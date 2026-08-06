@@ -18,6 +18,11 @@
   runtime with an unbound name.
 - Bind a shared-slice loop element by value, so `for n in xs` over a `&[T]`
   parameter reads the same as over the owned sequence.
+- Write loop elements back through a `&mut` sequence parameter, and reach a
+  heap element through the pointer its slot holds; the slot-address form read
+  a Vec header out of the outer buffer and faulted in a native build.
+- Type the element binding of a `&mut` loop whose element type is still being
+  inferred, so mutating it no longer reports an immutable binding.
 - Resolve a `use` that names a module in the same unit: `use options::Item`
   from the crate root, `use root::path::Item`, and nested `use a::b::Item`.
 - Rebuild the tour of Gossamer: loops and loop expressions, every collection,

@@ -966,6 +966,11 @@ const SPECS: &[Spec] = &[
     // iteration restarts it at element zero, so every tier must agree on the
     // full element sequence, the bound-local shape, and early `break`.
     spec("feature-testing-examples/for_lazy_iterator_source.gos"),
+    // Element bindings of a `&mut` sequence loop: scalar write-through, a
+    // heap element mutated through its slot pointer, slot replacement, and a
+    // shared `&[T]` binding by value. The slot-address form read a Vec header
+    // out of the outer buffer and faulted natively.
+    spec("feature-testing-examples/mut_ref_element_loops.gos"),
     spec("feature-testing-examples/seq_method_combinators.gos"),
     spec("feature-testing-examples/stdlib_slog.gos"),
     // Top-level statements (implicit `fn main`): plain, `?`-propagation,

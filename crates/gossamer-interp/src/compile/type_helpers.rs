@@ -139,6 +139,15 @@ impl<'tcx> FnBuilder<'tcx> {
     /// slice, or tuple - a collection the for-loop fast path can drive by
     /// index via `len()` + `IndexGet`. User `impl Iterator` types (`Adt`)
     /// are excluded so their stateful `next()` keeps its own desugar.
+    /// `true` when `expr` has type `&mut [T]` / `&mut Vec<T>` - a
+    /// reference whose elements are written through to their source.
+    pub(crate) fn expr_is_mut_ref_collection(&self, expr: &HirExpr) -> bool {
+        let Some(TyKind::Ref { mutability, inner }) = self.tcx.kind(expr.ty) else {
+            return false;
+        };
+        *mutability == gossamer_types::Mutbl::Mut && self.is_indexable_collection_ty(*inner)
+    }
+
     pub(crate) fn is_indexable_collection_ty(&self, ty: gossamer_types::Ty) -> bool {
         let ty = self.unwrap_ref(ty);
         matches!(

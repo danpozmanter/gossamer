@@ -2207,6 +2207,10 @@ impl<'tcx> FnBuilder<'tcx> {
                 op: HirUnaryOp::RefMut,
                 ..
             } => return Ok(None),
+            // A `&mut [T]` / `&mut Vec<T>` binding iterated without a fresh
+            // `&mut` in the header: the elements are still written through
+            // to the source the reference names.
+            _ if self.expr_is_mut_ref_collection(next_recv) => (next_recv.as_ref(), false, true),
             // Any other inline `for`-desugar receiver: a plain collection
             // (`for x in xs`), a method-result collection (`for (k, v) in
             // map.iter()`, `map.keys()`, `text.chars()`,

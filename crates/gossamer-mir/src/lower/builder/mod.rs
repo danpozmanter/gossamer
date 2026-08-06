@@ -80,6 +80,11 @@ pub(crate) struct Builder<'a> {
     /// auto-regioned. See `collect_region_unsafe_fns`.
     pub(crate) region_unsafe: &'a std::collections::HashSet<gossamer_resolve::DefId>,
     pub(crate) local_struct: HashMap<Local, String>,
+    /// Locals bound to the *address* of a vec slot by a `&mut` for-loop.
+    /// The slot of a heap-container element holds a pointer, so a method
+    /// call on such a binding loads that pointer before dispatching, while
+    /// an assignment through the binding still stores into the slot.
+    pub(crate) slot_ref_locals: std::collections::HashSet<Local>,
     /// For locals that hold an array/tuple whose element type is a
     /// known struct, records that struct's name. Used to resolve
     /// field projections through `a[i].x` when the type checker left

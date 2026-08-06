@@ -3021,7 +3021,7 @@ fn std_iter_skip_while_full_import_and_methods_typecheck() {
          let a = skip_while(|x: i64| x < 3, xs)\n\
          let b = xs.skip_while(|x: i64| x < 3)\n\
          let c = (1..5).skip_while(|x: i64| x < 3).collect()\n\
-         println!(\"{} {} {}\", a.len(), b.len(), c.len())\n\
+         println!(\"{} {} {}\", a.count(), b.count(), c.len())\n\
          }\n",
         true,
     );

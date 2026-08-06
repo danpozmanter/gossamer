@@ -570,6 +570,18 @@ impl<'a> Builder<'a> {
                 target: Some(after_ptr),
             });
             self.set_current(after_ptr);
+            // A heap-container element's slot holds a pointer, so a method
+            // call on this binding has to load it; an assignment through the
+            // binding still writes the slot. Scalar and inline-aggregate
+            // elements are addressed directly and need no such load.
+            if matches!(
+                self.tcx.kind_of(elem_ty),
+                gossamer_types::TyKind::Vec(_)
+                    | gossamer_types::TyKind::Slice(_)
+                    | gossamer_types::TyKind::HashMap { .. }
+            ) {
+                self.slot_ref_locals.insert(ptr_local);
+            }
             ptr_local
         } else if matches!(
             self.tcx.kind_of(elem_ty),

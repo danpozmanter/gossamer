@@ -87,6 +87,7 @@ impl<'a> Builder<'a> {
             mut_statics,
             region_unsafe,
             local_struct: HashMap::new(),
+            slot_ref_locals: std::collections::HashSet::new(),
             local_elem_struct: HashMap::new(),
             local_closure: HashMap::new(),
             local_fn_name: HashMap::new(),

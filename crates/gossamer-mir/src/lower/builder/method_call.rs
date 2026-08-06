@@ -4095,6 +4095,36 @@ impl<'a> Builder<'a> {
     }
 
     /// Coerce the receiver and build the operand list for the fallback call.
+    /// Loads the container pointer a vec slot holds. The loop binding for a
+    /// `&mut` element is the slot's address, so a method call dereferences it
+    /// once to reach the container itself.
+    fn load_slot_pointer(&mut self, slot: Local, slot_ty: Ty, span: Span) -> Local {
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let inner_ty = match self.tcx.kind_of(slot_ty) {
+            TyKind::Ref { inner, .. } => *inner,
+            _ => slot_ty,
+        };
+        let zero = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(zero),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+        let loaded = self.fresh(inner_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_load".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(slot)),
+                Operand::Copy(Place::local(zero)),
+            ],
+            destination: Place::local(loaded),
+            target: Some(next),
+        });
+        self.set_current(next);
+        loaded
+    }
+
     fn build_fallback_arg_operands(
         &mut self,
         runtime_symbol: Option<&'static str>,
@@ -4104,6 +4134,15 @@ impl<'a> Builder<'a> {
         expected_args: Option<&[Ty]>,
         span: Span,
     ) -> Option<(Local, Vec<Operand>)> {
+        // A `&mut` for-loop binds a heap-container element to its slot
+        // address; the container the method acts on is the pointer that slot
+        // holds, so load it before dispatch.
+        let receiver_local =
+            if runtime_symbol.is_some() && self.slot_ref_locals.contains(&receiver_local) {
+                self.load_slot_pointer(receiver_local, receiver.ty, span)
+            } else {
+                receiver_local
+            };
         let receiver_local = match runtime_symbol {
             Some(sym) if sym.starts_with("gos_rt_vec_") || sym == "gos_rt_strings_join" => {
                 match self

@@ -3758,6 +3758,9 @@ fn runtime_core_method_signature(owner: &str, name: &str, kind: &str) -> Option<
         return Some(format!("fn {name}(self: {owner}, rhs: {owner}) -> {owner}"));
     }
     if let Some(signature) = match (owner, name) {
+        // The cursor pull a `for` desugars to, and the one iterator method
+        // that is not a data-last `std::iter` free function.
+        ("Iterator", "next") => Some("fn next<T>(self: &mut Iterator<T>) -> Option<T>"),
         ("Arc", "new") => Some("fn new<T>(value: T) -> Arc<T>"),
         ("Rc", "new") => Some("fn new<T>(value: T) -> Rc<T>"),
         ("Box", "new") => Some("fn new<T>(value: T) -> Box<T>"),
@@ -3824,6 +3827,11 @@ fn runtime_core_method_signature(owner: &str, name: &str, kind: &str) -> Option<
     reason = "flat metadata table keeps REPL core-method docs auditable"
 )]
 fn runtime_core_method_doc(owner: &str, name: &str) -> Option<&'static str> {
+    if owner == "Iterator" && name == "next" {
+        return Some(
+            "Advances the iterator and returns its next value, or None when it is exhausted.",
+        );
+    }
     if owner == "sync::Map" {
         return match name {
             "new" => Some("Creates an empty concurrent string map."),
@@ -5264,7 +5272,7 @@ mod tests {
             .iter()
             .map(|entry| entry.name.as_str())
             .collect::<std::collections::BTreeSet<_>>();
-        for unavailable in ["next", "for_each", "position", "max_by_key"] {
+        for unavailable in ["for_each", "position", "max_by_key"] {
             assert!(!names.contains(unavailable));
         }
         let map = entries.iter().find(|entry| entry.name == "map").unwrap();

@@ -7737,9 +7737,25 @@ impl<'a> TypeChecker<'a> {
     fn check_deferred_mutating_receivers(&mut self) {
         let deferred = std::mem::take(&mut self.deferred_mutating_receivers);
         for receiver in deferred {
-            if self.method_requires_mut_receiver(receiver.ty, &receiver.method) {
-                self.emit_mutating_place_error(receiver.place, receiver.name, receiver.span);
+            if !self.method_requires_mut_receiver(receiver.ty, &receiver.method) {
+                continue;
             }
+            // The place verdict was taken while the receiver's type was still
+            // an inference variable, so a `&mut` binding read as an
+            // undeclared-`mut` local. Now that the type is known, a receiver
+            // that crosses a mutable reference is a writable place.
+            let mut resolved = self.infer.resolve(self.tcx, receiver.ty);
+            let mut crossed_mutable_reference = false;
+            while let Some(TyKind::Ref { mutability, inner }) = self.tcx.kind(resolved) {
+                if *mutability == Mutbl::Mut {
+                    crossed_mutable_reference = true;
+                }
+                resolved = self.infer.resolve(self.tcx, *inner);
+            }
+            if crossed_mutable_reference {
+                continue;
+            }
+            self.emit_mutating_place_error(receiver.place, receiver.name, receiver.span);
         }
     }
 
@@ -9879,31 +9895,40 @@ impl<'a> TypeChecker<'a> {
             let mut cur = starting;
             loop {
                 match self.tcx.kind_of(cur).clone() {
-                    TyKind::Ref { inner, mutability } => match self.tcx.kind_of(inner).clone() {
-                        TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
-                            // A shared borrow yields the same element binding
-                            // the owned sequence does; only `&mut` keeps the
-                            // reference, which is what carries a write through
-                            // to the source.
-                            if mutability == crate::Mutbl::Not {
-                                break Some(elem);
+                    TyKind::Ref { inner, mutability } => {
+                        // Resolve the referent first: a `&mut` to a container
+                        // whose element type is still being inferred would
+                        // otherwise read as an opaque variable and leave the
+                        // loop binding untyped.
+                        let inner = self.infer.resolve(self.tcx, inner);
+                        match self.tcx.kind_of(inner).clone() {
+                            TyKind::Array { elem, .. }
+                            | TyKind::Slice(elem)
+                            | TyKind::Vec(elem) => {
+                                // A shared borrow yields the same element binding
+                                // the owned sequence does; only `&mut` keeps the
+                                // reference, which is what carries a write through
+                                // to the source.
+                                if mutability == crate::Mutbl::Not {
+                                    break Some(elem);
+                                }
+                                break Some(self.tcx.intern(TyKind::Ref {
+                                    mutability,
+                                    inner: elem,
+                                }));
                             }
-                            break Some(self.tcx.intern(TyKind::Ref {
-                                mutability,
-                                inner: elem,
-                            }));
+                            TyKind::Tuple(elems) => {
+                                let Some(elem) = elems.first().copied() else {
+                                    break None;
+                                };
+                                break Some(self.tcx.intern(TyKind::Ref {
+                                    mutability,
+                                    inner: elem,
+                                }));
+                            }
+                            _ => cur = inner,
                         }
-                        TyKind::Tuple(elems) => {
-                            let Some(elem) = elems.first().copied() else {
-                                break None;
-                            };
-                            break Some(self.tcx.intern(TyKind::Ref {
-                                mutability,
-                                inner: elem,
-                            }));
-                        }
-                        _ => cur = inner,
-                    },
+                    }
                     TyKind::Array { elem, .. }
                     | TyKind::Slice(elem)
                     | TyKind::Vec(elem)
