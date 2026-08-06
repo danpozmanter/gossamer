@@ -60,7 +60,7 @@ fn serve_app() {
 fn await_ready(url: &String) {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(_) = http::get(url, Vec::from(#[])) {
+        if let Ok(_) = http::get(url, Vec::from([])) {
             return
         }
         time::sleep(25)
@@ -75,7 +75,7 @@ fn main() {
 
     // Basic auth + websocket upgrade headers present.
     // "admin:s3cret" base64-encoded is "YWRtaW46czNjcmV0".
-    let up_hdr: Vec<(String, String)> = Vec::from(#[
+    let up_hdr: Vec<(String, String)> = Vec::from([
         ("Authorization", "Basic YWRtaW46czNjcmV0"),
         ("Upgrade", "websocket"),
         ("Connection", "Upgrade"),
@@ -86,7 +86,7 @@ fn main() {
     }
 
     // Neither header present: decode degrades to None, upgrade to no.
-    match http::get(&base, Vec::from(#[])) {
+    match http::get(&base, Vec::from([])) {
         Ok(r) => println!("B status={} body={}", r.status, r.body),
         Err(e) => println!("B error: {}", e),
     }

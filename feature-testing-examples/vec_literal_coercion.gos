@@ -8,17 +8,17 @@
 struct Bag { items: Vec<String> }
 
 fn labels() -> Vec<String> {
-    Vec::from(#["alpha", "beta", "gamma"])
+    Vec::from(["alpha", "beta", "gamma"])
 }
 
 fn pick(branch: bool) -> Vec<i64> {
-    if branch { Vec::from(#[1, 2]) } else { Vec::from(#[3, 4, 5]) }
+    if branch { Vec::from([1, 2]) } else { Vec::from([3, 4, 5]) }
 }
 
 fn classify(n: i64) -> Vec<String> {
     match n {
-        0 => Vec::from(#["zero"]),
-        _ => Vec::from(#["many", "values"]),
+        0 => Vec::from(["zero"]),
+        _ => Vec::from(["many", "values"]),
     }
 }
 
@@ -36,9 +36,9 @@ fn slice_len(xs: &[String]) -> i64 {
 
 fn main() {
     // let-annotated List and slice forms.
-    let words: Vec<String> = Vec::from(#["yes", "wow"])
-    let slice: Vec<String> = Vec::from(#["p", "q", "r"])
-    let chars: Vec<char> = Vec::from(#['a', 'b'])
+    let words: Vec<String> = Vec::from(["yes", "wow"])
+    let slice: Vec<String> = Vec::from(["p", "q", "r"])
+    let chars: Vec<char> = Vec::from(['a', 'b'])
     // let-annotated Repeat form.
     let zeros: Vec<i64> = Vec::from([0; 4])
     let sevens: Vec<i64> = Vec::from([7; 3])
@@ -56,19 +56,19 @@ fn main() {
     println!("{} {}", classify(0)[0], classify(9)[1])
 
     // Struct field and call arguments.
-    let bag = Bag { items: Vec::from(#["one", "two"]) }
+    let bag = Bag { items: Vec::from(["one", "two"]) }
     println!("{} {}", bag.items[1], bag.items.len())
-    println!("{}", sum(Vec::from(#[10, 20, 30])))
+    println!("{}", sum(Vec::from([10, 20, 30])))
     println!("{}", slice_len(&["m", "n", "o", "p"]))
 
     // Inferred if/match branch join to Vec for differing lengths.
-    let joined = if true { Vec::from(#[1, 2]) } else { Vec::from(#[3, 4, 5]) }
+    let joined = if true { Vec::from([1, 2]) } else { Vec::from([3, 4, 5]) }
     println!("{} {}", joined.len(), joined[1])
 
     // Nested Vec<Vec<T>>: build, index, and drop cleanly.
-    let grid: Vec<Vec<String>> = Vec::from(#[Vec::from(#["a", "b"]), Vec::from(#["c"])])
+    let grid: Vec<Vec<String>> = Vec::from([Vec::from(["a", "b"]), Vec::from(["c"])])
     println!("{} {} {}", grid.len(), grid[0][1], grid[1][0])
-    let nums: Vec<Vec<i64>> = Vec::from(#[Vec::from(#[1, 2]), Vec::from(#[3])])
+    let nums: Vec<Vec<i64>> = Vec::from([Vec::from([1, 2]), Vec::from([3])])
     println!("{} {}", nums[0][1], nums[1][0])
 
     // Debug-format the nested containers.

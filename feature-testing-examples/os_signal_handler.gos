@@ -19,7 +19,7 @@ fn coordinator(
     num_workers: i64,
     results_rx: channel::Sender<String>,
 ) -> Vec<String> {
-    let mut collected: Vec<String> = Vec::from(#[])
+    let mut collected: Vec<String> = Vec::from([])
     let mut i = 0
     while i < num_workers {
         i += 1
@@ -43,7 +43,7 @@ fn run_workers(count: i64) -> Vec<String> {
     time::sleep(30)
     result_tx.close()
 
-    let mut results: Vec<String> = Vec::from(#[])
+    let mut results: Vec<String> = Vec::from([])
     while let Some(v) = result_rx.recv() {
         results.push(v)
     }
@@ -53,7 +53,7 @@ fn run_workers(count: i64) -> Vec<String> {
 fn graceful_drain(items: Vec<i64>, budget_ms: i64) -> Vec<i64> {
     // Process items, stopping when budget is exhausted
     let start = time::now_ms()
-    let mut out: Vec<i64> = Vec::from(#[])
+    let mut out: Vec<i64> = Vec::from([])
     for item in items {
         let elapsed = time::now_ms() - start
         if elapsed > budget_ms {
@@ -75,7 +75,7 @@ fn main() {
     println!("all workers done: {}", results.len() == 4)
 
     // Graceful drain with time budget
-    let items = Vec::from(#[1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    let items = Vec::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
     let drained = graceful_drain(items, 1000)
     println!("drained at least 1: {}", drained.len() >= 1)
 
@@ -100,7 +100,7 @@ mod tests {
 
     #[test]
     fn graceful_drain_processes_all_within_budget() {
-        let items = Vec::from(#[10, 20, 30, 40, 50])
+        let items = Vec::from([10, 20, 30, 40, 50])
         let out = super::graceful_drain(items, 5000)
         let _ = testing::check_eq(&(out.len() as i64), &5, "all 5 items drained")
         let _ = testing::check_eq(&out[0], &20, "first item doubled")

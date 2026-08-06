@@ -41,7 +41,7 @@ fn main() {
         "form-data; name=\"alpha\"",
         "form-data; name=\"file\"; filename=\"data.bin\"",
     ])
-    let mut fields: Vec<Field> = Vec::from(#[])
+    let mut fields: Vec<Field> = Vec::from([])
     for disp in dispositions {
         let d: String = disp
         let name = attr(&d, &"name")

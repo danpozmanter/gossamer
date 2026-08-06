@@ -6,7 +6,7 @@
 fn run_with_cleanup(actions: Vec<Fn() -> String>) -> Vec<String> {
     // Execute actions in LIFO order, collecting their return values
     let n = actions.len() as i64
-    let mut out: Vec<String> = Vec::from(#[])
+    let mut out: Vec<String> = Vec::from([])
     let mut i = n - 1
     while i >= 0 {
         let s = (actions[i])()
@@ -29,7 +29,7 @@ fn scope_guard(resource: String, work: Fn() -> i64) -> i64 {
 
 fn main() {
     // LIFO ordering via explicit stack
-    let mut actions: Vec<Fn() -> String> = Vec::from(#[])
+    let mut actions: Vec<Fn() -> String> = Vec::from([])
     actions.push(make_cleanup("first"))
     actions.push(make_cleanup("second"))
     actions.push(make_cleanup("third"))
@@ -55,7 +55,7 @@ fn main() {
     println!("nested result = {}", outer)
 
     // Manual cleanup stack: push registrations, pop on exit
-    let mut cleanup_log: Vec<String> = Vec::from(#[])
+    let mut cleanup_log: Vec<String> = Vec::from([])
     cleanup_log.push("opened file A")
     cleanup_log.push("opened file B")
     cleanup_log.push("opened socket")
@@ -75,7 +75,7 @@ mod tests {
 
     #[test]
     fn lifo_order() {
-        let mut actions: Vec<Fn() -> String> = Vec::from(#[])
+        let mut actions: Vec<Fn() -> String> = Vec::from([])
         actions.push(super::make_cleanup("a"))
         actions.push(super::make_cleanup("b"))
         actions.push(super::make_cleanup("c"))
@@ -93,7 +93,7 @@ mod tests {
 
     #[test]
     fn empty_cleanup_stack() {
-        let actions: Vec<Fn() -> String> = Vec::from(#[])
+        let actions: Vec<Fn() -> String> = Vec::from([])
         let result = super::run_with_cleanup(actions)
         let _ = testing::check_eq(&(result.len() as i64), &0, "empty stack empty result")
     }

@@ -2047,6 +2047,13 @@ impl<'a> TypeChecker<'a> {
                 .or_default()
                 .insert(self_seg.name.name.clone());
         }
+        // `Self` in a signature names the type being implemented, and
+        // signatures are collected before any impl body is checked, so the
+        // binding has to be in place here too - otherwise a `-> Self`
+        // constructor records an unconstrained return type and every call
+        // on its result goes unchecked.
+        let impl_self_ty = self.type_from_ast(&decl.self_ty);
+        let prev_self_ty = self.current_self_ty.replace(impl_self_ty);
         for item in &decl.items {
             if let ImplItem::Fn(fn_decl) = item {
                 let id = NodeId::DUMMY;
@@ -2103,6 +2110,7 @@ impl<'a> TypeChecker<'a> {
                 }
             }
         }
+        self.current_self_ty = prev_self_ty;
     }
 
     fn collect_impl_method_owners_and_mutability(&mut self, decl: &ImplDecl, owner: &str) {
@@ -3178,8 +3186,8 @@ impl<'a> TypeChecker<'a> {
                 let wants_array = target.is_some_and(|target| {
                     matches!(self.tcx.kind(target), Some(TyKind::Array { .. }))
                 });
-                let constant_repeat = matches!(arr, ArrayExpr::Repeat { count, .. } if evaluate_const_int_from_expr(count).is_some());
-                if wants_array || (!wants_growable && constant_repeat) {
+                let _ = wants_growable;
+                if wants_array {
                     self.check_array(arr, expected)
                 } else {
                     self.check_vec_literal(arr, expected)
@@ -3675,6 +3683,304 @@ impl<'a> TypeChecker<'a> {
         clippy::too_many_lines,
         reason = "sequential callee-shape dispatch: signature, variant constructor, then stdlib fallbacks"
     )]
+    /// Return type for a qualified stdlib path call (`Vec::from`,
+    /// `strings::parse`, `String::slice`, …). These have no `FnSig` to unify
+    /// against, so each family validates its own argument slots and reports
+    /// the type it produces. `None` leaves the call to the generic fallback.
+    fn check_qualified_path_call(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        arg_tys: &[Ty],
+        expected: Expectation,
+        resolved: Ty,
+    ) -> Option<Ty> {
+        let ExprKind::Path(path) = &callee.kind else {
+            return None;
+        };
+        let names = self.resolved_value_path_names(callee.id, path);
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let (module, last) = names.split_at(names.len().saturating_sub(1));
+        let Some(last) = last.first().copied() else {
+            return Some(self.fresh());
+        };
+        if matches!(module, ["Vec"] | ["std", "Vec"])
+            && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
+            && let Some(ret) = self.check_qualified_vec_call(last, args, arg_tys, callee.span)
+        {
+            return Some(ret);
+        }
+        if matches!(module, ["String"] | ["std", "String"])
+            && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
+            && let Some(ret) = self.check_qualified_string_call(last, args, arg_tys, callee.span)
+        {
+            return Some(ret);
+        }
+        if !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
+            && let Some(ret) =
+                self.check_qualified_bytes_handle_call(module, last, args, arg_tys, callee.span)
+        {
+            return Some(ret);
+        }
+        let is_strings_call = matches!(module, ["strings"] | ["std", "strings"]);
+        let has_specialized_combinator_sig = combinator_module_name(module)
+            .is_some_and(|m| Self::std_combinator_arity(m, last).is_some());
+        if !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. })) {
+            self.check_stdlib_signature_arity(
+                module,
+                last,
+                args.len(),
+                usize::from(self.pipe_stage_callees.contains(&callee.id)),
+                callee.span,
+            );
+            // `strings::*` has a dedicated validator below. Running the
+            // generic signature catalogue too reports the same bad slot
+            // twice, once without its parameter name.
+            if !is_strings_call && !has_specialized_combinator_sig {
+                self.check_stdlib_signature_args(module, last, args, arg_tys);
+            }
+        }
+        // `strings::` free functions have no `FnSig` to unify
+        // against, so validate their string-typed argument slots
+        // here. Skipped when the callee resolves to a user `FnDef`
+        // (a user module named `strings` keeps its own typing) or
+        // when the value is piped in (`|>` appends the data argument
+        // during lowering, shifting the positions this table keys
+        // on).
+        if is_strings_call
+            && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
+            && !self.pipe_stage_callees.contains(&callee.id)
+        {
+            self.check_strings_free_call_args(last, args, arg_tys, callee.span);
+        }
+        if is_strings_call
+            && last == "parse"
+            && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
+        {
+            let generics = path
+                .segments
+                .last()
+                .map_or(&[][..], |segment| segment.generics.as_slice());
+            return Some(self.string_parse_ret("strings::parse", generics, expected, callee.span));
+        }
+        if matches!(module, ["String"] | ["std", "String"])
+            && last == "slice"
+            && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
+        {
+            let s = self.tcx.string_ty();
+            let err = self.tcx.dyn_error_ty();
+            return Some(self.result_adt_ty(s, err));
+        }
+        if matches!(module, ["String"] | ["std", "String"])
+            && matches!(last, "from" | "new" | "with_capacity")
+            && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
+        {
+            return Some(self.tcx.string_ty());
+        }
+        if module.is_empty()
+            && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
+            && let Some(ret) = self.raw_stdlib_helper_ret(last)
+        {
+            return Some(ret);
+        }
+        // Data-last std combinators (`result::map_err(f, r)`,
+        // `iter::map(f, xs)`, ...): the signature table pins
+        // closure params to the data payload type. Gated on the
+        // callee not being a resolved user `FnDef` so a user
+        // module that happens to be named `iter` / `result` /
+        // `option` keeps its own typing.
+        if !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
+            && let Some(ret) = self.check_std_combinator_free_call(
+                callee,
+                args,
+                arg_tys,
+                combinator_module_name(module),
+                last,
+            )
+        {
+            return Some(ret);
+        }
+        // `archive::tar::write` / `archive::zip::write` take
+        // `[(String, [u8])]` and return `Result<[u8], Error>`.
+        // These are stdlib (no `fn_sig`), so re-type the literal
+        // argument against the synthesized parameter type so a
+        // `[("a", [1, 2, 3])]` literal builds heap Vecs at every
+        // level on the compiled tier.
+        if last == "write"
+            && matches!(module.last().copied(), Some("tar" | "zip"))
+            && args.len() == 1
+        {
+            // The `[(String, [u8])]` argument shape flowed in via
+            // `call_arg_expectations`; only the return type is
+            // synthesized here.
+            let u8_ty = self.tcx.int_ty(IntTy::U8);
+            let vec_u8 = self.tcx.intern(TyKind::Vec(u8_ty));
+            let e = self.tcx.dyn_error_ty();
+            return Some(self.result_adt_ty(vec_u8, e));
+        }
+        if let Some(ty) =
+            self.check_stdlib_module_ret_ty(module, last, callee, args, arg_tys, expected)
+        {
+            return Some(ty);
+        }
+        if let Some(ty) = self.stdlib_signature_return_ty(module, last) {
+            return Some(ty);
+        }
+        // `String::from_utf8` is an associated function on a primitive
+        // rather than a module member, so it has no catalogue row; pin
+        // its `Result` here or `?` sees an unresolved variable.
+        if module == ["String"] && last == "from_utf8" {
+            let string_ty = self.tcx.string_ty();
+            let err = self.tcx.dyn_error_ty();
+            return Some(self.result_adt_ty(string_ty, err));
+        }
+        // Built-in intrinsics emitted by the parser's macro
+        // expansion (`format!` only - `println!` / `print!` /
+        // `eprintln!` / `eprint!` etc. expand to a call to the
+        // outer name with the format-built string as the single
+        // argument, and pinning `println` to Unit broke
+        // generic-monomorph paths that route through user-named
+        // functions called `println`). Pinning `__concat` and
+        // `__fmt_prec` to `String` is safe: they're synthetic
+        // names the parser injects and no user code can
+        // shadow them.
+        if module.is_empty()
+            && let Some(ty) = self.check_bare_intrinsic_call(last, arg_tys, callee.span)
+        {
+            return Some(ty);
+        }
+        None
+    }
+
+    /// Checks one call against the callee's known signature: instantiates a
+    /// generic function's rigid parameter slots per call site, unifies each
+    /// argument, and reports an arity mismatch. Returns the call's type when
+    /// the signature determines it.
+    fn check_call_against_sig(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        arg_tys: &[Ty],
+        mut sig: FnSig,
+        callee_item: Option<(gossamer_resolve::DefId, crate::Substs)>,
+    ) -> Option<Ty> {
+        // Per-call-site instantiation of a generic function: replace
+        // the signature's rigid `Param` slots with one fresh inference
+        // variable each, so independent call sites bind the parameters
+        // independently (without this, the second call with a different
+        // concrete type fails to unify against the first's binding).
+        let inst: Option<(gossamer_resolve::DefId, Vec<Ty>, crate::Substs)> =
+            callee_item.and_then(|(def, explicit)| {
+                let n = self.fn_generic_arity.get(&def).copied()?;
+                if n == 0 {
+                    return None;
+                }
+                if !explicit.is_empty() && explicit.len() != n {
+                    self.emit(
+                        TypeError::CallArityMismatch {
+                            callee: format!("{} generic arguments", callee_display_name(callee)),
+                            expected: n,
+                            found: explicit.len(),
+                        },
+                        callee.span,
+                    );
+                }
+                let const_mask = self
+                    .fn_generic_const_mask
+                    .get(&def)
+                    .cloned()
+                    .unwrap_or_default();
+                let vars = (0..n)
+                    .map(|i| {
+                        if const_mask.get(i).copied().unwrap_or(false) {
+                            self.fresh()
+                        } else {
+                            match explicit.as_slice().get(i) {
+                                Some(crate::GenericArg::Type(ty)) => *ty,
+                                _ => self.fresh(),
+                            }
+                        }
+                    })
+                    .collect();
+                Some((def, vars, explicit))
+            });
+        if let Some((def, vars, explicit)) = &inst {
+            sig = self.instantiate_generic_sig(callee, *def, vars, explicit, sig, arg_tys);
+        }
+        let pipe_extra = usize::from(self.pipe_stage_callees.contains(&callee.id));
+        let effective = arg_tys.len() + pipe_extra;
+        if effective == sig.inputs.len() {
+            for (param, (arg_ty, arg_expr)) in sig.inputs.iter().zip(arg_tys.iter().zip(args)) {
+                self.check_sig_param_arg(*param, *arg_ty, arg_expr);
+            }
+            if let Some((def, vars, _)) = &inst {
+                self.check_trait_bounds(*def, vars, callee.span);
+            }
+            return Some(sig.output);
+        }
+        // A known callee signature whose declared arity does not
+        // match the call: the VM aborts (`CallArityMismatch` in the
+        // MIR verifier) and the native backend silently drops or
+        // zero-fills the surplus/missing arguments. Reject it
+        // statically so `check` is never looser than the tiers. A
+        // call on the right of `|>` receives the piped value as an
+        // implicit trailing argument, so count it toward the arity.
+        if effective != sig.inputs.len() {
+            self.emit(
+                TypeError::CallArityMismatch {
+                    callee: callee_display_name(callee),
+                    expected: sig.inputs.len(),
+                    found: effective,
+                },
+                callee.span,
+            );
+        }
+        // Fall through to the existing stdlib / fresh handling so a
+        // pipe-stage call keeps its current return typing.
+        None
+    }
+
+    /// Return type for the call shapes that name a user item rather than a
+    /// function value: an `impl`'s associated function, a reverse
+    /// constructor, a tuple or named struct literal, and an enum variant.
+    /// The first shape that recognises the callee decides the type.
+    fn check_constructor_like_call(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        arg_tys: &[Ty],
+    ) -> Option<Ty> {
+        self.check_user_assoc_fn_call(callee, args)
+            .or_else(|| self.check_reverse_ctor_call(callee, args, arg_tys))
+            .or_else(|| self.check_tuple_struct_ctor_call(callee, args, arg_tys))
+            .or_else(|| self.check_named_struct_ctor_call(callee, args))
+            .or_else(|| self.check_enum_variant_ctor_call(callee, args, arg_tys))
+    }
+
+    /// Return type of `Type::assoc(..)` for a user `impl`'s associated
+    /// function. Without it the call's result is a fresh variable, so a
+    /// `-> Self` constructor produces an untyped value and every method
+    /// call on it - including its argument types - goes unchecked.
+    fn check_user_assoc_fn_call(&mut self, callee: &Expr, args: &[Expr]) -> Option<Ty> {
+        let ExprKind::Path(path) = &callee.kind else {
+            return None;
+        };
+        let segments: Vec<&str> = path
+            .segments
+            .iter()
+            .map(|seg| seg.name.name.as_str())
+            .collect();
+        let [type_name, fn_name] = segments.as_slice() else {
+            return None;
+        };
+        if !self.user_type_decls.contains(*type_name) {
+            return None;
+        }
+        self.method_ret_types
+            .get(&((*type_name).to_string(), (*fn_name).to_string(), args.len()))
+            .copied()
+    }
+
     fn check_call_inner(
         &mut self,
         callee: &Expr,
@@ -3700,94 +4006,12 @@ impl<'a> TypeChecker<'a> {
             Some(TyKind::FnDef { def, .. }) => self.fn_sigs.get(&def).cloned(),
             _ => None,
         };
-        if let Some(mut sig) = sig_lookup {
-            // Per-call-site instantiation of a generic function: replace
-            // the signature's rigid `Param` slots with one fresh inference
-            // variable each, so independent call sites bind the parameters
-            // independently (without this, the second call with a different
-            // concrete type fails to unify against the first's binding).
-            let inst: Option<(gossamer_resolve::DefId, Vec<Ty>, crate::Substs)> = callee_item
-                .and_then(|(def, explicit)| {
-                    let n = self.fn_generic_arity.get(&def).copied()?;
-                    if n == 0 {
-                        return None;
-                    }
-                    if !explicit.is_empty() && explicit.len() != n {
-                        self.emit(
-                            TypeError::CallArityMismatch {
-                                callee: format!(
-                                    "{} generic arguments",
-                                    callee_display_name(callee)
-                                ),
-                                expected: n,
-                                found: explicit.len(),
-                            },
-                            callee.span,
-                        );
-                    }
-                    let const_mask = self
-                        .fn_generic_const_mask
-                        .get(&def)
-                        .cloned()
-                        .unwrap_or_default();
-                    let vars = (0..n)
-                        .map(|i| {
-                            if const_mask.get(i).copied().unwrap_or(false) {
-                                self.fresh()
-                            } else {
-                                match explicit.as_slice().get(i) {
-                                    Some(crate::GenericArg::Type(ty)) => *ty,
-                                    _ => self.fresh(),
-                                }
-                            }
-                        })
-                        .collect();
-                    Some((def, vars, explicit))
-                });
-            if let Some((def, vars, explicit)) = &inst {
-                sig = self.instantiate_generic_sig(callee, *def, vars, explicit, sig, arg_tys);
-            }
-            let pipe_extra = usize::from(self.pipe_stage_callees.contains(&callee.id));
-            let effective = arg_tys.len() + pipe_extra;
-            if effective == sig.inputs.len() {
-                for (param, (arg_ty, arg_expr)) in sig.inputs.iter().zip(arg_tys.iter().zip(args)) {
-                    self.check_sig_param_arg(*param, *arg_ty, arg_expr);
-                }
-                if let Some((def, vars, _)) = &inst {
-                    self.check_trait_bounds(*def, vars, callee.span);
-                }
-                return sig.output;
-            }
-            // A known callee signature whose declared arity does not
-            // match the call: the VM aborts (`CallArityMismatch` in the
-            // MIR verifier) and the native backend silently drops or
-            // zero-fills the surplus/missing arguments. Reject it
-            // statically so `check` is never looser than the tiers. A
-            // call on the right of `|>` receives the piped value as an
-            // implicit trailing argument, so count it toward the arity.
-            if effective != sig.inputs.len() {
-                self.emit(
-                    TypeError::CallArityMismatch {
-                        callee: callee_display_name(callee),
-                        expected: sig.inputs.len(),
-                        found: effective,
-                    },
-                    callee.span,
-                );
-            }
-            // Fall through to the existing stdlib / fresh handling so a
-            // pipe-stage call keeps its current return typing.
-        }
-        if let Some(ty) = self.check_reverse_ctor_call(callee, args, arg_tys) {
+        if let Some(sig) = sig_lookup
+            && let Some(ty) = self.check_call_against_sig(callee, args, arg_tys, sig, callee_item)
+        {
             return ty;
         }
-        if let Some(ty) = self.check_tuple_struct_ctor_call(callee, args, arg_tys) {
-            return ty;
-        }
-        if let Some(ty) = self.check_named_struct_ctor_call(callee, args) {
-            return ty;
-        }
-        if let Some(ty) = self.check_enum_variant_ctor_call(callee, args, arg_tys) {
+        if let Some(ty) = self.check_constructor_like_call(callee, args, arg_tys) {
             return ty;
         }
         // Fallback: known stdlib free functions whose signatures are
@@ -3796,151 +4020,9 @@ impl<'a> TypeChecker<'a> {
         // lets the type checker catch mismatches such as returning
         // `Result<json::Value, String>` from a function declared
         // `Result<ComicResponse, String>`.
-        if let ExprKind::Path(path) = &callee.kind {
-            let names = self.resolved_value_path_names(callee.id, path);
-            let names: Vec<&str> = names.iter().map(String::as_str).collect();
-            let (module, last) = names.split_at(names.len().saturating_sub(1));
-            let Some(last) = last.first().copied() else {
-                return self.fresh();
-            };
-            if matches!(module, ["Vec"] | ["std", "Vec"])
-                && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
-                && let Some(ret) = self.check_qualified_vec_call(last, args, arg_tys, callee.span)
-            {
-                return ret;
-            }
-            if matches!(module, ["String"] | ["std", "String"])
-                && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
-                && let Some(ret) =
-                    self.check_qualified_string_call(last, args, arg_tys, callee.span)
-            {
-                return ret;
-            }
-            if !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
-                && let Some(ret) =
-                    self.check_qualified_bytes_handle_call(module, last, args, arg_tys, callee.span)
-            {
-                return ret;
-            }
-            let is_strings_call = matches!(module, ["strings"] | ["std", "strings"]);
-            let has_specialized_combinator_sig = combinator_module_name(module)
-                .is_some_and(|m| Self::std_combinator_arity(m, last).is_some());
-            if !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. })) {
-                self.check_stdlib_signature_arity(
-                    module,
-                    last,
-                    args.len(),
-                    usize::from(self.pipe_stage_callees.contains(&callee.id)),
-                    callee.span,
-                );
-                // `strings::*` has a dedicated validator below. Running the
-                // generic signature catalogue too reports the same bad slot
-                // twice, once without its parameter name.
-                if !is_strings_call && !has_specialized_combinator_sig {
-                    self.check_stdlib_signature_args(module, last, args, arg_tys);
-                }
-            }
-            // `strings::` free functions have no `FnSig` to unify
-            // against, so validate their string-typed argument slots
-            // here. Skipped when the callee resolves to a user `FnDef`
-            // (a user module named `strings` keeps its own typing) or
-            // when the value is piped in (`|>` appends the data argument
-            // during lowering, shifting the positions this table keys
-            // on).
-            if is_strings_call
-                && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
-                && !self.pipe_stage_callees.contains(&callee.id)
-            {
-                self.check_strings_free_call_args(last, args, arg_tys, callee.span);
-            }
-            if is_strings_call
-                && last == "parse"
-                && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
-            {
-                let generics = path
-                    .segments
-                    .last()
-                    .map_or(&[][..], |segment| segment.generics.as_slice());
-                return self.string_parse_ret("strings::parse", generics, expected, callee.span);
-            }
-            if matches!(module, ["String"] | ["std", "String"])
-                && last == "slice"
-                && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
-            {
-                let s = self.tcx.string_ty();
-                let err = self.tcx.dyn_error_ty();
-                return self.result_adt_ty(s, err);
-            }
-            if matches!(module, ["String"] | ["std", "String"])
-                && matches!(last, "from" | "new" | "with_capacity")
-                && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
-            {
-                return self.tcx.string_ty();
-            }
-            if module.is_empty()
-                && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
-                && let Some(ret) = self.raw_stdlib_helper_ret(last)
-            {
-                return ret;
-            }
-            // Data-last std combinators (`result::map_err(f, r)`,
-            // `iter::map(f, xs)`, ...): the signature table pins
-            // closure params to the data payload type. Gated on the
-            // callee not being a resolved user `FnDef` so a user
-            // module that happens to be named `iter` / `result` /
-            // `option` keeps its own typing.
-            if !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
-                && let Some(ret) = self.check_std_combinator_free_call(
-                    callee,
-                    args,
-                    arg_tys,
-                    combinator_module_name(module),
-                    last,
-                )
-            {
-                return ret;
-            }
-            // `archive::tar::write` / `archive::zip::write` take
-            // `[(String, [u8])]` and return `Result<[u8], Error>`.
-            // These are stdlib (no `fn_sig`), so re-type the literal
-            // argument against the synthesized parameter type so a
-            // `[("a", [1, 2, 3])]` literal builds heap Vecs at every
-            // level on the compiled tier.
-            if last == "write"
-                && matches!(module.last().copied(), Some("tar" | "zip"))
-                && args.len() == 1
-            {
-                // The `[(String, [u8])]` argument shape flowed in via
-                // `call_arg_expectations`; only the return type is
-                // synthesized here.
-                let u8_ty = self.tcx.int_ty(IntTy::U8);
-                let vec_u8 = self.tcx.intern(TyKind::Vec(u8_ty));
-                let e = self.tcx.dyn_error_ty();
-                return self.result_adt_ty(vec_u8, e);
-            }
-            if let Some(ty) =
-                self.check_stdlib_module_ret_ty(module, last, callee, args, arg_tys, expected)
-            {
-                return ty;
-            }
-            if let Some(ty) = self.stdlib_signature_return_ty(module, last) {
-                return ty;
-            }
-            // Built-in intrinsics emitted by the parser's macro
-            // expansion (`format!` only - `println!` / `print!` /
-            // `eprintln!` / `eprint!` etc. expand to a call to the
-            // outer name with the format-built string as the single
-            // argument, and pinning `println` to Unit broke
-            // generic-monomorph paths that route through user-named
-            // functions called `println`). Pinning `__concat` and
-            // `__fmt_prec` to `String` is safe: they're synthetic
-            // names the parser injects and no user code can
-            // shadow them.
-            if module.is_empty()
-                && let Some(ty) = self.check_bare_intrinsic_call(last, arg_tys, callee.span)
-            {
-                return ty;
-            }
+        if let Some(ty) = self.check_qualified_path_call(callee, args, arg_tys, expected, resolved)
+        {
+            return ty;
         }
         self.reject_noncallable_callee(callee, callee_ty);
         self.fresh()
@@ -7072,6 +7154,19 @@ impl<'a> TypeChecker<'a> {
                     Expectation::HasType(self.tcx.intern(TyKind::FnPtr(sig)))
                 }
                 _ => match self.unique_container_expectation(&candidates, i) {
+                    // A fixed-array literal never stands in for a `Vec`
+                    // parameter: the spellings name different containers, so
+                    // the mismatch is reported here rather than coerced into
+                    // an argument the callee then treats as a Vec.
+                    Some(want)
+                        if matches!(&arg.kind, ExprKind::FixedArray(_))
+                            && matches!(
+                                self.tcx.kind(self.infer.resolve(self.tcx, want)),
+                                Some(TyKind::Vec(_))
+                            ) =>
+                    {
+                        Expectation::HasType(want)
+                    }
                     Some(want) => Expectation::Coerce(want),
                     None => Expectation::None,
                 },
@@ -10922,6 +11017,15 @@ impl<'a> TypeChecker<'a> {
             .map_or("", |seg| seg.name.name.as_str());
         if let Some(prim) = primitive_from_name(head_name) {
             return prim_to_ty(self.tcx, prim);
+        }
+        // Inside an `impl`, `Self` names the type being implemented. Leaving
+        // it as a fresh variable made every `-> Self` constructor's result
+        // unconstrained, so the calls on that value went unchecked.
+        if head_name == "Self"
+            && path.segments.len() == 1
+            && let Some(self_ty) = self.current_self_ty
+        {
+            return self_ty;
         }
         // Recognise the stdlib's opaque dynamic JSON value by
         // surface name. The resolver doesn't allocate a `DefId`

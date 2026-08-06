@@ -971,6 +971,18 @@ const SPECS: &[Spec] = &[
     // shared `&[T]` binding by value. The slot-address form read a Vec header
     // out of the outer buffer and faulted natively.
     spec("feature-testing-examples/mut_ref_element_loops.gos"),
+    // A nested stdlib function called by its leaf-module name, the json
+    // query surface reached as methods, and `{:?}` of a variant whose
+    // payload is a collection or a document. Each of these answered on one
+    // tier and failed on the other.
+    spec("feature-testing-examples/stdlib_leaf_calls_and_json_queries.gos"),
+    // A closure route and a named-handler route registered on one router.
+    // The closure form emitted an undefined `Handler::serve` and failed to
+    // link, while the VM registered it fine.
+    spec("feature-testing-examples/router_closure_route.gos"),
+    // `Set::from(values)` where the elements come from a runtime sequence
+    // rather than a literal list.
+    spec("feature-testing-examples/set_from_sequence.gos"),
     spec("feature-testing-examples/seq_method_combinators.gos"),
     spec("feature-testing-examples/stdlib_slog.gos"),
     // Top-level statements (implicit `fn main`): plain, `?`-propagation,

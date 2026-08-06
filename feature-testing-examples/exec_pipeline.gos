@@ -21,7 +21,7 @@ fn main() {
         Err(e) => println!("error: {}", e.message()),
     }
 
-    let three: Vec<String> = Vec::from(#[
+    let three: Vec<String> = Vec::from([
         "printf 'a\\nb\\nc\\n'",
         "sort -r",
         "head -n 1",

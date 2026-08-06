@@ -30,7 +30,7 @@ fn alias_test() {
 }
 
 fn array_alias() {
-    let mut arr: Vec<i64> = Vec::from(#[1, 2, 3, 4, 5])
+    let mut arr: Vec<i64> = Vec::from([1, 2, 3, 4, 5])
     let first_val = arr[0]
     arr[4] += first_val
     println!("last after += first: {}", arr[4])

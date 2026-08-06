@@ -381,6 +381,19 @@ impl<'a> Builder<'a> {
         if last == "set" && args.len() == 3 {
             return self.lower_json_set_call(&args[0], &args[1], &args[2], span);
         }
+        self.lower_json_query(last, args, span)
+    }
+
+    /// Lowers one `json` query by name with `args[0]` as the document.
+    /// The method form (`doc.keys()`) and the free form
+    /// (`json::keys(doc)`) name the same operation, so both arrive here
+    /// and agree on the runtime helper and its return type.
+    pub(crate) fn lower_json_query(
+        &mut self,
+        last: &str,
+        args: &[HirExpr],
+        span: Span,
+    ) -> Option<Local> {
         let (rt_name, ret_ty) = match last {
             "parse" | "decode" => ("gos_rt_json_parse", self.result_json_value_error_adt_ty()),
             "render" | "encode" => ("gos_rt_json_render", self.tcx.string_ty()),

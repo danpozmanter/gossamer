@@ -12,7 +12,7 @@ struct Tagged { data: Vec<i64>, name: String, id: i64 }
 
 // The vector is built here and moved into the returned struct.
 fn make(n: i64) -> Rec {
-    let mut v: Vec<i64> = Vec::from(#[])
+    let mut v: Vec<i64> = Vec::from([])
     let mut i = 0
     while i < n {
         v.push(i * 2)
@@ -23,7 +23,7 @@ fn make(n: i64) -> Rec {
 
 // Single-field struct: the whole aggregate is one word (its vec).
 fn make_box(n: i64) -> Box2 {
-    let mut v: Vec<i64> = Vec::from(#[])
+    let mut v: Vec<i64> = Vec::from([])
     let mut i = 0
     while i < n {
         v.push(i)
@@ -62,14 +62,14 @@ fn main() {
         total += sum_of(&bx.data)
 
         // nested by-value struct with a vec field
-        let mut nv: Vec<i64> = Vec::from(#[])
+        let mut nv: Vec<i64> = Vec::from([])
         nv.push(r)
         nv.push(r + 1)
         let o = Outer { inner: Inner { xs: nv, tag: "t" }, id: r }
         total += sum_of(&o.inner.xs) + o.id + o.inner.tag.len()
 
         // Positional copy sharing the vec field
-        let mut bv: Vec<i64> = Vec::from(#[])
+        let mut bv: Vec<i64> = Vec::from([])
         bv.push(r * 3)
         let base = Tagged { data: bv, name: "b", id: r }
         let upd = Tagged { data: base.data, name: base.name, id: r + 1 }

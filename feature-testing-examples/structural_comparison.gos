@@ -47,7 +47,7 @@ fn main() {
     println!("{}", kind)
 
     // Ordering powers sort with no derive.
-    let mut pts: Vec<Point> = Vec::from(#[
+    let mut pts: Vec<Point> = Vec::from([
         Point { x: 3, y: 1 },
         Point { x: 1, y: 9 },
         Point { x: 2, y: 5 },

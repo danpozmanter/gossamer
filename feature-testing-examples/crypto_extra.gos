@@ -18,8 +18,8 @@ fn main() {
     println!("sha1(abc) = {}", crypto::insecure::sha1_hex("abc"))
 
     // "password" / "salt" as raw bytes.
-    let pw: Vec<u8> = Vec::from(#[112, 97, 115, 115, 119, 111, 114, 100])
-    let salt: Vec<u8> = Vec::from(#[115, 97, 108, 116])
+    let pw: Vec<u8> = Vec::from([112, 97, 115, 115, 119, 111, 114, 100])
+    let salt: Vec<u8> = Vec::from([115, 97, 108, 116])
 
     // PBKDF2-HMAC-SHA256: 1 iteration, 32-byte derived key.
     let dk = crypto::kdf::pbkdf2_sha256(pw, salt, 1, 32)
@@ -32,8 +32,8 @@ fn main() {
     }
 
     // Argon2id hash + verify (random salt -> assert outcomes).
-    let secret: Vec<u8> = Vec::from(#[104, 117, 110, 116, 101, 114, 50])
-    let wrong: Vec<u8> = Vec::from(#[119, 114, 111, 110, 103])
+    let secret: Vec<u8> = Vec::from([104, 117, 110, 116, 101, 114, 50])
+    let wrong: Vec<u8> = Vec::from([119, 114, 111, 110, 103])
     match crypto::kdf::argon2id_hash(secret) {
         Ok(phc) => {
             let v = match crypto::kdf::argon2id_verify(secret, phc) {

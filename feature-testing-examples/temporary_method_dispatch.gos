@@ -7,7 +7,7 @@
 use std::collections::Map
 
 fn main() {
-    let words: Vec<String> = Vec::from(#["alpha", "beta", "gamma"])
+    let words: Vec<String> = Vec::from(["alpha", "beta", "gamma"])
 
     // Type-guarded Vec method on a chained temporary.
     println!("{}", words.rev().first().unwrap())
@@ -40,7 +40,7 @@ fn main() {
     }
 
     // Numeric element type is preserved (not forced to String).
-    let nums: Vec<i64> = Vec::from(#[10, 20, 30])
+    let nums: Vec<i64> = Vec::from([10, 20, 30])
     println!("{}", nums.rev().first().unwrap())
     for n in nums.rev() {
         println!("n={}", n)

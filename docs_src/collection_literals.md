@@ -12,11 +12,11 @@ let fixed = [1, 2, 3]
 let names = {"ada": 36, "grace": 37}
 let tags = #{"compiler", "runtime", "docs"}
 let ordered: BTreeSet<String> = #{"compiler", "runtime", "docs"}
-let queue = Queue::from(#[1, 2, 3])
-let stack = Stack::from(#[1, 2, 3])
-let deque = Deque::from(#[1, 2, 3])
-let max_heap = MaxHeap::from(#[1, 2, 3])
-let min_heap = MinHeap::from(#[1, 2, 3])
+let queue = Queue::from([1, 2, 3])
+let stack = Stack::from([1, 2, 3])
+let deque = Deque::from([1, 2, 3])
+let max_heap = MaxHeap::from([1, 2, 3])
+let min_heap = MinHeap::from([1, 2, 3])
 ```
 
 Every container has exactly one name. `HashMap`, `HashSet`, `VecDeque`,
@@ -46,8 +46,7 @@ bytes.push(65)
 ## Fixed Arrays
 
 `[...]` creates an owned fixed-size array `[T; N]`, whose length is part of its
-type. The repeat form `[value; count]` belongs to the array spelling, so
-`#[0; 4]` is a syntax error.
+type.
 
 ```gos
 let point = [3, 4]
@@ -59,6 +58,26 @@ An expected `[T; N]` type can also shape a Vec literal:
 
 ```gos
 let point: [i64; 2] = #[3, 4]
+```
+
+## Repeating A Value
+
+The repeat form `[value; count]` follows the same spelling rule as the list
+form: brackets build a fixed array, `#[...]` builds a Vec.
+
+```gos
+let grid = [5; 5]        // [i64; 5] - five copies of 5
+let mut buffer = #[6; 7] // Vec<i64> - seven copies of 6
+buffer.push(8)           // the Vec form still grows
+```
+
+The count may be any integer expression; a Vec repeat accepts a runtime
+length, while a fixed array needs a constant so its length is part of its
+type.
+
+```gos
+let width = 3
+let row = #[0; width]
 ```
 
 Fixed arrays and slices support non-resizing sequence methods. Use a `Vec<T>`
@@ -108,14 +127,14 @@ println(ordered.to_vec())
 ## Queue
 
 A `Queue<i64>` is FIFO-only: `push` appends to the back and `pop` removes from
-the front. Use `Queue::new()` for an empty queue and `Queue::from(#[...])` to
+the front. Use `Queue::new()` for an empty queue and `Queue::from([...])` to
 seed one in front-to-back order. `peek`, `len`, `is_empty`, and `clear` are the
 common observers and the reset operation.
 
 ```gos
 use std::collections::Queue
 
-let mut q: Queue<i64> = Queue::from(#[10, 20])
+let mut q: Queue<i64> = Queue::from([10, 20])
 q.push(30)
 println(q.len())
 println(q.peek())
@@ -125,13 +144,13 @@ println(q.pop())
 ## Stack
 
 A `Stack<i64>` is LIFO-only: `push` appends to the top and `pop` removes from
-the top. Use `Stack::new()` for an empty stack and `Stack::from(#[...])` to seed
+the top. Use `Stack::new()` for an empty stack and `Stack::from([...])` to seed
 one in bottom-to-top order.
 
 ```gos
 use std::collections::Stack
 
-let mut s: Stack<i64> = Stack::from(#[10, 20])
+let mut s: Stack<i64> = Stack::from([10, 20])
 s.push(30)
 println(s.len())
 println(s.peek())
@@ -145,7 +164,7 @@ Use `Deque<i64>` when both ends matter. It has explicit front/back methods.
 ```gos
 use std::collections::Deque
 
-let mut d: Deque<i64> = Deque::from(#[10, 20])
+let mut d: Deque<i64> = Deque::from([10, 20])
 d.push_front(5)
 d.push_back(30)
 println(d.pop_front())
@@ -160,12 +179,12 @@ neither needs a negated key or a wrapper type.
 ```gos
 use std::collections::{MaxHeap, MinHeap}
 
-let mut max_heap = MaxHeap::from(#[5, 1, 3])
+let mut max_heap = MaxHeap::from([5, 1, 3])
 println(max_heap.peek())  // Some(5)
 max_heap.push(8)
 println(max_heap.pop())   // Some(8)
 
-let mut min_heap = MinHeap::from(#[5, 1, 3])
+let mut min_heap = MinHeap::from([5, 1, 3])
 println(min_heap.peek())  // Some(1)
 min_heap.push(0)
 println(min_heap.pop())   // Some(0)
@@ -198,8 +217,8 @@ See [Tuples](language/tuples.md) for the full surface.
 
 | Constructor | Result |
 |---|---|
-| `Queue::new()` / `Queue::from(#[a, b])` | `Queue<i64>` |
-| `Stack::new()` / `Stack::from(#[a, b])` | `Stack<i64>` |
-| `Deque::new()` / `Deque::from(#[a, b])` | `Deque<i64>` |
-| `MaxHeap::new()` / `MaxHeap::from(#[a, b])` | `MaxHeap<i64>` |
-| `MinHeap::new()` / `MinHeap::from(#[a, b])` | `MinHeap<i64>` |
+| `Queue::new()` / `Queue::from([a, b])` | `Queue<i64>` |
+| `Stack::new()` / `Stack::from([a, b])` | `Stack<i64>` |
+| `Deque::new()` / `Deque::from([a, b])` | `Deque<i64>` |
+| `MaxHeap::new()` / `MaxHeap::from([a, b])` | `MaxHeap<i64>` |
+| `MinHeap::new()` / `MinHeap::from([a, b])` | `MinHeap<i64>` |

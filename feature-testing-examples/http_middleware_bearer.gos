@@ -44,7 +44,7 @@ fn serve_app() {
 fn await_ready(url: &String) {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(_) = http::get(url, Vec::from(#[])) {
+        if let Ok(_) = http::get(url, Vec::from([])) {
             return
         }
         time::sleep(25)
@@ -56,19 +56,19 @@ fn main() {
     go serve_app()
     await_ready(&"http://127.0.0.1:23885/x")
     // Valid token → handler body.
-    let ok_hdr: Vec<(String, String)> = Vec::from(#[("Authorization", "Bearer s3cret")])
+    let ok_hdr: Vec<(String, String)> = Vec::from([("Authorization", "Bearer s3cret")])
     match http::request("GET", "http://127.0.0.1:23885/x", "", ok_hdr) {
         Ok(r) => println!("valid status={} body={}", r.status, r.body),
         Err(e) => println!("valid error: {}", e),
     }
     // Wrong token → 401.
-    let bad_hdr: Vec<(String, String)> = Vec::from(#[("Authorization", "Bearer nope")])
+    let bad_hdr: Vec<(String, String)> = Vec::from([("Authorization", "Bearer nope")])
     match http::request("GET", "http://127.0.0.1:23885/x", "", bad_hdr) {
         Ok(r) => println!("wrong status={} body={}", r.status, r.body),
         Err(e) => println!("wrong error: {}", e),
     }
     // No header → 401 (verify is never invoked).
-    match http::get("http://127.0.0.1:23885/x", Vec::from(#[])) {
+    match http::get("http://127.0.0.1:23885/x", Vec::from([])) {
         Ok(r) => println!("none status={} body={}", r.status, r.body),
         Err(e) => println!("none error: {}", e),
     }

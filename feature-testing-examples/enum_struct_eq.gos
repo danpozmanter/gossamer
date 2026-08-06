@@ -5,9 +5,9 @@
 enum Node { Leaf(i64), Text(String), List(Vec<Node>), Pair(Box<Node>, Box<Node>) }
 
 fn main() {
-    let a = Node::List(Vec::from(#[Node::Leaf(1), Node::Text("hi"), Node::Pair(Node::Leaf(2), Node::Leaf(3))]))
-    let b = Node::List(Vec::from(#[Node::Leaf(1), Node::Text("hi"), Node::Pair(Node::Leaf(2), Node::Leaf(3))]))
-    let c = Node::List(Vec::from(#[Node::Leaf(1), Node::Text("HI"), Node::Pair(Node::Leaf(2), Node::Leaf(3))]))
+    let a = Node::List(Vec::from([Node::Leaf(1), Node::Text("hi"), Node::Pair(Node::Leaf(2), Node::Leaf(3))]))
+    let b = Node::List(Vec::from([Node::Leaf(1), Node::Text("hi"), Node::Pair(Node::Leaf(2), Node::Leaf(3))]))
+    let c = Node::List(Vec::from([Node::Leaf(1), Node::Text("HI"), Node::Pair(Node::Leaf(2), Node::Leaf(3))]))
     println!("{}", a == b)
     println!("{}", a == c)
     println!("{}", a != c)

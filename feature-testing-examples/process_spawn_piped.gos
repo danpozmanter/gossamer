@@ -6,7 +6,7 @@
 use std::process
 
 fn main() {
-    match process::spawn_piped("sort", Vec::from(#[])) {
+    match process::spawn_piped("sort", Vec::from([])) {
         Ok(child) => {
             child.write_stdin("pear\n")
             child.write_stdin("apple\n")

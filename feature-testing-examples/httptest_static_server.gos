@@ -6,7 +6,7 @@ use std::{http, httptest}
 
 fn main() {
     let base = httptest::server(201, "fixture body")
-    match http::get(base + "/status", Vec::from(#[])) {
+    match http::get(base + "/status", Vec::from([])) {
         Ok(response) => println!("status={} body={}", response.status, response.body),
         Err(error) => println!("request error: {}", error),
     }

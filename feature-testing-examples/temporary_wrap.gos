@@ -31,7 +31,7 @@ fn main() {
     }
     println!("min is_some = {}", present)
 
-    let empty: Vec<i64> = Vec::from(#[])
+    let empty: Vec<i64> = Vec::from([])
     let fallback = iter::min(&empty) |> option::unwrap_or(-1)
     println!("empty default = {}", fallback)
 }

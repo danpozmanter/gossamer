@@ -32,7 +32,7 @@ fn pipeline(raw: String, divisor: i64) -> Result<i64, String> {
 }
 
 fn run_with_recovery(inputs: Vec<Vec<String>>) -> Vec<String> {
-    let mut results: Vec<String> = Vec::from(#[])
+    let mut results: Vec<String> = Vec::from([])
     for pair in inputs {
         let raw = pair[0].clone()
         let divisor_str = pair[1].clone()
@@ -75,11 +75,11 @@ fn main() {
     }
 
     // Batch with recovery
-    let pairs = Vec::from(#[
-        Vec::from(#["50", "5"]),
-        Vec::from(#["abc", "2"]),
-        Vec::from(#["100", "0"]),
-        Vec::from(#["20", "4"]),
+    let pairs = Vec::from([
+        Vec::from(["50", "5"]),
+        Vec::from(["abc", "2"]),
+        Vec::from(["100", "0"]),
+        Vec::from(["20", "4"]),
     ])
     let results = run_with_recovery(pairs)
     for r in results {

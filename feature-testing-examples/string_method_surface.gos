@@ -40,7 +40,7 @@ fn main() {
     println!("{}", match s.strip_suffix(" Foo") { Some(r) => r, None => "?" })
 
     // Vec<String>.join - method form of strings::join
-    let parts: Vec<String> = Vec::from(#["a", "b", "c"])
+    let parts: Vec<String> = Vec::from(["a", "b", "c"])
     println!("{}", parts.join("-"))
     let upper: Vec<String> = "one two three"
         |> _.split_whitespace()
@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn vec_join_method() {
-        let parts: Vec<String> = Vec::from(#["x", "y", "z"])
+        let parts: Vec<String> = Vec::from(["x", "y", "z"])
         let _ = testing::check(parts.join("+") == "x+y+z", "Vec<String>.join")
     }
 }

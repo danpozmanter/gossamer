@@ -40,7 +40,7 @@ fn run_server() {
 fn await_ready(url: &String) {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(_) = http::get(url, Vec::from(#[])) {
+        if let Ok(_) = http::get(url, Vec::from([])) {
             return
         }
         time::sleep(25)
@@ -51,7 +51,7 @@ fn await_ready(url: &String) {
 fn main() {
     go run_server()
     await_ready(&"http://127.0.0.1:23876/chunks")
-    match http::stream("GET", "http://127.0.0.1:23876/chunks", "", Vec::from(#[])) {
+    match http::stream("GET", "http://127.0.0.1:23876/chunks", "", Vec::from([])) {
         Ok(s) => {
             let mut total = 0
             let mut sum = 0

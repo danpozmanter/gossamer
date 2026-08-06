@@ -13,7 +13,7 @@ fn show_string(label: String, value: Option<String>) {
 }
 
 fn main() {
-    let xs = Vec::from(#[10, 20, 30])
+    let xs = Vec::from([10, 20, 30])
     show_i64("vec0", xs.get(0))
     show_i64("vec2", xs.get(2))
     show_i64("vec3", xs.get(3))
@@ -22,7 +22,7 @@ fn main() {
     let arr = #[4, 5, 6]
     show_i64("arr1", arr.get(1))
 
-    let words = Vec::from(#["red", "blue"])
+    let words = Vec::from(["red", "blue"])
     show_string("word1", words.get(1))
     show_string("word2", words.get(2))
 }

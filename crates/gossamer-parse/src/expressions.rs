@@ -1182,21 +1182,21 @@ impl Parser<'_> {
         ExprKind::FixedArray(ArrayExpr::List(elements))
     }
 
-    /// `#[a, b]` - the Vec literal. The repeat form belongs to the
-    /// fixed-array spelling, so `#[value; count]` is rejected.
+    /// `#[a, b]` - the Vec literal, and `#[value; count]` - the Vec of
+    /// `count` copies of `value`. The bracket spelling picks the container:
+    /// `[value; count]` builds the fixed array of the same shape.
     fn parse_fixed_array_expr_inner(&mut self) -> ExprKind {
         if self.eat_punct(Punct::RBracket) {
             return ExprKind::Array(ArrayExpr::List(Vec::new()));
         }
         let first = self.parse_expr_no_assign();
-        if self.at_punct(Punct::Semi) {
-            let semi_span = self.peek_span();
-            self.bump();
-            let _count = self.parse_expr_no_assign();
+        if self.eat_punct(Punct::Semi) {
+            let count = self.parse_expr_no_assign();
             self.expect_punct(Punct::RBracket, "to close Vec expression");
-            let span = self.join(first.span, semi_span);
-            self.record(ParseError::BareRepeatLiteral, span);
-            return ExprKind::Error;
+            return ExprKind::Array(ArrayExpr::Repeat {
+                value: Box::new(first),
+                count: Box::new(count),
+            });
         }
         let mut elements = vec![first];
         while self.eat_punct(Punct::Comma) {

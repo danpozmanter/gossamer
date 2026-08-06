@@ -32,7 +32,7 @@ fn main() {
     counter.add(5)
     add(&mut counter.value, 7)
 
-    let mut values: Vec<i64> = Vec::from(#[1])
+    let mut values: Vec<i64> = Vec::from([1])
     append_value(&mut values, scalar)
 
     println!(

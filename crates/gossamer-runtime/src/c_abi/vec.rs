@@ -2083,8 +2083,36 @@ fn debug_payload_string(payload: i64, kind: i64) -> String {
                     .into_owned()
             }
         }
+        // A collection payload arrives as its `GosVec` pointer, so the
+        // element formatter that renders a bare `{:?}` of that vec renders
+        // it inside the variant too.
+        6 => unsafe { take_rt_string(super::btmap::gos_rt_vec_format_i64(vec_ptr(payload))) },
+        7 => unsafe { take_rt_string(super::btmap::gos_rt_vec_format_string(vec_ptr(payload))) },
+        8 => unsafe {
+            take_rt_string(crate::c_abi::gos_rt_json_display(
+                std::ptr::with_exposed_provenance(payload as usize),
+            ))
+        },
         _ => payload.to_string(),
     }
+}
+
+/// Reinterprets a payload slot as the `GosVec` pointer it holds.
+fn vec_ptr(payload: i64) -> *const crate::c_abi::GosVec {
+    std::ptr::with_exposed_provenance(payload as usize)
+}
+
+/// Consumes a runtime-allocated C string into an owned `String`, freeing the
+/// allocation the formatter handed back.
+unsafe fn take_rt_string(ptr: *mut std::ffi::c_char) -> String {
+    if ptr.is_null() {
+        return String::new();
+    }
+    let out = unsafe { std::ffi::CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned();
+    unsafe { super::string::gos_rt_str_free(ptr) };
+    out
 }
 
 /// `{:?}` of an `Option<T>` (the by-value `i128` enum, disc 0 = Some): renders

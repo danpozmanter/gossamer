@@ -16,7 +16,7 @@ enum V { Null, B(bool), I(i64), F(f64), T(String), L(Vec<u8>) }
 struct Sel { binds: Vec<V> }
 
 fn copy_vals(xs: &[V]) -> Vec<V> {
-    let mut out: Vec<V> = Vec::from(#[])
+    let mut out: Vec<V> = Vec::from([])
     for x in xs { out.push(x) }
     out
 }
@@ -42,7 +42,7 @@ fn churn() -> i64 {
 }
 
 fn main() {
-    let sel = Sel { binds: Vec::from(#[]) }.where_eq(V::I(95)).where_eq(V::T("alice"))
+    let sel = Sel { binds: Vec::from([]) }.where_eq(V::I(95)).where_eq(V::T("alice"))
     let binds = sel.params()
     let _ = churn()
     for v in &binds {

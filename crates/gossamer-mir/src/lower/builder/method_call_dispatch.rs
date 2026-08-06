@@ -865,6 +865,13 @@ impl<'a> Builder<'a> {
                 .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64)),
             "gos_rt_result_is_ok" | "gos_rt_result_is_err" => self.tcx.bool_ty(),
             "gos_rt_json_as_f64" => self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            // The Option-returning query helpers: a JSON node only answers
+            // when it actually holds that type, which is what the VM and the
+            // free-function form both report.
+            "gos_rt_json_as_i64_opt" => self.option_i64_adt_ty(),
+            "gos_rt_json_as_f64_opt" => self.option_f64_adt_ty(),
+            "gos_rt_json_as_bool_opt" => self.option_bool_adt_ty(),
+            "gos_rt_json_as_str_opt" => self.option_string_adt_ty(),
             "gos_rt_chan_try_send"
             | "gos_rt_map_remove"
             | "gos_rt_map_remove_i64"

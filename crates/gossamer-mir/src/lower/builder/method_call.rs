@@ -314,6 +314,11 @@ impl<'a> Builder<'a> {
             return r;
         }
         if let MethodLowering::Handled(r) =
+            self.lower_scalar_bound_method(receiver, method, args, span)
+        {
+            return r;
+        }
+        if let MethodLowering::Handled(r) =
             self.lower_seq_combinator_method(receiver, method, args, ty, span)
         {
             return r;
@@ -786,6 +791,34 @@ impl<'a> Builder<'a> {
         // MIR, and any heap-container result (e.g. `gos_rt_vec_get_i64`
         // producing a `Vec<T>`-typed dest) would be marked twice for
         // `gos_rt_vec_free`, producing a double free at scope end.
+        // A query on a parsed document is the same operation whichever way
+        // it is spelled, so `doc.keys()` lowers exactly as
+        // `json::keys(doc)` does - one helper, one return type, both tiers.
+        if self.is_json_value_ty(receiver.ty)
+            && matches!(
+                method.name.as_str(),
+                "get"
+                    | "at"
+                    | "keys"
+                    | "len"
+                    | "is_null"
+                    | "as_str"
+                    | "as_i64"
+                    | "as_f64"
+                    | "as_bool"
+                    | "as_array"
+                    | "render"
+                    | "encode"
+                    | "encode_pretty"
+            )
+        {
+            let mut query_args = Vec::with_capacity(args.len() + 1);
+            query_args.push(receiver.clone());
+            query_args.extend(args.iter().cloned());
+            if let Some(local) = self.lower_json_query(method.name.as_str(), &query_args, span) {
+                return MethodLowering::Handled(Some(local));
+            }
+        }
         if method.name.as_str() == "clone" && args.is_empty() && self.is_json_value_ty(receiver.ty)
         {
             let Some(recv_local) = self.lower_expr(receiver) else {
@@ -2194,16 +2227,16 @@ impl<'a> Builder<'a> {
                 _ => Some(""),
             },
             "as_str" => match &receiver_kind_flat {
-                TyKind::JsonValue => Some("gos_rt_json_as_str"),
+                TyKind::JsonValue => Some("gos_rt_json_as_str_opt"),
                 _ => Some(""),
             },
             // JSON value query/cast methods. The runtime helpers
             // accept a `*mut GosJson` (passed as a flat pointer)
             // and return either a fresh `*mut GosJson` (for
             // chained queries) or a primitive scalar.
-            "as_i64" => Some("gos_rt_json_as_i64"),
-            "as_f64" => Some("gos_rt_json_as_f64"),
-            "as_bool" => Some("gos_rt_json_as_bool"),
+            "as_i64" => Some("gos_rt_json_as_i64_opt"),
+            "as_f64" => Some("gos_rt_json_as_f64_opt"),
+            "as_bool" => Some("gos_rt_json_as_bool_opt"),
             "is_null" => Some("gos_rt_json_is_null"),
             "at" => match &receiver_kind_flat {
                 TyKind::JsonValue => Some("gos_rt_json_at"),
@@ -4565,6 +4598,38 @@ impl<'a> Builder<'a> {
     /// Non-sequence receivers pass through: `Result::map`,
     /// `Option::map`, `HashMap` accessors, and the String surface keep
     /// their own dispatch.
+    /// `n.max(m)` / `n.min(m)` / `n.clamp(lo, hi)` on a numeric receiver.
+    /// These name the same operation as the prelude's free `max(n, m)`, so
+    /// they lower through the same runtime helpers rather than reaching the
+    /// by-name fallback, which had no symbol to call.
+    fn lower_scalar_bound_method(
+        &mut self,
+        receiver: &HirExpr,
+        method: &Ident,
+        args: &[HirExpr],
+        span: Span,
+    ) -> MethodLowering {
+        let arity_ok = match method.name.as_str() {
+            "min" | "max" => args.len() == 1,
+            "clamp" => args.len() == 2,
+            _ => false,
+        };
+        if !arity_ok {
+            return MethodLowering::Pass;
+        }
+        let (_, recv_kind) = self.receiver_dispatch_kinds(receiver);
+        if !matches!(recv_kind, TyKind::Int(_) | TyKind::Float(_) | TyKind::Char) {
+            return MethodLowering::Pass;
+        }
+        let mut free_args = Vec::with_capacity(args.len() + 1);
+        free_args.push(receiver.clone());
+        free_args.extend(args.iter().cloned());
+        match self.lower_stdlib_free_by_name(method.name.as_str(), &free_args, span) {
+            Some(local) => MethodLowering::Handled(Some(local)),
+            None => MethodLowering::Pass,
+        }
+    }
+
     fn lower_seq_combinator_method(
         &mut self,
         receiver: &HirExpr,

@@ -41,7 +41,7 @@ fn main() {
         println!("eta={}", e.message())
     }
 
-    match http::request("GET", "http://127.0.0.1:23907/never", "", Vec::from(#[])) {
+    match http::request("GET", "http://127.0.0.1:23907/never", "", Vec::from([])) {
         Ok(r) => println!("unexpected status={}", r.status),
         Err(e) => {
             let rendered = format!("net: {e}")

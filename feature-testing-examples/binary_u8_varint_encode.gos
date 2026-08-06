@@ -6,7 +6,7 @@
 use std::encoding
 
 fn main() {
-    let empty: Vec<u8> = Vec::from(#[])
+    let empty: Vec<u8> = Vec::from([])
 
     // --- single byte put/get round-trip across the u8 range ---
     for v in [0, 1, 127, 128, 200, 255] {

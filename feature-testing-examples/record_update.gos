@@ -26,7 +26,7 @@ fn main() {
 
     // A Vec<String> field rides through the spread untouched while a scalar
     // is overridden; the base's vec and strings stay live for it.
-    let mut tags: Vec<String> = Vec::from(#[])
+    let mut tags: Vec<String> = Vec::from([])
     tags.push(format!("x"))
     tags.push(format!("y"))
     let bag = Bag { tags: tags, label: format!("first"), n: 1 }
@@ -38,7 +38,7 @@ fn main() {
     // nested heap children are shared into the new aggregate's slot and must
     // be retained there, so the source and the new owner each free once.
     let lead = User { name: format!("lin"), role: format!("eng"), age: 40 }
-    let mut roster: Vec<String> = Vec::from(#[])
+    let mut roster: Vec<String> = Vec::from([])
     roster.push(format!("ben"))
     roster.push(format!("cleo"))
     let team = Team { lead: lead, members: roster, size: 3 }

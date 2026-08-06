@@ -9,7 +9,7 @@ struct Team { lead: User, members: Vec<String>, size: i64 }
 
 fn main() {
     let lead = User { name: format!("lin"), role: format!("eng") }
-    let mut roster: Vec<String> = Vec::from(#[])
+    let mut roster: Vec<String> = Vec::from([])
     roster.push(format!("ben"))
     roster.push(format!("cleo"))
     let team = Team { lead: lead, members: roster, size: 3 }

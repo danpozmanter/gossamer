@@ -113,12 +113,12 @@ fn explicit_vec_construction_covers_explicit_and_tail_returns() {
     let (bodies, _) = build(
         r"
 fn explicit() -> Vec<i64> {
-    let values = Vec::from(#[1, 2, 3])
+    let values = Vec::from([1, 2, 3])
     return values
 }
 
 fn tail() -> Vec<i64> {
-    let values = Vec::from(#[4, 5, 6])
+    let values = Vec::from([4, 5, 6])
     values
 }
 ",
@@ -487,9 +487,9 @@ use std::collections::Map
 
 fn replace() -> i64 {
     let mut m: Map<i64, Vec<i64>> = Map::new()
-    let value: Vec<i64> = Vec::from(#[1i64, 2i64])
+    let value: Vec<i64> = Vec::from([1i64, 2i64])
     m.insert(1, value)
-    m.insert(1, Vec::from(#[3i64, 4i64]))
+    m.insert(1, Vec::from([3i64, 4i64]))
     m.remove(1)
     0i64
 }
@@ -569,7 +569,7 @@ use std::collections::Map
 
 fn insert_default() -> i64 {
     let mut m: Map<String, Vec<i64>> = Map::new()
-    let stored = m.or_insert("key", Vec::from(#[1i64, 2i64]))
+    let stored = m.or_insert("key", Vec::from([1i64, 2i64]))
     stored.len()
 }
 "#;
@@ -1094,7 +1094,7 @@ fn fresh_struct_return_with_vec_field_uses_managed_shallow_copy() {
 struct Rec { data: Vec<i64>, name: String }
 
 fn make() -> Rec {
-    Rec { data: Vec::from(#[1, 2, 3]), name: "row" }
+    Rec { data: Vec::from([1, 2, 3]), name: "row" }
 }
 
 fn main() {

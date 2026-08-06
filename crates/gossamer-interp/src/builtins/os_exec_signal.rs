@@ -937,40 +937,7 @@ fn builtin_fs_walk_dir(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
-/// `gzip::encode(data: String, level: i64) -> Result<String, String>`.
-/// Strings carry the byte payload (lossy at non-UTF-8 boundaries
-/// but matches the shape Gossamer exposes for binary buffers
-/// today). Level 0..=9 picks the flate2 compression level.
-fn builtin_gzip_encode(args: &[Value]) -> RuntimeResult<Value> {
-    let Some(data) = args.first().and_then(as_str) else {
-        return Ok(err_variant("gzip::encode: data argument must be a string"));
-    };
-    let level_raw = args.get(1).and_then(value_to_int).unwrap_or(6);
-    let level_u = u32::try_from(level_raw.clamp(0, 9)).unwrap_or(6);
-    let level = gzip_std::Level::new(level_u).unwrap_or_default();
-    match gzip_std::encode(data.as_bytes(), level) {
-        Ok(out) => {
-            let s = String::from_utf8_lossy(&out).into_owned();
-            Ok(ok_variant(Value::String(SmolStr::from(s))))
-        }
-        Err(e) => Ok(err_variant(format!("{e}"))),
-    }
-}
 
-/// `gzip::decode(data: String) -> Result<String, String>`. Inverse of
-/// [`builtin_gzip_encode`].
-fn builtin_gzip_decode(args: &[Value]) -> RuntimeResult<Value> {
-    let Some(data) = args.first().and_then(as_str) else {
-        return Ok(err_variant("gzip::decode: data argument must be a string"));
-    };
-    match gzip_std::decode(data.as_bytes()) {
-        Ok(out) => {
-            let s = String::from_utf8_lossy(&out).into_owned();
-            Ok(ok_variant(Value::String(SmolStr::from(s))))
-        }
-        Err(e) => Ok(err_variant(format!("{e}"))),
-    }
-}
 
 /// `slog::info(msg: String)` - emits a JSON-line record at INFO
 /// level on stderr. The full structured-fields API stays in

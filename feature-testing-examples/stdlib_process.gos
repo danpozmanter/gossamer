@@ -4,7 +4,7 @@
 use std::process
 
 fn main() {
-    match process::run(&"echo", &Vec::from(#["gossamer-0.14"])) {
+    match process::run(&"echo", &Vec::from(["gossamer-0.14"])) {
         Ok(o) => print!("{}", o.stdout),
         Err(e) => println!("err: {}", e),
     }

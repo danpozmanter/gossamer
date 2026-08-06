@@ -901,9 +901,7 @@ impl TypeDiagnostic {
             }
             TypeError::StructConstructorBracesRequired { name } => {
                 out = out
-                    .with_help(format!(
-                        "write `{name} {{ field: value, ... }}` or `{name} {{ value, ... }}`"
-                    ))
+                    .with_help(format!("write `{name} {{ field: value, ... }}`"))
                     .with_note(
                         "named structs use braced construction; tuple structs use parentheses",
                     );

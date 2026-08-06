@@ -5663,6 +5663,22 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_vec_reverse as *const u8,
         ),
         (
+            "gos_rt_set_from_vec_i64",
+            crate::c_abi::gos_rt_set_from_vec_i64 as *const u8,
+        ),
+        (
+            "gos_rt_set_from_vec_str",
+            crate::c_abi::gos_rt_set_from_vec_str as *const u8,
+        ),
+        (
+            "gos_rt_btree_set_from_vec_i64",
+            crate::c_abi::gos_rt_btree_set_from_vec_i64 as *const u8,
+        ),
+        (
+            "gos_rt_btree_set_from_vec_str",
+            crate::c_abi::gos_rt_btree_set_from_vec_str as *const u8,
+        ),
+        (
             "gos_rt_vec_reversed",
             crate::c_abi::gos_rt_vec_reversed as *const u8,
         ),

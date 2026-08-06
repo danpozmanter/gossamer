@@ -75,7 +75,7 @@ mod tests {
     #[test]
     fn shadow_loop_preserves_outer() {
         let x = 16
-        let mut vals: Vec<i64> = Vec::from(#[])
+        let mut vals: Vec<i64> = Vec::from([])
         for i in 0..3 {
             let inner = x + i
             vals.push(inner)

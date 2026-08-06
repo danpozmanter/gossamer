@@ -1012,6 +1012,12 @@ fn builtin_testing_wait_for_scheduler_idle(args: &[Value]) -> RuntimeResult<Valu
 /// of bailing out on type mismatch. Returns `false` rather than an
 /// error on cross-kind operands.
 fn values_equal_for_assertion(a: &Value, b: &Value) -> bool {
+    // `assert_eq` reports what `==` reports. A sequence has several runtime
+    // representations - a grown Vec and a literal of the same elements do not
+    // share one - so the structural comparison behind `==` decides here too.
+    if crate::vm::values_equal(a, b) {
+        return true;
+    }
     match (a, b) {
         (Value::Unit, Value::Unit) => true,
         (Value::Bool(x), Value::Bool(y)) => x == y,

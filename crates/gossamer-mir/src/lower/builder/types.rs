@@ -305,6 +305,25 @@ impl<'a> Builder<'a> {
             );
             return RouterHandlerAbi::Bare(Operand::Copy(Place::local(fn_addr_local)));
         }
+        // A closure handler carries its lifted body as the dispatch symbol
+        // and its captured environment as the first argument, the same
+        // shape a `serve` method has.
+        if let Some(closure_name) = self.local_closure.get(&handler_local).cloned() {
+            let fn_name = self.handler_dispatch_symbol(closure_name);
+            let fn_addr_local = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(fn_addr_local),
+                Rvalue::CallIntrinsic {
+                    name: "gos_fn_addr",
+                    args: vec![Operand::Const(ConstValue::Str(fn_name))],
+                },
+                span,
+            );
+            return RouterHandlerAbi::WithEnv {
+                env: Operand::Copy(Place::local(handler_local)),
+                fn_addr: Operand::Copy(Place::local(fn_addr_local)),
+            };
+        }
         let handler_ty = self.locals[handler_local.0 as usize].ty;
         let handler_struct = self
             .struct_name_of(handler_ty)

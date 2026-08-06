@@ -189,6 +189,64 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     crate::stdlib_builtins::install(globals);
     #[cfg(not(target_arch = "wasm32"))]
     globals.push(("serve", native("serve", native_http_serve)));
+    install_leaf_module_aliases(globals);
+}
+
+/// Binds `<leaf>::<fn>` for every nested stdlib path registered only as
+/// `<parent>::<leaf>::<fn>`. `use std::compress::gzip` brings the leaf
+/// module into scope, so `gzip::encode(..)` is how the call is spelled -
+/// the shape the compiled tiers already lower. A leaf spelling that two
+/// modules would both claim is left unbound rather than resolved
+/// arbitrarily, and an existing binding is never displaced.
+fn install_leaf_module_aliases(globals: &mut Vec<(&'static str, Value)>) {
+    use std::collections::{HashMap, HashSet};
+
+    let taken: HashSet<&'static str> = globals.iter().map(|(name, _)| *name).collect();
+    // A name registered more than once resolves to its last push, so the
+    // alias has to carry that same binding.
+    let mut effective: HashMap<&'static str, Value> = HashMap::new();
+    for (name, value) in globals.iter() {
+        effective.insert(*name, value.clone());
+    }
+    // Keyed by alias; the source path decides ambiguity, so the same
+    // function registered twice still aliases.
+    let mut candidates: HashMap<String, Option<(&'static str, Value)>> = HashMap::new();
+    for (name, value) in globals.iter() {
+        let segments: Vec<&str> = name.split("::").collect();
+        if segments.len() < 3 {
+            continue;
+        }
+        let leaf_module = segments[segments.len() - 2];
+        // A type's associated function (`path::Path::new`) keeps its own
+        // qualified spelling; only module segments alias.
+        if leaf_module.chars().next().is_some_and(char::is_uppercase) {
+            continue;
+        }
+        let alias = format!("{leaf_module}::{}", segments[segments.len() - 1]);
+        if taken.contains(alias.as_str()) {
+            continue;
+        }
+        match candidates.entry(alias) {
+            std::collections::hash_map::Entry::Occupied(mut slot) => {
+                let claimed_by_other = slot
+                    .get()
+                    .as_ref()
+                    .is_some_and(|(source, _)| *source != *name);
+                if claimed_by_other {
+                    slot.insert(None);
+                }
+            }
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                let bound = effective.get(name).cloned().unwrap_or_else(|| value.clone());
+                slot.insert(Some((*name, bound)));
+            }
+        }
+    }
+    for (alias, claimed) in candidates {
+        if let Some((_, value)) = claimed {
+            globals.push((Box::leak(alias.into_boxed_str()), value));
+        }
+    }
 }
 
 /// Returns the process-wide cached builtin table (built once on

@@ -47,7 +47,7 @@ fn header_of(headers: &Vec<(String, String)>, want: String) -> String {
 fn await_ready(url: &String) {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(_) = http::get(url, Vec::from(#[])) {
+        if let Ok(_) = http::get(url, Vec::from([])) {
             return
         }
         time::sleep(25)
@@ -58,7 +58,7 @@ fn await_ready(url: &String) {
 fn main() {
     go serve_app()
     await_ready(&"http://127.0.0.1:23874/x")
-    match http::get("http://127.0.0.1:23874/x", Vec::from(#[])) {
+    match http::get("http://127.0.0.1:23874/x", Vec::from([])) {
         Ok(r) => {
             println!("status={} body={}", r.status, r.body)
             let headers = r.headers

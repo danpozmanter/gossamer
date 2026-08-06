@@ -26,7 +26,7 @@ fn main() {
     // One fast producer
     go fast_sender(tx2)
 
-    let mut order: Vec<i64> = Vec::from(#[])
+    let mut order: Vec<i64> = Vec::from([])
     let mut attempts = 0
 
     // Poll both channels until both values arrive

@@ -30,7 +30,7 @@ fn main() {
     go safe_divide(81, 9, tx)
     time::sleep(30)
 
-    let mut results: Vec<i64> = Vec::from(#[])
+    let mut results: Vec<i64> = Vec::from([])
     for _ in 0..3 {
         match rx.recv() {
             Some(v) => results.push(v),
@@ -65,7 +65,7 @@ fn main() {
     time::sleep(20)
 
     // Transformer reads from raw_rx, sends to proc_tx
-    let mut transformed: Vec<i64> = Vec::from(#[])
+    let mut transformed: Vec<i64> = Vec::from([])
     for _ in 0..2 {
         match raw_rx.recv() {
             Some(v) => { transformed.push(v * 2) }

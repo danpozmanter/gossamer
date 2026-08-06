@@ -1,0 +1,20 @@
+// A route registered with a closure carries the closure's lifted body as
+// its dispatch symbol and its captured environment alongside; a named
+// handler passes its address directly. Both spellings register on every
+// tier - the closure form used to emit a `Handler::serve` symbol that was
+// never defined.
+
+use std::errors
+use std::http
+use std::http::router
+fn echo(_q: http::Request) -> Result<http::Response, errors::Error> {
+    Ok(http::Response::text(200, "echo"))
+}
+
+fn main() -> Result<(), errors::Error> {
+    let r = router::Router::new()
+        |> _.get("/ping", |_q| Ok(http::Response::text(200, "ok")))
+        |> _.post("/echo", echo)
+    println!("routes = {}", 2)
+    Ok(())
+}

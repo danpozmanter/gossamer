@@ -31,7 +31,7 @@ fn main() {
     println!("high: {} {} {}", hi[0], hi[1], hi[2])
 
     // Vec<u8> built by push.
-    let mut v: Vec<u8> = Vec::from(#[])
+    let mut v: Vec<u8> = Vec::from([])
     let mut j = 0
     while j < 6 {
         v.push((j * 40 + 3) as u8)

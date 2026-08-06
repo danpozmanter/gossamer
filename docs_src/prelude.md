@@ -121,9 +121,17 @@ compile time.
 | Family | Names | Description |
 |---|---|---|
 | Primitives | `bool`, `char`, signed and unsigned integers, `isize`, `usize`, `f32`, `f64`, `String`, `str` | Scalar and text types. |
-| Wrappers | `Option<T>`, `Result<T, E>`, `Box<T>`, `Rc<T>`, `Arc<T>`, `Weak<T>` | Sum types and managed-runtime compatibility wrappers. |
-| Collections | `Vec<T>`, `Map<K, V>`, `Set<T>`, `BTreeSet<T>`, `BTreeMap<K, V>`, `Deque<i64>`, `Queue<i64>`, `Stack<i64>`, `MaxHeap<i64>`, `MinHeap<i64>`, `Range`, `Iterator<T>` | Core collection and sequence types. |
-| Concurrency | `Sender<T>`, `Receiver<T>`, `Mutex<T>`, `WaitGroup`, `JoinHandle<T>` | Channel, lock, wait, and goroutine-handle types. |
+| Wrappers | `Option`, `Result`, `Box`, `Rc`, `Arc`, `Weak` | Sum types and managed-runtime compatibility wrappers. |
+| Collections | `Vec`, `Map`, `Set`, `BTreeSet`, `BTreeMap`, `Deque`, `Queue`, `Stack`, `MaxHeap`, `MinHeap`, `Range`, `Iterator` | Core collection and sequence types. |
+| Concurrency | `Sender`, `Receiver`, `Mutex`, `WaitGroup`, `JoinHandle` | Channel, lock, wait, and goroutine-handle types. |
+
+`Range` is the type of a `0..n` bound: iterator state over a bounded integer
+sequence, so it answers the same combinator surface `Iterator` does.
+
+```gos
+let counted: Range = 0..5
+println!("{:?}", counted.rev().collect())
+```
 
 ## Runtime statements
 

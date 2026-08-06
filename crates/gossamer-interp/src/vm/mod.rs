@@ -1338,6 +1338,10 @@ impl Vm {
             | Value::FloatVec(_)
             | Value::FloatArray(_) => Some(self.intern_qualified("Vec", method)),
             Value::LazyIter(_) => Some(self.intern_qualified("Iterator", method)),
+            // A parsed document answers the `json::` query surface by
+            // receiver type; without this the bare-name fallback reaches a
+            // reader for a different shape and returns `None`.
+            Value::Json(_) => Some(self.intern_qualified("json", method)),
             _ => None,
         }
     }
@@ -2131,7 +2135,7 @@ fn truthy(v: &Value) -> RuntimeResult<bool> {
     }
 }
 
-fn values_equal(a: &Value, b: &Value) -> bool {
+pub(crate) fn values_equal(a: &Value, b: &Value) -> bool {
     // 0.7.0 flag::Cell auto-deref. Either side being a `__Cell`
     // struct unwraps to its current value before comparison, so
     // `flags.output == "text"` works without the user typing `*`.

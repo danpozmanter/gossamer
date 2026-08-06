@@ -264,6 +264,32 @@ impl<'a> Builder<'a> {
         Some(dest)
     }
 
+    /// `Set::from(values)` where `values` is a sequence *value* rather than a
+    /// literal list: the elements are only known at run time, so the runtime
+    /// builds the set from the buffer in one call.
+    fn lower_set_from_sequence(
+        &mut self,
+        arg: &HirExpr,
+        span: Span,
+        runtime_kind: &'static str,
+    ) -> Option<Local> {
+        let elem_ty = self.for_loop_elem_ty(arg)?;
+        let is_i64 = matches!(
+            map_key_kind_from(self.tcx, self.peel_ref_ty(elem_ty)),
+            MapKeyKind::I64
+        );
+        let callee = match (runtime_kind, is_i64) {
+            ("collections::BTreeSet", true) => "gos_rt_btree_set_from_vec_i64",
+            ("collections::BTreeSet", false) => "gos_rt_btree_set_from_vec_str",
+            (_, true) => "gos_rt_set_from_vec_i64",
+            (_, false) => "gos_rt_set_from_vec_str",
+        };
+        let set_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let set = self.emit_stdlib_free_call(callee, set_ty, std::slice::from_ref(arg), span)?;
+        self.local_runtime_kind.insert(set, runtime_kind);
+        Some(set)
+    }
+
     fn lower_set_from_array(
         &mut self,
         arg: &HirExpr,
@@ -346,6 +372,11 @@ impl<'a> Builder<'a> {
             &names[..]
         };
         let joined = strip_std.join("::");
+        // `use std::compress::gzip` + `gzip::encode(..)` names the same
+        // function as `compress::gzip::encode`; the arms below key on the
+        // canonical path, so fold the leaf spelling into it first.
+        let joined = gossamer_resolve::canonical_stdlib_path(&joined)
+            .map_or(joined, std::string::ToString::to_string);
         if matches!(
             joined.as_str(),
             "BTreeSet::new" | "collections::BTreeSet::new"
@@ -376,17 +407,25 @@ impl<'a> Builder<'a> {
             joined.as_str(),
             "Set::from" | "collections::Set::from" | "HashSet::from" | "collections::HashSet::from"
         ) && let [arg] = args
-            && let Some(set) = self.lower_set_from_array(arg, span, "collections::HashSet")
         {
-            return Some(set);
+            if let Some(set) = self.lower_set_from_array(arg, span, "collections::HashSet") {
+                return Some(set);
+            }
+            if let Some(set) = self.lower_set_from_sequence(arg, span, "collections::HashSet") {
+                return Some(set);
+            }
         }
         if matches!(
             joined.as_str(),
             "BTreeSet::from" | "collections::BTreeSet::from"
         ) && let [arg] = args
-            && let Some(set) = self.lower_set_from_array(arg, span, "collections::BTreeSet")
         {
-            return Some(set);
+            if let Some(set) = self.lower_set_from_array(arg, span, "collections::BTreeSet") {
+                return Some(set);
+            }
+            if let Some(set) = self.lower_set_from_sequence(arg, span, "collections::BTreeSet") {
+                return Some(set);
+            }
         }
         // A loop region proves every region-owned allocation dies at the
         // iteration boundary. Collection while the region is still active is
@@ -462,6 +501,25 @@ impl<'a> Builder<'a> {
         resolved = resolved.or_else(|| self.lower_http_4_free(joined, args));
         resolved = resolved.or_else(|| self.lower_exec_free(joined, args));
         resolved = resolved.or_else(|| self.lower_signal_flag_free(joined, args));
+        let (rt_name, ret_ty) = resolved?;
+        self.emit_stdlib_free_call(rt_name, ret_ty, args, span)
+    }
+
+    /// Lowers a prelude free function by its bare name with the arguments
+    /// already assembled. The scalar bound methods (`n.max(m)`) name the
+    /// same operations, so they share this entry rather than duplicating
+    /// the symbol and return-type selection.
+    pub(crate) fn lower_stdlib_free_by_name(
+        &mut self,
+        name: &str,
+        args: &[HirExpr],
+        span: Span,
+    ) -> Option<Local> {
+        let resolved = self
+            .lower_math_free(name, args)
+            .or_else(|| self.lower_math_2_free(name, args))
+            .or_else(|| self.lower_math_3_free(name, args))
+            .or_else(|| self.lower_math_4_free(name, args));
         let (rt_name, ret_ty) = resolved?;
         self.emit_stdlib_free_call(rt_name, ret_ty, args, span)
     }

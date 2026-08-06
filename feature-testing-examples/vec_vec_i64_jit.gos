@@ -17,10 +17,10 @@ fn sum_graph(g: &[Vec<i64>], n: i64) -> i64 {
 }
 
 fn main() {
-    let mut g: Vec<Vec<i64>> = Vec::from(#[])
+    let mut g: Vec<Vec<i64>> = Vec::from([])
     let mut i: i64 = 0
     while i < 100 {
-        let mut row: Vec<i64> = Vec::from(#[])
+        let mut row: Vec<i64> = Vec::from([])
         let mut j: i64 = 0
         while j < 5 {
             row.push(i * 10 + j)

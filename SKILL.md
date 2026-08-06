@@ -121,8 +121,9 @@ Write clear, low-complexity, concise code.
   construction differs from Rust. Use `#[]` / `#[1,2,3]` for `Vec`, `[]` /
   `[1,2,3]` for fixed arrays, `{}` / `{"one": 1}` for `Map`, and `#{}` /
   `#{1,2,3}` for `Set`. `Queue`, `Stack`, `Deque`, `MaxHeap`, and `MinHeap`
-  have no literal: build them with `T::new()` or `T::from(#[1,2,3])`. A repeat
-  literal is a fixed array, `[v; N]`; `#[v; N]` is a syntax error.
+  have no literal: build them with `T::new()` or `T::from([1,2,3])`. The
+  repeat form follows the same spelling: `[5; 5]` is a fixed array of five
+  `5`s and `#[6; 7]` is a `Vec` of seven `6`s.
 - **Prefer dedicated collection contracts for intent.** `Stack` is the
   idiomatic LIFO-only type even though `Vec` can push/pop at the end;
   `Queue` is the FIFO-only type even though a deque can model it; `MinHeap`
@@ -459,7 +460,7 @@ use std::http::router
 
 let r = router::Router::new()
     |> _.get("/", handler_fn)
-    |> _.get_fn("/ping", |_r| Ok(http::Response::text(200, "ok")))
+    |> _.get("/ping", |_r| Ok(http::Response::text(200, "ok")))
 http::serve("0.0.0.0:8080", r)?
 ```
 

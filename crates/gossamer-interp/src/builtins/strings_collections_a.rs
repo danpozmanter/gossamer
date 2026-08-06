@@ -1274,7 +1274,7 @@ fn builtin_keys_router(args: &[Value]) -> RuntimeResult<Value> {
 fn builtin_get_router(args: &[Value]) -> RuntimeResult<Value> {
     match args.first() {
         Some(Value::Map(_) | Value::IntMap(_) | Value::StrIntMap(_)) => builtin_map_get(args),
-        Some(Value::Struct(_)) => builtin_json_get(args),
+        Some(Value::Struct(_) | Value::Json(_)) => builtin_json_get(args),
         _ => builtin_get(args),
     }
 }

@@ -173,6 +173,12 @@ fn has_compiled_dispatch(path: &str, reachable: &BTreeSet<String>) -> bool {
         || path
             .strip_prefix("iter::eager_")
             .is_some_and(|name| reachable.contains(&format!("iter::{name}")))
+        // A leaf-module spelling (`gzip::encode`, the shape `use
+        // std::compress::gzip` puts in scope) folds to its canonical path in
+        // `lower_stdlib_free_call` before the dispatch arms are consulted, so
+        // the canonical arm covers both.
+        || gossamer_resolve::canonical_stdlib_path(path)
+            .is_some_and(|canonical| reachable.contains(canonical))
 }
 
 #[test]

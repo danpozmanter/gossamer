@@ -44,7 +44,7 @@ fn main() {
         out += ";"
     }
     println!("{}", out)
-    let nums: Vec<String> = Vec::from(#["12", "300", "7"])
+    let nums: Vec<String> = Vec::from(["12", "300", "7"])
     match sum_ints(&nums) {
         Ok(t) => println!("sum {}", t),
         Err(e) => println!("err {}", e),

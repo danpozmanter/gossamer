@@ -157,13 +157,13 @@ pub(crate) fn core_method_names(owner: &str) -> Vec<&'static str> {
 const PRELUDE_BUILTINS: &[PreludeBuiltinHelp] = &[
     PreludeBuiltinHelp {
         name: "assert",
-        signature: "assert(condition: bool, message?: String)",
-        doc: "Panics when condition is false.",
+        signature: "assert(condition: bool, message: String)",
+        doc: "Panics when condition is false. The message may be omitted.",
     },
     PreludeBuiltinHelp {
         name: "assert_eq",
-        signature: "assert_eq(left, right, message?: String)",
-        doc: "Panics when left and right are not equal.",
+        signature: "assert_eq(left, right, message: String)",
+        doc: "Panics when left and right are not equal. The message may be omitted.",
     },
 ];
 
@@ -3275,10 +3275,10 @@ fn catalog_example(path: &str, kind: &str, signature: &str) -> String {
             return "let set: Set<i64> = Set::from([1, 2, 2, 3])".to_string();
         }
         "BTreeSet::from" => {
-            return "let set: BTreeSet<i64> = BTreeSet::from(#[1, 2, 2, 3])".to_string();
+            return "let set: BTreeSet<i64> = BTreeSet::from([1, 2, 2, 3])".to_string();
         }
         "Vec::from" => {
-            return "let values = Vec::from(#[1, 2, 3])".to_string();
+            return "let values = Vec::from([1, 2, 3])".to_string();
         }
         "Deque::from" | "VecDeque::from" => {
             return "let deque = Deque::from([1, 2, 3])".to_string();
@@ -3349,6 +3349,7 @@ fn core_namespace_description(owner: &str) -> &'static str {
         "MaxHeap" => "Max-priority heap.",
         "MinHeap" => "Min-priority heap.",
         "Iterator" => "Lazy sequence iterator.",
+        "Range" => "Bounded integer sequence; answers the Iterator surface.",
         "Option" => "Optional value.",
         "Result" => "Success or error value.",
         "String" => "UTF-8 string.",
@@ -3548,6 +3549,9 @@ fn core_method_entries() -> Vec<CoreMethodEntry> {
     add_data_last_std_methods(&mut entries, "Option", "std::option");
     add_data_last_std_methods(&mut entries, "Result", "std::result");
     add_data_last_std_methods(&mut entries, "Iterator", "std::iter");
+    // A range answers exactly the iterator surface, so `%info Range` lists
+    // the same methods rather than reporting an empty namespace.
+    add_data_last_std_methods(&mut entries, "Range", "std::iter");
     for registered in gossamer_interp::registered_names() {
         if let Some((owner, name)) = registered_core_method_path(registered) {
             if owner == "Iterator" && !gossamer_types::is_iterator_method(&name) {
@@ -3640,7 +3644,7 @@ fn add_data_last_std_methods(
         if item.kind != StdItemKind::Function {
             continue;
         }
-        if owner == "Iterator" && !gossamer_types::is_iterator_method(item.name) {
+        if matches!(owner, "Iterator" | "Range") && !gossamer_types::is_iterator_method(item.name) {
             continue;
         }
         let Some(signature) = data_last_method_signature(owner, module_path, item.name) else {
@@ -3653,7 +3657,7 @@ fn add_data_last_std_methods(
                 name: item.name.to_string(),
                 kind: "method",
                 signature,
-                doc: if owner == "Iterator" {
+                doc: if matches!(owner, "Iterator" | "Range") {
                     iterator_method_doc(item.name)
                         .unwrap_or(item.doc)
                         .to_string()
@@ -3672,7 +3676,7 @@ fn data_last_method_signature(owner: &str, module_path: &str, name: &str) -> Opt
     let receiver_matches = match owner {
         "Option" => receiver.ty.starts_with("Option<"),
         "Result" => receiver.ty.starts_with("Result<"),
-        "Iterator" => receiver.ty.starts_with("Vec<"),
+        "Iterator" | "Range" => receiver.ty.starts_with("Vec<"),
         _ => false,
     };
     if !receiver_matches {
@@ -3681,7 +3685,7 @@ fn data_last_method_signature(owner: &str, module_path: &str, name: &str) -> Opt
     let name_start = row.find(name)?;
     let open = row[name_start..].find('(')? + name_start;
     let generics = row.get(name_start + name.len()..open)?;
-    if owner == "Iterator" {
+    if matches!(owner, "Iterator" | "Range") {
         if name == "chain" {
             return Some(
                 "fn chain<T>(self: Iterator<T>, other: Iterator<T>) -> Iterator<T>".to_string(),
@@ -3694,13 +3698,15 @@ fn data_last_method_signature(owner: &str, module_path: &str, name: &str) -> Opt
             );
         }
     }
-    let receiver_ty = if owner == "Iterator" {
-        receiver.ty.replacen("Vec<", "Iterator<", 1)
-    } else {
-        receiver.ty.to_string()
+    let receiver_ty = match owner {
+        "Iterator" => receiver.ty.replacen("Vec<", "Iterator<", 1),
+        // A range is written `0..n`, so its receiver reads as the range
+        // itself rather than the element container.
+        "Range" => "Range".to_string(),
+        _ => receiver.ty.to_string(),
     };
     let mut params = vec![format!("self: {receiver_ty}")];
-    if owner == "Iterator" && name == "fold" && leading.len() == 2 {
+    if matches!(owner, "Iterator" | "Range") && name == "fold" && leading.len() == 2 {
         params.push(format!("{}: {}", leading[1].name, leading[1].ty));
         params.push(format!("{}: {}", leading[0].name, leading[0].ty));
     } else {
@@ -4042,6 +4048,9 @@ fn all_core_namespaces() -> Vec<String> {
         .into_iter()
         .map(|method| method.owner)
         .collect::<Vec<_>>();
+    // A range is iterator state with its own spelling, so it names a
+    // namespace even though every method it answers is an iterator method.
+    owners.push("Range".to_string());
     owners.sort_unstable();
     owners.dedup();
     owners

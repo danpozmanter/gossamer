@@ -166,8 +166,6 @@ pub enum ParseError {
         container: String,
     },
     /// A repeat literal written with the Vec spelling (`#[value; count]`).
-    #[error("`#[value; count]` is not valid syntax - a repeat literal is a fixed array")]
-    BareRepeatLiteral,
     /// A struct used in a `to_json` / `from_json` (or toml/yaml) call has a
     /// field whose type the serde synthesizer cannot handle. Without this the
     /// whole struct's serde was silently dropped and the call surfaced only as
@@ -326,15 +324,6 @@ impl ParseError {
                     "build the container through its type: `{container}::new()` for an empty one, \
                      or `{container}::from([a, b, c])` from a Vec literal"
                 )),
-            ),
-            ParseError::BareRepeatLiteral => (
-                "GP0033",
-                "`#[value; count]` is not valid syntax".to_string(),
-                Some(
-                    "a repeat literal is a fixed array: write `[value; count]`. `#[a, b]` is a \
-                     Vec of the listed elements"
-                        .to_string(),
-                ),
             ),
             other => other.code_title_help_malformed(),
         }

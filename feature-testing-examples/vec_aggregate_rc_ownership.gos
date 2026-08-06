@@ -34,7 +34,7 @@ fn mk_proj(e: Expr) -> Projection {
 
 // Built here and returned by value: the vec escapes this frame.
 fn build_projections() -> Vec<Projection> {
-    let mut ps: Vec<Projection> = Vec::from(#[])
+    let mut ps: Vec<Projection> = Vec::from([])
     ps.push(mk_proj(Expr::EColumn("id")))
     ps.push(mk_proj(Expr::ELiteral(42)))
     ps.push(mk_proj(Expr::EColumn("amount")))
@@ -58,8 +58,8 @@ fn describe(ps: &[Projection]) -> i64 {
 // Group-by accumulation: the inner `for k in &keys` arm reads `key`,
 // the `else` arm pushes it. Exercises the hoist forward-liveness guard.
 fn group_counts(labels: &[String]) -> i64 {
-    let mut keys: Vec<String> = Vec::from(#[])
-    let mut counts: Vec<i64> = Vec::from(#[])
+    let mut keys: Vec<String> = Vec::from([])
+    let mut counts: Vec<i64> = Vec::from([])
     for label in labels {
         let key = format!("k:{}|", label.clone())
         let mut idx: i64 = -1
@@ -94,7 +94,7 @@ fn main() {
     let ps = build_projections()
     println!("score = {}", describe(&ps))
 
-    let mut labels: Vec<String> = Vec::from(#[])
+    let mut labels: Vec<String> = Vec::from([])
     let names: [String; 4] = #["north", "south", "east", "west"]
     let mut i: i64 = 0
     while i < 10 {

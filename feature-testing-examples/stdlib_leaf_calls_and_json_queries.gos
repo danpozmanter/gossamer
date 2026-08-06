@@ -1,0 +1,35 @@
+// A nested stdlib module is callable by the leaf name `use` brings into
+// scope, a parsed document answers its query surface as methods, and a
+// variant carrying a collection or document payload renders under `{:?}`.
+// Identical on every tier.
+
+use std::encoding::base64
+use std::encoding::csv
+use std::encoding::json
+use std::errors
+use std::hash::fnv
+
+fn main() -> Result<(), errors::Error> {
+    let doc = json::parse(&"{\"name\":\"gossamer\",\"stars\":420}")?
+    println!("get   = {:?}", doc.get("name"))
+    println!("keys  = {:?}", doc.keys())
+    if let Some(stars) = doc.get("stars") {
+        println!("as_i64 = {:?}", stars.as_i64())
+    }
+    if let Some(name) = doc.get("name") {
+        println!("as_str = {:?}", name.as_str())
+    }
+    println!("pretty = {}", json::encode_pretty(&doc).len() > 0)
+
+    // Leaf-module spellings of nested stdlib functions.
+    let encoded = base64::encode("gossamer".as_bytes())
+    println!("base64 = {encoded}")
+    let raw = base64::decode(&encoded)?
+    println!("utf8   = {}", String::from_utf8(raw)?)
+    println!("csv    = {:?}", csv::parse_line(&"a,b"))
+    println!("fnv    = {}", fnv::hash_string(&"gossamer") != 0)
+
+    let numbers: Option<Vec<i64>> = Some(Vec::from([1, 2, 3]))
+    println!("opt vec = {:?}", numbers)
+    Ok(())
+}

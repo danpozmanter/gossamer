@@ -348,6 +348,28 @@ impl Resolver {
         })
     }
 
+    /// Reports an unresolved name, naming the rename when the name is a
+    /// container spelling this release replaced. Only `use` declarations used
+    /// to carry that hint, so a bare `HashSet<i64>` in a signature reported
+    /// only that the name was missing.
+    fn emit_unresolved_or_rename(&mut self, name: &str, span: Span) {
+        match crate::stdlib_exports::canonical_collection_name(name) {
+            Some(replacement) => self.emit(
+                ResolveError::RemovedStdItem {
+                    path: name.to_string(),
+                    replacement: replacement.to_string(),
+                },
+                span,
+            ),
+            None => self.emit(
+                ResolveError::UnresolvedName {
+                    name: name.to_string(),
+                },
+                span,
+            ),
+        }
+    }
+
     fn define_import(&mut self, name: &str, use_id: NodeId, span: Span) {
         let module = self.scopes.module_mut();
         // Allow imports to shadow prelude entries (Gossamer's
@@ -854,7 +876,7 @@ impl Resolver {
             .or_else(|| self.scopes.lookup_type(name))
             .map_or(Resolution::Err, |b| b.resolution);
         if matches!(resolution, Resolution::Err) {
-            self.emit(ResolveError::UnresolvedName { name: name.clone() }, span);
+            self.emit_unresolved_or_rename(name, span);
         }
         self.resolutions.insert(anchor, resolution);
         for segment in &path.segments {
@@ -904,10 +926,11 @@ impl Resolver {
                 .lookup_type(name)
                 .map_or(Resolution::Err, |binding| binding.resolution)
         };
-        if matches!(resolution, Resolution::Err) && !is_self_type(name) {
-            if let Some(span) = span {
-                self.emit(ResolveError::UnresolvedName { name: name.clone() }, span);
-            }
+        if matches!(resolution, Resolution::Err)
+            && !is_self_type(name)
+            && let Some(span) = span
+        {
+            self.emit_unresolved_or_rename(name, span);
         }
         if let Some(anchor) = anchor {
             self.resolutions.insert(anchor, resolution);
@@ -1114,6 +1137,20 @@ impl Resolver {
         // tree-walker behaviour).
         if effective.len() > 1 {
             let joined = effective.join("::");
+            // `HashSet::new()` names the pre-rename container: report the
+            // rename rather than an opaque missing path.
+            if let Some(head_name) = effective.first()
+                && self.lookup_value_or_type(&joined).is_none()
+                && self.scopes.lookup_type(head_name).is_none()
+                && crate::stdlib_exports::canonical_collection_name(head_name).is_some()
+            {
+                self.emit_unresolved_or_rename(head_name, span);
+                self.resolutions.insert(anchor, Resolution::Err);
+                for segment in &path.segments {
+                    self.resolve_generic_args(&segment.generics);
+                }
+                return;
+            }
             if let Some(resolution) = self.lookup_value_or_type(&joined) {
                 self.resolutions.insert(anchor, resolution);
                 for segment in &path.segments {

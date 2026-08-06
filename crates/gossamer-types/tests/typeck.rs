@@ -3120,3 +3120,65 @@ fn phase1_runtime_collection_shapes_reject_unsupported_generics() {
         );
     }
 }
+
+#[test]
+fn array_literal_never_satisfies_a_vec_parameter() {
+    // Rust's direction: a growable sequence coerces to a borrowed view, but a
+    // fixed array is not a Vec. Every call shape has to agree, including a
+    // method whose receiver came from a `-> Self` constructor - that path
+    // silently accepted the array and the callee then mis-read it.
+    let cases = [
+        "fn take(v: Vec<i64>) -> i64 { v.len() }\n\
+         fn main() { let _ = take([1, 2]) }\n",
+        "struct M { xs: Vec<i64> }\n\
+         impl M {\n\
+             fn take(&mut self, v: Vec<i64>) -> i64 { self.xs.extend(v)\n\
+                 self.xs.len() }\n\
+         }\n\
+         fn main() { let mut m = M { xs: #[] }\n\
+             let _ = m.take([1, 2]) }\n",
+        "struct M { xs: Vec<i64> }\n\
+         impl M {\n\
+             fn new() -> Self { M { xs: #[] } }\n\
+             fn take(&mut self, v: Vec<i64>) -> i64 { self.xs.extend(v)\n\
+                 self.xs.len() }\n\
+         }\n\
+         fn main() { let mut m = M::new()\n\
+             let _ = m.take([1, 2]) }\n",
+        "fn main() { let _v: Vec<i64> = [1, 2] }\n",
+    ];
+    for source in cases {
+        let checked = run(source);
+        assert!(
+            checked
+                .diagnostics
+                .iter()
+                .any(|d| matches!(d.error, TypeError::TypeMismatch { .. })),
+            "array literal was accepted for a Vec slot:\n{source}"
+        );
+    }
+}
+
+#[test]
+fn vec_literal_still_satisfies_an_array_parameter() {
+    let checked = run("fn take(a: [i64; 2]) -> i64 { a.len() }\n\
+         fn main() { let _ = take(#[1, 2]) }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn self_returning_constructor_types_its_result() {
+    let checked = run("struct M { x: i64 }\n\
+         impl M {\n\
+             fn new() -> Self { M { x: 1 } }\n\
+         }\n\
+         fn main() { let _bad: i64 = M::new() }\n");
+    assert!(
+        checked
+            .diagnostics
+            .iter()
+            .any(|d| matches!(d.error, TypeError::TypeMismatch { .. })),
+        "`-> Self` result went unchecked: {:?}",
+        checked.diagnostics
+    );
+}

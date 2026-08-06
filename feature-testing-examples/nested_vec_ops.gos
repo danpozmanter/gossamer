@@ -5,9 +5,9 @@
 // inner rows and deep-frees them; the compiled tiers must match the VM exactly.
 
 fn build(rows: i64, cols: i64) -> Vec<Vec<i64>> {
-    let mut g: Vec<Vec<i64>> = Vec::from(#[])
+    let mut g: Vec<Vec<i64>> = Vec::from([])
     for i in 0..rows {
-        let mut row: Vec<i64> = Vec::from(#[])
+        let mut row: Vec<i64> = Vec::from([])
         for j in 0..cols {
             row.push(i * cols + j)
         }
@@ -57,7 +57,7 @@ fn main() {
     }
 
     // An `[[i64]]` array literal coerced to a nested vec.
-    let lit: Vec<Vec<i64>> = Vec::from(#[Vec::from(#[1, 2, 3]), Vec::from(#[4, 5]), Vec::from(#[6])])
+    let lit: Vec<Vec<i64>> = Vec::from([Vec::from([1, 2, 3]), Vec::from([4, 5]), Vec::from([6])])
     let mut d = 0
     for i in 0..lit.len() {
         for x in lit[i] {

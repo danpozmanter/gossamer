@@ -55,7 +55,7 @@ fn main() {
     println!("{}", (N { v: 1 } << N { v: 4 }).v)
     println!("{}", (N { v: 32 } >> N { v: 2 }).v)
 
-    let r = Row { data: Vec::from(#[7, 8, 9]) }
+    let r = Row { data: Vec::from([7, 8, 9]) }
     println!("{}", r[1])
 
     println!("{} {} {}", classify(0), classify(5), classify(50))

@@ -16,6 +16,8 @@
 #![allow(clippy::wildcard_imports)]
 
 use std::ffi::CStr;
+
+use crate::c_abi::GosVec;
 use std::os::raw::c_char;
 
 // ---------------------------------------------------------------
@@ -46,6 +48,75 @@ pub unsafe extern "C" fn gos_rt_set_new() -> *mut GosSet {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_btree_set_new() -> *mut GosSet {
     unsafe { gos_rt_set_new() }
+}
+
+/// Builds a set from a `GosVec` of scalar slots. `Set::from(values)` where
+/// `values` is a runtime sequence rather than a literal list; the literal
+/// form is unrolled into individual inserts at lowering time.
+///
+/// # Safety
+/// `v` must be null or a live `GosVec` whose slots hold `i64` elements.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_from_vec_i64(v: *const GosVec) -> *mut GosSet {
+    ffi_entry!(std::ptr::null_mut(), {
+        let set = unsafe { gos_rt_set_new() };
+        if v.is_null() || set.is_null() {
+            return set;
+        }
+        let vec = unsafe { &*v };
+        let ptr = vec.ptr.cast::<i64>();
+        let out = unsafe { &mut *set };
+        for i in 0..vec.len.max(0) as usize {
+            out.inner.insert(unsafe { *ptr.add(i) }.to_string());
+        }
+        set
+    })
+}
+
+/// Builds a set from a `GosVec` of string slots.
+///
+/// # Safety
+/// `v` must be null or a live `GosVec` whose slots hold `*const c_char`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_from_vec_str(v: *const GosVec) -> *mut GosSet {
+    ffi_entry!(std::ptr::null_mut(), {
+        let set = unsafe { gos_rt_set_new() };
+        if v.is_null() || set.is_null() {
+            return set;
+        }
+        let vec = unsafe { &*v };
+        let ptr = vec.ptr.cast::<*const c_char>();
+        let out = unsafe { &mut *set };
+        for i in 0..vec.len.max(0) as usize {
+            let entry = unsafe { *ptr.add(i) };
+            if entry.is_null() {
+                continue;
+            }
+            out.inner.insert(
+                unsafe { CStr::from_ptr(entry) }
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
+        set
+    })
+}
+
+/// `BTreeSet::from(values)`; the ordered set shares this representation and
+/// sorts on iteration.
+///
+/// # Safety
+/// Same contract as [`gos_rt_set_from_vec_i64`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_btree_set_from_vec_i64(v: *const GosVec) -> *mut GosSet {
+    unsafe { gos_rt_set_from_vec_i64(v) }
+}
+
+/// # Safety
+/// Same contract as [`gos_rt_set_from_vec_str`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_btree_set_from_vec_str(v: *const GosVec) -> *mut GosSet {
+    unsafe { gos_rt_set_from_vec_str(v) }
 }
 
 #[unsafe(no_mangle)]

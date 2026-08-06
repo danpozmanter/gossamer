@@ -2,7 +2,7 @@
 // removes the element in place and returns it through Ok on every tier.
 
 fn main() {
-    let mut xs: Vec<i64> = Vec::from(#[10, 20, 30, 40, 50])
+    let mut xs: Vec<i64> = Vec::from([10, 20, 30, 40, 50])
     let r = Vec::remove(&mut xs, 1).unwrap_or(-1)
     let mut sum = 0
     for x in xs { sum += x }

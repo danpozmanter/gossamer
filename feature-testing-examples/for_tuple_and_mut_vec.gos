@@ -1,5 +1,5 @@
 fn main() {
-    let mut v = Vec::from(#[1, 2])
+    let mut v = Vec::from([1, 2])
     for i in &mut v {
         *i += 1
     }

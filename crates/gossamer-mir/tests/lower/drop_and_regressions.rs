@@ -754,7 +754,7 @@ fn lifted_map_err_closure_param_keeps_string_type() {
 #[test]
 fn lifted_iter_map_closure_param_keeps_string_type() {
     let source = "use std::iter\n\
-                  fn main() { let xs: Vec<String> = Vec::from(#[\"a\", \"b\"])\n\
+                  fn main() { let xs: Vec<String> = Vec::from([\"a\", \"b\"])\n\
                   let ys = iter::map(|s| format!(\"[{s}]\"), xs)\n\
                   let _ = ys }\n";
     let (bodies, tcx) = build_with_lift(source);
@@ -1304,7 +1304,7 @@ fn http_response_literal_full_lowers_to_constructor_and_setters() {
     let source = "use std::http\n\
                   fn h() -> http::Response {\n\
                   http::Response { status: 201, body: \"x\", content_type: \"t\",\n\
-                  headers: Vec::from(#[(\"a\", \"b\"), (\"c\", \"d\")]) } }\n";
+                  headers: Vec::from([(\"a\", \"b\"), (\"c\", \"d\")]) } }\n";
     let (bodies, _) = build(source);
     let h = bodies.iter().find(|b| b.name == "h").expect("h body");
     let names = call_names(h);
@@ -1545,7 +1545,7 @@ const COMBINATOR_MATRIX: &[(&str, &str, &str)] = &[
     ),
     (
         "Vec::collect",
-        "fn main() { let xs = Vec::from(#[1, 2]).collect()\nlet _ = xs }",
+        "fn main() { let xs = Vec::from([1, 2]).collect()\nlet _ = xs }",
         "gos_rt_vec_clone",
     ),
     (

@@ -745,6 +745,27 @@ impl<'a> Lowerer<'a> {
                             is_btree = true;
                         }
                         "gos_rt_set_new" => saw_set_ctor = true,
+                        // `Set::from(values)` over a runtime sequence: the
+                        // constructor names the element kind directly, so the
+                        // handle still renders under `{:?}`.
+                        "gos_rt_btree_set_from_vec_i64" => {
+                            saw_set_ctor = true;
+                            is_btree = true;
+                            elem_kind = Some(ConcatKind::SetI64(true));
+                        }
+                        "gos_rt_btree_set_from_vec_str" => {
+                            saw_set_ctor = true;
+                            is_btree = true;
+                            elem_kind = Some(ConcatKind::SetString(true));
+                        }
+                        "gos_rt_set_from_vec_i64" => {
+                            saw_set_ctor = true;
+                            elem_kind = Some(ConcatKind::SetI64(false));
+                        }
+                        "gos_rt_set_from_vec_str" => {
+                            saw_set_ctor = true;
+                            elem_kind = Some(ConcatKind::SetString(false));
+                        }
                         _ => {}
                     }
                 }
@@ -785,6 +806,17 @@ impl<'a> Lowerer<'a> {
             Some(TyKind::Bool) => Some(3),
             Some(TyKind::Char) => Some(4),
             Some(TyKind::String) => Some(5),
+            // A parsed document renders through its own display helper.
+            Some(TyKind::JsonValue) => Some(8),
+            // A `Vec` payload is rendered by the same formatter a bare
+            // `{:?}` of that vec uses; the slot carries its pointer.
+            Some(TyKind::Vec(elem) | TyKind::Slice(elem)) => {
+                match self.tcx.kind(self.unwrap_ref(*elem)) {
+                    Some(TyKind::Int(_)) => Some(6),
+                    Some(TyKind::String) => Some(7),
+                    _ => None,
+                }
+            }
             _ => None,
         }
     }

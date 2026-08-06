@@ -5,7 +5,7 @@
 // so correctness can be tested without the unsupported syntax.
 
 fn subslice(xs: Vec<i64>, start: i64, end: i64) -> Vec<i64> {
-    let mut out: Vec<i64> = Vec::from(#[])
+    let mut out: Vec<i64> = Vec::from([])
     let mut i = start
     while i < end {
         out.push(xs[i])
@@ -15,7 +15,7 @@ fn subslice(xs: Vec<i64>, start: i64, end: i64) -> Vec<i64> {
 }
 
 fn windows(xs: Vec<i64>, size: i64) -> Vec<Vec<i64>> {
-    let mut out: Vec<Vec<i64>> = Vec::from(#[])
+    let mut out: Vec<Vec<i64>> = Vec::from([])
     let n = xs.len() as i64
     let mut i = 0
     while i + size <= n {
@@ -26,7 +26,7 @@ fn windows(xs: Vec<i64>, size: i64) -> Vec<Vec<i64>> {
 }
 
 fn chunks(xs: Vec<i64>, size: i64) -> Vec<Vec<i64>> {
-    let mut out: Vec<Vec<i64>> = Vec::from(#[])
+    let mut out: Vec<Vec<i64>> = Vec::from([])
     let n = xs.len() as i64
     let mut i = 0
     while i < n {
@@ -55,7 +55,7 @@ fn sum(xs: Vec<i64>) -> i64 {
 }
 
 fn main() {
-    let data = Vec::from(#[10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
+    let data = Vec::from([10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
 
     // Subslice middle
     let mid = subslice(data, 2, 5)

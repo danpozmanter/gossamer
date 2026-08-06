@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.43.1 - Leaf-module calls, JSON queries, and stdlib fixes
+
+- Bind every nested stdlib function under its leaf-module spelling, so
+  `use std::compress::gzip` plus `gzip::encode(..)` runs on the VM the way it
+  already built natively; 158 functions type-checked and then failed at
+  runtime with `GX0002`.
+- Fold a leaf-module path to its canonical stdlib path in MIR dispatch, and
+  gate both properties so the two spellings cannot drift apart again.
+- Answer the `json::Value` query surface on a method receiver: `doc.get(k)`,
+  `doc.keys()`, and the `as_*` casts returned `None` or an empty list on the
+  VM and reached an undefined symbol in a native build.
+- Return `Option` from the JSON casts on the compiled tier: `v.as_i64()` gave
+  `Some(1)` on the VM and a bare `1` natively.
+- Drop the duplicate `compress::gzip` registration whose String-payload
+  implementation shadowed the byte-payload one depending on install order.
+- Type `String::from_utf8` so `?` sees its `Result`.
+- Fix the rotted web-service load harness and the three struct-literal probe
+  programs, which no longer compiled.
+- Build a `Set` from a sequence value, not just a literal list: `Set::from(v)`
+  reached an undefined `Set` symbol in a native build.
+- Name the replacement for a renamed container wherever it appears, not only
+  in a `use`: `HashSet<i64>` in a signature reported a plain missing name.
+- Bump workspace crates and lockfile package versions to 0.43.1.
+
 ## 0.43.0 - Tuple surface, one name per container, collection literals,
 ## Iterator for-loops, reverse fix, dead method audit, explicit module imports
 

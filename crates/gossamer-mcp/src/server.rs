@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn skill_card_teaches_collection_literal_spellings() {
-        for literal in ["`#[]`", "`[]`", "`{}`", "`#{}`", "`T::from(#[1,2,3])`"] {
+        for literal in ["`#[]`", "`[]`", "`{}`", "`#{}`", "`T::from([1,2,3])`"] {
             assert!(
                 SKILL_CARD.contains(literal),
                 "skill card should document {literal}"

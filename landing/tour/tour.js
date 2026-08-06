@@ -289,28 +289,28 @@ fn main() {
     prose: `
       <p>Each container has exactly one name and one contract. <code>Queue</code> is FIFO-only and <code>Stack</code> is LIFO-only even though a <code>Vec</code> could do either - the narrower type states the intent in the signature.</p>
       <p><code>Deque</code> pushes and pops at both ends. <code>MaxHeap</code> and <code>MinHeap</code> give priority order directly, so a min-heap never means negating your keys.</p>
-      <p>None of these have a literal: build them with <code>T::new()</code> or <code>T::from(#[..])</code>.</p>`,
+      <p>None of these have a literal: build them with <code>T::new()</code> or <code>T::from([..])</code>.</p>`,
     code: `use std::collections::{Deque, Queue, Stack, MinHeap, MaxHeap}
 
 fn main() {
-    let mut q = Queue::from(#[1, 2, 3])
+    let mut q = Queue::from([1, 2, 3])
     q.push(4)
     println!("queue front = {:?}, len = {}", q.pop(), q.len())
 
-    let mut st = Stack::from(#[1, 2, 3])
+    let mut st = Stack::from([1, 2, 3])
     st.push(4)
     println!("stack top = {:?}", st.pop())
 
-    let mut dq = Deque::from(#[2, 3])
+    let mut dq = Deque::from([2, 3])
     dq.push_front(1)
     dq.push_back(4)
     println!("deque ends = {:?} {:?}", dq.pop_front(), dq.pop_back())
 
-    let mut hi = MaxHeap::from(#[3, 9, 4])
+    let mut hi = MaxHeap::from([3, 9, 4])
     hi.push(11)
     println!("max = {:?}", hi.pop())
 
-    let mut lo = MinHeap::from(#[3, 9, 4])
+    let mut lo = MinHeap::from([3, 9, 4])
     println!("min = {:?}", lo.pop())
 }
 `,
@@ -1058,10 +1058,14 @@ fn main() -> Result<(), errors::Error> {
     let repo = from_json::<Repo>(&body)?
     println!("{} has {} stars", repo.name, repo.stars)
 
-    // The document round-trips: encode it back, or pretty-print what
-    // arrived when you are inspecting a payload by hand.
+    // Dynamic decode for a shape you only partly know: query the document
+    // itself rather than describing it with a struct.
+    let doc = json::parse(&body)?
+    println!("keys       = {:?}", doc.keys())
+    if let Some(name) = doc.get("name") {
+        println!("name field = {:?}", name.as_str())
+    }
     println!("re-encoded = {}", to_json::<Repo>(repo)?)
-    println!("{}", json::render(&json::parse(&body)?))
 
     // Streaming: a server-sent-event feed arrives as lines, not as one
     // document, so each chunk is handled as it lands.
@@ -1108,7 +1112,7 @@ fn main() {
     println!("median checks passed")
 
     // A failing assertion panics with the message you wrote.
-    let empty: Vec<i64> = Vec::from(#[])
+    let empty: Vec<i64> = Vec::from([])
     assert(empty.is_empty(), "an empty vec has no elements")
 
     // \`#[test]\` functions run under \`gos test\`, and the fenced code in a

@@ -1,7 +1,7 @@
 fn main() {
     let mut total = 0
     for round in 0..2_000 {
-        let mut values: Vec<i64> = Vec::from(#[])
+        let mut values: Vec<i64> = Vec::from([])
         for i in 0..1_000 {
             values.push((i * 17 + round) % 251)
         }

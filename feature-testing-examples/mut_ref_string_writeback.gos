@@ -38,7 +38,7 @@ fn main() {
     println!("{}", b)
 
     let mut c = ""
-    serialize_into(&mut c, Vec::from(#[1, 2, 3, 40, 500]))
+    serialize_into(&mut c, Vec::from([1, 2, 3, 40, 500]))
     println!("{}", c)
 
     let mut d = "x"

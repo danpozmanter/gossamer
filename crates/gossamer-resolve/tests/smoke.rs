@@ -229,3 +229,25 @@ fn use_of_an_unknown_module_path_still_reports() {
         "expected UnknownModulePath, got: {diags:?}"
     );
 }
+
+#[test]
+fn renamed_container_names_report_their_replacement() {
+    // The rename hint used to reach only `use` declarations, so a bare
+    // `HashSet<i64>` in a signature or a `HashSet::new()` call reported a
+    // plain missing name and left the reader to guess the new spelling.
+    for source in [
+        "fn f(s: HashSet<i64>) -> i64 { 0 }\nfn main() { }\n",
+        "fn main() { let _s = HashSet::new() }\n",
+        "fn f(m: HashMap<String, i64>) -> i64 { 0 }\nfn main() { }\n",
+        "fn main() { let _d = VecDeque::new() }\n",
+    ] {
+        let sf = parse(source);
+        let (_, diags) = resolve_source_file(&sf);
+        assert!(
+            diags
+                .iter()
+                .any(|d| matches!(d.error, ResolveError::RemovedStdItem { .. })),
+            "no rename hint for:\n{source}\n{diags:?}"
+        );
+    }
+}

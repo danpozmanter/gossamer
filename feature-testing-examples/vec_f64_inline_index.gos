@@ -19,7 +19,7 @@ fn dot(a: &Vec<f64>, b: &Vec<f64>, n: i64) -> f64 {
 
 fn main() {
     // Vec<f64> read + write.
-    let mut v: Vec<f64> = Vec::from(#[])
+    let mut v: Vec<f64> = Vec::from([])
     for k in 0..5 { v.push((k + 1) as f64 * 0.5) }
     v[2] = 9.25
     for x in v { print!("{:.2} ", x) }
@@ -31,7 +31,7 @@ fn main() {
     println!("sum={:.2}", sum)
 
     // Vec<i64> read + write.
-    let mut w: Vec<i64> = Vec::from(#[])
+    let mut w: Vec<i64> = Vec::from([])
     for k in 0..5 { w.push(k * 10) }
     w[0] = 100
     let mut wi = 0
@@ -41,9 +41,9 @@ fn main() {
     println!("acc={}", acc)
 
     // Nested Vec<Vec<f64>> read + write.
-    let mut grid: Vec<Vec<f64>> = Vec::from(#[])
+    let mut grid: Vec<Vec<f64>> = Vec::from([])
     for r in 0..3 {
-        let mut row: Vec<f64> = Vec::from(#[])
+        let mut row: Vec<f64> = Vec::from([])
         for c in 0..3 { row.push((r * 3 + c) as f64) }
         grid.push(row)
     }
@@ -59,12 +59,12 @@ fn main() {
     println!("gsum={:.2}", gsum)
 
     // Vec<f64> indexed-read kernel through a function boundary.
-    let a: Vec<f64> = Vec::from(#[1.0, 2.0, 3.0, 4.0])
-    let b: Vec<f64> = Vec::from(#[4.0, 3.0, 2.0, 1.0])
+    let a: Vec<f64> = Vec::from([1.0, 2.0, 3.0, 4.0])
+    let b: Vec<f64> = Vec::from([4.0, 3.0, 2.0, 1.0])
     println!("dot={:.2}", dot(&a, &b, 4))
 
     // Aggregate element type: stays on the runtime get_ptr path.
-    let mut pts: Vec<Point> = Vec::from(#[])
+    let mut pts: Vec<Point> = Vec::from([])
     pts.push(Point { x: 1.5, y: 2.5 })
     pts.push(Point { x: 3.5, y: 4.5 })
     println!("pt={:.1},{:.1}", pts[1].x, pts[1].y)

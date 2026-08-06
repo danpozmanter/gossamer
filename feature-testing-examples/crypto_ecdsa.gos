@@ -8,7 +8,7 @@ fn main() {
         Ok((sk, pk)) => {
             println!("secret_pem_ok={}", sk.starts_with("-----BEGIN"))
             println!("public_pem_ok={}", pk.starts_with("-----BEGIN"))
-            let msg: Vec<u8> = Vec::from(#[103, 111, 115, 115, 97, 109, 101, 114])
+            let msg: Vec<u8> = Vec::from([103, 111, 115, 115, 97, 109, 101, 114])
             match crypto::ecdsa::sign_pem(sk, msg) {
                 Ok(sig) => {
                     println!("sig_nonempty={}", sig.len() > 0)
@@ -16,7 +16,7 @@ fn main() {
                         Ok(_) => println!("verify=ok"),
                         Err(e) => println!("verify_err={}", e),
                     }
-                    let tampered: Vec<u8> = Vec::from(#[1, 2, 3, 4, 5, 6, 7, 8])
+                    let tampered: Vec<u8> = Vec::from([1, 2, 3, 4, 5, 6, 7, 8])
                     match crypto::ecdsa::verify_pem(pk, msg, tampered) {
                         Ok(_) => println!("verify_bad=unexpected_ok"),
                         Err(_) => println!("verify_bad=rejected"),

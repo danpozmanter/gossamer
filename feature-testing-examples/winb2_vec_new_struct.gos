@@ -8,6 +8,6 @@ fn main() {
     for s in v {
         println!("{} {}", s.a, s.b)
     }
-    let lit: Vec<S> = Vec::from(#[])
+    let lit: Vec<S> = Vec::from([])
     println!("lit_len={}", lit.len())
 }

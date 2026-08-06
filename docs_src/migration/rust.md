@@ -112,11 +112,11 @@ let map = {"ada": 36, "grace": 37}
 let empty: Map<String, i64> = {}
 let set = #{"parse", "lower", "parse"}
 let ordered: BTreeSet<String> = #{"lower", "parse"}
-let queue = Queue::from(#[1, 2, 3])
-let stack = Stack::from(#[1, 2, 3])
-let deque = Deque::from(#[1, 2, 3])
-let max_heap = MaxHeap::from(#[1, 2, 3])
-let min_heap = MinHeap::from(#[1, 2, 3])
+let queue = Queue::from([1, 2, 3])
+let stack = Stack::from([1, 2, 3])
+let deque = Deque::from([1, 2, 3])
+let max_heap = MaxHeap::from([1, 2, 3])
+let min_heap = MinHeap::from([1, 2, 3])
 let pair = (1, "two")
 ```
 

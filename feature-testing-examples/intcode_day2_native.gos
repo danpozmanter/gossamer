@@ -37,7 +37,7 @@ fn main() {
     let part1 = run_program(with_inputs(&input, 9, 10))
     println!("pos0={}", part1[0])
 
-    let sample = Vec::from(#[1, 1, 1, 4, 99, 5, 6, 0, 99])
+    let sample = Vec::from([1, 1, 1, 4, 99, 5, 6, 0, 99])
     let out = run_program(sample)
     println!("sample={} {}", out[0], out[4])
 }

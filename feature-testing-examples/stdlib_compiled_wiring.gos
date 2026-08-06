@@ -27,7 +27,7 @@ fn main() {
     print_hex(&"sha1", &crypto::insecure::sha1("abc".to_string().as_bytes()))
 
     // Hex-alphabet Base32 of "foobar".
-    let raw: Vec<u8> = Vec::from(#[102, 111, 111, 98, 97, 114])
+    let raw: Vec<u8> = Vec::from([102, 111, 111, 98, 97, 114])
     println!("base32hex = {}", encoding::base32::encode_hex(&raw))
 
     // Regex first-match replacement.

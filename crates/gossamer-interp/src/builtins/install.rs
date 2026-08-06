@@ -653,14 +653,6 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
     );
     globals.push(("to_vec", builtin("to_vec", builtin_to_vec_v)));
     install_module(
-        "compress::gzip",
-        &[
-            ("encode", builtin_gzip_encode),
-            ("decode", builtin_gzip_decode),
-        ],
-        globals,
-    );
-    install_module(
         "slog",
         &[
             ("info", builtin_slog_info),

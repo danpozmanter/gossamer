@@ -16,7 +16,7 @@ fn leaf(x: i64) -> Result<Node, errors::Error> {
 }
 
 fn make_list(x: i64) -> Result<Node, errors::Error> {
-    let mut xs: Vec<Node> = Vec::from(#[])
+    let mut xs: Vec<Node> = Vec::from([])
     let mut i = 0
     while i < 3 {
         xs.push(leaf(x + i)?)
@@ -27,7 +27,7 @@ fn make_list(x: i64) -> Result<Node, errors::Error> {
 }
 
 fn make_map(x: i64) -> Result<Node, errors::Error> {
-    let mut ps: Vec<(String, Node)> = Vec::from(#[])
+    let mut ps: Vec<(String, Node)> = Vec::from([])
     let mut i = 0
     while i < 2 {
         ps.push((format!("k{}", i), leaf(x + i)?))

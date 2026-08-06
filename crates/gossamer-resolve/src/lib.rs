@@ -31,7 +31,8 @@ pub use diagnostic::{ResolveDiagnostic, ResolveError};
 pub use resolutions::{FloatWidth, IntWidth, PrimitiveTy, Resolution, Resolutions};
 pub use resolver::{project_dep_module_name, resolve_source_file};
 pub use stdlib_exports::{
-    STDLIB_MODULE_PATHS, STDLIB_MODULES, STDLIB_QUALIFIED, is_stdlib_qualified,
+    STDLIB_MODULE_PATHS, STDLIB_MODULES, STDLIB_QUALIFIED, canonical_stdlib_path,
+    is_stdlib_qualified,
 };
 
 pub use external::{

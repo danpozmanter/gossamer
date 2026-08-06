@@ -14,7 +14,7 @@ fn sum(xs: &[i64]) -> i64 {
 
 fn main() {
     // Push-built [i64] from an empty literal.
-    let mut v: Vec<i64> = Vec::from(#[])
+    let mut v: Vec<i64> = Vec::from([])
     for i in 0..100 {
         v.push(i * 3)
     }
@@ -38,11 +38,11 @@ fn main() {
     println!("sorted0={} sorted_last={:?}", v[0], v.last())
 
     // Structural equality between a push-built and a literal vec.
-    let mut built: Vec<i64> = Vec::from(#[])
+    let mut built: Vec<i64> = Vec::from([])
     built.push(1)
     built.push(2)
     built.push(3)
-    println!("eq_literal={}", built == Vec::from(#[1, 2, 3]))
+    println!("eq_literal={}", built == Vec::from([1, 2, 3]))
 
     // Runtime-count repeat lands in flat storage too.
     let n = 1000
@@ -53,7 +53,7 @@ fn main() {
     println!("counts_len={} c0={} sum={}", counts.len(), counts[0], sum(&counts))
 
     // Push-built [f64].
-    let mut f: Vec<f64> = Vec::from(#[])
+    let mut f: Vec<f64> = Vec::from([])
     f.push(0.0)
     f.push(1.5)
     f.push(2.25)
@@ -75,9 +75,9 @@ fn main() {
     println!("frsum={:.2}", frsum)
 
     // Nested: push-built [[i64]] of push-built rows.
-    let mut grid: Vec<Vec<i64>> = Vec::from(#[])
+    let mut grid: Vec<Vec<i64>> = Vec::from([])
     for i in 0..10 {
-        let mut row: Vec<i64> = Vec::from(#[])
+        let mut row: Vec<i64> = Vec::from([])
         for j in 0..10 {
             row.push(i * 10 + j)
         }

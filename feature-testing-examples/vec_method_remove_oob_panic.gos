@@ -1,7 +1,7 @@
 // Vec remove returns Err for an invalid index without mutating the receiver.
 
 fn main() {
-    let mut xs = Vec::from(#[1, 2, 3])
+    let mut xs = Vec::from([1, 2, 3])
     let _ = xs.remove(2)
     println!("before {}", xs.len())
     match xs.remove(2) {

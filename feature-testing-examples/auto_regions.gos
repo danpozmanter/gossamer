@@ -35,7 +35,7 @@ fn main() {
     // across iterations (escapes the loop body), so the loop must NOT be
     // regioned - the trees have to survive. A wrong escape decision here
     // would free `kept`'s nodes mid-build.
-    let mut kept: Vec<Tree> = Vec::from(#[])
+    let mut kept: Vec<Tree> = Vec::from([])
     let mut j: i64 = 0
     while j < 50 {
         kept.push(make(3))

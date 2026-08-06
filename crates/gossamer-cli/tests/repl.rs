@@ -126,7 +126,7 @@ fn repl_reports_mixed_numeric_types_without_vm_register_details() {
 #[test]
 fn vec_insert_results_do_not_corrupt_persistent_repl_bindings() {
     let out = run_repl(
-        "let mut values: Vec<i64> = Vec::from(#[1, 2, 3])\nlet ok = values.insert(1, 9)\nlet failure = values.insert(99, 8)\n%b\n",
+        "let mut values: Vec<i64> = Vec::from([1, 2, 3])\nlet ok = values.insert(1, 9)\nlet failure = values.insert(99, 8)\n%b\n",
     );
     assert!(out.success, "stderr: {}", out.stderr);
     assert!(out.stderr.is_empty(), "stderr: {}", out.stderr);
@@ -190,7 +190,7 @@ fn direct_vec_insert_results_replay_without_poisoning_the_repl() {
 fn repl_binding_and_declaration_listing_do_not_replay_program_output() {
     let out = run_repl(
         "fn id(x: i64) -> i64 { x }\n\
-         let v = Vec::from(#[1, 2])\n\
+         let v = Vec::from([1, 2])\n\
          let a = for e in v { println(e) }\n\
          a\n\
          %b\n\
@@ -406,7 +406,7 @@ fn repl_indexes_with_a_computed_usize_struct_field() {
              }\n\
              fn get_memory(self, index: usize) -> i64 { self.mem[index] }\n\
          }\n\
-         let mut mem = Mem { mem: Vec::from(#[1, 2, 3, 4]) pos: 0 }\n\
+         let mut mem = Mem { mem: Vec::from([1, 2, 3, 4]) pos: 0 }\n\
          mem.set_memory(1, 9)\n\
          println(mem.get_memory(1))\n",
     );
@@ -420,7 +420,7 @@ fn repl_indexes_with_a_computed_usize_struct_field() {
 
 #[test]
 fn repl_bindings_show_the_concrete_type_of_a_clone() {
-    let out = run_repl("let mut a = Vec::from(#[1, 2, 3])\nlet mut c = a.clone()\n%b\n");
+    let out = run_repl("let mut a = Vec::from([1, 2, 3])\nlet mut c = a.clone()\n%b\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout.contains("mut c: Vec<i64> = #[1, 2, 3]"),
@@ -564,7 +564,7 @@ fn repl_explain_owns_persistent_declaration_inspection() {
 
 #[test]
 fn repl_explain_lists_all_available_methods() {
-    let out = run_repl("let mut values = Vec::from(#[1, 2])\n%e values\n");
+    let out = run_repl("let mut values = Vec::from([1, 2])\n%e values\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout.contains("mut values: Vec<i64> [binding]")
@@ -639,7 +639,7 @@ fn repl_sequence_help_respects_type_and_receiver_capability() {
         );
     }
 
-    let immutable_vec = run_repl("let values: Vec<i64> = Vec::from(#[1, 2, 3])\n%e values\n");
+    let immutable_vec = run_repl("let values: Vec<i64> = Vec::from([1, 2, 3])\n%e values\n");
     assert!(immutable_vec.success, "stderr: {}", immutable_vec.stderr);
     assert!(
         immutable_vec
@@ -664,7 +664,7 @@ fn repl_sequence_help_respects_type_and_receiver_capability() {
         );
     }
 
-    let mutable_vec = run_repl("let mut values: Vec<i64> = Vec::from(#[1, 2, 3])\n%e values\n");
+    let mutable_vec = run_repl("let mut values: Vec<i64> = Vec::from([1, 2, 3])\n%e values\n");
     assert!(mutable_vec.success, "stderr: {}", mutable_vec.stderr);
     for available in [
         "values.push",
@@ -727,7 +727,7 @@ fn repl_info_and_explain_details_always_follow_descriptions_with_examples() {
 fn repl_hashmap_literals_and_from_tuple_arrays_work() {
     let out = run_repl(
         "let m = {\"a\": 1, \"b\": 2}\n\
-         let n = Map::from(#[(\"a\", 1), (\"b\", 2)])\n\
+         let n = Map::from([(\"a\", 1), (\"b\", 2)])\n\
          m.len()\n\
          n.len()\n\
          m.get(\"a\")\n\
@@ -779,7 +779,7 @@ fn repl_hashmap_from_rejects_map_literal_argument() {
 #[test]
 fn repl_btreemap_from_tuple_arrays_work() {
     let out = run_repl(
-        "let mut m: BTreeMap<String, i64> = BTreeMap::from(#[(\"b\", 2), (\"a\", 1)])\n\
+        "let mut m: BTreeMap<String, i64> = BTreeMap::from([(\"b\", 2), (\"a\", 1)])\n\
          println(m.get(\"a\"))\n\
          println(m.len())\n\
          m.clear()\n\
@@ -868,7 +868,7 @@ fn repl_info_vec_from_has_the_array_conversion_contract() {
     );
     assert!(
         out.stdout.contains(
-            "Creates a growable vector by moving values from a fixed-size array.\n    Builtin\n    Example: let values = Vec::from(#[1, 2, 3])"
+            "Creates a growable vector by moving values from a fixed-size array.\n    Builtin\n    Example: let values = Vec::from([1, 2, 3])"
         ),
         "Vec::from details are incomplete: {}",
         out.stdout
@@ -904,7 +904,7 @@ fn repl_resolution_errors_suggest_prelude_type_case() {
 #[test]
 fn iterator_parameter_for_loop_preserves_single_pass_state() {
     let out = run_repl(
-        "use Iterator\nfn list_range(v: Vec<i64>, r: Iterator<i64>) { for i in r { println(v[i]) } }\nlet values = Vec::from(#[1, 2, 3])\nlet fresh = 0..2\nlist_range(values, fresh)\n",
+        "use Iterator\nfn list_range(v: Vec<i64>, r: Iterator<i64>) { for i in r { println(v[i]) } }\nlet values = Vec::from([1, 2, 3])\nlet fresh = 0..2\nlist_range(values, fresh)\n",
     );
     assert!(out.success, "stderr: {}", out.stderr);
     let values: Vec<&str> = out
@@ -924,7 +924,7 @@ fn repl_range_binding_inspection_does_not_poison_iterator_reuse() {
     let out = run_repl(
         "use Iterator\n\
          fn list_range(v: Vec<i64>, r: Iterator<i64>) { for i in r { println(v[i]) } }\n\
-         let v = Vec::from(#[1, 2, 3])\n\
+         let v = Vec::from([1, 2, 3])\n\
          let r = 0..2\n\
          %b\n\
          for i in r { println(v[i]) }\n\
@@ -1122,7 +1122,7 @@ fn repl_meta_commands_accept_leading_whitespace() {
 #[test]
 fn repl_vec_from_fixed_array_creates_growable_vec() {
     let out = run_repl(
-        "let mut v = Vec::from(#[1, 2])\n\
+        "let mut v = Vec::from([1, 2])\n\
          %b\n\
          v.push(3)\n",
     );
@@ -1161,7 +1161,7 @@ fn repl_later_assignment_cannot_retype_an_immutable_binding() {
     let out = run_repl(
         "let a = 256\n\
          let mut b: i8 = 1\n\
-         let mut v: Vec<i8> = Vec::from(#[1, 2])\n\
+         let mut v: Vec<i8> = Vec::from([1, 2])\n\
          b = a\n\
          v[0] = a\n\
          %b\n",
@@ -1191,7 +1191,7 @@ fn repl_byte_buffer_has_a_public_type_and_strict_mutation_contract() {
          let mut b = Buffer::new()\n\
          b.push(65)\n\
          b.push(\"A\")\n\
-         b.push(Vec::from(#[1, 2]))\n\
+         b.push(Vec::from([1, 2]))\n\
          b.push(256)\n\
          b.len()\n\
          b.to_string()\n\
@@ -2209,7 +2209,7 @@ fn repl_meta_quit_terminates_with_exit_zero() {
 #[test]
 fn repl_drop_ends_reference_lifetime_and_preserves_mutation() {
     let out = run_repl(
-        "let mut v = Vec::from(#[1, 2])\n\
+        "let mut v = Vec::from([1, 2])\n\
          let a = &mut v\n\
          a[0] = 9\n\
          let answer = 42\n\
@@ -2256,7 +2256,7 @@ fn repl_drop_ends_reference_lifetime_and_preserves_mutation() {
 #[test]
 fn repl_drop_cascades_dependent_references_without_internal_errors() {
     let out = run_repl(
-        "let mut v = Vec::from(#[1, 2])\n\
+        "let mut v = Vec::from([1, 2])\n\
          let a = &mut v\n\
          let b = &a\n\
          v[0]\n\
@@ -2300,7 +2300,7 @@ fn repl_drop_cascades_dependent_references_without_internal_errors() {
 #[test]
 fn repl_drop_leaf_reference_keeps_source_locked_until_owner_drop() {
     let out = run_repl(
-        "let mut v = Vec::from(#[1, 2])\n\
+        "let mut v = Vec::from([1, 2])\n\
          let a = &mut v\n\
          let b = &a\n\
          %drop b\n\
@@ -2446,17 +2446,17 @@ fn repl_meta_find_is_removed() {
 fn repl_iter_receiver_methods_pipe_dotdot_and_range_index_work() {
     let out = run_repl(
         "use std::iter\n\
-         let a: Vec<i64> = Vec::from(#[1, 2, 3, 4, 5])\n\
+         let a: Vec<i64> = Vec::from([1, 2, 3, 4, 5])\n\
          a.skip(2)\n\
          a.enumerate()\n\
          a.zip(0..).collect()\n\
          a |> iter::zip(..) |> _.collect()\n\
          a[..2]\n\
-         Vec::from(#[1, 1, 2, 2]).dedup()\n\
+         Vec::from([1, 1, 2, 2]).dedup()\n\
          a.windows(2)\n\
          a.chunks(2)\n\
          a.pairwise()\n\
-         Vec::from(#[Vec::from(#[1, 2]), Vec::from(#[3])]).flatten()\n\
+         Vec::from([Vec::from([1, 2]), Vec::from([3])]).flatten()\n\
          a.rev()\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -2483,7 +2483,7 @@ fn repl_iter_receiver_methods_pipe_dotdot_and_range_index_work() {
 
 #[test]
 fn repl_iter_take_rejects_negative_counts() {
-    let out = run_repl("let a: Vec<i64> = Vec::from(#[1, 2, 3])\na.take(-2)\n");
+    let out = run_repl("let a: Vec<i64> = Vec::from([1, 2, 3])\na.take(-2)\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stderr.contains("count must be non-negative"),
@@ -2505,7 +2505,7 @@ fn repl_rejects_negative_size_arguments_across_stdlib() {
          strings::splitn(\"a,b\", -1, \",\")\n\
          strings::pad_left(\"x\", -1, ' ')\n\
          strings::replacen(\"aaa\", \"a\", \"b\", -1)\n\
-         let xs: Vec<i64> = Vec::from(#[1, 2, 3])\n\
+         let xs: Vec<i64> = Vec::from([1, 2, 3])\n\
          xs.take(-1)\n\
          xs.step_by(-1)\n\
          xs.windows(-1)\n\
@@ -2911,10 +2911,10 @@ fn repl_meta_help_covers_every_builtin_macro_and_prelude_assertion() {
     }
     assert!(
         out.stdout
-            .contains("assert(condition: bool, message?: String) [builtin]")
+            .contains("assert(condition: bool, message: String) [builtin]")
             && out
                 .stdout
-                .contains("assert_eq(left, right, message?: String) [builtin]"),
+                .contains("assert_eq(left, right, message: String) [builtin]"),
         "missing prelude assertion help: {}",
         out.stdout
     );
@@ -3182,7 +3182,7 @@ fn repl_rejects_unqualified_std_functions() {
 fn repl_persists_rust_style_string_and_vec_mutations() {
     let out = run_repl(
         "let mut s = \"abc\"\n\
-         let mut v = Vec::from(#[1, 2])\n\
+         let mut v = Vec::from([1, 2])\n\
          s.push('d')\n\
          s\n\
          v.push(3)\n\
@@ -3202,7 +3202,7 @@ fn repl_persists_rust_style_string_and_vec_mutations() {
 #[test]
 fn repl_mut_vec_for_loop_and_tuple_for_loop_work() {
     let out = run_repl(
-        "let mut v = Vec::from(#[1, 2])\n\
+        "let mut v = Vec::from([1, 2])\n\
          for i in &mut v { *i += 1 }\n\
          println(v)\n\
          for i in (0, 1) { println(i) }\n",
@@ -3264,16 +3264,16 @@ fn repl_iterates_bare_strings_as_unicode_chars() {
 #[test]
 fn repl_preserves_vec_bindings_across_all_supported_mutating_loops() {
     let out = run_repl(
-        "let mut by_ref = Vec::from(#[1, 2])\n\
+        "let mut by_ref = Vec::from([1, 2])\n\
          for value in &mut by_ref { *value += 1 }\n\
-         let mut by_enumerate = Vec::from(#[1, 2])\n\
+         let mut by_enumerate = Vec::from([1, 2])\n\
          for (i, _) in by_enumerate.enumerate() { by_enumerate[i] += 1 }\n\
-         let mut by_range = Vec::from(#[1, 2])\n\
+         let mut by_range = Vec::from([1, 2])\n\
          for i in 0..by_range.len() { by_range[i] += 1 }\n\
-         let mut by_array = Vec::from(#[1, 2])\n\
+         let mut by_array = Vec::from([1, 2])\n\
          for i in [0, 1] { by_array[i] += 1 }\n\
          %b\n\
-         let mut by_ref = Vec::from(#[4, 5])\n\
+         let mut by_ref = Vec::from([4, 5])\n\
          by_ref\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -3314,7 +3314,7 @@ fn repl_rejects_invalid_qualified_string_push_without_mutating() {
 #[test]
 fn repl_rejects_invalid_qualified_vec_push_without_mutating() {
     let out = run_repl(
-        "let mut v = Vec::from(#[1, 2])\n\
+        "let mut v = Vec::from([1, 2])\n\
          Vec::push(&mut v, \"x\")\n\
          v\n\
          Vec::push(&mut v, 3)\n\
@@ -3334,7 +3334,7 @@ fn repl_rejects_invalid_qualified_vec_push_without_mutating() {
 fn repl_checks_string_and_vec_push_contracts() {
     let out = run_repl(
         "let mut s = \"abc\"\n\
-         let mut v = Vec::from(#[1, 2])\n\
+         let mut v = Vec::from([1, 2])\n\
          s.push(\"x\")\n\
          v.push(3, 4, 5)\n\
          v.push(\"x\")\n",
@@ -3361,15 +3361,15 @@ fn repl_checks_string_and_vec_push_contracts() {
 #[test]
 fn repl_reports_collection_argument_mismatches_in_expected_found_order() {
     let out = run_repl(
-        "let mut v = Vec::from(#[1, 2])\n\
+        "let mut v = Vec::from([1, 2])\n\
          v.push(\"x\")\n\
          v.push('a')\n\
          v.push([3, 4, 5])\n\
-         let mut strings = Vec::from(#[\"a\"])\n\
+         let mut strings = Vec::from([\"a\"])\n\
          strings.push(1)\n\
-         let mut floats = Vec::from(#[1.0])\n\
+         let mut floats = Vec::from([1.0])\n\
          floats.push('b')\n\
-         let mut chars = Vec::from(#['a'])\n\
+         let mut chars = Vec::from(['a'])\n\
          chars.push(2.0)\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -3440,7 +3440,7 @@ fn repl_persists_map_set_and_deque_mutations() {
 #[test]
 fn repl_renders_queue_and_heap_bindings() {
     let out = run_repl(
-        "let q = Queue::from(#[1, 2, 3])\nlet s = Stack::from(#[1, 2, 3])\nlet max = MaxHeap::from(#[1, 2, 3])\nlet min = MinHeap::from(#[1, 2, 3])\n%b\nmax.peek()\nmin.peek()\n",
+        "let q = Queue::from([1, 2, 3])\nlet s = Stack::from([1, 2, 3])\nlet max = MaxHeap::from([1, 2, 3])\nlet min = MinHeap::from([1, 2, 3])\n%b\nmax.peek()\nmin.peek()\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [

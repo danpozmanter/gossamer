@@ -452,10 +452,6 @@ pub const REGISTRY: &[(&str, &str)] = &[
         "A bracket spelling that used to build a container is no longer syntax. Construct the container through its type instead: `Type::new()` for an empty one, or `Type::from([a, b, c])`.",
     ),
     (
-        "GP0033",
-        "A repeat literal is a fixed array, written `#[value; count]`. Bare brackets build a Vec from the elements listed inside them.",
-    ),
-    (
         "GR0001",
         "A name used in source could not be resolved to a declaration.\n\
                      Check the spelling, whether a `use` brings the name into scope,\n\

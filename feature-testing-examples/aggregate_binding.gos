@@ -28,8 +28,8 @@ use std::flag
 
 fn main() {
     let mut m: Map<String, Vec<i64>> = Map::new()
-    m.insert("a", Vec::from(#[1, 2, 3]))
-    m.insert("b", Vec::from(#[4, 5]))
+    m.insert("a", Vec::from([1, 2, 3]))
+    m.insert("b", Vec::from([4, 5]))
 
     if let Some(v) = m.get("a") {
         println!("a: len={} v0={} v2={}", v.len(), v[0], v[2])
@@ -46,13 +46,13 @@ fn main() {
     // borrow of it. Binding + using the result (len / index) is the
     // shape that used to double-free and hang the compiled tier at
     // teardown.
-    let fresh = m.or_insert("c", Vec::from(#[11, 22, 33]))
+    let fresh = m.or_insert("c", Vec::from([11, 22, 33]))
     println!("c fresh: len={} v0={} v2={}", fresh.len(), fresh[0], fresh[2])
 
     // or_insert on a PRESENT key returns the stored Vec unchanged.
-    let present = m.or_insert("a", Vec::from(#[99]))
+    let present = m.or_insert("a", Vec::from([99]))
     println!("a present: len={} v0={}", present.len(), present[0])
-    m.insert("z", Vec::from(#[7, 8]))
+    m.insert("z", Vec::from([7, 8]))
     if let Some(v) = m.get("z") {
         println!("z: len={} v0={} v1={}", v.len(), v[0], v[1])
     } else {
