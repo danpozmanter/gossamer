@@ -530,6 +530,26 @@ impl<'a> Builder<'a> {
         } else {
             self.lower_expr(receiver)?
         };
+        // `contains` / `index_of` / `count_of` over an element type the
+        // flat-slot search shims cannot compare: scan with the language's own
+        // structural `==` instead, so an f64 needle keeps its value and an
+        // aggregate compares by value rather than by address.
+        if matches!(method.name.as_str(), "contains" | "index_of" | "count_of")
+            && args.len() == 1
+            && let Some(elem_ty) = self
+                .seq_elem_ty(receiver_ty)
+                .or_else(|| self.seq_elem_ty(self.locals[receiver_local.0 as usize].ty))
+            && !self.seq_search_shim_fits(elem_ty)
+        {
+            return self.lower_seq_eq_scan(
+                receiver_local,
+                &args[0],
+                method.name.as_str(),
+                elem_ty,
+                ty,
+                span,
+            );
+        }
         let lowered_runtime_kind = self.local_runtime_kind.get(&receiver_local).copied();
         let lowered_heap_reverse_i64 = self.local_binary_heap_min_i64.contains(&receiver_local)
             || self.binary_heap_elem_is_reverse_i64(receiver_ty)
@@ -4839,6 +4859,242 @@ impl<'a> Builder<'a> {
             TyKind::Char => Some("gos_rt_vec_join_char"),
             TyKind::Int(_) | TyKind::Var(_) => Some("gos_rt_vec_join_i64"),
             _ => None,
+        }
+    }
+
+    /// True when the `gos_rt_vec_*_i64` / `_str` search shims can represent
+    /// `elem` faithfully. Those shims compare one raw 8-byte slot against the
+    /// needle word, which equals the element's value only for an i64-slot
+    /// scalar or a String's c-string pointer. An `f64` needle would be
+    /// converted to an integer at the `i64` parameter, and every aggregate
+    /// (struct, tuple, enum, nested sequence) is either stored inline across
+    /// several slots or reached through a pointer, so a slot compare answers
+    /// pointer identity rather than value equality. Those element types take
+    /// the structural scan instead.
+    fn seq_search_shim_fits(&self, elem: Ty) -> bool {
+        let mut t = elem;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(t) {
+            t = *inner;
+        }
+        matches!(
+            self.tcx.kind_of(t),
+            TyKind::Int(_) | TyKind::Bool | TyKind::Char | TyKind::String | TyKind::Var(_)
+        )
+    }
+
+    /// Element type of a sequence receiver, peeling references.
+    fn seq_elem_ty(&self, receiver_ty: Ty) -> Option<Ty> {
+        let mut t = receiver_ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(t) {
+            t = *inner;
+        }
+        match self.tcx.kind_of(t) {
+            TyKind::Vec(elem) | TyKind::Slice(elem) => Some(*elem),
+            TyKind::Array { elem, .. } => Some(*elem),
+            _ => None,
+        }
+    }
+
+    /// A Vec element of this type is reached by its slot address rather than
+    /// a loaded word: a user struct is address-is-value at any width (a
+    /// one-field struct still projects its field off the slot pointer), and a
+    /// tuple / fixed array spans several inline slots.
+    fn seq_elem_is_inline_aggregate(&self, elem_ty: Ty) -> bool {
+        matches!(
+            self.tcx.kind_of(elem_ty),
+            TyKind::Tuple(_) | TyKind::Array { .. }
+        ) || matches!(
+            self.tcx.kind_of(elem_ty),
+            TyKind::Adt { def, .. }
+                if def.local < u32::MAX - 16 && self.tcx.struct_field_tys(*def).is_some()
+        )
+    }
+
+    /// Lowers `xs.contains(&n)` / `xs.index_of(&n)` / `xs.count_of(&n)` as a
+    /// scan that compares each element with `==`, the same structural
+    /// equality the language applies to a bare `a == b`. Used for element
+    /// types the flat-slot search shims cannot compare (see
+    /// [`Self::seq_search_shim_fits`]).
+    fn lower_seq_eq_scan(
+        &mut self,
+        receiver_local: Local,
+        needle: &HirExpr,
+        method: &str,
+        elem_ty: Ty,
+        ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let bool_ty = self.tcx.bool_ty();
+        let needle_local = self.lower_expr(needle)?;
+
+        let len_local = self.fresh(i64_ty);
+        let after_len = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_len".to_string())),
+            args: vec![Operand::Copy(Place::local(receiver_local))],
+            destination: Place::local(len_local),
+            target: Some(after_len),
+        });
+        self.set_current(after_len);
+
+        // `found` doubles as `contains`'s result; `idx` carries the first
+        // matching position and `count` the number of matches.
+        let found = self.push_local(bool_ty, None, true);
+        let idx = self.push_local(i64_ty, None, true);
+        let count = self.push_local(i64_ty, None, true);
+        let counter = self.push_local(i64_ty, None, true);
+        for (slot, init) in [(found, 0i128), (idx, 0), (count, 0), (counter, 0)] {
+            self.emit_assign(
+                Place::local(slot),
+                Rvalue::Use(Operand::Const(ConstValue::Int(init))),
+                span,
+            );
+        }
+
+        let header = self.new_block(span);
+        let body_block = self.new_block(span);
+        let hit_block = self.new_block(span);
+        let step_block = self.new_block(span);
+        let exit = self.new_block(span);
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(header);
+        let in_range = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(in_range),
+            Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(counter)),
+                rhs: Operand::Copy(Place::local(len_local)),
+            },
+            span,
+        );
+        self.terminate(Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(in_range)),
+            arms: vec![(0, exit)],
+            default: body_block,
+        });
+
+        self.set_current(body_block);
+        let ptr_local = self.fresh(i64_ty);
+        let after_ptr = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_get_ptr".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(receiver_local)),
+                Operand::Copy(Place::local(counter)),
+            ],
+            destination: Place::local(ptr_local),
+            target: Some(after_ptr),
+        });
+        self.set_current(after_ptr);
+        let elem_local = self.fresh(elem_ty);
+        if self.seq_elem_is_inline_aggregate(elem_ty) {
+            self.emit_assign(
+                Place::local(elem_local),
+                Rvalue::Use(Operand::Copy(Place::local(ptr_local))),
+                span,
+            );
+        } else {
+            let zero_off = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(zero_off),
+                Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                span,
+            );
+            let after_load = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_load".to_string())),
+                args: vec![
+                    Operand::Copy(Place::local(ptr_local)),
+                    Operand::Copy(Place::local(zero_off)),
+                ],
+                destination: Place::local(elem_local),
+                target: Some(after_load),
+            });
+            self.set_current(after_load);
+        }
+        let is_eq = self.emit_structural_eq(elem_local, needle_local, elem_ty, span);
+        self.terminate(Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(is_eq)),
+            arms: vec![(0, step_block)],
+            default: hit_block,
+        });
+
+        // `count_of` tallies every match, so it keeps scanning; the other two
+        // only need the first one and leave the loop.
+        self.set_current(hit_block);
+        let counting = method == "count_of";
+        if counting {
+            self.emit_assign(
+                Place::local(count),
+                Rvalue::BinaryOp {
+                    op: BinOp::Add,
+                    lhs: Operand::Copy(Place::local(count)),
+                    rhs: Operand::Const(ConstValue::Int(1)),
+                },
+                span,
+            );
+            self.terminate(Terminator::Goto { target: step_block });
+        } else {
+            self.emit_assign(
+                Place::local(found),
+                Rvalue::Use(Operand::Const(ConstValue::Int(1))),
+                span,
+            );
+            self.emit_assign(
+                Place::local(idx),
+                Rvalue::Use(Operand::Copy(Place::local(counter))),
+                span,
+            );
+            self.terminate(Terminator::Goto { target: exit });
+        }
+
+        self.set_current(step_block);
+        self.emit_assign(
+            Place::local(counter),
+            Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(counter)),
+                rhs: Operand::Const(ConstValue::Int(1)),
+            },
+            span,
+        );
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(exit);
+        match method {
+            "contains" => Some(found),
+            "count_of" => Some(count),
+            // `index_of` yields `Option<i64>`: discriminant 0 carries the
+            // position, 1 is `None`.
+            _ => {
+                let disc = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(disc),
+                    Rvalue::BinaryOp {
+                        op: BinOp::Sub,
+                        lhs: Operand::Const(ConstValue::Int(1)),
+                        rhs: Operand::Copy(Place::local(found)),
+                    },
+                    span,
+                );
+                let rty = self.result_repr_ty(ty);
+                let dest = self.fresh(rty);
+                self.emit_assign(
+                    Place::local(dest),
+                    Rvalue::CallIntrinsic {
+                        name: "gos_rt_result_new",
+                        args: vec![
+                            Operand::Copy(Place::local(disc)),
+                            Operand::Copy(Place::local(idx)),
+                        ],
+                    },
+                    span,
+                );
+                Some(dest)
+            }
         }
     }
 

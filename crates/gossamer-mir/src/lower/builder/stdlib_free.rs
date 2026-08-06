@@ -52,23 +52,33 @@ impl<'a> Builder<'a> {
     /// Lowers a prelude `assert` / `assert_eq` call to a conditional
     /// `panic`, so the abort fires identically on every compiled tier.
     /// Returns a unit local (the call's value).
+    /// True when an `assert_eq` operand can be rendered into the failure
+    /// message. The message is built with `__concat`, which formats scalars
+    /// and Strings; an aggregate has no Display form there, so those keep the
+    /// bare heading rather than failing the build.
+    fn assert_operand_renders(&self, hir_ty: gossamer_types::Ty, local: Local) -> bool {
+        use gossamer_types::TyKind;
+        let renders = |this: &Self, t: gossamer_types::Ty| {
+            let mut cur = t;
+            while let TyKind::Ref { inner, .. } = this.tcx.kind_of(cur) {
+                cur = *inner;
+            }
+            matches!(
+                this.tcx.kind_of(cur),
+                TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::String
+            )
+        };
+        renders(self, hir_ty) || renders(self, self.locals[local.0 as usize].ty)
+    }
+
     fn lower_assert(&mut self, args: &[HirExpr], eq: bool, span: Span) -> Option<Local> {
-        let bool_ty = self.tcx.bool_ty();
         let unit_ty = self.tcx.unit();
+        let mut compared: Option<(Local, Local)> = None;
         let cond = if eq {
             let a = self.lower_expr(&args[0])?;
             let b = self.lower_expr(args.get(1)?)?;
-            let c = self.fresh(bool_ty);
-            self.emit_assign(
-                Place::local(c),
-                Rvalue::BinaryOp {
-                    op: BinOp::Eq,
-                    lhs: Operand::Copy(Place::local(a)),
-                    rhs: Operand::Copy(Place::local(b)),
-                },
-                span,
-            );
-            c
+            compared = Some((a, b));
+            self.emit_structural_eq(a, b, args[0].ty, span)
         } else {
             self.lower_expr(&args[0])?
         };
@@ -82,8 +92,41 @@ impl<'a> Builder<'a> {
         });
         self.set_current(fail);
         let msg_idx = if eq { 2 } else { 1 };
-        let msg_local = if let Some(m) = args.get(msg_idx) {
-            self.lower_expr(m)?
+        let user_msg = match args.get(msg_idx) {
+            Some(m) => Some(self.lower_expr(m)?),
+            None => None,
+        };
+        // `assert_eq` names the two values that differ
+        // (`assertion failed: <msg>: <a> != <b>`); `assert` panics with the
+        // supplied text verbatim, or the bare heading when none was given.
+        let rendered = compared.filter(|(a, b)| {
+            self.assert_operand_renders(args[0].ty, *a)
+                && self.assert_operand_renders(args[1].ty, *b)
+        });
+        let msg_local = if let Some((a, b)) = rendered {
+            let mut pieces = vec![Operand::Const(ConstValue::Str(
+                "assertion failed: ".to_string(),
+            ))];
+            if let Some(m) = user_msg {
+                pieces.push(Operand::Copy(Place::local(m)));
+                pieces.push(Operand::Const(ConstValue::Str(": ".to_string())));
+            }
+            pieces.push(Operand::Copy(Place::local(a)));
+            pieces.push(Operand::Const(ConstValue::Str(" != ".to_string())));
+            pieces.push(Operand::Copy(Place::local(b)));
+            let s_ty = self.tcx.string_ty();
+            let dest = self.fresh(s_ty);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("__concat".to_string())),
+                args: pieces,
+                destination: Place::local(dest),
+                target: Some(next),
+            });
+            self.set_current(next);
+            dest
+        } else if let Some(m) = user_msg {
+            m
         } else {
             let s_ty = self.tcx.string_ty();
             let s = self.fresh(s_ty);
@@ -3170,7 +3213,7 @@ impl<'a> Builder<'a> {
         Some(match joined {
             // Qualified Vec mutators use the same checked in-place contract
             // as method calls.
-            "Vec::insert" if args.len() == 3 => {
+            "Vec::insert" | "collections::Vec::insert" if args.len() == 3 => {
                 let unit = self.tcx.unit();
                 let error = self.tcx.dyn_error_ty();
                 let substs = gossamer_types::Substs::from_types([unit, error]);
@@ -3180,7 +3223,7 @@ impl<'a> Builder<'a> {
                 });
                 ("gos_rt_vec_insert_safe", result)
             }
-            "Vec::remove" if args.len() == 2 => {
+            "Vec::remove" | "collections::Vec::remove" if args.len() == 2 => {
                 let elem = self.vec_receiver_elem_ty(args[0].ty);
                 let error = self.tcx.dyn_error_ty();
                 let substs = gossamer_types::Substs::from_types([elem, error]);

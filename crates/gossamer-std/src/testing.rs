@@ -477,10 +477,13 @@ mod tests {
     }
 
     #[test]
-    fn wait_for_scheduler_idle_returns_true_when_already_idle() {
-        assert!(wait_for_scheduler_idle(std::time::Duration::from_millis(
-            10
-        )));
+    fn wait_for_scheduler_idle_reports_idle() {
+        // The scheduler is process-global while libtest runs this module's
+        // tests in parallel threads, so sibling tests' goroutines can be live
+        // when this one starts. The budget is what the call is allowed to
+        // spend waiting for them to drain, not a timing assertion: the poll
+        // returns as soon as it observes an idle scheduler.
+        assert!(wait_for_scheduler_idle(std::time::Duration::from_secs(30)));
     }
 
     #[test]

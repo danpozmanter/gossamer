@@ -576,6 +576,19 @@ pub(super) fn operand_is_char(body: &Body, tcx: &TyCtxt, op: &Operand) -> bool {
     }
 }
 
+/// True for a user-declared struct ADT: not an enum, not an `Option` /
+/// `Result` carrier, and not one of the opaque stdlib heap-blob handles whose
+/// `DefId` sits in the `u32::MAX - 16 ..= u32::MAX` sentinel range.
+fn is_user_struct_adt(tcx: &TyCtxt, ty: Ty) -> bool {
+    matches!(
+        tcx.kind_of(ty),
+        TyKind::Adt { def, substs }
+            if def.local < u32::MAX - 16
+                && !tcx.is_inline_enum_ty(ty)
+                && tcx.adt_field_tys(*def, substs).is_some()
+    )
+}
+
 pub(super) fn operand_aggregate_slots(body: &Body, tcx: &TyCtxt, op: &Operand) -> Option<u32> {
     match op {
         Operand::Copy(place) if place.projection.is_empty() => {
@@ -591,8 +604,16 @@ pub(super) fn operand_aggregate_slots(body: &Body, tcx: &TyCtxt, op: &Operand) -
                 TyKind::Tuple(_) | TyKind::Adt { .. } | TyKind::Array { .. }
             ) {
                 let slots = type_slot_count(tcx, ty);
-                if slots > 1 {
-                    return Some(slots);
+                // MIR treats a user struct as address-is-value at every
+                // width, so a one-field struct is still handed over as the
+                // address of its backing storage - the consumer memcpys its
+                // single slot. Reading the local as a scalar word instead
+                // would hand over the storage pointer as if it were the
+                // field. An opaque stdlib heap-blob handle (`def.local` in
+                // the `u32::MAX - 16 ..= u32::MAX` sentinel range) genuinely
+                // is a pointer word, so it stays by value.
+                if slots > 1 || is_user_struct_adt(tcx, ty) {
+                    return Some(slots.max(1));
                 }
             }
             None

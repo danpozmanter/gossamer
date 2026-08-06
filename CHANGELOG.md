@@ -22,7 +22,24 @@
   reached an undefined `Set` symbol in a native build.
 - Name the replacement for a renamed container wherever it appears, not only
   in a `use`: `HashSet<i64>` in a signature reported a plain missing name.
-- Bump workspace crates and lockfile package versions to 0.43.1.
+- Lower qualified `Vec::insert` / `Vec::remove`, which a canonical-path rewrite
+  left unmatched so both spellings emitted an undefined symbol and a native
+  build failed at its LLVM symbol audit.
+- Search a sequence with the language's own structural `==`: `contains`,
+  `index_of`, and `count_of` compared one raw slot, so on the compiled tiers an
+  `f64` needle truncated to an integer and every struct, tuple, enum, and
+  nested sequence compared by address.
+- Report the compared values from `assert_eq` on the compiled tiers, which
+  printed only the supplied message, and compare its operands structurally
+  rather than by address.
+- Pass a struct or `f64` element to `any` and `position` in its own shape; a
+  struct predicate faulted in a native build and an `f64` one read the bit
+  pattern as an integer.
+- Hand a one-field struct's Vec element to the JIT by slot address like every
+  wider struct, instead of pushing the pointer to its backing storage and
+  reading that back as the field.
+- Settle the process-global scheduler before asserting it is idle, so the
+  check no longer races the sibling tests sharing it.
 
 ## 0.43.0 - Tuple surface, one name per container, collection literals,
 ## Iterator for-loops, reverse fix, dead method audit, explicit module imports

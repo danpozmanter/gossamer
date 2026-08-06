@@ -2002,6 +2002,117 @@ impl<'a> Builder<'a> {
         Some((elems.len(), tags))
     }
 
+    /// Emits `lhs == rhs` for two already-lowered locals holding values of
+    /// `ty`, applying the same structural dispatch a source-level `a == b`
+    /// gets: a `Type::eq` impl, the runtime String and heap-enum walks, or the
+    /// element-wise tuple / sequence compares. Scalars fall through to the
+    /// primitive slot compare. A caller that synthesizes a comparison rather
+    /// than lowering one the user wrote routes through this so its answer
+    /// matches `==` for every element type.
+    pub(crate) fn emit_structural_eq(
+        &mut self,
+        lhs_local: Local,
+        rhs_local: Local,
+        ty: Ty,
+        span: Span,
+    ) -> Local {
+        use gossamer_types::TyKind;
+        let bool_ty = self.tcx.bool_ty();
+        let peel = |this: &Self, t: Ty| -> Ty {
+            let mut cur = t;
+            while let TyKind::Ref { inner, .. } = this.tcx.kind_of(cur) {
+                cur = *inner;
+            }
+            cur
+        };
+        let ty = peel(self, ty);
+        let lhs_ty = peel(self, self.locals[lhs_local.0 as usize].ty);
+
+        if matches!(self.tcx.kind_of(ty), TyKind::String)
+            || matches!(self.tcx.kind_of(lhs_ty), TyKind::String)
+        {
+            let cmp = self.fresh(bool_ty);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_str_eq".to_string())),
+                args: vec![
+                    Operand::Copy(Place::local(lhs_local)),
+                    Operand::Copy(Place::local(rhs_local)),
+                ],
+                destination: Place::local(cmp),
+                target: Some(next),
+            });
+            self.set_current(next);
+            return cmp;
+        }
+
+        let sname = self
+            .adt_dispatch_name(ty)
+            .or_else(|| self.adt_dispatch_name(lhs_ty))
+            .or_else(|| self.local_struct.get(&lhs_local).cloned())
+            .or_else(|| self.local_struct.get(&rhs_local).cloned());
+        if let Some(sname) = sname.clone() {
+            let mangled = format!("{sname}::eq");
+            if self.impl_methods.contains_key(&mangled) {
+                let cmp = self.fresh(bool_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(mangled)),
+                    args: vec![
+                        Operand::Copy(Place::local(lhs_local)),
+                        Operand::Copy(Place::local(rhs_local)),
+                    ],
+                    destination: Place::local(cmp),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                return cmp;
+            }
+        }
+        if let Some(sym) = sname
+            .and_then(|n| self.tcx.enum_ty_by_name(&n))
+            .and_then(|ety| self.ensure_enum_eq_desc(ety))
+        {
+            let cmp = self.fresh(bool_ty);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_enum_struct_eq".to_string())),
+                args: vec![
+                    Operand::Copy(Place::local(lhs_local)),
+                    Operand::Copy(Place::local(rhs_local)),
+                    Operand::Const(ConstValue::Str(sym)),
+                ],
+                destination: Place::local(cmp),
+                target: Some(next),
+            });
+            self.set_current(next);
+            return cmp;
+        }
+        if let Some(tags) = self
+            .tuple_cmp_tags(ty)
+            .or_else(|| self.tuple_cmp_tags(lhs_ty))
+        {
+            return self.lower_tuple_cmp(HirBinaryOp::Eq, lhs_local, rhs_local, &tags, span);
+        }
+        if let Some(tag) = self
+            .vec_elem_cmp_tag(ty)
+            .or_else(|| self.vec_elem_cmp_tag(lhs_ty))
+        {
+            return self.lower_vec_eq(HirBinaryOp::Eq, lhs_local, rhs_local, tag, span);
+        }
+        let cmp = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(cmp),
+            Rvalue::BinaryOp {
+                op: BinOp::Eq,
+                lhs: Operand::Copy(Place::local(lhs_local)),
+                rhs: Operand::Copy(Place::local(rhs_local)),
+            },
+            span,
+        );
+        cmp
+    }
+
     /// Per-element tags for a flat-buffer aggregate of scalar/string elements:
     /// a tuple (`(A, B)`) or a fixed-size array (`[T; N]`, a flat `[N x i64]`
     /// buffer like a tuple). `None` for a non-flat or aggregate-element type.

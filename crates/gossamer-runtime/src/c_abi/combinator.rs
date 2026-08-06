@@ -459,6 +459,31 @@ pub unsafe extern "C" fn gos_rt_iter_position_i64(env: *const u8, v: *const GosV
     })
 }
 
+/// `iter::position(p, xs) -> Option<i64>` for vectors whose elements must be
+/// passed by slot address, such as user structs.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_position_ptr(env: *const u8, v: *const GosVec) -> i128 {
+    ffi_entry!(NONE, {
+        let Some(addr) = env_fn_addr(env) else {
+            return NONE;
+        };
+        type PtrPredFn = unsafe extern "C" fn(env: *const u8, x: *mut u8) -> bool;
+        // SAFETY: addr is the callable stored by the closure lowering.
+        let p: PtrPredFn = unsafe { std::mem::transmute(addr) };
+        if v.is_null() {
+            return NONE;
+        }
+        let len = unsafe { (*v).len };
+        for i in 0..len {
+            let x = unsafe { crate::c_abi::gos_rt_vec_get_ptr(v, i) };
+            if unsafe { p(env, x) } {
+                return some_of(i);
+            }
+        }
+        NONE
+    })
+}
+
 /// `iter::find_map(f, xs) -> Option<U>` - first Some payload of `f(x)`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_find_map_i64(env: *const u8, v: *const GosVec) -> i128 {

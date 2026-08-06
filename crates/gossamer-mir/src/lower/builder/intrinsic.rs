@@ -1650,8 +1650,9 @@ impl<'a> Builder<'a> {
             }
             ("iter::any", 2) => {
                 let bool_ty = self.tcx.bool_ty();
-                let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
                 if matches!(self.tcx.kind_of(args[1].ty), TyKind::Iterator(_)) {
+                    let closure_local =
+                        self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
                     let iter_local = self.lower_expr(&args[1])?;
                     let dest = self.fresh(bool_ty);
                     let next = self.new_block(span);
@@ -1670,12 +1671,29 @@ impl<'a> Builder<'a> {
                     return Some(dest);
                 }
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                // A struct element is handed to the predicate by slot
+                // address, so the closure takes the element type and the
+                // by-pointer shim feeds it; matches `iter::all`.
+                let ptr_elem_ty = self.iter_struct_elem_ty(vec_local);
+                let float_elem = ptr_elem_ty.is_none() && self.iter_elem_is_float(vec_local);
+                let closure_inputs = match (ptr_elem_ty, float_elem) {
+                    (Some(elem), _) => vec![elem],
+                    (None, true) => vec![self.tcx.float_ty(gossamer_types::FloatTy::F64)],
+                    (None, false) => vec![i64_ty],
+                };
+                let closure_local =
+                    self.lower_iter_closure(&args[0], &closure_inputs, bool_ty, span)?;
+                let helper = match (ptr_elem_ty.is_some(), float_elem) {
+                    (true, _) => "gos_rt_iter_any_ptr",
+                    (false, true) => "gos_rt_iter_any_f64",
+                    (false, false) => "gos_rt_iter_any_i64",
+                };
                 // Bool-typed destination so `{}` renders true/false
                 // like the VM; the shim returns i64 0/1.
                 let dest = self.fresh(bool_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_any_i64".to_string())),
+                    callee: Operand::Const(ConstValue::Str(helper.to_string())),
                     args: vec![
                         Operand::Copy(Place::local(closure_local)),
                         Operand::Copy(Place::local(vec_local)),
@@ -2545,11 +2563,20 @@ impl<'a> Builder<'a> {
                 ))
             }
             ("iter::position", 2) => {
-                let closure = self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                // A struct element reaches the predicate by slot address; see
+                // `iter::any`.
+                let ptr_elem_ty = self.iter_struct_elem_ty(vec_local);
+                let closure_inputs = ptr_elem_ty.map_or_else(|| vec![i64_ty], |elem| vec![elem]);
+                let closure = self.lower_iter_closure(&args[0], &closure_inputs, bool_ty, span)?;
+                let helper = if ptr_elem_ty.is_some() {
+                    "gos_rt_iter_position_ptr"
+                } else {
+                    "gos_rt_iter_position_i64"
+                };
                 let dest_ty = self.option_payload_adt_ty(i64_ty);
                 Some(self.emit_combinator_call(
-                    "gos_rt_iter_position_i64",
+                    helper,
                     vec![
                         Operand::Copy(Place::local(closure)),
                         Operand::Copy(Place::local(vec_local)),
@@ -2866,6 +2893,30 @@ impl<'a> Builder<'a> {
         });
         self.set_current(next);
         Some(dest)
+    }
+
+    /// Element type of an iterated sequence local when that element is a user
+    /// struct, which a combinator's callback receives by slot address rather
+    /// than as a loaded word.
+    fn iter_struct_elem_ty(&self, vec_local: Local) -> Option<Ty> {
+        use gossamer_types::TyKind;
+        let elem = match self.tcx.kind_of(self.locals[vec_local.0 as usize].ty) {
+            TyKind::Vec(elem) | TyKind::Slice(elem) => *elem,
+            _ => return None,
+        };
+        self.struct_name_of(elem)
+            .is_some_and(|name| self.struct_defs.values().any(|sn| sn == &name))
+            .then_some(elem)
+    }
+
+    /// True when the iterated sequence's elements are `f64`, whose slot bits a
+    /// combinator's callback must receive reinterpreted as a float.
+    fn iter_elem_is_float(&self, vec_local: Local) -> bool {
+        use gossamer_types::TyKind;
+        matches!(
+            self.tcx.kind_of(self.locals[vec_local.0 as usize].ty),
+            TyKind::Vec(elem) | TyKind::Slice(elem) if matches!(self.tcx.kind_of(*elem), TyKind::Float(_))
+        )
     }
 
     pub(crate) fn lower_iter_closure(

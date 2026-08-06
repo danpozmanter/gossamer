@@ -978,6 +978,8 @@ pub(super) fn lower_generic_rt_call(
             (&[ptr_ty, ptr_ty], Some(types::I64))
         }
         "gos_rt_iter_all_ptr" => (&[ptr_ty, ptr_ty], Some(types::I64)),
+        "gos_rt_iter_any_ptr" => (&[ptr_ty, ptr_ty], Some(types::I64)),
+        "gos_rt_iter_any_f64" => (&[ptr_ty, ptr_ty], Some(types::I64)),
         "gos_rt_lazy_iter_find_i64" => (&[ptr_ty, ptr_ty], Some(types::I128)),
         "gos_rt_lazy_iter_min_i64" | "gos_rt_lazy_iter_max_i64" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_lazy_iter_next_i64" => (&[ptr_ty], Some(types::I128)),
@@ -1003,6 +1005,7 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_iter_windowed_i64" => (&[types::I64, ptr_ty], Some(ptr_ty)),
         "gos_rt_iter_zip_i64" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_iter_position_i64" => (&[ptr_ty, ptr_ty], Some(types::I128)),
+        "gos_rt_iter_position_ptr" => (&[ptr_ty, ptr_ty], Some(types::I128)),
         "gos_rt_iter_product_by_i64" => (&[ptr_ty, ptr_ty], Some(types::I64)),
         "gos_rt_iter_reduce_i64" => (&[ptr_ty, ptr_ty], Some(types::I128)),
         "gos_rt_iter_scan_i64" => (&[types::I64, ptr_ty, ptr_ty], Some(ptr_ty)),
