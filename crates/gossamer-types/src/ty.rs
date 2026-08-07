@@ -248,10 +248,17 @@ pub enum TyKind {
     Slice(Ty),
     /// `Vec<T>` - built-in growable sequence.
     Vec(Ty),
-    /// `Iterator<T>` - linear lazy sequence state. This is an internal
-    /// compiler type until the edition-gated public iterator signatures and
-    /// backend lowering are enabled.
+    /// `Iterator<T>` - linear lazy sequence state, the type an adapter
+    /// chain produces.
     Iterator(Ty),
+    /// `Range<T>` - the bounded sequence a range expression produces.
+    ///
+    /// It shares `Iterator<T>`'s representation and method surface and
+    /// converts to it, so a range is accepted wherever an iterator is
+    /// required. The distinction exists so a range reports the type the
+    /// reader wrote. Lowering never sees it: [`crate::normalize_for_lowering`]
+    /// maps it to `Iterator` at the boundary into HIR.
+    Range(Ty),
     /// `HashMap<K, V>` - built-in hash map.
     HashMap {
         /// Key type.

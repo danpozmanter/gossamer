@@ -690,6 +690,7 @@ impl<'a> Lowerer<'a> {
                         | TyKind::Receiver(_)
                         | TyKind::JoinHandle(_)
                         | TyKind::Iterator(_)
+                        | TyKind::Range(_)
                         | TyKind::Adt { .. }
                         | TyKind::Closure { .. }
                         | TyKind::FnDef { .. }

@@ -2526,6 +2526,21 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Whether an iterable's type is a generic parameter, whose concrete
+    /// shape is only known once the call site is monomorphised.
+    fn iter_ty_is_generic_param(&mut self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        for _ in 0..8 {
+            match self.tcx.kind_of(cur) {
+                TyKind::Ref { inner, .. } => cur = *inner,
+                TyKind::Param { .. } => return true,
+                _ => return false,
+            }
+        }
+        false
+    }
+
     fn for_loop_uses_user_adt(&mut self, for_loop: &ForLoopShape<'_>) -> bool {
         use gossamer_types::TyKind;
 
@@ -2542,6 +2557,10 @@ impl<'a> Builder<'a> {
                 match self.tcx.kind_of(ty) {
                     TyKind::Ref { inner, .. } => ty = *inner,
                     TyKind::Adt { def, .. } => return def.local < u32::MAX - 64,
+                    // A type parameter's shape varies per instantiation, so
+                    // it walks through `.next()`, which its iteration bound
+                    // guarantees, rather than an indexed sequence read.
+                    TyKind::Param { .. } => return true,
                     _ => return false,
                 }
             }
@@ -2626,6 +2645,14 @@ impl<'a> Builder<'a> {
             } => operand.as_ref(),
             _ => for_loop.iter_expr,
         };
+        // A generic parameter's shape is fixed per instantiation, so none of
+        // the sequence fast paths below can describe it. It walks through
+        // the `next` protocol, which its iteration bound guarantees.
+        if self.iter_ty_is_generic_param(for_loop.iter_expr.ty)
+            || self.iter_ty_is_generic_param(probe_expr.ty)
+        {
+            return None;
+        }
         // `for x in s` over a `HashSet` value (a bare binding, or a
         // set-returning method like `a.union(&b)`). The set is a sentinel
         // `Adt`, so it would otherwise hit the Adt bail-out below and lower

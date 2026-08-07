@@ -1,7 +1,128 @@
 # Changelog
 
-## 0.43.1 - Leaf-module calls, JSON queries, and stdlib fixes
+## 0.44.0 -Authoritative trait bounds, diagnostic clarity, stdlib + other fixes
 
+- Name the fix for a `const` or `static` written without a type: `const y = 1e-12`
+  reported three errors, one of them about an empty name, and now reports
+  `GP0034` alone with `y: f64` as an applicable edit.
+- Render REPL diagnostics through the frame `gos check` and the LSP already use,
+  so one mistake reads identically everywhere; the REPL previously dropped every
+  error code, note, help, and suggestion.
+- Stop reporting names the parser invented while recovering. A failed name became
+  an empty or `<error>` spelling that later passes reported as missing, and whose
+  "did you mean" proposed replacing a name with itself.
+- Skip serde and derive synthesis when the source did not parse. Generated code
+  built from a recovered tree was reported against line numbers past the end of
+  the user's file; one unclosed brace produced 28 diagnostics, now one.
+- Withhold a "did you mean" whose edit distance reaches the length of the name it
+  corrects, and never propose a candidate identical to it.
+- Keep a missing stdlib import from also suggesting an unrelated name: the fix for
+  `iter::sum(v)` offered to rewrite it as `str::sum(v)`.
+- Draw "did you mean" from the scope where the name failed, so a mistyped local,
+  parameter, or closure binding is corrected; candidates were top-level item
+  names only, leaving the most common typo with no hint at all.
+- Name the module a misspelled `use` meant: `use std::json` now points at
+  `std::encoding::json` instead of restating that the path does not exist.
+- Print a suggested edit once rather than repeating it beside itself.
+- Drop the note under a type mismatch that restated the title verbatim.
+- Give `GP0001` a help line. The parser's most common error was its only one
+  with no guidance attached.
+- Resync to the closing delimiter after a bad token in a parameter list,
+  argument list, or generic list. A missing comma in `fn add(a: i64 b: i64)`
+  reported 9 parse errors and now reports one.
+- Say what was expected in the reader's terms: "a type name" rather than
+  "path segment identifier", the actual item keywords rather than "item
+  keyword", and the macro being parsed rather than "macro invocation".
+- Name `Vec` and `Set` in the `#` literal errors, which described `#[..]` as a
+  fixed array and `Set` as a hash set.
+- Report a refutable `let` written without its `else` block (`GP0037`); the
+  tail parsed as a struct literal and surfaced later as an unrelated error.
+- Report a repeated `..` in a slice pattern (`GP0035`) and a repeated `..base`
+  spread in a struct literal (`GP0036`) against the offending token.
+- Suppress the statement-separator error once the same statement has already
+  reported one; it was the terminal noise line of nearly every cascade.
+- Stop reporting a type that already failed to check. A nested unsized slice
+  produced follow-on errors naming `<error>`, a spelling absent from the
+  source; one stale program dropped from 190 diagnostics to 147.
+- Name the field or variant a typo meant, and list what the type declares,
+  rather than advising the reader to check that a definition just resolved is
+  in scope.
+- Suggest the method a receiver does carry: `p.nrom()` names `norm`, and
+  `v.lenght()` names `len`.
+- Explain an integer-to-float mismatch with the cast to write, and an
+  `Option<T>` used as `T` with the unwrap or `if let` to write.
+- Drop the advice to call `.as_str()` on a `String`, which has no such method.
+- Stop advising a cast to `i128` or `u128`, which the language rejects.
+- Point the unused-`Result` diagnostic at the call rather than the enclosing
+  block's closing brace.
+- Report a repeated import only when one name is bound to two different
+  paths; the same path imported twice is a lint, not an error.
+- Run exhaustiveness, arena-escape, and comptime checks in the LSP, which
+  reported none of them, and report generated-code failures against the
+  declaration that caused them instead of dropping them.
+- Run the default lints in `gos check`, which editors already reported.
+- Fail an MCP tool call when the command it ran failed, and return parsed
+  diagnostics rather than a text blob.
+- Give `Range<T>` the type a range expression produces. The name was in scope
+  but bound to nothing, so `fn f(it: Range<i64>)` type-checked and then
+  iterated zero times, silently returning 0 where 10 was correct.
+- Check a trait bound against its impls whenever the trait is declared in this
+  unit, even when its name matches a built-in one. Declaring `trait Ord` turned
+  off bound checking for every `T: Ord`, so an unrelated type was accepted.
+- Retire the `redundant_field_init` lint, which advised the field shorthand
+  `Point { x, y }` that named-struct construction rejects.
+- Read `#{a, b}` as a `Set` literal wherever an expression is allowed. At the
+  start of a block or as a tail expression it was taken for an attribute and
+  rejected as `GP0013`.
+- Remove `Atomic` from the prelude. It named no type anywhere in the compiler,
+  so `let x: Atomic = 5` type-checked and any use failed at run time; the
+  atomic types are `AtomicI64`, `AtomicI32`, `AtomicU64`, and `AtomicBool`.
+- Resolve a method on a generic parameter through its trait bounds alone
+  (`GT0056`). A call no bound declared bound an unrelated type's method body
+  and read the receiver at that type's field layout, which type-checked
+  cleanly and printed values built from the wrong fields.
+- Require a bound that provides iteration to write `for x in t` over a generic
+  parameter. The loop otherwise lowered against whatever shape each
+  instantiation happened to have, yielding zero iterations on the VM and a
+  fault in a native build.
+- Walk a generic parameter through the `next` protocol rather than an indexed
+  sequence read, so a user-defined iterator passed to a generic gives the same
+  answer on the VM, the JIT, and a native build.
+- Gate the type system on an adversarial suite covering arguments, numeric
+  conversion, references, collections, aggregates, and trait bounds.
+- Keep a value alive for as long as a `Weak` can reach it. `w.upgrade()` read
+  `None` for a referent that was still in use, and a native build faulted.
+- Reject a `use` naming an item its module does not export (`GR0007`), which
+  passed as an unused-import warning and failed at run time.
+- Import `Mutex`, `WaitGroup`, and the other `std::sync` primitives by name
+  rather than reading them from the prelude, so a bare `Mutex` reports the
+  missing import instead of binding a name that accepted any value.
+- Rebuild the musl runtime archive for every profile. `gos build --release`
+  links it whatever profile `gos` itself was built in, so a runtime change was
+  invisible to native builds until `gos` was rebuilt in release.
+- Build a release binary for a struct with no fields, which emitted a `void`
+  parameter into its generated serde body and failed to compile.
+- Lower `gos_rt_enum_box_aggr` on the JIT, which bailed the whole enclosing
+  body back to bytecode.
+- Document `GR0005`, which the generated diagnostics page omitted.
+- Reject passing a built-in iterator to a parameter bound by an iteration
+  trait (`GT0057`), pointing at the parameter spelling every tier lowers. The
+  call reached the native backend as an internal lowering failure.
+- Answer `m.lock()` with the `()` its documentation states. It handed back the
+  guarded value on the VM and nothing on a native build, so the same source
+  read differently per tier.
+- Report a range as `Range<i64>`, the type written, rather than the internal
+  `Iterator<i64>`. A range converts to the iterator it advances through, and
+  only in that direction, so an adapter chain is still not a range.
+- Type a closure argument from the callback slot it fills. A signature naming
+  `Fn(..)` left the closure's parameters unresolved, so a field read inside the
+  body took the dynamic path and produced bytes rather than the field on a
+  native build; `fs::walk_dir` and `path::walk` now visit identically on every
+  tier.
+- Resolve a stdlib handle named in a signature to the same type a written
+  annotation gets, so `fs::DirInfo` carries its fields either way.
+- Type `fs::walk_dir` from its declared signature rather than pinning it to the
+  listing form's return type, and give `path::walk` the signature it lacked.
 - Bind every nested stdlib function under its leaf-module spelling, so
   `use std::compress::gzip` plus `gzip::encode(..)` runs on the VM the way it
   already built natively; 158 functions type-checked and then failed at

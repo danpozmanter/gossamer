@@ -119,7 +119,20 @@ impl Parser<'_> {
     }
 
     fn parse_fn_type_after_keyword(&mut self, kind: FnTypeKind) -> TypeKind {
-        self.expect_punct(Punct::LParen, "to start function parameter types");
+        let keyword = kind.as_str();
+        if !self.eat_punct(Punct::LParen) {
+            self.record(
+                ParseError::unexpected_help(
+                    format!("`(` after `{keyword}` in a function type"),
+                    self.peek_text(),
+                    format!(
+                        "write the parameter types in parentheses, as in `{keyword}(i64) -> i64`"
+                    ),
+                ),
+                self.peek_span(),
+            );
+            return self.parse_fn_type_unparenthesised(kind);
+        }
         let mut params = Vec::new();
         while !self.at_punct(Punct::RParen) && !self.at_eof() {
             params.push(self.parse_type());
@@ -127,7 +140,28 @@ impl Parser<'_> {
                 break;
             }
         }
-        self.expect_punct(Punct::RParen, "to close function parameter types");
+        if !self.expect_punct(Punct::RParen, "to close the function type's parameter list") {
+            self.recover_to_close(Punct::LParen, Punct::RParen);
+        }
+        let ret = if self.eat_punct(Punct::Arrow) {
+            Some(Box::new(self.parse_type()))
+        } else {
+            None
+        };
+        TypeKind::Fn { kind, params, ret }
+    }
+
+    /// Reads the parameter and return types of a function type written
+    /// without its parentheses, so the surrounding list still meets its
+    /// own delimiters and one missing `(` costs one diagnostic.
+    fn parse_fn_type_unparenthesised(&mut self, kind: FnTypeKind) -> TypeKind {
+        let mut params = Vec::new();
+        while !self.at_eof() && !self.at_close_angle() && !closes_type_position(self) {
+            params.push(self.parse_type());
+            if !self.eat_punct(Punct::Comma) {
+                break;
+            }
+        }
         let ret = if self.eat_punct(Punct::Arrow) {
             Some(Box::new(self.parse_type()))
         } else {
@@ -190,13 +224,10 @@ impl Parser<'_> {
             }
             _ => {
                 self.record(
-                    ParseError::Unexpected {
-                        expected: "path segment identifier".to_string(),
-                        found: self.peek_text(),
-                    },
+                    ParseError::unexpected("a type name", self.peek_text()),
                     token.span,
                 );
-                String::new()
+                gossamer_ast::ERROR_IDENT.to_string()
             }
         }
     }
@@ -264,4 +295,17 @@ fn is_non_generic_primitive(name: &str) -> bool {
             | "char"
             | "str"
     )
+}
+
+/// Returns `true` when the cursor sits on a token that can only follow a
+/// type, never begin one.
+fn closes_type_position(parser: &Parser<'_>) -> bool {
+    parser.at_punct(Punct::RParen)
+        || parser.at_punct(Punct::RBracket)
+        || parser.at_punct(Punct::RBrace)
+        || parser.at_punct(Punct::LBrace)
+        || parser.at_punct(Punct::Comma)
+        || parser.at_punct(Punct::Semi)
+        || parser.at_punct(Punct::Arrow)
+        || parser.at_punct(Punct::Eq)
 }

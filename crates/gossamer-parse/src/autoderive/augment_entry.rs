@@ -16,7 +16,16 @@ pub fn augment_source(source: &str) -> String {
     let (serde, derives, type_info) = if source_may_need_ast_synthesis(source) {
         let mut probe_map = SourceMap::new();
         let probe_file = probe_map.add_file("<autoderive-probe>", source.to_string());
-        let (parsed, _) = crate::parse_source_file(source, probe_file);
+        let (parsed, probe_diags) = crate::parse_source_file(source, probe_file);
+        // Synthesis reads item names, fields, and types out of the tree and
+        // splices the result back as source. A tree built through error
+        // recovery carries placeholder names and dropped items, so anything
+        // derived from it would be reported against spans in the appended
+        // text rather than anything the user wrote. The parse diagnostics
+        // are the actionable report in that case.
+        if !probe_diags.is_empty() {
+            return source.to_string();
+        }
         let serde = synthesize_serde_impls(&parsed);
         let derives = synthesize_derive_impls(&parsed);
         // Field-reflection functions for `typeInfo::<T>()`, emitted only

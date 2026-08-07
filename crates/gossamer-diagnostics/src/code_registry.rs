@@ -110,10 +110,6 @@ pub const REGISTRY: &[(&str, &str)] = &[
             keep the body once.",
     ),
     (
-        "GL0020",
-        "`Foo { x: x }` is the same as the shorthand `Foo { x }`.",
-    ),
-    (
         "GL0021",
         "`if cond { return X } else { Y }` - the `else` is unreachable\n\
             fall-through. Un-nest the `else` body.",
@@ -452,6 +448,30 @@ pub const REGISTRY: &[(&str, &str)] = &[
         "A bracket spelling that used to build a container is no longer syntax. Construct the container through its type instead: `Type::new()` for an empty one, or `Type::from([a, b, c])`.",
     ),
     (
+        "GP0034",
+        "A `const` or `static` item was declared without a type annotation.\n\
+                     These items are never inferred from their initialiser, so the type\n\
+                     is written after the name: `const EPS: f64 = 1e-12`.",
+    ),
+    (
+        "GP0035",
+        "A slice pattern wrote more than one `..`. One rest binding splits the\n\
+            elements into a prefix and a suffix, as in `[first, ..rest, last]`;\n\
+            a second `..` has no elements left to describe.",
+    ),
+    (
+        "GP0036",
+        "A struct literal wrote more than one `..base` functional update. Keep a\n\
+            single base value and list every field you want to override\n\
+            explicitly.",
+    ),
+    (
+        "GP0037",
+        "A `let` whose pattern can fail to match was written without an `else`\n\
+            block. Give the failure a diverging path: `let Some(x) = opt else\n\
+            { return }`.",
+    ),
+    (
         "GR0001",
         "A name used in source could not be resolved to a declaration.\n\
                      Check the spelling, whether a `use` brings the name into scope,\n\
@@ -483,6 +503,12 @@ pub const REGISTRY: &[(&str, &str)] = &[
     (
         "GR0006",
         "A container spelling that a canonical name replaced. Each container has exactly one name - import and write that one.",
+    ),
+    (
+        "GR0007",
+        "The `use` names a module that exists but an item that module does\n\
+                     not export. Check the item spelling; `gos doc std::<module>`\n\
+                     lists every name a module exports.",
     ),
     (
         "GT0001",
@@ -820,6 +846,19 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      or arrays. Channels also reject aggregates containing nested Vec\n\
                      storage. Publish supported fields separately and reconstruct the\n\
                      aggregate in the receiver.",
+    ),
+    (
+        "GT0056",
+        "A method was called on a generic parameter that none of its trait\n\
+                     bounds declares. A parameter stands for every type a caller\n\
+                     may supply, so its bounds are the whole of what it can do.\n\
+                     Bound the parameter by a trait that declares the method.",
+    ),
+    (
+        "GT0057",
+        "A built-in iterator was passed to a parameter bound by an iteration\n\
+                     trait. Only a type with an impl block can specialise such a\n\
+                     call, so name the iterator type on the parameter directly.",
     ),
     (
         "GX0001",

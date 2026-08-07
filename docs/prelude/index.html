@@ -2415,21 +2415,26 @@ compile time.</p>
 </tr>
 <tr>
 <td>Wrappers</td>
-<td><code>Option&lt;T&gt;</code>, <code>Result&lt;T, E&gt;</code>, <code>Box&lt;T&gt;</code>, <code>Rc&lt;T&gt;</code>, <code>Arc&lt;T&gt;</code>, <code>Weak&lt;T&gt;</code></td>
+<td><code>Option</code>, <code>Result</code>, <code>Box</code>, <code>Rc</code>, <code>Arc</code>, <code>Weak</code></td>
 <td>Sum types and managed-runtime compatibility wrappers.</td>
 </tr>
 <tr>
 <td>Collections</td>
-<td><code>Vec&lt;T&gt;</code>, <code>Map&lt;K, V&gt;</code>, <code>Set&lt;T&gt;</code>, <code>BTreeSet&lt;T&gt;</code>, <code>BTreeMap&lt;K, V&gt;</code>, <code>Deque&lt;i64&gt;</code>, <code>Queue&lt;i64&gt;</code>, <code>Stack&lt;i64&gt;</code>, <code>MaxHeap&lt;i64&gt;</code>, <code>MinHeap&lt;i64&gt;</code>, <code>Range</code>, <code>Iterator&lt;T&gt;</code></td>
+<td><code>Vec</code>, <code>Map</code>, <code>Set</code>, <code>BTreeSet</code>, <code>BTreeMap</code>, <code>Deque</code>, <code>Queue</code>, <code>Stack</code>, <code>MaxHeap</code>, <code>MinHeap</code>, <code>Range</code>, <code>Iterator</code></td>
 <td>Core collection and sequence types.</td>
 </tr>
 <tr>
 <td>Concurrency</td>
-<td><code>Sender&lt;T&gt;</code>, <code>Receiver&lt;T&gt;</code>, <code>Mutex&lt;T&gt;</code>, <code>WaitGroup</code>, <code>JoinHandle&lt;T&gt;</code></td>
+<td><code>Sender</code>, <code>Receiver</code>, <code>Mutex</code>, <code>WaitGroup</code>, <code>JoinHandle</code></td>
 <td>Channel, lock, wait, and goroutine-handle types.</td>
 </tr>
 </tbody>
 </table>
+<p><code>Range</code> is the type of a <code>0..n</code> bound: iterator state over a bounded integer
+sequence, so it answers the same combinator surface <code>Iterator</code> does.</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">counted</span>: <span class="nc">Range</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="o">..</span><span class="mi">5</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">counted</span><span class="p">.</span><span class="n">rev</span><span class="p">().</span><span class="n">collect</span><span class="p">())</span>
+</code></pre></div>
 <h2 id="runtime-statements">Runtime statements<a class="headerlink" href="#runtime-statements" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

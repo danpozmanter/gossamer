@@ -14,13 +14,30 @@ pub struct ResolveDiagnostic {
     pub error: ResolveError,
     /// Where in the source the error was detected.
     pub span: Span,
+    /// Closest name visible where the error was raised.
+    ///
+    /// Locals, parameters, and closure bindings exist only in the resolver's
+    /// scope stack, so the candidate is captured at the point of failure;
+    /// nothing downstream can reconstruct that scope.
+    pub in_scope_candidate: Option<String>,
 }
 
 impl ResolveDiagnostic {
     /// Constructs a diagnostic pairing an error with its source span.
     #[must_use]
     pub const fn new(error: ResolveError, span: Span) -> Self {
-        Self { error, span }
+        Self {
+            error,
+            span,
+            in_scope_candidate: None,
+        }
+    }
+
+    /// Attaches the closest name that was visible where the error was raised.
+    #[must_use]
+    pub fn with_candidate(mut self, candidate: Option<String>) -> Self {
+        self.in_scope_candidate = candidate;
+        self
     }
 }
 
@@ -68,6 +85,15 @@ pub enum ResolveError {
         /// Conflicting name.
         name: String,
     },
+    /// A `use` path whose module exists but which names an item that
+    /// module does not export.
+    #[error("no `{name}` in `std::{module}`")]
+    UnknownStdItem {
+        /// Item name as written.
+        name: String,
+        /// `std::`-relative path of the module that was searched.
+        module: String,
+    },
     /// A `use` path naming a spelling that a canonical type replaced.
     #[error("`{path}` does not exist - use `{replacement}` instead")]
     RemovedStdItem {
@@ -88,8 +114,35 @@ impl ResolveError {
             Self::WrongNamespace { .. } => "wrong-namespace",
             Self::DuplicateItem { .. } => "duplicate-item",
             Self::DuplicateImport { .. } => "duplicate-import",
+            Self::UnknownStdItem { .. } => "unknown-std-item",
             Self::RemovedStdItem { .. } => "removed-std-item",
         }
+    }
+
+    /// Whether this error is about a name the parser fabricated during
+    /// recovery rather than one the user wrote.
+    ///
+    /// The parse error that produced the placeholder is the actionable
+    /// report; repeating it as an unresolved name would point the user at
+    /// a name that does not appear in their source.
+    #[must_use]
+    pub fn is_about_parse_placeholder(&self) -> bool {
+        let reported = match self {
+            Self::UnresolvedName { name }
+            | Self::WrongNamespace { name, .. }
+            | Self::DuplicateItem { name }
+            | Self::DuplicateImport { name } => name,
+            Self::UnknownModulePath { path } | Self::RemovedStdItem { path, .. } => path,
+            Self::UnknownStdItem { name, module } => {
+                return name
+                    .split("::")
+                    .chain(module.split("::"))
+                    .any(gossamer_ast::common::is_error_name);
+            }
+        };
+        reported
+            .split("::")
+            .any(gossamer_ast::common::is_error_name)
     }
 
     /// Stable error code used by the diagnostics framework.
@@ -102,6 +155,7 @@ impl ResolveError {
             Self::DuplicateImport { .. } => "GR0004",
             Self::UnknownModulePath { .. } => "GR0005",
             Self::RemovedStdItem { .. } => "GR0006",
+            Self::UnknownStdItem { .. } => "GR0007",
         }
     }
 }
@@ -132,20 +186,35 @@ impl ResolveDiagnostic {
                         .is_some_and(|prefix| prefix.ends_with("::"))
             });
             if let (Some(path), None) = (module_paths.next(), module_paths.next()) {
-                out = out.with_help(format!(
+                // The name is a real stdlib module, so the import is the fix.
+                // A spelling candidate found below would be a different name
+                // entirely, and applying it would rewrite a correct call onto
+                // an unrelated type.
+                return out.with_help(format!(
                     "standard library module `{name}` is not in scope; add `use std::{path}`"
                 ));
             }
-            if let Some(suggestion) = suggest(name, in_scope.iter().copied(), 2)
+            if let Some(module) = crate::stdlib_exports::sole_stdlib_module_exporting(name) {
+                // Exactly one standard library module exports this name, so
+                // the import is unambiguous. A spelling candidate found below
+                // would name a different item entirely.
+                return out.with_help(format!(
+                    "`{name}` is exported by `std::{module}`; add `use std::{module}::{name}`"
+                ));
+            }
+            // The scope-derived candidate is checked first: it is the only
+            // one that can name a local, a parameter, or a closure binding.
+            if let Some(suggestion) = self
+                .in_scope_candidate
+                .as_deref()
+                .or_else(|| suggest(name, in_scope.iter().copied(), 2))
                 .or_else(|| suggest(name, crate::scope::prelude_suggestion_names(), 2))
             {
-                let msg = format!("did you mean `{suggestion}`?");
                 out = out.with_suggestion(Suggestion::replacement(
                     location,
-                    msg.clone(),
+                    format!("did you mean `{suggestion}`?"),
                     suggestion.to_string(),
                 ));
-                out = out.with_help(msg);
             }
         } else {
             out = match &self.error {
@@ -156,9 +225,18 @@ impl ResolveDiagnostic {
                 } => out.with_help(format!(
                     "use a {expected} in this position; `{name}` resolves to a {found}"
                 )),
-                ResolveError::UnknownModulePath { path } => out.with_help(format!(
-                    "check `{path}` against the standard library module list or registered external items"
-                )),
+                ResolveError::UnknownModulePath { path } => match closest_module_path(path) {
+                    Some(known) => out.with_suggestion(Suggestion::replacement(
+                        location,
+                        format!("did you mean `std::{known}`?"),
+                        format!("std::{known}"),
+                    )),
+                    None => out.with_help(
+                        "a standard library path is spelled in full, as in \
+                             `use std::encoding::json`; `gos doc std` lists the modules"
+                            .to_string(),
+                    ),
+                },
                 ResolveError::DuplicateItem { name } => out.with_help(format!(
                     "rename or remove one `{name}` declaration in this module"
                 )),
@@ -169,9 +247,38 @@ impl ResolveDiagnostic {
                     "`{replacement}` is the one spelling for this type; import it as \
                      `use std::collections::{replacement}`"
                 )),
+                ResolveError::UnknownStdItem { name, module } => {
+                    let exports = crate::stdlib_exports::stdlib_module_item_names(module);
+                    match suggest(name, exports.iter().copied(), 2) {
+                        Some(known) => out.with_suggestion(Suggestion::replacement(
+                            location,
+                            format!("did you mean `std::{module}::{known}`?"),
+                            format!("std::{module}::{known}"),
+                        )),
+                        None => out.with_help(format!(
+                            "`gos doc std::{module}` lists what this module exports"
+                        )),
+                    }
+                }
                 ResolveError::UnresolvedName { .. } => out,
             };
         }
         out
     }
+}
+
+/// Closest real standard library module path to `path`.
+///
+/// Compares the leaf segment as well as the whole path, so the common
+/// mistake of omitting an intermediate namespace (`std::json` for
+/// `std::encoding::json`) resolves to the module the user meant.
+fn closest_module_path(path: &str) -> Option<&'static str> {
+    let written = path.strip_prefix("std::").unwrap_or(path);
+    if let Some(exact) = crate::STDLIB_MODULE_PATHS
+        .iter()
+        .find(|known| known.rsplit("::").next() == Some(written))
+    {
+        return Some(exact);
+    }
+    gossamer_diagnostics::suggest(written, crate::STDLIB_MODULE_PATHS.iter().copied(), 2)
 }

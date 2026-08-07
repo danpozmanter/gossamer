@@ -234,11 +234,38 @@ pub struct Ident {
     pub name: String,
 }
 
+/// Spelling the parser substitutes for a name it could not read.
+///
+/// It is not a legal identifier, so it can never collide with user source.
+/// Later passes recognise it through [`Ident::is_error`] and stay silent,
+/// leaving the parse diagnostic that produced it as the only report.
+pub const ERROR_IDENT: &str = "<error>";
+
 impl Ident {
     /// Constructs an identifier from any `Into<String>`.
     pub fn new(name: impl Into<String>) -> Self {
         Self { name: name.into() }
     }
+
+    /// Placeholder standing in for a name the parser could not read.
+    #[must_use]
+    pub fn error() -> Self {
+        Self::new(ERROR_IDENT)
+    }
+
+    /// Whether this name is a parse-error placeholder rather than a name
+    /// the user wrote. An empty spelling counts: it is unreachable from
+    /// valid source and only ever arises from failed recovery.
+    #[must_use]
+    pub fn is_error(&self) -> bool {
+        self.name.is_empty() || self.name == ERROR_IDENT
+    }
+}
+
+/// Whether a raw name spelling is a parse-error placeholder.
+#[must_use]
+pub fn is_error_name(name: &str) -> bool {
+    name.is_empty() || name == ERROR_IDENT
 }
 
 #[cfg(test)]

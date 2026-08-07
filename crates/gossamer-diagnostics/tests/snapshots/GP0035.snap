@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0035]: A slice pattern wrote more than one `..`. One rest binding splits the - here
+--- framed ---
+error[GP0035]: A slice pattern wrote more than one `..`. One rest binding splits the
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

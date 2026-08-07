@@ -333,15 +333,27 @@ pub fn edit_distance(a: &str, b: &str) -> usize {
 
 /// Returns the best "did you mean" candidate for `target` from
 /// `candidates` under the given edit-distance budget.
+///
+/// A candidate must share more with `target` than it differs: the edit
+/// distance is also capped below `target`'s length, so a short or empty
+/// target cannot match an unrelated name. A candidate equal to `target`
+/// is never suggested, since replacing a name with itself is no fix.
 #[must_use]
 pub fn suggest<'a, I>(target: &str, candidates: I, max_distance: usize) -> Option<&'a str>
 where
     I: IntoIterator<Item = &'a str>,
 {
+    let budget = max_distance.min(target.chars().count().saturating_sub(1));
+    if budget == 0 {
+        return None;
+    }
     let mut best: Option<(&str, usize)> = None;
     for candidate in candidates {
+        if candidate == target {
+            continue;
+        }
         let distance = edit_distance(target, candidate);
-        if distance > max_distance {
+        if distance > budget {
             continue;
         }
         match best {

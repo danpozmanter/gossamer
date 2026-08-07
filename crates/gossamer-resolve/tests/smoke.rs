@@ -97,10 +97,43 @@ fn let_binding_shadows_and_resolves_to_local() {
 
 #[test]
 fn use_list_imports_each_name_into_scope() {
-    let source = "use std::sync::atomic::{AtomicU64, Ordering}\n\nfn main() {\n    AtomicU64::new(0)\n    Ordering::Relaxed\n}\n";
+    let source = "use std::sync::{AtomicU64, WaitGroup}\n\nfn main() {\n    AtomicU64::new(0)\n    WaitGroup::new()\n}\n";
     let sf = parse(source);
     let (_resolutions, diags) = resolve_source_file(&sf);
     assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+}
+
+#[test]
+fn use_of_an_item_no_module_exports_reports_it() {
+    for source in [
+        "use std::sync::Frobnicator\n",
+        "use std::sync::{Mutex, Frobnicator}\n",
+    ] {
+        let sf = parse(source);
+        let (_resolutions, diags) = resolve_source_file(&sf);
+        let tags: Vec<&str> = diags.iter().map(|d| d.error.tag()).collect();
+        assert_eq!(tags, ["unknown-std-item"], "for {source:?}");
+    }
+}
+
+#[test]
+fn use_of_a_real_stdlib_item_resolves() {
+    for source in [
+        "use std::sync::Mutex\n",
+        "use std::sync::{Mutex, WaitGroup, channel}\n",
+        "use std::{env, fs}\n",
+        "use std::encoding::json::Value\n",
+        "use std::collections::{Map, Set}\n",
+        "use std::io as printing\n",
+        "use std::fs::DirInfo\n",
+    ] {
+        let sf = parse(source);
+        let (_resolutions, diags) = resolve_source_file(&sf);
+        assert!(
+            diags.is_empty(),
+            "unexpected diagnostics for {source:?}: {diags:?}"
+        );
+    }
 }
 
 #[test]

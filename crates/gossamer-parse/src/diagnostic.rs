@@ -16,10 +16,14 @@ pub enum ParseError {
     /// does not double-wrap.
     #[error("unexpected {found}, expected {expected}")]
     Unexpected {
-        /// Human-readable description of what was expected.
+        /// Human-readable description of what was expected. Reads as the
+        /// tail of "expected ...", so it stays a noun phrase; guidance
+        /// belongs in `help`.
         expected: String,
         /// Source text of the token that was actually seen.
         found: String,
+        /// Optional guidance rendered as the diagnostic's help line.
+        help: Option<String>,
     },
     /// End of file encountered while parsing a construct.
     #[error("unexpected end of input while parsing {construct}")]
@@ -156,6 +160,19 @@ pub enum ParseError {
     /// every value must correspond to an explicit positional placeholder.
     #[error("piped format value needs an explicit positional placeholder")]
     PipedFormatArgumentNeedsPlaceholder,
+    /// A `const` or `static` declaration whose name was followed directly by
+    /// `=`. These items carry no inference, so the type annotation is part of
+    /// the grammar rather than an option.
+    #[error("{kind} `{name}` needs a type annotation")]
+    MissingItemType {
+        /// Item keyword, `constant` or `static`.
+        kind: &'static str,
+        /// The item's declared name.
+        name: String,
+        /// Type spelling inferred from the initialiser, when it is a literal
+        /// whose type is known without inference.
+        inferred: Option<&'static str>,
+    },
     /// A bracket literal spelling for a container that is now constructed
     /// through its type: `<[..]`, `[..]>`, `^[..]`, `_[..]`.
     #[error("`{spelling}` literals are not valid syntax - construct a `{container}` instead")]
@@ -165,7 +182,6 @@ pub enum ParseError {
         /// The container the spelling used to build.
         container: String,
     },
-    /// A repeat literal written with the Vec spelling (`#[value; count]`).
     /// A struct used in a `to_json` / `from_json` (or toml/yaml) call has a
     /// field whose type the serde synthesizer cannot handle. Without this the
     /// whole struct's serde was silently dropped and the call surfaced only as
@@ -183,6 +199,17 @@ pub enum ParseError {
         /// The serde operation requested (`to_json`, `from_json`, ...).
         op: String,
     },
+    /// A slice pattern wrote a second `..`. One rest binding splits the
+    /// elements into a prefix and a suffix; a second one has no meaning.
+    #[error("a slice pattern may contain at most one `..`")]
+    SlicePatternExtraRest,
+    /// A struct literal wrote a second `..base` functional update.
+    #[error("a struct literal may contain at most one `..base` spread")]
+    StructLiteralExtraSpread,
+    /// A `let` whose pattern can fail to match was written without the
+    /// `else` block that gives the failure a diverging path.
+    #[error("a refutable `let` pattern requires an `else` block")]
+    RefutableLetNeedsElse,
 }
 
 /// A diagnostic with its source location.
@@ -223,25 +250,66 @@ impl ParseDiagnostic {
     /// [`gossamer_diagnostics::Diagnostic`].
     #[must_use]
     pub fn to_diagnostic(&self) -> gossamer_diagnostics::Diagnostic {
-        use gossamer_diagnostics::{Code, Diagnostic, Location};
+        use gossamer_diagnostics::{Code, Diagnostic, Location, Suggestion};
         let location = Location::new(self.span.file, self.span);
         let (code, title, help) = self.error.code_title_help();
         let mut out = Diagnostic::error(Code(code), title.clone()).with_primary(location, title);
         if let Some(help) = help {
             out = out.with_help(help);
         }
+        // The span of a missing-type diagnostic is the item's name, so the
+        // annotated name is a drop-in replacement an editor can apply.
+        if let ParseError::MissingItemType {
+            name,
+            inferred: Some(ty),
+            ..
+        } = &self.error
+        {
+            out = out.with_suggestion(Suggestion::replacement(
+                location,
+                format!("annotate the type: `{name}: {ty}`"),
+                format!("{name}: {ty}"),
+            ));
+        }
         out
     }
 }
 
 impl ParseError {
+    /// Builds an unexpected-token error carrying no extra guidance.
+    pub(crate) fn unexpected(expected: impl Into<String>, found: String) -> Self {
+        ParseError::Unexpected {
+            expected: expected.into(),
+            found,
+            help: None,
+        }
+    }
+
+    /// Builds an unexpected-token error whose `help` line carries the
+    /// guidance, keeping `expected` a bare noun phrase.
+    pub(crate) fn unexpected_help(
+        expected: impl Into<String>,
+        found: String,
+        help: impl Into<String>,
+    ) -> Self {
+        ParseError::Unexpected {
+            expected: expected.into(),
+            found,
+            help: Some(help.into()),
+        }
+    }
+
     /// Diagnostic code, title, and optional help text for this error.
     fn code_title_help(&self) -> (&'static str, String, Option<String>) {
         match self {
-            ParseError::Unexpected { expected, found } => (
+            ParseError::Unexpected {
+                expected,
+                found,
+                help,
+            } => (
                 "GP0001",
                 format!("unexpected {found}, expected {expected}"),
-                None,
+                help.clone(),
             ),
             ParseError::UnexpectedEof { construct } => (
                 "GP0002",
@@ -314,17 +382,6 @@ impl ParseError {
                 Some("split the expression into smaller helpers".to_string()),
             ),
             ParseError::Lex { message } => ("GP0018", message.clone(), None),
-            ParseError::RemovedCollectionLiteral {
-                spelling,
-                container,
-            } => (
-                "GP0032",
-                format!("`{spelling}` literals are not valid syntax"),
-                Some(format!(
-                    "build the container through its type: `{container}::new()` for an empty one, \
-                     or `{container}::from([a, b, c])` from a Vec literal"
-                )),
-            ),
             other => other.code_title_help_malformed(),
         }
     }
@@ -482,9 +539,70 @@ impl ParseError {
                      Map<String, _>, json::Value, or a nested struct), or hand-write `{op}`"
                 )),
             ),
-            // Every other variant is handled by `code_title_help`; this split
-            // exists only to keep that match under the line cap.
-            _ => unreachable!("code_title_help dispatches non-entry variants"),
+            other => other.code_title_help_shape(),
+        }
+    }
+
+    /// Code/title/help for the item-annotation, literal-spelling, and
+    /// construct-shape errors.
+    fn code_title_help_shape(&self) -> (&'static str, String, Option<String>) {
+        match self {
+            ParseError::MissingItemType {
+                kind,
+                name,
+                inferred,
+            } => (
+                "GP0034",
+                format!("{kind} `{name}` needs a type annotation"),
+                // With a type inferred from the initialiser the suggestion
+                // below carries the exact edit, so a help would repeat it.
+                match inferred {
+                    Some(_) => None,
+                    None => Some(format!(
+                        "write the type after the name, as in `{name}: i64`; a {kind} is never \
+                         inferred from its value"
+                    )),
+                },
+            ),
+            ParseError::RemovedCollectionLiteral {
+                spelling,
+                container,
+            } => (
+                "GP0032",
+                format!("`{spelling}` literals are not valid syntax"),
+                Some(format!(
+                    "build the container through its type: `{container}::new()` for an empty one, \
+                     or `{container}::from([a, b, c])` from a Vec literal"
+                )),
+            ),
+            ParseError::SlicePatternExtraRest => (
+                "GP0035",
+                "a slice pattern may contain at most one `..`".to_string(),
+                Some(
+                    "keep a single `..`; elements before it form the prefix and those after it \
+                     the suffix, as in `[first, ..rest, last]`"
+                        .to_string(),
+                ),
+            ),
+            ParseError::StructLiteralExtraSpread => (
+                "GP0036",
+                "a struct literal may contain at most one `..base` spread".to_string(),
+                Some(
+                    "keep a single `..base` and list every field you want to override explicitly"
+                        .to_string(),
+                ),
+            ),
+            ParseError::RefutableLetNeedsElse => (
+                "GP0037",
+                "a refutable `let` pattern requires an `else` block".to_string(),
+                Some(
+                    "write `let Some(x) = opt else { return }`; the `else` block must diverge"
+                        .to_string(),
+                ),
+            ),
+            // Every other variant is handled earlier in the chain; this
+            // split exists only to keep each match under the line cap.
+            _ => unreachable!("code_title_help dispatches every other variant"),
         }
     }
 }

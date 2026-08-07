@@ -51,13 +51,17 @@ impl McpClient {
         json::parse(line.trim()).unwrap()
     }
 
-    fn call_tool(&mut self, name: &str, arguments: &str) -> String {
+    fn call_tool_result(&mut self, name: &str, arguments: &str) -> Value {
         let reply = self.request(
             "tools/call",
             &format!("{{\"name\":\"{name}\",\"arguments\":{arguments}}}"),
         );
-        let result = json::get(&reply, "result").expect("tool result");
-        let content = json::get(result, "content")
+        json::get(&reply, "result").expect("tool result").clone()
+    }
+
+    fn call_tool(&mut self, name: &str, arguments: &str) -> String {
+        let result = self.call_tool_result(name, arguments);
+        let content = json::get(&result, "content")
             .and_then(json::as_array)
             .unwrap();
         json::get(&content[0], "text")
@@ -85,17 +89,29 @@ fn check_execute_and_timeout_work_end_to_end() {
 
     let mut client = McpClient::start();
 
-    // A parser error surfaces through `check` as a structured diagnostic.
+    // A parser error surfaces through `check` as a failed tool call whose
+    // diagnostics arrive parsed, not as a blob the caller has to re-split.
     let bad = dir.join("bad.gos");
     std::fs::write(&bad, "fn main() { let x = }\n").unwrap();
-    let text = client.call_tool("check", &format!("{{\"file\":\"{}\"}}", json_path(&bad)));
-    assert!(
-        text.contains("exit code: 1"),
-        "invalid syntax must fail MCP check: {text}"
+    let result = client.call_tool_result("check", &format!("{{\"file\":\"{}\"}}", json_path(&bad)));
+    assert_eq!(
+        json::get(&result, "isError").and_then(json::as_bool),
+        Some(true),
+        "invalid syntax must fail MCP check: {result:?}"
     );
+    let report = json::get(&result, "structuredContent").expect("structured check report");
+    assert_eq!(
+        json::get(report, "exitCode").and_then(json::as_i64),
+        Some(1)
+    );
+    let diagnostics = json::get(report, "diagnostics")
+        .and_then(json::as_array)
+        .expect("parsed diagnostics");
     assert!(
-        text.contains("\"code\":\"GP0001\""),
-        "MCP check omitted parser diagnostic: {text}"
+        diagnostics
+            .iter()
+            .any(|diag| json::get(diag, "code").and_then(json::as_str) == Some("GP0001")),
+        "MCP check omitted parser diagnostic: {diagnostics:?}"
     );
 
     // A clean program runs and its stdout comes back.

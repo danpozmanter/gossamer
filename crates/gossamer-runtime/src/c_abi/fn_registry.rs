@@ -49,6 +49,10 @@ pub enum FnKind {
     /// `extern "C" fn(*const u8, *const u8) -> i64`. Aggregate sort
     /// comparator (a-ptr, b-ptr -> ordering).
     SortCmpAggr,
+    /// `extern "C" fn(env: *const u8, entry: i64) -> i128`. `fs::walk_dir`
+    /// visitor callback - `entry` is a `fs::DirInfo` blob address, the
+    /// packed i128 result is the visitor's `Result<(), errors::Error>`.
+    WalkVisit,
     /// `extern "C" fn(i64) -> i64`. Unary i64 callback.
     UnaryI64ToI64,
     /// `extern "C" fn(i64, i64) -> i64`. Binary i64 callback

@@ -165,6 +165,9 @@ nix = { version = "0.31", default-features = false, features = ["user", "fs", "p
 # Self-signed PEM keypair generation for native-client TLS tests.
 # Never compiled into the shipped crate.
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
+# The resolver validates `use std::module::Item` leaves against a
+# checked-in copy of this crate's manifest; a test pins the two together.
+gossamer-resolve = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 # Signal delivery + process-group control for `std::exec`.

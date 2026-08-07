@@ -2129,7 +2129,7 @@ fn extern_declare(body: &Body, tcx: &TyCtxt) -> String {
             params.push_str(", ");
         }
         let local = gossamer_mir::Local(i + 1);
-        let p_ty = crate::ty::render_ty(tcx, body.local_ty(local));
+        let p_ty = crate::ty::param_llvm_ty(tcx, body.local_ty(local));
         let _ = write!(params, "{p_ty}");
     }
     format!(

@@ -57,9 +57,10 @@ const POSITION_ARGS: &[Arg] = &[
 const TOOLS: &[Tool] = &[
     Tool {
         name: "check",
-        description: "Parse + resolve + typecheck a Gossamer file or project. Returns one \
-                      JSON object per diagnostic (stable schema). Empty output means no \
-                      findings.",
+        description: "Parse + resolve + typecheck + exhaustiveness + arena-escape + lints \
+                      for a Gossamer file or project. `structuredContent.diagnostics` holds \
+                      one parsed object per diagnostic (stable schema); an empty array means \
+                      no findings.",
         args: &[Arg {
             name: "file",
             ty: "string",
@@ -249,7 +250,7 @@ pub(crate) fn call(
     };
     let args = field(params, "arguments");
     let outcome = match name {
-        "check" => exec_tool(config, check_args(args), args),
+        "check" => check_tool(config, args),
         "explain" => match field_str(args, "code") {
             Some(code) => exec_tool(config, vec!["explain".into(), code.into()], args),
             None => Err("`code` is required".to_string()),
@@ -334,6 +335,55 @@ fn exec_tool(config: &ServerConfig, command: Vec<String>, args: &Value) -> Resul
     Ok(exec_result(&outcome))
 }
 
+/// Runs `gos check` and returns its diagnostics already parsed.
+///
+/// `check_args` forces `--message-format json`, so the child writes one
+/// JSON object per diagnostic; parsing them here hands the caller a
+/// ready array instead of a text blob it would have to re-split.
+fn check_tool(config: &ServerConfig, args: &Value) -> Result<Value, String> {
+    let outcome = exec::run_gos(&config.gos_exe, &check_args(args), timeout_from(args))?;
+    let structured = check_report(&outcome);
+    let mut result = text_result(&json::to_string(&structured), tool_failed(&outcome));
+    if let Value::Object(fields) = &mut result {
+        fields.insert("structuredContent".to_string(), structured);
+    }
+    Ok(result)
+}
+
+/// Builds the `check` report: the child's diagnostics parsed out of its
+/// line-delimited JSON, plus how the child terminated.
+///
+/// Non-JSON lines are the human-readable summary `check` prints
+/// alongside the machine format; they carry no diagnostic and are
+/// dropped.
+fn check_report(outcome: &ExecOutcome) -> Value {
+    let diagnostics: Vec<Value> = outcome
+        .stderr
+        .lines()
+        .chain(outcome.stdout.lines())
+        .filter_map(|line| json::parse(line.trim()).ok())
+        .filter(|value| matches!(value, Value::Object(_)))
+        .collect();
+    obj(vec![
+        ("diagnostics", Value::Array(diagnostics)),
+        (
+            "exitCode",
+            outcome.exit_code.map_or(Value::Null, Value::Int),
+        ),
+        ("timedOut", Value::Bool(outcome.timed_out)),
+    ])
+}
+
+/// A subprocess that timed out or exited non-zero is a failed tool call.
+fn tool_failed(outcome: &ExecOutcome) -> bool {
+    outcome.timed_out || outcome.exit_code != Some(0)
+}
+
+/// Wraps a finished subprocess as MCP tool-call content.
+///
+/// A non-zero exit is a failed tool call: a caller that only inspects
+/// `isError` must not read a failing `check` as a success whose text
+/// happens to contain errors.
 fn exec_result(outcome: &ExecOutcome) -> Value {
     let status = match (outcome.timed_out, outcome.exit_code) {
         (true, _) => "timed out (killed)".to_string(),
@@ -344,7 +394,7 @@ fn exec_result(outcome: &ExecOutcome) -> Value {
         "{status}\n\n--- stdout ---\n{}\n--- stderr ---\n{}",
         outcome.stdout, outcome.stderr
     );
-    text_result(&text, outcome.timed_out)
+    text_result(&text, tool_failed(outcome))
 }
 
 /// Wraps `text` as MCP tool-call content.
@@ -356,4 +406,60 @@ pub(crate) fn text_result(text: &str, is_error: bool) -> Value {
         ),
         ("isError", Value::Bool(is_error)),
     ])
+}
+
+#[cfg(test)]
+mod tools_tests {
+    use super::*;
+
+    fn outcome(exit_code: Option<i64>, stdout: &str, stderr: &str) -> ExecOutcome {
+        ExecOutcome {
+            exit_code,
+            stdout: stdout.to_string(),
+            stderr: stderr.to_string(),
+            timed_out: false,
+        }
+    }
+
+    #[test]
+    fn a_nonzero_exit_is_reported_as_a_tool_error() {
+        let failing = exec_result(&outcome(Some(1), "", "error[GT0001]: mismatch\n"));
+        assert_eq!(
+            json::get(&failing, "isError").and_then(json::as_bool),
+            Some(true)
+        );
+        let passing = exec_result(&outcome(Some(0), "check: ok\n", ""));
+        assert_eq!(
+            json::get(&passing, "isError").and_then(json::as_bool),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn check_diagnostics_are_returned_parsed_not_as_a_blob() {
+        let stderr = "{\"code\":\"GT0001\",\"message\":\"mismatch\"}\n\
+                      {\"code\":\"GM0001\",\"message\":\"non-exhaustive\"}\n";
+        let report = check_report(&outcome(Some(1), "", stderr));
+        let diagnostics = json::get(&report, "diagnostics")
+            .and_then(json::as_array)
+            .expect("diagnostics array");
+        assert_eq!(diagnostics.len(), 2);
+        assert_eq!(
+            json::get(&diagnostics[1], "code").and_then(json::as_str),
+            Some("GM0001")
+        );
+        assert_eq!(
+            json::get(&report, "exitCode").and_then(json::as_i64),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn the_human_readable_summary_line_is_not_a_diagnostic() {
+        let report = check_report(&outcome(Some(0), "check: ok (3 items typed)\n", ""));
+        let diagnostics = json::get(&report, "diagnostics")
+            .and_then(json::as_array)
+            .expect("diagnostics array");
+        assert!(diagnostics.is_empty(), "got {diagnostics:?}");
+    }
 }

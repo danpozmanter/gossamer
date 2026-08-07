@@ -723,8 +723,8 @@ fn render_lints_page(ids: &[&str]) -> String {
     writeln!(out).unwrap();
     writeln!(out, "| Code | Identifier | Default |").unwrap();
     writeln!(out, "|------|------------|---------|").unwrap();
-    for (i, id) in ids.iter().enumerate() {
-        let code = format!("GL{:04}", i + 1);
+    for id in ids {
+        let code = gossamer_lint::lint_code(id);
         let default = default_level_for(id);
         writeln!(out, "| `{code}` | [`{id}`](#{id}) | {default} |").unwrap();
     }
@@ -967,10 +967,28 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
         "A bracket spelling that used to build a container is no longer syntax. Construct the container through its type: `Type::new()` or `Type::from([a, b, c])`.",
     ),
     (
-        "GP0033",
+        "GP0034",
         "Parser",
-        "bare repeat literal",
-        "A repeat literal is a fixed array, written `#[value; count]`. Bare brackets build a Vec from the elements listed inside them.",
+        "missing item type",
+        "A `const` or `static` item was declared without a type annotation. These items are never inferred from their initialiser, so the type is written after the name: `const EPS: f64 = 1e-12`.",
+    ),
+    (
+        "GP0035",
+        "Parser",
+        "duplicate slice-pattern rest",
+        "A slice pattern wrote more than one `..`. One rest binding splits the elements into a prefix and a suffix, as in `[first, ..rest, last]`.",
+    ),
+    (
+        "GP0036",
+        "Parser",
+        "duplicate struct-literal spread",
+        "A struct literal wrote more than one `..base` functional update. Keep a single base value and list every overridden field explicitly.",
+    ),
+    (
+        "GP0037",
+        "Parser",
+        "refutable let without else",
+        "A `let` whose pattern can fail to match was written without an `else` block. Give the failure a diverging path: `let Some(x) = opt else { return }`.",
     ),
     (
         "GR0001",
@@ -997,10 +1015,22 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
         "The same path was imported twice in the same `use` list. Drop the duplicate.",
     ),
     (
+        "GR0005",
+        "Resolve",
+        "unknown module path",
+        "The `use` names a `std::` module path that does not exist. Every module has exactly one canonical path (e.g. JSON lives at `std::encoding::json`); check `gos doc` or the stdlib reference for the module's path.",
+    ),
+    (
         "GR0006",
         "Resolve",
         "removed stdlib item",
         "A container spelling that a canonical name replaced. Each container has exactly one name - import and write that one.",
+    ),
+    (
+        "GR0007",
+        "Resolve",
+        "unknown stdlib item",
+        "The `use` names a module that exists but an item that module does not export. Check the item spelling; `gos doc std::<module>` lists every name a module exports.",
     ),
     (
         "GT0001",

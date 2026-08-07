@@ -463,7 +463,12 @@ impl InferCtxt {
             | (TyKind::Vec(a), TyKind::Vec(b))
             | (TyKind::Sender(a), TyKind::Sender(b))
             | (TyKind::Receiver(a), TyKind::Receiver(b))
+            | (TyKind::Range(a), TyKind::Range(b))
             | (TyKind::JoinHandle(a), TyKind::JoinHandle(b)) => self.unify(tcx, *a, *b),
+            // A range converts to the iterator it advances through, and only
+            // in that direction: an adapter chain is not a range, so an
+            // expected `Range<T>` keeps rejecting a plain `Iterator<T>`.
+            (TyKind::Iterator(a), TyKind::Range(b)) => self.unify(tcx, *a, *b),
             (TyKind::HashMap { key: ak, value: av }, TyKind::HashMap { key: bk, value: bv }) => {
                 self.unify(tcx, *ak, *bk)?;
                 self.unify(tcx, *av, *bv)
@@ -683,7 +688,8 @@ fn occurs_in_kind(infer: &InferCtxt, tcx: &TyCtxt, vid: TyVid, kind: &TyKind) ->
         TyKind::Array { elem, .. }
         | TyKind::Slice(elem)
         | TyKind::Vec(elem)
-        | TyKind::Iterator(elem) => occurs(infer, tcx, vid, *elem),
+        | TyKind::Iterator(elem)
+        | TyKind::Range(elem) => occurs(infer, tcx, vid, *elem),
         TyKind::HashMap { key, value } => {
             occurs(infer, tcx, vid, *key) || occurs(infer, tcx, vid, *value)
         }

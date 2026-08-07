@@ -8,26 +8,29 @@ use gossamer_ast::{
 };
 use gossamer_lex::{Keyword, Punct, Span};
 
+use crate::diagnostic::ParseError;
 use crate::parser::Parser;
-use crate::recovery::{is_item_start, is_stmt_start};
+use crate::recovery::{is_item_start, is_stmt_start, is_stmt_start_keyword};
 
 impl Parser<'_> {
     /// Parses a single statement.
     pub(crate) fn parse_stmt(&mut self) -> Stmt {
         let start_span = self.peek_span();
+        let diagnostics_before = self.diagnostic_count();
         let kind = self.parse_stmt_kind();
         let consumed_semicolon = self.slice(self.last_span()) == ";";
+        // A statement that already failed to parse is stopped somewhere the
+        // grammar never intended, so its missing separator says nothing the
+        // first diagnostic has not already said.
         if requires_statement_separator(&kind)
             && !consumed_semicolon
             && !self.at_eof()
             && !self.at_punct(Punct::RBrace)
             && !self.newline_before_peek()
+            && self.diagnostic_count() == diagnostics_before
         {
             self.record(
-                crate::diagnostic::ParseError::Unexpected {
-                    expected: "`;` or a newline between statements".to_string(),
-                    found: self.peek_text(),
-                },
+                ParseError::unexpected("`;` or a newline between statements", self.peek_text()),
                 self.peek_span(),
             );
         }
@@ -47,8 +50,8 @@ impl Parser<'_> {
             self.eat_statement_semicolon();
             return StmtKind::Defer(Box::new(body));
         }
-        // `arena { ... }` - contextual keyword (an identifier `arena` not
-        // followed by `{` still parses as a normal expression). Every
+        // `arena { ... }` - contextual keyword (an identifier `arena` used
+        // as a value still parses as a normal expression). Every
         // allocation made while the block runs lands in a bump arena and
         // is freed wholesale when the block exits - desugars to
         // `{ runtime::arena_push(); defer runtime::arena_pop(); ... }`,
@@ -79,19 +82,33 @@ impl Parser<'_> {
         }
     }
 
+    /// `true` at the head of an `arena` block. A bare `arena` followed by
+    /// a keyword that can only begin a statement is also claimed here, so
+    /// the missing `{` is reported against the block the author meant
+    /// rather than against the statement after it.
     fn at_arena_block(&mut self) -> bool {
         use gossamer_lex::TokenKind;
         let cur = self.peek();
         if !matches!(cur.kind, TokenKind::Ident) || self.slice(cur.span) != "arena" {
             return false;
         }
-        matches!(self.peek_nth(1).kind, TokenKind::Punct(Punct::LBrace))
+        match self.peek_nth(1).kind {
+            TokenKind::Punct(Punct::LBrace) => true,
+            TokenKind::Keyword(keyword) => is_stmt_start_keyword(keyword),
+            _ => false,
+        }
     }
 
     fn parse_arena_block(&mut self) -> StmtKind {
         let start = self.peek_span();
         self.bump(); // `arena`
-        self.expect_punct(Punct::LBrace, "an `arena` block body");
+        if !self.expect_punct(Punct::LBrace, "to open the `arena` block") {
+            let expr = Expr::new(self.alloc_id(), start, ExprKind::Error);
+            return StmtKind::Expr {
+                expr: Box::new(expr),
+                has_semi: true,
+            };
+        }
         let mut block = self.parse_block_body();
         // Tag the desugared block so the front-end runs the arena-escape
         // check (GM0003) on it - the raw `runtime::arena_push/pop`
@@ -164,11 +181,27 @@ impl Parser<'_> {
         } else {
             None
         };
+        // A pattern that can fail to match owns the `{` that follows its
+        // initialiser: it opens the `else` block, never a struct literal.
+        let refutable = is_refutable_pattern(&pattern);
         let init = if self.eat_punct(Punct::Eq) {
-            Some(Box::new(self.parse_expr()))
+            if refutable {
+                self.enter_no_struct();
+            }
+            let expr = self.parse_expr();
+            if refutable {
+                self.leave_no_struct();
+            }
+            Some(Box::new(expr))
         } else {
             None
         };
+        if refutable && !self.at_keyword(Keyword::Else) && self.at_punct(Punct::LBrace) {
+            self.record(ParseError::RefutableLetNeedsElse, self.peek_span());
+            if let Some(init) = init {
+                return self.parse_let_else_block(pattern, init);
+            }
+        }
         // `let PAT = init else { … }` - desugar to a `match` binding so the
         // refutable pattern's bindings escape into the enclosing scope
         // (Rust/Swift semantics), reusing the match lowering on every tier.
@@ -185,7 +218,14 @@ impl Parser<'_> {
 
     fn desugar_let_else(&mut self, pattern: Pattern, init: Box<Expr>) -> StmtKind {
         self.bump(); // consume `else`
-        self.expect_punct(Punct::LBrace, "to open `let ... else` block");
+        self.parse_let_else_block(pattern, init)
+    }
+
+    /// Parses the `{ … }` that gives a refutable `let` its diverging path
+    /// and builds the `match` the binding desugars to. The `else` keyword
+    /// is already consumed, or was omitted and diagnosed.
+    fn parse_let_else_block(&mut self, pattern: Pattern, init: Box<Expr>) -> StmtKind {
+        self.expect_punct(Punct::LBrace, "to open the `let ... else` block");
         let start = self.last_span();
         let block = self.parse_block_body();
         let else_span = self.join(start, self.last_span());
@@ -340,5 +380,21 @@ fn collect_pattern_bindings(pat: &Pattern, out: &mut Vec<Ident>) {
         }
         PatternKind::Ref { inner, .. } => collect_pattern_bindings(inner, out),
         _ => {}
+    }
+}
+
+/// `true` for a pattern whose match can fail on some value of its type,
+/// as far as syntax alone can tell. Struct patterns are excluded: a
+/// braced pattern is written the same way for an irrefutable struct
+/// destructure as for an enum variant.
+fn is_refutable_pattern(pattern: &Pattern) -> bool {
+    match &pattern.kind {
+        PatternKind::Literal(_) | PatternKind::Range { .. } | PatternKind::TupleStruct { .. } => {
+            true
+        }
+        PatternKind::Path(path) => path.segments.len() > 1,
+        PatternKind::Or(alternatives) => alternatives.iter().any(is_refutable_pattern),
+        PatternKind::Ref { inner, .. } => is_refutable_pattern(inner),
+        _ => false,
     }
 }

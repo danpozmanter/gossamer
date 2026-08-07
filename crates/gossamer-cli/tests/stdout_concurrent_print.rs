@@ -18,6 +18,8 @@ fn concurrent_println_lines_do_not_tear() {
     std::fs::write(
         &source,
         "
+use std::sync::WaitGroup
+
 fn worker(id: i64, wg: WaitGroup) {
     let mut i = 0
     while i < 256 {

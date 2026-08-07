@@ -45,11 +45,24 @@ pub fn render(diag: &Diagnostic, map: &SourceMap, options: RenderOptions) -> Str
         let _ = writeln!(out, "  {dim_colour}= help:{reset} {help}");
     }
     for suggestion in &diag.suggestions {
-        let _ = writeln!(
-            out,
-            "  {dim_colour}= suggestion:{reset} {} → `{}`",
-            suggestion.message, suggestion.replacement
-        );
+        // A message that already quotes its replacement is complete on its
+        // own; appending the arrow would print the same text twice.
+        if suggestion
+            .message
+            .contains(&format!("`{}`", suggestion.replacement))
+        {
+            let _ = writeln!(
+                out,
+                "  {dim_colour}= suggestion:{reset} {}",
+                suggestion.message
+            );
+        } else {
+            let _ = writeln!(
+                out,
+                "  {dim_colour}= suggestion:{reset} {} → `{}`",
+                suggestion.message, suggestion.replacement
+            );
+        }
     }
     out
 }

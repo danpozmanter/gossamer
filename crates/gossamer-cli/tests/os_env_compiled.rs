@@ -189,7 +189,7 @@ fn os_set_env_propagates_to_a_spawned_child_in_all_tiers() {
     // shared-library-dependent child).
     let src = r#"
 use std::env
-use std::env::exec
+use std::os::exec
 fn main() {
     env::set_var(&"GOS_PROBE_CHILD_2026".to_string(), &"propagated".to_string())
     let args: Vec<String> = Vec::from([]).to_vec()
@@ -219,7 +219,7 @@ fn os_set_env_propagates_to_a_spawned_child_in_all_tiers_windows() {
     // `GOS_PROBE_CHILD_2026=propagated` if the var is in the environment.
     let src = r#"
 use std::env
-use std::env::exec
+use std::os::exec
 fn main() {
     env::set_var(&"GOS_PROBE_CHILD_2026".to_string(), &"propagated".to_string())
     let args: Vec<String> = ["/c", "set", "GOS_PROBE_CHILD_2026"].to_vec()

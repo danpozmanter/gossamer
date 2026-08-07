@@ -43,6 +43,19 @@ jobs:
       - run: rustup set profile minimal
       - run: cargo fmt --all --check
 
+  type-system:
+    name: Type system gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      # Adversarial programs a strongly-typed language must reject, each
+      # pinned to the diagnostic that rejects it, with accepted controls so
+      # the gate cannot pass by rejecting everything. Runs in milliseconds
+      # and fails the build before any longer job starts.
+      - run: cargo test -p gossamer-cli --test type_system_gate
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
@@ -359,6 +372,12 @@ jobs:
                 [ "$name" = tier_parity ] && continue
                 if [ "$crate" = gossamer-cli ] && [ "$name" = repl ]; then
                   echo "::notice::skip ${crate}::${name}; covered by Test non-native CLI and codegen"
+                  continue
+                fi
+                # Typing is a property of the language, not of a target, so the
+                # gate runs once in its own job rather than once per OS shard.
+                if [ "$crate" = gossamer-cli ] && [ "$name" = type_system_gate ]; then
+                  echo "::notice::skip ${crate}::${name}; covered by the Type system gate job"
                   continue
                 fi
                 if [ "$crate" = gossamer-cli ] && in_list "$non_native_cli" "$name"; then

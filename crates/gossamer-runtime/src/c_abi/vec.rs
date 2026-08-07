@@ -1960,12 +1960,12 @@ pub fn pack_result(disc: i64, payload: i64) -> i128 {
 }
 
 #[inline]
-fn result_disc_of(r: i128) -> i64 {
+pub(crate) fn result_disc_of(r: i128) -> i64 {
     (r as u128 as u64) as i64
 }
 
 #[inline]
-fn result_payload_of(r: i128) -> i64 {
+pub(crate) fn result_payload_of(r: i128) -> i64 {
     ((r as u128 >> 64) as u64) as i64
 }
 

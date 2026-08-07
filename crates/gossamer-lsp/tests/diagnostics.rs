@@ -8,7 +8,8 @@
 mod common;
 
 use common::{
-    diagnostic_code, diagnostic_message, diagnostics_from, field, field_array, server_with,
+    diagnostic_code, diagnostic_message, diagnostics_from, field, field_array, field_f64,
+    server_with,
 };
 use gossamer_std::json::Value;
 
@@ -356,4 +357,84 @@ fn empty_source_publishes_clean() {
         }
     }
     let _ = field_array(&notifs[0], "diagnostics");
+}
+
+#[test]
+fn non_exhaustive_match_emits_gm0001() {
+    let uri = "file:///exhaust.gos";
+    let server = server_with(
+        uri,
+        "enum Shape { Circle, Square, Tri }\n\
+         fn name(s: Shape) -> String {\n\
+         \x20   match s {\n\
+         \x20       Shape::Circle => \"circle\",\n\
+         \x20       Shape::Square => \"square\",\n\
+         \x20   }\n\
+         }\n\
+         fn main() { println!(\"{}\", name(Shape::Circle)) }\n",
+    );
+    let diags = diagnostics_from(&server.publish_diagnostics(uri));
+    assert!(
+        diags
+            .iter()
+            .filter_map(diagnostic_code)
+            .any(|c| c == "GM0001"),
+        "expected GM0001, got {:?}",
+        diags.iter().filter_map(diagnostic_code).collect::<Vec<_>>()
+    );
+    assert_diagnostics_well_formed(&diags);
+}
+
+#[test]
+fn arena_escape_emits_gm0003() {
+    let uri = "file:///arena.gos";
+    let server = server_with(
+        uri,
+        "struct Node { v: i64 }\n\
+         fn main() {\n\
+         \x20   let mut outer = #[]\n\
+         \x20   arena {\n\
+         \x20       let n = Node { v: 1 }\n\
+         \x20       outer.push(n)\n\
+         \x20   }\n\
+         \x20   println!(\"{}\", outer.len())\n\
+         }\n",
+    );
+    let diags = diagnostics_from(&server.publish_diagnostics(uri));
+    assert!(
+        diags
+            .iter()
+            .filter_map(diagnostic_code)
+            .any(|c| c == "GM0003"),
+        "expected GM0003, got {:?}",
+        diags.iter().filter_map(diagnostic_code).collect::<Vec<_>>()
+    );
+    assert_diagnostics_well_formed(&diags);
+}
+
+#[test]
+fn generated_serde_failure_is_reported_against_the_user_declaration() {
+    let uri = "file:///serde.gos";
+    let source = "use std::encoding::json\n\
+                  struct Inner { m: Map<i64, i64> }\n\
+                  struct Outer { i: Inner }\n\
+                  fn main() {\n\
+                  \x20   let o = Outer { i: Inner { m: {} } }\n\
+                  \x20   println!(\"{}\", json::to_json::<Outer>(o))\n\
+                  }\n";
+    let server = server_with(uri, source);
+    let diags = diagnostics_from(&server.publish_diagnostics(uri));
+    let line_count = source.lines().count() as f64;
+    assert!(
+        !diags.is_empty(),
+        "a file `gos check` rejects must not publish clean"
+    );
+    assert_diagnostics_well_formed(&diags);
+    for diag in &diags {
+        let start_line = field_f64(field(field(diag, "range"), "start"), "line").unwrap_or(0.0);
+        assert!(
+            start_line < line_count,
+            "diagnostic lands past the editor buffer: {diag:?}"
+        );
+    }
 }

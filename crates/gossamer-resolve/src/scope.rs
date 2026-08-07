@@ -114,6 +114,16 @@ impl Scope {
     pub(crate) fn lookup_value(&self, name: &str) -> Option<Binding> {
         self.values.get(name).copied()
     }
+
+    /// Names bound in this layer's value namespace.
+    pub(crate) fn value_names(&self) -> impl Iterator<Item = &str> {
+        self.values.keys().map(AsRef::as_ref)
+    }
+
+    /// Names bound in this layer's type namespace.
+    pub(crate) fn type_names(&self) -> impl Iterator<Item = &str> {
+        self.types.keys().map(AsRef::as_ref)
+    }
 }
 
 /// Stack of lexical scopes visible at a given program point.
@@ -191,39 +201,31 @@ impl ScopeStack {
         }
         None
     }
+
+    /// Every name visible at this point, innermost scope first, across both
+    /// namespaces. Locals, parameters, and closure bindings live only here,
+    /// so this is the candidate set a "did you mean" must draw on to reach
+    /// the names a user most often mistypes.
+    pub(crate) fn visible_names(&self) -> impl Iterator<Item = &str> {
+        self.layers
+            .iter()
+            .rev()
+            .flat_map(|scope| scope.value_names().chain(scope.type_names()))
+    }
 }
 
 const PRELUDE_TYPES: &[&str] = &[
-    "str",
-    "Result",
-    "Option",
-    "Vec",
-    "Map",
-    "Set",
-    "BTreeSet",
-    "BTreeMap",
-    "Deque",
-    "Queue",
-    "Stack",
-    "MaxHeap",
-    "MinHeap",
-    "Iterator",
-    "Box",
-    "Arc",
-    "Rc",
-    "Weak",
-    "Range",
-    "Sender",
+    "str", "Result", "Option", "Vec", "Map", "Set", "BTreeSet", "BTreeMap", "Deque", "Queue",
+    "Stack", "MaxHeap", "MinHeap", "Iterator", "Box", "Arc", "Rc", "Weak", "Range", "Sender",
     "Receiver",
-    // Sync primitives matched to Go's `sync` package: a
-    // mutex (lock/unlock), a wait group (add/done/wait), a
-    // heap-allocated `[i64]` for cross-goroutine writes, and
-    // an `AtomicI64` for lock-free counters.
-    "Mutex",
-    "WaitGroup",
-    "I64Vec",
-    "U8Vec",
-    "Atomic",
+    // Goroutine fan-out buffers: a heap-allocated `[i64]` and a
+    // `[u8]` whose elements take lock-free cross-goroutine writes.
+    // These are the prelude's own spelling - no module exports them,
+    // so `I64Vec::new` / `U8Vec::new` is the whole surface. The
+    // `std::sync` primitives are imported (`use std::sync::Mutex`)
+    // rather than listed here, so a bare `Mutex` reports the import
+    // it is missing instead of binding a name with no owning module.
+    "I64Vec", "U8Vec",
 ];
 
 const PRELUDE_VALUES: &[&str] = &[

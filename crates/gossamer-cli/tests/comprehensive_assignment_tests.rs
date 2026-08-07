@@ -16,9 +16,19 @@ fn diagnostics(source: &str) -> Vec<String> {
     let file = map.add_file("comprehensive_assignment_tests.gos", source.to_string());
     let (parsed, parse_diagnostics) = parse_source_file(source, file);
     if !parse_diagnostics.is_empty() {
+        // Guidance lives in the rendered help, so a case is matched on the
+        // whole diagnostic rather than its summary line alone.
         return parse_diagnostics
-            .into_iter()
-            .map(|diagnostic| diagnostic.error.to_string())
+            .iter()
+            .map(|diagnostic| {
+                let rendered = diagnostic.to_diagnostic();
+                let mut text = rendered.title.clone();
+                for help in &rendered.helps {
+                    text.push_str("; ");
+                    text.push_str(help);
+                }
+                text
+            })
             .collect();
     }
     let (resolutions, resolve_diagnostics) = resolve_source_file(&parsed);
@@ -180,7 +190,7 @@ fn invalid_mut_before_reference_pattern_spelling_is_rejected() {
     assert_rejected(
         "mut before shared reference pattern",
         "    let value = 1\n    let mut &copy = &value",
-        "reference patterns start with `&mut`, not `mut &`",
+        "a reference pattern is written `&mut name`, not `mut &name`",
     );
 }
 

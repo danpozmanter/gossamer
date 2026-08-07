@@ -2470,6 +2470,11 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::path",
+        name: "walk",
+        signature: "fn walk(path: String, visit: Fn(fs::DirInfo) -> Result<(), io::Error>) -> Result<(), io::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::path",
         name: "extension",
         signature: "fn extension(path: String) -> Option<String>",
     },

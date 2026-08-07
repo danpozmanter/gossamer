@@ -596,18 +596,33 @@ impl<'a> Builder<'a> {
         // `x.downgrade()` - create a `Weak<T>` from a strong RC value.
         // `gos_rt_rc_downgrade` bumps the weak count and returns the same
         // payload pointer, now typed `Weak<T>` so the drop pass releases
-        // it through `gos_rt_rc_weak_release`.
+        // it through `gos_rt_rc_weak_release`. The referent it observes is
+        // first pinned in a frame-owned local, so liveness follows the
+        // downgrading scope rather than the source binding's last use -
+        // the schedule the interpreter's downgrade pin keeps.
         if method.name.as_str() == "downgrade" && args.is_empty() {
             let Some(recv_local) = self.lower_expr(receiver) else {
                 return MethodLowering::Handled(None);
             };
             let recv_ty = self.locals[recv_local.0 as usize].ty;
             let weak_ty = self.weak_adt_ty(recv_ty);
+            let Some(pin_local) = self.pin_weak_referent(recv_local, recv_ty, span) else {
+                // No RC allocation exists to observe (an opaque runtime
+                // handle), so the weak is born dead: a null referent, which
+                // every weak helper reads as `None`.
+                let dest = self.fresh(weak_ty);
+                self.emit_assign(
+                    Place::local(dest),
+                    Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                    span,
+                );
+                return MethodLowering::Handled(Some(dest));
+            };
             let dest = self.fresh(weak_ty);
             let next = self.new_block(span);
             self.terminate(Terminator::Call {
                 callee: Operand::Const(ConstValue::Str("gos_rt_rc_downgrade".to_string())),
-                args: vec![Operand::Copy(Place::local(recv_local))],
+                args: vec![Operand::Copy(Place::local(pin_local))],
                 destination: Place::local(dest),
                 target: Some(next),
             });
@@ -643,7 +658,15 @@ impl<'a> Builder<'a> {
                 target: Some(next),
             });
             self.set_current(next);
-            let shadow = self.fresh(payload_ty);
+            // The pin's type decides the release helper the drop pass emits
+            // for it. A by-value aggregate payload lives in an RC cell, so
+            // the pin holds the cell pointer, not aggregate slot data.
+            let shadow_ty = if self.weak_referent_needs_cell(payload_ty) {
+                self.weak_cell_adt_ty(payload_ty)
+            } else {
+                payload_ty
+            };
+            let shadow = self.fresh(shadow_ty);
             self.emit_assign(
                 Place::local(shadow),
                 Rvalue::CallIntrinsic {
@@ -655,6 +678,50 @@ impl<'a> Builder<'a> {
             return MethodLowering::Handled(Some(dest));
         }
         MethodLowering::Pass
+    }
+
+    /// Materialises the referent a `Weak` observes and leaves it owned by the
+    /// enclosing frame. An RC-managed receiver is pinned by an ordinary owning
+    /// copy; a by-value aggregate has no RC header, so its slot bytes are
+    /// copied into an RC cell that becomes the referent. Returns `None` for a
+    /// receiver with no RC allocation to observe at all.
+    fn pin_weak_referent(&mut self, recv_local: Local, recv_ty: Ty, span: Span) -> Option<Local> {
+        if self.tcx.is_rc_managed(recv_ty) && !self.tcx.is_weak_ty(recv_ty) {
+            let pin = self.fresh(recv_ty);
+            self.emit_assign(
+                Place::local(pin),
+                Rvalue::Use(Operand::Copy(Place::local(recv_local))),
+                span,
+            );
+            return Some(pin);
+        }
+        if !self.weak_referent_needs_cell(recv_ty) {
+            return None;
+        }
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let size_bytes = i128::from(self.type_slot_bytes(recv_ty));
+        let meta_sym = self.ensure_aggr_struct_meta(recv_ty).unwrap_or_default();
+        let size_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(size_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(size_bytes))),
+            span,
+        );
+        let cell_ty = self.weak_cell_adt_ty(recv_ty);
+        let cell = self.fresh(cell_ty);
+        self.emit_assign(
+            Place::local(cell),
+            Rvalue::CallIntrinsic {
+                name: "gos_rt_rc_weak_cell",
+                args: vec![
+                    Operand::Copy(Place::local(size_local)),
+                    Operand::Const(ConstValue::Str(meta_sym)),
+                    Operand::Copy(Place::local(recv_local)),
+                ],
+            },
+            span,
+        );
+        Some(cell)
     }
 
     /// `d.as_millis()` / `inst.elapsed_ms()` - transparent time accessors.

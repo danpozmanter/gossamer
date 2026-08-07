@@ -1524,6 +1524,7 @@ fn jit_local_ty_needs_bytecode_inner(
         TyKind::Adt { .. }
         | TyKind::HashMap { .. }
         | TyKind::Iterator(_)
+        | TyKind::Range(_)
         | TyKind::Sender(_)
         | TyKind::Receiver(_)
         | TyKind::JoinHandle(_)

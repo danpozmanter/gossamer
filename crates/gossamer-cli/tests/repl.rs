@@ -387,7 +387,7 @@ fn repl_reports_a_missing_enum_body_once() {
     let out = run_repl("enum Nothing\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stderr.contains("1 parse error:")
+        out.stderr.matches("error[").count() == 1
             && out.stderr.contains("expected `{` to open enum body")
             && !out.stderr.contains("unexpected keyword `fn`"),
         "missing enum body should have one clear diagnostic: {}",
@@ -445,7 +445,7 @@ fn repl_supports_reference_let_patterns_and_explains_invalid_syntax() {
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stderr
-            .contains("reference patterns start with `&mut`, not `mut &`")
+            .contains("a reference pattern is written `&mut name`, not `mut &name`")
             && out
                 .stderr
                 .contains("`let &mut name = value` requires an `&mut` initializer")
@@ -934,7 +934,7 @@ fn repl_range_binding_inspection_does_not_poison_iterator_reuse() {
     assert!(
         out.stdout
             .lines()
-            .any(|line| line == "r: Iterator<i64> = 0..2"),
+            .any(|line| line == "r: Range<i64> = 0..2"),
         "%b must render the range binding without an inspection error: {}",
         out.stdout
     );

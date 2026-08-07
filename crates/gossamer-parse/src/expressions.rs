@@ -629,10 +629,7 @@ impl Parser<'_> {
             }
             _ => {
                 self.record(
-                    ParseError::Unexpected {
-                        expected: "field or method name after `.`".to_string(),
-                        found: self.peek_text(),
-                    },
+                    ParseError::unexpected("a field or method name after `.`", self.peek_text()),
                     token.span,
                 );
                 receiver
@@ -878,7 +875,9 @@ impl Parser<'_> {
                     break;
                 }
             }
-            p.expect_punct(Punct::RParen, "to close argument list");
+            if !p.expect_punct(Punct::RParen, "to close the argument list") {
+                p.recover_to_close(Punct::LParen, Punct::RParen);
+            }
             args
         })
     }
@@ -983,10 +982,7 @@ impl Parser<'_> {
             return self.parse_path_expr_or_struct();
         }
         self.record(
-            ParseError::Unexpected {
-                expected: "expression".to_string(),
-                found: self.peek_text(),
-            },
+            ParseError::unexpected("an expression", self.peek_text()),
             self.peek_span(),
         );
         self.bump();
@@ -1001,10 +997,10 @@ impl Parser<'_> {
             return self.parse_set_literal_expr();
         }
         self.record(
-            ParseError::Unexpected {
-                expected: "`[` for fixed array or `{` for hash set literal after `#`".to_string(),
-                found: self.peek_text(),
-            },
+            ParseError::unexpected(
+                "`[` for a `Vec` literal or `{` for a `Set` literal after `#`",
+                self.peek_text(),
+            ),
             self.peek_span(),
         );
         ExprKind::Error
@@ -1220,7 +1216,7 @@ impl Parser<'_> {
             }
             elements.push(self.parse_expr_no_assign());
         }
-        self.expect_punct(Punct::RBrace, "to close hash set literal");
+        self.expect_punct(Punct::RBrace, "to close the `Set` literal");
         ExprKind::SetLiteral(elements)
     }
 
@@ -1339,11 +1335,11 @@ impl Parser<'_> {
         if has_let {
             if self.peek_binary_op().is_some() {
                 self.record(
-                    ParseError::Unexpected {
-                        expected: "`&&`; `let` in a condition can only be chained with `&&`"
-                            .to_string(),
-                        found: self.peek_text(),
-                    },
+                    ParseError::unexpected_help(
+                        "`&&`",
+                        self.peek_text(),
+                        "a `let` clause in a condition chains only with `&&`",
+                    ),
                     self.peek_span(),
                 );
                 // Consume the trailing operand so the branch-opening `{`
@@ -1738,10 +1734,10 @@ impl Parser<'_> {
             return self.parse_for_expr(label);
         }
         self.record(
-            ParseError::Unexpected {
-                expected: "`loop`, `while`, or `for` after label".to_string(),
-                found: self.peek_text(),
-            },
+            ParseError::unexpected(
+                "`loop`, `while`, or `for` after the label",
+                self.peek_text(),
+            ),
             self.peek_span(),
         );
         ExprKind::Error
@@ -1783,7 +1779,10 @@ impl Parser<'_> {
 
     fn parse_fn_closure_expr(&mut self) -> ExprKind {
         self.bump();
-        self.expect_punct(Punct::LParen, "to open `fn` closure parameters");
+        self.expect_punct(
+            Punct::LParen,
+            "to open the `fn(..)` closure literal's parameters",
+        );
         let mut params = Vec::new();
         while !self.at_punct(Punct::RParen) && !self.at_eof() {
             let pattern = self.parse_pattern_no_or();
@@ -1797,13 +1796,16 @@ impl Parser<'_> {
                 break;
             }
         }
-        self.expect_punct(Punct::RParen, "to close `fn` closure parameters");
+        self.expect_punct(
+            Punct::RParen,
+            "to close the `fn(..)` closure literal's parameters",
+        );
         let ret = if self.eat_punct(Punct::Arrow) {
             Some(self.parse_type())
         } else {
             None
         };
-        self.expect_punct(Punct::LBrace, "to open `fn` closure body");
+        self.expect_punct(Punct::LBrace, "to open the `fn(..)` closure literal's body");
         let block = self.parse_block_body();
         let span = self.last_span();
         let id = self.alloc_id();
@@ -1836,7 +1838,10 @@ impl Parser<'_> {
                 if self.eat_punct(Punct::Eq) {
                     let raw = self.parse_expr_no_assign();
                     let channel = strip_recv_call(raw);
-                    self.expect_punct(Punct::FatArrow, "after select recv");
+                    self.expect_punct(
+                        Punct::FatArrow,
+                        "after a select receive arm, as in `x = rx.recv() => ...`",
+                    );
                     let body = self.parse_expr();
                     arms.push(gossamer_ast::SelectArm {
                         op: gossamer_ast::SelectOp::Recv { pattern, channel },
@@ -1848,7 +1853,10 @@ impl Parser<'_> {
                     self.tokens.rewind(checkpoint);
                     let raw = self.parse_expr_no_assign();
                     if let Some((channel, value)) = strip_send_call(raw) {
-                        self.expect_punct(Punct::FatArrow, "after select send");
+                        self.expect_punct(
+                            Punct::FatArrow,
+                            "after a select send arm, as in `tx.send(v) => ...`",
+                        );
                         let body = self.parse_expr();
                         arms.push(gossamer_ast::SelectArm {
                             op: gossamer_ast::SelectOp::Send { channel, value },
@@ -1956,17 +1964,11 @@ impl Parser<'_> {
             // list (`{ ..base, x: 1 }` or `{ x: 1, ..base }`); explicit
             // fields override the base's value for the same name. Only one
             // spread is allowed.
+            let spread_span = self.peek_span();
             if self.eat_punct(Punct::DotDot) {
-                let spread_span = self.peek_span();
                 let expr = self.parse_expr_no_assign();
                 if base.is_some() {
-                    self.record(
-                        ParseError::Unexpected {
-                            expected: "a single `..base` spread in a struct literal".to_string(),
-                            found: "a second `..` spread".to_string(),
-                        },
-                        spread_span,
-                    );
+                    self.record(ParseError::StructLiteralExtraSpread, spread_span);
                 } else {
                     base = Some(Box::new(expr));
                 }
@@ -2044,7 +2046,12 @@ impl Parser<'_> {
         let recognised = is_format_macro(&macro_name) && delim == MacroDelim::Paren;
 
         if recognised {
-            self.expect_punct(Punct::LParen, "to open macro invocation");
+            if !self.expect_punct(
+                Punct::LParen,
+                &format!("to open the arguments of `{macro_name}!`"),
+            ) {
+                return ExprKind::Error;
+            }
             let args = self.parse_call_args();
             return self.expand_format_macro(&macro_name, args);
         }
@@ -2059,7 +2066,12 @@ impl Parser<'_> {
             && matches!(macro_name.as_str(), "regex" | "sql")
             && delim == MacroDelim::Paren
         {
-            self.expect_punct(Punct::LParen, "to open macro invocation");
+            if !self.expect_punct(
+                Punct::LParen,
+                &format!("to open the arguments of `{macro_name}!`"),
+            ) {
+                return ExprKind::Error;
+            }
             let args = self.parse_call_args();
             let validator = format!("__gos_{macro_name}_validate");
             return self.alloc_function_call(&validator, args);
@@ -2073,7 +2085,12 @@ impl Parser<'_> {
         // `__gos_codegen`, which the comptime pass recognizes and renders
         // unquoted (as source) rather than as a string literal.
         if is_comptime_macro(&macro_name) && macro_name == "codegen" && delim == MacroDelim::Paren {
-            self.expect_punct(Punct::LParen, "to open macro invocation");
+            if !self.expect_punct(
+                Punct::LParen,
+                &format!("to open the arguments of `{macro_name}!`"),
+            ) {
+                return ExprKind::Error;
+            }
             let args = self.parse_call_args();
             return self.alloc_function_call("__gos_codegen", args);
         }
@@ -2096,10 +2113,7 @@ impl Parser<'_> {
             format!("`{macro_name}(...)` - Gossamer has no user-defined macros, drop the `!`")
         };
         self.record(
-            ParseError::Unexpected {
-                expected,
-                found: "!".to_string(),
-            },
+            ParseError::unexpected(expected, "`!`".to_string()),
             bang_span,
         );
         let (open, close) = delim.pair();
@@ -2132,11 +2146,19 @@ impl Parser<'_> {
     /// has matched the name and the `(` delimiter; the paren is unconsumed.
     fn expand_builtin_macro(&mut self, macro_name: &str) -> ExprKind {
         if macro_name == "matches" {
-            self.expect_punct(Punct::LParen, "to open macro invocation");
+            if !self.expect_punct(
+                Punct::LParen,
+                &format!("to open the arguments of `{macro_name}!`"),
+            ) {
+                return ExprKind::Error;
+            }
             let scrutinee = self.with_struct_literals_allowed(Self::parse_expr_no_assign);
             self.expect_punct(Punct::Comma, "after `matches!` scrutinee");
             let pattern = self.parse_pattern();
-            self.expect_punct(Punct::RParen, "to close macro invocation");
+            self.expect_punct(
+                Punct::RParen,
+                &format!("to close the arguments of `{macro_name}!`"),
+            );
             let yes = self.alloc_literal_expr(Literal::Bool(true));
             let no = self.alloc_literal_expr(Literal::Bool(false));
             return self.make_match_clause(pattern, scrutinee, yes, no).kind;
@@ -2144,7 +2166,12 @@ impl Parser<'_> {
         if macro_name == "dbg" {
             return self.expand_dbg_macro();
         }
-        self.expect_punct(Punct::LParen, "to open macro invocation");
+        if !self.expect_punct(
+            Punct::LParen,
+            &format!("to open the arguments of `{macro_name}!`"),
+        ) {
+            return ExprKind::Error;
+        }
         let args = self.parse_call_args();
         let args = if args.is_empty() {
             let message = match macro_name {
@@ -2163,7 +2190,9 @@ impl Parser<'_> {
     /// __dbg }`, so the value is printed for inspection yet flows on
     /// unchanged. Any non-one arity degrades to a bare `eprintln!("")`.
     fn expand_dbg_macro(&mut self) -> ExprKind {
-        self.expect_punct(Punct::LParen, "to open macro invocation");
+        if !self.expect_punct(Punct::LParen, "to open the arguments of `dbg!`") {
+            return ExprKind::Error;
+        }
         let mut args = self.parse_call_args();
         if args.len() != 1 {
             let empty = self.alloc_literal_expr(Literal::String(String::new()));
@@ -2494,13 +2523,10 @@ impl Parser<'_> {
             }
             _ => {
                 self.record(
-                    ParseError::Unexpected {
-                        expected: "path segment".to_string(),
-                        found: self.peek_text(),
-                    },
+                    ParseError::unexpected("a name after `::`", self.peek_text()),
                     token.span,
                 );
-                String::new()
+                gossamer_ast::ERROR_IDENT.to_string()
             }
         };
         PathSegment::new(name)

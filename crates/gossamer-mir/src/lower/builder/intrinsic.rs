@@ -456,6 +456,43 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// `fs::walk_dir(root, visit)` / `path::walk(root, visit)`: recursively
+    /// visits every descendant, invoking `visit` for each entry. The
+    /// visitor closure is coerced to an env-pointer value (the same shape
+    /// `sort_by`'s comparator uses) and handed to the runtime walker, which
+    /// calls back into it per entry and stops as soon as `visit` returns
+    /// `Err`.
+    pub(crate) fn try_lower_walk_dir(&mut self, args: &[HirExpr], span: Span) -> Option<Local> {
+        use gossamer_types::TyKind;
+        let [root_arg, visit_arg] = args else {
+            return None;
+        };
+        let root_local = self.lower_expr(root_arg)?;
+        let raw_visit_local = self.lower_expr(visit_arg)?;
+        let dir_info_ty = self.dir_info_adt_ty();
+        let visit_ret_ty = self.result_unit_error_adt_ty();
+        let visit_sig = gossamer_types::FnSig {
+            inputs: vec![dir_info_ty],
+            output: visit_ret_ty,
+        };
+        let visit_trait_ty = self.tcx.intern(TyKind::FnTrait(visit_sig));
+        let visit_local = self.coerce_to_fn_trait_if_needed(raw_visit_local, visit_trait_ty, span);
+        let result_ty = self.result_unit_error_adt_ty();
+        let dest = self.fresh(result_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_fs_walk_dir".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(root_local)),
+                Operand::Copy(Place::local(visit_local)),
+            ],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
     pub(crate) fn try_lower_array_swap(
         &mut self,
         receiver: &HirExpr,

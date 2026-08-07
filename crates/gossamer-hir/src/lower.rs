@@ -403,7 +403,10 @@ impl Lowerer<'_> {
     }
 
     fn ty_of(&mut self, node: NodeId) -> gossamer_types::Ty {
-        self.table.get(node).unwrap_or_else(|| self.tcx.error_ty())
+        // `Range<T>` is a type-layer spelling of `Iterator<T>`; lowering and
+        // every backend below it know only the latter.
+        let ty = self.table.get(node).unwrap_or_else(|| self.tcx.error_ty());
+        gossamer_types::normalize_for_lowering(self.tcx, ty)
     }
 
     fn unit(&mut self) -> gossamer_types::Ty {
@@ -1316,6 +1319,10 @@ impl Lowerer<'_> {
                 Some(TyKind::Adt { def, .. }) => {
                     return !matches!(def.local, HASH_SET_DEF_LOCAL | BTREE_SET_DEF_LOCAL);
                 }
+                // A type parameter's shape is only known per instantiation,
+                // so it advances through `.next()`, the one protocol every
+                // iterable answers. Its bound guarantees that method exists.
+                Some(TyKind::Param { .. }) => return true,
                 _ => return false,
             }
         }

@@ -133,7 +133,6 @@ pub const DAY_ONE_LINTS: &[&str] = &[
     "let_and_return",
     "collapsible_if",
     "if_same_then_else",
-    "redundant_field_init",
     "needless_else_after_return",
     "self_compare",
     "identity_op",
@@ -209,7 +208,13 @@ pub fn run(source_file: &SourceFile, src: &str, registry: &Registry) -> Vec<Diag
     out
 }
 
-fn lint_code(id: &str) -> Code {
+/// Stable diagnostic code for a lint identifier.
+///
+/// Codes are assigned per identifier rather than by position, so retiring a
+/// lint leaves every other code where it was. Anything that presents codes,
+/// including the generated documentation, reads them from here.
+#[must_use]
+pub fn lint_code(id: &str) -> Code {
     match id {
         "unused_variable" => Code("GL0001"),
         "unused_import" => Code("GL0002"),
@@ -230,7 +235,6 @@ fn lint_code(id: &str) -> Code {
         "let_and_return" => Code("GL0017"),
         "collapsible_if" => Code("GL0018"),
         "if_same_then_else" => Code("GL0019"),
-        "redundant_field_init" => Code("GL0020"),
         "needless_else_after_return" => Code("GL0021"),
         "self_compare" => Code("GL0022"),
         "identity_op" => Code("GL0023"),

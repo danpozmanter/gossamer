@@ -163,7 +163,7 @@ impl<'a> Lowerer<'a> {
                 params.push_str(", ");
             }
             let local = Local(i + 1);
-            let p_ty = render_ty(self.tcx, self.body.local_ty(local));
+            let p_ty = param_llvm_ty(self.tcx, self.body.local_ty(local));
             let _ = write!(params, "{p_ty} %p{i}");
         }
         writeln!(

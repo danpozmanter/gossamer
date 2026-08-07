@@ -2505,12 +2505,78 @@ impl<'tcx> FnBuilder<'tcx> {
         }))
     }
 
+    /// True when a `.downgrade()` receiver of this type names an allocation a
+    /// weak can observe: a user struct, enum, tuple, or array. Mirrors the MIR
+    /// lowering's rule so both tiers agree on which receivers yield a weak
+    /// that can ever upgrade.
+    fn weak_referent_is_observable(&self, ty: gossamer_types::Ty) -> bool {
+        let mut ty = ty;
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(ty) {
+            ty = *inner;
+        }
+        match self.tcx.kind(ty) {
+            // Stdlib sentinel Adts (`u32::MAX - 16 ..= u32::MAX`) are opaque
+            // runtime handles; inline enums are by-value words.
+            Some(TyKind::Adt { def, .. }) => {
+                def.local < u32::MAX - 16 && !self.tcx.is_inline_enum_ty(ty)
+            }
+            Some(TyKind::Tuple(_) | TyKind::Array { .. }) => true,
+            // An unresolved receiver keeps the general path; the checker
+            // rejects the by-value cases it can prove.
+            other => other.is_none(),
+        }
+    }
+
+    /// `x.downgrade()` - the weak observes a strong reference pinned in a
+    /// frame-lifetime register belonging to this call site. Liveness of a
+    /// `Weak` is observable through `upgrade`, so the referent must stay
+    /// reachable for the rest of the frame however the source binding is
+    /// consumed, cleared at its last use, or overwritten. Re-executing the
+    /// site (a downgrade in a loop) overwrites the pin, which releases the
+    /// previous referent - the same schedule the compiled tiers keep.
+    fn compile_downgrade(&mut self, receiver: &HirExpr) -> RuntimeResult<Reg> {
+        let source = if self.weak_referent_is_observable(receiver.ty) {
+            self.compile_expr(receiver)?
+        } else {
+            // An opaque runtime handle (a `Set`, a socket, an io stream) is
+            // owned by the runtime and has no reference count of its own, so
+            // its weak can never upgrade. The receiver is still evaluated for
+            // its effects; downgrading unit is the dead-weak handle.
+            self.compile_expr(receiver)?;
+            self.load_unit()
+        };
+        let pin = self.alloc_reg();
+        self.emit(Op::Move {
+            dst: pin,
+            src: source,
+        });
+        self.escaped_reference_reg_floor =
+            self.escaped_reference_reg_floor.max(pin.saturating_add(1));
+        let args_start = self.next_reg;
+        self.ensure_reg_slot(args_start);
+        let dst = self.alloc_reg();
+        let name_idx = self.global_idx("downgrade");
+        let cache_idx = self.alloc_cache_idx();
+        self.emit(Op::MethodCall {
+            dst,
+            receiver: pin,
+            name_idx,
+            args: args_start,
+            argc: 0,
+            cache_idx,
+        });
+        Ok(dst)
+    }
+
     pub(crate) fn compile_method_call(
         &mut self,
         receiver: &HirExpr,
         name: &Ident,
         args: &[HirExpr],
     ) -> RuntimeResult<Reg> {
+        if name.name == "downgrade" && args.is_empty() {
+            return self.compile_downgrade(receiver);
+        }
         // Keep explicit wrapping arithmetic on the unboxed integer register
         // path. Routing these methods through generic dynamic dispatch makes
         // an intentional opt-out from debug overflow checks substantially

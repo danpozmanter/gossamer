@@ -14,6 +14,28 @@ use gossamer_lex::{Keyword, Punct, TokenKind};
 use crate::diagnostic::ParseError;
 use crate::parser::Parser;
 
+/// Type spelling for an initialiser whose type is known from its syntax
+/// alone, used to name a concrete type in a missing-annotation diagnostic.
+fn literal_type_name(value: &Expr) -> Option<&'static str> {
+    use gossamer_ast::Literal;
+    let inner = match &value.kind {
+        ExprKind::Unary { operand, .. } => &operand.kind,
+        other => other,
+    };
+    let ExprKind::Literal(literal) = inner else {
+        return None;
+    };
+    Some(match literal {
+        Literal::Int(_) => "i64",
+        Literal::Float(_) => "f64",
+        Literal::String(_) | Literal::RawString { .. } => "String",
+        Literal::Char(_) => "char",
+        Literal::Byte(_) => "u8",
+        Literal::Bool(_) => "bool",
+        Literal::ByteString(_) | Literal::RawByteString { .. } | Literal::Unit => return None,
+    })
+}
+
 fn empty_enum_decl(name: Ident, generics: Generics, where_clause: WhereClause) -> EnumDecl {
     EnumDecl {
         name,
@@ -108,10 +130,11 @@ impl Parser<'_> {
             });
         }
         self.record(
-            ParseError::Unexpected {
-                expected: "item keyword".to_string(),
-                found: self.peek_text(),
-            },
+            ParseError::unexpected(
+                "one of `fn`, `struct`, `enum`, `trait`, `impl`, `const`, `static`, `type`, \
+                 `use`, or `mod`",
+                self.peek_text(),
+            ),
             self.peek_span(),
         );
         // Force progress past the bad token before re-syncing - otherwise
@@ -131,7 +154,7 @@ impl Parser<'_> {
     /// Parses the outer attribute list preceding an item.
     pub(crate) fn parse_attrs(&mut self) -> Attrs {
         let mut outer = Vec::new();
-        while self.at_punct(Punct::Hash) {
+        while self.at_attribute_start() {
             if let Some(attribute) = self.parse_attribute() {
                 outer.push(attribute);
             } else {
@@ -141,6 +164,22 @@ impl Parser<'_> {
         Attrs {
             outer,
             inner: Vec::new(),
+        }
+    }
+
+    /// Whether the cursor is at `#[` or `#![`, the only shapes that open an
+    /// attribute. `#` also begins the `#[..]` Vec and `#{..}` Set literals,
+    /// so the following token decides which construct this is.
+    pub(crate) fn at_attribute_start(&self) -> bool {
+        if !self.at_punct(Punct::Hash) {
+            return false;
+        }
+        match self.peek_nth(1).kind {
+            TokenKind::Punct(Punct::LBracket) => true,
+            TokenKind::Punct(Punct::Bang) => {
+                matches!(self.peek_nth(2).kind, TokenKind::Punct(Punct::LBracket))
+            }
+            _ => false,
         }
     }
 
@@ -222,9 +261,11 @@ impl Parser<'_> {
         self.expect_keyword(Keyword::Fn, "to start function declaration");
         let name = self.parse_ident_required("function name");
         let generics = self.parse_generics();
-        self.expect_punct(Punct::LParen, "to open function parameter list");
+        self.expect_punct(Punct::LParen, "to open the parameter list");
         let params = self.parse_fn_params();
-        self.expect_punct(Punct::RParen, "to close function parameter list");
+        if !self.expect_punct(Punct::RParen, "to close the parameter list") {
+            self.recover_to_close(Punct::LParen, Punct::RParen);
+        }
         let ret = if self.eat_punct(Punct::Arrow) {
             Some(self.parse_type())
         } else {
@@ -267,7 +308,9 @@ impl Parser<'_> {
             let before_param = self.tokens.checkpoint();
             let is_comptime = self.eat_keyword(Keyword::Comptime);
             let pattern = self.parse_pattern_no_or();
-            self.expect_punct(Punct::Colon, "after parameter pattern");
+            if !self.expect_punct(Punct::Colon, "after the parameter pattern") {
+                break;
+            }
             let ty = self.parse_type();
             params.push(FnParam::Typed {
                 pattern,
@@ -312,7 +355,9 @@ impl Parser<'_> {
         }
         if self.eat_punct(Punct::Amp) {
             let mutability = self.eat_keyword(Keyword::Mut);
-            self.expect_keyword(Keyword::SelfLower, "after `&`/`&mut`");
+            // `at_receiver_start` gates this path on a `self` following the
+            // `&` or `&mut`, so the keyword is present.
+            self.eat_keyword(Keyword::SelfLower);
             return Some(if mutability {
                 Receiver::RefMut
             } else {
@@ -353,7 +398,10 @@ impl Parser<'_> {
     fn parse_struct_body(&mut self) -> StructBody {
         if self.eat_punct(Punct::LBrace) {
             let mut fields = Vec::new();
-            while !self.at_punct(Punct::RBrace) && !self.at_eof() {
+            // An item keyword ends the field list: the `}` is missing, and
+            // reading the next item as a field would report every one of
+            // its tokens instead of the one absent brace.
+            while !self.at_punct(Punct::RBrace) && !self.at_eof() && !at_item_keyword(self) {
                 let before_field = self.tokens.checkpoint();
                 let attrs = self.parse_attrs();
                 let visibility = if self.eat_keyword(Keyword::Pub) {
@@ -634,7 +682,7 @@ impl Parser<'_> {
         let _visibility = self.eat_keyword(Keyword::Pub);
         if self.eat_keyword(Keyword::Type) {
             let name = self.parse_ident_required("associated type name");
-            self.expect_punct(Punct::Eq, "in associated type");
+            self.expect_punct(Punct::Eq, "after the associated type name");
             let ty = self.parse_type();
             self.eat_punct(Punct::Semi);
             return ImplItem::Type { attrs, name, ty };
@@ -643,7 +691,7 @@ impl Parser<'_> {
             let name = self.parse_ident_required("associated constant name");
             self.expect_punct(Punct::Colon, "after associated constant name");
             let ty = self.parse_type();
-            self.expect_punct(Punct::Eq, "in associated constant");
+            self.expect_punct(Punct::Eq, "after the associated constant's type");
             let value = self.parse_expr();
             self.eat_punct(Punct::Semi);
             return ImplItem::Const {
@@ -660,7 +708,7 @@ impl Parser<'_> {
         self.bump();
         let name = self.parse_ident_required("type alias name");
         let generics = self.parse_generics();
-        self.expect_punct(Punct::Eq, "in type alias");
+        self.expect_punct(Punct::Eq, "after the alias name");
         let ty = self.parse_type();
         self.eat_punct(Punct::Semi);
         TypeAliasDecl { name, generics, ty }
@@ -668,13 +716,55 @@ impl Parser<'_> {
 
     fn parse_const_decl(&mut self) -> ConstDecl {
         self.bump();
+        let name_span = self.peek_span();
         let name = self.parse_ident_required("constant name");
+        if let Some((ty, value)) = self.recover_missing_item_type("constant", &name, name_span) {
+            return ConstDecl { name, ty, value };
+        }
         self.expect_punct(Punct::Colon, "after constant name");
         let ty = self.parse_type();
-        self.expect_punct(Punct::Eq, "in constant declaration");
+        self.expect_punct(Punct::Eq, "before the constant's value");
         let value = self.parse_expr();
         self.eat_punct(Punct::Semi);
         ConstDecl { name, ty, value }
+    }
+
+    /// Recovers from `const NAME = value` / `static NAME = value`, where the
+    /// mandatory type annotation is absent.
+    ///
+    /// Returns `None` when the annotation is present, leaving the cursor
+    /// untouched for the normal path. Otherwise consumes through the
+    /// initialiser and reports one diagnostic naming the type to write,
+    /// taken from the initialiser when it is a literal. The recovered type is
+    /// `Infer` so later passes see no name to resolve.
+    fn recover_missing_item_type(
+        &mut self,
+        kind: &'static str,
+        name: &Ident,
+        name_span: gossamer_lex::Span,
+    ) -> Option<(gossamer_ast::Type, Expr)> {
+        if !self.at_punct(Punct::Eq) {
+            return None;
+        }
+        self.bump();
+        let value = self.parse_expr();
+        self.eat_punct(Punct::Semi);
+        // A name the parser had to invent was already reported; naming it
+        // back to the user, or offering it as an edit, would put a spelling
+        // into their source that never appeared in it.
+        if !name.is_error() {
+            self.record(
+                ParseError::MissingItemType {
+                    kind,
+                    name: name.name.clone(),
+                    inferred: literal_type_name(&value),
+                },
+                name_span,
+            );
+        }
+        let id = self.alloc_id();
+        let ty = gossamer_ast::Type::new(id, name_span, gossamer_ast::TypeKind::Infer);
+        Some((ty, value))
     }
 
     fn parse_static_decl(&mut self) -> StaticDecl {
@@ -684,10 +774,19 @@ impl Parser<'_> {
         } else {
             Mutability::Immutable
         };
+        let name_span = self.peek_span();
         let name = self.parse_ident_required("static name");
+        if let Some((ty, value)) = self.recover_missing_item_type("static", &name, name_span) {
+            return StaticDecl {
+                mutability,
+                name,
+                ty,
+                value,
+            };
+        }
         self.expect_punct(Punct::Colon, "after static name");
         let ty = self.parse_type();
-        self.expect_punct(Punct::Eq, "in static declaration");
+        self.expect_punct(Punct::Eq, "before the static's initial value");
         let value = self.parse_expr();
         self.eat_punct(Punct::Semi);
         StaticDecl {
@@ -755,13 +854,27 @@ impl Parser<'_> {
             self.bump();
             return Ident::new(self.slice(span));
         }
-        self.record(
-            ParseError::Unexpected {
-                expected: context.to_string(),
-                found: self.peek_text(),
-            },
-            span,
-        );
+        self.record(ParseError::unexpected(context, self.peek_text()), span);
         Ident::new("<error>")
     }
+}
+
+/// `true` on a keyword that can only introduce an item. A struct field
+/// may be prefixed with `pub`, so visibility alone does not qualify.
+fn at_item_keyword(parser: &Parser<'_>) -> bool {
+    matches!(
+        parser.peek().kind,
+        TokenKind::Keyword(
+            Keyword::Fn
+                | Keyword::Struct
+                | Keyword::Enum
+                | Keyword::Trait
+                | Keyword::Impl
+                | Keyword::Type
+                | Keyword::Const
+                | Keyword::Static
+                | Keyword::Mod
+                | Keyword::Use
+        )
+    )
 }

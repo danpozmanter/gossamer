@@ -146,6 +146,113 @@ const REVERSE_DEF_LOCAL: u32 = u32::MAX - 29;
 const MIN_HEAP_DEF_LOCAL: u32 = u32::MAX - 30;
 const VEC_QUEUE_DEF_LOCAL: u32 = u32::MAX - 31;
 const VEC_STACK_DEF_LOCAL: u32 = u32::MAX - 32;
+const RESULT_DEF_LOCAL: u32 = u32::MAX;
+const OPTION_DEF_LOCAL: u32 = u32::MAX - 1;
+
+/// Eager sequence combinators callable in method form on a `Vec`.
+const SEQUENCE_COMBINATOR_METHODS: &[&str] = &[
+    "map",
+    "filter",
+    "for_each",
+    "fold",
+    "any",
+    "all",
+    "find",
+    "position",
+    "min_by_key",
+    "max_by_key",
+    "take",
+    "take_while",
+    "skip",
+    "skip_while",
+    "step_by",
+    "chain",
+    "zip",
+    "enumerate",
+    "rev",
+    "dedup",
+    "flatten",
+    "pairwise",
+    "sum",
+    "min",
+    "max",
+    "count",
+];
+
+/// The `Set` and `BTreeSet` method surface.
+const SET_METHODS: &[&str] = &[
+    "insert",
+    "remove",
+    "contains",
+    "len",
+    "is_empty",
+    "clear",
+    "iter",
+    "to_vec",
+    "union",
+    "intersection",
+    "difference",
+    "symmetric_difference",
+    "is_subset",
+    "is_superset",
+    "is_disjoint",
+];
+
+/// The `Deque` method surface.
+const DEQUE_METHODS: &[&str] = &[
+    "push_back",
+    "push_front",
+    "pop_back",
+    "pop_front",
+    "peek_back",
+    "peek_front",
+    "len",
+    "is_empty",
+    "clear",
+];
+
+/// The `Queue`, `Stack`, `MaxHeap`, and `MinHeap` method surface.
+const PUSH_POP_METHODS: &[&str] = &["push", "pop", "peek", "len", "is_empty", "clear"];
+
+/// Method names synthesized for every user type, which say nothing about
+/// the type the reader declared and so list after its own methods.
+const AUTOMATIC_METHODS: &[&str] = &["eq", "ne", "cmp", "partial_cmp", "fmt", "hash", "clone"];
+
+/// The `Result<T, E>` method surface.
+const RESULT_METHODS: &[&str] = &[
+    "is_ok",
+    "is_err",
+    "ok",
+    "err",
+    "unwrap",
+    "unwrap_or",
+    "unwrap_or_else",
+    "expect",
+    "map",
+    "map_err",
+    "and_then",
+    "or_else",
+];
+
+/// The `Option<T>` method surface.
+const OPTION_METHODS: &[&str] = &[
+    "is_some",
+    "is_none",
+    "unwrap",
+    "unwrap_or",
+    "unwrap_or_else",
+    "expect",
+    "map",
+    "and_then",
+    "filter",
+    "or",
+    "or_else",
+    "zip",
+    "ok_or",
+    "ok_or_else",
+    "flatten",
+    "iter",
+];
 
 /// Expected type pushed down into an expression while it is checked -
 /// the "checking mode" of bidirectional typechecking. The expectation
@@ -775,11 +882,20 @@ impl<'a> TypeChecker<'a> {
         };
         for (i, var) in vars.iter().enumerate() {
             let resolved = self.infer.resolve(self.tcx, *var);
+            self.reject_builtin_iterator_instantiation(
+                resolved,
+                bounds.get(i).map(Vec::as_slice).unwrap_or_default(),
+                span,
+            );
             let Some(ty_name) = self.concrete_type_name(resolved) else {
                 continue;
             };
             for bound in bounds.get(i).into_iter().flatten() {
-                if known_builtin_trait(bound) {
+                // A trait declared in this unit is checked against its impls
+                // even when its name matches a built-in one. Only names with
+                // no declaration behind them are exempt, since there is no
+                // impl set to check them against.
+                if known_builtin_trait(bound) && !self.declared_trait_names.contains(bound) {
                     continue;
                 }
                 let satisfied = self
@@ -1027,6 +1143,12 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn emit(&mut self, error: TypeError, span: Span) {
+        // A type that failed to check renders as a placeholder. Reporting it
+        // again names something absent from the source, so the diagnostic
+        // that produced the placeholder stands as the only report.
+        if error.mentions_error_type() {
+            return;
+        }
         self.diagnostics.push(TypeDiagnostic::new(error, span));
     }
 
@@ -1143,6 +1265,7 @@ impl<'a> TypeChecker<'a> {
             TyKind::Slice(elem) => self.deep_resolve_wrap(resolved, elem, TyKind::Slice),
             TyKind::Vec(elem) => self.deep_resolve_wrap(resolved, elem, TyKind::Vec),
             TyKind::Iterator(elem) => self.deep_resolve_wrap(resolved, elem, TyKind::Iterator),
+            TyKind::Range(elem) => self.deep_resolve_wrap(resolved, elem, TyKind::Range),
             TyKind::Sender(elem) => self.deep_resolve_wrap(resolved, elem, TyKind::Sender),
             TyKind::Receiver(elem) => self.deep_resolve_wrap(resolved, elem, TyKind::Receiver),
             TyKind::JoinHandle(elem) => self.deep_resolve_wrap(resolved, elem, TyKind::JoinHandle),
@@ -1981,9 +2104,11 @@ impl<'a> TypeChecker<'a> {
                             ty: ty_name,
                             field: field_name.to_string(),
                             opaque: true,
+                            declared: Vec::new(),
+                            field_span: None,
                         });
                     };
-                    for (name, ty) in fields {
+                    for (name, ty) in &fields {
                         if name == field_name {
                             // Substitute `TyKind::Param { idx }`
                             // slots in the declared field type
@@ -1996,13 +2121,15 @@ impl<'a> TypeChecker<'a> {
                             // resolve `Param` back to the
                             // receiver's per-instance argument.
                             let substs_vec = substs.types();
-                            return Ok(self.subst_params_in_ty(ty, &substs_vec));
+                            return Ok(self.subst_params_in_ty(*ty, &substs_vec));
                         }
                     }
                     return Err(TypeError::UnknownField {
                         ty: ty_name,
                         field: field_name.to_string(),
                         opaque: false,
+                        declared: fields.iter().map(|(name, _)| name.clone()).collect(),
+                        field_span: None,
                     });
                 }
                 _ => return Ok(self.fresh()),
@@ -2503,7 +2630,7 @@ impl<'a> TypeChecker<'a> {
                 if let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved)
                     && self.tcx.def_name(*def) == Some("Result")
                 {
-                    self.emit(TypeError::DiscardedResult, body.span);
+                    self.emit(TypeError::DiscardedResult, body_value_span(body));
                 }
                 body_ty
             };
@@ -2939,7 +3066,10 @@ impl<'a> TypeChecker<'a> {
                         match self.lookup_field_ty_diagnosed(receiver_ty, &name.name) {
                             Ok(ty) => ty,
                             Err(err) => {
-                                self.emit(err, expr.span);
+                                self.emit(
+                                    with_field_span(err, field_name_span(expr, &name.name)),
+                                    expr.span,
+                                );
                                 self.fresh()
                             }
                         }
@@ -3209,7 +3339,7 @@ impl<'a> TypeChecker<'a> {
                 if let (Some(bound), Some(ty)) = (end, end_ty) {
                     self.unify(elem, ty, bound.span);
                 }
-                self.tcx.iterator_ty(elem)
+                self.tcx.range_ty(elem)
             }
             ExprKind::Try(inner) => {
                 let inner_expectation = match self.expectation_target(expected) {
@@ -3284,6 +3414,11 @@ impl<'a> TypeChecker<'a> {
                         ty: name.clone(),
                         field: field.name.name.clone(),
                         opaque: false,
+                        declared: declared_fields
+                            .iter()
+                            .map(|(field_name, _)| field_name.clone())
+                            .collect(),
+                        field_span: None,
                     },
                     span,
                 );
@@ -4757,7 +4892,9 @@ impl<'a> TypeChecker<'a> {
                 let e = self.tcx.dyn_error_ty();
                 Some(self.result_adt_ty(v, e))
             }
-            "walk_dir" | "read_dir" => {
+            // `walk_dir` is the visiting form and is typed from its declared
+            // signature, so only the listing call is pinned here.
+            "read_dir" => {
                 let def = gossamer_resolve::DefId::local(u32::MAX - 2);
                 self.tcx.register_def_name(def, "DirInfo");
                 let entry = self.tcx.intern(TyKind::Adt {
@@ -5384,7 +5521,10 @@ impl<'a> TypeChecker<'a> {
             | "__gos_strconv_quote" => {
                 for ty in arg_tys {
                     let resolved = self.infer.resolve(self.tcx, *ty);
-                    if matches!(self.tcx.kind(resolved), Some(TyKind::Iterator(_))) {
+                    if matches!(
+                        self.tcx.kind(resolved),
+                        Some(TyKind::Iterator(_) | TyKind::Range(_))
+                    ) {
                         self.emit(TypeError::IteratorStateFormatted, span);
                         return Some(self.tcx.error_ty());
                     }
@@ -5564,8 +5704,59 @@ impl<'a> TypeChecker<'a> {
         self.stdlib_signature_ty(src)
     }
 
+    /// Callable type for a `Fn(A, B) -> R` slot in a stdlib signature.
+    ///
+    /// Returns `None` when the slot is not a callable, or when any part of
+    /// it names a type the catalogue cannot represent, so an unmodelled
+    /// callback keeps its previous inference-variable behaviour.
+    fn stdlib_signature_fn_ty(&mut self, src: &str) -> Option<Ty> {
+        let rest = src.trim().strip_prefix("Fn(")?;
+        // The parameter list ends at the paren matching `Fn(`, not at the
+        // last one in the row: a return type may carry its own parentheses.
+        let mut depth = 1usize;
+        let mut close = None;
+        for (i, ch) in rest.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let close = close?;
+        let (params_src, tail) = rest.split_at(close);
+        let mut inputs = Vec::new();
+        for part in crate::stdlib_signatures::split_top_level(params_src, ',') {
+            if part.trim().is_empty() {
+                continue;
+            }
+            inputs.push(self.stdlib_signature_ty(part)?);
+        }
+        // An unmodelled return type still leaves the parameters pinned, which
+        // is what a closure body needs to type its field accesses.
+        let output = match tail[1..].trim().strip_prefix("->") {
+            Some(return_src) => self
+                .stdlib_signature_ty(return_src)
+                .unwrap_or_else(|| self.fresh()),
+            None => self.tcx.unit(),
+        };
+        Some(self.tcx.intern(TyKind::FnTrait(FnSig { inputs, output })))
+    }
+
     fn stdlib_signature_ty(&mut self, src: &str) -> Option<Ty> {
         let src = src.trim();
+        // A callback slot resolves to the callable shape it declares, so a
+        // closure literal passed there types its parameters from the
+        // signature instead of leaving them inference variables that field
+        // access then reads dynamically.
+        if let Some(sig) = self.stdlib_signature_fn_ty(src) {
+            return Some(sig);
+        }
         if src.is_empty()
             || src.contains('|')
             || src.starts_with("Fn(")
@@ -5628,6 +5819,18 @@ impl<'a> TypeChecker<'a> {
                 .map(|part| self.stdlib_signature_ty(part))
                 .collect::<Option<Vec<_>>>()?;
             return Some(self.tcx.intern(TyKind::Tuple(elems)));
+        }
+        // A nominal stdlib handle resolves to the same sentinel Adt a written
+        // annotation gets, so a signature slot naming one carries its fields
+        // rather than an inference variable.
+        if let Some(offset) = stdlib_handle_def_offset(src.rsplit("::").next().unwrap_or(src)) {
+            let def = gossamer_resolve::DefId::local(u32::MAX - offset);
+            let name = src.rsplit("::").next().unwrap_or(src).to_string();
+            self.tcx.register_def_name(def, &name);
+            return Some(self.tcx.intern(TyKind::Adt {
+                def,
+                substs: crate::Substs::new(),
+            }));
         }
         None
     }
@@ -6234,6 +6437,9 @@ impl<'a> TypeChecker<'a> {
         {
             return ty;
         }
+        if self.reject_method_off_bound(receiver_ty, method, args, receiver.span) {
+            return self.tcx.error_ty();
+        }
         if self.reject_supertrait_method_through_bound(receiver_ty, method, receiver.span) {
             for arg in args {
                 self.check_expr(arg);
@@ -6401,13 +6607,8 @@ impl<'a> TypeChecker<'a> {
         if let Some(name) = self.payload_adt_method_owner(resolved)
             && !matches!(method, "clone")
         {
-            self.emit(
-                TypeError::UnresolvedMethod {
-                    ty: name.to_string(),
-                    name: method.to_string(),
-                },
-                receiver.span,
-            );
+            let error = self.unresolved_method(name.to_string(), method, resolved);
+            self.emit(error, receiver.span);
             return self.tcx.error_ty();
         }
         self.check_method_arity(call_id, resolved, method, args, receiver.span);
@@ -6467,6 +6668,82 @@ impl<'a> TypeChecker<'a> {
         Some(self.string_method_ret(method, generics, expected, span))
     }
 
+    /// Method names the checker resolves on `resolved`, in the order a
+    /// diagnostic lists them. Empty for a receiver with no tabled surface,
+    /// which leaves the diagnostic without a did-you-mean.
+    fn known_method_names(&self, resolved: Ty) -> Vec<String> {
+        let names: Vec<&str> = match self.tcx.kind(resolved) {
+            Some(TyKind::String) => STRING_METHODS.to_vec(),
+            Some(TyKind::Vec(_)) => SLICE_SEQUENCE_METHODS
+                .iter()
+                .chain(VEC_ONLY_SEQUENCE_METHODS)
+                .chain(SEQUENCE_COMBINATOR_METHODS)
+                .copied()
+                .collect(),
+            Some(TyKind::Slice(_)) => SLICE_SEQUENCE_METHODS.to_vec(),
+            Some(TyKind::Array { .. }) => SLICE_SEQUENCE_METHODS
+                .iter()
+                .chain(["clone", "into"].iter())
+                .copied()
+                .collect(),
+            Some(TyKind::HashMap { .. }) => MAP_METHODS.to_vec(),
+            Some(TyKind::Iterator(_) | TyKind::Range(_)) => ITERATOR_METHODS.to_vec(),
+            Some(TyKind::Tuple(_)) => TUPLE_METHODS.to_vec(),
+            Some(TyKind::Adt { def, .. }) => return self.adt_method_names(*def),
+            _ => Vec::new(),
+        };
+        let mut seen = HashSet::new();
+        names
+            .into_iter()
+            .filter(|name| seen.insert(*name))
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Method names of an `Adt` receiver: the tabled surface for the
+    /// checker's sentinel collections, and the user impl and trait methods
+    /// for a declared type.
+    fn adt_method_names(&self, def: gossamer_resolve::DefId) -> Vec<String> {
+        let tabled = match def.local {
+            HASH_SET_DEF_LOCAL | BTREE_SET_DEF_LOCAL => Some(SET_METHODS),
+            VEC_DEQUE_DEF_LOCAL => Some(DEQUE_METHODS),
+            VEC_QUEUE_DEF_LOCAL
+            | VEC_STACK_DEF_LOCAL
+            | BINARY_HEAP_DEF_LOCAL
+            | MIN_HEAP_DEF_LOCAL => Some(PUSH_POP_METHODS),
+            RESULT_DEF_LOCAL => Some(RESULT_METHODS),
+            OPTION_DEF_LOCAL => Some(OPTION_METHODS),
+            _ => None,
+        };
+        if let Some(names) = tabled {
+            return names.iter().map(|name| (*name).to_string()).collect();
+        }
+        let Some(owner) = self.tcx.def_name(def) else {
+            return Vec::new();
+        };
+        let mut methods: Vec<String> = self
+            .user_method_owners
+            .iter()
+            .filter(|(_, owners)| owners.contains(owner))
+            .map(|(method, _)| method.clone())
+            .collect();
+        // The methods written for this type lead the listing; the surface
+        // every type carries says nothing about what the reader declared.
+        methods
+            .sort_by_key(|method| (AUTOMATIC_METHODS.contains(&method.as_str()), method.clone()));
+        methods
+    }
+
+    /// Builds the GT0002 diagnostic for `method` on `resolved`, carrying
+    /// the receiver's method surface so the reader gets a did-you-mean.
+    fn unresolved_method(&self, ty: String, method: &str, resolved: Ty) -> TypeError {
+        TypeError::UnresolvedMethod {
+            ty,
+            name: method.to_string(),
+            available: self.known_method_names(resolved),
+        }
+    }
+
     fn reject_unknown_sequence_method(&mut self, resolved: Ty, method: &str, span: Span) -> bool {
         if !matches!(
             self.tcx.kind(resolved),
@@ -6475,13 +6752,8 @@ impl<'a> TypeChecker<'a> {
             return false;
         }
         let ty = self.render_public_ty(resolved);
-        self.emit(
-            TypeError::UnresolvedMethod {
-                ty,
-                name: method.to_string(),
-            },
-            span,
-        );
+        let error = self.unresolved_method(ty, method, resolved);
+        self.emit(error, span);
         true
     }
 
@@ -6494,13 +6766,8 @@ impl<'a> TypeChecker<'a> {
             return false;
         }
         let ty = self.render_public_ty(resolved);
-        self.emit(
-            TypeError::UnresolvedMethod {
-                ty,
-                name: method.to_string(),
-            },
-            span,
-        );
+        let error = self.unresolved_method(ty, method, resolved);
+        self.emit(error, span);
         true
     }
 
@@ -6517,13 +6784,8 @@ impl<'a> TypeChecker<'a> {
             return false;
         }
         let ty = self.render_public_ty(resolved);
-        self.emit(
-            TypeError::UnresolvedMethod {
-                ty,
-                name: method.to_string(),
-            },
-            span,
-        );
+        let error = self.unresolved_method(ty, method, resolved);
+        self.emit(error, span);
         true
     }
 
@@ -6592,6 +6854,138 @@ impl<'a> TypeChecker<'a> {
                 callee: format!("{owner}::{method}"),
                 expected,
                 found,
+            },
+            span,
+        );
+        true
+    }
+
+    /// Rejects passing a built-in iterator to a parameter bound by an
+    /// iteration trait.
+    ///
+    /// A built-in iterator carries no impl block, so the specialised body
+    /// keeps an unresolved `next` that no backend can lower. Naming the
+    /// iterator type on the parameter directly is the form every tier
+    /// lowers, and it is what the help points at.
+    fn reject_builtin_iterator_instantiation(
+        &mut self,
+        concrete: Ty,
+        bounds: &[String],
+        span: Span,
+    ) {
+        if !matches!(
+            self.tcx.kind(concrete),
+            Some(TyKind::Iterator(_) | TyKind::Range(_))
+        ) {
+            return;
+        }
+        let iterating = bounds.iter().any(|bound| {
+            matches!(bound.as_str(), "Iterator" | "IntoIterator")
+                || self
+                    .trait_method_ret
+                    .contains_key(&(bound.clone(), "next".to_string()))
+        });
+        if !iterating {
+            return;
+        }
+        let rendered = self.render_public_ty(concrete);
+        self.emit(TypeError::BuiltinIteratorNotGeneric { ty: rendered }, span);
+    }
+
+    /// Rejects `for x in t` where `t` is a generic parameter no bound makes
+    /// iterable.
+    ///
+    /// A parameter iterates through `.next()`, so a bound has to guarantee
+    /// that method exists. Without one the loop lowers against whatever
+    /// shape each instantiation happens to have, which the compiled tier
+    /// cannot resolve.
+    fn reject_unbounded_generic_iteration(&mut self, iter_ty: Ty, span: Span) {
+        let mut t = self.infer.resolve(self.tcx, iter_ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(t) {
+            t = self.infer.resolve(self.tcx, *inner);
+        }
+        let Some(TyKind::Param { idx, name }) = self.tcx.kind(t) else {
+            return;
+        };
+        let param = name.to_string();
+        let bounds = self
+            .current_param_bounds
+            .get(idx.0 as usize)
+            .cloned()
+            .unwrap_or_default();
+        let iterable = bounds.iter().any(|bound| {
+            matches!(bound.as_str(), "Iterator" | "IntoIterator")
+                || self
+                    .trait_method_ret
+                    .contains_key(&(bound.clone(), "next".to_string()))
+        });
+        if iterable {
+            return;
+        }
+        self.emit(
+            TypeError::MethodNotOnBound {
+                param,
+                method: "next".to_string(),
+                bounds,
+            },
+            span,
+        );
+    }
+
+    /// Rejects a method on a generic-parameter receiver that none of the
+    /// parameter's bounds declares.
+    ///
+    /// A parameter stands for every type a caller may supply, so its bounds
+    /// are the whole of what it can do. Without this the call fell through
+    /// to a name-global lookup and bound an unrelated type's body, reading
+    /// the receiver at that type's field layout.
+    fn reject_method_off_bound(
+        &mut self,
+        receiver_ty: Ty,
+        method: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> bool {
+        // Every value answers these regardless of its bounds.
+        if AUTOMATIC_METHODS.contains(&method) {
+            return false;
+        }
+        let mut t = self.infer.resolve(self.tcx, receiver_ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(t) {
+            t = self.infer.resolve(self.tcx, *inner);
+        }
+        let Some(TyKind::Param { idx, name }) = self.tcx.kind(t) else {
+            return false;
+        };
+        let param = name.to_string();
+        let bounds = self
+            .current_param_bounds
+            .get(idx.0 as usize)
+            .cloned()
+            .unwrap_or_default();
+        // A bound whose method surface is unknown cannot say whether this
+        // call is valid, so it is left alone rather than guessed at.
+        if bounds.iter().any(|bound| {
+            !self.declared_trait_names.contains(bound) && builtin_trait_methods(bound).is_none()
+        }) {
+            return false;
+        }
+        // A built-in bound answers for the methods it licenses.
+        if bounds
+            .iter()
+            .filter_map(|bound| builtin_trait_methods(bound))
+            .any(|surface| surface.contains(&method))
+        {
+            return false;
+        }
+        for arg in args {
+            self.check_expr(arg);
+        }
+        self.emit(
+            TypeError::MethodNotOnBound {
+                param,
+                method: method.to_string(),
+                bounds,
             },
             span,
         );
@@ -6786,7 +7180,7 @@ impl<'a> TypeChecker<'a> {
             // Iterator state addresses elements through the combinator
             // surface; a buffer method has no length or storage to act on
             // and would read as a silent no-op.
-            Some(TyKind::Iterator(_)) => (is_iterator_method(method), false),
+            Some(TyKind::Iterator(_) | TyKind::Range(_)) => (is_iterator_method(method), false),
             // A map is keyed, not ordered by position: the sequence surface
             // has nothing to index, reorder, or slice on it.
             Some(TyKind::HashMap { .. }) => (is_map_method(method), false),
@@ -6799,13 +7193,8 @@ impl<'a> TypeChecker<'a> {
             self.check_expr(arg);
         }
         let ty = self.render_public_ty(resolved);
-        self.emit(
-            TypeError::UnresolvedMethod {
-                ty,
-                name: method.to_string(),
-            },
-            span,
-        );
+        let error = self.unresolved_method(ty, method, resolved);
+        self.emit(error, span);
         true
     }
 
@@ -6837,6 +7226,9 @@ impl<'a> TypeChecker<'a> {
             }
             Some(TyKind::Iterator(elem)) => {
                 format!("Iterator<{}>", self.render_public_ty(elem))
+            }
+            Some(TyKind::Range(elem)) => {
+                format!("Range<{}>", self.render_public_ty(elem))
             }
             Some(TyKind::HashMap { key, value }) => {
                 format!(
@@ -7019,6 +7411,7 @@ impl<'a> TypeChecker<'a> {
                 | TyKind::Float(_)
                 | TyKind::Vec(_)
                 | TyKind::Iterator(_)
+                | TyKind::Range(_)
                 | TyKind::HashMap { .. }
                 | TyKind::Sender(_)
                 | TyKind::Receiver(_)
@@ -7245,7 +7638,7 @@ impl<'a> TypeChecker<'a> {
         span: Span,
     ) -> Option<Ty> {
         match self.tcx.kind(resolved) {
-            Some(TyKind::Iterator(_)) => {
+            Some(TyKind::Iterator(_) | TyKind::Range(_)) => {
                 let arity = Self::std_combinator_arity("iter", method)?;
                 if arity != arg_tys.len() + 1 {
                     return None;
@@ -7309,13 +7702,8 @@ impl<'a> TypeChecker<'a> {
         // it uniformly here.
         if method == "set" {
             let ty = self.render_public_ty(resolved);
-            self.emit(
-                TypeError::UnresolvedMethod {
-                    ty,
-                    name: "set".to_string(),
-                },
-                span,
-            );
+            let error = self.unresolved_method(ty, "set", resolved);
+            self.emit(error, span);
             return Some(self.tcx.error_ty());
         }
         let (key_arg, value_arg) = match (method, args.len()) {
@@ -7364,13 +7752,8 @@ impl<'a> TypeChecker<'a> {
                     TyKind::Adt { .. } | TyKind::Tuple(_) | TyKind::Array { .. }
                 ) {
                     let ty = self.render_public_ty(resolved);
-                    self.emit(
-                        TypeError::UnresolvedMethod {
-                            ty,
-                            name: "keys for aggregate Map keys".to_string(),
-                        },
-                        span,
-                    );
+                    let error = self.unresolved_method(ty, "keys for aggregate Map keys", resolved);
+                    self.emit(error, span);
                     return Some(self.tcx.error_ty());
                 }
                 Some(self.tcx.intern(TyKind::Vec(key)))
@@ -7555,6 +7938,7 @@ impl<'a> TypeChecker<'a> {
                         TypeError::UnresolvedMethod {
                             ty,
                             name: "join".to_string(),
+                            available: Vec::new(),
                         },
                         span,
                     );
@@ -7667,13 +8051,9 @@ impl<'a> TypeChecker<'a> {
             "parse" => self.string_parse_ret("String::parse", generics, expected, span),
             _ if is_string_method(method) => self.fresh(),
             _ => {
-                self.emit(
-                    TypeError::UnresolvedMethod {
-                        ty: "String".to_string(),
-                        name: method.to_string(),
-                    },
-                    span,
-                );
+                let string_ty = self.tcx.string_ty();
+                let error = self.unresolved_method("String".to_string(), method, string_ty);
+                self.emit(error, span);
                 self.tcx.error_ty()
             }
         }
@@ -7903,23 +8283,16 @@ impl<'a> TypeChecker<'a> {
             return;
         }
         // `user_method_owners` records every impl and trait method, so a
-        // method name that no user type owns is a genuine typo /
-        // nonexistent method on a concrete user receiver. Previously this
-        // case returned early (only a name owned by *another* type was
-        // rejected), so a typo passed `check` and the compiled tier
-        // failed to build with an undefined `@Type::method` symbol.
+        // name this receiver does not own is a typo or a method of another
+        // type; both would reach the compiled tier as an undefined
+        // `@Type::method` symbol.
         let owned_here = self
             .user_method_owners
             .get(method)
             .is_some_and(|owners| owners.contains(&name));
         if !owned_here {
-            self.emit(
-                TypeError::UnresolvedMethod {
-                    ty: name,
-                    name: method.to_string(),
-                },
-                span,
-            );
+            let error = self.unresolved_method(name, method, resolved);
+            self.emit(error, span);
         }
     }
 
@@ -8214,6 +8587,7 @@ impl<'a> TypeChecker<'a> {
             Some(
                 TyKind::Vec(elem)
                 | TyKind::Iterator(elem)
+                | TyKind::Range(elem)
                 | TyKind::Slice(elem)
                 | TyKind::Array { elem, .. },
             ) => Some(*elem),
@@ -8515,7 +8889,7 @@ impl<'a> TypeChecker<'a> {
                 let all_tier_iterator_input = is_iterator_method(name);
                 let data_is_iterator = matches!(
                     self.tcx.kind_of(self.infer.resolve(self.tcx, data_ty)),
-                    TyKind::Iterator(_)
+                    TyKind::Iterator(_) | TyKind::Range(_)
                 );
                 let lazy_result = edition_lazy_result || data_is_iterator;
                 let iterator_terminal = matches!(
@@ -8790,7 +9164,10 @@ impl<'a> TypeChecker<'a> {
 
     fn mark_consumed_iterator_expr(&mut self, name: &str, expr: &Expr, ty: Ty) {
         let resolved = self.infer.resolve(self.tcx, ty);
-        if !matches!(self.tcx.kind(resolved), Some(TyKind::Iterator(_))) {
+        if !matches!(
+            self.tcx.kind(resolved),
+            Some(TyKind::Iterator(_) | TyKind::Range(_))
+        ) {
             return;
         }
         let ExprKind::Path(path) = &expr.kind else {
@@ -9065,7 +9442,7 @@ impl<'a> TypeChecker<'a> {
                 if !self.both_integer_types(lhs_ty, rhs_ty)
                     && !self.coerce_byte_literal_cmp(lhs, lhs_ty, rhs, rhs_ty)
                 {
-                    self.unify(lhs_ty, rhs_ty, span);
+                    self.unify_operands(op, lhs, lhs_ty, rhs, rhs_ty, span);
                 }
                 self.tcx.bool_ty()
             }
@@ -9143,10 +9520,62 @@ impl<'a> TypeChecker<'a> {
                 if self.coerce_byte_literal_cmp(lhs, lhs_ty, rhs, rhs_ty) {
                     return if lhs_is_byte { rhs_ty } else { lhs_ty };
                 }
-                self.unify(lhs_ty, rhs_ty, span);
+                self.unify_operands(op, lhs, lhs_ty, rhs, rhs_ty, span);
                 lhs_ty
             }
         }
+    }
+
+    /// Unifies two operand types, reporting an integer paired with a float
+    /// as the cast the reader has to write instead of a bare mismatch.
+    fn unify_operands(
+        &mut self,
+        op: BinaryOp,
+        lhs: &Expr,
+        lhs_ty: Ty,
+        rhs: &Expr,
+        rhs_ty: Ty,
+        span: Span,
+    ) {
+        if let Some(error) = self.numeric_operand_mismatch(op, lhs, lhs_ty, rhs, rhs_ty) {
+            self.emit(error, span);
+            return;
+        }
+        self.unify(lhs_ty, rhs_ty, span);
+    }
+
+    /// The GT0001 diagnostic for an integer operand paired with a float
+    /// one, spelling the whole expression with the cast in place. `None`
+    /// for every other operand pairing.
+    fn numeric_operand_mismatch(
+        &mut self,
+        op: BinaryOp,
+        lhs: &Expr,
+        lhs_ty: Ty,
+        rhs: &Expr,
+        rhs_ty: Ty,
+    ) -> Option<TypeError> {
+        let left = self.infer.resolve(self.tcx, lhs_ty);
+        let right = self.infer.resolve(self.tcx, rhs_ty);
+        let (left_kind, right_kind) = (self.tcx.kind(left)?.clone(), self.tcx.kind(right)?.clone());
+        let expected = self.render_public_ty(left);
+        let found = self.render_public_ty(right);
+        let op = op.as_str();
+        let (left_text, right_text) = (operand_display(lhs), operand_display(rhs));
+        let cast = match (left_kind, right_kind) {
+            (TyKind::Int(_), TyKind::Float(_)) => {
+                format!("{left_text} as {found} {op} {right_text}")
+            }
+            (TyKind::Float(_), TyKind::Int(_)) => {
+                format!("{left_text} {op} {right_text} as {expected}")
+            }
+            _ => return None,
+        };
+        Some(TypeError::NumericOperandMismatch {
+            expected,
+            found,
+            cast,
+        })
     }
 
     /// Type-checks a pipe RHS closure with its parameter shaped by the value
@@ -9958,6 +10387,7 @@ impl<'a> TypeChecker<'a> {
 
     fn check_for(&mut self, pattern: &Pattern, iter: &Expr, body: &Expr) -> Ty {
         let iter_ty = self.check_expr(iter);
+        self.reject_unbounded_generic_iteration(iter_ty, iter.span);
         self.mark_consumed_iterator_expr("into_iter", iter, iter_ty);
         self.push_scope();
         // Derive the pattern's type from the iterator: arrays/slices
@@ -10027,7 +10457,8 @@ impl<'a> TypeChecker<'a> {
                     TyKind::Array { elem, .. }
                     | TyKind::Slice(elem)
                     | TyKind::Vec(elem)
-                    | TyKind::Iterator(elem) => {
+                    | TyKind::Iterator(elem)
+                    | TyKind::Range(elem) => {
                         break Some(elem);
                     }
                     TyKind::String => break Some(self.tcx.char_ty()),
@@ -10153,7 +10584,11 @@ impl<'a> TypeChecker<'a> {
                 Expectation::None
             };
             let init_ty = self.check_expr_expecting(init, expected);
-            self.unify(binding_ty, init_ty, init.span);
+            if let Some(error) = self.option_value_mismatch(pattern, binding_ty, init, init_ty) {
+                self.emit(error, init.span);
+            } else {
+                self.unify(binding_ty, init_ty, init.span);
+            }
             self.check_local_reference_storage(pattern, binding_ty, init);
             self.check_reference_pattern(pattern, init_ty);
         }
@@ -10164,6 +10599,53 @@ impl<'a> TypeChecker<'a> {
         if let Some(init) = init {
             self.register_named_mutable_borrow(pattern, init);
         }
+    }
+
+    /// The GT0001 diagnostic for binding an `Option<T>` where the
+    /// annotation asks for `T`, spelling both fixes with the initializer's
+    /// own text. `None` when the shapes do not match that case or the
+    /// initializer has no short spelling, leaving ordinary unification to
+    /// report the mismatch.
+    fn option_value_mismatch(
+        &mut self,
+        pattern: &Pattern,
+        binding_ty: Ty,
+        init: &Expr,
+        init_ty: Ty,
+    ) -> Option<TypeError> {
+        let want = self.infer.resolve(self.tcx, binding_ty);
+        let found = self.infer.resolve(self.tcx, init_ty);
+        if matches!(
+            self.tcx.kind(want),
+            Some(TyKind::Var(_) | TyKind::Error) | None
+        ) {
+            return None;
+        }
+        let Some(TyKind::Adt { def, substs }) = self.tcx.kind(found) else {
+            return None;
+        };
+        if def.local != OPTION_DEF_LOCAL {
+            return None;
+        }
+        let payload = substs.types().first().copied()?;
+        let payload = self.infer.resolve(self.tcx, payload);
+        let expected = self.render_public_ty(want);
+        if expected != self.render_public_ty(payload) {
+            return None;
+        }
+        let actual = expr_display(init)?;
+        let binding = match &pattern.kind {
+            PatternKind::Ident { name, .. } => name.name.clone(),
+            _ => "value".to_string(),
+        };
+        let default = default_value_spelling(self.tcx.kind(payload));
+        Some(TypeError::OptionValueMismatch {
+            expected,
+            found: self.render_public_ty(found),
+            actual,
+            binding,
+            default,
+        })
     }
 
     fn check_local_reference_storage(&mut self, pattern: &Pattern, binding_ty: Ty, init: &Expr) {
@@ -10710,10 +11192,17 @@ impl<'a> TypeChecker<'a> {
                     .is_some_and(|owners| owners.contains(enum_name))
         });
         if unknown {
+            let mut declared: Vec<String> = self
+                .enum_variants
+                .get(enum_name)
+                .map(|variants| variants.iter().cloned().collect())
+                .unwrap_or_default();
+            declared.sort();
             self.emit(
                 TypeError::UnknownVariant {
                     enum_name: enum_name.to_string(),
                     variant: variant.to_string(),
+                    declared,
                 },
                 span,
             );
@@ -11119,14 +11608,21 @@ impl<'a> TypeChecker<'a> {
                     .unwrap_or_else(|| self.fresh());
                 return self.tcx.intern(TyKind::Vec(elem));
             }
-            "Iterator" => {
+            // `Range<T>` is what a range expression produces and converts to
+            // `Iterator<T>`, so either spelling accepts a range while only
+            // `Range` reports back as one.
+            "Iterator" | "Range" => {
                 let substs = self.substs_from_ast(path);
                 let item = substs
                     .types()
                     .first()
                     .copied()
                     .unwrap_or_else(|| self.fresh());
-                return self.tcx.intern(TyKind::Iterator(item));
+                return if head_name == "Range" {
+                    self.tcx.range_ty(item)
+                } else {
+                    self.tcx.intern(TyKind::Iterator(item))
+                };
             }
             // `Sender<T>` / `Receiver<T>` / `JoinHandle<T>` carry their
             // element type in a dedicated `TyKind`. Resolving the
@@ -11993,6 +12489,112 @@ fn strings_fn_param_metadata(name: &str, position: usize, shape: StrArgShape) ->
 
 /// Concise source-like text for an invalid argument. Literals retain their
 /// exact value, while paths remain useful without requiring the source map.
+/// Source-shaped spelling of an expression, for a diagnostic that shows
+/// the rewrite in the reader's own terms. `None` for a shape with no short
+/// spelling, which leaves the diagnostic on its generic `<expr>` wording.
+fn expr_display(expr: &Expr) -> Option<String> {
+    match &expr.kind {
+        ExprKind::Literal(_) | ExprKind::Path(_) => match argument_value_display(expr).as_str() {
+            "<expression>" => None,
+            text => Some(text.to_string()),
+        },
+        ExprKind::Call { callee, args } => {
+            let callee = expr_display(callee)?;
+            let args = expr_display_list(args)?;
+            Some(format!("{callee}({args})"))
+        }
+        ExprKind::MethodCall {
+            receiver,
+            name,
+            args,
+            ..
+        } => {
+            let receiver = expr_display(receiver)?;
+            let args = expr_display_list(args)?;
+            Some(format!("{receiver}.{}({args})", name.name))
+        }
+        ExprKind::FieldAccess {
+            receiver,
+            field: gossamer_ast::FieldSelector::Named(name),
+        } => Some(format!("{}.{}", expr_display(receiver)?, name.name)),
+        _ => None,
+    }
+}
+
+/// Comma-joined spellings of an argument list, or `None` when any argument
+/// has no short spelling.
+fn expr_display_list(args: &[Expr]) -> Option<String> {
+    let rendered = args.iter().map(expr_display).collect::<Option<Vec<_>>>()?;
+    Some(rendered.join(", "))
+}
+
+/// Spelling of an operand for a cast suggestion, falling back to the
+/// `<expr>` placeholder the other help lines use.
+fn operand_display(expr: &Expr) -> String {
+    expr_display(expr).unwrap_or_else(|| "<expr>".to_string())
+}
+
+/// Spelling of a `T` value to seed `unwrap_or` with for the scalar types
+/// that have an obvious zero, or the `<default>` placeholder otherwise.
+fn default_value_spelling(kind: Option<&TyKind>) -> String {
+    match kind {
+        Some(TyKind::Int(_)) => "0".to_string(),
+        Some(TyKind::Float(_)) => "0.0".to_string(),
+        Some(TyKind::Bool) => "false".to_string(),
+        Some(TyKind::String) => "\"\"".to_string(),
+        _ => "<default>".to_string(),
+    }
+}
+
+/// Span of the expression a function body evaluates to. A block yields
+/// its tail expression, so a diagnostic about the produced value points at
+/// that expression rather than at the enclosing braces.
+fn body_value_span(body: &Expr) -> Span {
+    match &body.kind {
+        ExprKind::Block(block) => block
+            .tail
+            .as_ref()
+            .map_or(body.span, |tail| body_value_span(tail)),
+        _ => body.span,
+    }
+}
+
+/// Span of the field name inside a named field access. A named access
+/// ends at its field name, so the trailing bytes of the access span cover
+/// the name exactly.
+fn field_name_span(access: &Expr, field: &str) -> Option<Span> {
+    let len = u32::try_from(field.len()).ok()?;
+    if access.span.len() <= len {
+        return None;
+    }
+    Some(Span::new(
+        access.span.file,
+        access.span.end - len,
+        access.span.end,
+    ))
+}
+
+/// Records where a field name sits so the GT0006 rename suggestion can
+/// replace that name alone.
+fn with_field_span(error: TypeError, span: Option<Span>) -> TypeError {
+    match error {
+        TypeError::UnknownField {
+            ty,
+            field,
+            opaque,
+            declared,
+            ..
+        } => TypeError::UnknownField {
+            ty,
+            field,
+            opaque,
+            declared,
+            field_span: span,
+        },
+        other => other,
+    }
+}
+
 fn argument_value_display(arg: &Expr) -> String {
     match &arg.kind {
         ExprKind::Array(ArrayExpr::List(values)) => array_value_display("#[", "]", values),
@@ -12576,6 +13178,7 @@ fn expr_tree_has_reference(expr: &Expr, table: &TypeTable, tcx: &TyCtxt) -> bool
             | TyKind::Slice(elem)
             | TyKind::Vec(elem)
             | TyKind::Iterator(elem)
+            | TyKind::Range(elem)
             | TyKind::Sender(elem)
             | TyKind::Receiver(elem)
             | TyKind::JoinHandle(elem) => contains(tcx, *elem),
@@ -12665,6 +13268,7 @@ fn kind_is_concrete(checker: &TypeChecker<'_>, kind: &TyKind) -> bool {
         | TyKind::Slice(elem)
         | TyKind::Vec(elem)
         | TyKind::Iterator(elem)
+        | TyKind::Range(elem)
         | TyKind::Sender(elem)
         | TyKind::Receiver(elem)
         | TyKind::JoinHandle(elem)
@@ -12971,92 +13575,97 @@ fn cast_allowed(from: &TyKind, to: &TyKind) -> bool {
 /// with precise return types before this fallback and need not recur
 /// here, but listing them keeps the set self-describing.
 fn is_string_method(name: &str) -> bool {
-    matches!(
-        name,
-        "len"
-            | "is_empty"
-            | "as_bytes"
-            | "bytes"
-            | "chars"
-            | "split"
-            | "splitn"
-            | "split_whitespace"
-            | "split_once"
-            | "rsplit_once"
-            | "lines"
-            | "find"
-            | "rfind"
-            | "find_any"
-            | "rfind_any"
-            | "index_rune"
-            | "contains"
-            | "contains_any"
-            | "contains_rune"
-            | "starts_with"
-            | "ends_with"
-            | "equal_fold"
-            | "count"
-            | "byte_at"
-            | "byte_len"
-            | "trim"
-            | "trim_start"
-            | "trim_end"
-            | "trim_matches"
-            | "trim_start_matches"
-            | "trim_end_matches"
-            | "replace"
-            | "replacen"
-            | "to_lowercase"
-            | "to_uppercase"
-            | "to_title"
-            | "to_i64"
-            | "to_f64"
-            | "to_bool"
-            | "repeat"
-            | "strip_prefix"
-            | "strip_suffix"
-            | "pad_left"
-            | "pad_right"
-            | "center"
-            | "slice"
-            | "substring"
-            | "clear"
-            | "truncate"
-            | "push"
-            | "push_str"
-            | "push_char"
-            | "push_byte"
-            | "parse"
-    )
+    STRING_METHODS.contains(&name)
 }
+
+/// The `String` method surface, in the order diagnostics list it.
+const STRING_METHODS: &[&str] = &[
+    "len",
+    "is_empty",
+    "as_bytes",
+    "bytes",
+    "chars",
+    "split",
+    "splitn",
+    "split_whitespace",
+    "split_once",
+    "rsplit_once",
+    "lines",
+    "find",
+    "rfind",
+    "find_any",
+    "rfind_any",
+    "index_rune",
+    "contains",
+    "contains_any",
+    "contains_rune",
+    "starts_with",
+    "ends_with",
+    "equal_fold",
+    "count",
+    "byte_at",
+    "byte_len",
+    "trim",
+    "trim_start",
+    "trim_end",
+    "trim_matches",
+    "trim_start_matches",
+    "trim_end_matches",
+    "replace",
+    "replacen",
+    "to_lowercase",
+    "to_uppercase",
+    "to_title",
+    "to_i64",
+    "to_f64",
+    "to_bool",
+    "repeat",
+    "strip_prefix",
+    "strip_suffix",
+    "pad_left",
+    "pad_right",
+    "center",
+    "slice",
+    "substring",
+    "clear",
+    "truncate",
+    "push",
+    "push_str",
+    "push_char",
+    "push_byte",
+    "parse",
+];
 
 /// Returns whether a `Vec` method changes capacity or length and therefore
 /// cannot be called on a fixed-size array receiver.
 #[must_use]
 pub fn is_vec_only_sequence_method(name: &str) -> bool {
-    matches!(
-        name,
-        "push"
-            | "pop"
-            | "insert"
-            | "remove"
-            | "clear"
-            | "extend"
-            | "extend_from_slice"
-            | "truncate"
-            | "reserve"
-            | "reserve_exact"
-            | "capacity"
-            | "append"
-            | "resize"
-            | "resize_with"
-            | "split_off"
-            | "drain"
-            | "retain"
-            | "shrink_to_fit"
-            | "dedup"
-    )
+    VEC_ONLY_SEQUENCE_METHODS.contains(&name)
 }
+
+/// The length- and capacity-changing sequence methods, which only a
+/// `Vec<T>` receiver carries.
+const VEC_ONLY_SEQUENCE_METHODS: &[&str] = &[
+    "push",
+    "pop",
+    "insert",
+    "remove",
+    "clear",
+    "extend",
+    "extend_from_slice",
+    "truncate",
+    "reserve",
+    "reserve_exact",
+    "capacity",
+    "append",
+    "resize",
+    "resize_with",
+    "split_off",
+    "drain",
+    "retain",
+    "shrink_to_fit",
+    "dedup",
+];
 
 /// Returns whether a method belongs to Gossamer's slice surface. This is the
 /// canonical list used by method checking and REPL documentation. Eager
@@ -13065,30 +13674,32 @@ pub fn is_vec_only_sequence_method(name: &str) -> bool {
 /// and iterator APIs.
 #[must_use]
 pub fn is_slice_sequence_method(name: &str) -> bool {
-    matches!(
-        name,
-        "len"
-            | "is_empty"
-            | "slice"
-            | "first"
-            | "last"
-            | "get"
-            | "contains"
-            | "index_of"
-            | "count_of"
-            | "sort"
-            | "sort_by"
-            | "sort_by_key"
-            | "reverse"
-            | "swap"
-            | "fill"
-            | "windows"
-            | "chunks"
-            | "join"
-            | "to_vec"
-            | "iter"
-    )
+    SLICE_SEQUENCE_METHODS.contains(&name)
 }
+
+/// The slice method surface shared by slices, arrays, and `Vec`.
+const SLICE_SEQUENCE_METHODS: &[&str] = &[
+    "len",
+    "is_empty",
+    "slice",
+    "first",
+    "last",
+    "get",
+    "contains",
+    "index_of",
+    "count_of",
+    "sort",
+    "sort_by",
+    "sort_by_key",
+    "reverse",
+    "swap",
+    "fill",
+    "windows",
+    "chunks",
+    "join",
+    "to_vec",
+    "iter",
+];
 
 /// Returns whether a method is rejected for a tuple receiver. A tuple's
 /// elements may differ in type, so nothing that walks it as a sequence of
@@ -13106,11 +13717,19 @@ pub fn is_tuple_rejected_method(name: &str) -> bool {
 /// type to act on and no buffer to reorder.
 #[must_use]
 pub fn is_tuple_method(name: &str) -> bool {
-    matches!(
-        name,
-        "len" | "is_empty" | "get" | "clone" | "to_string" | "into" | "try_into"
-    )
+    TUPLE_METHODS.contains(&name)
 }
+
+/// The tuple method surface: whole-value operations plus positional access.
+const TUPLE_METHODS: &[&str] = &[
+    "len",
+    "is_empty",
+    "get",
+    "clone",
+    "to_string",
+    "into",
+    "try_into",
+];
 
 /// Returns whether a method is implemented for a `Map` receiver. Keeping
 /// discovery, type checking, and the runtime on one list stops a sequence
@@ -13118,27 +13737,30 @@ pub fn is_tuple_method(name: &str) -> bool {
 /// would read as a silent no-op.
 #[must_use]
 pub fn is_map_method(name: &str) -> bool {
-    matches!(
-        name,
-        "insert"
-            | "get"
-            | "get_or"
-            | "or_insert"
-            | "remove"
-            | "pop"
-            | "contains_key"
-            | "contains"
-            | "inc"
-            | "inc_at"
-            | "inc_batch"
-            | "len"
-            | "is_empty"
-            | "keys"
-            | "values"
-            | "iter"
-            | "clear"
-    )
+    MAP_METHODS.contains(&name)
 }
+
+/// The `Map` method surface shared by discovery, type checking, and the
+/// runtime.
+const MAP_METHODS: &[&str] = &[
+    "insert",
+    "get",
+    "get_or",
+    "or_insert",
+    "remove",
+    "pop",
+    "contains_key",
+    "contains",
+    "inc",
+    "inc_at",
+    "inc_batch",
+    "len",
+    "is_empty",
+    "keys",
+    "values",
+    "iter",
+    "clear",
+];
 
 /// Fixed arrays expose value-preserving `clone` in addition to methods made
 /// available through Rust-like array-to-slice receiver coercion.
@@ -13153,37 +13775,39 @@ pub fn is_array_sequence_method(name: &str) -> bool {
 /// iterator operations.
 #[must_use]
 pub fn is_iterator_method(name: &str) -> bool {
-    matches!(
-        name,
-        "next"
-            | "take"
-            | "skip"
-            | "step_by"
-            | "enumerate"
-            | "chain"
-            | "zip"
-            | "map"
-            | "filter"
-            | "take_while"
-            | "skip_while"
-            | "rev"
-            | "dedup"
-            | "flatten"
-            | "pairwise"
-            | "windows"
-            | "chunks"
-            | "collect"
-            | "count"
-            | "sum"
-            | "product"
-            | "min"
-            | "max"
-            | "fold"
-            | "any"
-            | "all"
-            | "find"
-    )
+    ITERATOR_METHODS.contains(&name)
 }
+
+/// The `Iterator<T>` method surface available on every execution tier.
+const ITERATOR_METHODS: &[&str] = &[
+    "next",
+    "take",
+    "skip",
+    "step_by",
+    "enumerate",
+    "chain",
+    "zip",
+    "map",
+    "filter",
+    "take_while",
+    "skip_while",
+    "rev",
+    "dedup",
+    "flatten",
+    "pairwise",
+    "windows",
+    "chunks",
+    "collect",
+    "count",
+    "sum",
+    "product",
+    "min",
+    "max",
+    "fold",
+    "any",
+    "all",
+    "find",
+];
 
 /// Best-effort human-readable name for a call's callee expression,
 /// used in arity diagnostics. A path renders as its joined segments;
@@ -13286,6 +13910,59 @@ fn struct_literal_positional_index(name: &str) -> Option<usize> {
     } else {
         None
     }
+}
+
+/// Methods a built-in trait licenses on a bound type parameter.
+///
+/// `None` means the name has no known surface, so a bound naming it cannot
+/// decide whether a call is valid. An empty surface means the trait licenses
+/// no methods of its own, which is different from having none known.
+fn builtin_trait_methods(name: &str) -> Option<&'static [&'static str]> {
+    Some(match name {
+        "Iterator" | "IntoIterator" => ITERATOR_METHODS,
+        "Clone" => &["clone"],
+        "Debug" | "Display" => &["fmt", "to_string"],
+        "Default" => &["default"],
+        "Hash" | "Hashable" => &["hash"],
+        "PartialEq" | "Eq" => &["eq", "ne"],
+        "PartialOrd" | "Ord" => &["cmp", "partial_cmp"],
+        "From" => &["from"],
+        "Into" => &["into"],
+        "TryFrom" => &["try_from"],
+        "TryInto" => &["try_into"],
+        "Add" => &["add"],
+        "Sub" => &["sub"],
+        "Mul" => &["mul"],
+        "Div" => &["div"],
+        "Rem" => &["rem"],
+        "Neg" => &["neg"],
+        "Not" => &["not"],
+        "BitAnd" => &["bitand"],
+        "BitOr" => &["bitor"],
+        "BitXor" => &["bitxor"],
+        "Shl" => &["shl"],
+        "Shr" => &["shr"],
+        "Index" | "IndexMut" => &["index"],
+        "AsRef" => &["as_ref"],
+        "AsMut" => &["as_mut"],
+        // Marker traits carry no methods of their own.
+        "Copy" | "Sized" | "Send" | "Sync" | "Drop" => &[],
+        _ => return None,
+    })
+}
+
+/// Sentinel-def offset for a stdlib handle named by its last path segment.
+///
+/// Mirrors the annotation path so `fs::DirInfo` means the same type whether
+/// it is written in source or read out of a signature row.
+fn stdlib_handle_def_offset(tail: &str) -> Option<u32> {
+    Some(match tail {
+        "DirInfo" => 2,
+        "Output" => 3,
+        "ResponseStream" => 4,
+        "Response" => 5,
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

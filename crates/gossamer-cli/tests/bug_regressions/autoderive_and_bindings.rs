@@ -915,7 +915,7 @@ fn main() {
     wg.wait()
     println!("done")
 }
-fn finish(wg: WaitGroup) { wg.done() }
+fn finish(wg: sync::WaitGroup) { wg.done() }
 "#;
     let dir = fresh_dir("sync_waitgroup_qualified");
     let path = write_source(&dir, "sync_waitgroup_qualified", src);

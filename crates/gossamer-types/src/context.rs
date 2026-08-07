@@ -235,6 +235,11 @@ impl TyCtxt {
         self.intern(TyKind::Iterator(item))
     }
 
+    /// Interns `Range<T>`, the type a range expression produces.
+    pub fn range_ty(&mut self, item: Ty) -> Ty {
+        self.intern(TyKind::Range(item))
+    }
+
     /// Returns the interned `()` type if it already exists. Immutable
     /// counterpart to [`unit`](Self::unit) for passes holding `&TyCtxt`
     /// (e.g. the drop/RC inserter, which must type a throwaway local as unit

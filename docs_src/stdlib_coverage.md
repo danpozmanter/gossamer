@@ -32,8 +32,8 @@ evidence visible.
 | `std::panic` | experimental | 1 | module-only | module-only | module-only | panic + catch_unwind. |
 | `std::errors` | experimental | 6 | module-only | module-only | module-only | new, newf, wrap, is, join. |
 | `std::flag` | experimental | 8 | module-only | module-only | module-only | Set with string/int/uint/float/bool/duration/string_list, --help, equals form. Subcommands deferred to v1.x. |
-| `std::path` | shipped | 12 | module-only | module-only | module-only | join, split, base, dir, ext, clean. |
-| `std::fs` | experimental | 25 | module-only | module-only | module-only | read_dir, walk_dir, mkdir_all, remove_all, copy, rename. |
+| `std::path` | shipped | 13 | module-only | module-only | module-only | join, split, base, dir, ext, clean. |
+| `std::fs` | experimental | 26 | module-only | module-only | module-only | read_dir, walk_dir, mkdir_all, remove_all, copy, rename. |
 | `std::bytes` | experimental | 5 | module-only | module-only | module-only | Buffer, Builder, index_of, split, replace. |
 | `std::bufio` | experimental | 7 | module-only | module-only | module-only | Reader, Writer, Scanner with split_lines / split_words. |
 | `std::net::url` | shipped | 5 | module-only | module-only | module-only | Url, query_escape, query_unescape. |
@@ -368,6 +368,7 @@ the canonical item path.
 | `std::fmt::println` | Macro | experimental | not item-audited |
 | `std::fmt::write` | Macro | experimental | not item-audited |
 | `std::fmt::writeln` | Macro | experimental | not item-audited |
+| `std::fs::DirInfo` | Type | experimental | not item-audited |
 | `std::fs::File` | Type | experimental | not item-audited |
 | `std::fs::OpenOptions` | Type | experimental | not item-audited |
 | `std::fs::canonicalize` | Function | experimental | not item-audited |
@@ -792,6 +793,7 @@ the canonical item path.
 | `std::path::split` | Function | experimental | not item-audited |
 | `std::path::starts_with` | Function | experimental | not item-audited |
 | `std::path::unique_prefixes` | Function | experimental | not item-audited |
+| `std::path::walk` | Function | experimental | not item-audited |
 | `std::process::Child` | Type | experimental | not item-audited |
 | `std::process::abort` | Function | experimental | not item-audited |
 | `std::process::exit` | Function | experimental | not item-audited |

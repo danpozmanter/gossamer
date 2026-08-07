@@ -783,6 +783,10 @@ const SPECS: &[Spec] = &[
     // frame-owned shadow local: repeated / rebound / discarded upgrades
     // keep the accounting balanced on every tier.
     spec("feature-testing-examples/weak_upgrade_ownership.gos"),
+    // `x.downgrade()` on a by-value aggregate: the referent lives in an RC
+    // cell pinned by the creating scope, so liveness never depends on the
+    // source binding's last read on any tier.
+    spec("feature-testing-examples/weak_value_referent.gos"),
     spec("feature-testing-examples/recursive_enum_walk.gos"),
     // Structural `==` / `!=` on heap (recursive / Box / Vec-bearing) enums:
     // equal-but-distinct allocations compare true on every tier.

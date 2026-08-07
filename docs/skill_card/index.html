@@ -2425,11 +2425,12 @@ card:</p>
   parses returning <code>Option&lt;T&gt;</code>:
   <code>env::args().first().unwrap_or("8").to_i64().unwrap_or(8)</code>.</li>
 <li><strong>Collection literal spellings are distinct.</strong> Fixed array and Vec
-  construction differs from Rust. Use <code>[]</code> / <code>[1,2,3]</code> for <code>Vec</code>, <code>#[]</code> /
-  <code>#[1,2,3]</code> for fixed arrays, <code>{}</code> / <code>{"one": 1}</code> for <code>Map</code>, and <code>#{}</code> /
+  construction differs from Rust. Use <code>#[]</code> / <code>#[1,2,3]</code> for <code>Vec</code>, <code>[]</code> /
+  <code>[1,2,3]</code> for fixed arrays, <code>{}</code> / <code>{"one": 1}</code> for <code>Map</code>, and <code>#{}</code> /
   <code>#{1,2,3}</code> for <code>Set</code>. <code>Queue</code>, <code>Stack</code>, <code>Deque</code>, <code>MaxHeap</code>, and <code>MinHeap</code>
-  have no literal: build them with <code>T::new()</code> or <code>T::from([1,2,3])</code>. A repeat
-  literal is a fixed array, <code>#[v; N]</code>; bare <code>[v; N]</code> is a syntax error.</li>
+  have no literal: build them with <code>T::new()</code> or <code>T::from([1,2,3])</code>. The
+  repeat form follows the same spelling: <code>[5; 5]</code> is a fixed array of five
+  <code>5</code>s and <code>#[6; 7]</code> is a <code>Vec</code> of seven <code>6</code>s.</li>
 <li><strong>Prefer dedicated collection contracts for intent.</strong> <code>Stack</code> is the
   idiomatic LIFO-only type even though <code>Vec</code> can push/pop at the end;
   <code>Queue</code> is the FIFO-only type even though a deque can model it; <code>MinHeap</code>
@@ -2628,7 +2629,7 @@ are callable as methods/free functions and materialize results.</p>
 <ul>
 <li><code>[T; N]</code> is an owned fixed array, <code>[T]</code> is an unsized borrowed slice,
   and <code>Vec&lt;T&gt;</code> is the default owned growable sequence. Literal spellings are
-  <code>[]</code> for Vec, <code>#[]</code> for fixed arrays, <code>{}</code> for <code>Map</code>, and <code>#{}</code> for
+  <code>#[]</code> for Vec, <code>[]</code> for fixed arrays, <code>{}</code> for <code>Map</code>, and <code>#{}</code> for
   <code>Set</code> or expected <code>BTreeSet</code>; <code>Queue</code>, <code>Stack</code>, <code>Deque</code>, <code>MaxHeap</code>, and
   <code>MinHeap</code> use <code>new()</code> / <code>from([..])</code>. Arrays, slices, and Vec share the
   implemented slice method surface. Eager collection combinators are Vec
@@ -2647,9 +2648,12 @@ are callable as methods/free functions and materialize results.</p>
   differ. Read and assign positionally (<code>t.0</code>, chained <code>t.0.1</code>, <code>t.0 = v</code>
   through a <code>mut</code> binding), destructure in <code>let</code> / <code>for</code> / <code>match</code> / params,
   and compare structurally in declaration order (so <code>sort</code> orders a sequence
-  of tuples lexicographically). No import, no methods; <code>%i Tuple</code> documents
-  it and <code>%e &lt;binding&gt;</code> lists a tuple's elements. Tuple structs are the
-  named variant and are fully usable.</li>
+  of tuples lexicographically). No import; methods are <code>len</code>, <code>is_empty</code>,
+  <code>get</code>, <code>clone</code>, <code>to_string</code>, <code>into</code>, <code>try_into</code> - <code>iter()</code> and its
+  combinators are rejected (elements may differ in type, so there is no
+  element type to yield). <code>%i Tuple</code> documents it and
+  <code>%e &lt;binding&gt;</code> lists a tuple's elements. Tuple structs are the named
+  variant and are fully usable.</li>
 <li><code>std::collections</code>: <code>Vec</code>, <code>Map</code> (struct/tuple keys by value;
   aggregate-key maps use <code>iter()</code> rather than <code>keys()</code> until typed key
   snapshots are available;
@@ -2739,7 +2743,7 @@ test</code> also compiles and runs fenced code in doc comments.</p>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
 <a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">r</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">router</span>::<span class="n">Router</span>::<span class="n">new</span><span class="p">()</span>
 <a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">_</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;/&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">handler_fn</span><span class="p">)</span>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">_</span><span class="p">.</span><span class="n">get_fn</span><span class="p">(</span><span class="s">&quot;/ping&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">|</span><span class="n">_r</span><span class="o">|</span><span class="w"> </span><span class="nb">Ok</span><span class="p">(</span><span class="n">http</span>::<span class="n">Response</span>::<span class="n">text</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ok&quot;</span><span class="p">)))</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">_</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;/ping&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">|</span><span class="n">_r</span><span class="o">|</span><span class="w"> </span><span class="nb">Ok</span><span class="p">(</span><span class="n">http</span>::<span class="n">Response</span>::<span class="n">text</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ok&quot;</span><span class="p">)))</span>
 <a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="n">http</span>::<span class="n">serve</span><span class="p">(</span><span class="s">&quot;0.0.0.0:8080&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
 <h2 id="13-project-layout">13. Project layout<a class="headerlink" href="#13-project-layout" title="Permanent link">&para;</a></h2>

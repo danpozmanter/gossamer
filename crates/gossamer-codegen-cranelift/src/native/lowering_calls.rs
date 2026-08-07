@@ -537,7 +537,7 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_env_home_dir" => (&[], Some(ptr_ty)),
         "gos_rt_os_cwd" => (&[], Some(ptr_ty)),
         "gos_rt_fs_list_dir" => (&[ptr_ty], Some(ptr_ty)),
-        "gos_rt_fs_walk_dir" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_fs_walk_dir" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_exec_run" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_exec_spawn" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_exec_spawn_piped" => (&[ptr_ty, ptr_ty], Some(types::I128)),

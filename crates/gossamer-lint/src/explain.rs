@@ -88,7 +88,6 @@ pub fn lint_explanation(id: &str) -> Option<&'static str> {
             "Both branches of the `if` are identical. Drop the branch and\n\
             keep the body once."
         }
-        "redundant_field_init" => "`Foo { x: x }` is the same as the shorthand `Foo { x }`.",
         "needless_else_after_return" => {
             "`if cond { return X } else { Y }` - the `else` is unreachable\n\
             fall-through. Un-nest the `else` body."

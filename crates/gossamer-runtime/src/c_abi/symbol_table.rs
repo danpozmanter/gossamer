@@ -3331,6 +3331,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::rc::gos_rt_enum_box_aggr as *const u8,
         ),
         (
+            "gos_rt_rc_weak_cell",
+            crate::c_abi::rc::gos_rt_rc_weak_cell as *const u8,
+        ),
+        (
             "gos_rt_rc_retain_children",
             crate::c_abi::rc::gos_rt_rc_retain_children as *const u8,
         ),

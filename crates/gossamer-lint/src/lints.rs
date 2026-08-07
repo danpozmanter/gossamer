@@ -39,7 +39,6 @@ pub(crate) fn run_lint(id: &str, sf: &SourceFile, src: &str) -> Vec<Finding> {
         "let_and_return" => lint_let_and_return(sf),
         "collapsible_if" => lint_collapsible_if(sf),
         "if_same_then_else" => lint_if_same_then_else(sf, src),
-        "redundant_field_init" => lint_redundant_field_init(sf),
         "needless_else_after_return" => lint_needless_else_after_return(sf),
         "self_compare" => lint_self_compare(sf),
         "identity_op" => lint_identity_op(sf),
@@ -1000,39 +999,6 @@ fn lint_if_same_then_else(sf: &SourceFile, src: &str) -> Vec<Finding> {
 fn spans_equal_text(src: &str, a: Span, b: Span) -> bool {
     let text = |s: Span| src.get(s.start as usize..s.end as usize);
     matches!((text(a), text(b)), (Some(x), Some(y)) if x == y)
-}
-
-fn lint_redundant_field_init(sf: &SourceFile) -> Vec<Finding> {
-    let mut out = Vec::new();
-    each_fn_body(sf, |body| {
-        walk_expr(body, &mut |expr| {
-            let ExprKind::Struct { fields, .. } = &expr.kind else {
-                return;
-            };
-            for field in fields {
-                let Some(value) = &field.value else { continue };
-                let ExprKind::Path(path) = &value.kind else {
-                    continue;
-                };
-                if path.segments.len() == 1
-                    && path
-                        .segments
-                        .first()
-                        .is_some_and(|s| s.name.name == field.name.name)
-                {
-                    out.push((
-                        value.span,
-                        format!(
-                            "redundant `{0}: {0}` - field shorthand suffices",
-                            field.name.name
-                        ),
-                        Some("drop the `: <name>` - shorthand `{ x, y }` works".to_string()),
-                    ));
-                }
-            }
-        });
-    });
-    out
 }
 
 fn lint_needless_else_after_return(sf: &SourceFile) -> Vec<Finding> {

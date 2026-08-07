@@ -587,10 +587,11 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "signal_try_wait",
         builtin("signal_try_wait", builtin_signal_try_wait),
     ));
+    globals.push(("walk_dir", native("walk_dir", native_fs_walk_dir)));
+    globals.push(("fs::walk_dir", native("fs::walk_dir", native_fs_walk_dir)));
     install_module(
         "fs",
         &[
-            ("walk_dir", builtin_fs_walk_dir),
             ("read", builtin_os_read_file),
             ("read_to_string", builtin_os_read_file_to_string),
             ("write", builtin_os_write_file),
@@ -610,17 +611,12 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         ],
         globals,
     );
-    install_module(
-        "path",
-        &[
-            // `path::walk` was deprecated in favour of `fs::walk_dir`;
-            // the dispatch entry stays for one release so existing
-            // user code keeps resolving while we migrate examples.
-            ("walk", builtin_fs_walk_dir),
-            ("join", builtin_path_join_v),
-        ],
-        globals,
-    );
+    // `path::walk` was deprecated in favour of `fs::walk_dir`; the
+    // dispatch entry stays for one release so existing user code keeps
+    // resolving while we migrate examples.
+    globals.push(("walk", native("walk", native_fs_walk_dir)));
+    globals.push(("path::walk", native("path::walk", native_fs_walk_dir)));
+    install_module("path", &[("join", builtin_path_join_v)], globals);
     install_module(
         "BTreeMap",
         &[("new", builtin_btmap_new), ("from", builtin_map_from)],

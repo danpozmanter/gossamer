@@ -603,6 +603,14 @@ impl<'a> Builder<'a> {
         {
             return ControlFlow::Break(self.lower_assert(args, joined == "assert_eq", span));
         }
+        // `fs::walk_dir(root, visit)` / `path::walk(root, visit)`: the
+        // visitor closure must be coerced to an env-pointer value and
+        // handed to the runtime walker, which calls back into it per
+        // descendant - the generic stdlib-call path only forwards plain
+        // operands, so this needs its own lowering ahead of that fallback.
+        if !callee_def_some && args.len() == 2 && matches!(joined, "fs::walk_dir" | "path::walk") {
+            return ControlFlow::Break(self.try_lower_walk_dir(args, span));
+        }
         // A resolver-bound type-qualified call (`UserStruct::method`, so
         // `callee_def` is some) is a user item and must never be hijacked
         // by a stdlib bare-type alias like `Counter::new` / `Builder::new`
@@ -849,18 +857,14 @@ impl<'a> Builder<'a> {
         _args: &[HirExpr],
     ) -> Option<(&'static str, gossamer_types::Ty)> {
         Some(match joined {
-            "fs::read_dir" | "fs::walk_dir" | "path::walk" => {
+            "fs::read_dir" => {
                 // Return type is `Result<Vec<DirInfo>, errors::Error>`.
                 // Pin the dest as a Result Adt whose first generic
                 // is `Vec<DirInfo>` so `.map_err(...)?` unwraps to a
                 // properly-typed Vec (driving `entries[i]` through
                 // the Vec dispatch with `DirInfo` element-struct
                 // tag) instead of a bare i64 pointer.
-                let dir_info_def = gossamer_resolve::DefId::local(u32::MAX - 2);
-                let dir_info_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
-                    def: dir_info_def,
-                    substs: gossamer_types::Substs::new(),
-                });
+                let dir_info_ty = self.dir_info_adt_ty();
                 let vec_ty = self.tcx.intern(gossamer_types::TyKind::Vec(dir_info_ty));
                 // The Err payload is a `*mut GosError` from
                 // `gos_rt_error_new`; pinning it as a bare I64 made
@@ -871,12 +875,7 @@ impl<'a> Builder<'a> {
                     def: gossamer_resolve::DefId::local(u32::MAX),
                     substs,
                 });
-                let sym = if joined == "fs::walk_dir" || joined == "path::walk" {
-                    "gos_rt_fs_walk_dir"
-                } else {
-                    "gos_rt_fs_list_dir"
-                };
-                (sym, result_ty)
+                ("gos_rt_fs_list_dir", result_ty)
             }
             _ => return None,
         })
@@ -3828,7 +3827,7 @@ impl<'a> Builder<'a> {
         if let Some(rk) = Self::stdlib_runtime_kind(rt_name) {
             self.local_runtime_kind.insert(dest, rk);
         }
-        if matches!(rt_name, "gos_rt_fs_list_dir" | "gos_rt_fs_walk_dir") {
+        if rt_name == "gos_rt_fs_list_dir" {
             self.local_elem_struct.insert(dest, "DirInfo".to_string());
         }
         let next = self.new_block(span);

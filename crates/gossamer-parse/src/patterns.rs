@@ -89,10 +89,7 @@ impl Parser<'_> {
             return self.parse_path_pattern();
         }
         self.record(
-            ParseError::Unexpected {
-                expected: "pattern".to_string(),
-                found: self.peek_text(),
-            },
+            ParseError::unexpected("a pattern", self.peek_text()),
             self.peek_span(),
         );
         self.bump();
@@ -165,13 +162,7 @@ impl Parser<'_> {
                     Box::new(self.parse_pattern_no_or())
                 };
                 if seen_rest {
-                    self.record(
-                        ParseError::Unexpected {
-                            expected: "at most one `..` in a slice pattern".to_string(),
-                            found: "a second `..`".to_string(),
-                        },
-                        rest_span,
-                    );
+                    self.record(ParseError::SlicePatternExtraRest, rest_span);
                 } else {
                     seen_rest = true;
                     rest = Some(binding);
@@ -200,10 +191,11 @@ impl Parser<'_> {
         let token = self.peek();
         if !matches!(token.kind, TokenKind::Ident) {
             self.record(
-                ParseError::Unexpected {
-                    expected: "an identifier after `mut`; reference patterns start with `&mut`, not `mut &`".to_string(),
-                    found: self.peek_text(),
-                },
+                ParseError::unexpected_help(
+                    "an identifier after `mut`",
+                    self.peek_text(),
+                    "a reference pattern is written `&mut name`, not `mut &name`",
+                ),
                 token.span,
             );
             return PatternKind::Error;
@@ -366,10 +358,7 @@ impl Parser<'_> {
             let name_span = self.peek_span();
             if !matches!(self.peek().kind, TokenKind::Ident) {
                 self.record(
-                    ParseError::Unexpected {
-                        expected: "field name".to_string(),
-                        found: self.peek_text(),
-                    },
+                    ParseError::unexpected("a field name", self.peek_text()),
                     name_span,
                 );
                 self.bump();

@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GR0007]: The `use` names a module that exists but an item that module does - here
+--- framed ---
+error[GR0007]: The `use` names a module that exists but an item that module does
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

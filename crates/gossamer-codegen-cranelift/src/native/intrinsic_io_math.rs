@@ -1360,6 +1360,75 @@ pub(super) fn lower_intrinsic_call_io_math(
             );
             Ok(true)
         }
+        "gos_rt_enum_box_aggr" | "gos_rt_rc_weak_cell" => {
+            // Copy a by-value aggregate's slot bytes into a fresh RC cell:
+            // `gos_rt_enum_box_aggr(size, meta, src)`. `meta` names the
+            // module-global child-layout blob (empty name => leaf => null
+            // meta) and `src` is the aggregate's data address, which is what
+            // an aggregate local's cranelift value already holds.
+            if args.len() < 3 {
+                bail!("native codegen: {name} requires (size, meta, src)");
+            }
+            let size_val = lower_operand(
+                module, builder, locals, body, tcx, &args[0], None, intrinsics,
+            )?;
+            let size_i64 = if builder.func.dfg.value_type(size_val) == types::I64 {
+                size_val
+            } else {
+                builder.ins().sextend(types::I64, size_val)
+            };
+            let meta_val = match &args[1] {
+                Operand::Const(ConstValue::Str(sym)) if !sym.is_empty() => {
+                    let Some(blob) = tcx.rc_meta(sym) else {
+                        bail!("native codegen: {name} references unknown meta `{sym}`");
+                    };
+                    let data_id = intrinsics.intern_rc_meta(module, sym, blob)?;
+                    let gv = module.declare_data_in_func(data_id, builder.func);
+                    builder.ins().symbol_value(ptr_ty, gv)
+                }
+                _ => builder.ins().iconst(ptr_ty, 0),
+            };
+            let src_raw = lower_operand(
+                module, builder, locals, body, tcx, &args[2], None, intrinsics,
+            )?;
+            let src = if builder.func.dfg.value_type(src_raw) == ptr_ty {
+                src_raw
+            } else if ptr_ty == types::I64 {
+                builder.ins().uextend(types::I64, src_raw)
+            } else {
+                builder.ins().ireduce(ptr_ty, src_raw)
+            };
+            let static_name: &'static str = if name == "gos_rt_rc_weak_cell" {
+                "gos_rt_rc_weak_cell"
+            } else {
+                "gos_rt_enum_box_aggr"
+            };
+            let f = intrinsics.extern_fn(
+                module,
+                static_name,
+                &[types::I64, ptr_ty, ptr_ty],
+                &[ptr_ty],
+            )?;
+            let fref = module.declare_func_in_func(f, builder.func);
+            let call = builder.ins().call(fref, &[size_i64, meta_val, src]);
+            let raw = builder.inst_results(call)[0];
+            let as_i64 = if ptr_ty == types::I64 {
+                raw
+            } else {
+                builder.ins().uextend(types::I64, raw)
+            };
+            if !destination.projection.is_empty() {
+                bail!("native codegen: {name} destination cannot have projections");
+            }
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                as_i64,
+            );
+            Ok(true)
+        }
         "gos_store" => {
             // Raw heap store: `gos_store(ptr, offset, value)` writes
             // `value` as an i64 at `ptr + offset`. Companion to

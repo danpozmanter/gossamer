@@ -1,6 +1,6 @@
 # `std::path`
 
-Lexical filesystem-path operations; platform path grammar, no URL parsing or I/O.
+Lexical filesystem-path operations; platform path grammar, no URL parsing.
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 

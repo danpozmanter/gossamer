@@ -404,7 +404,8 @@ and Vec is the only sequence type that owns growable storage.
 `#[a, b, c]` creates a `Vec<T>`. `[a, b, c]` and `[value; N]` create fixed
 `[T; N]` arrays; `N` must be a compile-time constant. An expected type can
 shape either spelling into the other where the shapes agree. The repeat form
-belongs to fixed arrays alone: `#[value; N]` is `GP0033`.
+follows the same spelling as the list form: `[value; N]` is a fixed array and
+`#[value; N]` is a `Vec`.
 
 `Queue`, `Stack`, `Deque`, `MaxHeap`, and `MinHeap` have no literal form and
 are constructed through their type, with `T::new()` for an empty container and
@@ -2312,8 +2313,8 @@ includes the Rust macros a newcomer reaches for: there is no `vec!`,
 
 - Collection literals use `#[a, b]` for `Vec` values. Use `[a, b]` /
   `[v; N]` for fixed arrays, `{}` or `{k: v}` for `Map`, and `#{a, b}` for set
-  values; there is no `vec!`, `map!`, or `set!`. A repeat literal is always a
-  fixed array, so `#[v; N]` is a syntax error (`GP0033`).
+  values; there is no `vec!`, `map!`, or `set!`. A repeat literal follows its
+  container's spelling: `[v; N]` is a fixed array and `#[v; N]` is a `Vec`.
 - `assert(cond[, msg])` and `assert_eq(a, b[, msg])` are prelude
   *functions* called without a `!`; `std::testing` provides the
   non-panicking `check*` variants.

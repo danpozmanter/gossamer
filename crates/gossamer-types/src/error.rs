@@ -41,6 +41,32 @@ pub enum TypeError {
         /// Found type, rendered via [`crate::render_ty`].
         found: String,
     },
+    /// An operator mixed an integer operand with a float operand.
+    /// Gossamer never widens across that boundary implicitly, so the fix
+    /// is a written cast on the integer operand.
+    #[error("type mismatch: expected `{expected}`, found `{found}`")]
+    NumericOperandMismatch {
+        /// Left operand type, rendered via [`crate::render_ty`].
+        expected: String,
+        /// Right operand type, rendered via [`crate::render_ty`].
+        found: String,
+        /// The whole expression rewritten with the cast in place.
+        cast: String,
+    },
+    /// An `Option<T>` value was used where the payload `T` is required.
+    #[error("type mismatch: expected `{expected}`, found `{found}`")]
+    OptionValueMismatch {
+        /// Payload type the site requires.
+        expected: String,
+        /// The `Option<T>` type found there.
+        found: String,
+        /// Source spelling of the expression producing the `Option`.
+        actual: String,
+        /// Name to bind the payload to in the `if let` form.
+        binding: String,
+        /// Spelling of a `T` value for the `unwrap_or` form.
+        default: String,
+    },
     /// A named call parameter received a value of an incompatible type.
     #[error(
         "type mismatch for parameter `{parameter}` of `{callee}`: expected `{expected}`, found `{found}` (value `{actual}`)"
@@ -64,6 +90,9 @@ pub enum TypeError {
         ty: String,
         /// Method name.
         name: String,
+        /// Method names the receiver does have, in canonical order.
+        /// Empty when the checker has no surface list for the receiver.
+        available: Vec<String>,
     },
     /// A binary or unary operator could not be resolved for the given
     /// operand types.
@@ -202,6 +231,12 @@ pub enum TypeError {
         field: String,
         /// `true` when the receiver is opaque to the checker.
         opaque: bool,
+        /// Field names `ty` declares, in declaration order. Empty when
+        /// the receiver is opaque.
+        declared: Vec<String>,
+        /// Span covering the field name alone, when the site can point at
+        /// it. Carries the machine-applicable rename.
+        field_span: Option<Span>,
     },
     /// A `Result<T, E>` expression was used as a statement without
     /// binding or propagating the value. SPEC §9: discarded Results
@@ -247,7 +282,7 @@ pub enum TypeError {
     },
     /// A string escape that the parser accepted but cannot be
     /// validly decoded (out-of-range `\u{...}`, surrogate code
-    /// point, non-ASCII `\x..`). Surfaced from the AST→typechecker
+    /// point, non-ASCII `\x..`). Surfaced from the AST-to-typechecker
     /// boundary so that downstream lowering sees no malformed
     /// strings.
     #[error("invalid escape `{escape}` in string literal: {reason}")]
@@ -276,6 +311,25 @@ pub enum TypeError {
         ty: String,
         /// Trait the parameter is bound by.
         bound: String,
+    },
+    /// A method was called on a generic parameter that none of its trait
+    /// bounds declares. The parameter stands for every type a caller may
+    /// supply, so only its bounds say what it can do.
+    #[error("no method named `{method}` on type parameter `{param}`")]
+    MethodNotOnBound {
+        /// Source-level name of the type parameter (`T`, `U`, ...).
+        param: String,
+        /// Method the receiver was asked for.
+        method: String,
+        /// Traits the parameter is bound by, in source order.
+        bounds: Vec<String>,
+    },
+    /// A built-in iterator was passed to a parameter bound by an iteration
+    /// trait. Only a type with an impl block can specialise such a call.
+    #[error("`{ty}` cannot instantiate a parameter bound by an iteration trait")]
+    BuiltinIteratorNotGeneric {
+        /// Rendered iterator type supplied at the call site.
+        ty: String,
     },
     /// An enum declares more variants than the heap representation's
     /// one-byte discriminant can index.
@@ -393,6 +447,8 @@ pub enum TypeError {
         enum_name: String,
         /// Variant name as written.
         variant: String,
+        /// Variant names the enum declares, sorted for a stable listing.
+        declared: Vec<String>,
     },
     /// A method reached through a generic bound (`fn f<T: Pet>(p: &T)`)
     /// resolves only through a supertrait of the bound (`trait Pet:
@@ -559,6 +615,8 @@ impl TypeError {
     pub const fn tag(&self) -> &'static str {
         match self {
             Self::TypeMismatch { .. } => "type-mismatch",
+            Self::NumericOperandMismatch { .. } => "numeric-operand-mismatch",
+            Self::OptionValueMismatch { .. } => "option-value-mismatch",
             Self::ArgumentTypeMismatch { .. } => "argument-type-mismatch",
             Self::UnresolvedMethod { .. } => "unresolved-method",
             Self::UnresolvedOp { .. } => "unresolved-op",
@@ -591,6 +649,8 @@ impl TypeError {
             Self::InvalidEscape { .. } => "invalid-escape",
             Self::UnknownTraitBound { .. } => "unknown-trait-bound",
             Self::TraitBoundNotSatisfied { .. } => "trait-bound-not-satisfied",
+            Self::MethodNotOnBound { .. } => "method-not-on-bound",
+            Self::BuiltinIteratorNotGeneric { .. } => "builtin-iterator-not-generic",
             Self::TooManyVariants { .. } => "too-many-variants",
             Self::ClosureParamUninferred { .. } => "closure-param-uninferred",
             Self::GenericReturnTypeUninferred { .. } => "generic-return-type-uninferred",
@@ -623,11 +683,23 @@ impl TypeError {
         }
     }
 
+    /// Whether this error names a type that already failed to check.
+    ///
+    /// Such a type renders as `<error>`, a spelling that appears nowhere in
+    /// the source, so a diagnostic carrying it is a follow-on report of a
+    /// failure already described.
+    #[must_use]
+    pub fn mentions_error_type(&self) -> bool {
+        format!("{self}").contains("<error>")
+    }
+
     /// Stable error code used by the diagnostics framework.
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
             Self::TypeMismatch { .. } => "GT0001",
+            Self::NumericOperandMismatch { .. } => "GT0001",
+            Self::OptionValueMismatch { .. } => "GT0001",
             Self::ArgumentTypeMismatch { .. } => "GT0001",
             Self::UnresolvedMethod { .. } => "GT0002",
             Self::UnresolvedOp { .. } | Self::UnresolvedOpImpl { .. } => "GT0003",
@@ -663,6 +735,8 @@ impl TypeError {
             Self::IteratorStateConsumed { .. } => "GT0042",
             Self::JsonNotSerializable { .. } => "GT0016",
             Self::TraitBoundNotSatisfied { .. } => "GT0017",
+            Self::MethodNotOnBound { .. } => "GT0056",
+            Self::BuiltinIteratorNotGeneric { .. } => "GT0057",
             Self::CallArityMismatch { .. } => "GT0018",
             Self::UnknownVariant { .. } => "GT0019",
             Self::SupertraitMethodThroughBound { .. } => "GT0020",
@@ -698,7 +772,7 @@ fn int128_diagnostic(
     out.with_help("use `i64` / `u64` or split the value into two 64-bit halves")
         .with_note(format!(
             "`{ty}` has no 128-bit runtime representation on any tier (VM, JIT, or \
-             compiled tier); the VM would otherwise run it at silent 64-bit width"
+             compiled tier)"
         ))
 }
 
@@ -715,21 +789,21 @@ fn mismatch_suggestion(expected: &str, found: &str) -> Option<String> {
                 .to_string(),
         );
     }
-    // String / &str
-    if expected == "String" && found.ends_with("&str") {
-        return Some("did you mean to call `.to_string()` on the value?".to_string());
-    }
-    if expected.ends_with("&str") && found == "String" {
-        return Some("did you mean to call `.as_str()` on the value?".to_string());
-    }
-    // Numeric width - i32 ↔ i64, u32 ↔ u64, etc.
+    // Numeric width: i32 to i64, u32 to u64, and so on.
     let int_suffixes = [
-        "i8", "i16", "i32", "i64", "i128", "u8", "u16", "u32", "u64", "u128", "isize", "usize",
+        "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "isize", "usize",
     ];
+    let float_suffixes = ["f32", "f64"];
     if int_suffixes.contains(&expected) && int_suffixes.contains(&found) {
         return Some(format!("cast explicitly with `<expr> as {expected}`"));
     }
-    // T → Option<T>
+    // Integer and float operands never widen into each other implicitly.
+    if (int_suffixes.contains(&expected) && float_suffixes.contains(&found))
+        || (float_suffixes.contains(&expected) && int_suffixes.contains(&found))
+    {
+        return Some(format!("cast explicitly with `<expr> as {expected}`"));
+    }
+    // T to Option<T>
     if let Some(inner) = expected
         .strip_prefix("Option<")
         .and_then(|s| s.strip_suffix('>'))
@@ -740,7 +814,20 @@ fn mismatch_suggestion(expected: &str, found: &str) -> Option<String> {
             ));
         }
     }
-    // Result<T, _> → T (handler returned a Result, caller wanted the inner value)
+    // Option<T> to T
+    if let Some(inner) = found
+        .strip_prefix("Option<")
+        .and_then(|s| s.strip_suffix('>'))
+    {
+        if inner == expected {
+            return Some(
+                "unwrap it with `<expr>.unwrap_or(<default>)`, or bind with \
+                 `if let Some(value) = <expr>`"
+                    .to_string(),
+            );
+        }
+    }
+    // Result<T, _> to T (handler returned a Result, caller wanted the inner value)
     if found.starts_with("Result<") && !expected.starts_with("Result<") {
         return Some(
             "did you mean to propagate with `?` (`<expr>?`) to unwrap the `Result`?".to_string(),
@@ -779,27 +866,36 @@ impl TypeDiagnostic {
         let mut out =
             Diagnostic::error(Code(self.error.code()), title.clone()).with_primary(location, title);
         match &self.error {
-            TypeError::TypeMismatch { expected, found } => {
-                out = out.with_note(format!("expected `{expected}`, found `{found}`"));
-                if let Some(suggestion) = mismatch_suggestion(expected, found) {
-                    out = out.with_help(suggestion);
-                }
-            }
-            TypeError::ArgumentTypeMismatch {
-                callee,
-                parameter,
-                expected,
-                found,
-                actual,
+            // Both titles already carry the expected and found types, so a
+            // note repeating them would double the diagnostic's length
+            // without adding anything the reader can act on.
+            TypeError::TypeMismatch { expected, found }
+            | TypeError::ArgumentTypeMismatch {
+                expected, found, ..
             } => {
-                out = out.with_note(format!(
-                    "parameter `{parameter}` of `{callee}` expects `{expected}`, found `{found}` from `{actual}`"
-                ));
                 if let Some(suggestion) = mismatch_suggestion(expected, found) {
                     out = out.with_help(suggestion);
                 }
             }
-            TypeError::UnresolvedMethod { ty, name } => {
+            TypeError::NumericOperandMismatch { cast, .. } => {
+                out = out.with_help(format!("cast explicitly: `{cast}`"));
+            }
+            TypeError::OptionValueMismatch {
+                actual,
+                binding,
+                default,
+                ..
+            } => {
+                out = out.with_help(format!(
+                    "unwrap it with `{actual}.unwrap_or({default})`, or bind with \
+                     `if let Some({binding}) = {actual}`"
+                ));
+            }
+            TypeError::UnresolvedMethod {
+                ty,
+                name,
+                available,
+            } => {
                 out = if name == "set" && ty.starts_with("Map") {
                     out.with_help(format!("`{ty}` writes with `insert(key, value)`"))
                         .with_note(
@@ -813,8 +909,7 @@ impl TypeDiagnostic {
                         "`Map::keys()` is unavailable for struct, tuple, and array key types until aggregate key snapshots preserve their layout",
                     )
                 } else {
-                    out.with_help(format!("`{ty}` has no method named `{name}`"))
-                        .with_note("check for a typo or an impl block missing from scope")
+                    unresolved_method_diagnostic(out, ty, name, available)
                 };
             }
             TypeError::UnresolvedOp { op, lhs, rhs } => {
@@ -942,16 +1037,32 @@ impl TypeDiagnostic {
             TypeError::InvalidCast { from, to } => {
                 out = out
                     .with_help(
-                        "`as` is restricted to numeric ↔ numeric, `bool`/`char` → integer, `u8` → `char`, and no-op same-type casts",
+                        "`as` is restricted to numeric-to-numeric, `bool` / `char` to integer, `u8` to `char`, and no-op same-type casts",
                     )
                     .with_note(format!("cannot cast `{from}` to `{to}`"));
             }
-            TypeError::UnknownField { ty, field, opaque } => {
-                out = unknown_field_diagnostic(out, ty, field, *opaque);
+            TypeError::UnknownField {
+                ty,
+                field,
+                opaque,
+                declared,
+                field_span,
+            } => {
+                out = unknown_field_diagnostic(
+                    out,
+                    self.span.file,
+                    UnknownFieldParts {
+                        ty,
+                        field,
+                        opaque: *opaque,
+                        declared,
+                        field_span: *field_span,
+                    },
+                );
             }
             TypeError::TooManyVariants { .. } => {
                 out = out.with_help(
-                    "the heap enum discriminant is one byte; split the enum or                      group variants into nested enums.",
+                    "the heap enum discriminant is one byte; split the enum or group variants into nested enums",
                 );
             }
             TypeError::DiscardedResult => out = discarded_result_diagnostic(out),
@@ -960,12 +1071,34 @@ impl TypeDiagnostic {
                     "add `impl {bound} for {ty} {{ ... }}`, or pass a type that already implements `{bound}`"
                 ));
             }
+            TypeError::MethodNotOnBound {
+                param,
+                method,
+                bounds,
+            } => {
+                out = out.with_help(match bounds.as_slice() {
+                    [] => format!(
+                        "`{param}` has no trait bound, so it has no methods; write \
+                         `<{param}: SomeTrait>` where `SomeTrait` declares `fn {method}`"
+                    ),
+                    [only] => format!(
+                        "`{param}` can only do what `{only}` declares; add `fn {method}` to \
+                         `{only}`, or bound `{param}` by a trait that declares it"
+                    ),
+                    _ => format!(
+                        "none of `{}` declares `fn {method}`; bound `{param}` by a trait \
+                         that does",
+                        bounds.join("`, `")
+                    ),
+                });
+            }
+            TypeError::BuiltinIteratorNotGeneric { ty } => {
+                out = out.with_help(format!(
+                    "name the iterator on the parameter instead, as in `fn f(it: {ty})`,                      which every tier lowers"
+                ));
+            }
             TypeError::RecursionLimit { .. } => {
-                out = out
-                    .with_help("split the expression into smaller helpers")
-                    .with_note(
-                        "the typechecker bails out at a fixed depth to avoid a C-stack overflow",
-                    );
+                out = out.with_help("split the expression into smaller helpers");
             }
             TypeError::CyclicTypeAlias { name } => {
                 out = out
@@ -990,9 +1123,9 @@ impl TypeDiagnostic {
                     ))
                     .with_note("check for a typo or import the trait into scope");
             }
-            TypeError::ClosureParamUninferred { combinator } => {
-                out = closure_param_diagnostic(out, combinator);
-            }
+            // The title names the combinator and spells the annotation to
+            // write, so a help line here would only restate it.
+            TypeError::ClosureParamUninferred { .. } => {}
             TypeError::GenericReturnTypeUninferred { callable, param } => {
                 out = out
                     .with_help(format!(
@@ -1029,12 +1162,12 @@ impl TypeDiagnostic {
             TypeError::CallArityMismatch {
                 callee, expected, ..
             } => out = arity_mismatch_diagnostic(out, callee, *expected),
-            TypeError::UnknownVariant { enum_name, variant } => {
-                out = out
-                    .with_help(format!(
-                        "check `{enum_name}::{variant}` against the declared variants"
-                    ))
-                    .with_note("an unknown variant resolves to nothing and faults at runtime");
+            TypeError::UnknownVariant {
+                enum_name,
+                variant,
+                declared,
+            } => {
+                out = unknown_variant_diagnostic(out, enum_name, variant, declared);
             }
             TypeError::SupertraitMethodThroughBound {
                 method,
@@ -1169,25 +1302,15 @@ fn structural_use_diagnostic(
     error: &TypeError,
 ) -> gossamer_diagnostics::Diagnostic {
     match error {
-        TypeError::NotIndexable { ty } => out
-            .with_help(format!(
-                "`{ty}` is not a `[T]`, `[T; N]`, `Vec<T>`, or `String`; index a user type through `impl Index for {ty}`"
-            ))
-            .with_note(
-                "the VM faults (GX0001) and the compiled tier reads through the value as a pointer",
-            ),
-        TypeError::NotCallable { ty } => out
-            .with_help(format!(
-                "`{ty}` is not a function; only `fn` items, `fn(..)` pointers, and `Fn(..)` values can be called"
-            ))
-            .with_note(
-                "the VM faults (GX0001) and the compiled tier emits a call through a non-function symbol",
-            ),
-        TypeError::NoTupleField { ty, index } => out
-            .with_help(format!(
-                "`{ty}` has no field `.{index}`; positional access works only on tuples within their arity"
-            ))
-            .with_note("the VM faults (GX0004) and the compiled tier reads out-of-object memory"),
+        TypeError::NotIndexable { ty } => out.with_help(format!(
+            "`{ty}` is not a `[T]`, `[T; N]`, `Vec<T>`, or `String`; index a user type through `impl Index for {ty}`"
+        )),
+        TypeError::NotCallable { ty } => out.with_help(format!(
+            "`{ty}` is not a function; only `fn` items, `fn(..)` pointers, and `Fn(..)` values can be called"
+        )),
+        TypeError::NoTupleField { ty, index } => out.with_help(format!(
+            "`{ty}` has no field `.{index}`; positional access works only on tuples within their arity"
+        )),
         _ => out,
     }
 }
@@ -1201,27 +1324,137 @@ fn discarded_result_diagnostic(
         "propagate the error with `?`, handle it with `match` / `if let`, \
          or explicitly discard with `let _ = <expr>`",
     )
-    .with_note("SPEC §9: every `Result` value must be handled")
+    .with_note("every `Result` value must be handled")
 }
 
-/// Attaches the GT0006 help. Split out of `to_diagnostic` to keep that
-/// match within the line-count lint budget.
+/// How many method names a GT0002 diagnostic lists before truncating.
+const AVAILABLE_NAME_LIMIT: usize = 3;
+
+/// Edit-distance budget for a "did you mean" candidate.
+const SUGGEST_MAX_DISTANCE: usize = 3;
+
+/// Renders `names` as a comma-separated list of backticked spellings,
+/// keeping at most `limit` of them and marking a truncated tail.
+fn name_list(names: &[String], limit: usize) -> String {
+    let shown = names
+        .iter()
+        .take(limit)
+        .map(|name| format!("`{name}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if names.len() > limit {
+        format!("{shown}, ...")
+    } else {
+        shown
+    }
+}
+
+/// The GT0006 rendering inputs, grouped so the helper takes one argument
+/// per concern rather than a flat parameter list.
+struct UnknownFieldParts<'a> {
+    ty: &'a str,
+    field: &'a str,
+    opaque: bool,
+    declared: &'a [String],
+    field_span: Option<Span>,
+}
+
+/// Attaches the GT0006 help and rename suggestion. Split out of
+/// `to_diagnostic` to keep that match within the line-count lint budget.
 fn unknown_field_diagnostic(
     out: gossamer_diagnostics::Diagnostic,
-    ty: &str,
-    field: &str,
-    opaque: bool,
+    file: gossamer_lex::FileId,
+    parts: UnknownFieldParts<'_>,
 ) -> gossamer_diagnostics::Diagnostic {
+    let UnknownFieldParts {
+        ty,
+        field,
+        opaque,
+        declared,
+        field_span,
+    } = parts;
     if opaque {
-        out.with_help(format!(
-            "`{ty}` has no named struct fields exposed to the language. \
-             Use the type's methods (e.g. `value.get(\"{field}\")` for \
-             `json::Value`) instead of named-field access."
-        ))
+        return out.with_help(format!(
+            "`{ty}` has no named struct fields exposed to the language; \
+             read it through the type's methods, for example `value.get(\"{field}\")` \
+             on a `json::Value`"
+        ));
+    }
+    let mut out = out;
+    if let Some(candidate) = gossamer_diagnostics::suggest(
+        field,
+        declared.iter().map(String::as_str),
+        SUGGEST_MAX_DISTANCE,
+    ) {
+        out = out.with_help(format!("did you mean `{candidate}`?"));
+        if let Some(span) = field_span {
+            out = out.with_suggestion(gossamer_diagnostics::Suggestion::replacement(
+                gossamer_diagnostics::Location::new(file, span),
+                format!("replace `{field}` with `{candidate}`"),
+                candidate,
+            ));
+        }
+    }
+    if declared.is_empty() {
+        out.with_help(format!("`{ty}` declares no fields"))
     } else {
         out.with_help(format!(
-            "check the spelling of `.{field}` and that the struct \
-             definition for `{ty}` is in scope."
+            "declared fields are {}",
+            name_list(declared, declared.len())
+        ))
+    }
+}
+
+/// Attaches the GT0002 did-you-mean and the receiver's method surface.
+/// Split out of `to_diagnostic` to keep that match within the line-count
+/// lint budget.
+fn unresolved_method_diagnostic(
+    out: gossamer_diagnostics::Diagnostic,
+    ty: &str,
+    name: &str,
+    available: &[String],
+) -> gossamer_diagnostics::Diagnostic {
+    let mut out = out;
+    if let Some(candidate) = gossamer_diagnostics::suggest(
+        name,
+        available.iter().map(String::as_str),
+        SUGGEST_MAX_DISTANCE,
+    ) {
+        out = out.with_help(format!("did you mean `{candidate}`?"));
+    }
+    if available.is_empty() {
+        out
+    } else {
+        out.with_help(format!(
+            "`{ty}` has {}",
+            name_list(available, AVAILABLE_NAME_LIMIT)
+        ))
+    }
+}
+
+/// Attaches the GT0019 did-you-mean and the enum's declared variants.
+/// Split out of `to_diagnostic` to keep that match within the line-count
+/// lint budget.
+fn unknown_variant_diagnostic(
+    out: gossamer_diagnostics::Diagnostic,
+    enum_name: &str,
+    variant: &str,
+    declared: &[String],
+) -> gossamer_diagnostics::Diagnostic {
+    let mut out = out;
+    if let Some(candidate) = gossamer_diagnostics::suggest(
+        variant,
+        declared.iter().map(String::as_str),
+        SUGGEST_MAX_DISTANCE,
+    ) {
+        out = out.with_help(format!("did you mean `{enum_name}::{candidate}`?"));
+    }
+    if declared.is_empty() {
+        out
+    } else {
+        out.with_help(format!(
+            "declared variants are {}",
+            name_list(declared, declared.len())
         ))
     }
 }
@@ -1236,10 +1469,6 @@ fn arity_mismatch_diagnostic(
     out.with_help(format!(
         "`{callee}` is declared with {expected} parameter(s); pass exactly that many"
     ))
-    .with_note(
-        "the VM aborts on an arity mismatch and the native backend drops or \
-         zero-fills the extra/missing arguments, so it is rejected at check",
-    )
 }
 
 /// Attaches the GT0020 help + note. Split out of `to_diagnostic` to keep
@@ -1254,10 +1483,7 @@ fn supertrait_method_diagnostic(
         "add `{method}` to bound `{bound}`, or bound the parameter on `{supertrait}` \
          directly (`<T: {supertrait}>`)"
     ))
-    .with_note(
-        "SPEC §3.8: a generic bound exposes only the named trait's own methods; \
-         supertrait methods through the bound miscompile on the native tier",
-    )
+    .with_note("a generic bound exposes only the named trait's own methods")
 }
 
 /// Attaches the GT0016 note + help. Split out of `to_diagnostic` to keep
@@ -1271,25 +1497,8 @@ fn json_not_serializable_diagnostic(
         "`{ty}` is an enum, which has no JSON representation"
     ))
     .with_help(format!(
-        "unwrap the value before encoding - e.g. `let v = …?` then \
+        "unwrap the value before encoding - e.g. `let v = <expr>?` then \
              `json::{op}(&v)` - or build a `json::Value`"
-    ))
-}
-
-/// Attaches the GT0013 help + note. Split out of `to_diagnostic` to
-/// keep that match within the line-count lint budget.
-fn closure_param_diagnostic(
-    out: gossamer_diagnostics::Diagnostic,
-    combinator: &str,
-) -> gossamer_diagnostics::Diagnostic {
-    out.with_help(
-        "annotate the closure parameter with its concrete type \
-         (e.g. `|x: String| ...`) or bind the payload through a typed `match`",
-    )
-    .with_note(format!(
-        "`{combinator}` has no signature row in the checker, so the closure's \
-         parameter type cannot be inferred; compiled tiers would otherwise read \
-         heap payloads as raw integers"
     ))
 }
 

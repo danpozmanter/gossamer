@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+mod comptime;
 mod inlay;
 mod navigation;
 mod protocol;
@@ -14,6 +15,7 @@ mod server;
 mod session;
 mod stdlib_index;
 mod symbols;
+mod synthesis;
 mod workspace_index;
 
 pub use server::{handle, run_stdio};

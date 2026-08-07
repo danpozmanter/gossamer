@@ -17,7 +17,7 @@ use gossamer_ast::{ItemKind, SourceFile};
 use gossamer_diagnostics::Diagnostic;
 use gossamer_lex::FileId;
 use gossamer_pkg::Edition;
-use gossamer_resolve::{ResolveError, resolve_source_file};
+use gossamer_resolve::resolve_source_file;
 use gossamer_types::{
     ExhaustivenessError, TyCtxt, check_arena_escapes, check_exhaustiveness,
     typecheck_source_file_with_edition,
@@ -72,10 +72,8 @@ impl FrontendOutcome {
 /// single fatal-error policy:
 ///
 /// - **Parse**: every parse diagnostic is fatal.
-/// - **Resolve**: `UnresolvedName`, `DuplicateItem`,
-///   `UnknownModulePath` (GR0005, the canonical-`std`-path check), and
-///   `RemovedStdItem` (GR0006) are fatal; lower-severity resolve
-///   diagnostics are not.
+/// - **Resolve**: every emitted resolve diagnostic is fatal, so `check`
+///   reports the same resolve set the LSP and the REPL do.
 /// - **Type**: every type diagnostic is fatal.
 /// - **Exhaustiveness**: a non-exhaustive `match` (GM0001) is fatal.
 /// - **Arena escape**: a value allocated in an `arena { }` block that is
@@ -128,18 +126,16 @@ pub fn check_frontend_with_edition(
     let phase_started = Instant::now();
     let (resolutions, resolve_diags) = resolve_source_file(&sf);
     let resolve = phase_started.elapsed();
+    // Every resolve diagnostic the resolver chose to emit is fatal. The
+    // resolver already suppresses the one class that is not actionable
+    // (names the parser fabricated during recovery), so admitting the rest
+    // keeps `gos check` a superset of what the LSP and the REPL report.
     let in_scope = collect_top_level_names(&sf);
-    for diag in &resolve_diags {
-        if matches!(
-            diag.error,
-            ResolveError::UnresolvedName { .. }
-                | ResolveError::DuplicateItem { .. }
-                | ResolveError::UnknownModulePath { .. }
-                | ResolveError::RemovedStdItem { .. }
-        ) {
-            diagnostics.push(diag.to_diagnostic(&in_scope));
-        }
-    }
+    diagnostics.extend(
+        resolve_diags
+            .iter()
+            .map(|diag| diag.to_diagnostic(&in_scope)),
+    );
 
     let phase_started = Instant::now();
     let mut tcx = TyCtxt::new();

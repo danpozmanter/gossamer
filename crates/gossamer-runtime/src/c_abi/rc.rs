@@ -2920,6 +2920,60 @@ pub unsafe extern "C" fn gos_rt_enum_box_aggr(
     payload
 }
 
+/// Copy a by-value aggregate's slot bytes into the RC cell a `Weak` observes:
+/// allocate a headered cell carrying `meta` (an `RC_KIND_STRUCT` child-word
+/// list), copy `size` bytes from `src`, and retain every RC child the cell now
+/// co-owns. The caller's frame owns the returned strong reference and releases
+/// it at scope end, at which point the outstanding weak count keeps the cell
+/// allocated until the last `Weak` is released.
+///
+/// The cell is always allocated globally, never bump-allocated in an enclosing
+/// `arena { … }`: weak liveness is per-object, and a region block reclaims its
+/// slab wholesale without individual accounting.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_rc_weak_cell(
+    size: u64,
+    meta: *const i64,
+    src: *const u8,
+) -> *mut u8 {
+    let total = (size as usize).saturating_add(RC_HEADER_SIZE);
+    let Some(meta_id) = meta_intern(meta) else {
+        return std::ptr::null_mut();
+    };
+    let base = rc_block_alloc_zeroed(total);
+    if base.is_null() {
+        return std::ptr::null_mut();
+    }
+    let h = base as *mut RcHeader;
+    // SAFETY: `base` is a fresh zeroed block of at least `RC_HEADER_SIZE`.
+    unsafe {
+        (*h).strong = 1;
+        (*h).weak = AtomicU8::new(0);
+        (*h).disc = 0;
+        (*h).meta_id = meta_id;
+    }
+    rc_live_inc();
+    crate::c_abi::ledger::rc_alloc(size as usize, 0, false, false);
+    // SAFETY: the payload begins one header past the block base.
+    let payload = unsafe { base.add(RC_HEADER_SIZE) };
+    if src.is_null() {
+        return payload;
+    }
+    // SAFETY: `src` addresses `size` bytes of the source aggregate's slots and
+    // the fresh cell cannot overlap it.
+    unsafe { std::ptr::copy_nonoverlapping(src, payload, size as usize) };
+    // SAFETY: the header's meta describes the payload words just written.
+    unsafe {
+        visit_children_raw(payload, |c| {
+            gos_rt_rc_retain(c);
+        });
+        visit_vec_children(payload, |v| {
+            crate::c_abi::vec::vec_retain_header(v.cast());
+        });
+    }
+    payload
+}
+
 /// Retain every RC child `payload` names through its header meta - a `String`
 /// (`gos_rt_str_retain`) or RC-node (`gos_rt_rc_retain`) child. Used after a
 /// multi-slot aggregate enum payload is materialised by value into a match

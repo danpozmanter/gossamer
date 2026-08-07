@@ -61,6 +61,9 @@ struct Resolver {
     scopes: ScopeStack,
     defs: DefIdGenerator,
     deferred_project_uses: Vec<DeferredProjectUse>,
+    /// Path each imported name is bound to, so a repeated import of the
+    /// same path is distinguished from two paths claiming one name.
+    imported_targets: std::collections::HashMap<String, String>,
     /// alias -> inlined dependency module name, for `use "id" as
     /// alias` bindings that resolved to a bundled module. Qualified
     /// item paths are registered under the module's real name, so
@@ -89,6 +92,7 @@ impl Resolver {
             scopes: ScopeStack::with_prelude(),
             defs: DefIdGenerator::new(),
             deferred_project_uses: Vec::new(),
+            imported_targets: std::collections::HashMap::new(),
             project_alias_modules: std::collections::HashMap::new(),
             module_scopes: std::collections::HashMap::new(),
             collect_mod_stack: Vec::new(),
@@ -136,13 +140,31 @@ impl Resolver {
                     module.insert_value(&du.alias, binding);
                     self.project_alias_modules.insert(du.alias, du.module_name);
                 }
-                None => self.define_import(&du.alias, du.use_id, du.span),
+                None => self.define_import(&du.alias, du.use_id, du.span, &du.module_name),
             }
         }
     }
 
     fn emit(&mut self, error: ResolveError, span: Span) {
-        self.diagnostics.push(ResolveDiagnostic::new(error, span));
+        if error.is_about_parse_placeholder() {
+            return;
+        }
+        // Captured here because the scope stack is unwound by the time the
+        // diagnostic is rendered, and locals live nowhere else.
+        let candidate = match &error {
+            ResolveError::UnresolvedName { name } => self.closest_visible_name(name),
+            _ => None,
+        };
+        self.diagnostics
+            .push(ResolveDiagnostic::new(error, span).with_candidate(candidate));
+    }
+
+    /// Closest name currently in scope to `name`, for a "did you mean" hint.
+    fn closest_visible_name(&self, name: &str) -> Option<String> {
+        // A qualified path fails on its head segment; comparing the whole
+        // path against bare names would only ever find noise.
+        let target = name.split("::").next().unwrap_or(name);
+        gossamer_diagnostics::suggest(target, self.scopes.visible_names(), 2).map(str::to_string)
     }
 
     fn alloc_def(&mut self, node: NodeId, kind: DefKind) -> DefId {
@@ -181,7 +203,8 @@ impl Resolver {
             });
             return;
         }
-        self.define_import(&name, use_decl.id, use_decl.span);
+        let target = target_path_text(&use_decl.target);
+        self.define_import(&name, use_decl.id, use_decl.span, &target);
     }
 
     /// Validates `use` module paths against the canonical module table. Stdlib
@@ -245,9 +268,20 @@ impl Resolver {
         if crate::stdlib_exports::is_stdlib_module_path_or_namespace(&joined) {
             return;
         }
-        if rest.len() >= 2 {
-            let parent = rest[..rest.len() - 1].join("::");
+        if let Some((item, parent)) = rest.split_last().filter(|(_, parent)| !parent.is_empty()) {
+            let parent = parent.join("::");
             if crate::stdlib_exports::is_stdlib_module_path_or_namespace(&parent) {
+                // The module resolves, so the leaf names an item: the module's
+                // own export set decides whether the import binds anything.
+                if !crate::stdlib_exports::is_stdlib_item_path(&joined) {
+                    self.emit(
+                        ResolveError::UnknownStdItem {
+                            name: (*item).to_string(),
+                            module: parent,
+                        },
+                        use_decl.span,
+                    );
+                }
                 return;
             }
         }
@@ -266,7 +300,8 @@ impl Resolver {
                 .alias
                 .as_ref()
                 .map_or_else(|| entry.name.name.clone(), |alias| alias.name.clone());
-            self.define_import(&imported, use_decl.id, use_decl.span);
+            let target = format!("{}::{imported}", target_path_text(&use_decl.target));
+            self.define_import(&imported, use_decl.id, use_decl.span, &target);
         }
     }
 
@@ -300,40 +335,46 @@ impl Resolver {
                 );
             }
         }
-        if !base_rest.is_empty() {
-            let base = base_rest.join("::");
-            let base_parent = base_rest
-                .get(..base_rest.len().saturating_sub(1))
-                .map(|items| items.join("::"));
-            if crate::stdlib_exports::is_stdlib_module_path_or_namespace(&base)
-                || base_parent
-                    .as_deref()
-                    .is_some_and(crate::stdlib_exports::is_stdlib_module_path_or_namespace)
-            {
-                return;
-            }
-        }
         for entry in list {
+            // A `self` entry names the module the list is rooted at, not an
+            // item that module exports.
+            if entry.name.name == "self" {
+                continue;
+            }
             let mut rest = base_rest.clone();
             rest.extend(entry.prefix.iter().map(|segment| segment.name.as_str()));
             rest.push(entry.name.name.as_str());
             let joined = rest.join("::");
-            let parent = rest
-                .get(..rest.len().saturating_sub(1))
-                .map(|items| items.join("::"));
-            let valid = crate::stdlib_exports::is_stdlib_module_path_or_namespace(&joined)
+            if crate::stdlib_exports::is_stdlib_module_path_or_namespace(&joined)
                 || crate::stdlib_exports::is_stdlib_qualified(&joined)
-                || parent
-                    .as_deref()
-                    .is_some_and(crate::stdlib_exports::is_stdlib_module_path_or_namespace);
-            if !valid {
-                self.emit(
-                    ResolveError::UnknownModulePath {
-                        path: format!("std::{joined}"),
-                    },
-                    use_decl.span,
-                );
+            {
+                continue;
             }
+            let split = rest.split_last().filter(|(_, parent)| !parent.is_empty());
+            if let Some((item, parent)) = split {
+                let parent = parent.join("::");
+                if crate::stdlib_exports::is_stdlib_module_path_or_namespace(&parent) {
+                    // The module resolves, so the leaf names an item: the
+                    // module's own export set decides whether the import
+                    // binds anything.
+                    if !crate::stdlib_exports::is_stdlib_item_path(&joined) {
+                        self.emit(
+                            ResolveError::UnknownStdItem {
+                                name: (*item).to_string(),
+                                module: parent,
+                            },
+                            use_decl.span,
+                        );
+                    }
+                    continue;
+                }
+            }
+            self.emit(
+                ResolveError::UnknownModulePath {
+                    path: format!("std::{joined}"),
+                },
+                use_decl.span,
+            );
         }
     }
 
@@ -370,7 +411,7 @@ impl Resolver {
         }
     }
 
-    fn define_import(&mut self, name: &str, use_id: NodeId, span: Span) {
+    fn define_import(&mut self, name: &str, use_id: NodeId, span: Span, target: &str) {
         let module = self.scopes.module_mut();
         // Allow imports to shadow prelude entries (Gossamer's
         // `use std::collections::{HashMap, ...}` style imports
@@ -394,14 +435,33 @@ impl Resolver {
             _ => false,
         };
         if !is_prelude_only {
-            self.emit(
-                ResolveError::DuplicateImport {
-                    name: name.to_string(),
-                },
-                span,
-            );
+            // Every `use` in a compilation unit lands in this one module
+            // scope, including those written inside a `mod { }` body and
+            // those injected alongside synthesized code. Binding one name
+            // to one path twice leaves nothing ambiguous; only two paths
+            // competing for the same name do. A `super::` / `crate::` /
+            // `self::` path names an item of this same unit, so it spells
+            // out where an existing binding comes from rather than
+            // introducing a rival one.
+            let names_this_unit =
+                matches!(target.split("::").next(), Some("super" | "crate" | "self"));
+            if !names_this_unit
+                && self
+                    .imported_targets
+                    .get(name)
+                    .is_none_or(|prev| prev != target)
+            {
+                self.emit(
+                    ResolveError::DuplicateImport {
+                        name: name.to_string(),
+                    },
+                    span,
+                );
+            }
             return;
         }
+        self.imported_targets
+            .insert(name.to_string(), target.to_string());
         let binding = Binding::import(use_id);
         module.insert_type(name, binding);
         self.scopes.module_mut().insert_value(name, binding);
@@ -1610,4 +1670,23 @@ fn starts_lowercase(seg: &str) -> bool {
     seg.chars()
         .next()
         .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+}
+
+/// Canonical `::`-joined spelling of a `use` target, used to tell a repeated
+/// import of one path from two paths competing for the same name.
+fn target_path_text(target: &UseTarget) -> String {
+    fn join(path: &ModulePath) -> String {
+        path.segments
+            .iter()
+            .map(|segment| segment.name.as_str())
+            .collect::<Vec<_>>()
+            .join("::")
+    }
+    match target {
+        UseTarget::Module(path) => join(path),
+        UseTarget::Project { id, module } => match module {
+            Some(path) => format!("{id}::{}", join(path)),
+            None => id.clone(),
+        },
+    }
 }

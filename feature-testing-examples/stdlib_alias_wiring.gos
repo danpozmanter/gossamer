@@ -28,8 +28,12 @@ fn main() {
         Err(e) => println!("set_cwd_err={}", e),
     }
 
-    let entries = path::walk(&dir).unwrap()
-    println!("walk_nonempty={}", entries.len() > 0)
+    // `create_dir_all` and `write` above put exactly `a` and `data.bin`
+    // under `dir`, and the walk yields them in sorted order.
+    let _ = path::walk(&dir, |entry| {
+        println!("walk_entry={}", entry.name)
+        Ok(())
+    })
 
     let _ = fs::remove_dir_all(&dir)
 }

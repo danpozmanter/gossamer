@@ -1,0 +1,13 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+assertion_line: 86
+expression: rendered
+---
+--- plain ---
+error[GP0034]: A `const` or `static` item was declared without a type annotation. - here
+--- framed ---
+error[GP0034]: A `const` or `static` item was declared without a type annotation.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

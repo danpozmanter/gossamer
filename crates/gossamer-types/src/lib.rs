@@ -99,3 +99,19 @@ pub fn is_mutating_method_name(name: &str) -> bool {
             | "shrink_to_fit"
     )
 }
+
+/// Rewrites `Range<T>` to `Iterator<T>` for the lowering pipeline.
+///
+/// `Range` exists so a range reports the type the reader wrote. The two
+/// share one representation and one method surface, and only `Iterator`
+/// has lowering behind it, so the boundary into HIR maps ranges onto it.
+#[must_use]
+pub fn normalize_for_lowering(tcx: &mut TyCtxt, ty: Ty) -> Ty {
+    match tcx.kind(ty) {
+        Some(TyKind::Range(item)) => {
+            let item = *item;
+            tcx.iterator_ty(item)
+        }
+        _ => ty,
+    }
+}

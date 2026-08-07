@@ -950,6 +950,13 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     {
                         owned[i] = true;
                     }
+                    // The RC cell a `Weak` observes for a by-value aggregate
+                    // referent: the frame that created it owns its strong
+                    // reference and releases it at scope end, after which the
+                    // outstanding weak count decides when the cell is freed.
+                    Rvalue::CallIntrinsic { name, .. } if *name == "gos_rt_rc_weak_cell" => {
+                        owned[i] = true;
+                    }
                     // The shadow local pinning a `w.upgrade()` result: the
                     // upgrade shim took a fresh strong reference for the
                     // `Some` payload, and this extract (null for `None`)

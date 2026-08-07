@@ -1,0 +1,13 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+assertion_line: 86
+expression: rendered
+---
+--- plain ---
+error[GT0056]: A method was called on a generic parameter that none of its trait - here
+--- framed ---
+error[GT0056]: A method was called on a generic parameter that none of its trait
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

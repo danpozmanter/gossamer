@@ -1,0 +1,77 @@
+// `x.downgrade()` on a by-value aggregate. A struct has no reference-count
+// header of its own on the compiled tiers, so the weak observes an RC cell
+// holding the referent, pinned by the scope that created it. Liveness is
+// therefore tied to that scope, not to the source binding's last read: the
+// weak still upgrades after the binding has been consumed, cleared at its
+// last use, or overwritten, and reads dead once the creating frame returns.
+
+struct Node {
+    v: i64
+}
+
+struct Labelled {
+    v: i64
+    tag: String
+}
+
+fn probe(w: Weak<Node>) -> i64 {
+    if let Some(p) = w.upgrade() { p.v } else { -1 }
+}
+
+// The referent's pin dies with this frame, so the returned weak is dead.
+fn escaped_weak() -> Weak<Node> {
+    let n = Node { v: 404 }
+    n.downgrade()
+}
+
+fn main() {
+    // The source binding's last read precedes the upgrade.
+    let a = Node { v: 7 }
+    let wa = a.downgrade()
+    println!("a={}", a.v)
+    match wa.upgrade() {
+        Some(p) => println!("case1={}", p.v)
+        None => println!("case1=NONE")
+    }
+
+    // The downgrade is the binding's only read, and the weak is passed on.
+    let b = Node { v: 7 }
+    let wb = b.downgrade()
+    println!("case2={}", probe(wb))
+
+    // No binding at all: downgrade and upgrade in one expression.
+    let c = Node { v: 7 }
+    println!(
+        "case3={}",
+        if let Some(p) = c.downgrade().upgrade() { p.v } else { -1 }
+    )
+
+    // A referent with a reference-counted field: the cell co-owns the string.
+    let d = Labelled { v: 11, tag: "eleven" }
+    let wd = d.downgrade()
+    match wd.upgrade() {
+        Some(p) => println!("labelled={} {}", p.v, p.tag)
+        None => println!("labelled=NONE")
+    }
+
+    // Writing the source after the downgrade leaves the weak observing the
+    // referent it was taken from.
+    let mut e = Node { v: 7 }
+    let we = e.downgrade()
+    e.v = 9
+    match we.upgrade() {
+        Some(p) => println!("mutated={} {}", p.v, e.v)
+        None => println!("mutated=NONE")
+    }
+
+    // Repeated downgrades at one site: each overwrites the previous pin, so
+    // only the most recent referent stays observable.
+    let mut total = 0
+    for i in 0..200 {
+        let n = Node { v: i }
+        total += probe(n.downgrade())
+    }
+    println!("loop_total={}", total)
+
+    println!("escaped={}", probe(escaped_weak()))
+}

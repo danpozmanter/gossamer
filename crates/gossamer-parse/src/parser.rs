@@ -128,6 +128,13 @@ impl<'src> Parser<'src> {
         self.diagnostics.push(ParseDiagnostic::new(error, span));
     }
 
+    /// Number of diagnostics recorded so far. Compared across a
+    /// sub-parse to tell whether it reported anything.
+    #[must_use]
+    pub(crate) fn diagnostic_count(&self) -> usize {
+        self.diagnostics.len()
+    }
+
     /// Returns the accumulated diagnostics, leaving the parser's vector empty.
     pub fn take_diagnostics(&mut self) -> Vec<ParseDiagnostic> {
         std::mem::take(&mut self.diagnostics)
@@ -207,10 +214,7 @@ impl<'src> Parser<'src> {
         }
         let found = self.peek_text();
         self.record(
-            ParseError::Unexpected {
-                expected: format!("`>` {context}"),
-                found,
-            },
+            ParseError::unexpected(format!("`>` {context}"), found),
             self.peek_span(),
         );
         false
@@ -228,10 +232,7 @@ impl<'src> Parser<'src> {
         }
         let found = self.peek_text();
         self.record(
-            ParseError::Unexpected {
-                expected: format!("`{}` {}", punct.as_str(), context),
-                found,
-            },
+            ParseError::unexpected(format!("`{}` {}", punct.as_str(), context), found),
             self.peek_span(),
         );
         false
@@ -244,10 +245,7 @@ impl<'src> Parser<'src> {
         }
         let found = self.peek_text();
         self.record(
-            ParseError::Unexpected {
-                expected: format!("`{}` {}", keyword.as_str(), context),
-                found,
-            },
+            ParseError::unexpected(format!("`{}` {}", keyword.as_str(), context), found),
             self.peek_span(),
         );
         false

@@ -22,7 +22,9 @@ impl Parser<'_> {
                 break;
             }
         }
-        self.expect_close_angle("to close generic parameters");
+        if !self.expect_close_angle("to close generic parameters") {
+            self.recover_to_close_angle();
+        }
         Generics { params }
     }
 
@@ -34,10 +36,7 @@ impl Parser<'_> {
                 self.slice(name_span).to_string()
             } else {
                 self.record(
-                    ParseError::Unexpected {
-                        expected: "const generic name".to_string(),
-                        found: self.peek_text(),
-                    },
+                    ParseError::unexpected("a const generic parameter name", self.peek_text()),
                     name_span,
                 );
                 String::new()
@@ -68,10 +67,7 @@ impl Parser<'_> {
             self.slice(name_span).to_string()
         } else {
             self.record(
-                ParseError::Unexpected {
-                    expected: "type parameter name".to_string(),
-                    found: self.peek_text(),
-                },
+                ParseError::unexpected("a type parameter name", self.peek_text()),
                 name_span,
             );
             String::new()
@@ -117,7 +113,7 @@ impl Parser<'_> {
                 break;
             }
             let bounded = self.parse_type();
-            self.expect_punct(Punct::Colon, "in where predicate");
+            self.expect_punct(Punct::Colon, "after the type in the `where` clause");
             let bounds = self.parse_trait_bound_list();
             predicates.push(WherePredicate { bounded, bounds });
             if !self.eat_punct(Punct::Comma) {

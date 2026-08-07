@@ -90,6 +90,19 @@ pub(crate) fn render_ty(tcx: &TyCtxt, ty: Ty) -> String {
     }
 }
 
+/// LLVM type rendering for a parameter or argument slot. `void` is a
+/// return-only type, so a zero-sized parameter (a field-less struct, `()`)
+/// takes an unread pointer word instead. Definition, declaration, and call
+/// site all go through this so the three agree on arity and shape.
+pub(crate) fn param_llvm_ty(tcx: &TyCtxt, ty: Ty) -> String {
+    let rendered = render_ty(tcx, ty);
+    if rendered == "void" {
+        "ptr".to_string()
+    } else {
+        rendered
+    }
+}
+
 /// True when `ty` lowers to the 2-word by-value enum representation:
 /// the `Option` / `Result` sentinel Adts (`u32::MAX` / `u32::MAX - 1`)
 /// or an inline-able user enum. These cross the ABI as a packed `i128`.

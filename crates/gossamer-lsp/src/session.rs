@@ -11,7 +11,10 @@ use gossamer_ast::SourceFile;
 use gossamer_diagnostics::Diagnostic;
 use gossamer_lex::{FileId, SourceMap, Span};
 use gossamer_resolve::{Resolutions, resolve_source_file};
-use gossamer_types::{TyCtxt, TypeTable, typecheck_source_file};
+use gossamer_types::{
+    ExhaustivenessError, TyCtxt, TypeTable, check_arena_escapes, check_exhaustiveness,
+    typecheck_source_file,
+};
 
 use crate::navigation::DefinitionIndex;
 
@@ -137,6 +140,7 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
     let bundled = bundle_project_unit(uri, source);
     let augmented = gossamer_parse::autoderive::augment_source(&bundled);
     let user_len = u32::try_from(source.len()).unwrap_or(u32::MAX);
+    let bundle_len = u32::try_from(bundled.len()).unwrap_or(u32::MAX);
     let mut map = SourceMap::new();
     let file = map.add_file(uri.to_string(), augmented.clone());
     let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&augmented, file);
@@ -160,6 +164,26 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
             .iter()
             .map(gossamer_types::TypeDiagnostic::to_diagnostic),
     );
+    // The editor must run every phase the command-line gate runs, or a
+    // file reads clean here and fails `gos check`. Exhaustiveness
+    // (GM0001) and arena escape (GM0003) are fatal there, so they are
+    // reported here under the same policy.
+    for diag in check_exhaustiveness(&sf, &resolutions, &types, &tcx) {
+        if matches!(diag.error, ExhaustivenessError::NonExhaustive { .. }) {
+            diagnostics.push(diag.to_diagnostic());
+        }
+    }
+    for diag in check_arena_escapes(&sf, &resolutions, &types, &tcx) {
+        diagnostics.push(diag.to_diagnostic());
+    }
+    // The comptime fold lowers the program, so it runs only once every
+    // earlier phase has accepted it - exactly the order `gos check` uses.
+    if diagnostics.is_empty()
+        && let Some(diag) =
+            crate::comptime::fold_diagnostic(&augmented, &sf, &resolutions, &types, &mut tcx, file)
+    {
+        diagnostics.push(diag);
+    }
     // Editors should see the same default lint findings as `gos lint`.
     // Parse the user source without the synthesized autoderive tail so
     // lint spans and fixes can never point outside the editor buffer.
@@ -174,19 +198,19 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
         attach_lint_fixes(&mut lint_diagnostics, lint_fixes);
         diagnostics.extend(lint_diagnostics);
     }
-    // Diagnostics pointing into the synthesized tail would land past
-    // the end of the buffer the editor displays; `gos check` surfaces
-    // them against the augmented text, but an LSP client cannot.
-    // `<=` keeps unexpected-EOF parse errors, which point exactly AT
-    // the user text's end; the synthesized tail begins at least two
-    // newlines later.
-    diagnostics.retain(|d| {
-        d.labels
-            .iter()
-            .find(|l| l.primary)
-            .or_else(|| d.labels.first())
-            .is_none_or(|l| l.location.span.start <= user_len)
-    });
+    // A diagnostic anchored in the synthesized autoderive tail still
+    // describes a defect in the user's own declarations, so it is moved
+    // onto the construct that caused the synthesis rather than dropped:
+    // dropping it lets the editor call a file clean that `gos check`
+    // rejects.
+    crate::synthesis::reanchor_out_of_buffer(
+        &mut diagnostics,
+        &sf,
+        &augmented,
+        file,
+        user_len,
+        bundle_len,
+    );
 
     let index = DefinitionIndex::build(&sf, &augmented, &resolutions);
 

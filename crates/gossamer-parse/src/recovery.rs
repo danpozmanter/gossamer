@@ -17,6 +17,57 @@ impl Parser<'_> {
         }
     }
 
+    /// Advances to the `close` delimiter matching an `open` the parser has
+    /// already consumed, consuming it, and returns whether it was found.
+    /// Resynchronising on the delimiter keeps one malformed element inside
+    /// a bracketed list from being re-read as a sequence of statements.
+    /// A `{` at the top nesting level ends the search: it belongs to the
+    /// construct that follows the list, not to the list itself.
+    pub(crate) fn recover_to_close(&mut self, open: Punct, close: Punct) -> bool {
+        let mut depth = 1u32;
+        while !self.at_eof() {
+            if self.at_punct(open) {
+                depth += 1;
+            } else if self.at_punct(close) {
+                depth -= 1;
+                if depth == 0 {
+                    self.bump();
+                    return true;
+                }
+            } else if depth == 1 && close != Punct::RBrace && self.at_punct(Punct::LBrace) {
+                return false;
+            }
+            self.bump();
+        }
+        false
+    }
+
+    /// Advances to the `>` closing an already-opened generic list,
+    /// consuming it, and returns whether it was found. The body of a
+    /// following block or statement ends the search so an unterminated
+    /// list cannot swallow the rest of the file.
+    pub(crate) fn recover_to_close_angle(&mut self) -> bool {
+        let mut depth = 1u32;
+        while !self.at_eof() {
+            if self.at_punct(Punct::LBrace) || self.at_punct(Punct::Semi) {
+                return false;
+            }
+            if self.at_close_angle() {
+                depth -= 1;
+                self.tokens.eat_close_angle();
+                if depth == 0 {
+                    return true;
+                }
+                continue;
+            }
+            if self.at_punct(Punct::Lt) {
+                depth += 1;
+            }
+            self.bump();
+        }
+        false
+    }
+
     /// Advances tokens until reaching a statement-starter, `;`, or `}`.
     pub(crate) fn recover_in_block(&mut self) {
         while !self.at_eof() {
@@ -68,6 +119,11 @@ pub(crate) fn is_item_start(parser: &Parser<'_>) -> bool {
 }
 
 fn hash_prefixed_item_start(parser: &Parser<'_>) -> bool {
+    // `#{..}` is a `Set` literal. Only `#[` can open an attribute, so this
+    // shape is always an expression and never introduces an item.
+    if matches!(parser.peek_nth(1).kind, TokenKind::Punct(Punct::LBrace)) {
+        return false;
+    }
     let Some(offset) = skip_outer_attrs(parser, 0) else {
         return true;
     };
@@ -124,33 +180,37 @@ fn keyword_item_start_after_attrs(kind: TokenKind) -> bool {
 
 /// Returns `true` when the current token begins a fresh statement.
 pub(crate) fn is_stmt_start(parser: &Parser<'_>) -> bool {
-    let token = parser.peek();
-    match token.kind {
-        TokenKind::Keyword(keyword) => matches!(
-            keyword,
-            Keyword::Let
-                | Keyword::Return
-                | Keyword::Break
-                | Keyword::Continue
-                | Keyword::If
-                | Keyword::While
-                | Keyword::For
-                | Keyword::Loop
-                | Keyword::Match
-                | Keyword::Fn
-                | Keyword::Struct
-                | Keyword::Enum
-                | Keyword::Trait
-                | Keyword::Impl
-                | Keyword::Use
-                | Keyword::Type
-                | Keyword::Const
-                | Keyword::Static
-                | Keyword::Mod
-                | Keyword::Go
-                | Keyword::Defer
-                | Keyword::Pub
-        ),
+    match parser.peek().kind {
+        TokenKind::Keyword(keyword) => is_stmt_start_keyword(keyword),
         _ => false,
     }
+}
+
+/// Returns `true` for a keyword that can only begin a statement.
+pub(crate) fn is_stmt_start_keyword(keyword: Keyword) -> bool {
+    matches!(
+        keyword,
+        Keyword::Let
+            | Keyword::Return
+            | Keyword::Break
+            | Keyword::Continue
+            | Keyword::If
+            | Keyword::While
+            | Keyword::For
+            | Keyword::Loop
+            | Keyword::Match
+            | Keyword::Fn
+            | Keyword::Struct
+            | Keyword::Enum
+            | Keyword::Trait
+            | Keyword::Impl
+            | Keyword::Use
+            | Keyword::Type
+            | Keyword::Const
+            | Keyword::Static
+            | Keyword::Mod
+            | Keyword::Go
+            | Keyword::Defer
+            | Keyword::Pub
+    )
 }

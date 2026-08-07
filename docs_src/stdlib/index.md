@@ -99,7 +99,7 @@ For receiver methods on built-in types, see [`Methods by type`](../method_suppor
 | [`std::os::signal`](os_signal.md) | POSIX-style signal subscription (Go's os/signal shape). |
 | [`std::os::user`](os_user.md) | POSIX user / group lookup. Unix-backed by `nix`; Windows falls back to env vars. |
 | [`std::panic`](panic.md) | Panic / `catch_unwind` integration. |
-| [`std::path`](path.md) | Lexical filesystem-path operations; platform path grammar, no URL parsing or I/O. |
+| [`std::path`](path.md) | Lexical filesystem-path operations; platform path grammar, no URL parsing. |
 | [`std::process`](process.md) | Canonical process control and child-process API; std::os::exec is compatibility-only. |
 | [`std::regex`](regex.md) | Compiled regular expressions (Rust `regex` crate syntax; no backreferences or look-around). |
 | [`std::result`](result.md) | Data-last Result combinators for pipeline chaining: map, map_err, unwrap_or_else, etc. |

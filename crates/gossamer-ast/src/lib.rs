@@ -20,7 +20,10 @@ pub mod stmt;
 pub mod ty;
 pub mod visitor;
 
-pub use common::{AssignOp, BinaryOp, Ident, Mutability, RangeKind, UnaryOp, Visibility};
+pub use common::{
+    AssignOp, BinaryOp, ERROR_IDENT, Ident, Mutability, RangeKind, UnaryOp, Visibility,
+    is_error_name,
+};
 pub use expr::{
     ArrayExpr, Block, ClosureParam, Expr, ExprKind, FieldSelector, Label, Literal, MacroCall,
     MacroDelim, MatchArm, PathExpr, PathSegment, SelectArm, SelectOp, StructExprField,

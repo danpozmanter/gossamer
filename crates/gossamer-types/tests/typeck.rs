@@ -1557,7 +1557,7 @@ fn result_rejects_option_only_methods() {
     assert!(
         checked.diagnostics.iter().any(|d| matches!(
             d.error,
-            TypeError::UnresolvedMethod { ref ty, ref name }
+            TypeError::UnresolvedMethod { ref ty, ref name, .. }
                 if ty == "Result" && name == "ok_or"
         )),
         "{:?}",
@@ -2295,7 +2295,7 @@ fn strings_join_is_not_a_string_method() {
     assert!(
         d.iter().any(|x| matches!(
             &x.error,
-            TypeError::UnresolvedMethod { ty, name } if ty == "String" && name == "join"
+            TypeError::UnresolvedMethod { ty, name, .. } if ty == "String" && name == "join"
         )),
         "`strings::join(parts, sep)` belongs to Vec, not String: {d:?}"
     );

@@ -410,10 +410,13 @@ pub(crate) fn builtin_mutex_lock(args: &[Value]) -> RuntimeResult<Value> {
     // registry lock is not held while this goroutine parks on the
     // mutex's condvar.
     let arc = MUTEX_REGISTRY.with(|r| r.borrow().get(&id).cloned());
-    match arc {
-        Some(cell) => Ok(cell.lock()),
-        None => Ok(Value::Unit),
+    if let Some(cell) = arc {
+        // Acquiring answers with the lock, not with what the mutex guards:
+        // the compiled tiers carry no value back through this call, so a
+        // guarded value returned here would read differently per tier.
+        let _ = cell.lock();
     }
+    Ok(Value::Unit)
 }
 
 pub(crate) fn builtin_mutex_unlock(args: &[Value]) -> RuntimeResult<Value> {

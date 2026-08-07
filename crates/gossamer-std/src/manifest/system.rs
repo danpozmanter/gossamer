@@ -170,12 +170,17 @@ pub const OS_SIGNAL: StdModule = StdModule {
 
 pub const PATH: StdModule = StdModule {
     path: "std::path",
-    summary: "Lexical filesystem-path operations; platform path grammar, no URL parsing or I/O.",
+    summary: "Lexical filesystem-path operations; platform path grammar, no URL parsing.",
     items: &[
         StdItem {
             name: "join",
             kind: StdItemKind::Function,
             doc: "Joins two path fragments.",
+        },
+        StdItem {
+            name: "walk",
+            kind: StdItemKind::Function,
+            doc: "Recursively visits every descendant entry under a directory, the path-module spelling of fs::walk_dir.",
         },
         StdItem {
             name: "components",
@@ -243,6 +248,11 @@ pub const FS: StdModule = StdModule {
             name: "File",
             kind: StdItemKind::Type,
             doc: "Streaming file handle; supports read, read_to_string, write, flush, and close.",
+        },
+        StdItem {
+            name: "DirInfo",
+            kind: StdItemKind::Type,
+            doc: "Directory entry yielded by read_dir and walk_dir; carries path, name, is_file, is_dir, is_symlink, and size.",
         },
         StdItem {
             name: "OpenOptions",

@@ -508,6 +508,17 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#repeating-a-value" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Repeating A Value
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#map" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -2076,6 +2087,17 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#repeating-a-value" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Repeating A Value
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#map" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -2182,12 +2204,12 @@
 
 <h1 id="collection-literals">Collection literals<a class="headerlink" href="#collection-literals" title="Permanent link">&para;</a></h1>
 <p>Gossamer has dedicated literal forms for the everyday collection shapes:
-growable vectors, fixed arrays, maps, and sets. The remaining containers -
+growable vectors (<code>#[...]</code>), fixed arrays (<code>[...]</code>), maps, and sets. The remaining containers -
 queues, stacks, deques, and heaps - are built through their type.</p>
 <div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">collections</span>::<span class="p">{</span><span class="n">Queue</span><span class="p">,</span><span class="w"> </span><span class="n">Stack</span><span class="p">,</span><span class="w"> </span><span class="n">Deque</span><span class="p">,</span><span class="w"> </span><span class="n">MaxHeap</span><span class="p">,</span><span class="w"> </span><span class="n">MinHeap</span><span class="p">}</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">values</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">]</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">fixed</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[1, 2, 3]</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">values</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[1, 2, 3]</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">fixed</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">]</span>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="kd">let</span><span class="w"> </span><span class="n">names</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="s">&quot;ada&quot;</span>: <span class="mi">36</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;grace&quot;</span>: <span class="mi">37</span><span class="p">}</span>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="kd">let</span><span class="w"> </span><span class="n">tags</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>#<span class="p">{</span><span class="s">&quot;compiler&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;runtime&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;docs&quot;</span><span class="p">}</span>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="kd">let</span><span class="w"> </span><span class="n">ordered</span>: <span class="nc">BTreeSet</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>#<span class="p">{</span><span class="s">&quot;compiler&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;runtime&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;docs&quot;</span><span class="p">}</span>
@@ -2202,10 +2224,10 @@ queues, stacks, deques, and heaps - are built through their type.</p>
 not accepted; write <code>Map</code>, <code>Set</code>, <code>Deque</code>, <code>Queue</code>, <code>Stack</code>, <code>MaxHeap</code>, and
 <code>MinHeap</code>.</p>
 <h2 id="vec">Vec<a class="headerlink" href="#vec" title="Permanent link">&para;</a></h2>
-<p>A plain bracket literal creates a <code>Vec&lt;T&gt;</code> unless an expected fixed-array type
-shapes it.</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">scores</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="mi">20</span><span class="p">,</span><span class="w"> </span><span class="mi">30</span><span class="p">]</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">pending</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[]</span>
+<p><code>#[...]</code> creates a <code>Vec&lt;T&gt;</code> - the default growable sequence - unless an
+expected fixed-array type shapes it.</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">scores</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[10, 20, 30]</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">pending</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[]</span>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">pending</span><span class="p">.</span><span class="n">push</span><span class="p">(</span><span class="mi">40</span><span class="p">)</span>
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">pending</span><span class="p">.</span><span class="n">push</span><span class="p">(</span><span class="mi">50</span><span class="p">)</span>
 </code></pre></div>
@@ -2214,99 +2236,111 @@ shapes it.</p>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">bytes</span><span class="p">.</span><span class="n">push</span><span class="p">(</span><span class="mi">65</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="fixed-arrays">Fixed Arrays<a class="headerlink" href="#fixed-arrays" title="Permanent link">&para;</a></h2>
-<p>Use <code>#[...]</code> when the value must be an owned fixed-size array. The repeat form
-<code>#[value; count]</code> is a fixed array too - bare brackets never spell a repeat, so
-<code>[0; 4]</code> is a syntax error.</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">point</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[3, 4]</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">zeros</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[0; 4]</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">zero_vec</span>: <span class="nb">Vec</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">Vec</span>::<span class="n">from</span><span class="p">(</span><span class="cp">#[0; 4]</span><span class="p">)</span>
+<p><code>[...]</code> creates an owned fixed-size array <code>[T; N]</code>, whose length is part of its
+type.</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">point</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">]</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">zeros</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="mi">4</span><span class="p">]</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">zero_vec</span>: <span class="nb">Vec</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">Vec</span>::<span class="n">from</span><span class="p">([</span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="mi">4</span><span class="p">])</span>
 </code></pre></div>
-<p>An expected <code>[T; N]</code> type can also shape a plain bracket literal:</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">point</span>: <span class="p">[</span><span class="kt">i64</span><span class="p">;</span><span class="w"> </span><span class="mi">2</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">]</span>
+<p>An expected <code>[T; N]</code> type can also shape a Vec literal:</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">point</span>: <span class="p">[</span><span class="kt">i64</span><span class="p">;</span><span class="w"> </span><span class="mi">2</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[3, 4]</span>
+</code></pre></div>
+<h2 id="repeating-a-value">Repeating A Value<a class="headerlink" href="#repeating-a-value" title="Permanent link">&para;</a></h2>
+<p>The repeat form <code>[value; count]</code> follows the same spelling rule as the list
+form: brackets build a fixed array, <code>#[...]</code> builds a Vec.</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">grid</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">5</span><span class="p">;</span><span class="w"> </span><span class="mi">5</span><span class="p">]</span><span class="w">        </span><span class="c1">// [i64; 5] - five copies of 5</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">buffer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[6; 7]</span><span class="w"> </span><span class="c1">// Vec&lt;i64&gt; - seven copies of 6</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">buffer</span><span class="p">.</span><span class="n">push</span><span class="p">(</span><span class="mi">8</span><span class="p">)</span><span class="w">           </span><span class="c1">// the Vec form still grows</span>
+</code></pre></div>
+<p>The count may be any integer expression; a Vec repeat accepts a runtime
+length, while a fixed array needs a constant so its length is part of its
+type.</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">width</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">row</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[0; width]</span>
 </code></pre></div>
 <p>Fixed arrays and slices support non-resizing sequence methods. Use a <code>Vec&lt;T&gt;</code>
 when the collection must grow or shrink.</p>
 <h2 id="map">Map<a class="headerlink" href="#map" title="Permanent link">&para;</a></h2>
 <p>A brace literal creates a <code>Map&lt;K, V&gt;</code>.</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">ages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="s">&quot;ada&quot;</span>: <span class="mi">36</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;grace&quot;</span>: <span class="mi">37</span><span class="p">}</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">println</span><span class="p">(</span><span class="n">ages</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;ada&quot;</span><span class="p">))</span>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">ages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="s">&quot;ada&quot;</span>: <span class="mi">36</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;grace&quot;</span>: <span class="mi">37</span><span class="p">}</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">println</span><span class="p">(</span><span class="n">ages</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;ada&quot;</span><span class="p">))</span>
 </code></pre></div>
 <p>The empty brace literal creates an empty <code>Map</code>.</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">counts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{}</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">println</span><span class="p">(</span><span class="n">counts</span><span class="p">.</span><span class="n">len</span><span class="p">())</span>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">typed</span>: <span class="nc">Map</span><span class="o">&lt;</span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{}</span>
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">println</span><span class="p">(</span><span class="n">typed</span><span class="p">.</span><span class="n">len</span><span class="p">())</span>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">counts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{}</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">println</span><span class="p">(</span><span class="n">counts</span><span class="p">.</span><span class="n">len</span><span class="p">())</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">typed</span>: <span class="nc">Map</span><span class="o">&lt;</span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{}</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="n">println</span><span class="p">(</span><span class="n">typed</span><span class="p">.</span><span class="n">len</span><span class="p">())</span>
 </code></pre></div>
 <p>Annotate an empty map when later code does not give the checker enough key and
 value information.</p>
 <h2 id="set-and-btreeset">Set And BTreeSet<a class="headerlink" href="#set-and-btreeset" title="Permanent link">&para;</a></h2>
 <p>Use <code>#{...}</code> for a <code>Set&lt;T&gt;</code>.</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">seen</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>#<span class="p">{</span><span class="s">&quot;ada&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;grace&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ada&quot;</span><span class="p">}</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">println</span><span class="p">(</span><span class="n">seen</span><span class="p">.</span><span class="n">len</span><span class="p">())</span><span class="w">       </span><span class="c1">// 2</span>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">println</span><span class="p">(</span><span class="n">seen</span><span class="p">.</span><span class="n">contains</span><span class="p">(</span><span class="s">&quot;ada&quot;</span><span class="p">))</span>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">seen</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>#<span class="p">{</span><span class="s">&quot;ada&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;grace&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ada&quot;</span><span class="p">}</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">println</span><span class="p">(</span><span class="n">seen</span><span class="p">.</span><span class="n">len</span><span class="p">())</span><span class="w">       </span><span class="c1">// 2</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">println</span><span class="p">(</span><span class="n">seen</span><span class="p">.</span><span class="n">contains</span><span class="p">(</span><span class="s">&quot;ada&quot;</span><span class="p">))</span>
 </code></pre></div>
 <p>The literal removes duplicates just like repeated <code>insert</code> calls.</p>
 <p>An expected <code>BTreeSet&lt;T&gt;</code> type shapes the same literal into an ordered set:</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">ordered</span>: <span class="nc">BTreeSet</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>#<span class="p">{</span><span class="s">&quot;grace&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ada&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ada&quot;</span><span class="p">}</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">println</span><span class="p">(</span><span class="n">ordered</span><span class="p">.</span><span class="n">to_vec</span><span class="p">())</span>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">ordered</span>: <span class="nc">BTreeSet</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>#<span class="p">{</span><span class="s">&quot;grace&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ada&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ada&quot;</span><span class="p">}</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">println</span><span class="p">(</span><span class="n">ordered</span><span class="p">.</span><span class="n">to_vec</span><span class="p">())</span>
 </code></pre></div>
 <h2 id="queue">Queue<a class="headerlink" href="#queue" title="Permanent link">&para;</a></h2>
 <p>A <code>Queue&lt;i64&gt;</code> is FIFO-only: <code>push</code> appends to the back and <code>pop</code> removes from
 the front. Use <code>Queue::new()</code> for an empty queue and <code>Queue::from([...])</code> to
 seed one in front-to-back order. <code>peek</code>, <code>len</code>, <code>is_empty</code>, and <code>clear</code> are the
 common observers and the reset operation.</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">collections</span>::<span class="n">Queue</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">q</span>: <span class="nc">Queue</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Queue</span>::<span class="n">from</span><span class="p">([</span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="mi">20</span><span class="p">])</span>
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="n">q</span><span class="p">.</span><span class="n">push</span><span class="p">(</span><span class="mi">30</span><span class="p">)</span>
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="n">println</span><span class="p">(</span><span class="n">q</span><span class="p">.</span><span class="n">len</span><span class="p">())</span>
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="n">println</span><span class="p">(</span><span class="n">q</span><span class="p">.</span><span class="n">peek</span><span class="p">())</span>
-<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="n">println</span><span class="p">(</span><span class="n">q</span><span class="p">.</span><span class="n">pop</span><span class="p">())</span>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">collections</span>::<span class="n">Queue</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">q</span>: <span class="nc">Queue</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Queue</span>::<span class="n">from</span><span class="p">([</span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="mi">20</span><span class="p">])</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="n">q</span><span class="p">.</span><span class="n">push</span><span class="p">(</span><span class="mi">30</span><span class="p">)</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="n">println</span><span class="p">(</span><span class="n">q</span><span class="p">.</span><span class="n">len</span><span class="p">())</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="n">println</span><span class="p">(</span><span class="n">q</span><span class="p">.</span><span class="n">peek</span><span class="p">())</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="n">println</span><span class="p">(</span><span class="n">q</span><span class="p">.</span><span class="n">pop</span><span class="p">())</span>
 </code></pre></div>
 <h2 id="stack">Stack<a class="headerlink" href="#stack" title="Permanent link">&para;</a></h2>
 <p>A <code>Stack&lt;i64&gt;</code> is LIFO-only: <code>push</code> appends to the top and <code>pop</code> removes from
 the top. Use <code>Stack::new()</code> for an empty stack and <code>Stack::from([...])</code> to seed
 one in bottom-to-top order.</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">collections</span>::<span class="n">Stack</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">s</span>: <span class="nc">Stack</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Stack</span>::<span class="n">from</span><span class="p">([</span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="mi">20</span><span class="p">])</span>
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="n">s</span><span class="p">.</span><span class="n">push</span><span class="p">(</span><span class="mi">30</span><span class="p">)</span>
-<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="n">println</span><span class="p">(</span><span class="n">s</span><span class="p">.</span><span class="n">len</span><span class="p">())</span>
-<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="n">println</span><span class="p">(</span><span class="n">s</span><span class="p">.</span><span class="n">peek</span><span class="p">())</span>
-<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="n">println</span><span class="p">(</span><span class="n">s</span><span class="p">.</span><span class="n">pop</span><span class="p">())</span>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">collections</span>::<span class="n">Stack</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">s</span>: <span class="nc">Stack</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Stack</span>::<span class="n">from</span><span class="p">([</span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="mi">20</span><span class="p">])</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="n">s</span><span class="p">.</span><span class="n">push</span><span class="p">(</span><span class="mi">30</span><span class="p">)</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="n">println</span><span class="p">(</span><span class="n">s</span><span class="p">.</span><span class="n">len</span><span class="p">())</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="n">println</span><span class="p">(</span><span class="n">s</span><span class="p">.</span><span class="n">peek</span><span class="p">())</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="n">println</span><span class="p">(</span><span class="n">s</span><span class="p">.</span><span class="n">pop</span><span class="p">())</span>
 </code></pre></div>
 <h2 id="deque">Deque<a class="headerlink" href="#deque" title="Permanent link">&para;</a></h2>
 <p>Use <code>Deque&lt;i64&gt;</code> when both ends matter. It has explicit front/back methods.</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">collections</span>::<span class="n">Deque</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">d</span>: <span class="nc">Deque</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Deque</span>::<span class="n">from</span><span class="p">([</span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="mi">20</span><span class="p">])</span>
-<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="n">d</span><span class="p">.</span><span class="n">push_front</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
-<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="n">d</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="mi">30</span><span class="p">)</span>
-<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="n">println</span><span class="p">(</span><span class="n">d</span><span class="p">.</span><span class="n">pop_front</span><span class="p">())</span>
-<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="n">println</span><span class="p">(</span><span class="n">d</span><span class="p">.</span><span class="n">pop_back</span><span class="p">())</span>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">collections</span>::<span class="n">Deque</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">d</span>: <span class="nc">Deque</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Deque</span>::<span class="n">from</span><span class="p">([</span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="mi">20</span><span class="p">])</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="n">d</span><span class="p">.</span><span class="n">push_front</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="n">d</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="mi">30</span><span class="p">)</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="n">println</span><span class="p">(</span><span class="n">d</span><span class="p">.</span><span class="n">pop_front</span><span class="p">())</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="n">println</span><span class="p">(</span><span class="n">d</span><span class="p">.</span><span class="n">pop_back</span><span class="p">())</span>
 </code></pre></div>
 <h2 id="maxheap-and-minheap">MaxHeap and MinHeap<a class="headerlink" href="#maxheap-and-minheap" title="Permanent link">&para;</a></h2>
 <p><code>MaxHeap&lt;i64&gt;</code> pops the largest value and <code>MinHeap&lt;i64&gt;</code> the smallest, so
 neither needs a negated key or a wrapper type.</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">collections</span>::<span class="p">{</span><span class="n">MaxHeap</span><span class="p">,</span><span class="w"> </span><span class="n">MinHeap</span><span class="p">}</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">max_heap</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MaxHeap</span>::<span class="n">from</span><span class="p">([</span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">])</span>
-<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="n">println</span><span class="p">(</span><span class="n">max_heap</span><span class="p">.</span><span class="n">peek</span><span class="p">())</span><span class="w">  </span><span class="c1">// Some(5)</span>
-<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="n">max_heap</span><span class="p">.</span><span class="n">push</span><span class="p">(</span><span class="mi">8</span><span class="p">)</span>
-<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="n">println</span><span class="p">(</span><span class="n">max_heap</span><span class="p">.</span><span class="n">pop</span><span class="p">())</span><span class="w">   </span><span class="c1">// Some(8)</span>
-<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>
-<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">min_heap</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MinHeap</span>::<span class="n">from</span><span class="p">([</span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">])</span>
-<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="n">println</span><span class="p">(</span><span class="n">min_heap</span><span class="p">.</span><span class="n">peek</span><span class="p">())</span><span class="w">  </span><span class="c1">// Some(1)</span>
-<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="n">min_heap</span><span class="p">.</span><span class="n">push</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
-<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="n">println</span><span class="p">(</span><span class="n">min_heap</span><span class="p">.</span><span class="n">pop</span><span class="p">())</span><span class="w">   </span><span class="c1">// Some(0)</span>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">collections</span>::<span class="p">{</span><span class="n">MaxHeap</span><span class="p">,</span><span class="w"> </span><span class="n">MinHeap</span><span class="p">}</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">max_heap</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MaxHeap</span>::<span class="n">from</span><span class="p">([</span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">])</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="n">println</span><span class="p">(</span><span class="n">max_heap</span><span class="p">.</span><span class="n">peek</span><span class="p">())</span><span class="w">  </span><span class="c1">// Some(5)</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="n">max_heap</span><span class="p">.</span><span class="n">push</span><span class="p">(</span><span class="mi">8</span><span class="p">)</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="n">println</span><span class="p">(</span><span class="n">max_heap</span><span class="p">.</span><span class="n">pop</span><span class="p">())</span><span class="w">   </span><span class="c1">// Some(8)</span>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">min_heap</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MinHeap</span>::<span class="n">from</span><span class="p">([</span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">])</span>
+<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="n">println</span><span class="p">(</span><span class="n">min_heap</span><span class="p">.</span><span class="n">peek</span><span class="p">())</span><span class="w">  </span><span class="c1">// Some(1)</span>
+<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="n">min_heap</span><span class="p">.</span><span class="n">push</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a><span class="n">println</span><span class="p">(</span><span class="n">min_heap</span><span class="p">.</span><span class="n">pop</span><span class="p">())</span><span class="w">   </span><span class="c1">// Some(0)</span>
 </code></pre></div>
 <h2 id="tuples">Tuples<a class="headerlink" href="#tuples" title="Permanent link">&para;</a></h2>
 <p>A tuple groups a fixed number of values whose types may differ. It is written
 with parentheses rather than brackets and needs no import.</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">entry</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;two&quot;</span><span class="p">,</span><span class="w"> </span><span class="mf">3.0</span><span class="p">)</span>
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="n">println</span><span class="p">(</span><span class="n">entry</span><span class="p">.</span><span class="mi">1</span><span class="p">)</span>
-<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="kd">let</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="n">weight</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">entry</span>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">entry</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;two&quot;</span><span class="p">,</span><span class="w"> </span><span class="mf">3.0</span><span class="p">)</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="n">println</span><span class="p">(</span><span class="n">entry</span><span class="p">.</span><span class="mi">1</span><span class="p">)</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="kd">let</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="n">weight</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">entry</span>
 </code></pre></div>
 <p>See <a href="../language/tuples/">Tuples</a> for the full surface.</p>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
@@ -2319,15 +2353,15 @@ with parentheses rather than brackets and needs no import.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>[a, b]</code></td>
+<td><code>#[a, b]</code></td>
 <td><code>Vec&lt;T&gt;</code></td>
 </tr>
 <tr>
-<td><code>#[a, b]</code></td>
+<td><code>[a, b]</code></td>
 <td><code>[T; N]</code> fixed array</td>
 </tr>
 <tr>
-<td><code>#[value; count]</code></td>
+<td><code>[value; count]</code></td>
 <td>repeated fixed array</td>
 </tr>
 <tr>

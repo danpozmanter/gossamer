@@ -164,9 +164,12 @@ fn did_you_mean_suggests_a_close_match() {
     assert!(
         rendered
             .iter()
-            .any(|d| d.helps.iter().any(|h| h.contains("banana"))),
+            .any(|d| d.suggestions.iter().any(|s| s.replacement == "banana")),
         "did-you-mean should suggest `banana`; got {:?}",
-        rendered.iter().map(|d| d.helps.clone()).collect::<Vec<_>>()
+        rendered
+            .iter()
+            .map(|d| d.suggestions.clone())
+            .collect::<Vec<_>>()
     );
 }
 
@@ -186,9 +189,12 @@ fn did_you_mean_suggests_prelude_type_case_match() {
     assert!(
         rendered
             .iter()
-            .any(|d| d.helps.iter().any(|h| h.contains("BTreeMap"))),
+            .any(|d| d.suggestions.iter().any(|s| s.replacement == "BTreeMap")),
         "did-you-mean should suggest `BTreeMap`; got {:?}",
-        rendered.iter().map(|d| d.helps.clone()).collect::<Vec<_>>()
+        rendered
+            .iter()
+            .map(|d| d.suggestions.clone())
+            .collect::<Vec<_>>()
     );
 }
 

@@ -916,23 +916,40 @@ fn dir_info_value(entry: &fs_std::DirEntry) -> Value {
     Value::struct_("DirInfo", Arc::unwrap_or_clone(Arc::new(fields)))
 }
 
-/// `fs::walk_dir(root: String) -> Result<[DirInfo], String>`. Recursive
-/// walk; returns every descendant entry with the same `DirInfo`
-/// shape as `fs::read_dir` (and as the compiled tiers). The
-/// gossamer-std API uses a visitor closure for streaming; this
-/// builtin materialises the list to keep the .gos call site
-/// simple. Aliased as `path::walk` for Go-shaped spelling.
-fn builtin_fs_walk_dir(args: &[Value]) -> RuntimeResult<Value> {
+/// `fs::walk_dir(root: String, visit: Fn(fs::DirInfo) -> Result<(),
+/// errors::Error>) -> Result<(), errors::Error>`. Recursively visits every
+/// descendant, invoking `visit` with the same `DirInfo` shape as
+/// `fs::read_dir`. Stops as soon as `visit` returns `Err`, propagating that
+/// value as the walk's own result. Aliased as `path::walk` for Go-shaped
+/// spelling.
+fn native_fs_walk_dir(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
     let Some(root) = args.first().and_then(as_str) else {
         return Ok(err_variant("fs::walk_dir: root argument must be a string"));
     };
-    let collected = std::cell::RefCell::new(Vec::<Value>::new());
+    let visit = args.get(1).cloned().unwrap_or(Value::Unit);
+    let mut stop_err: Option<Value> = None;
+    let mut fault: Option<RuntimeError> = None;
     let visit_result = fs_std::walk_dir(fs_std::decode_path(root), |entry| {
-        collected.borrow_mut().push(dir_info_value(entry));
-        Ok(())
+        match dispatch.call_value(&visit, vec![dir_info_value(entry)]) {
+            Ok(Value::Variant(v)) if v.name == "Err" => {
+                stop_err = Some(v.fields.first().cloned().unwrap_or(Value::Unit));
+                Err(std::io::Error::other("gossamer visitor stop"))
+            }
+            Ok(_) => Ok(()),
+            Err(e) => {
+                fault = Some(e);
+                Err(std::io::Error::other("gossamer visitor fault"))
+            }
+        }
     });
+    if let Some(e) = fault {
+        return Err(e);
+    }
+    if let Some(payload) = stop_err {
+        return Ok(Value::variant("Err", vec![payload]));
+    }
     match visit_result {
-        Ok(()) => Ok(ok_variant(Value::Array(Arc::new(collected.into_inner())))),
+        Ok(()) => Ok(ok_variant(Value::Unit)),
         Err(e) => Ok(err_variant(format!("{e}"))),
     }
 }

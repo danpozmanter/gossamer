@@ -158,11 +158,17 @@ fn main() {
     // gos is a debugging tool that never produces static-musl release
     // binaries - skip the musl runtime for those builds.
     let sanitizer_toolchain = env::var("GOSSAMERFLAGS").is_ok_and(|f| f.contains("-Z"));
-    if cfg!(target_os = "linux") && profile == "release" && !sanitizer_toolchain {
+    // Built for every profile, not just release: `gos build --release` links
+    // this archive whatever profile `gos` itself was built in, so tying it to
+    // the outer profile leaves a debug `gos` emitting native binaries against
+    // whichever runtime a previous release build happened to leave behind.
+    // The archive itself is always the release build, which is what the link
+    // consumes.
+    if cfg!(target_os = "linux") && !sanitizer_toolchain {
         let musl_triple = "x86_64-unknown-linux-musl";
         if rustup_target_installed(musl_triple) {
             let musl_lib_path =
-                build_runtime_into(&workspace_root, &target_dir, &profile, Some(musl_triple));
+                build_runtime_into(&workspace_root, &target_dir, "release", Some(musl_triple));
             publish_archive(&musl_lib_path, &lib_dir.join("libgossamer_runtime-musl.a"));
             println!(
                 "cargo:rustc-env=GOSSAMER_RUNTIME_LIB_PATH_MUSL={}",

@@ -539,8 +539,47 @@ fn list_dir_data(path: &str) -> Result<Vec<DirInfoData>, std::io::Error> {
     Ok(entries.into_iter().filter_map(dir_info).collect())
 }
 
-fn walk_dir_data(root: &str) -> Result<Vec<DirInfoData>, std::io::Error> {
-    let mut out = Vec::new();
+/// Allocates a `fs::DirInfo` blob (7 fields * 8 bytes) for `entry` and
+/// returns its heap address. Routed through the tracing collector so the
+/// blob participates in mark/sweep instead of leaking. Field order matches
+/// the interpreter's `Value::struct_("DirInfo", ...)` layout.
+fn dir_info_blob(entry: &DirInfoData) -> i64 {
+    let name_cs = alloc_cstring(entry.name.as_bytes()) as i64;
+    let path_cs = alloc_cstring(entry.path.as_bytes()) as i64;
+    let blob = super::gc::gos_rt_gc_alloc(56) as *mut i64;
+    if blob.is_null() {
+        return 0;
+    }
+    unsafe {
+        *blob.add(0) = name_cs;
+        *blob.add(1) = path_cs;
+        *blob.add(2) = i64::from(entry.is_file);
+        *blob.add(3) = i64::from(entry.is_dir);
+        *blob.add(4) = i64::from(entry.is_symlink);
+        *blob.add(5) = entry.size;
+        *blob.add(6) = entry.modified_ms;
+    }
+    blob as i64
+}
+
+fn dir_infos_result(entries: Vec<DirInfoData>) -> i128 {
+    let out = unsafe { gos_rt_vec_new(8) };
+    for entry in entries {
+        let entry_val = dir_info_blob(&entry);
+        unsafe {
+            gos_rt_vec_push(out, std::ptr::addr_of!(entry_val).cast::<u8>());
+        }
+    }
+    unsafe { gos_rt_result_new(0, out as i64) }
+}
+
+/// Depth-first descendant walk of `root`, invoking `visit` for each entry
+/// before descending into it. Stops as soon as `visit` returns `Err`,
+/// leaving the rest of the tree unvisited.
+fn walk_dir_visit(
+    root: &str,
+    mut visit: impl FnMut(&DirInfoData) -> Result<(), i64>,
+) -> Result<Result<(), i64>, std::io::Error> {
     let mut stack = vec![decode_os_path(root)];
     while let Some(dir) = stack.pop() {
         let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(&dir)?.flatten().collect();
@@ -550,41 +589,16 @@ fn walk_dir_data(root: &str) -> Result<Vec<DirInfoData>, std::io::Error> {
             let Some(info) = dir_info(entry) else {
                 continue;
             };
-            if info.is_dir && !info.is_symlink {
+            let descend = info.is_dir && !info.is_symlink;
+            if let Err(payload) = visit(&info) {
+                return Ok(Err(payload));
+            }
+            if descend {
                 stack.push(child);
             }
-            out.push(info);
         }
     }
-    Ok(out)
-}
-
-fn dir_infos_result(entries: Vec<DirInfoData>) -> i128 {
-    let out = unsafe { gos_rt_vec_new(8) };
-    for entry in entries {
-        let name_cs = alloc_cstring(entry.name.as_bytes()) as i64;
-        let path_cs = alloc_cstring(entry.path.as_bytes()) as i64;
-        // 7 fields * 8 bytes = 56 bytes. Route through the tracing collector
-        // so the blob participates in mark/sweep instead of leaking.
-        let blob = super::gc::gos_rt_gc_alloc(56) as *mut i64;
-        if blob.is_null() {
-            continue;
-        }
-        unsafe {
-            *blob.add(0) = name_cs;
-            *blob.add(1) = path_cs;
-            *blob.add(2) = i64::from(entry.is_file);
-            *blob.add(3) = i64::from(entry.is_dir);
-            *blob.add(4) = i64::from(entry.is_symlink);
-            *blob.add(5) = entry.size;
-            *blob.add(6) = entry.modified_ms;
-        }
-        let entry_val = blob as i64;
-        unsafe {
-            gos_rt_vec_push(out, std::ptr::addr_of!(entry_val).cast::<u8>());
-        }
-    }
-    unsafe { gos_rt_result_new(0, out as i64) }
+    Ok(Ok(()))
 }
 
 #[unsafe(no_mangle)]
@@ -612,25 +626,45 @@ pub unsafe extern "C" fn gos_rt_fs_list_dir(path: *const c_char) -> i128 {
     })
 }
 
-/// `fs::walk_dir(root) -> Result<[DirInfo], errors::Error>`.
-/// Recursive descendant walk. Same DirInfo shape as `fs::list_dir`.
+/// `fs::walk_dir(root, visit) -> Result<(), errors::Error>`. Recursive
+/// descendant walk; `visit`'s function-pointer address lives in `env`'s
+/// first word (the `Fn(...)`-value env layout cranelift / LLVM both use),
+/// matching `sort_by`'s comparator callback shape. Called inline on the
+/// calling thread - not routed through `run_blocking` - because `visit` is
+/// compiled Gossamer code, and only the thread the scheduler already
+/// tracks for this goroutine may run it.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_fs_walk_dir(path: *const c_char) -> i128 {
+pub unsafe extern "C" fn gos_rt_fs_walk_dir(path: *const c_char, env: *const u8) -> i128 {
     ffi_entry!(0i128, {
         let root = if path.is_null() {
             ".".to_string()
         } else {
             unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
         };
-        match crate::sched_global::run_blocking("fs-walk-dir", move || walk_dir_data(&root)) {
-            Ok(Ok(entries)) => dir_infos_result(entries),
-            Ok(Err(e)) => {
-                let cs = std::ffi::CString::new(e.to_string()).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
-                unsafe { gos_rt_result_new(1, err as i64) }
+        if env.is_null() {
+            return unsafe { gos_rt_result_new(0, 0) };
+        }
+        type VisitFn = unsafe extern "C" fn(env: *const u8, entry: i64) -> i128;
+        let fn_addr_raw = unsafe { (env as *const usize).read() };
+        if fn_addr_raw == 0 {
+            return unsafe { gos_rt_result_new(0, 0) };
+        }
+        super::fn_registry::verify(fn_addr_raw, super::fn_registry::FnKind::WalkVisit);
+        let visit: VisitFn = unsafe { std::mem::transmute(fn_addr_raw) };
+        let result = walk_dir_visit(&root, |info| {
+            let blob = dir_info_blob(info);
+            let r = unsafe { visit(env, blob) };
+            if super::vec::result_disc_of(r) == 0 {
+                Ok(())
+            } else {
+                Err(super::vec::result_payload_of(r))
             }
+        });
+        match result {
+            Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
+            Ok(Err(payload)) => unsafe { gos_rt_result_new(1, payload) },
             Err(e) => {
-                let cs = std::ffi::CString::new(e).unwrap_or_default();
+                let cs = std::ffi::CString::new(format!("{e}")).unwrap_or_default();
                 let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }

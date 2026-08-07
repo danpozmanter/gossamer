@@ -878,6 +878,17 @@ impl<'a> Builder<'a> {
         })
     }
 
+    /// The opaque `fs::DirInfo` blob handle shared by `fs::read_dir` and
+    /// `fs::walk_dir` - a heap blob address held in a single scalar slot,
+    /// not an inline struct.
+    pub(crate) fn dir_info_adt_ty(&mut self) -> Ty {
+        let def = gossamer_resolve::DefId::local(u32::MAX - 2);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def,
+            substs: gossamer_types::Substs::new(),
+        })
+    }
+
     pub(crate) fn result_unit_error_adt_ty(&mut self) -> Ty {
         let u = self.tcx.unit();
         let e = self.tcx.dyn_error_ty();
@@ -1440,6 +1451,38 @@ impl<'a> Builder<'a> {
         let def = gossamer_resolve::DefId::local(u32::MAX - 6);
         let substs = gossamer_types::Substs::from_types([payload]);
         self.tcx.intern(TyKind::Adt { def, substs })
+    }
+
+    /// Builds the `WeakCell<T>` sentinel Adt (def `u32::MAX - 33`): the RC
+    /// cell a `Weak<T>` observes when `T` is a by-value aggregate with no RC
+    /// header of its own. Registered as RC-managed so the drop pass gives the
+    /// cell the ordinary strong retain/release schedule, and left with no
+    /// registered field layout so every backend treats it as a pointer word.
+    pub(crate) fn weak_cell_adt_ty(&mut self, payload: Ty) -> Ty {
+        use gossamer_types::TyKind;
+        let def = gossamer_resolve::DefId::local(u32::MAX - 33);
+        self.tcx.register_def_name(def, "WeakCell");
+        let substs = gossamer_types::Substs::from_types([payload]);
+        let ty = self.tcx.intern(TyKind::Adt { def, substs });
+        self.tcx.register_rc_managed_ty(ty);
+        ty
+    }
+
+    /// True when a `.downgrade()` receiver of this type is a by-value
+    /// aggregate whose runtime value is inline slot data rather than an RC
+    /// payload pointer, so the weak must observe an RC cell holding a copy.
+    pub(crate) fn weak_referent_needs_cell(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        if self.tcx.is_rc_managed(ty) {
+            return false;
+        }
+        match self.tcx.kind_of(ty) {
+            // Stdlib sentinel Adts (`u32::MAX - 16 ..= u32::MAX`) are opaque
+            // runtime handles, not slot data.
+            TyKind::Adt { def, .. } => def.local < u32::MAX - 16 && !self.tcx.is_inline_enum_ty(ty),
+            TyKind::Tuple(_) | TyKind::Array { .. } => true,
+            _ => false,
+        }
     }
 
     /// Extracts `T` from a `Weak<T>` sentinel Adt; returns `None` for any

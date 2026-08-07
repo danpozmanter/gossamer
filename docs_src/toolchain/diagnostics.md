@@ -44,12 +44,17 @@ version. This page is auto-generated from the catalogue in
 | [`GP0030`](#gp0030) | Parser | match arm missing body |
 | [`GP0031`](#gp0031) | Parser | match arm missing separator |
 | [`GP0032`](#gp0032) | Parser | removed collection literal |
-| [`GP0033`](#gp0033) | Parser | bare repeat literal |
+| [`GP0034`](#gp0034) | Parser | missing item type |
+| [`GP0035`](#gp0035) | Parser | duplicate slice-pattern rest |
+| [`GP0036`](#gp0036) | Parser | duplicate struct-literal spread |
+| [`GP0037`](#gp0037) | Parser | refutable let without else |
 | [`GR0001`](#gr0001) | Resolve | unresolved name |
 | [`GR0002`](#gr0002) | Resolve | wrong namespace |
 | [`GR0003`](#gr0003) | Resolve | duplicate item |
 | [`GR0004`](#gr0004) | Resolve | duplicate import |
+| [`GR0005`](#gr0005) | Resolve | unknown module path |
 | [`GR0006`](#gr0006) | Resolve | removed stdlib item |
+| [`GR0007`](#gr0007) | Resolve | unknown stdlib item |
 | [`GT0001`](#gt0001) | Types | type mismatch |
 | [`GT0002`](#gt0002) | Types | unresolved method |
 | [`GT0003`](#gt0003) | Types | unresolved operator |
@@ -251,11 +256,29 @@ Separate same-line expression arms with a comma, or start the next arm on a new 
 
 A bracket spelling that used to build a container is no longer syntax. Construct the container through its type: `Type::new()` or `Type::from([a, b, c])`.
 
-## `GP0033` <a id="gp0033"></a>
+## `GP0034` <a id="gp0034"></a>
 
-**Parser** - bare repeat literal
+**Parser** - missing item type
 
-A repeat literal is a fixed array, written `#[value; count]`. Bare brackets build a Vec from the elements listed inside them.
+A `const` or `static` item was declared without a type annotation. These items are never inferred from their initialiser, so the type is written after the name: `const EPS: f64 = 1e-12`.
+
+## `GP0035` <a id="gp0035"></a>
+
+**Parser** - duplicate slice-pattern rest
+
+A slice pattern wrote more than one `..`. One rest binding splits the elements into a prefix and a suffix, as in `[first, ..rest, last]`.
+
+## `GP0036` <a id="gp0036"></a>
+
+**Parser** - duplicate struct-literal spread
+
+A struct literal wrote more than one `..base` functional update. Keep a single base value and list every overridden field explicitly.
+
+## `GP0037` <a id="gp0037"></a>
+
+**Parser** - refutable let without else
+
+A `let` whose pattern can fail to match was written without an `else` block. Give the failure a diverging path: `let Some(x) = opt else { return }`.
 
 ## `GR0001` <a id="gr0001"></a>
 
@@ -281,11 +304,23 @@ Two items in the same module share a name. Rename one of them or move it into a 
 
 The same path was imported twice in the same `use` list. Drop the duplicate.
 
+## `GR0005` <a id="gr0005"></a>
+
+**Resolve** - unknown module path
+
+The `use` names a `std::` module path that does not exist. Every module has exactly one canonical path (e.g. JSON lives at `std::encoding::json`); check `gos doc` or the stdlib reference for the module's path.
+
 ## `GR0006` <a id="gr0006"></a>
 
 **Resolve** - removed stdlib item
 
 A container spelling that a canonical name replaced. Each container has exactly one name - import and write that one.
+
+## `GR0007` <a id="gr0007"></a>
+
+**Resolve** - unknown stdlib item
+
+The `use` names a module that exists but an item that module does not export. Check the item spelling; `gos doc std::<module>` lists every name a module exports.
 
 ## `GT0001` <a id="gt0001"></a>
 

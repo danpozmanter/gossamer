@@ -1487,10 +1487,43 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#gp0033" class="md-nav__link">
+  <a href="#gp0034" class="md-nav__link">
     <span class="md-ellipsis">
 
-        GP0033
+        GP0034
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gp0035" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GP0035
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gp0036" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GP0036
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gp0037" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GP0037
 
     </span>
   </a>
@@ -1542,10 +1575,32 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#gr0005" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GR0005
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#gr0006" class="md-nav__link">
     <span class="md-ellipsis">
 
         GR0006
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gr0007" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GR0007
 
     </span>
   </a>
@@ -2804,10 +2859,43 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#gp0033" class="md-nav__link">
+  <a href="#gp0034" class="md-nav__link">
     <span class="md-ellipsis">
 
-        GP0033
+        GP0034
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gp0035" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GP0035
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gp0036" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GP0036
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gp0037" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GP0037
 
     </span>
   </a>
@@ -2859,10 +2947,32 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#gr0005" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GR0005
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#gr0006" class="md-nav__link">
     <span class="md-ellipsis">
 
         GR0006
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gr0007" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GR0007
 
     </span>
   </a>
@@ -3154,9 +3264,24 @@ version. This page is auto-generated from the catalogue in
 <td>removed collection literal</td>
 </tr>
 <tr>
-<td><a href="#gp0033"><code>GP0033</code></a></td>
+<td><a href="#gp0034"><code>GP0034</code></a></td>
 <td>Parser</td>
-<td>bare repeat literal</td>
+<td>missing item type</td>
+</tr>
+<tr>
+<td><a href="#gp0035"><code>GP0035</code></a></td>
+<td>Parser</td>
+<td>duplicate slice-pattern rest</td>
+</tr>
+<tr>
+<td><a href="#gp0036"><code>GP0036</code></a></td>
+<td>Parser</td>
+<td>duplicate struct-literal spread</td>
+</tr>
+<tr>
+<td><a href="#gp0037"><code>GP0037</code></a></td>
+<td>Parser</td>
+<td>refutable let without else</td>
 </tr>
 <tr>
 <td><a href="#gr0001"><code>GR0001</code></a></td>
@@ -3179,9 +3304,19 @@ version. This page is auto-generated from the catalogue in
 <td>duplicate import</td>
 </tr>
 <tr>
+<td><a href="#gr0005"><code>GR0005</code></a></td>
+<td>Resolve</td>
+<td>unknown module path</td>
+</tr>
+<tr>
 <td><a href="#gr0006"><code>GR0006</code></a></td>
 <td>Resolve</td>
 <td>removed stdlib item</td>
+</tr>
+<tr>
+<td><a href="#gr0007"><code>GR0007</code></a></td>
+<td>Resolve</td>
+<td>unknown stdlib item</td>
 </tr>
 <tr>
 <td><a href="#gt0001"><code>GT0001</code></a></td>
@@ -3321,9 +3456,18 @@ version. This page is auto-generated from the catalogue in
 <h2 id="gp0032"><code>GP0032</code> <a id="gp0032"></a><a class="headerlink" href="#gp0032" title="Permanent link">&para;</a></h2>
 <p><strong>Parser</strong> - removed collection literal</p>
 <p>A bracket spelling that used to build a container is no longer syntax. Construct the container through its type: <code>Type::new()</code> or <code>Type::from([a, b, c])</code>.</p>
-<h2 id="gp0033"><code>GP0033</code> <a id="gp0033"></a><a class="headerlink" href="#gp0033" title="Permanent link">&para;</a></h2>
-<p><strong>Parser</strong> - bare repeat literal</p>
-<p>A repeat literal is a fixed array, written <code>#[value; count]</code>. Bare brackets build a Vec from the elements listed inside them.</p>
+<h2 id="gp0034"><code>GP0034</code> <a id="gp0034"></a><a class="headerlink" href="#gp0034" title="Permanent link">&para;</a></h2>
+<p><strong>Parser</strong> - missing item type</p>
+<p>A <code>const</code> or <code>static</code> item was declared without a type annotation. These items are never inferred from their initialiser, so the type is written after the name: <code>const EPS: f64 = 1e-12</code>.</p>
+<h2 id="gp0035"><code>GP0035</code> <a id="gp0035"></a><a class="headerlink" href="#gp0035" title="Permanent link">&para;</a></h2>
+<p><strong>Parser</strong> - duplicate slice-pattern rest</p>
+<p>A slice pattern wrote more than one <code>..</code>. One rest binding splits the elements into a prefix and a suffix, as in <code>[first, ..rest, last]</code>.</p>
+<h2 id="gp0036"><code>GP0036</code> <a id="gp0036"></a><a class="headerlink" href="#gp0036" title="Permanent link">&para;</a></h2>
+<p><strong>Parser</strong> - duplicate struct-literal spread</p>
+<p>A struct literal wrote more than one <code>..base</code> functional update. Keep a single base value and list every overridden field explicitly.</p>
+<h2 id="gp0037"><code>GP0037</code> <a id="gp0037"></a><a class="headerlink" href="#gp0037" title="Permanent link">&para;</a></h2>
+<p><strong>Parser</strong> - refutable let without else</p>
+<p>A <code>let</code> whose pattern can fail to match was written without an <code>else</code> block. Give the failure a diverging path: <code>let Some(x) = opt else { return }</code>.</p>
 <h2 id="gr0001"><code>GR0001</code> <a id="gr0001"></a><a class="headerlink" href="#gr0001" title="Permanent link">&para;</a></h2>
 <p><strong>Resolve</strong> - unresolved name</p>
 <p>A name used in source could not be resolved to a declaration. Check the spelling, whether a <code>use</code> brings the name into scope, and whether the item is visible at this location.</p>
@@ -3336,9 +3480,15 @@ version. This page is auto-generated from the catalogue in
 <h2 id="gr0004"><code>GR0004</code> <a id="gr0004"></a><a class="headerlink" href="#gr0004" title="Permanent link">&para;</a></h2>
 <p><strong>Resolve</strong> - duplicate import</p>
 <p>The same path was imported twice in the same <code>use</code> list. Drop the duplicate.</p>
+<h2 id="gr0005"><code>GR0005</code> <a id="gr0005"></a><a class="headerlink" href="#gr0005" title="Permanent link">&para;</a></h2>
+<p><strong>Resolve</strong> - unknown module path</p>
+<p>The <code>use</code> names a <code>std::</code> module path that does not exist. Every module has exactly one canonical path (e.g. JSON lives at <code>std::encoding::json</code>); check <code>gos doc</code> or the stdlib reference for the module's path.</p>
 <h2 id="gr0006"><code>GR0006</code> <a id="gr0006"></a><a class="headerlink" href="#gr0006" title="Permanent link">&para;</a></h2>
 <p><strong>Resolve</strong> - removed stdlib item</p>
 <p>A container spelling that a canonical name replaced. Each container has exactly one name - import and write that one.</p>
+<h2 id="gr0007"><code>GR0007</code> <a id="gr0007"></a><a class="headerlink" href="#gr0007" title="Permanent link">&para;</a></h2>
+<p><strong>Resolve</strong> - unknown stdlib item</p>
+<p>The <code>use</code> names a module that exists but an item that module does not export. Check the item spelling; <code>gos doc std::&lt;module&gt;</code> lists every name a module exports.</p>
 <h2 id="gt0001"><code>GT0001</code> <a id="gt0001"></a><a class="headerlink" href="#gt0001" title="Permanent link">&para;</a></h2>
 <p><strong>Types</strong> - type mismatch</p>
 <p>The type checker could not reconcile two types it expected to match. The primary label shows the location of the mismatch; the <code>note:</code> line names the conflicting types.</p>

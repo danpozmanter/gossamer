@@ -2576,11 +2576,13 @@ the top.</p>
 <h2 id="arrays-slices-vec-and-ranges">Arrays, slices, Vec, and ranges<a class="headerlink" href="#arrays-slices-vec-and-ranges" title="Permanent link">&para;</a></h2>
 <p>Gossamer follows Rust's sequence model:</p>
 <ul>
-<li><code>[T; N]</code> is an owned fixed-size array. Use <code>#[a, b]</code> for an explicit fixed
-  literal, or let an expected fixed type such as <code>[i64; 2]</code> shape <code>[a, b]</code>.</li>
+<li><code>[T; N]</code> is an owned fixed-size array. Use <code>[a, b]</code> for an explicit fixed
+  literal.</li>
 <li><code>[T]</code> is unsized and is ordinarily used as <code>&amp;[T]</code> or <code>&amp;mut [T]</code>.</li>
-<li><code>Vec&lt;T&gt;</code> is the only owned growable sequence. Bracket literals such as
-  <code>[a, b]</code> create Vec values by default.</li>
+<li><code>Vec&lt;T&gt;</code> is the only owned growable sequence. <code>#[a, b]</code> creates a Vec, and
+  <code>[a, b]</code> creates a fixed <code>[T; N]</code> array whose length is part of its type.</li>
+<li>The repeat form follows the same spelling rule: <code>[5; 5]</code> is a fixed array of
+  five <code>5</code>s, and <code>#[6; 7]</code> is a Vec of seven <code>6</code>s.</li>
 <li><code>{key: value}</code> creates a <code>Map&lt;K, V&gt;</code>, and <code>#{a, b}</code> creates a
   <code>Set&lt;T&gt;</code> unless an expected <code>BTreeSet&lt;T&gt;</code> type shapes it.</li>
 <li>Queues, stacks, deques, and heaps have no literal form. Build them through

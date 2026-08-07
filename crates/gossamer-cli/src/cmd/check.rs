@@ -115,6 +115,13 @@ pub(crate) fn run(
     for diag in &outcome.diagnostics {
         emit_diag(diag, &map, render_opts, message_format);
     }
+    // The editor and `gos lint` both run the default lint registry, so
+    // `check` runs it too and stays the superset gate. Lints are advisory
+    // here: they report at warning severity and never move the exit code,
+    // which `gos lint --deny-warnings` remains the gate for.
+    for diag in lint_diagnostics(file, &mut map)? {
+        emit_diag(&diag, &map, render_opts, message_format);
+    }
     if !outcome.diagnostics.is_empty() {
         return Err(anyhow!(
             "check failed with {} diagnostic(s)",
@@ -135,6 +142,35 @@ pub(crate) fn run(
         );
     }
     Ok(())
+}
+
+/// Runs the default lint registry over `path`'s own text and returns
+/// its findings at warning severity.
+///
+/// The findings are anchored to a second entry in `map` holding that
+/// text alone: the checked source carries the project bundle, the
+/// synthesized autoderive tail, and any comptime splices, and a lint
+/// span is only meaningful against the text the author wrote. Sibling
+/// modules are linted when `gos lint` walks them under their own paths.
+fn lint_diagnostics(
+    path: &Path,
+    map: &mut gossamer_lex::SourceMap,
+) -> Result<Vec<gossamer_diagnostics::Diagnostic>> {
+    let source = crate::paths::read_source(path)?;
+    let lint_file = map.add_file(path.to_string_lossy().into_owned(), source.clone());
+    let (sf, parse_diags) = gossamer_parse::parse_source_file(&source, lint_file);
+    if !parse_diags.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut registry = gossamer_lint::Registry::with_defaults();
+    for item in &sf.items {
+        gossamer_lint::apply_attributes(&item.attrs, &mut registry);
+    }
+    let mut diagnostics = gossamer_lint::run(&sf, &source, &registry);
+    for diag in &mut diagnostics {
+        diag.severity = gossamer_diagnostics::Severity::Warning;
+    }
+    Ok(diagnostics)
 }
 
 /// Renders a structured diagnostic to stderr, branching on

@@ -421,11 +421,12 @@ impl<'a> Lowerer<'a> {
                 | "gos_rt_map_insert_str_i64_opt"
                 | "gos_rt_map_insert_typed_str_i64_opt"
         );
-        // `gos_rt_enum_box_aggr(size, meta, src)`: the second argument names a
-        // module-global `RC_KIND_STRUCT` meta blob (the box's child layout),
-        // and the third is the source aggregate's stack slot ADDRESS - not the
-        // value its first word holds.
-        let enum_box_aggr = matches!(name, "gos_rt_enum_box_aggr");
+        // `gos_rt_enum_box_aggr(size, meta, src)` and its weak-cell sibling
+        // `gos_rt_rc_weak_cell`: the second argument names a module-global
+        // `RC_KIND_STRUCT` meta blob (the cell's child layout), and the third
+        // is the source aggregate's stack slot ADDRESS - not the value its
+        // first word holds.
+        let enum_box_aggr = matches!(name, "gos_rt_enum_box_aggr" | "gos_rt_rc_weak_cell");
         let mut arg_text = String::new();
         for (i, arg) in args.iter().enumerate() {
             if i > 0 {
