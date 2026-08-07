@@ -2347,9 +2347,115 @@ fn repl_drop_validates_its_binding_name() {
         out.stderr
     );
     assert!(
-        out.stderr.contains("no persistent binding named `missing`"),
-        "an unknown binding should be diagnosed: {}",
         out.stderr
+            .contains("no persistent binding or declaration named `missing`"),
+        "an unknown name should be diagnosed: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn repl_drop_ends_a_declaration_so_its_name_is_free() {
+    let out = run_repl(
+        "fn f() -> i64 { 1 }\n\
+         f()\n\
+         %drop f\n\
+         fn f() -> i64 { 2 }\n\
+         f()\n\
+         %declarations\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("dropped `f`"),
+        "`%drop f` should confirm the ended declaration: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stderr.contains("defined multiple times"),
+        "redeclaring after `%drop` should not collide: {}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.lines().any(|line| line == "2"),
+        "the redeclared `f` should answer: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("fn f() -> i64 { 2 }") && !out.stdout.contains("fn f() -> i64 { 1 }"),
+        "`%declarations` should list only the redeclared `f`: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_drop_declaration_cascades_to_declarations_that_need_it() {
+    let out = run_repl(
+        "struct Point { x: i64, y: i64 }\n\
+         impl Point { fn sum(&self) -> i64 { self.x + self.y } }\n\
+         Point { x: 1, y: 2 }.sum()\n\
+         %drop Point\n\
+         %declarations\n\
+         struct Point { x: i64 }\n\
+         Point { x: 9 }.x\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("dropped `Point`"),
+        "`%drop Point` should confirm the ended declaration: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("no declarations yet"),
+        "the orphaned `impl Point` should go with its type: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.lines().any(|line| line == "9"),
+        "the redeclared `Point` should be usable: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_drop_declaration_reports_the_dependents_it_removed() {
+    let out = run_repl(
+        "fn base() -> i64 { 1 }\n\
+         fn uses() -> i64 { base() + 1 }\n\
+         uses()\n\
+         %drop base\n\
+         %declarations\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("dropped `base` and dependent `uses`"),
+        "`%drop base` should name the dependent declaration: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("no declarations yet"),
+        "both declarations should be gone: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_drop_declaration_keeps_a_binding_that_still_needs_it() {
+    let out = run_repl(
+        "struct P { x: i64 }\n\
+         let p = P { x: 1 }\n\
+         %drop P\n\
+         p.x\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("cannot drop `P`"),
+        "a binding still using the type should block the drop: {}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.lines().any(|line| line == "1"),
+        "the binding should survive the refused drop: {}",
+        out.stdout
     );
 }
 

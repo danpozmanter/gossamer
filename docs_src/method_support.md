@@ -54,10 +54,10 @@ dispatch-table additions.
 
 ## Vec
 
-`Vec<T>` is the only owned growable sequence. A bracket literal such as
-`[a, b, c]` creates a Vec by default. Use `#[a, b, c]` for an explicit fixed
-array, or let an expected fixed type such as `[T; 3]` shape a plain bracket
-literal.
+`Vec<T>` is the only owned growable sequence. `#[a, b, c]` creates a Vec, and
+`[a, b, c]` creates a fixed `[T; N]` array whose length is part of its type.
+The repeat form follows the same spelling rule: `#[6; 7]` is a Vec of seven
+`6`s, and `[5; 5]` is a fixed array of five `5`s.
 `[T; N]`, `&[T]`, and `&mut [T]` share only the non-resizing methods listed
 below. Mutable arrays and slices may reorder or replace existing elements, but
 cannot change their length or capacity. Iterator combinators are used through

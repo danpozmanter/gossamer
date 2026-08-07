@@ -521,6 +521,10 @@ impl<'a> Builder<'a> {
         match self.tcx.kind_of(cur) {
             TyKind::Vec(e) | TyKind::Slice(e) => Some(*e),
             TyKind::Array { elem, .. } => Some(*elem),
+            // Iterator state yields the sequence's element, so a consumer
+            // recovering an element type from its receiver reaches the same
+            // answer whether it holds the sequence or a walk over it.
+            TyKind::Iterator(e) | TyKind::Range(e) => Some(*e),
             _ => None,
         }
     }

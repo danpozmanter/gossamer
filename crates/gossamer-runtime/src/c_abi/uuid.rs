@@ -221,6 +221,49 @@ pub unsafe extern "C" fn gos_rt_iter_max_i64(v: *const GosVec) -> i128 {
     })
 }
 
+/// `iter::min(xs) -> Option<f64>` as an i128-packed Option carrying the
+/// payload's f64 bits: `None` (= 1) for empty input, `Some(m)` otherwise.
+///
+/// Ordering is `f64::total_cmp`, so a NaN never silently wins the comparison
+/// the way a partial ordering would leave it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_min_f64(v: *const GosVec) -> i128 {
+    ffi_entry!(1i128, {
+        if v.is_null() {
+            return 1i128;
+        }
+        let vec = unsafe { &*v };
+        if vec.ptr.is_null() || vec.len <= 0 {
+            return 1i128;
+        }
+        let slice = unsafe { std::slice::from_raw_parts(vec.ptr.cast::<f64>(), vec.len as usize) };
+        match slice.iter().copied().min_by(f64::total_cmp) {
+            Some(m) => gos_rt_result_new(0, m.to_bits() as i64),
+            None => 1i128,
+        }
+    })
+}
+
+/// `iter::max(xs) -> Option<f64>` as an i128-packed Option carrying the
+/// payload's f64 bits: `None` (= 1) for empty input, `Some(m)` otherwise.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_max_f64(v: *const GosVec) -> i128 {
+    ffi_entry!(1i128, {
+        if v.is_null() {
+            return 1i128;
+        }
+        let vec = unsafe { &*v };
+        if vec.ptr.is_null() || vec.len <= 0 {
+            return 1i128;
+        }
+        let slice = unsafe { std::slice::from_raw_parts(vec.ptr.cast::<f64>(), vec.len as usize) };
+        match slice.iter().copied().max_by(f64::total_cmp) {
+            Some(m) => gos_rt_result_new(0, m.to_bits() as i64),
+            None => 1i128,
+        }
+    })
+}
+
 /// Build a `Vec<i64>` of `[start, end)`. Empty if `end <= start`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_range(start: i64, end: i64) -> *mut GosVec {

@@ -1895,6 +1895,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_iter_min_i64 as *const u8,
         ),
         (
+            "gos_rt_iter_min_f64",
+            crate::c_abi::gos_rt_iter_min_f64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_max_f64",
+            crate::c_abi::gos_rt_iter_max_f64 as *const u8,
+        ),
+        (
             "gos_rt_iter_product_f64",
             crate::c_abi::gos_rt_iter_product_f64 as *const u8,
         ),

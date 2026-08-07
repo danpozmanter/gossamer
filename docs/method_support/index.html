@@ -2535,10 +2535,10 @@ dispatch-table additions.</p>
 </tbody>
 </table>
 <h2 id="vec">Vec<a class="headerlink" href="#vec" title="Permanent link">&para;</a></h2>
-<p><code>Vec&lt;T&gt;</code> is the only owned growable sequence. A bracket literal such as
-<code>[a, b, c]</code> creates a Vec by default. Use <code>#[a, b, c]</code> for an explicit fixed
-array, or let an expected fixed type such as <code>[T; 3]</code> shape a plain bracket
-literal.
+<p><code>Vec&lt;T&gt;</code> is the only owned growable sequence. <code>#[a, b, c]</code> creates a Vec, and
+<code>[a, b, c]</code> creates a fixed <code>[T; N]</code> array whose length is part of its type.
+The repeat form follows the same spelling rule: <code>#[6; 7]</code> is a Vec of seven
+<code>6</code>s, and <code>[5; 5]</code> is a fixed array of five <code>5</code>s.
 <code>[T; N]</code>, <code>&amp;[T]</code>, and <code>&amp;mut [T]</code> share only the non-resizing methods listed
 below. Mutable arrays and slices may reorder or replace existing elements, but
 cannot change their length or capacity. Iterator combinators are used through

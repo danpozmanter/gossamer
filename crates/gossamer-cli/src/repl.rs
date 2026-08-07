@@ -25,7 +25,8 @@ REPL commands
   %bindings (%b) [pattern]
     Show persistent `let` bindings. Patterns filter binding names.
   %drop NAME
-    End a persistent binding's lexical lifetime and remove it.
+    End a persistent binding's lexical lifetime and remove it, or remove the
+    declaration that introduced NAME so the name can be declared again.
   %declarations (%d) [pattern]
     Show persistent declarations. Patterns filter declaration names.
   %history (%h) [regex]
@@ -1922,7 +1923,46 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                         continue;
                     }
                     let Some(drop_plan) = prepare_repl_drop(&lets, &bindings, name) else {
-                        print_repl_error(&format!("no persistent binding named `{name}`"));
+                        // A name the session declares rather than binds ends the
+                        // whole declaration that introduced it. Redeclaring a name
+                        // is rejected as a duplicate definition, so ending the
+                        // declaration is what makes a name reusable.
+                        match prepare_repl_declaration_drop(&declarations, name) {
+                            Some(plan) => {
+                                let probe_body = format!("{}()\n", render_repl_setup(&lets));
+                                let entry = format!("__irepl_drop_{input_no}");
+                                let probe = format!(
+                                    "{}\nfn {entry}() {{\n    {probe_body}}}\n",
+                                    plan.declarations.join("\n"),
+                                );
+                                match rebuild_session(&plan.declarations)
+                                    .and_then(|()| build_and_call(&probe, &entry).map(|_| ()))
+                                {
+                                    Ok(()) => {
+                                        declarations = plan.declarations;
+                                        if let Some(helper) = editor.helper_mut() {
+                                            for dropped in &plan.dropped_names {
+                                                helper.forget_binding(dropped);
+                                            }
+                                        }
+                                        let dropped =
+                                            render_dropped_declaration_names(&plan.dropped_names);
+                                        println!(
+                                            "{}",
+                                            crate::style::repl_meta_accent(&format!(
+                                                "dropped {dropped}"
+                                            ))
+                                        );
+                                    }
+                                    Err(message) => print_repl_error(&format!(
+                                        "cannot drop `{name}`: the rest of the session still depends on it:\n{message}"
+                                    )),
+                                }
+                            }
+                            None => print_repl_error(&format!(
+                                "no persistent binding or declaration named `{name}`"
+                            )),
+                        }
                         continue;
                     };
                     let probe_body = format!("{}()\n", render_repl_setup(&drop_plan.lets));
@@ -2455,6 +2495,76 @@ fn source_mentions_binding(source: &str, name: &str) -> bool {
 
 fn is_ident_continue(ch: char) -> bool {
     ch == '_' || ch.is_ascii_alphanumeric()
+}
+
+struct ReplDeclarationDropPlan {
+    declarations: Vec<String>,
+    dropped_names: Vec<String>,
+}
+
+/// Removes the declaration introducing `name`, reporting every name that goes.
+///
+/// One entry can introduce several names - an enum and its variants - and the
+/// entry is the unit the user typed, so it ends whole. Entries that name a
+/// departing item go with it: an `impl Point` written separately from `Point`
+/// cannot outlive it, so the set closes over mentions until it stops growing.
+fn prepare_repl_declaration_drop(
+    declarations: &[String],
+    name: &str,
+) -> Option<ReplDeclarationDropPlan> {
+    let target = declarations
+        .iter()
+        .position(|declaration| declaration_declares_name(declaration, name))?;
+
+    let mut removed = HashSet::from([target]);
+    let mut dropped_names = declaration_names(&declarations[target]);
+    if let Some(position) = dropped_names.iter().position(|other| other == name) {
+        dropped_names.swap(0, position);
+    }
+    let mut dropped_set = dropped_names.iter().cloned().collect::<HashSet<_>>();
+    while let Some((index, declaration)) = declarations
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !removed.contains(index))
+        .find(|(_, declaration)| {
+            dropped_set
+                .iter()
+                .any(|dropped| source_mentions_binding(declaration, dropped))
+        })
+    {
+        removed.insert(index);
+        for declared in declaration_names(declaration) {
+            if dropped_set.insert(declared.clone()) {
+                dropped_names.push(declared);
+            }
+        }
+    }
+
+    let declarations = declarations
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !removed.contains(index))
+        .map(|(_, declaration)| declaration.clone())
+        .collect();
+    Some(ReplDeclarationDropPlan {
+        declarations,
+        dropped_names,
+    })
+}
+
+fn render_dropped_declaration_names(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [name] => format!("`{name}`"),
+        [first, rest @ ..] => {
+            let also = rest
+                .iter()
+                .map(|name| format!("`{name}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("`{first}` and dependent {also}")
+        }
+    }
 }
 
 fn render_dropped_binding_names(names: &[String]) -> String {

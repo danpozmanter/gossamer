@@ -573,6 +573,8 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_iter_min_by_key_i64", (Ptr, Ptr) -> I128, Both, "iter::min_by_key over Vec<i64> -> Option<i64>."),
     rt!("gos_rt_iter_min_by_key_ptr", (Ptr, Ptr) -> I128, Both, "iter::min_by_key over aggregate elements; callbacks receive the element storage address."),
     rt!("gos_rt_iter_min_i64", (Ptr) -> I128, Both, "iter::min over Vec<i64> -> Option<i64> (None for empty input)."),
+    rt!("gos_rt_iter_min_f64", (Ptr) -> I128, Both, "iter::min over Vec<f64> -> Option<f64> (None for empty input)."),
+    rt!("gos_rt_iter_max_f64", (Ptr) -> I128, Both, "iter::max over Vec<f64> -> Option<f64> (None for empty input)."),
     rt!("gos_rt_iter_pairwise_i64", (Ptr) -> Ptr, Both, "iter::pairwise over Vec<i64> -> Vec<(i64, i64)> of successive overlapping pairs."),
     rt!("gos_rt_iter_partition_i64", (Ptr, Ptr) -> Ptr, Both, "iter::partition over Vec<i64> -> ([i64], [i64]) by-value pair."),
     rt!("gos_rt_iter_position_i64", (Ptr, Ptr) -> I128, Both, "iter::position over Vec<i64> -> Option<i64>: index of the first match."),

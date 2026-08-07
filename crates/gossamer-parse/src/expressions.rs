@@ -2102,12 +2102,12 @@ impl Parser<'_> {
             return self.expand_builtin_macro(&macro_name);
         }
 
-        // Gossamer has no `vec!`: bracket literals create Vec values by
-        // default, and `#[...]` is the explicit fixed-array form. Steer the
-        // common Rust habit there rather than to the misleading "drop the `!`"
-        // form.
+        // Gossamer has no `vec!`: `#[...]` is the Vec literal and a plain
+        // `[...]` is the fixed-array form. Steer the common Rust habit to the
+        // growable spelling rather than to the misleading "drop the `!`" form.
         let expected = if macro_name == "vec" {
-            "a bracket literal `[...]` - Gossamer has no `vec!`; `[...]` creates a `Vec<T>`"
+            "a Vec literal `#[...]` - Gossamer has no `vec!`; `#[...]` creates a `Vec<T>` \
+             and `[...]` creates a fixed `[T; N]` array"
                 .to_string()
         } else {
             format!("`{macro_name}(...)` - Gossamer has no user-defined macros, drop the `!`")

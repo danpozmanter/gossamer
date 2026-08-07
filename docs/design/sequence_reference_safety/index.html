@@ -2131,8 +2131,8 @@ reasoning.</p>
 </tr>
 </tbody>
 </table>
-<p>Bracket literals create Vec values by default. Use <code>#[a, b]</code> for an explicit
-fixed array, or let an expected <code>[T; N]</code> type shape a plain bracket literal.
+<p><code>#[a, b]</code> creates a Vec, and <code>[a, b]</code> creates a fixed <code>[T; N]</code> array whose
+length is part of its type.
 <code>.slice(start, end)</code> is a checked copy and returns <code>Result&lt;Vec&lt;T&gt;,
 errors::Error&gt;</code>; it is not a borrowed sub-slice.</p>
 <p>Owned Vec assignment and by-value calls produce independent writable storage.

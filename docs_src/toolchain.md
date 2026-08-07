@@ -89,7 +89,9 @@ It starts with `gos <version> REPL [<architecture>-<os>]`. The REPL supports:
   history. `%bindings` filters binding names, and `%declarations` filters
   declaration names. `%drop NAME` ends one persistent binding's lexical lifetime
   and removes it, which releases any source protected by a reference binding.
-  `%reset` (`%r`) clears bindings and declarations.
+  `%drop` also accepts a declared name, removing the declaration that introduced
+  it along with the declarations that name it, so `%drop f` frees `f` to be
+  declared again. `%reset` (`%r`) clears bindings and declarations.
 - Up/down cycles history. Enter continues until braces close. Ctrl-D or
   `%quit` (`%q`) exits.
 

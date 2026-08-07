@@ -302,6 +302,32 @@ fn range_values_are_lazy_iterators_in_every_edition() {
 }
 
 #[test]
+fn an_iterator_parameter_accepts_an_iterator_argument() {
+    let checked = run("use Iterator\n\
+         fn take(a: Iterator<i64>) -> Option<i64> { a.next() }\n\
+         fn main() { let v = #[1, 2, 3]\n\
+         let _ = take(v.iter()) }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn an_iterator_parameter_rejects_a_differently_typed_iterator() {
+    let checked = run("use Iterator\n\
+         fn take(a: Iterator<i64>) -> Option<i64> { a.next() }\n\
+         fn main() { let v = #[\"a\", \"b\"]\n\
+         let _ = take(v.iter()) }\n");
+    assert!(
+        checked.diagnostics.iter().any(|diagnostic| matches!(
+            &diagnostic.error,
+            TypeError::TypeMismatch { expected, found }
+                if expected == "Iterator<i64>" && found == "Iterator<String>"
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
 fn formatting_a_range_reports_the_iterator_remedy() {
     let checked = run("fn main() { println!(\"{}\", 10..) }\n");
     let diagnostic = checked

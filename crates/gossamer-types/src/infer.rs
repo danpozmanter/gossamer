@@ -464,6 +464,7 @@ impl InferCtxt {
             | (TyKind::Sender(a), TyKind::Sender(b))
             | (TyKind::Receiver(a), TyKind::Receiver(b))
             | (TyKind::Range(a), TyKind::Range(b))
+            | (TyKind::Iterator(a), TyKind::Iterator(b))
             | (TyKind::JoinHandle(a), TyKind::JoinHandle(b)) => self.unify(tcx, *a, *b),
             // A range converts to the iterator it advances through, and only
             // in that direction: an adapter chain is not a range, so an

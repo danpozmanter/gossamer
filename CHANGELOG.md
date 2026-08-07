@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.44.1 - Iterator elements, and the Vec/array literal spellings
+
+- Accept an `Iterator<T>` argument for an `Iterator<T>` parameter. Passing
+  `v.iter()` to a function taking `Iterator<i64>` reported a mismatch whose
+  expected and found types were both `Iterator<i64>`.
+- Run `.iter()` chains over every element type on the compiled tiers. `.iter()`
+  built one iterator handle while the adapters and terminals consumed another,
+  so `.count()`, `.skip()`, and `.collect()` over a `String`, `f64`, or struct
+  element faulted natively, and `.next()` failed to link.
+- Return `iter::min` and `iter::max` over a `Vec<f64>` as floats. They reported
+  the integer their bits spell, and now order through `total_cmp` so a NaN
+  cannot silently win the comparison.
+- Bind a `String` from `xs.iter().next()` as a `String` on the compiled tiers
+  rather than as its raw pointer.
+- Correct the Vec and fixed-array literal spellings in the methods-by-type and
+  sequence-safety references: `#[a, b]` creates a `Vec<T>` and `[a, b]` creates
+  a fixed `[T; N]`. Both pages said the reverse.
+- Point `vec![...]` at `#[...]`. The diagnostic steered Rust habits to `[...]`,
+  which builds a fixed array that then rejects `push`.
+- Offer Vec completions for `#[...]` and fixed-array completions for `[...]`.
+  The editor had the two literal forms swapped.
+- Name `<expr>.iter()` in the help for a `Vec<T>` passed where an `Iterator<T>`
+  is expected, instead of describing the fix in the abstract.
+- Accept a declared name in the REPL's `%drop`, which removes the declaration
+  that introduced it together with the declarations that name it. Redeclaring a
+  name is rejected as a duplicate definition, so this is what frees it.
+
 ## 0.44.0 - Authoritative trait bounds, diagnostic clarity, stdlib + other fixes
 
 - Name the fix for a `const` or `static` written without a type: `const y = 1e-12`

@@ -16,8 +16,8 @@ reasoning.
 | `&mut [T]` | Exclusive lexical view that may replace elements but not resize. |
 | `Vec<T>` | Owned growable contiguous value. |
 
-Bracket literals create Vec values by default. Use `#[a, b]` for an explicit
-fixed array, or let an expected `[T; N]` type shape a plain bracket literal.
+`#[a, b]` creates a Vec, and `[a, b]` creates a fixed `[T; N]` array whose
+length is part of its type.
 `.slice(start, end)` is a checked copy and returns `Result<Vec<T>,
 errors::Error>`; it is not a borrowed sub-slice.
 

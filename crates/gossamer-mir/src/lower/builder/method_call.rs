@@ -133,7 +133,7 @@ impl<'a> Builder<'a> {
         if method.name == "iter"
             && args.is_empty()
             && matches!(self.tcx.kind_of(ty), TyKind::Iterator(item)
-                if matches!(self.tcx.kind_of(*item), TyKind::Int(gossamer_types::IntTy::I64)))
+                if self.lazy_iter_carries_elem(*item))
         {
             let mut receiver_ty = receiver.ty;
             while let TyKind::Ref { inner, .. } = self.tcx.kind_of(receiver_ty) {
@@ -585,6 +585,35 @@ impl<'a> Builder<'a> {
     }
 
     /// `x.downgrade()` / `w.upgrade()` - RC strong<->weak conversions.
+    /// Whether the lazy iterator runtime can carry `elem` in its 8-byte slot.
+    ///
+    /// The state yields one raw slot per element, so an integer is carried by
+    /// value and a `String` by its managed pointer. A float's bits would be
+    /// read back as an integer by the arithmetic terminals, and an aggregate
+    /// spans more than the slot, so both keep the eager sequence surface.
+    ///
+    /// A two-`i64` tuple rides the dedicated pair state that `zip` and
+    /// `enumerate` produce.
+    ///
+    /// Every site that builds or consumes lazy state must agree on this
+    /// predicate: handing a handle from one family to the other reinterprets
+    /// the pointer.
+    pub(crate) fn lazy_iter_carries_elem(&self, elem: Ty) -> bool {
+        match self.tcx.kind_of(elem) {
+            TyKind::Int(gossamer_types::IntTy::I64) | TyKind::String => true,
+            TyKind::Tuple(fields) => {
+                fields.len() == 2
+                    && fields.iter().all(|field| {
+                        matches!(
+                            self.tcx.kind_of(*field),
+                            TyKind::Int(gossamer_types::IntTy::I64)
+                        )
+                    })
+            }
+            _ => false,
+        }
+    }
+
     fn lower_rc_weak_method(
         &mut self,
         receiver: &HirExpr,
@@ -1885,12 +1914,7 @@ impl<'a> Builder<'a> {
                 }
             }
             "next" if args.is_empty() => match &receiver_kind_flat {
-                TyKind::Iterator(elem)
-                    if matches!(
-                        self.tcx.kind_of(*elem),
-                        TyKind::Int(gossamer_types::IntTy::I64)
-                    ) =>
-                {
+                TyKind::Iterator(elem) if self.lazy_iter_carries_elem(*elem) => {
                     Some("gos_rt_lazy_iter_next_i64")
                 }
                 _ => None,
@@ -2290,6 +2314,12 @@ impl<'a> Builder<'a> {
                 // rather than the `gos_rt_arr_iter` path, which would
                 // reinterpret the `*mut GosMap` as a `*mut GosVec`.
                 TyKind::HashMap { .. } => return SymbolLookup::Bail,
+                // A sequence whose element the lazy state cannot carry keeps
+                // its own handle, so the eager sequence helpers - which read
+                // the element at its real width - consume it directly.
+                TyKind::Vec(elem) | TyKind::Slice(elem) if !self.lazy_iter_carries_elem(*elem) => {
+                    Some("")
+                }
                 _ => Some("gos_rt_arr_iter"),
             },
             "collect" | "to_vec" => match &receiver_kind_flat {
@@ -3338,7 +3368,25 @@ impl<'a> Builder<'a> {
                     self.option_adt_ty()
                 }
             }
-            "gos_rt_lazy_iter_next_i64" => self.option_i64_adt_ty(),
+            "gos_rt_lazy_iter_next_i64" => {
+                // The slot the shim returns carries whatever the state yields,
+                // so the payload takes the iterator's element type and `Some(s)`
+                // binds `s` as that type rather than as the raw slot.
+                let mut iter_ty = self.locals[receiver_local.0 as usize].ty;
+                while let TyKind::Ref { inner, .. } = self.tcx.kind_of(iter_ty) {
+                    iter_ty = *inner;
+                }
+                match self.tcx.kind_of(iter_ty) {
+                    TyKind::Iterator(elem) | TyKind::Range(elem) => {
+                        let substs = gossamer_types::Substs::from_types([*elem]);
+                        self.tcx.intern(gossamer_types::TyKind::Adt {
+                            def: gossamer_resolve::DefId::local(u32::MAX - 1),
+                            substs,
+                        })
+                    }
+                    _ => self.option_i64_adt_ty(),
+                }
+            }
             "gos_rt_sync_map_get" => self.option_string_adt_ty(),
             "gos_rt_sync_map_keys" | "gos_rt_btmap_keys" => {
                 let s = self.tcx.string_ty();
@@ -4116,8 +4164,7 @@ impl<'a> Builder<'a> {
             && args.is_empty()
             && matches!(
                 self.tcx.kind_of(lowered_recv_ty),
-                TyKind::Iterator(elem)
-                    if matches!(self.tcx.kind_of(*elem), TyKind::Int(gossamer_types::IntTy::I64))
+                TyKind::Iterator(elem) if self.lazy_iter_carries_elem(*elem)
             )
         {
             runtime_symbol = Some("gos_rt_lazy_iter_next_i64");

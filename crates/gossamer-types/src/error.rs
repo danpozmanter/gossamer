@@ -785,7 +785,7 @@ fn mismatch_suggestion(expected: &str, found: &str) -> Option<String> {
     }
     if expected.starts_with("Iterator<") && found.starts_with("Vec<") {
         return Some(
-            "start a lazy pipeline with an iterator constructor or pass the Vec to a lazy adapter"
+            "start the lazy pipeline with `<expr>.iter()`, or pass the Vec to a lazy adapter"
                 .to_string(),
         );
     }
@@ -1531,7 +1531,7 @@ mod tests {
         );
         assert!(
             mismatch_suggestion("Iterator<i64>", "Vec<i64>")
-                .is_some_and(|help| help.contains("lazy adapter"))
+                .is_some_and(|help| help.contains("`<expr>.iter()`"))
         );
     }
 }

@@ -970,6 +970,10 @@ const SPECS: &[Spec] = &[
     // iteration restarts it at element zero, so every tier must agree on the
     // full element sequence, the bound-local shape, and early `break`.
     spec("feature-testing-examples/for_lazy_iterator_source.gos"),
+    // An `Iterator<T>` parameter receiving a range, a `.iter()`, and an
+    // adapter chain. The argument's element type is often still open at the
+    // call, so the parameter has to pin it through the `Iterator` constructor.
+    spec("feature-testing-examples/iterator_param_argument.gos"),
     // Element bindings of a `&mut` sequence loop: scalar write-through, a
     // heap element mutated through its slot pointer, slot replacement, and a
     // shared `&[T]` binding by value. The slot-address form read a Vec header

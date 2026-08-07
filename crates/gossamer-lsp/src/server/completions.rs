@@ -179,7 +179,7 @@ fn classify_receiver(doc: &DocumentAnalysis, expr: &str) -> ReceiverDescriptor {
     }
     if head.starts_with("#[") {
         return ReceiverDescriptor {
-            builtin: BuiltinReceiver::Array,
+            builtin: BuiltinReceiver::Vec,
             type_name: None,
             writable: false,
         };
@@ -233,10 +233,10 @@ fn classify_receiver(doc: &DocumentAnalysis, expr: &str) -> ReceiverDescriptor {
             writable: false,
         };
     }
-    // A bracket literal is a Vec unless an expected fixed-array type shapes it.
+    // A plain bracket literal is a fixed array; `#[...]` above is the Vec form.
     if head.starts_with('[') {
         return ReceiverDescriptor {
-            builtin: BuiltinReceiver::Vec,
+            builtin: BuiltinReceiver::Array,
             type_name: None,
             writable: false,
         };
