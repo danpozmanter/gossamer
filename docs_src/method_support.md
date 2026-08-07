@@ -54,36 +54,18 @@ dispatch-table additions.
 
 ## Vec
 
-`Vec<T>` is the only owned growable sequence. `#[a, b, c]` creates a Vec, and
-`[a, b, c]` creates a fixed `[T; N]` array whose length is part of its type.
-The repeat form follows the same spelling rule: `#[6; 7]` is a Vec of seven
-`6`s, and `[5; 5]` is a fixed array of five `5`s.
-`[T; N]`, `&[T]`, and `&mut [T]` share only the non-resizing methods listed
-below. Mutable arrays and slices may reorder or replace existing elements, but
-cannot change their length or capacity. Iterator combinators are used through
-`.iter()` on arrays and slices.
+`Vec<T>` is the only owned growable sequence. `[T; N]`, `&[T]`, and `&mut [T]`
+share only the non-resizing methods listed below. Mutable arrays and slices may
+reorder or replace existing elements, but cannot change their length or
+capacity. Iterator combinators are used through `.iter()` on arrays and slices.
+The literal spelling of each container is in
+[Collection literals](collection_literals.md).
 
 | Receiver | Available surface |
 |---|---|
 | `[T; N]`, `&[T; N]`, `&[T]` | `len`, `is_empty`, `slice`, `first`, `last`, `get`, `contains`, `index_of`, `count_of`, `windows`, `chunks`, `join`, `to_vec`, `iter`; fixed arrays also have value-preserving `clone` |
 | `&mut [T; N]`, `&mut [T]` | Shared methods plus in-place `sort`, `sort_by`, `sort_by_key`, `reverse`, `swap`, and `fill` |
 | `Vec<T>`, `&Vec<T>`, `&mut Vec<T>` | Shared methods plus eager combinators, resizing, and capacity operations |
-
-`#[...]` constructs `Vec` values and `[...]` constructs fixed arrays.
-Map literals such as `{"one": 1}` construct `Map` values. Set literals
-such as `#{1, 2, 2}` construct `Set` values, or `BTreeSet` values when an
-expected `BTreeSet<T>` type is present.
-
-Every container has exactly one name. `HashMap`, `HashSet`, `VecDeque`,
-`VecQueue`, `VecStack`, `BinaryHeap`, `MaxBinaryHeap`, and `MinBinaryHeap` are
-not accepted; write `Map`, `Set`, `Deque`, `Queue`, `Stack`, `MaxHeap`, and
-`MinHeap`.
-
-A tuple's surface is positional access (`t.0`), assignment through a `mut`
-binding, destructuring, and structural comparison, plus `len`, `is_empty`,
-`get`, `clone`, `to_string`, `into`, and `try_into`. `iter()` and its
-combinators are rejected - a tuple's elements may differ in type, so there is
-no element type to yield. See [Tuples](language/tuples.md).
 
 | Method | Returns | Notes |
 |---|---|---|
@@ -223,6 +205,12 @@ the top without removing it. Build one with `Stack::new()` or `Stack::from([a, b
 | `s.len()` | `i64` | |
 | `s.is_empty()` | `bool` | |
 | `s.clear()` | `()` | Removes all values. |
+
+## Tuple
+
+A tuple's surface is mostly syntax rather than methods. See
+[Tuples](language/tuples.md) for its method table and the reason `iter()` is
+rejected.
 
 ## Option
 

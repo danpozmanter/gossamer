@@ -995,6 +995,17 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#tuple" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Tuple
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#option" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -2243,6 +2254,17 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#tuple" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Tuple
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#option" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -2535,14 +2557,12 @@ dispatch-table additions.</p>
 </tbody>
 </table>
 <h2 id="vec">Vec<a class="headerlink" href="#vec" title="Permanent link">&para;</a></h2>
-<p><code>Vec&lt;T&gt;</code> is the only owned growable sequence. <code>#[a, b, c]</code> creates a Vec, and
-<code>[a, b, c]</code> creates a fixed <code>[T; N]</code> array whose length is part of its type.
-The repeat form follows the same spelling rule: <code>#[6; 7]</code> is a Vec of seven
-<code>6</code>s, and <code>[5; 5]</code> is a fixed array of five <code>5</code>s.
-<code>[T; N]</code>, <code>&amp;[T]</code>, and <code>&amp;mut [T]</code> share only the non-resizing methods listed
-below. Mutable arrays and slices may reorder or replace existing elements, but
-cannot change their length or capacity. Iterator combinators are used through
-<code>.iter()</code> on arrays and slices.</p>
+<p><code>Vec&lt;T&gt;</code> is the only owned growable sequence. <code>[T; N]</code>, <code>&amp;[T]</code>, and <code>&amp;mut [T]</code>
+share only the non-resizing methods listed below. Mutable arrays and slices may
+reorder or replace existing elements, but cannot change their length or
+capacity. Iterator combinators are used through <code>.iter()</code> on arrays and slices.
+The literal spelling of each container is in
+<a href="../collection_literals/">Collection literals</a>.</p>
 <table>
 <thead>
 <tr>
@@ -2565,19 +2585,6 @@ cannot change their length or capacity. Iterator combinators are used through
 </tr>
 </tbody>
 </table>
-<p><code>#[...]</code> constructs <code>Vec</code> values and <code>[...]</code> constructs fixed arrays.
-Map literals such as <code>{"one": 1}</code> construct <code>Map</code> values. Set literals
-such as <code>#{1, 2, 2}</code> construct <code>Set</code> values, or <code>BTreeSet</code> values when an
-expected <code>BTreeSet&lt;T&gt;</code> type is present.</p>
-<p>Every container has exactly one name. <code>HashMap</code>, <code>HashSet</code>, <code>VecDeque</code>,
-<code>VecQueue</code>, <code>VecStack</code>, <code>BinaryHeap</code>, <code>MaxBinaryHeap</code>, and <code>MinBinaryHeap</code> are
-not accepted; write <code>Map</code>, <code>Set</code>, <code>Deque</code>, <code>Queue</code>, <code>Stack</code>, <code>MaxHeap</code>, and
-<code>MinHeap</code>.</p>
-<p>A tuple's surface is positional access (<code>t.0</code>), assignment through a <code>mut</code>
-binding, destructuring, and structural comparison, plus <code>len</code>, <code>is_empty</code>,
-<code>get</code>, <code>clone</code>, <code>to_string</code>, <code>into</code>, and <code>try_into</code>. <code>iter()</code> and its
-combinators are rejected - a tuple's elements may differ in type, so there is
-no element type to yield. See <a href="../language/tuples/">Tuples</a>.</p>
 <table>
 <thead>
 <tr>
@@ -3105,6 +3112,10 @@ the top without removing it. Build one with <code>Stack::new()</code> or <code>S
 </tr>
 </tbody>
 </table>
+<h2 id="tuple">Tuple<a class="headerlink" href="#tuple" title="Permanent link">&para;</a></h2>
+<p>A tuple's surface is mostly syntax rather than methods. See
+<a href="../language/tuples/">Tuples</a> for its method table and the reason <code>iter()</code> is
+rejected.</p>
 <h2 id="option">Option<a class="headerlink" href="#option" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

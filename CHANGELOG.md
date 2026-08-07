@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.44.1 - Iterator elements, and the Vec/array literal spellings
+## 0.44.1 - Iterator elements, Doc fixes.
 
 - Accept an `Iterator<T>` argument for an `Iterator<T>` parameter. Passing
   `v.iter()` to a function taking `Iterator<i64>` reported a mismatch whose
