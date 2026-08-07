@@ -14,6 +14,9 @@
   cannot silently win the comparison.
 - Bind a `String` from `xs.iter().next()` as a `String` on the compiled tiers
   rather than as its raw pointer.
+- Visit every entry of `fs::walk_dir` and `path::walk` in a native Windows
+  build. The visitor's `Result` came back in the wrong register, so the walk
+  ended after the first entry.
 - Correct the Vec and fixed-array literal spellings in the methods-by-type and
   sequence-safety references: `#[a, b]` creates a `Vec<T>` and `[a, b]` creates
   a fixed `[T; N]`. Both pages said the reverse.

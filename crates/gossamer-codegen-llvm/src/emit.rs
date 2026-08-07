@@ -1819,12 +1819,12 @@ fn collect_thunk_names_in_body(body: &Body, out: &mut std::collections::BTreeSet
     }
 }
 
-/// Runtime combinators (`combinator.rs`) whose closure callback returns the
-/// 2-word `i128` Option/Result. The rustc runtime invokes the callback
-/// through `extern "C" fn(..) -> i128`, reading the result from xmm0; the
-/// callback address lives at offset 0 of the closure env-blob passed as an
-/// argument. `map` / predicate / comparator callbacks return `i64` / `bool`,
-/// which already agree on the GP register, so they are not listed here.
+/// Runtime shims whose closure callback returns the 2-word `i128`
+/// Option/Result. The rustc runtime invokes the callback through
+/// `extern "C" fn(..) -> i128`, reading the result from xmm0; the callback
+/// address lives at offset 0 of the closure env-blob passed as an argument.
+/// `map` / predicate / comparator callbacks return `i64` / `bool`, which
+/// already agree on the GP register, so they are not listed here.
 const CABI_I128_COMBINATORS: &[&str] = &[
     // Aggregate iterator maps return i64 but still need a codegen-owned
     // reference for the runtime dispatch-table parity gate.
@@ -1835,6 +1835,9 @@ const CABI_I128_COMBINATORS: &[&str] = &[
     "gos_rt_option_or_else",
     "gos_rt_iter_filter_map_i64",
     "gos_rt_iter_find_map_i64",
+    // The `fs::walk_dir` / `path::walk` visitor: its `Result<(),
+    // errors::Error>` decides whether the walk continues past each entry.
+    "gos_rt_fs_walk_dir",
 ];
 
 /// Resolves a fn-address local to the non-runtime function name its defining
@@ -3192,6 +3195,82 @@ mod cabi_thunk_tests {
             "must bitcast i128 to <16 x i8>"
         );
         assert!(ir.contains("ret <16 x i8>"), "must return <16 x i8>");
+    }
+
+    /// Every runtime shim that invokes a gossamer callback as
+    /// `extern "C" fn(..) -> i128` must be collected, so the callback is
+    /// reached through its `<16 x i8>` thunk on Win64. `gos_rt_fs_walk_dir`
+    /// takes its visitor as an env blob whose slot 0 holds the callable,
+    /// the same shape as the i128 combinators.
+    #[test]
+    fn walk_dir_visitor_is_collected_as_a_cabi_handler() {
+        let handlers = super::collect_cabi_handlers(&[env_callback_body("gos_rt_fs_walk_dir")]);
+        assert!(
+            handlers.contains_key("visit"),
+            "walk_dir visitor must be collected, got: {handlers:?}"
+        );
+    }
+
+    /// Builds a body shaped like the env-blob callback lowering: the
+    /// callable's address is stored at offset 0 of the env, and the env is
+    /// handed to `shim` as its second argument.
+    fn env_callback_body(shim: &str) -> gossamer_mir::Body {
+        use gossamer_lex::{SourceMap, Span};
+        use gossamer_mir::{
+            BasicBlock, BlockId, Body, ConstValue, Local, Operand, Place, Rvalue, Statement,
+            StatementKind, Terminator,
+        };
+
+        let mut map = SourceMap::new();
+        let span = Span::new(map.add_file("walk.gos", ""), 0, 0);
+        let (root, env, addr) = (Local(1), Local(2), Local(3));
+        let assign = |place: Local, rvalue: Rvalue| Statement {
+            kind: StatementKind::Assign {
+                place: Place::local(place),
+                rvalue,
+            },
+            span,
+        };
+        Body {
+            name: "main".to_string(),
+            def: None,
+            arity: 0,
+            locals: Vec::new(),
+            blocks: vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    assign(
+                        addr,
+                        Rvalue::CallIntrinsic {
+                            name: "gos_fn_addr",
+                            args: vec![Operand::Const(ConstValue::Str("visit".to_string()))],
+                        },
+                    ),
+                    assign(
+                        Local(4),
+                        Rvalue::CallIntrinsic {
+                            name: "gos_store",
+                            args: vec![
+                                Operand::Copy(Place::local(env)),
+                                Operand::Const(ConstValue::Int(0)),
+                                Operand::Copy(Place::local(addr)),
+                            ],
+                        },
+                    ),
+                ],
+                terminator: Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(shim.to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(root)),
+                        Operand::Copy(Place::local(env)),
+                    ],
+                    destination: Place::local(Local(0)),
+                    target: None,
+                },
+                span,
+            }],
+            span,
+        }
     }
 }
 
