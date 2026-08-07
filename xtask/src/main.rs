@@ -35,7 +35,7 @@ fn main() -> Result<()> {
             println!("  docs-lints          regenerate docs_src/toolchain/lints.md");
             println!("  docs-diagnostics    regenerate docs_src/toolchain/diagnostics.md");
             println!("  stdlib-coverage     regenerate docs_src/stdlib_coverage.md");
-            println!("  docs-llm [--check]  regenerate or check docs/api/stdlib.json");
+            println!("  docs-llm [--check]  regenerate or check docs_src/api/stdlib.json");
             println!("  docs-all            run every docs generator");
             println!("  lint-budget         tally #[allow(...)] sites per crate");
             println!("  audit-allows        list every #[allow(...)] with surrounding context");
@@ -188,13 +188,17 @@ fn regenerate_llm_docs(check: bool) -> Result<()> {
     let catalogue = build_public_api_catalog()?;
     let skill_card = fs::read_to_string(workspace_root.join("SKILL.md"))
         .context("reading checked LLM primer SKILL.md")?;
+    // The catalogue lives under the mkdocs `docs_dir` (`docs_src`), not the
+    // rendered `site_dir` (`docs`): mkdocs clears `site_dir` on every build and
+    // only restores what it renders itself. Being a docs source keeps these
+    // files published at `docs/api/*.json` while mkdocs copies them forward.
     let outputs = vec![
         (
-            workspace_root.join("docs/api/stdlib.json"),
+            workspace_root.join("docs_src/api/stdlib.json"),
             serialize_public_api_catalog(&catalogue)?,
         ),
         (
-            workspace_root.join("docs/api/cookbook.json"),
+            workspace_root.join("docs_src/api/cookbook.json"),
             render_empty_cookbook_catalog(),
         ),
         (
@@ -320,7 +324,7 @@ fn render_empty_cookbook_catalog() -> String {
 /// Generates the small root LLM discovery index rather than a second primer.
 fn render_llms_index(catalogue: &PublicApiCatalog) -> String {
     format!(
-        "# Gossamer\n\nGossamer is a Rust-flavoured language with goroutines and deterministic memory management; use `gos` to check, execute, build, test, format, and query programs. This generated index points models and agents at the reviewed primer and canonical API data.\n\n- [Compact LLM reference](llms-full.txt)\n- [Reviewed skill card](SKILL.md)\n- [Machine-readable stdlib API catalog](docs/api/stdlib.json) ({entries} entries)\n- [Cookbook registry](docs/api/cookbook.json) (recipes appear only after fixture verification)\n- [Language specification](SPEC.md)\n- [Examples](examples/)\n- [Examples guide](docs_src/examples.md)\n\n## Tooling\n\nUse `gos check FILE` before `gos run FILE`; validate compiled behavior with `gos build FILE`. For agent integration, run `gos mcp` over stdio, then use its `check`, `execute`, `build`, `doc`, `explain`, and semantic-navigation tools.\n",
+        "# Gossamer\n\nGossamer is a Rust-flavoured language with goroutines and deterministic memory management; use `gos` to check, execute, build, test, format, and query programs. This generated index points models and agents at the reviewed primer and canonical API data.\n\n- [Compact LLM reference](llms-full.txt)\n- [Reviewed skill card](SKILL.md)\n- [Machine-readable stdlib API catalog](docs_src/api/stdlib.json) ({entries} entries)\n- [Cookbook registry](docs_src/api/cookbook.json) (recipes appear only after fixture verification)\n- [Language specification](SPEC.md)\n- [Examples](examples/)\n- [Examples guide](docs_src/examples.md)\n\n## Tooling\n\nUse `gos check FILE` before `gos run FILE`; validate compiled behavior with `gos build FILE`. For agent integration, run `gos mcp` over stdio, then use its `check`, `execute`, `build`, `doc`, `explain`, and semantic-navigation tools.\n",
         entries = catalogue.entries.len()
     )
 }
@@ -339,12 +343,12 @@ fn render_llms_full(catalogue: &PublicApiCatalog, skill_card: &str) -> Result<St
         .filter(|entry| entry.example_id.is_some() && entry.reference_status == "verified")
         .count();
     let mut out = format!(
-        "# Gossamer LLM Reference\n\nGenerated from `SKILL.md` and `docs/api/stdlib.json`. This is deliberately scoped: only catalog entries with a standalone executable example and explicit verified status may appear as API recommendations.\n\n## Language primer\n\n{skill_card}\n\n## Verified API reference\n\n"
+        "# Gossamer LLM Reference\n\nGenerated from `SKILL.md` and `docs_src/api/stdlib.json`. This is deliberately scoped: only catalog entries with a standalone executable example and explicit verified status may appear as API recommendations.\n\n## Language primer\n\n{skill_card}\n\n## Verified API reference\n\n"
     );
     if verified_entries == 0 {
         out.push_str(
             "No stdlib entry is eligible for this section yet. Consult the structured \
-             [`docs/api/stdlib.json`](docs/api/stdlib.json) catalog with `gos check`/`gos`; \
+             [`docs_src/api/stdlib.json`](docs_src/api/stdlib.json) catalog with `gos check`/`gos`; \
              its entries are deliberately quarantined until their fixtures and tier evidence land.\n",
         );
     }
@@ -392,8 +396,8 @@ mod llm_catalog_tests {
         for link in [
             "llms-full.txt",
             "SKILL.md",
-            "docs/api/stdlib.json",
-            "docs/api/cookbook.json",
+            "docs_src/api/stdlib.json",
+            "docs_src/api/cookbook.json",
             "SPEC.md",
             "examples/",
         ] {
