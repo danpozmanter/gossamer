@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.44.0 -Authoritative trait bounds, diagnostic clarity, stdlib + other fixes
+## 0.44.0 - Authoritative trait bounds, diagnostic clarity, stdlib + other fixes
 
 - Name the fix for a `const` or `static` written without a type: `const y = 1e-12`
   reported three errors, one of them about an empty name, and now reports

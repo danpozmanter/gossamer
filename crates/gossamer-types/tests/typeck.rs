@@ -276,7 +276,28 @@ fn range_values_are_lazy_iterators_in_every_edition() {
             panic!("expected initialized let");
         };
         let ty = checked.table.get(init.id).expect("range typed");
-        assert!(matches!(checked.tcx.kind(ty), Some(TyKind::Iterator(_))));
+        let Some(TyKind::Range(elem)) = checked.tcx.kind(ty) else {
+            panic!("expected Range, got {:?}", checked.tcx.kind(ty));
+        };
+        assert!(matches!(
+            checked.tcx.kind(*elem),
+            Some(TyKind::Int(IntTy::I64))
+        ));
+
+        let consumed = run_with_lazy_iterators(
+            "use Iterator\n\
+             fn total(it: Iterator<i64>) -> i64 { let mut sum = 0\n\
+             for value in it { sum += value }\n\
+             sum }\n\
+             fn main() { let r = 10..12\n\
+             let _ = total(r) }\n",
+            lazy_iterators,
+        );
+        assert!(
+            consumed.diagnostics.is_empty(),
+            "{:?}",
+            consumed.diagnostics
+        );
     }
 }
 
