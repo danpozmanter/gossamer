@@ -3185,10 +3185,17 @@ mod map_iter_tests {
             let first = byte_vec_from_slice(&[1, 2, 3]);
             gos_rt_map_insert_str_i64(m, crate::c_abi::string::test_gos_str("alpha"), first as i64);
             let replacement = byte_vec_from_slice(&[4, 5]);
-            gos_rt_map_insert_str_i64(m, crate::c_abi::string::test_gos_str("alpha"), replacement as i64);
+            gos_rt_map_insert_str_i64(
+                m,
+                crate::c_abi::string::test_gos_str("alpha"),
+                replacement as i64,
+            );
 
             assert_eq!(gos_rt_map_len(m), 1);
-            assert!(gos_rt_map_contains_key_str(m, crate::c_abi::string::test_gos_str("alpha")));
+            assert!(gos_rt_map_contains_key_str(
+                m,
+                crate::c_abi::string::test_gos_str("alpha")
+            ));
             {
                 let storage = (*m).storage.lock();
                 let MapStorage::StrBytes(inner) = &*storage else {
@@ -3207,7 +3214,10 @@ mod map_iter_tests {
             );
             gos_rt_vec_free(values);
 
-            assert!(gos_rt_map_remove_str(m, crate::c_abi::string::test_gos_str("alpha")));
+            assert!(gos_rt_map_remove_str(
+                m,
+                crate::c_abi::string::test_gos_str("alpha")
+            ));
             assert_eq!(gos_rt_map_len(m), 0);
             gos_rt_map_free(m);
         }

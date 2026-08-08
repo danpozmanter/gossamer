@@ -626,8 +626,12 @@ fn large_fixed_array_local_spills_to_heap_storage() {
     };
 
     let ir = render_ir_to_string(&[body], &tcx, false).unwrap();
+    // Matched without the return-attribute list so an added attribute such as
+    // `noalias` does not read as a behaviour change.
     assert!(
-        ir.contains("%l1 = call ptr @gos_rt_aggr_alloc(i64 800000000)"),
+        ir.lines().any(|line| {
+            line.contains("%l1 = call") && line.contains("@gos_rt_aggr_alloc(i64 800000000)")
+        }),
         "IR was:\n{ir}"
     );
     assert!(!ir.contains("%l1 = alloca"), "IR was:\n{ir}");

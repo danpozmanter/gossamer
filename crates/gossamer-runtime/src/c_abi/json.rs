@@ -1258,7 +1258,8 @@ mod tests {
         assert!(unsafe { (*keys).cap } >= 9);
 
         let array_text = std::ffi::CString::new("[0,1,2,3,4,5,6,7,8]").unwrap();
-        let array_result = unsafe { gos_rt_json_parse(crate::c_abi::string::test_gos_ptr(&array_text)) };
+        let array_result =
+            unsafe { gos_rt_json_parse(crate::c_abi::string::test_gos_ptr(&array_text)) };
         let array = crate::c_abi::vec::gos_rt_result_payload(array_result) as *mut GosJson;
         let items = unsafe { gos_rt_json_as_array_opt(array) };
         let items = crate::c_abi::vec::gos_rt_result_payload(items) as *mut GosVec;
