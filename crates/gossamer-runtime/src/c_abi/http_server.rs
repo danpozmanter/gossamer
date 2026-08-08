@@ -1923,7 +1923,7 @@ mod tests {
         let handle = super::http_client::stream_registry_register(reader);
         let blob = [handle, 200i64, 0i64];
         let ct = std::ffi::CString::new("application/octet-stream").unwrap();
-        let resp = unsafe { gos_rt_http_response_stream_new(201, ct.as_ptr(), blob.as_ptr()) };
+        let resp = unsafe { gos_rt_http_response_stream_new(201, crate::c_abi::string::test_gos_ptr(&ct), blob.as_ptr()) };
         let result = super::super::vec::pack_result(0, resp as i64);
         assert_eq!(streamed_ok_handle(result), Some(handle));
 
@@ -2246,7 +2246,7 @@ mod tests {
             trailer
         );
         let c = std::ffi::CString::new(text).unwrap();
-        let resp = unsafe { gos_rt_http_response_text_new(200, c.as_ptr()) };
+        let resp = unsafe { gos_rt_http_response_text_new(200, crate::c_abi::string::test_gos_ptr(&c)) };
         super::super::vec::pack_result(0, resp as i64)
     }
 

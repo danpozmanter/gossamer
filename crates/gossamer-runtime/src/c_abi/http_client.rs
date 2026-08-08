@@ -2371,9 +2371,9 @@ mod tests {
         let body = std::ffi::CString::new("").unwrap();
         let packed = unsafe {
             gos_rt_http_stream(
-                method.as_ptr(),
-                url_cs.as_ptr(),
-                body.as_ptr(),
+                crate::c_abi::string::test_gos_ptr(&method),
+                crate::c_abi::string::test_gos_ptr(&url_cs),
+                crate::c_abi::string::test_gos_ptr(&body),
                 std::ptr::null_mut(),
             )
         };
@@ -2502,7 +2502,7 @@ mod tests {
         let blob = open_stream(&url);
         let handle = unsafe { *blob };
         let ct = std::ffi::CString::new("text/plain").unwrap();
-        let resp = unsafe { gos_rt_http_response_stream_new(200, ct.as_ptr(), blob) };
+        let resp = unsafe { gos_rt_http_response_stream_new(200, crate::c_abi::string::test_gos_ptr(&ct), blob) };
         assert!(!resp.is_null());
         assert_eq!(unsafe { (*resp).stream_handle }, handle);
         assert!(
@@ -2535,7 +2535,7 @@ mod tests {
     #[test]
     fn response_stream_new_on_null_or_stale_blob_yields_dead_handle() {
         let ct = std::ffi::CString::new("text/plain").unwrap();
-        let resp = unsafe { gos_rt_http_response_stream_new(200, ct.as_ptr(), std::ptr::null()) };
+        let resp = unsafe { gos_rt_http_response_stream_new(200, crate::c_abi::string::test_gos_ptr(&ct), std::ptr::null()) };
         assert!(!resp.is_null());
         assert_eq!(
             unsafe { (*resp).stream_handle },
@@ -2545,7 +2545,7 @@ mod tests {
         drop(unsafe { Box::from_raw(resp) });
 
         let stale = [-7i64, 200, 0];
-        let resp = unsafe { gos_rt_http_response_stream_new(200, ct.as_ptr(), stale.as_ptr()) };
+        let resp = unsafe { gos_rt_http_response_stream_new(200, crate::c_abi::string::test_gos_ptr(&ct), stale.as_ptr()) };
         assert_eq!(unsafe { (*resp).stream_handle }, -7);
         assert!(
             stream_take_for_serve(-7).is_none(),
@@ -2567,7 +2567,7 @@ mod tests {
         let body = std::ffi::CString::new("hi there").unwrap();
         let headers = header_tuple_vec(&[("x-test", "yes")]);
         let packed = unsafe {
-            gos_rt_http_request(method.as_ptr(), url_cs.as_ptr(), body.as_ptr(), headers)
+            gos_rt_http_request(crate::c_abi::string::test_gos_ptr(&method), crate::c_abi::string::test_gos_ptr(&url_cs), crate::c_abi::string::test_gos_ptr(&body), headers)
         };
         free_header_tuple_vec(headers);
         assert_eq!(gos_rt_result_disc(packed), 0);
@@ -2624,7 +2624,7 @@ mod tests {
             unsafe { crate::c_abi::vec::gos_rt_vec_push(body, std::ptr::from_ref(b)) };
         }
         let packed = unsafe {
-            gos_rt_http_request_bytes(method.as_ptr(), url_cs.as_ptr(), body, std::ptr::null_mut())
+            gos_rt_http_request_bytes(crate::c_abi::string::test_gos_ptr(&method), crate::c_abi::string::test_gos_ptr(&url_cs), body, std::ptr::null_mut())
         };
         unsafe { crate::c_abi::map::gos_rt_vec_free(body) };
         assert_eq!(gos_rt_result_disc(packed), 0);
@@ -2650,13 +2650,13 @@ mod tests {
         );
         let client = unsafe { gos_rt_http_client_new() };
         let url_cs = std::ffi::CString::new(url).unwrap();
-        let req = unsafe { gos_rt_http_client_post(client, url_cs.as_ptr()) };
+        let req = unsafe { gos_rt_http_client_post(client, crate::c_abi::string::test_gos_ptr(&url_cs)) };
         assert!(!req.is_null());
         let hdr_name = std::ffi::CString::new("x-builder").unwrap();
         let hdr_value = std::ffi::CString::new("yes").unwrap();
-        let req = unsafe { gos_rt_http_request_header(req, hdr_name.as_ptr(), hdr_value.as_ptr()) };
+        let req = unsafe { gos_rt_http_request_header(req, crate::c_abi::string::test_gos_ptr(&hdr_name), crate::c_abi::string::test_gos_ptr(&hdr_value)) };
         let body_cs = std::ffi::CString::new("payload!").unwrap();
-        let req = unsafe { gos_rt_http_request_body(req, body_cs.as_ptr()) };
+        let req = unsafe { gos_rt_http_request_body(req, crate::c_abi::string::test_gos_ptr(&body_cs)) };
         let packed = unsafe { gos_rt_http_request_send(req) };
         assert_eq!(gos_rt_result_disc(packed), 0);
         let resp = gos_rt_result_payload(packed) as *mut GosHttpResponse;
@@ -2697,7 +2697,7 @@ mod tests {
         );
         let client = unsafe { gos_rt_http_client_new() };
         let url_cs = std::ffi::CString::new(url).unwrap();
-        let req = unsafe { gos_rt_http_client_get(client, url_cs.as_ptr()) };
+        let req = unsafe { gos_rt_http_client_get(client, crate::c_abi::string::test_gos_ptr(&url_cs)) };
         let packed = unsafe { gos_rt_http_request_send(req) };
         assert_eq!(gos_rt_result_disc(packed), 0);
         let resp = gos_rt_result_payload(packed) as *mut GosHttpResponse;
@@ -2732,7 +2732,7 @@ mod tests {
         );
         let client = unsafe { gos_rt_http_client_new() };
         let url_cs = std::ffi::CString::new(url).unwrap();
-        let req = unsafe { gos_rt_http_client_get(client, url_cs.as_ptr()) };
+        let req = unsafe { gos_rt_http_client_get(client, crate::c_abi::string::test_gos_ptr(&url_cs)) };
         let packed = unsafe { gos_rt_http_request_send(req) };
         assert_eq!(gos_rt_result_disc(packed), 0);
         let resp = gos_rt_result_payload(packed) as *mut GosHttpResponse;
@@ -2761,8 +2761,8 @@ mod tests {
         let url_cs = std::ffi::CString::new("http://127.0.0.1:1/never").unwrap();
         let packed = unsafe {
             gos_rt_http_request(
-                method.as_ptr(),
-                url_cs.as_ptr(),
+                crate::c_abi::string::test_gos_ptr(&method),
+                crate::c_abi::string::test_gos_ptr(&url_cs),
                 std::ptr::null(),
                 std::ptr::null_mut(),
             )
@@ -2786,7 +2786,7 @@ mod tests {
         let client = unsafe { gos_rt_http_client_new() };
         // Port 1 is never listening; the dial must fail.
         let url_cs = std::ffi::CString::new("http://127.0.0.1:1/refused").unwrap();
-        let req = unsafe { gos_rt_http_client_get(client, url_cs.as_ptr()) };
+        let req = unsafe { gos_rt_http_client_get(client, crate::c_abi::string::test_gos_ptr(&url_cs)) };
         let packed = unsafe { gos_rt_http_request_send(req) };
         assert_eq!(gos_rt_result_disc(packed), 1);
         let err = gos_rt_result_payload(packed) as *mut crate::c_abi::errors::GosError;
@@ -2895,8 +2895,8 @@ mod tests {
         let packed = unsafe {
             gos_rt_http_client_request(
                 client,
-                method.as_ptr(),
-                url_cs.as_ptr(),
+                crate::c_abi::string::test_gos_ptr(&method),
+                crate::c_abi::string::test_gos_ptr(&url_cs),
                 std::ptr::null(),
                 std::ptr::null_mut(),
             )
@@ -2923,8 +2923,8 @@ mod tests {
         let packed = unsafe {
             gos_rt_http_client_request(
                 client,
-                method.as_ptr(),
-                url_cs.as_ptr(),
+                crate::c_abi::string::test_gos_ptr(&method),
+                crate::c_abi::string::test_gos_ptr(&url_cs),
                 std::ptr::null(),
                 std::ptr::null_mut(),
             )
@@ -2948,8 +2948,8 @@ mod tests {
         let packed = unsafe {
             gos_rt_http_client_request(
                 client,
-                method.as_ptr(),
-                url_cs.as_ptr(),
+                crate::c_abi::string::test_gos_ptr(&method),
+                crate::c_abi::string::test_gos_ptr(&url_cs),
                 std::ptr::null(),
                 std::ptr::null_mut(),
             )
@@ -2968,8 +2968,8 @@ mod tests {
         let packed = unsafe {
             gos_rt_http_client_request_bytes(
                 client,
-                method.as_ptr(),
-                url_cs.as_ptr(),
+                crate::c_abi::string::test_gos_ptr(&method),
+                crate::c_abi::string::test_gos_ptr(&url_cs),
                 std::ptr::null(),
                 std::ptr::null_mut(),
             )

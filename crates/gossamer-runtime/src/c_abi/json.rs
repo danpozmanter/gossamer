@@ -1121,7 +1121,7 @@ mod tests {
     #[test]
     fn json_keys_vec_is_string_typed_and_deep_frees_unvisited_keys() {
         let text = std::ffi::CString::new(r#"{"alpha":1,"beta":2}"#).unwrap();
-        let pr = unsafe { gos_rt_json_parse(text.as_ptr()) };
+        let pr = unsafe { gos_rt_json_parse(crate::c_abi::string::test_gos_ptr(&text)) };
         assert_eq!(crate::c_abi::vec::gos_rt_result_disc(pr), 0);
         let j = crate::c_abi::vec::gos_rt_result_payload(pr) as *mut GosJson;
         let kr = unsafe { gos_rt_json_keys_opt(j) };
@@ -1160,7 +1160,7 @@ mod tests {
             "]".repeat(JSON_MAX_DEPTH)
         );
         let at_limit = std::ffi::CString::new(at_limit).unwrap();
-        let parsed = unsafe { gos_rt_json_parse(at_limit.as_ptr()) };
+        let parsed = unsafe { gos_rt_json_parse(crate::c_abi::string::test_gos_ptr(&at_limit)) };
         assert_eq!(crate::c_abi::vec::gos_rt_result_disc(parsed), 0);
         unsafe {
             gos_rt_json_free(crate::c_abi::vec::gos_rt_result_payload(parsed) as *mut GosJson);
@@ -1184,7 +1184,7 @@ mod tests {
     #[test]
     fn json_render_preserves_parsed_number_spelling() {
         let text = std::ffi::CString::new(r#"{"score":12.100000000000001,"short":20.9}"#).unwrap();
-        let parsed = unsafe { gos_rt_json_parse(text.as_ptr()) };
+        let parsed = unsafe { gos_rt_json_parse(crate::c_abi::string::test_gos_ptr(&text)) };
         assert_eq!(crate::c_abi::vec::gos_rt_result_disc(parsed), 0);
         let json = crate::c_abi::vec::gos_rt_result_payload(parsed) as *mut GosJson;
         let rendered_ptr = unsafe { gos_rt_json_render(json) };
@@ -1201,7 +1201,7 @@ mod tests {
     #[test]
     fn untouched_json_renders_without_materialising_the_dom() {
         let text = std::ffi::CString::new(" { \"value\" : 7 } ").unwrap();
-        let parsed = unsafe { gos_rt_json_parse(text.as_ptr()) };
+        let parsed = unsafe { gos_rt_json_parse(crate::c_abi::string::test_gos_ptr(&text)) };
         let json = crate::c_abi::vec::gos_rt_result_payload(parsed) as *mut GosJson;
         let handle = unsafe { &*json };
         assert!(matches!(
@@ -1218,7 +1218,7 @@ mod tests {
             JsonTree::Raw { parsed, .. } if parsed.get().is_none()
         ));
         let key = c"value";
-        let child = unsafe { gos_rt_json_get(json, key.as_ptr()) };
+        let child = unsafe { gos_rt_json_get(json, crate::c_abi::string::test_gos_ptr(&key)) };
         assert_eq!(unsafe { gos_rt_json_as_i64(child) }, 7);
         assert!(matches!(
             &*handle.tree,
@@ -1234,7 +1234,7 @@ mod tests {
     #[test]
     fn direct_json_render_keeps_html_safe_escaping() {
         let text = std::ffi::CString::new(r#"{"x":"<>&\u2028\u2029"}"#).unwrap();
-        let parsed = unsafe { gos_rt_json_parse(text.as_ptr()) };
+        let parsed = unsafe { gos_rt_json_parse(crate::c_abi::string::test_gos_ptr(&text)) };
         let json = crate::c_abi::vec::gos_rt_result_payload(parsed) as *mut GosJson;
         let rendered_ptr = unsafe { gos_rt_json_render(json) };
         let rendered = unsafe { CStr::from_ptr(rendered_ptr) }.to_str().unwrap();
@@ -1249,7 +1249,7 @@ mod tests {
             r#"{"k0":0,"k1":1,"k2":2,"k3":3,"k4":4,"k5":5,"k6":6,"k7":7,"k8":8}"#,
         )
         .unwrap();
-        let parsed = unsafe { gos_rt_json_parse(text.as_ptr()) };
+        let parsed = unsafe { gos_rt_json_parse(crate::c_abi::string::test_gos_ptr(&text)) };
         let json = crate::c_abi::vec::gos_rt_result_payload(parsed) as *mut GosJson;
 
         let keys = unsafe { gos_rt_json_keys_opt(json) };
@@ -1258,7 +1258,7 @@ mod tests {
         assert!(unsafe { (*keys).cap } >= 9);
 
         let array_text = std::ffi::CString::new("[0,1,2,3,4,5,6,7,8]").unwrap();
-        let array_result = unsafe { gos_rt_json_parse(array_text.as_ptr()) };
+        let array_result = unsafe { gos_rt_json_parse(crate::c_abi::string::test_gos_ptr(&array_text)) };
         let array = crate::c_abi::vec::gos_rt_result_payload(array_result) as *mut GosJson;
         let items = unsafe { gos_rt_json_as_array_opt(array) };
         let items = crate::c_abi::vec::gos_rt_result_payload(items) as *mut GosVec;

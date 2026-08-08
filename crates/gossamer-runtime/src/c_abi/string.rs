@@ -781,6 +781,15 @@ pub(crate) unsafe fn gos_rt_str_mark_shared(s: *const c_char) {
 
 /// Allocate an owned, NUL-terminated heap string holding `s`'s bytes (the
 /// growable runtime-string allocator shape).
+/// Re-allocates `c` as a tagged Gossamer string for tests.
+///
+/// Same contract as [`test_gos_str`]: a `CString` built by a test has no
+/// length header, so a shim probing for one would read before it.
+#[cfg(test)]
+pub(crate) fn test_gos_ptr(c: &std::ffi::CStr) -> *const c_char {
+    alloc_cstring(c.to_bytes()).cast_const()
+}
+
 /// Allocates a tagged Gossamer string for tests.
 ///
 /// The C ABI receives a pointer whose length header sits before it, so a bare

@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn csv_read_outer_vec_is_vec_typed_and_deep_frees_unvisited_rows() {
         let input = std::ffi::CString::new("a,b\nc,d\ne,f").unwrap();
-        let r = unsafe { gos_rt_csv_read(input.as_ptr()) };
+        let r = unsafe { gos_rt_csv_read(crate::c_abi::string::test_gos_ptr(&input)) };
         assert_eq!(crate::c_abi::vec::gos_rt_result_disc(r), 0);
         let outer = crate::c_abi::vec::gos_rt_result_payload(r) as *mut GosVec;
         assert!(!outer.is_null());
@@ -225,7 +225,7 @@ mod tests {
     #[test]
     fn csv_read_borrow_all_rows_then_free_is_balanced() {
         let input = std::ffi::CString::new("x,y\nz,w").unwrap();
-        let r = unsafe { gos_rt_csv_read(input.as_ptr()) };
+        let r = unsafe { gos_rt_csv_read(crate::c_abi::string::test_gos_ptr(&input)) };
         assert_eq!(crate::c_abi::vec::gos_rt_result_disc(r), 0);
         let outer = crate::c_abi::vec::gos_rt_result_payload(r) as *mut GosVec;
         let o = unsafe { &*outer };
