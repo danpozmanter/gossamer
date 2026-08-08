@@ -1147,11 +1147,11 @@ fn alloc_response_stream_blob(handle: i64, status: i64, content_type: &str) -> *
 }
 
 fn err_result_with_msg(msg: &str) -> i128 {
-    // SAFETY: the fallback literal contains no NUL byte, so the inner new cannot fail.
-    let cs = std::ffi::CString::new(msg).unwrap_or_else(|_| {
-        std::ffi::CString::new("error message contained NUL").expect("static string is NUL-free")
-    });
-    let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+    // `gos_rt_error_new` reads the length header a Gossamer string carries
+    // ahead of its pointer, so the message is allocated through the runtime's
+    // own allocator rather than as a bare `CString`.
+    let text = crate::c_abi::string::alloc_cstring(msg.as_bytes());
+    let err = unsafe { gos_rt_error_new(text.cast_const()) };
     gos_rt_result_new(1, err as i64)
 }
 

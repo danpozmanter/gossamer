@@ -391,6 +391,14 @@ impl<'a> Builder<'a> {
             Some("http::Middleware") => Some("gos_rt_middleware_serve".to_string()),
             Some("http::Router") => Some("gos_rt_router_serve".to_string()),
             _ => {
+                // A bare function is a handler in its own right, the shape the
+                // router already accepts for a route. Dispatch through its own
+                // symbol - `handler_dispatch_symbol` routes a bare-`Response`
+                // return through the synthesized `::__ok_wrap` thunk so the
+                // packed-Result ABI the runtime invokes is preserved.
+                if let Some(fn_name) = self.local_fn_name.get(&inner_local).cloned() {
+                    return Some(self.handler_dispatch_symbol(fn_name));
+                }
                 let inner_ty = self.locals[inner_local.0 as usize].ty;
                 let struct_name = self.struct_name_of(inner_ty)?;
                 Some(self.handler_dispatch_symbol(format!("{struct_name}::serve")))

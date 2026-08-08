@@ -69,6 +69,12 @@
   per-instantiation layout. Each read a slot address where the value's handle
   belonged, so `.map()` over a `Vec<Enum>` always matched the first variant and a
   `Wrapper<Point>` in a loop summed the wrong fields.
+- Accept a plain function as an `http::middleware` handler in a native build.
+  Only a type with a `serve` method was resolved, so wrapping a function
+  type-checked and then failed to link.
+- Build a runtime error message through the runtime's own allocator. The HTTP
+  client handed the error constructor a pointer with no length header, so
+  reading the header read outside the allocation.
 - Carry a string's own length across the C ABI rather than stopping at the first
   NUL byte. A `String` holding an interior NUL was truncated on the compiled
   tiers while the bytecode VM kept it whole; the remaining reads are of

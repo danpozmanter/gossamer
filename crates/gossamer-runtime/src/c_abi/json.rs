@@ -1218,7 +1218,7 @@ mod tests {
             JsonTree::Raw { parsed, .. } if parsed.get().is_none()
         ));
         let key = c"value";
-        let child = unsafe { gos_rt_json_get(json, crate::c_abi::string::test_gos_ptr(&key)) };
+        let child = unsafe { gos_rt_json_get(json, crate::c_abi::string::test_gos_ptr(key)) };
         assert_eq!(unsafe { gos_rt_json_as_i64(child) }, 7);
         assert!(matches!(
             &*handle.tree,

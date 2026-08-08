@@ -3169,10 +3169,11 @@ mod map_iter_tests {
     fn typed_capacity_constructor_preserves_string_key_layout() {
         unsafe {
             let m = gos_rt_map_new_with_capacity_typed(1, 0, 8);
-            let key = crate::c_abi::string::test_gos_str("alpha");
-            gos_rt_map_insert_str_i64(m, key, 7);
+            // `insert` takes ownership of the key, so the lookup needs its own.
+            gos_rt_map_insert_str_i64(m, crate::c_abi::string::test_gos_str("alpha"), 7);
             assert_eq!(gos_rt_map_len(m), 1);
-            assert_eq!(gos_rt_map_get_or_str_i64(m, key, -1), 7);
+            let probe = crate::c_abi::string::test_gos_str("alpha");
+            assert_eq!(gos_rt_map_get_or_str_i64(m, probe, -1), 7);
             gos_rt_map_free(m);
         }
     }
