@@ -136,6 +136,23 @@ use super::*;
 
 use super::*;
 
+/// Reinterprets `value` as the same-width type `want`. A bitcast that changes
+/// the lane count carries an explicit byte order; the targets Gossamer lowers
+/// for are little-endian, so lane 0 holds the low-order bits.
+pub(super) fn bitcast_same_width(
+    builder: &mut FunctionBuilder<'_>,
+    want: ir::Type,
+    value: ir::Value,
+) -> ir::Value {
+    let have = value_type(value, builder);
+    let flags = if have.lane_count() == want.lane_count() {
+        ir::MemFlagsData::new()
+    } else {
+        ir::MemFlagsData::new().with_endianness(ir::Endianness::Little)
+    };
+    builder.ins().bitcast(want, flags, value)
+}
+
 pub(super) fn coerce_arg_to(
     builder: &mut FunctionBuilder<'_>,
     value: ir::Value,
@@ -179,7 +196,7 @@ pub(super) fn coerce_arg_to(
     }
     // Same-width bit reinterpret (i32 ↔ f32, i8 ↔ ints, etc.).
     if have.bits() == want.bits() {
-        return Ok(builder.ins().bitcast(want, ir::MemFlagsData::new(), value));
+        return Ok(bitcast_same_width(builder, want, value));
     }
     if have.is_float() && want.is_int() {
         let int_form = if have == types::F64 {

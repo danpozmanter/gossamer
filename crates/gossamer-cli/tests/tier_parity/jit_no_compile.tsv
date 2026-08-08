@@ -174,7 +174,6 @@ feature-testing-examples/json_round_trip_fuzz.gos	bytecode-only local
 feature-testing-examples/json_set_update.gos	no hot body
 feature-testing-examples/json_yaml_encode.gos	no hot body
 feature-testing-examples/jwt_roundtrip.gos	no hot body
-feature-testing-examples/let_chains.gos	entry shape
 feature-testing-examples/let_destructure_struct.gos	bytecode-only local
 feature-testing-examples/literal_forms.gos	no hot body
 feature-testing-examples/map_entry_and_format_paths.gos	bytecode-only local
@@ -182,7 +181,6 @@ feature-testing-examples/map_inc_at_oob.gos	no hot body
 feature-testing-examples/map_iter_destructure.gos	bytecode-only local
 feature-testing-examples/map_iter_wildcard_destructure.gos	bytecode-only local
 feature-testing-examples/map_iteration_order.gos	bytecode-only local
-feature-testing-examples/match_or_patterns.gos	bytecode-only local
 feature-testing-examples/method_dispatch_collision.gos	bytecode-only local
 feature-testing-examples/method_dispatch_collisions.gos	no hot body
 feature-testing-examples/method_name_collision.gos	bytecode-only local

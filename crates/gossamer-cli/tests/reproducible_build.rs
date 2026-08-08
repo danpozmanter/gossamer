@@ -62,7 +62,10 @@ fn build_reproducible(dir: &Path) -> Vec<u8> {
         "build failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let binary = dir.join("target").join("release").join("app");
+    let binary = dir
+        .join("target")
+        .join("release")
+        .join(format!("app{}", std::env::consts::EXE_SUFFIX));
     std::fs::read(&binary).unwrap_or_else(|e| panic!("reading {}: {e}", binary.display()))
 }
 

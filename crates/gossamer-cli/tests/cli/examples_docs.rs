@@ -475,9 +475,14 @@ fn clean_subcommand_removes_frontend_cache_directory() {
     ));
     std::fs::create_dir_all(&tmp).unwrap();
     std::fs::write(tmp.join("abc123.ok"), b"").unwrap();
+    // Point every cache class inside `tmp`: `gos clean` sweeps the shared
+    // per-user cache too, which other tests in this run are writing to.
     let out = Command::new(gos_bin())
         .arg("clean")
         .env("GOSSAMER_CACHE_DIR", &tmp)
+        .env("GOSSAMER_CACHE", &tmp)
+        .env("XDG_CACHE_HOME", &tmp)
+        .env("HOME", &tmp)
         .output()
         .expect("spawn clean");
     assert!(out.status.success(), "clean should succeed: {out:?}");
@@ -504,6 +509,9 @@ fn clean_dry_run_reports_sizes_without_touching_the_cache() {
         .arg("clean")
         .arg("--dry-run")
         .env("GOSSAMER_CACHE_DIR", &tmp)
+        .env("GOSSAMER_CACHE", &tmp)
+        .env("XDG_CACHE_HOME", &tmp)
+        .env("HOME", &tmp)
         .output()
         .expect("spawn clean --dry-run");
     let stdout = String::from_utf8_lossy(&out.stdout);

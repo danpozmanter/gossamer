@@ -141,10 +141,7 @@ fn emit_lazy_iter_runtime_call(
     name: &'static str,
     args: &[ir::Value],
 ) -> Result<Option<ir::Value>> {
-    let func = intrinsics.extern_fn_by_name(module, name)?;
-    let fref = module.declare_func_in_func(func, builder.func);
-    let call = builder.ins().call(fref, args);
-    Ok(builder.inst_results(call).first().copied())
+    emit_rt_call_by_name(module, builder, intrinsics, name, args)
 }
 
 fn store_typed_iter_value(

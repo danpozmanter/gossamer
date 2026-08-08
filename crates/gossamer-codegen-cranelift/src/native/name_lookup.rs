@@ -623,6 +623,7 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         // the distinct MIR name only marks the destination as owned.
         "gos_rt_weak_opt_payload" => Some("gos_rt_result_payload"),
         "gos_rt_result_payload_f64" => Some("gos_rt_result_payload_f64"),
+        "gos_rt_result_payload_i128" => Some("gos_rt_result_payload_i128"),
         "gos_rt_result_unwrap" => Some("gos_rt_result_unwrap"),
         "gos_rt_result_unwrap_or" => Some("gos_rt_result_unwrap_or"),
         "gos_rt_result_ok" => Some("gos_rt_result_ok"),

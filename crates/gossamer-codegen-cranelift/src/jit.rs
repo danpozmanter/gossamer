@@ -23,7 +23,7 @@ use gossamer_mir::Body;
 use gossamer_types::{ArrayLen, Ty, TyCtxt, TyKind};
 
 use crate::jit_memory::NativeCodeHeap;
-use crate::native::{build_native_isa, lower_program_serial};
+use crate::native::{FailedBody, build_native_isa, lower_program_serial};
 
 /// Cranelift register class for one parameter or return slot of a
 /// JIT-compiled body. Used by the dispatch trampoline to pick the
@@ -977,46 +977,60 @@ pub fn compile_to_jit_for_promotion_owned(
     bodies.retain(|body| compile_names.contains(body.name.as_str()));
     let filtered = bodies;
 
-    match compile_bodies(&filtered, tcx, enum_shapes, struct_shapes) {
-        Ok(artifact) => Ok(artifact),
-        Err(err) if filtered.iter().any(|b| b.name == "main") => {
-            // A single un-lowerable body fails the whole cranelift module. The
-            // common case is a top-level `main` that calls an interp-only
-            // builtin the codegen has no lowering for (the qualified stdlib
-            // paths wired only through the VM's `install_module`). Dropping
-            // `main` and retrying keeps native promotion for every other body
-            // instead of switching the JIT off wholesale; the VM runs `main`
-            // on bytecode either way.
-            if std::env::var("GOS_JIT_TRACE").is_ok() {
-                eprintln!("jit: module build failed ({err}); retrying without main");
-            }
-            // Dropping `main` sends it to the VM; re-run the static-mut
-            // connectivity check so no compiled body is left sharing a static
-            // with the now-interpreted `main`. `compile_set` still borrows
-            // `bodies` (not `filtered`), so it survives moving `filtered`.
-            let mut retry_set: std::collections::HashSet<&str> = filtered
-                .iter()
-                .map(|body| body.name.as_str())
-                .filter(|name| *name != "main")
-                .collect();
-            restrict_static_leaky_bodies(&mut retry_set, &filtered);
-            let retry_names: std::collections::HashSet<String> =
-                retry_set.into_iter().map(str::to_string).collect();
-            let without_main: Vec<Body> = filtered
-                .into_iter()
-                .filter(|b| retry_names.contains(b.name.as_str()))
-                .collect();
-            if without_main.is_empty() {
-                return Ok(JitArtifact {
-                    heap: None,
-                    functions: HashMap::new(),
-                    code_bytes: 0,
-                    cacheable: true,
-                });
-            }
-            compile_bodies(&without_main, tcx, enum_shapes, struct_shapes)
+    compile_bodies_dropping_failures(filtered, tcx, enum_shapes, struct_shapes)
+}
+
+/// Compiles `bodies`, dropping any single body whose lowering fails and
+/// retrying with the rest. A body the codegen cannot lower runs on the
+/// bytecode VM, which is the reference semantics either way; abandoning the
+/// whole module instead would take every unrelated hot body down with it.
+fn compile_bodies_dropping_failures(
+    mut bodies: Vec<Body>,
+    tcx: &TyCtxt,
+    enum_shapes: &HashMap<u32, u32>,
+    struct_shapes: &HashMap<u32, u32>,
+) -> Result<JitArtifact> {
+    let trace = std::env::var("GOS_JIT_TRACE").is_ok();
+    loop {
+        let err = match compile_bodies(&bodies, tcx, enum_shapes, struct_shapes) {
+            Ok(artifact) => return Ok(artifact),
+            Err(err) => err,
+        };
+        // The failure names its body when it came from IR construction or
+        // Cranelift compilation; anything else is module-wide and retrying
+        // would only repeat it.
+        let Some(failed) = err
+            .downcast_ref::<FailedBody>()
+            .map(|FailedBody(name)| name.clone())
+        else {
+            return Err(err);
+        };
+        if trace {
+            eprintln!("jit: module build failed ({err:#}); retrying without {failed}");
         }
-        Err(err) => Err(err),
+        // Dropping a body sends it to the VM; re-run the static-mut
+        // connectivity check so no compiled body is left sharing a static
+        // with a now-interpreted one.
+        let mut retry_set: std::collections::HashSet<&str> = bodies
+            .iter()
+            .map(|body| body.name.as_str())
+            .filter(|name| *name != failed)
+            .collect();
+        if retry_set.len() == bodies.len() {
+            return Err(err);
+        }
+        restrict_static_leaky_bodies(&mut retry_set, &bodies);
+        let retry_names: std::collections::HashSet<String> =
+            retry_set.into_iter().map(str::to_string).collect();
+        bodies.retain(|body| retry_names.contains(body.name.as_str()));
+        if bodies.is_empty() {
+            return Ok(JitArtifact {
+                heap: None,
+                functions: HashMap::new(),
+                code_bytes: 0,
+                cacheable: true,
+            });
+        }
     }
 }
 
@@ -2428,6 +2442,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_strconv_parse_f64_bytes" => rt::gos_rt_strconv_parse_f64_bytes,
         "gos_rt_result_unwrap"       => rt::gos_rt_result_unwrap,
         "gos_rt_result_unwrap_or"    => rt::gos_rt_result_unwrap_or,
+        "gos_rt_result_payload_i128" => rt::gos_rt_result_payload_i128,
         "gos_rt_result_ok"           => rt::gos_rt_result_ok,
         "gos_rt_result_err"          => rt::gos_rt_result_err,
         "gos_rt_result_ok_or"        => rt::gos_rt_result_ok_or,
@@ -3366,6 +3381,81 @@ mod promotion_report_tests {
             admitted,
             std::collections::HashSet::from(["pop_loop".to_string()]),
             "an internal Option result such as discarded Vec::pop must not block promotion"
+        );
+    }
+}
+
+#[cfg(test)]
+mod failure_isolation_tests {
+    use super::compile_bodies_dropping_failures;
+    use gossamer_lex::SourceMap;
+    use gossamer_mir::{
+        BasicBlock, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Rvalue, Statement,
+        StatementKind, Terminator,
+    };
+    use gossamer_types::{IntTy, TyCtxt};
+    use std::collections::HashMap;
+
+    /// `fn <name>() -> i64 { <rvalue> }`.
+    fn body(name: &str, ty: gossamer_types::Ty, rvalue: Rvalue) -> Body {
+        let mut map = SourceMap::new();
+        let file = map.add_file("jit-isolation.gos", "");
+        let span = gossamer_lex::Span::new(file, 0, 0);
+        Body {
+            name: name.to_string(),
+            def: None,
+            arity: 0,
+            locals: vec![LocalDecl {
+                ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            }],
+            blocks: vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![Statement {
+                    span,
+                    kind: StatementKind::Assign {
+                        place: Place::local(Local(0)),
+                        rvalue,
+                    },
+                }],
+                terminator: Terminator::Return,
+                span,
+            }],
+            span,
+        }
+    }
+
+    #[test]
+    fn an_unlowerable_body_does_not_take_the_rest_of_the_module_with_it() {
+        let mut tcx = TyCtxt::new();
+        let i64_ty = tcx.int_ty(IntTy::I64);
+        let bodies = vec![
+            body(
+                "broken",
+                i64_ty,
+                Rvalue::CallIntrinsic {
+                    name: "definitely_not_a_lowered_intrinsic",
+                    args: Vec::new(),
+                },
+            ),
+            body(
+                "healthy",
+                i64_ty,
+                Rvalue::Use(Operand::Const(ConstValue::Int(7))),
+            ),
+        ];
+        let artifact =
+            compile_bodies_dropping_failures(bodies, &tcx, &HashMap::new(), &HashMap::new())
+                .expect("an un-lowerable body must not fail the whole module");
+        assert!(
+            artifact.functions.contains_key("healthy"),
+            "the lowerable body keeps its native entry"
+        );
+        assert!(
+            !artifact.functions.contains_key("broken"),
+            "the un-lowerable body stays on the bytecode VM"
         );
     }
 }

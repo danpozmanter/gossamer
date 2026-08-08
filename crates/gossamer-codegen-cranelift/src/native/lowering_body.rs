@@ -749,9 +749,7 @@ pub(super) fn define_var_to_with(
         // can; otherwise drop the value and substitute a typed
         // zero so the def_var doesn't trap the verifier.
         if decl_ty.bits() == value_ty.bits() {
-            builder
-                .ins()
-                .bitcast(decl_ty, ir::MemFlagsData::new(), value)
+            bitcast_same_width(builder, decl_ty, value)
         } else if decl_ty.is_int() {
             builder.ins().iconst(decl_ty, 0)
         } else if decl_ty == types::F64 {

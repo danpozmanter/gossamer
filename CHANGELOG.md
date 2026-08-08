@@ -160,6 +160,15 @@
   and `where` clauses both work, and the reference described only single bounds.
   Correct the HTTP/2 and WebSocket status, and the scheduler's unpark path,
   which pins a goroutine to its home worker rather than migrating it.
+- Pass `Result` and `Option` carriers to the runtime under the Win64 `extern
+  "C"` ABI on Windows. The JIT declared them as an integer-register pair while
+  the call site marshalled them by pointer, so any hot body reaching one of
+  those helpers failed to compile and the program ran wholly on bytecode.
+- Keep native compilation for the rest of a program when one body cannot be
+  lowered, rather than dropping the whole module to bytecode, and JIT-compile a
+  nested enum payload such as `Some(Some(v))` instead of rejecting its body.
+- Treat an already-absent cache directory as cleaned by `gos clean`, which
+  failed when a concurrent build removed one first.
 
 ## 0.44.1 - Iterator elements, Doc fixes.
 

@@ -434,6 +434,20 @@ pub(super) fn build_signature_from_types(
     sig
 }
 
+/// Names the body a lowering failure came from. Attached as an `anyhow`
+/// context so the JIT can drop exactly that body and keep native coverage for
+/// the rest of the program instead of abandoning the whole module.
+#[derive(Debug)]
+pub(crate) struct FailedBody(pub(crate) String);
+
+impl std::fmt::Display for FailedBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "lowering body `{}`", self.0)
+    }
+}
+
+impl std::error::Error for FailedBody {}
+
 pub(crate) fn lower_program(
     module: &mut dyn Module,
     bodies: &[Body],
@@ -778,7 +792,8 @@ pub(crate) fn lower_program_full(
             &function_ids_by_name,
             &mut local_intrinsics,
             &capture_summary,
-        )?;
+        )
+        .map_err(|e| e.context(FailedBody(body.name.clone())))?;
         Ok((id, body.name.clone(), func))
     };
     let ir_pairs: Vec<(FuncId, String, Function)> = match mode {
@@ -811,12 +826,15 @@ pub(crate) fn lower_program_full(
                 cranelift_module::ModuleError::Compilation(ce) => format!("{ce:#}\n{ce:?}"),
                 other => format!("{other:#}"),
             };
-            anyhow!("define {name}: {detail}")
+            anyhow!("define {name}: {detail}").context(FailedBody(name.clone()))
         })?;
         let code_bytes = ctx
             .compiled_code()
             .map(|code| u64::from(code.code_info().total_size))
-            .ok_or_else(|| anyhow!("define {name}: Cranelift returned no compiled code"))?;
+            .ok_or_else(|| {
+                anyhow!("define {name}: Cranelift returned no compiled code")
+                    .context(FailedBody(name.clone()))
+            })?;
         emitted_code_bytes = emitted_code_bytes.saturating_add(code_bytes);
     }
 
@@ -825,4 +843,117 @@ pub(crate) fn lower_program_full(
         emitted_code_bytes,
         function_ids_by_def,
     })
+}
+
+#[cfg(test)]
+mod win64_abi_tests {
+    use super::{LoweringMode, lower_program_full};
+    use cranelift_codegen::settings::{self, Configurable};
+    use cranelift_object::{ObjectBuilder, ObjectModule};
+    use gossamer_lex::{SourceMap, Span};
+    use gossamer_mir::{
+        BasicBlock, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Rvalue, Statement,
+        StatementKind, Terminator,
+    };
+    use gossamer_resolve::DefId;
+    use gossamer_types::{IntTy, Substs, TyCtxt, TyKind};
+    use target_lexicon::Triple;
+
+    /// Cranelift module targeting Win64, where an `extern "C"` `i128` crosses
+    /// the boundary by pointer / vector register rather than in an integer
+    /// register pair. Built on the host architecture's Windows triple so the
+    /// test runs on any x86 or aarch64 host.
+    fn win64_module() -> ObjectModule {
+        let arch = std::env::consts::ARCH;
+        let triple: Triple = format!("{arch}-pc-windows-msvc").parse().expect("triple");
+        let mut fb = settings::builder();
+        fb.set("opt_level", "speed").unwrap();
+        fb.set("is_pic", "false").unwrap();
+        fb.set("use_colocated_libcalls", "false").unwrap();
+        fb.set("unwind_info", "false").unwrap();
+        fb.set("enable_llvm_abi_extensions", "true").unwrap();
+        let isa = cranelift_codegen::isa::lookup(triple)
+            .expect("windows isa")
+            .finish(settings::Flags::new(fb))
+            .expect("isa finish");
+        let builder = ObjectBuilder::new(
+            isa,
+            b"win64-abi-test".to_vec(),
+            cranelift_module::default_libcall_names(),
+        )
+        .expect("object builder");
+        ObjectModule::new(builder)
+    }
+
+    /// `fn main() -> i64 { let o = Some(7); o.unwrap_or(0) }` in MIR: an
+    /// `Option<i64>` carrier constructed inline, then handed to a runtime
+    /// helper that takes it by value.
+    fn carrier_roundtrip_body(tcx: &mut TyCtxt) -> Body {
+        let mut map = SourceMap::new();
+        let file = map.add_file("win64.gos", "");
+        let span = Span::new(file, 0, 0);
+        let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+        let option_ty = tcx.intern(TyKind::Adt {
+            def: DefId::local(u32::MAX - 1),
+            substs: Substs::new(),
+        });
+        let decl = |ty| LocalDecl {
+            ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        };
+        let stmt = |kind| Statement { kind, span };
+        Body {
+            name: "main".to_string(),
+            def: None,
+            arity: 0,
+            locals: vec![decl(i64_ty), decl(option_ty)],
+            blocks: vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    stmt(StatementKind::Assign {
+                        place: Place::local(Local(1)),
+                        rvalue: Rvalue::CallIntrinsic {
+                            name: "gos_rt_result_new",
+                            args: vec![
+                                Operand::Const(ConstValue::Int(0)),
+                                Operand::Const(ConstValue::Int(7)),
+                            ],
+                        },
+                    }),
+                    stmt(StatementKind::Assign {
+                        place: Place::local(Local(0)),
+                        rvalue: Rvalue::CallIntrinsic {
+                            name: "gos_rt_result_unwrap_or",
+                            args: vec![
+                                Operand::Copy(Place::local(Local(1))),
+                                Operand::Const(ConstValue::Int(0)),
+                            ],
+                        },
+                    }),
+                ],
+                terminator: Terminator::Return,
+                span,
+            }],
+            span,
+        }
+    }
+
+    #[test]
+    fn i128_carrier_call_lowers_for_the_win64_abi() {
+        let mut tcx = TyCtxt::new();
+        let body = carrier_roundtrip_body(&mut tcx);
+        let mut module = win64_module();
+        lower_program_full(
+            &mut module,
+            std::slice::from_ref(&body),
+            &tcx,
+            Some("gos_main"),
+            false,
+            None,
+            LoweringMode::Serial,
+        )
+        .expect("a body passing a Result/Option carrier to a runtime helper must lower for Win64");
+    }
 }

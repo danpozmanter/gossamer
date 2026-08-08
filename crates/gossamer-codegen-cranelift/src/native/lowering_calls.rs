@@ -162,16 +162,11 @@ pub(super) fn emit_win64_rt_call(
     // `OfflineModule` that panics on `isa()`.
     let cfg = module.target_config();
     let ptr_ty = cfg.pointer_type();
-    let win64 = cfg.default_call_conv == CallConv::WindowsFastcall;
-    let fat = |t: ir::Type| win64 && t == types::I128;
+    let fat = |t: ir::Type| is_win64_abi(cfg) && t == types::I128;
 
-    let wire_params: Vec<ir::Type> = params
-        .iter()
-        .map(|&t| if fat(t) { ptr_ty } else { t })
-        .collect();
+    let wire_params: Vec<ir::Type> = params.iter().map(|&t| win64_wire_param(cfg, t)).collect();
     let wire_returns: Vec<ir::Type> = match ret {
-        Some(t) if fat(t) => vec![types::I8X16],
-        Some(t) => vec![t],
+        Some(t) => vec![win64_wire_return(cfg, t)],
         None => Vec::new(),
     };
     let func_id = intrinsics.extern_fn(module, name, &wire_params, &wire_returns)?;
@@ -196,7 +191,7 @@ pub(super) fn emit_win64_rt_call(
         Some(t) => {
             let raw = builder.inst_results(call)[0];
             let v = if fat(t) {
-                builder.ins().bitcast(types::I128, MemFlagsData::new(), raw)
+                bitcast_same_width(builder, types::I128, raw)
             } else {
                 raw
             };
@@ -204,6 +199,61 @@ pub(super) fn emit_win64_rt_call(
         }
         None => None,
     })
+}
+
+/// Copies a two-word `[disc, payload]` carrier into a fresh heap block and
+/// returns the block's address, the form a Result/Option payload takes when
+/// the payload is itself a carrier.
+fn heap_copy_carrier(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    intrinsics: &mut IntrinsicContext,
+    carrier: ir::Value,
+) -> Result<ir::Value> {
+    let ptr_ty = module.target_config().pointer_type();
+    let alloc_fn = intrinsics.extern_fn(module, "gos_rt_aggr_alloc", &[types::I64], &[ptr_ty])?;
+    let alloc_ref = module.declare_func_in_func(alloc_fn, builder.func);
+    let size = builder.ins().iconst(types::I64, 16);
+    let call = builder.ins().call(alloc_ref, &[size]);
+    let block = builder.inst_results(call)[0];
+    let (disc, payload) = builder.ins().isplit(carrier);
+    builder.ins().store(
+        MemFlagsData::new(),
+        disc,
+        block,
+        ir::immediates::Offset32::new(0),
+    );
+    builder.ins().store(
+        MemFlagsData::new(),
+        payload,
+        block,
+        ir::immediates::Offset32::new(8),
+    );
+    Ok(block)
+}
+
+/// Calls runtime symbol `name` using the signature the ABI registry records
+/// for it, marshalling every `i128` slot the way [`emit_win64_rt_call`]
+/// documents. Call sites that already know their slot types call that
+/// function directly; this wrapper keeps the registry the single source of
+/// truth for the rest, so a helper's declared and called shapes cannot drift.
+pub(super) fn emit_rt_call_by_name(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    intrinsics: &mut IntrinsicContext,
+    name: &'static str,
+    arg_values: &[ir::Value],
+) -> Result<Option<ir::Value>> {
+    let entry = gossamer_abi::lookup(name)
+        .ok_or_else(|| anyhow!("emit_rt_call_by_name: unknown runtime symbol {name}"))?;
+    let params: Vec<ir::Type> = entry
+        .sig
+        .params
+        .iter()
+        .filter_map(|t| abi_type_to_cranelift(*t))
+        .collect();
+    let ret = abi_type_to_cranelift(entry.sig.ret);
+    emit_win64_rt_call(module, builder, intrinsics, name, &params, ret, arg_values)
 }
 
 fn pack_i64_carrier(
@@ -246,16 +296,21 @@ fn lower_inline_result_carrier_call(
                 None => builder.ins().iconst(types::I64, 0),
             };
             let payload = match args.get(1) {
-                Some(arg) => lower_operand(
-                    module,
-                    builder,
-                    locals,
-                    body,
-                    tcx,
-                    arg,
-                    Some(types::I64),
-                    intrinsics,
-                )?,
+                Some(arg) => {
+                    let raw =
+                        lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?;
+                    if value_type(raw, builder) == types::I128 {
+                        // A payload that is itself a two-word carrier
+                        // (`Some(Some(v))`, `Ok(Err(e))`, an inline user
+                        // enum) outlives the constructing frame, so the
+                        // carrier holds the address of a heap copy. The
+                        // `gos_rt_result_payload_i128` extractor reads the
+                        // two words back from that address.
+                        heap_copy_carrier(module, builder, intrinsics, raw)?
+                    } else {
+                        coerce_arg_to(builder, raw, types::I64)?
+                    }
+                }
                 None => builder.ins().iconst(types::I64, 0),
             };
             pack_i64_carrier(builder, disc, payload)
@@ -856,6 +911,7 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_result_disc" => (&[types::I128], Some(types::I64)),
         "gos_rt_result_payload" => (&[types::I128], Some(types::I64)),
         "gos_rt_result_payload_f64" => (&[types::I128], Some(types::F64)),
+        "gos_rt_result_payload_i128" => (&[types::I128], Some(types::I128)),
         "gos_rt_result_unwrap" => (&[types::I128], Some(types::I64)),
         "gos_rt_result_unwrap_or" => (&[types::I128, types::I64], Some(types::I64)),
         "gos_rt_result_ok" => (&[types::I128], Some(types::I64)),

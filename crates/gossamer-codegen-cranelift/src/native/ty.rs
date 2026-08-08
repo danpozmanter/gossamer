@@ -146,6 +146,33 @@ pub(super) fn abi_type_to_cranelift(ty: gossamer_abi::AbiType) -> Option<ir::Typ
     }
 }
 
+/// `true` when the target passes `extern "C"` arguments under the Win64 ABI,
+/// where rustc hands an `i128` over by pointer and returns one in a 16-byte
+/// vector register instead of Cranelift's native integer-register pair.
+pub(super) fn is_win64_abi(cfg: TargetFrontendConfig) -> bool {
+    cfg.default_call_conv == CallConv::WindowsFastcall
+}
+
+/// Wire type of a logical `extern "C"` parameter: an `i128` crosses the Win64
+/// boundary as the address of a 16-byte slot.
+pub(super) fn win64_wire_param(cfg: TargetFrontendConfig, logical: ir::Type) -> ir::Type {
+    if is_win64_abi(cfg) && logical == types::I128 {
+        cfg.pointer_type()
+    } else {
+        logical
+    }
+}
+
+/// Wire type of a logical `extern "C"` return: an `i128` comes back from a
+/// Win64 callee in a 16-byte vector register.
+pub(super) fn win64_wire_return(cfg: TargetFrontendConfig, logical: ir::Type) -> ir::Type {
+    if is_win64_abi(cfg) && logical == types::I128 {
+        types::I8X16
+    } else {
+        logical
+    }
+}
+
 pub(super) fn cl_type_of(tcx: &TyCtxt, ty: Ty, module: &dyn Module) -> ir::Type {
     match tcx.kind_of(ty) {
         TyKind::Bool => types::I8,

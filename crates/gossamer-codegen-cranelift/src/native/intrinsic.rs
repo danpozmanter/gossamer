@@ -498,15 +498,16 @@ impl IntrinsicContext {
         let entry = gossamer_abi::lookup(name).unwrap_or_else(|| {
             panic!("extern_fn_by_name: unknown runtime symbol {name:?} - add it to gossamer-abi/src/registry.rs")
         });
+        let cfg = module.target_config();
         let mut sig = module.make_signature();
         for abi_ty in entry.sig.params {
             let cl_ty = abi_type_to_cranelift(*abi_ty);
             if let Some(t) = cl_ty {
-                sig.params.push(AbiParam::new(t));
+                sig.params.push(AbiParam::new(win64_wire_param(cfg, t)));
             }
         }
         if let Some(t) = abi_type_to_cranelift(entry.sig.ret) {
-            sig.returns.push(AbiParam::new(t));
+            sig.returns.push(AbiParam::new(win64_wire_return(cfg, t)));
         }
         let id = module
             .declare_function(name, Linkage::Import, &sig)

@@ -192,7 +192,14 @@ pub fn remove(
         }
         let (bytes, files) = dir_size(&path);
         if !dry_run {
-            fs::remove_dir_all(&path)?;
+            // The caller asked for the directory to be gone; another process
+            // removing it first satisfies that, so only a real I/O failure
+            // propagates.
+            match fs::remove_dir_all(&path) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err),
+            }
         }
         removed.push(CacheEntry {
             class,

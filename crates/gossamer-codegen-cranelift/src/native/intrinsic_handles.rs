@@ -656,11 +656,9 @@ pub(super) fn lower_intrinsic_call_handles(
         // `gos_rt_json_get(value, "field")` call before this
         // backend sees it.
         "gos_rt_json_parse" => {
-            let rt_fn = intrinsics.extern_fn_by_name(module, "gos_rt_json_parse")?;
             let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
-            let fref = module.declare_func_in_func(rt_fn, builder.func);
-            let call = builder.ins().call(fref, &[arg]);
-            let v = builder.inst_results(call)[0];
+            let v = emit_rt_call_by_name(module, builder, intrinsics, "gos_rt_json_parse", &[arg])?
+                .ok_or_else(|| anyhow!("gos_rt_json_parse returns a value"))?;
             define_var_to(
                 builder,
                 locals,
@@ -928,11 +926,10 @@ pub(super) fn lower_intrinsic_call_handles(
             Ok(true)
         }
         "gos_rt_json_keys_opt" => {
-            let rt_fn = intrinsics.extern_fn_by_name(module, "gos_rt_json_keys_opt")?;
             let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
-            let fref = module.declare_func_in_func(rt_fn, builder.func);
-            let call = builder.ins().call(fref, &[arg]);
-            let v = builder.inst_results(call)[0];
+            let v =
+                emit_rt_call_by_name(module, builder, intrinsics, "gos_rt_json_keys_opt", &[arg])?
+                    .ok_or_else(|| anyhow!("gos_rt_json_keys_opt returns a value"))?;
             define_var_to(
                 builder,
                 locals,
@@ -943,11 +940,15 @@ pub(super) fn lower_intrinsic_call_handles(
             Ok(true)
         }
         "gos_rt_json_as_array_opt" => {
-            let rt_fn = intrinsics.extern_fn_by_name(module, "gos_rt_json_as_array_opt")?;
             let arg = lower_first_ptr_arg(module, builder, locals, body, tcx, args, intrinsics)?;
-            let fref = module.declare_func_in_func(rt_fn, builder.func);
-            let call = builder.ins().call(fref, &[arg]);
-            let v = builder.inst_results(call)[0];
+            let v = emit_rt_call_by_name(
+                module,
+                builder,
+                intrinsics,
+                "gos_rt_json_as_array_opt",
+                &[arg],
+            )?
+            .ok_or_else(|| anyhow!("gos_rt_json_as_array_opt returns a value"))?;
             define_var_to(
                 builder,
                 locals,
@@ -1322,10 +1323,14 @@ pub(super) fn lower_intrinsic_call_handles(
                 )?,
                 None => bail!("chan_recv: missing channel arg"),
             };
-            let f = intrinsics.extern_fn_by_name(module, "gos_rt_chan_recv_option")?;
-            let fref = module.declare_func_in_func(f, builder.func);
-            let call = builder.ins().call(fref, &[chan]);
-            let opt_ptr = builder.inst_results(call)[0];
+            let opt_ptr = emit_rt_call_by_name(
+                module,
+                builder,
+                intrinsics,
+                "gos_rt_chan_recv_option",
+                &[chan],
+            )?
+            .ok_or_else(|| anyhow!("gos_rt_chan_recv_option returns a carrier"))?;
             define_var_to(
                 builder,
                 locals,
