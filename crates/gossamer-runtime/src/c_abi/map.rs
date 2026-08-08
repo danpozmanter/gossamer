@@ -3132,9 +3132,9 @@ mod map_iter_tests {
     fn map_format_quotes_and_sorts_string_keys() {
         unsafe {
             let map = gos_rt_map_new(8, 8);
-            gos_rt_map_insert_str_i64(map, c"zebra".as_ptr(), 1);
-            gos_rt_map_insert_str_i64(map, c"apple".as_ptr(), 2);
-            gos_rt_map_insert_str_i64(map, c"mango".as_ptr(), 3);
+            gos_rt_map_insert_str_i64(map, crate::c_abi::string::test_gos_str("zebra"), 1);
+            gos_rt_map_insert_str_i64(map, crate::c_abi::string::test_gos_str("apple"), 2);
+            gos_rt_map_insert_str_i64(map, crate::c_abi::string::test_gos_str("mango"), 3);
 
             assert_eq!(
                 formatted_map(map),
@@ -3169,7 +3169,7 @@ mod map_iter_tests {
     fn typed_capacity_constructor_preserves_string_key_layout() {
         unsafe {
             let m = gos_rt_map_new_with_capacity_typed(1, 0, 8);
-            let key = c"alpha".as_ptr();
+            let key = crate::c_abi::string::test_gos_str("alpha");
             gos_rt_map_insert_str_i64(m, key, 7);
             assert_eq!(gos_rt_map_len(m), 1);
             assert_eq!(gos_rt_map_get_or_str_i64(m, key, -1), 7);
@@ -3182,12 +3182,12 @@ mod map_iter_tests {
         unsafe {
             let m = gos_rt_map_new_with_capacity_typed(1, 2, 4);
             let first = byte_vec_from_slice(&[1, 2, 3]);
-            gos_rt_map_insert_str_i64(m, c"alpha".as_ptr(), first as i64);
+            gos_rt_map_insert_str_i64(m, crate::c_abi::string::test_gos_str("alpha"), first as i64);
             let replacement = byte_vec_from_slice(&[4, 5]);
-            gos_rt_map_insert_str_i64(m, c"alpha".as_ptr(), replacement as i64);
+            gos_rt_map_insert_str_i64(m, crate::c_abi::string::test_gos_str("alpha"), replacement as i64);
 
             assert_eq!(gos_rt_map_len(m), 1);
-            assert!(gos_rt_map_contains_key_str(m, c"alpha".as_ptr()));
+            assert!(gos_rt_map_contains_key_str(m, crate::c_abi::string::test_gos_str("alpha")));
             {
                 let storage = (*m).storage.lock();
                 let MapStorage::StrBytes(inner) = &*storage else {
@@ -3206,7 +3206,7 @@ mod map_iter_tests {
             );
             gos_rt_vec_free(values);
 
-            assert!(gos_rt_map_remove_str(m, c"alpha".as_ptr()));
+            assert!(gos_rt_map_remove_str(m, crate::c_abi::string::test_gos_str("alpha")));
             assert_eq!(gos_rt_map_len(m), 0);
             gos_rt_map_free(m);
         }

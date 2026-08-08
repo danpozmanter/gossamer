@@ -14,7 +14,7 @@ evidence visible.
 | Module | Lifecycle | Items | Interp evidence | Compiled evidence | Test evidence | Notes |
 |--------|-----------|------:|-----------------|-------------------|---------------|-------|
 | `std::fmt` | experimental | 9 | module-only | module-only | module-only | println / print / eprintln / eprint / format / write / writeln. |
-| `std::io` | experimental | 10 | module-only | module-only | module-only | stdout, stderr, stdin, write, write_byte, write_byte_array, flush, read_line, read_to_string. |
+| `std::io` | experimental | 21 | module-only | module-only | module-only | stdout, stderr, stdin, write, write_byte, write_byte_array, flush, read_line, read_to_string. |
 | `std::os` | experimental | 2 | module-only | module-only | module-only | args, env, exit, read_file, write_file, mkdir, mkdir_all, read_dir. |
 | `std::os::exec` | shipped | 12 | module-only | module-only | module-only | Command builder + output / status / spawn / kill / wait. Wired through interp builtins, MIR lower, and C ABI. |
 | `std::os::signal` | experimental | 5 | module-only | module-only | module-only | on(signum) + Notifier::wait/try_wait. Wired through interp builtins, MIR lower, and C ABI. |
@@ -32,7 +32,7 @@ evidence visible.
 | `std::panic` | experimental | 1 | module-only | module-only | module-only | panic + catch_unwind. |
 | `std::errors` | experimental | 6 | module-only | module-only | module-only | new, newf, wrap, is, join. |
 | `std::flag` | experimental | 8 | module-only | module-only | module-only | Set with string/int/uint/float/bool/duration/string_list, --help, equals form. Subcommands deferred to v1.x. |
-| `std::path` | shipped | 13 | module-only | module-only | module-only | join, split, base, dir, ext, clean. |
+| `std::path` | shipped | 15 | module-only | module-only | module-only | join, split, base, dir, ext, clean. |
 | `std::fs` | experimental | 26 | module-only | module-only | module-only | read_dir, walk_dir, mkdir_all, remove_all, copy, rename. |
 | `std::bytes` | experimental | 5 | module-only | module-only | module-only | Buffer, Builder, index_of, split, replace. |
 | `std::bufio` | experimental | 7 | module-only | module-only | module-only | Reader, Writer, Scanner with split_lines / split_words. |
@@ -76,7 +76,7 @@ evidence visible.
 | `std::option` | experimental | 16 | none | none | none | No module-level evidence record. |
 | `std::result` | experimental | 10 | none | none | none | No module-level evidence record. |
 | `std::http::router` | experimental | 6 | none | none | none | No module-level evidence record. |
-| `std::http::middleware` | experimental | 7 | none | none | none | No module-level evidence record. |
+| `std::http::middleware` | experimental | 27 | none | none | none | No module-level evidence record. |
 | `std::http::static_files` | experimental | 3 | none | none | none | No module-level evidence record. |
 | `std::http::proxy` | experimental | 3 | none | none | none | No module-level evidence record. |
 | `std::http::websocket` | experimental | 12 | none | none | none | No module-level evidence record. |
@@ -109,6 +109,7 @@ evidence visible.
 | `std::collections::ordered_vec` | experimental | 7 | none | none | none | No module-level evidence record. |
 | `std::collections::ordered_set` | experimental | 4 | none | none | none | No module-level evidence record. |
 | `std::collections::ordered_map` | experimental | 5 | none | none | none | No module-level evidence record. |
+| `std::sort` | experimental | 3 | module-only | module-only | module-only | sort, sort_stable, binary_search. |
 | `std::http::cookie` | experimental | 5 | none | none | none | No module-level evidence record. |
 | `std::http::csrf` | experimental | 8 | none | none | none | No module-level evidence record. |
 | `std::http::form` | experimental | 2 | none | none | none | No module-level evidence record. |
@@ -447,13 +448,33 @@ the canonical item path.
 | `std::http::head` | Function | experimental | not item-audited |
 | `std::http::health::Health` | Type | experimental | not item-audited |
 | `std::http::health::Probe` | Trait | experimental | not item-audited |
+| `std::http::middleware::CacheControl` | Type | experimental | not item-audited |
 | `std::http::middleware::Chain` | Type | experimental | not item-audited |
+| `std::http::middleware::CorsConfig` | Type | experimental | not item-audited |
 | `std::http::middleware::Handler` | Trait | experimental | not item-audited |
+| `std::http::middleware::HstsConfig` | Type | experimental | not item-audited |
+| `std::http::middleware::RateLimit` | Type | experimental | not item-audited |
+| `std::http::middleware::SecurityHeaders` | Type | experimental | not item-audited |
 | `std::http::middleware::accepts_gzip` | Function | experimental | not item-audited |
+| `std::http::middleware::basic_auth` | Function | experimental | not item-audited |
+| `std::http::middleware::bearer_auth` | Function | experimental | not item-audited |
 | `std::http::middleware::bearer_ok` | Function | experimental | not item-audited |
+| `std::http::middleware::body_limit` | Function | experimental | not item-audited |
+| `std::http::middleware::cache_control` | Function | experimental | not item-audited |
+| `std::http::middleware::compress_gzip` | Function | experimental | not item-audited |
+| `std::http::middleware::cors` | Function | experimental | not item-audited |
 | `std::http::middleware::decode_basic_auth` | Function | experimental | not item-audited |
+| `std::http::middleware::etag` | Function | experimental | not item-audited |
+| `std::http::middleware::hsts` | Function | experimental | not item-audited |
+| `std::http::middleware::logger` | Function | experimental | not item-audited |
 | `std::http::middleware::new_request_id` | Function | experimental | not item-audited |
+| `std::http::middleware::rate_limit` | Function | experimental | not item-audited |
+| `std::http::middleware::recoverer` | Function | experimental | not item-audited |
+| `std::http::middleware::request_id` | Function | experimental | not item-audited |
+| `std::http::middleware::safe_defaults` | Function | experimental | not item-audited |
+| `std::http::middleware::security_headers` | Function | experimental | not item-audited |
 | `std::http::middleware::tag` | Function | experimental | not item-audited |
+| `std::http::middleware::timeout` | Function | experimental | not item-audited |
 | `std::http::multipart::Config` | Type | experimental | not item-audited |
 | `std::http::multipart::Form` | Type | experimental | not item-audited |
 | `std::http::multipart::Part` | Type | experimental | not item-audited |
@@ -535,9 +556,20 @@ the canonical item path.
 | `std::io::ReadAll` | Function | experimental | not item-audited |
 | `std::io::Reader` | Trait | experimental | not item-audited |
 | `std::io::Writer` | Trait | experimental | not item-audited |
+| `std::io::buffer_writer` | Function | experimental | not item-audited |
+| `std::io::close_writer` | Function | experimental | not item-audited |
+| `std::io::contents` | Function | experimental | not item-audited |
+| `std::io::copy_n` | Function | experimental | not item-audited |
+| `std::io::drain` | Function | experimental | not item-audited |
+| `std::io::limit_reader` | Function | experimental | not item-audited |
+| `std::io::multi_reader` | Function | experimental | not item-audited |
+| `std::io::pipe` | Function | experimental | not item-audited |
 | `std::io::stderr` | Function | experimental | not item-audited |
 | `std::io::stdin` | Function | experimental | not item-audited |
 | `std::io::stdout` | Function | experimental | not item-audited |
+| `std::io::string_reader` | Function | experimental | not item-audited |
+| `std::io::tee_reader` | Function | experimental | not item-audited |
+| `std::io::write` | Function | experimental | not item-audited |
 | `std::iter::all` | Function | experimental | not item-audited |
 | `std::iter::any` | Function | experimental | not item-audited |
 | `std::iter::chain` | Function | experimental | not item-audited |
@@ -785,8 +817,10 @@ the canonical item path.
 | `std::path::extension` | Function | experimental | not item-audited |
 | `std::path::file_name` | Function | experimental | not item-audited |
 | `std::path::file_stem` | Function | experimental | not item-audited |
+| `std::path::glob` | Function | experimental | not item-audited |
 | `std::path::is_absolute` | Function | experimental | not item-audited |
 | `std::path::join` | Function | experimental | not item-audited |
+| `std::path::matches` | Function | experimental | not item-audited |
 | `std::path::normalize` | Function | experimental | not item-audited |
 | `std::path::parent` | Function | experimental | not item-audited |
 | `std::path::prefixes` | Function | experimental | not item-audited |
@@ -840,6 +874,9 @@ the canonical item path.
 | `std::slog::error` | Function | experimental | not item-audited |
 | `std::slog::info` | Function | experimental | not item-audited |
 | `std::slog::warn` | Function | experimental | not item-audited |
+| `std::sort::binary_search` | Function | experimental | not item-audited |
+| `std::sort::partition_point` | Function | experimental | not item-audited |
+| `std::sort::sort_stable` | Function | experimental | not item-audited |
 | `std::strconv::format_f64` | Function | experimental | not item-audited |
 | `std::strconv::format_i64` | Function | experimental | not item-audited |
 | `std::strconv::format_i64_radix` | Function | experimental | not item-audited |

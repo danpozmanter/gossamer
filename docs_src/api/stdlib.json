@@ -2912,7 +2912,7 @@
       "id": "std-encoding-binary-uvarint",
       "name": "std::encoding::binary::uvarint",
       "kind": "function",
-      "signature": "fn uvarint(bytes: Vec<u8>) -> Result<i64, errors::Error>",
+      "signature": "fn uvarint(bytes: Vec<u8>) -> Result<(i64, i64), errors::Error>",
       "description": "Decodes an unsigned varint.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -2931,7 +2931,7 @@
       "id": "std-encoding-binary-varint",
       "name": "std::encoding::binary::varint",
       "kind": "function",
-      "signature": "fn varint(bytes: Vec<u8>) -> Result<i64, errors::Error>",
+      "signature": "fn varint(bytes: Vec<u8>) -> Result<(i64, i64), errors::Error>",
       "description": "Decodes a signed varint (zigzag).",
       "lifecycle": "experimental",
       "tier_support": [
@@ -4015,7 +4015,7 @@
       "name": "std::errors::Error",
       "kind": "type",
       "signature": null,
-      "description": "Reference-counted error value with optional cause chain.",
+      "description": "Error value carrying a message, an optional cause, and structured diagnostic fields. Methods: `message() -> String` (top message only), `cause() -> Option<Error>`, `chain() -> Vec<Error>` (self then every ancestor cause), `is(needle) -> bool`, `with_field(key, value) -> Error` (an immutable copy carrying one more field; re-setting a key replaces its value), `field(key) -> Option<String>`, `fields() -> Vec<(String, String)>` in insertion order. `{}` renders the colon-joined chain. Example: `let e = errors::new(\"query failed\").with_field(\"sqlstate\", \"23505\")`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -4033,8 +4033,8 @@
       "id": "std-errors-is",
       "name": "std::errors::is",
       "kind": "function",
-      "signature": "fn is(error: errors::Error, needle: String) -> bool",
-      "description": "Checks whether an error's chain contains a matching message.",
+      "signature": "fn is(error: errors::Error, needle: T) -> bool",
+      "description": "`is(error, needle) -> bool` - true when `needle` matches `error` or any link of its cause chain. Prefer a sentinel error VALUE, which matches by identity so two errors sharing a message stay distinct: `let NOT_FOUND = errors::new(\"not found\")`, then `errors::is(err, NOT_FOUND)`. A String `needle` falls back to a message substring test.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -5949,11 +5949,49 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-http-middleware-CacheControl",
+      "name": "std::http::middleware::CacheControl",
+      "kind": "type",
+      "signature": null,
+      "description": "Cache-Control policy. `CacheControl::no_store()` never caches; `CacheControl::immutable_for(seconds)` marks a content-hashed asset immutable.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttpmiddleware",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-http-middleware-Chain",
       "name": "std::http::middleware::Chain",
       "kind": "type",
       "signature": null,
       "description": "Helper for composing middleware in a single value.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttpmiddleware",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-http-middleware-CorsConfig",
+      "name": "std::http::middleware::CorsConfig",
+      "kind": "type",
+      "signature": null,
+      "description": "CORS configuration. `CorsConfig::permissive()` allows any origin and the common verbs; `CorsConfig::new(origin, methods, headers, max_age)` spells one out.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -5987,11 +6025,106 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-http-middleware-HstsConfig",
+      "name": "std::http::middleware::HstsConfig",
+      "kind": "type",
+      "signature": null,
+      "description": "HSTS configuration. `HstsConfig::safe_default()` is one year for this host; `HstsConfig::strict()` is two years with subdomains and preload.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttpmiddleware",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-http-middleware-RateLimit",
+      "name": "std::http::middleware::RateLimit",
+      "kind": "type",
+      "signature": null,
+      "description": "Token-bucket budget. `RateLimit::per_ip(capacity, refill_per_sec)`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttpmiddleware",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-http-middleware-SecurityHeaders",
+      "name": "std::http::middleware::SecurityHeaders",
+      "kind": "type",
+      "signature": null,
+      "description": "Security-header preset. `SecurityHeaders::strict()` adds CSP / COOP / Permissions-Policy on top of the baseline; `SecurityHeaders::off()` emits nothing.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttpmiddleware",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-http-middleware-accepts-gzip",
       "name": "std::http::middleware::accepts_gzip",
       "kind": "function",
       "signature": "fn accepts_gzip(request: http::Request) -> bool",
       "description": "Check an Accept-Encoding header for a gzip token. Available in interp + compiled.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttpmiddleware",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-http-middleware-basic-auth",
+      "name": "std::http::middleware::basic_auth",
+      "kind": "function",
+      "signature": "fn basic_auth(inner: T, realm: String) -> T",
+      "description": "`basic_auth(inner, realm: String) -> Handler` - adds `WWW-Authenticate: Basic realm=\"...\"` to a 401 response. Decode credentials with `middleware::decode_basic_auth`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttpmiddleware",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-http-middleware-bearer-auth",
+      "name": "std::http::middleware::bearer_auth",
+      "kind": "function",
+      "signature": "fn bearer_auth(inner: T, realm: String) -> T",
+      "description": "`bearer_auth(inner, realm: String) -> Handler` - adds `WWW-Authenticate: Bearer` to a 401 response. Verify tokens with `middleware::bearer_ok`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -6025,11 +6158,144 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-http-middleware-body-limit",
+      "name": "std::http::middleware::body_limit",
+      "kind": "function",
+      "signature": "fn body_limit(inner: T, max_bytes: i64) -> T",
+      "description": "`body_limit(inner, max_bytes: i64) -> Handler` - responses larger than the budget become 413.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttpmiddleware",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-http-middleware-cache-control",
+      "name": "std::http::middleware::cache_control",
+      "kind": "function",
+      "signature": "fn cache_control(inner: T, config: String) -> T",
+      "description": "`cache_control(inner, config: CacheControl) -> Handler` - sets `Cache-Control`. Example: `middleware::cache_control(app, middleware::CacheControl::no_store())`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttpmiddleware",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-http-middleware-compress-gzip",
+      "name": "std::http::middleware::compress_gzip",
+      "kind": "function",
+      "signature": "fn compress_gzip(inner: T) -> T",
+      "description": "`compress_gzip(inner) -> Handler` - advertises negotiated compression with `Vary: Accept-Encoding`; pair with `middleware::accepts_gzip` to decide per request.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttpmiddleware",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-http-middleware-cors",
+      "name": "std::http::middleware::cors",
+      "kind": "function",
+      "signature": "fn cors(inner: T, config: String) -> T",
+      "description": "`cors(inner, config: CorsConfig) -> Handler` - CORS response headers. Example: `middleware::cors(app, middleware::CorsConfig::permissive())`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttpmiddleware",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-http-middleware-decode-basic-auth",
       "name": "std::http::middleware::decode_basic_auth",
       "kind": "function",
       "signature": "fn decode_basic_auth(request: http::Request) -> Option<(String, String)>",
       "description": "Decode a Basic-auth Authorization header into (user, password). Interp tier.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttpmiddleware",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-http-middleware-etag",
+      "name": "std::http::middleware::etag",
+      "kind": "function",
+      "signature": "fn etag(inner: T) -> T",
+      "description": "`etag(inner) -> Handler` - sets a strong `ETag` derived from the response body, so the same body always yields the same validator.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttpmiddleware",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-http-middleware-hsts",
+      "name": "std::http::middleware::hsts",
+      "kind": "function",
+      "signature": "fn hsts(inner: T, config: String) -> T",
+      "description": "`hsts(inner, config: HstsConfig) -> Handler` - sets `Strict-Transport-Security`. Example: `middleware::hsts(app, middleware::HstsConfig::safe_default())`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttpmiddleware",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-http-middleware-logger",
+      "name": "std::http::middleware::logger",
+      "kind": "function",
+      "signature": "fn logger(inner: T) -> T",
+      "description": "`logger(inner) -> Handler` - writes one `[http] <status> <bytes>b` line per response to stderr.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -6063,11 +6329,125 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-http-middleware-rate-limit",
+      "name": "std::http::middleware::rate_limit",
+      "kind": "function",
+      "signature": "fn rate_limit(inner: T, config: String) -> T",
+      "description": "`rate_limit(inner, config: RateLimit) -> Handler` - token-bucket limiter; past the budget the response becomes 429 with `Retry-After`. Example: `middleware::rate_limit(app, middleware::RateLimit::per_ip(100, 10))`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttpmiddleware",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-http-middleware-recoverer",
+      "name": "std::http::middleware::recoverer",
+      "kind": "function",
+      "signature": "fn recoverer(inner: T) -> T",
+      "description": "`recoverer(inner) -> Handler` - replaces a 5xx response body with a fixed `internal server error`, so handler internals never leak.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttpmiddleware",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-http-middleware-request-id",
+      "name": "std::http::middleware::request_id",
+      "kind": "function",
+      "signature": "fn request_id(inner: T) -> T",
+      "description": "`request_id(inner) -> Handler` - stamps `X-Request-Id` on every response, using a process-monotonic `req-<n>` counter so a chain's output is identical on every tier.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttpmiddleware",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-http-middleware-safe-defaults",
+      "name": "std::http::middleware::safe_defaults",
+      "kind": "function",
+      "signature": "fn safe_defaults(inner: T) -> T",
+      "description": "`safe_defaults(inner) -> Handler` - strict security headers, HSTS, and a request id in one wrapper.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttpmiddleware",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-http-middleware-security-headers",
+      "name": "std::http::middleware::security_headers",
+      "kind": "function",
+      "signature": "fn security_headers(inner: T, preset: String) -> T",
+      "description": "`security_headers(inner, preset: SecurityHeaders) -> Handler` - X-Content-Type-Options, X-Frame-Options, and Referrer-Policy; the `strict` preset adds CSP, COOP, and Permissions-Policy. Example: `middleware::security_headers(app, middleware::SecurityHeaders::strict())`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttpmiddleware",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-http-middleware-tag",
       "name": "std::http::middleware::tag",
       "kind": "function",
       "signature": "fn tag(handler: http::Handler) -> http::Handler",
       "description": "Wrap a handler (`tag(inner) -> Handler`), prepending `mw:` to each response body. Deterministic composition primitive; available in interp + compiled.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttpmiddleware",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-http-middleware-timeout",
+      "name": "std::http::middleware::timeout",
+      "kind": "function",
+      "signature": "fn timeout(inner: T, budget_ms: i64) -> T",
+      "description": "`timeout(inner, budget_ms: i64) -> Handler` - stamps the budget as `X-Timeout-Ms` for downstream proxies.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -7621,6 +8001,158 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-io-buffer-writer",
+      "name": "std::io::buffer_writer",
+      "kind": "function",
+      "signature": "fn buffer_writer() -> i64",
+      "description": "`buffer_writer() -> i64` - a Writer handle collecting everything written to it; read it back with `io::contents`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdio",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-io-close-writer",
+      "name": "std::io::close_writer",
+      "kind": "function",
+      "signature": "fn close_writer(writer: i64)",
+      "description": "`close_writer(writer: i64)` - signals end of stream on a pipe Writer; later writes are rejected.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdio",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-io-contents",
+      "name": "std::io::contents",
+      "kind": "function",
+      "signature": "fn contents(writer: i64) -> String",
+      "description": "`contents(writer: i64) -> String` - everything written to a buffer or pipe Writer, as UTF-8 text.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdio",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-io-copy-n",
+      "name": "std::io::copy_n",
+      "kind": "function",
+      "signature": "fn copy_n(dst: i64, src: i64, n: i64) -> Result<i64, errors::Error>",
+      "description": "`copy_n(dst: i64, src: i64, n: i64) -> Result<i64, errors::Error>` - copies at most `n` bytes and returns the count actually transferred. Go's `io.CopyN`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdio",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-io-drain",
+      "name": "std::io::drain",
+      "kind": "function",
+      "signature": "fn drain(src: i64) -> String",
+      "description": "`drain(src: i64) -> String` - reads a Reader handle to end of stream as UTF-8 text.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdio",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-io-limit-reader",
+      "name": "std::io::limit_reader",
+      "kind": "function",
+      "signature": "fn limit_reader(src: i64, limit: i64) -> i64",
+      "description": "`limit_reader(src: i64, limit: i64) -> i64` - a Reader yielding at most `limit` bytes from `src`, Go's `io.LimitReader`. Example: `io::drain(io::limit_reader(src, 5))`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdio",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-io-multi-reader",
+      "name": "std::io::multi_reader",
+      "kind": "function",
+      "signature": "fn multi_reader(sources: Vec<i64>) -> i64",
+      "description": "`multi_reader(sources: Vec<i64>) -> i64` - a Reader draining each source in turn, Go's `io.MultiReader`. Example: `io::multi_reader(#[a, b])`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdio",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-io-pipe",
+      "name": "std::io::pipe",
+      "kind": "function",
+      "signature": "fn pipe() -> (i64, i64)",
+      "description": "`pipe() -> (i64, i64)` - a connected `(reader, writer)` pair sharing one in-memory buffer. Reads return the bytes written so far and never block; `io::close_writer` marks the writer done. Example: `let (r, w) = io::pipe()`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdio",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-io-stderr",
       "name": "std::io::stderr",
       "kind": "function",
@@ -7664,6 +8196,63 @@
       "kind": "function",
       "signature": "fn stdout() -> io::Writer",
       "description": "Returns a handle to the process's standard output stream.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdio",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-io-string-reader",
+      "name": "std::io::string_reader",
+      "kind": "function",
+      "signature": "fn string_reader(text: String) -> i64",
+      "description": "`string_reader(text: String) -> i64` - a Reader handle over an in-memory buffer. Reader and Writer handles are plain integers, so the adapters below compose by value. Example: `let src = io::string_reader(\"hello\")`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdio",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-io-tee-reader",
+      "name": "std::io::tee_reader",
+      "kind": "function",
+      "signature": "fn tee_reader(src: i64, sink: i64) -> i64",
+      "description": "`tee_reader(src: i64, sink: i64) -> i64` - a Reader mirroring every byte read from `src` into the Writer `sink`, Go's `io.TeeReader`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdio",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-io-write",
+      "name": "std::io::write",
+      "kind": "function",
+      "signature": "fn write(writer: i64, text: String) -> i64",
+      "description": "`write(writer: i64, text: String) -> i64` - appends text to a Writer handle and returns the byte count accepted.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -12371,6 +12960,25 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-path-glob",
+      "name": "std::path::glob",
+      "kind": "function",
+      "signature": "fn glob(pattern: String) -> Result<Vec<String>, errors::Error>",
+      "description": "`glob(pattern) -> Result<Vec<String>, errors::Error>` - filesystem paths matching a shell glob, sorted so every tier reports the same order. Supports `*`, `?`, `[abc]`, and `**` (this directory and every descendant). Relative patterns resolve against the working directory. Example: `let found = path::glob(\"src/**/*.gos\")?`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdpath",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-path-is-absolute",
       "name": "std::path::is_absolute",
       "kind": "function",
@@ -12395,6 +13003,25 @@
       "kind": "function",
       "signature": "fn join(base: String, segment: String) -> String",
       "description": "Joins two path fragments.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdpath",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-path-matches",
+      "name": "std::path::matches",
+      "kind": "function",
+      "signature": "fn matches(pattern: String, name: String) -> bool",
+      "description": "`matches(pattern, name) -> bool` - Go `filepath.Match` shell-glob test over a single path segment: `*` and `?` never cross a `/`, `[abc]` is a character class. Spelled `matches` because `match` is a keyword. Example: `path::matches(\"*.gos\", \"main.gos\")` is true, `path::matches(\"a*c\", \"a/c\")` is false.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -13412,6 +14039,63 @@
       "limits": [],
       "cookbook_tags": [],
       "doc_anchor": "docs_src/stdlib.md#stdslog",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-sort-binary-search",
+      "name": "std::sort::binary_search",
+      "kind": "function",
+      "signature": "fn binary_search(xs: Vec<T>, target: T) -> Option<i64>",
+      "description": "`binary_search(xs: Vec<T>, target: T) -> Option<i64>` - index of a matching element in an already-ascending sequence, `None` when absent. Example: `sort::binary_search(#[1, 3, 5], 3)` is `Some(1)`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdsort",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-sort-partition-point",
+      "name": "std::sort::partition_point",
+      "kind": "function",
+      "signature": "fn partition_point(xs: Vec<T>, pivot: T) -> i64",
+      "description": "`partition_point(xs: Vec<T>, pivot: T) -> i64` - the count of elements strictly less than `pivot` in an already-ascending sequence, which is also the insertion index that keeps it sorted. Example: `sort::partition_point(#[1, 2, 6, 8], 5)` is `2`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdsort",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-sort-sort-stable",
+      "name": "std::sort::sort_stable",
+      "kind": "function",
+      "signature": "fn sort_stable(xs: Vec<T>) -> Vec<T>",
+      "description": "`sort_stable(xs: Vec<T>) -> Vec<T>` - a fresh ascending sequence in which equal elements keep their input order. `xs.sort()` sorts in place and is unstable; this is the spelling that guarantees stability. Example: `let ordered = sort::sort_stable(#[3, 1, 2])`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdsort",
       "example_id": null,
       "reference_status": "catalog_only"
     },

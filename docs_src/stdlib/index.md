@@ -65,7 +65,7 @@ For receiver methods on built-in types, see [`Methods by type`](../method_suppor
 | [`std::http::csrf`](http_csrf.md) | Double-submit-cookie CSRF protection with Origin / Referer allowlist. |
 | [`std::http::form`](http_form.md) | application/x-www-form-urlencoded parser and builder. |
 | [`std::http::health`](http_health.md) | Liveness / readiness probes for HTTP health endpoints. |
-| [`std::http::middleware`](http_middleware.md) | Composable middleware: logger, recoverer, request_id, cors, basic_auth, compress_gzip. |
+| [`std::http::middleware`](http_middleware.md) | Composable middleware: request_id, cors, security_headers, hsts, cache_control, etag, rate_limit, body_limit, timeout, compress_gzip, logger, recoverer, basic_auth, bearer_auth, safe_defaults. |
 | [`std::http::multipart`](http_multipart.md) | RFC 7578 multipart/form-data streaming parser. |
 | [`std::http::native_client`](http_native_client.md) | Goroutine-driven HTTP/1.1 client over std::net (no ureq, no blocking pool). |
 | [`std::http::proxy`](http_proxy.md) | Reverse proxy on top of http::Client. Director-style request mutator + hop-by-hop strip + error handler. |
@@ -105,6 +105,7 @@ For receiver methods on built-in types, see [`Methods by type`](../method_suppor
 | [`std::result`](result.md) | Data-last Result combinators for pipeline chaining: map, map_err, unwrap_or_else, etc. |
 | [`std::runtime`](runtime.md) | Goroutine / scheduler introspection and tuning. |
 | [`std::slog`](slog.md) | Structured, levelled logging. |
+| [`std::sort`](sort.md) | Explicit stable ordering and sorted-sequence search, the deliberate counterpart to Vec's unstable inherent `sort`. |
 | [`std::strconv`](strconv.md) | Conversions between strings and primitive numeric types. |
 | [`std::strings`](strings.md) | String operations. |
 | [`std::sync`](sync.md) | Synchronisation primitives beyond channels. |

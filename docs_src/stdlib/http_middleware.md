@@ -2,7 +2,7 @@
 
 Status: experimental
 
-Composable middleware: logger, recoverer, request_id, cors, basic_auth, compress_gzip.
+Composable middleware: request_id, cors, security_headers, hsts, cache_control, etag, rate_limit, body_limit, timeout, compress_gzip, logger, recoverer, basic_auth, bearer_auth, safe_defaults.
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 

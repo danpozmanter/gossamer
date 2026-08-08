@@ -285,6 +285,13 @@ unsafe fn cstr_owned(p: *const c_char) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// The C ABI receives a Gossamer string, whose length header sits before
+    /// the pointer. A bare `c"..."` literal has no header, so probing for one
+    /// reads outside the literal.
+    fn gos_str(text: &str) -> *const c_char {
+        crate::c_abi::string::alloc_cstring(text.as_bytes()).cast_const()
+    }
+
     use super::*;
     use std::ffi::CStr;
 
@@ -297,23 +304,23 @@ mod tests {
 
     #[test]
     fn error_new_displays_message_only() {
-        let e = unsafe { gos_rt_error_new(c"boom".as_ptr()) };
+        let e = unsafe { gos_rt_error_new(gos_str("boom")) };
         assert_eq!(render(gos_rt_error_display, e), "boom");
         assert_eq!(render(gos_rt_error_message, e), "boom");
     }
 
     #[test]
     fn wrap_two_deep_displays_colon_joined_chain() {
-        let root = unsafe { gos_rt_error_new(c"root".as_ptr()) };
-        let mid = unsafe { gos_rt_error_wrap(root, c"mid".as_ptr()) };
-        let outer = unsafe { gos_rt_error_wrap(mid, c"outer".as_ptr()) };
+        let root = unsafe { gos_rt_error_new(gos_str("root")) };
+        let mid = unsafe { gos_rt_error_wrap(root, gos_str("mid")) };
+        let outer = unsafe { gos_rt_error_wrap(mid, gos_str("outer")) };
         assert_eq!(render(gos_rt_error_display, outer), "outer: mid: root");
     }
 
     #[test]
     fn wrap_keeps_message_top_level_only() {
-        let root = unsafe { gos_rt_error_new(c"root".as_ptr()) };
-        let outer = unsafe { gos_rt_error_wrap(root, c"outer".as_ptr()) };
+        let root = unsafe { gos_rt_error_new(gos_str("root")) };
+        let outer = unsafe { gos_rt_error_wrap(root, gos_str("outer")) };
         assert_eq!(render(gos_rt_error_message, outer), "outer");
     }
 }

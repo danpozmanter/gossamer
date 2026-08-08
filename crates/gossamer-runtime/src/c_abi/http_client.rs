@@ -2989,10 +2989,10 @@ mod tests {
 
     #[test]
     fn with_header_replaces_then_pushes_and_returns_same_pointer() {
-        let resp = unsafe { gos_rt_http_response_text_new(201, c"ok".as_ptr()) };
-        let r1 = unsafe { gos_rt_http_response_with_header(resp, c"x-a".as_ptr(), c"1".as_ptr()) };
-        let r2 = unsafe { gos_rt_http_response_with_header(r1, c"X-A".as_ptr(), c"2".as_ptr()) };
-        let r3 = unsafe { gos_rt_http_response_with_header(r2, c"x-b".as_ptr(), c"3".as_ptr()) };
+        let resp = unsafe { gos_rt_http_response_text_new(201, crate::c_abi::string::test_gos_str("ok")) };
+        let r1 = unsafe { gos_rt_http_response_with_header(resp, crate::c_abi::string::test_gos_str("x-a"), crate::c_abi::string::test_gos_str("1")) };
+        let r2 = unsafe { gos_rt_http_response_with_header(r1, crate::c_abi::string::test_gos_str("X-A"), crate::c_abi::string::test_gos_str("2")) };
+        let r3 = unsafe { gos_rt_http_response_with_header(r2, crate::c_abi::string::test_gos_str("x-b"), crate::c_abi::string::test_gos_str("3")) };
         assert_eq!(resp, r1, "chain must reuse the same allocation");
         assert_eq!(resp, r2);
         assert_eq!(resp, r3);

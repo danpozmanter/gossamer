@@ -781,6 +781,17 @@ pub(crate) unsafe fn gos_rt_str_mark_shared(s: *const c_char) {
 
 /// Allocate an owned, NUL-terminated heap string holding `s`'s bytes (the
 /// growable runtime-string allocator shape).
+/// Allocates a tagged Gossamer string for tests.
+///
+/// The C ABI receives a pointer whose length header sits before it, so a bare
+/// `c"..."` literal has no header and probing for one reads outside the
+/// literal. Tests that feed a `gos_rt_*` string parameter build their input
+/// here instead.
+#[cfg(test)]
+pub(crate) fn test_gos_str(text: &str) -> *const c_char {
+    alloc_cstring(text.as_bytes()).cast_const()
+}
+
 pub fn alloc_cstring(s: &[u8]) -> *mut c_char {
     alloc_cstring_from_slices(&[s])
 }

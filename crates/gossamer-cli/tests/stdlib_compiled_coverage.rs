@@ -39,6 +39,40 @@ const DISPATCH_SOURCES: &[&str] = &[
 /// function must not be added here to silence the gate - wire its MIR
 /// dispatch instead.
 const COMPILED_VIA_SPECIAL_MECHANISM: &[&str] = &[
+    // The middleware wrappers are lowered by `lower_middleware_kind`
+    // (`stdlib_free.rs`), which binds the inner handler's serve address into a
+    // `GosMiddleware` handle from a name-to-kind table rather than matching a
+    // per-function dispatch pattern.
+    "http::middleware::basic_auth",
+    "http::middleware::bearer_auth",
+    "http::middleware::body_limit",
+    "http::middleware::cache_control",
+    "http::middleware::compress_gzip",
+    "http::middleware::cors",
+    "http::middleware::etag",
+    "http::middleware::hsts",
+    "http::middleware::logger",
+    "http::middleware::rate_limit",
+    "http::middleware::recoverer",
+    "http::middleware::request_id",
+    "http::middleware::safe_defaults",
+    "http::middleware::security_headers",
+    "http::middleware::timeout",
+    "middleware::basic_auth",
+    "middleware::bearer_auth",
+    "middleware::body_limit",
+    "middleware::cache_control",
+    "middleware::compress_gzip",
+    "middleware::cors",
+    "middleware::etag",
+    "middleware::hsts",
+    "middleware::logger",
+    "middleware::rate_limit",
+    "middleware::recoverer",
+    "middleware::request_id",
+    "middleware::safe_defaults",
+    "middleware::security_headers",
+    "middleware::timeout",
     // `lower_json_free_call` recognises the whole `json` / `encoding::json`
     // module by its segment chain (not per-function string patterns).
     "encoding::json::as_array",

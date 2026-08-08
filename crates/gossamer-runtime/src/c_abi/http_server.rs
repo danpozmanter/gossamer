@@ -1597,7 +1597,7 @@ mod tests {
         crate::c_abi::rc::gos_rt_arena_push();
         let ptr = crate::c_abi::gc::gos_rt_gc_alloc(64);
         assert!(ptr.is_null() || crate::c_abi::rc::in_region_arena(ptr));
-        let response = unsafe { gos_rt_http_response_text_new(200, c"ok".as_ptr()) };
+        let response = unsafe { gos_rt_http_response_text_new(200, crate::c_abi::string::test_gos_str("ok")) };
         super::super::vec::pack_result(0, response as i64)
     }
 
@@ -1616,7 +1616,7 @@ mod tests {
             usize::from(crate::c_abi::rc::region_is_active()) + 1,
             Ordering::Release,
         );
-        let response = unsafe { gos_rt_http_response_text_new(200, c"ok".as_ptr()) };
+        let response = unsafe { gos_rt_http_response_text_new(200, crate::c_abi::string::test_gos_str("ok")) };
         super::super::vec::pack_result(0, response as i64)
     }
 
@@ -1701,7 +1701,7 @@ mod tests {
 
     #[test]
     fn text_response_renders_text_plain_content_type() {
-        let resp = unsafe { gos_rt_http_response_text_new(200, c"ok".as_ptr()) };
+        let resp = unsafe { gos_rt_http_response_text_new(200, crate::c_abi::string::test_gos_str("ok")) };
         let result = super::super::vec::pack_result(0, resp as i64);
         let bytes = rendered(result);
         assert!(
@@ -1716,7 +1716,7 @@ mod tests {
         // A byte-array body may contain NUL bytes; the writer must
         // serve `body_bytes` in full instead of the c-string mirror
         // (which stops at the first NUL).
-        let resp = unsafe { gos_rt_http_response_text_new(200, c"A".as_ptr()) };
+        let resp = unsafe { gos_rt_http_response_text_new(200, crate::c_abi::string::test_gos_str("A")) };
         unsafe { (*resp).body_bytes = Some(vec![0x41, 0x00, 0x42, 0x00, 0x43]) };
         let result = super::super::vec::pack_result(0, resp as i64);
         let mut out = Vec::new();
@@ -1737,7 +1737,7 @@ mod tests {
     fn handler_header_names_render_lowercase_on_the_wire() {
         // Wire casing is canonical-lowercase on every tier; a
         // handler-supplied mixed-case name must normalize.
-        let resp = unsafe { gos_rt_http_response_text_new(200, c"ok".as_ptr()) };
+        let resp = unsafe { gos_rt_http_response_text_new(200, crate::c_abi::string::test_gos_str("ok")) };
         unsafe {
             (*resp)
                 .headers
@@ -1760,7 +1760,7 @@ mod tests {
 
     #[test]
     fn json_response_renders_application_json_content_type() {
-        let resp = unsafe { gos_rt_http_response_json_new(200, c"{}".as_ptr()) };
+        let resp = unsafe { gos_rt_http_response_json_new(200, crate::c_abi::string::test_gos_str("{}")) };
         let result = super::super::vec::pack_result(0, resp as i64);
         let bytes = rendered(result);
         assert!(
@@ -1771,7 +1771,7 @@ mod tests {
 
     #[test]
     fn explicit_content_type_header_wins_over_constructor_default() {
-        let resp = unsafe { gos_rt_http_response_text_new(200, c"<p>hi</p>".as_ptr()) };
+        let resp = unsafe { gos_rt_http_response_text_new(200, crate::c_abi::string::test_gos_str("<p>hi</p>")) };
         unsafe {
             (*resp)
                 .headers
@@ -1791,7 +1791,7 @@ mod tests {
 
     #[test]
     fn empty_content_type_falls_back_to_text_plain() {
-        let resp = unsafe { gos_rt_http_response_text_new(200, c"ok".as_ptr()) };
+        let resp = unsafe { gos_rt_http_response_text_new(200, crate::c_abi::string::test_gos_str("ok")) };
         unsafe { (*resp).content_type.clear() };
         let result = super::super::vec::pack_result(0, resp as i64);
         let bytes = rendered(result);
@@ -2445,12 +2445,12 @@ mod tests {
 
     #[test]
     fn handler_header_names_write_lowercase_on_the_wire() {
-        let resp = unsafe { gos_rt_http_response_text_new(200, c"ok".as_ptr()) };
+        let resp = unsafe { gos_rt_http_response_text_new(200, crate::c_abi::string::test_gos_str("ok")) };
         unsafe {
             super::http_client::gos_rt_http_response_set_header(
                 resp,
-                c"X-Custom-Thing".as_ptr(),
-                c"v".as_ptr(),
+                crate::c_abi::string::test_gos_str("X-Custom-Thing"),
+                crate::c_abi::string::test_gos_str("v"),
             );
         }
         let result = super::super::vec::pack_result(0, resp as i64);
@@ -2475,12 +2475,12 @@ mod tests {
         let handle = super::http_client::stream_registry_register(reader);
         let blob = [handle, 200i64, 0i64];
         let resp =
-            unsafe { gos_rt_http_response_stream_new(200, c"text/csv".as_ptr(), blob.as_ptr()) };
+            unsafe { gos_rt_http_response_stream_new(200, crate::c_abi::string::test_gos_str("text/csv"), blob.as_ptr()) };
         unsafe {
             super::http_client::gos_rt_http_response_set_header(
                 resp,
-                c"X-MiXeD".as_ptr(),
-                c"v".as_ptr(),
+                crate::c_abi::string::test_gos_str("X-MiXeD"),
+                crate::c_abi::string::test_gos_str("v"),
             );
         }
         let result = super::super::vec::pack_result(0, resp as i64);

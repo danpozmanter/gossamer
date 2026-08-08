@@ -69,6 +69,13 @@
   per-instantiation layout. Each read a slot address where the value's handle
   belonged, so `.map()` over a `Vec<Enum>` always matched the first variant and a
   `Wrapper<Point>` in a loop summed the wrong fields.
+- Carry a string's own length across the C ABI rather than stopping at the first
+  NUL byte. A `String` holding an interior NUL was truncated on the compiled
+  tiers while the bytecode VM kept it whole; the remaining reads are of
+  host-owned C strings (`argv` and a native binding's pointer), each documented
+  and held to that by a test.
+- Produce a bit-identical artifact from `gos build --reproducible`, including
+  across build directories and with the compilation caches live.
 - Stop reporting a used path dependency as an unused import. `use
   "example.com/intcode"` was matched against the whole project id while call
   sites spell the last segment (`intcode::item`), so the correct import always

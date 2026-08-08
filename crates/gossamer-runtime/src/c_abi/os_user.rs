@@ -15,7 +15,8 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-#[cfg(unix)]
+// The C-ABI signatures below return `*mut c_char` on every platform; only the
+// lookup they wrap is unix-specific.
 use std::os::raw::c_char;
 
 use super::*;
