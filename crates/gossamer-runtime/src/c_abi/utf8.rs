@@ -27,7 +27,6 @@
 //! buffer (codepoint, byte-length) the caller memcpys into its
 //! tuple alloca.
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 #[inline]
@@ -35,7 +34,7 @@ unsafe fn cstr_to_str<'a>(s: *const c_char) -> &'a str {
     if s.is_null() {
         return "";
     }
-    unsafe { CStr::from_ptr(s) }.to_str().unwrap_or("")
+    unsafe { crate::c_abi::gos_str_arg_text(s) }
 }
 
 #[unsafe(no_mangle)]
@@ -94,10 +93,7 @@ pub unsafe extern "C" fn gos_rt_utf8_valid_string(s: *const c_char) -> i64 {
         if s.is_null() {
             return 1;
         }
-        // CStr::to_str validates UTF-8; reaching the function with a
-        // valid cstring is a strong-enough check for the common
-        // caller path.
-        let ok = unsafe { CStr::from_ptr(s) }.to_str().is_ok();
+        let ok = std::str::from_utf8(unsafe { crate::c_abi::gos_str_arg_bytes(s) }).is_ok();
         i64::from(ok)
     })
 }

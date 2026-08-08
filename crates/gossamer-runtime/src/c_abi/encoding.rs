@@ -10,7 +10,6 @@
 //! (that would be a dependency cycle), so the bytes mirror
 //! `gossamer_std::encoding::{xml,base32}` exactly.
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::errors::gos_rt_error_new;
@@ -25,13 +24,9 @@ fn err_result(msg: &str) -> i128 {
 }
 
 fn cstr_to_str<'a>(s: *const c_char) -> &'a str {
-    if s.is_null() {
-        return "";
-    }
-    // SAFETY: callers pass a null-terminated c-string (Gossamer
-    // `String` ABI); non-UTF-8 falls back to the empty string.
-    let bytes = unsafe { CStr::from_ptr(s).to_bytes() };
-    std::str::from_utf8(bytes).unwrap_or("")
+    // SAFETY: callers pass a Gossamer `String`, read through its length
+    // header so interior NUL bytes survive; non-UTF-8 falls back to empty.
+    unsafe { crate::c_abi::gos_str_arg_text(s) }
 }
 
 /// `encoding::xml::escape(s)` - replaces XML metacharacters with their

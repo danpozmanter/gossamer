@@ -109,18 +109,21 @@ pub(crate) struct EnumIndex {
 
 impl EnumIndex {
     /// Resolves an enum-variant path / bare name to `(enum_name,
-    /// variant_index)`. Accepts paths of the form `Color::Green`
-    /// (two segments) or the bare name `Green` (one segment) when
-    /// the variant name is unambiguous across the program.
+    /// variant_index)`. Accepts the bare name `Green` when the variant
+    /// name is unambiguous across the program, and any path ending in
+    /// `Color::Green` - so a module-qualified `shapes::Shape::Circle`
+    /// resolves to the same variant the in-module `Shape::Circle` does.
+    /// The enum index is keyed by bare enum name, so a path whose
+    /// second-to-last segment names no enum still resolves to `None`.
     pub(crate) fn lookup(&self, segments: &[Ident]) -> Option<(String, usize)> {
         match segments {
             [single] => self.variant_index.get(&single.name).cloned(),
-            [enum_seg, variant_seg] => {
+            [.., enum_seg, variant_seg] => {
                 let variants = self.by_enum.get(&enum_seg.name)?;
                 let idx = variants.iter().position(|v| v == &variant_seg.name)?;
                 Some((enum_seg.name.clone(), idx))
             }
-            _ => None,
+            [] => None,
         }
     }
 

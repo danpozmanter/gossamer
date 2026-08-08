@@ -5,9 +5,9 @@
  * `f(a, b, x)` (the piped value lands in the *last* positional
  * slot). `x |> recv.m(a)` pipes into an external receiver's last
  * argument: `recv.m(a, x)`. One direct `_` selects another argument
- * position: `x |> f(_, a)` is `f(x, a)`. The `_` placeholder instead
- * makes the piped value the *receiver* in `x |> _.m(a)`, and bare
- * `x |> _.trim` is `x.trim()`. `|>` is left-associative with very
+ * position: `x |> f($, a)` is `f(x, a)`. The `_` placeholder instead
+ * makes the piped value the *receiver* in `x |> $.m(a)`, and bare
+ * `x |> $.trim` is `x.trim()`. `|>` is left-associative with very
  * low precedence, so `a |> f |> g` reads as `g(f(a))` without
  * parentheses.
  *
@@ -44,7 +44,7 @@ fn main() {
 
     // `_.method` pipes the value through its own methods - `_` is the
     // receiver of the step, so `_.trim` is `x.trim()`.
-    let shout = "  hello  " |> _.trim |> _.to_uppercase
+    let shout = "  hello  " |> $.trim |> $.to_uppercase
     println!("shout: {shout}")
 
     // Word count, top-down: split on whitespace, drop empties, count.

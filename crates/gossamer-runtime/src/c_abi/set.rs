@@ -15,8 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
-
 use crate::c_abi::GosVec;
 use std::os::raw::c_char;
 
@@ -92,11 +90,8 @@ pub unsafe extern "C" fn gos_rt_set_from_vec_str(v: *const GosVec) -> *mut GosSe
             if entry.is_null() {
                 continue;
             }
-            out.inner.insert(
-                unsafe { CStr::from_ptr(entry) }
-                    .to_string_lossy()
-                    .into_owned(),
-            );
+            out.inner
+                .insert(unsafe { crate::c_abi::gos_str_arg_string(entry) });
         }
         set
     })
@@ -125,7 +120,7 @@ pub unsafe extern "C" fn gos_rt_set_insert(s: *mut GosSet, key: *const c_char) -
         if s.is_null() || key.is_null() {
             return 0;
         }
-        let k = unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() };
+        let k = unsafe { crate::c_abi::gos_str_arg_string(key) };
         let s = unsafe { &mut *s };
         i64::from(s.inner.insert(k))
     })
@@ -137,7 +132,7 @@ pub unsafe extern "C" fn gos_rt_set_contains(s: *const GosSet, key: *const c_cha
         if s.is_null() || key.is_null() {
             return 0;
         }
-        let bytes = unsafe { CStr::from_ptr(key).to_bytes() };
+        let bytes = unsafe { crate::c_abi::gos_str_arg_bytes(key) };
         // Gossamer strings are always valid UTF-8 at the source level.
         let k: &str = unsafe { std::str::from_utf8_unchecked(bytes) };
         let s = unsafe { &*s };
@@ -151,7 +146,7 @@ pub unsafe extern "C" fn gos_rt_set_remove(s: *mut GosSet, key: *const c_char) -
         if s.is_null() || key.is_null() {
             return 0;
         }
-        let bytes = unsafe { CStr::from_ptr(key).to_bytes() };
+        let bytes = unsafe { crate::c_abi::gos_str_arg_bytes(key) };
         // Gossamer strings are always valid UTF-8 at the source level.
         let k: &str = unsafe { std::str::from_utf8_unchecked(bytes) };
         let s = unsafe { &mut *s };
@@ -414,7 +409,7 @@ pub unsafe extern "C" fn gos_rt_set_insert_skey(
         if s.is_null() {
             return 0;
         }
-        let width = unsafe { CStr::from_ptr(desc) }.to_bytes().len() * 8;
+        let width = unsafe { crate::c_abi::gos_str_arg_len(desc) } * 8;
         let slots = unsafe { std::slice::from_raw_parts(key, width) }
             .to_vec()
             .into_boxed_slice();
@@ -472,7 +467,7 @@ pub unsafe extern "C" fn gos_rt_set_to_vec_skey(
         if desc.is_null() {
             return std::ptr::null_mut();
         }
-        let width = unsafe { CStr::from_ptr(desc) }.to_bytes().len() * 8;
+        let width = unsafe { crate::c_abi::gos_str_arg_len(desc) } * 8;
         let out = unsafe {
             crate::c_abi::vec::gos_rt_vec_new_typed(
                 width as u32,
@@ -505,7 +500,7 @@ pub unsafe extern "C" fn gos_rt_set_intersection_to_vec_skey(
         if desc.is_null() {
             return std::ptr::null_mut();
         }
-        let width = unsafe { CStr::from_ptr(desc) }.to_bytes().len() * 8;
+        let width = unsafe { crate::c_abi::gos_str_arg_len(desc) } * 8;
         let out = unsafe {
             crate::c_abi::vec::gos_rt_vec_new_typed(
                 width as u32,

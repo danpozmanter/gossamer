@@ -177,6 +177,38 @@ pub struct WherePredicate {
 pub struct TraitBound {
     /// Path naming the trait.
     pub path: TypePath,
+    /// Associated-type equality constraints written inside the bound's
+    /// argument list (`Iterator<Item = i64>`). Ordinary type and const
+    /// arguments stay in the path segment's `generics`.
+    #[serde(default)]
+    pub bindings: Vec<AssocBinding>,
+}
+
+impl TraitBound {
+    /// Constructs a bound from its path with no associated-type bindings.
+    #[must_use]
+    pub const fn new(path: TypePath) -> Self {
+        Self {
+            path,
+            bindings: Vec::new(),
+        }
+    }
+
+    /// Source name of the trait this bound names, ignoring any module
+    /// qualification.
+    #[must_use]
+    pub fn trait_name(&self) -> Option<&str> {
+        self.path.segments.last().map(|s| s.name.name.as_str())
+    }
+}
+
+/// One `Name = Type` associated-type constraint inside a trait bound.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AssocBinding {
+    /// Associated type being constrained.
+    pub name: Ident,
+    /// Type it is constrained to.
+    pub ty: Type,
 }
 
 /// A function declaration: signature plus optional body.

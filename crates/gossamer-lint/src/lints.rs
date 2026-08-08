@@ -453,7 +453,10 @@ fn check_use(decl: &UseDecl, uses: &Uses, out: &mut Vec<Finding>) {
             UseTarget::Project { module, id } => module
                 .as_ref()
                 .and_then(|p| p.segments.last().map(|s| s.name.clone()))
-                .unwrap_or_else(|| id.clone()),
+                // A bare `use "example.com/intcode"` binds the last path
+                // segment of the project id, which is the name call sites
+                // spell (`intcode::item`), not the whole id.
+                .unwrap_or_else(|| project_id_binding(id)),
         },
         |a| a.name.clone(),
     );
@@ -464,6 +467,12 @@ fn check_use(decl: &UseDecl, uses: &Uses, out: &mut Vec<Finding>) {
             Some("remove the `use` declaration".to_string()),
         ));
     }
+}
+
+/// Name a bare project import binds: the last `/`-separated segment of the
+/// project id, matching how call sites spell it.
+fn project_id_binding(id: &str) -> String {
+    id.rsplit('/').next().unwrap_or(id).to_string()
 }
 
 fn check_entry(entry: &UseListEntry, span: Span, uses: &Uses, out: &mut Vec<Finding>) {

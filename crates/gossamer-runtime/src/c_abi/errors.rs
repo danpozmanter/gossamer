@@ -15,7 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::*;
@@ -35,6 +34,9 @@ pub struct GosError {
     pub message: SyncRawPtr<c_char>,
     /// Cause pointer. NULL when the error has no cause.
     pub cause: SyncRawPtr<GosError>,
+    /// Structured diagnostic fields in insertion order. Only Rust reads
+    /// this tail; the compiled tiers carry the whole error as a pointer.
+    pub fields: Vec<(String, String)>,
 }
 
 #[unsafe(no_mangle)]
@@ -43,12 +45,13 @@ pub unsafe extern "C" fn gos_rt_error_new(msg: *const c_char) -> *mut GosError {
         let text = if msg.is_null() {
             Vec::new()
         } else {
-            unsafe { CStr::from_ptr(msg).to_bytes().to_vec() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(msg) }.to_vec()
         };
         let leaked = alloc_cstring(&text);
         Box::into_raw(Box::new(GosError {
             message: SyncRawPtr::new(leaked),
             cause: SyncRawPtr::NULL,
+            fields: Vec::new(),
         }))
     })
 }
@@ -67,12 +70,13 @@ pub unsafe extern "C" fn gos_rt_error_from(value: *const c_char) -> *mut GosErro
         let text = if value.is_null() {
             Vec::new()
         } else {
-            unsafe { CStr::from_ptr(value).to_bytes().to_vec() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(value) }.to_vec()
         };
         let leaked = alloc_cstring(&text);
         Box::into_raw(Box::new(GosError {
             message: SyncRawPtr::new(leaked),
             cause: SyncRawPtr::NULL,
+            fields: Vec::new(),
         }))
     })
 }
@@ -86,12 +90,13 @@ pub unsafe extern "C" fn gos_rt_error_wrap(
         let text = if msg.is_null() {
             Vec::new()
         } else {
-            unsafe { CStr::from_ptr(msg).to_bytes().to_vec() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(msg) }.to_vec()
         };
         let leaked = alloc_cstring(&text);
         Box::into_raw(Box::new(GosError {
             message: SyncRawPtr::new(leaked),
             cause: SyncRawPtr::new(cause),
+            fields: Vec::new(),
         }))
     })
 }
@@ -108,8 +113,7 @@ pub unsafe extern "C" fn gos_rt_error_message(err: *const GosError) -> *mut c_ch
         }
         // Re-leak a copy so the caller can hold the string past the
         // GosError's lifetime if it ever gets reclaimed.
-        let bytes = unsafe { CStr::from_ptr(m.as_ptr()).to_bytes().to_vec() };
-        alloc_cstring(&bytes)
+        alloc_cstring(unsafe { crate::c_abi::gos_str_arg_bytes(m.as_ptr()) })
     })
 }
 
@@ -130,7 +134,7 @@ pub unsafe extern "C" fn gos_rt_error_display(err: *const GosError) -> *mut c_ch
             first = false;
             let m = unsafe { (*cur).message };
             if !m.is_null() {
-                text.extend_from_slice(unsafe { CStr::from_ptr(m.as_ptr()).to_bytes() });
+                text.extend_from_slice(unsafe { crate::c_abi::gos_str_arg_bytes(m.as_ptr()) });
             }
             cur = unsafe { (*cur).cause.as_ptr() };
         }
@@ -138,9 +142,151 @@ pub unsafe extern "C" fn gos_rt_error_display(err: *const GosError) -> *mut c_ch
     })
 }
 
+/// Slot layout of the `errors::Error::fields()` vec: both words are
+/// vec-owned strings.
+static ERROR_FIELDS_SLOT_CHILDREN: [crate::c_abi::vec::VecSlotChild; 2] = [
+    crate::c_abi::vec::VecSlotChild {
+        gate: -1,
+        disc_word: 0,
+        word: 0,
+        kind: crate::c_abi::vec::vec_elem_kind::STRING,
+    },
+    crate::c_abi::vec::VecSlotChild {
+        gate: -1,
+        disc_word: 0,
+        word: 1,
+        kind: crate::c_abi::vec::vec_elem_kind::STRING,
+    },
+];
+
+/// `errors::Error::with_field(key, value) -> errors::Error` - a copy of
+/// `err` carrying one more structured diagnostic field. Re-setting an
+/// existing key replaces its value in place, so field order is insertion
+/// order. Errors are immutable: the receiver is unchanged.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_error_with_field(
+    err: *const GosError,
+    key: *const c_char,
+    value: *const c_char,
+) -> *mut GosError {
+    ffi_entry!(std::ptr::null_mut(), {
+        let key = unsafe { cstr_owned(key) };
+        let value = unsafe { cstr_owned(value) };
+        let (message, cause, mut fields) = if err.is_null() {
+            (Vec::new(), std::ptr::null_mut(), Vec::new())
+        } else {
+            let e = unsafe { &*err };
+            let msg = if e.message.as_ptr().is_null() {
+                Vec::new()
+            } else {
+                unsafe { crate::c_abi::gos_str_arg_bytes(e.message.as_ptr()) }.to_vec()
+            };
+            (msg, e.cause.as_ptr(), e.fields.clone())
+        };
+        match fields.iter_mut().find(|(name, _)| *name == key) {
+            Some((_, current)) => *current = value,
+            None => fields.push((key, value)),
+        }
+        Box::into_raw(Box::new(GosError {
+            message: SyncRawPtr::new(alloc_cstring(&message)),
+            cause: SyncRawPtr::new(cause),
+            fields,
+        }))
+    })
+}
+
+/// `errors::Error::field(key) -> Option<String>` - the value attached
+/// under `key` on this error, ignoring the cause chain.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_error_field(err: *const GosError, key: *const c_char) -> i128 {
+    ffi_entry!(unsafe { crate::c_abi::vec::gos_rt_result_new(1, 0) }, {
+        if err.is_null() {
+            return unsafe { crate::c_abi::vec::gos_rt_result_new(1, 0) };
+        }
+        let key = unsafe { cstr_owned(key) };
+        match unsafe { &*err }.fields.iter().find(|(n, _)| *n == key) {
+            Some((_, value)) => unsafe {
+                crate::c_abi::vec::gos_rt_result_new(0, alloc_cstring(value.as_bytes()) as i64)
+            },
+            None => unsafe { crate::c_abi::vec::gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
+/// `errors::Error::fields() -> Vec<(String, String)>` - the structured
+/// diagnostic fields of this error in insertion order.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_error_fields(err: *const GosError) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe { crate::c_abi::vec::gos_rt_vec_with_capacity(16, 0) };
+        if !err.is_null() {
+            for (key, value) in &unsafe { &*err }.fields {
+                let pair: [i64; 2] = [
+                    alloc_cstring(key.as_bytes()) as i64,
+                    alloc_cstring(value.as_bytes()) as i64,
+                ];
+                unsafe { crate::c_abi::vec::gos_rt_vec_push(out, pair.as_ptr().cast::<u8>()) };
+            }
+        }
+        crate::c_abi::vec::vec_set_slot_children(out, &ERROR_FIELDS_SLOT_CHILDREN);
+        out
+    })
+}
+
+/// `errors::Error::chain() -> Vec<errors::Error>` - this error followed
+/// by every ancestor cause, outermost first.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_error_chain(err: *const GosError) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe { crate::c_abi::vec::gos_rt_vec_with_capacity(8, 0) };
+        let mut cur = err;
+        while !cur.is_null() {
+            let slot = cur as i64;
+            unsafe {
+                crate::c_abi::vec::gos_rt_vec_push(out, std::ptr::addr_of!(slot).cast::<u8>());
+            }
+            cur = unsafe { (*cur).cause.as_ptr() };
+        }
+        out
+    })
+}
+
+/// `errors::is(err, sentinel) -> bool` with a sentinel *value* rather
+/// than a message: true when `sentinel` is `err` itself or any link of
+/// its cause chain. Identity is the error's own handle, so two errors
+/// built from the same text stay distinguishable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_error_is_sentinel(
+    err: *const GosError,
+    sentinel: *const GosError,
+) -> i64 {
+    ffi_entry!(0, {
+        if err.is_null() || sentinel.is_null() {
+            return 0;
+        }
+        let mut cur = err;
+        while !cur.is_null() {
+            if std::ptr::eq(cur, sentinel) {
+                return 1;
+            }
+            cur = unsafe { (*cur).cause.as_ptr() };
+        }
+        0
+    })
+}
+
+/// Owned copy of a nul-terminated C string; the empty string for null.
+unsafe fn cstr_owned(p: *const c_char) -> String {
+    if p.is_null() {
+        return String::new();
+    }
+    unsafe { crate::c_abi::gos_str_arg_string(p) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::CStr;
 
     fn render(f: unsafe extern "C" fn(*const GosError) -> *mut c_char, e: *mut GosError) -> String {
         let p = unsafe { f(e) };

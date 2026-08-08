@@ -28,17 +28,12 @@
 //! importing it, which would form a `runtime -> std -> runtime`
 //! dependency cycle) so the VM and compiled tiers agree bit-for-bit.
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::*;
 
 fn cstr_to_string(p: *const c_char) -> String {
-    if p.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(p).to_string_lossy().into_owned() }
-    }
+    unsafe { crate::c_abi::gos_str_arg_string(p) }
 }
 
 /// First index at which `needle` appears in `haystack`, or `None`.

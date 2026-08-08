@@ -16,7 +16,6 @@
 #![allow(clippy::wildcard_imports)]
 
 use std::collections::HashMap;
-use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::sync::{Mutex, OnceLock};
 
@@ -41,7 +40,7 @@ pub unsafe extern "C" fn gos_rt_testing_check(cond: bool, msg: *const c_char) ->
             let m = if msg.is_null() {
                 "check failed".to_string()
             } else {
-                unsafe { CStr::from_ptr(msg).to_string_lossy().into_owned() }
+                unsafe { crate::c_abi::gos_str_arg_string(msg) }
             };
             eprintln!("test check failed: {m}");
         }
@@ -57,7 +56,7 @@ pub unsafe extern "C" fn gos_rt_testing_check_eq_i64(a: i64, b: i64, msg: *const
             let m = if msg.is_null() {
                 String::new()
             } else {
-                unsafe { CStr::from_ptr(msg).to_string_lossy().into_owned() }
+                unsafe { crate::c_abi::gos_str_arg_string(msg) }
             };
             eprintln!("test check_eq failed: {a} != {b} ({m})");
         }
@@ -141,7 +140,7 @@ pub unsafe extern "C" fn gos_rt_httptest_server(status: i64, body: *const c_char
         let body = if body.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(body).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(body) }
         };
         let Ok(url) = httptest_server(status, &body) else {
             return std::ptr::null_mut();

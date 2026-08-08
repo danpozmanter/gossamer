@@ -34,10 +34,20 @@ impl<'tcx> FnBuilder<'tcx> {
         // `Value` in the closure's name/value capture list.
         let mut capture_regs: Vec<Reg> = Vec::new();
         let mut capture_names: Vec<String> = Vec::new();
+        let mut capture_is_cell: Vec<bool> = Vec::new();
         for name in &free {
             if let Some(tr) = self.lookup_local(name) {
-                let value_reg = self.as_value(tr);
-                capture_regs.push(value_reg);
+                // A capture-cell binding is captured by its cell, so the
+                // closure names the same storage the enclosing binding
+                // does; everything else is snapshotted by value.
+                if let Some(cell) = self.capture_cell_for_local(tr) {
+                    capture_regs.push(cell);
+                    capture_is_cell.push(true);
+                } else {
+                    let value_reg = self.as_value(tr);
+                    capture_regs.push(value_reg);
+                    capture_is_cell.push(false);
+                }
                 capture_names.push(name.clone());
             }
         }
@@ -47,7 +57,7 @@ impl<'tcx> FnBuilder<'tcx> {
         // block-scoped LIFO emission, so every closure body lowers
         // natively.
         let chunk = self
-            .build_closure_chunk(&capture_names, params, body)?
+            .build_closure_chunk(&capture_names, &capture_is_cell, params, body)?
             .into_shared();
 
         let proto = ClosureProto {
@@ -74,6 +84,7 @@ impl<'tcx> FnBuilder<'tcx> {
     fn build_closure_chunk(
         &self,
         capture_names: &[String],
+        capture_is_cell: &[bool],
         params: &[HirParam],
         body: &HirExpr,
     ) -> RuntimeResult<FnChunk> {
@@ -95,18 +106,14 @@ impl<'tcx> FnBuilder<'tcx> {
         // inline stack into it so a callee mid-inline in the enclosing
         // function is never re-inlined across the closure boundary.
         b.inlining.clone_from(&self.inlining);
-        // Captured upvalues occupy the leading registers, bound by name so
-        // body references resolve to them.
-        for cname in capture_names {
-            let reg = b.alloc_reg();
-            b.bind_local(
-                cname,
-                TypedReg {
-                    reg,
-                    kind: RegKind::Value,
-                },
-            );
-        }
+        // Captured upvalues occupy the leading registers; the names bind
+        // to them below, once the declared parameters have claimed the
+        // rest of the arity prefix.
+        let capture_regs: Vec<Reg> = capture_names.iter().map(|_| b.alloc_reg()).collect();
+        b.capture_cell_names = crate::compile::capture_cell_names(
+            self.tcx,
+            &crate::compile::consume::closure_captured_locals_in_expr(params, body),
+        );
         // Declared parameters follow, mirroring `compile_fn`'s param
         // binding: the `&mut Vec<T>` write-back protocol and the
         // typed-storage fast-path tracking both carry over.
@@ -129,6 +136,36 @@ impl<'tcx> FnBuilder<'tcx> {
                     }
                     _ => {}
                 }
+            }
+            if let HirPatKind::Binding { name, .. } = &param.pattern.kind {
+                let typed = TypedReg {
+                    reg,
+                    kind: RegKind::Value,
+                };
+                b.install_capture_cell(&name.name, typed, param.ty);
+            }
+        }
+        // Upvalues bind after the declared parameters so the arity
+        // prefix keeps its `captures ++ args` register layout. A cell
+        // capture arrives as the cell itself; its binding gets a working
+        // register that every instruction loads from, and stores back
+        // to, that cell.
+        for ((cname, reg), is_cell) in capture_names
+            .iter()
+            .zip(capture_regs)
+            .zip(capture_is_cell.iter().copied())
+        {
+            let home = if is_cell { b.alloc_reg() } else { reg };
+            b.bind_local(
+                cname,
+                TypedReg {
+                    reg: home,
+                    kind: RegKind::Value,
+                },
+            );
+            if is_cell {
+                b.capture_cells.push((home, reg));
+                b.capture_cells_used = true;
             }
         }
         // A `Block` body mirrors `compile_fn`'s tail handling; a bare

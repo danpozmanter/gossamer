@@ -1,0 +1,47 @@
+// Cross-tier parity for the typed error-chain surface: cause / chain /
+// with_field / field / fields, plus `errors::is` in both of its forms -
+// a sentinel error value (identity, the recommended path) and a message
+// substring (the string fallback).
+use std::errors
+
+fn sentinel_probe() {
+    let sentinel = errors::new("not found")
+    let lookalike = errors::new("not found")
+    let wrapped = errors::wrap(sentinel, "loading config")
+    println!("identity_hit={}", errors::is(wrapped, sentinel))
+    println!("identity_miss={}", errors::is(wrapped, lookalike))
+    println!("message_hit={}", errors::is(wrapped, "not found"))
+    println!("message_miss={}", errors::is(wrapped, "denied"))
+}
+
+fn main() {
+    let root = errors::new("EACCES")
+    let outer = errors::wrap(root, "open /etc/passwd")
+    println!("message={}", outer.message())
+    println!("display={}", outer)
+    match outer.cause() {
+        Some(c) => println!("cause={}", c.message()),
+        None => println!("cause=none"),
+    }
+    for link in outer.chain() {
+        println!("link={}", link.message())
+    }
+
+    let tagged = errors::new("query failed")
+        .with_field("sqlstate", "40001")
+        .with_field("op", "insert")
+        .with_field("sqlstate", "23505")
+    match tagged.field("sqlstate") {
+        Some(v) => println!("sqlstate={}", v),
+        None => println!("sqlstate=none"),
+    }
+    match tagged.field("absent") {
+        Some(v) => println!("absent={}", v),
+        None => println!("absent=none"),
+    }
+    for (key, value) in tagged.fields() {
+        println!("field {}={}", key, value)
+    }
+
+    sentinel_probe()
+}

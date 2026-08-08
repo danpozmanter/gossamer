@@ -1,0 +1,59 @@
+// A float nested inside any aggregate renders the same way a struct field
+// does: with a fractional part or an exponent, never a bare integer.
+
+#[derive(Debug)]
+struct Reading {
+    label: String,
+    value: f64,
+    scale: f64,
+}
+
+#[derive(Debug)]
+struct Wrapped {
+    inner: Reading,
+    count: i64,
+}
+
+#[derive(Debug)]
+enum Measure {
+    Exact(f64),
+    Range { lo: f64, hi: f64 },
+}
+
+fn main() {
+    let r = Reading {
+        label: "temp",
+        value: 7.0,
+        scale: 0.5,
+    }
+    println!("{:?}", r)
+    println!(
+        "{:?}",
+        Wrapped {
+            inner: Reading {
+                label: "inner",
+                value: -0.0,
+                scale: 1e300,
+            },
+            count: 2,
+        }
+    )
+
+    println!("{:?}", #[7.0, 1.5, -0.5])
+    println!("{:?}", [7.0, 1.5])
+    println!("{:?}", #[#[1.0], #[2.5, 3.0]])
+
+    let some: Option<f64> = Some(7.0)
+    let none: Option<f64> = None
+    println!("{:?} {:?}", some, none)
+    let ok: Result<f64, f64> = Ok(4.0)
+    let err: Result<f64, f64> = Err(-2.0)
+    println!("{:?} {:?}", ok, err)
+
+    println!("{:?}", (7.0, 1, 2.5))
+    println!("{:?}", ((1.0, 2.0), 3.0))
+
+    println!("{:?}", Measure::Exact(9.0))
+    println!("{:?}", Measure::Range { lo: 0.0, hi: 1e-10 })
+    println!("{:?}", #[Measure::Exact(1.0), Measure::Range { lo: -1.0, hi: 1.0 }])
+}

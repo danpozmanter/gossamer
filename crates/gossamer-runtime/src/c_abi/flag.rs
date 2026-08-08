@@ -15,7 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::sync::atomic::Ordering;
 
@@ -66,7 +65,7 @@ pub unsafe extern "C" fn gos_rt_flag_set_new(name: *const c_char) -> *mut GosFla
         let n = if name.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(name) }
         };
         Box::into_raw(Box::new(GosFlagSet {
             name: n,
@@ -77,11 +76,7 @@ pub unsafe extern "C" fn gos_rt_flag_set_new(name: *const c_char) -> *mut GosFla
 }
 
 fn read_cstr(p: *const c_char) -> String {
-    if p.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(p).to_string_lossy().into_owned() }
-    }
+    unsafe { crate::c_abi::gos_str_arg_string(p) }
 }
 
 #[unsafe(no_mangle)]
@@ -100,7 +95,7 @@ pub unsafe extern "C" fn gos_rt_flag_set_string(
         let dv = if default_v.is_null() {
             alloc_cstring(b"")
         } else {
-            let bytes = unsafe { CStr::from_ptr(default_v).to_bytes().to_vec() };
+            let bytes = unsafe { crate::c_abi::gos_str_arg_bytes(default_v) }.to_vec();
             alloc_cstring(&bytes)
         };
         let cell = Box::into_raw(Box::new(dv));
@@ -384,7 +379,7 @@ fn apply_flag_value(
         if p.is_null() {
             return 1;
         }
-        let s = unsafe { CStr::from_ptr(p).to_string_lossy().into_owned() };
+        let s = unsafe { crate::c_abi::gos_str_arg_string(p) };
         (s, 2)
     };
     match spec.kind {
@@ -501,14 +496,14 @@ pub unsafe extern "C" fn gos_rt_flag_set_parse(set: *mut GosFlagSet, args: *cons
             let arg = if arg_ptr.is_null() {
                 String::new()
             } else {
-                unsafe { CStr::from_ptr(arg_ptr).to_string_lossy().into_owned() }
+                unsafe { crate::c_abi::gos_str_arg_string(arg_ptr) }
             };
             if arg == "--" {
                 i += 1;
                 while i < argc {
                     let p = get_arg_ptr(i);
                     if !p.is_null() {
-                        let s = unsafe { CStr::from_ptr(p).to_string_lossy().into_owned() };
+                        let s = unsafe { crate::c_abi::gos_str_arg_string(p) };
                         set.positional.push(s);
                     }
                     i += 1;

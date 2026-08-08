@@ -1,0 +1,28 @@
+// Lazy iterator terminals over `f64` elements: the element rides the float
+// ABI end to end, so every terminal reads a double rather than the slot's
+// integer reinterpretation.
+
+fn scale(x: f64) -> f64 { x * 2.0 }
+
+fn main() {
+    let xs: Vec<f64> = #[1.5, 2.5, 3.0, 4.25]
+    let total: f64 = xs.iter().sum()
+    println!("sum {}", total)
+    let prod: f64 = xs.iter().product()
+    println!("product {}", prod)
+    println!("min {:?}", xs.iter().min())
+    println!("max {:?}", xs.iter().max())
+    let folded: f64 = xs.iter().fold(0.5, |acc: f64, x: f64| -> f64 { acc + x })
+    println!("fold {}", folded)
+    let kept: f64 = xs.iter().filter(|x| x > 2.0).sum()
+    println!("filter-sum {}", kept)
+    let doubled: f64 = xs.iter().map(scale).sum()
+    println!("map-sum {}", doubled)
+    let mapped: Vec<f64> = xs.iter().map(scale).collect()
+    println!("map-collect {}", mapped)
+    println!("any {}", xs.iter().any(|x| x > 4.0))
+    println!("all {}", xs.iter().all(|x| x > 1.0))
+    println!("find {:?}", xs.iter().find(|x| x > 2.4))
+    println!("count {}", xs.iter().filter(|x| x < 3.5).count())
+    println!("chained {}", xs.iter().filter(|x| x > 1.6).map(scale).count())
+}

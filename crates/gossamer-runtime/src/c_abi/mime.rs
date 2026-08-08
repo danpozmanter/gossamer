@@ -15,7 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::*;
@@ -36,12 +35,9 @@ fn mime_str(p: *const c_char) -> String {
     if p.is_null() {
         return String::new();
     }
-    // SAFETY: the contract for every gos_rt_mime_* entry is
-    // that `p` is either null or a NUL-terminated c-string
-    // valid for the duration of the call (the compiler emits
-    // pointers into either the string pool or alloc_cstring'd
-    // heap buffers). CStr::from_ptr enforces the NUL.
-    unsafe { CStr::from_ptr(p).to_str().unwrap_or("").to_string() }
+    // SAFETY: every gos_rt_mime_* entry takes a Gossamer `String`, read
+    // through its length header.
+    unsafe { crate::c_abi::gos_str_arg_text(p) }.to_string()
 }
 
 fn mime_parse(s: &str) -> Option<::mime::Mime> {

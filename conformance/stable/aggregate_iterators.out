@@ -1,0 +1,14 @@
+total=15
+names=bolt,nut,washer
+first=bolt
+top=nut 9
+low=washer 2
+inventory=55
+1:one
+2:two
+3:three
+keys=6
+words=one|two|three
+flat=6
+long=1
+joined=DELTA-ALPHA-CHARLIE

@@ -24,7 +24,6 @@
 //! (rather than depending on `gossamer_std::metrics`, which would form
 //! a `runtime -> std -> runtime` dependency cycle).
 
-use std::ffi::CStr;
 use std::fmt::Write as _;
 use std::os::raw::c_char;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -38,10 +37,7 @@ use super::vec::GosVec;
 
 /// Reads a Gossamer c-string argument into an owned `String`.
 unsafe fn read_cstr(s: *const c_char) -> String {
-    if s.is_null() {
-        return String::new();
-    }
-    unsafe { CStr::from_ptr(s) }.to_string_lossy().into_owned()
+    unsafe { crate::c_abi::gos_str_arg_string(s) }
 }
 
 /// Reads a Gossamer `[f64]` / `Vec<f64>` argument into a `Vec<f64>`.

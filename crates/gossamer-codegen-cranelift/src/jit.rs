@@ -171,6 +171,16 @@ pub struct JitFn {
 // single-threaded today. We do not implement Send/Sync for `JitFn`
 // - anyone who copies it must keep it on the owning thread.
 
+/// Emits one machine-readable admission summary per JIT compilation
+/// attempt on stderr, gated on `GOS_JIT_STATS`. Verification harnesses read
+/// the lines back to prove the Cranelift tier actually installed native
+/// entries instead of silently running the whole program on bytecode.
+fn report_jit_stats(compiled: usize) {
+    if std::env::var_os("GOS_JIT_STATS").is_some() {
+        eprintln!("gos-jit-stats: compiled={compiled}");
+    }
+}
+
 /// Owns finalized native allocations and a name → [`JitFn`] map.
 /// Dropping the artifact frees every page that backs the function
 /// pointers it has handed out, so the VM must hold the artifact
@@ -895,6 +905,7 @@ pub fn compile_to_jit(
     struct_shapes: &HashMap<u32, u32>,
 ) -> Result<JitArtifact> {
     if bodies.is_empty() {
+        report_jit_stats(0);
         return Ok(JitArtifact {
             heap: None,
             functions: HashMap::new(),
@@ -945,6 +956,7 @@ pub fn compile_to_jit_for_promotion_owned(
     // uses the static's native cell, a VM body its `Global::MutStatic` cell.
     restrict_static_leaky_bodies(&mut compile_set, &bodies);
     if compile_set.is_empty() {
+        report_jit_stats(0);
         return Ok(JitArtifact {
             heap: None,
             functions: HashMap::new(),
@@ -1149,6 +1161,7 @@ fn compile_bodies(
     drop(module);
     heap.mark_detached();
 
+    report_jit_stats(functions.len());
     Ok(JitArtifact {
         heap: Some(heap),
         functions,
@@ -1257,10 +1270,6 @@ fn body_calls_jit_unsafe(
 ///   object reclaimed after the call - so a write through the reference
 ///   never reaches the caller, and the copy-back of an in-place
 ///   `String`/`Vec` append corrupts the heap (a segfault).
-/// - A function value (`Operand::FnRef`) passed as a call or intrinsic
-///   *argument*: a higher-order call (`fold` / `map` / `sort_by` / ...)
-///   whose closure the JIT has no way to invoke, so the call lowers to a
-///   default-returning stub (e.g. `iter::fold` yielding its seed).
 /// - A goroutine-spawn site or a cross-goroutine sync primitive
 ///   (channel / `WaitGroup` / Mutex / Atomic / ... - see
 ///   [`is_cross_goroutine_rt`]). Under `gos` the spawned side runs
@@ -1282,25 +1291,9 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
         }
         return true;
     }
-    // A function-value local (a closure or `fn`/`Fn` pointer). The JIT has
-    // no closure-invocation lowering: such a local is materialised as a
-    // null placeholder, so a higher-order call through it (`iter::fold` and
-    // friends) silently returns its seed. Keep the body on bytecode.
     for idx in 0..body.locals.len() {
         let lty =
             tcx.kind_of(body.local_ty(gossamer_mir::Local(u32::try_from(idx).unwrap_or(u32::MAX))));
-        if matches!(
-            lty,
-            TyKind::FnDef { .. } | TyKind::FnPtr(_) | TyKind::Closure { .. }
-        ) {
-            if std::env::var("GOS_JIT_TRACE").is_ok() {
-                eprintln!(
-                    "jit: unsupported {} local#{idx} callable kind={lty:?}",
-                    body.name
-                );
-            }
-            return true;
-        }
         if jit_local_ty_needs_bytecode(
             tcx,
             body.local_ty(gossamer_mir::Local(u32::try_from(idx).unwrap_or(u32::MAX))),
@@ -1504,6 +1497,16 @@ fn jit_local_ty_needs_bytecode_inner(
             })
         }
         TyKind::Adt { def, .. } if def.local == u32::MAX - 20 => false,
+        // A callable value is one machine word: either a raw code address
+        // (`FnDef`) or an env pointer whose first word is the code address
+        // (`FnPtr` / `FnTrait` / `Closure`, post the MIR's coercion). The
+        // indirect-dispatch lowering for those shapes exists below, but the
+        // combinator surface built on them does not yet agree with the
+        // bytecode tier for every element type, so a body holding one stays
+        // on bytecode until that surface is proven across tiers.
+        TyKind::FnDef { .. } | TyKind::FnPtr(_) | TyKind::FnTrait(_) | TyKind::Closure { .. } => {
+            true
+        }
         TyKind::Adt { def, substs } if def.local < u32::MAX - 64 => {
             let struct_unsafe = tcx.adt_field_tys(*def, substs).is_some_and(|fields| {
                 fields
@@ -1530,10 +1533,6 @@ fn jit_local_ty_needs_bytecode_inner(
         | TyKind::JoinHandle(_)
         | TyKind::JsonValue
         | TyKind::DynError
-        | TyKind::FnDef { .. }
-        | TyKind::FnPtr(_)
-        | TyKind::FnTrait(_)
-        | TyKind::Closure { .. }
         | TyKind::Alias { .. }
         | TyKind::Dyn(_)
         | TyKind::Error => true,
@@ -2040,6 +2039,17 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_deque_clear"         => rt::gos_rt_deque_clear,
         "gos_rt_deque_free"          => rt::gos_rt_deque_free,
         "gos_rt_strings_join"        => rt::gos_rt_strings_join,
+        "gos_rt_path_glob"           => rt::gos_rt_path_glob,
+        "gos_rt_path_matches"        => rt::gos_rt_path_matches,
+        "gos_rt_sort_stable_i64"     => rt::gos_rt_sort_stable_i64,
+        "gos_rt_sort_stable_f64"     => rt::gos_rt_sort_stable_f64,
+        "gos_rt_sort_binary_search_f64" => rt::gos_rt_sort_binary_search_f64,
+        "gos_rt_sort_partition_point_f64" => rt::gos_rt_sort_partition_point_f64,
+        "gos_rt_sort_stable_str"     => rt::gos_rt_sort_stable_str,
+        "gos_rt_sort_binary_search_i64" => rt::gos_rt_sort_binary_search_i64,
+        "gos_rt_sort_binary_search_str" => rt::gos_rt_sort_binary_search_str,
+        "gos_rt_sort_partition_point_i64" => rt::gos_rt_sort_partition_point_i64,
+        "gos_rt_sort_partition_point_str" => rt::gos_rt_sort_partition_point_str,
         "gos_rt_path_base"           => rt::gos_rt_path_base,
         "gos_rt_path_components"     => rt::gos_rt_path_components,
         "gos_rt_path_prefixes"       => rt::gos_rt_path_prefixes,
@@ -2094,6 +2104,11 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_error_display"       => rt::gos_rt_error_display,
         "gos_rt_error_cause"         => rt::gos_rt_error_cause,
         "gos_rt_error_is"            => rt::gos_rt_error_is,
+        "gos_rt_error_is_sentinel"   => rt::gos_rt_error_is_sentinel,
+        "gos_rt_error_chain"         => rt::gos_rt_error_chain,
+        "gos_rt_error_field"         => rt::gos_rt_error_field,
+        "gos_rt_error_fields"        => rt::gos_rt_error_fields,
+        "gos_rt_error_with_field"    => rt::gos_rt_error_with_field,
         "gos_rt_regex_compile"       => rt::gos_rt_regex_compile,
         "gos_rt_regex_is_match"      => rt::gos_rt_regex_is_match,
         "gos_rt_regex_find"          => rt::gos_rt_regex_find,
@@ -2275,6 +2290,16 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_metrics_registry_register" => rt::gos_rt_metrics_registry_register,
         "gos_rt_metrics_registry_render" => rt::gos_rt_metrics_registry_render,
         "gos_rt_middleware_new"      => rt::gos_rt_middleware_new,
+        "gos_rt_middleware_new_kind" => rt::gos_rt_middleware_new_kind,
+        "gos_rt_mw_cors_permissive"  => rt::gos_rt_mw_cors_permissive,
+        "gos_rt_mw_cors_new"         => rt::gos_rt_mw_cors_new,
+        "gos_rt_mw_hsts_safe_default" => rt::gos_rt_mw_hsts_safe_default,
+        "gos_rt_mw_hsts_strict"      => rt::gos_rt_mw_hsts_strict,
+        "gos_rt_mw_security_strict"  => rt::gos_rt_mw_security_strict,
+        "gos_rt_mw_security_off"     => rt::gos_rt_mw_security_off,
+        "gos_rt_mw_cache_no_store"   => rt::gos_rt_mw_cache_no_store,
+        "gos_rt_mw_cache_immutable_for" => rt::gos_rt_mw_cache_immutable_for,
+        "gos_rt_mw_rate_limit_per_ip" => rt::gos_rt_mw_rate_limit_per_ip,
         "gos_rt_middleware_serve"    => rt::gos_rt_middleware_serve,
         "gos_rt_trace_tracer_new" => rt::gos_rt_trace_tracer_new,
         "gos_rt_trace_tracer_start_span" => rt::gos_rt_trace_tracer_start_span,
@@ -2430,11 +2455,6 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_set_is_subset"       => rt::gos_rt_set_is_subset,
         "gos_rt_set_is_superset"     => rt::gos_rt_set_is_superset,
         "gos_rt_set_is_disjoint"     => rt::gos_rt_set_is_disjoint,
-        "gos_rt_btmap_new"           => rt::gos_rt_btmap_new,
-        "gos_rt_btmap_insert"        => rt::gos_rt_btmap_insert,
-        "gos_rt_btmap_get_or"        => rt::gos_rt_btmap_get_or,
-        "gos_rt_btmap_len"           => rt::gos_rt_btmap_len,
-        "gos_rt_btmap_keys"          => rt::gos_rt_btmap_keys,
         "gos_rt_str_as_bytes"        => rt::gos_rt_str_as_bytes,
         "gos_rt_regex_captures_all"  => rt::gos_rt_regex_captures_all,
         "gos_rt_vec_clone"           => rt::gos_rt_vec_clone,
@@ -2654,6 +2674,17 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_eprint_str"          => rt::gos_rt_eprint_str,
         "gos_rt_eprintln"            => rt::gos_rt_eprintln,
         "gos_rt_io_copy"             => rt::gos_rt_io_copy,
+        "gos_rt_io_string_reader"    => rt::gos_rt_io_string_reader,
+        "gos_rt_io_buffer_writer"    => rt::gos_rt_io_buffer_writer,
+        "gos_rt_io_limit_reader"     => rt::gos_rt_io_limit_reader,
+        "gos_rt_io_tee_reader"       => rt::gos_rt_io_tee_reader,
+        "gos_rt_io_multi_reader"     => rt::gos_rt_io_multi_reader,
+        "gos_rt_io_pipe"             => rt::gos_rt_io_pipe,
+        "gos_rt_io_copy_n"           => rt::gos_rt_io_copy_n,
+        "gos_rt_io_drain"            => rt::gos_rt_io_drain,
+        "gos_rt_io_contents"         => rt::gos_rt_io_contents,
+        "gos_rt_io_write_str"        => rt::gos_rt_io_write_str,
+        "gos_rt_io_close_writer"     => rt::gos_rt_io_close_writer,
         "gos_rt_io_read_all"         => rt::gos_rt_io_read_all,
         "gos_rt_io_stdin"            => rt::gos_rt_io_stdin,
         "gos_rt_io_stdout"           => rt::gos_rt_io_stdout,
@@ -2723,7 +2754,6 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_vec_retain"          => rt::gos_rt_vec_retain,
         "gos_rt_vec_mark_shared"     => rt::gos_rt_vec_mark_shared,
         "gos_rt_set_free"            => rt::gos_rt_set_free,
-        "gos_rt_btmap_free"          => rt::gos_rt_btmap_free,
         "gos_rt_map_keys_i64"        => rt::gos_rt_map_keys_i64,
         "gos_rt_map_values_i64"      => rt::gos_rt_map_values_i64,
         "gos_rt_map_keys_str"        => rt::gos_rt_map_keys_str,

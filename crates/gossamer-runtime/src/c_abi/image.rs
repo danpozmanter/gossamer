@@ -1,7 +1,6 @@
 //! Native bridge for the public `std::image` opaque-handle API.
 
 use std::collections::HashMap;
-use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -213,12 +212,9 @@ fn pack(value: Rgba) -> i64 {
 
 unsafe fn input<'a>(value: *const c_char) -> Option<&'a str> {
     if value.is_null() {
-        None
-    } else {
-        // The compiled tiers pass a runtime-owned, NUL-terminated string for
-        // the duration of this call.
-        Some(unsafe { CStr::from_ptr(value) }.to_str().ok()?)
+        return None;
     }
+    std::str::from_utf8(unsafe { crate::c_abi::gos_str_arg_bytes(value) }).ok()
 }
 
 /// `image::new(width, height) -> i64`.

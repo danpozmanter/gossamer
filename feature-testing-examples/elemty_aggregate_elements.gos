@@ -1,0 +1,23 @@
+// Aggregate elements span more than one slot, so a combinator's callback
+// receives each element's storage address and a kept element is copied out
+// whole. Both stay on the eager surface, which the lazy shims cannot address.
+
+use std::iter
+
+struct Point { x: i64, y: i64 }
+
+fn main() {
+    let points: Vec<Point> = #[Point { x: 1, y: 2 }, Point { x: 3, y: 4 }, Point { x: 5, y: 6 }]
+    let right: Vec<Point> = points.iter().filter(|p| p.x > 2).collect()
+    println!("filter {} {} {}", right.len(), right[0].x, right[1].y)
+    let sums: Vec<i64> = points.iter().map(|p: Point| -> i64 { p.x + p.y }).collect()
+    println!("map {}", sums)
+    println!("sum_by {}", iter::sum_by(|p: Point| p.x, points))
+    println!("fold {}", iter::fold(100, |acc: i64, p: Point| acc + p.y, points))
+    println!("any {}", points.iter().any(|p| p.y == 4))
+    println!("all {}", points.iter().all(|p| p.x > 0))
+
+    let pairs: Vec<(i64, i64)> = #[(1, 9), (4, 2)]
+    let big: Vec<(i64, i64)> = pairs.iter().filter(|p| p.0 > 2).collect()
+    println!("tuple-filter {} {}", big[0].0, big[0].1)
+}

@@ -179,15 +179,16 @@ impl<'a> Lowerer<'a> {
         if is_aggregate(self.tcx, leaf_ty) && slot_count(self.tcx, leaf_ty).unwrap_or(1) > 1 {
             return addr;
         }
+        let tbaa = self.place_payload_tbaa(place);
         if self.place_is_packed_byte_element(place) {
             let byte = self.fresh();
-            writeln!(self.out, "  {byte} = load i8, ptr {addr}").unwrap();
+            writeln!(self.out, "  {byte} = load i8, ptr {addr}{tbaa}").unwrap();
             let tmp = self.fresh();
             writeln!(self.out, "  {tmp} = zext i8 {byte} to i64").unwrap();
             tmp
         } else {
             let tmp = self.fresh();
-            writeln!(self.out, "  {tmp} = load {leaf_llvm}, ptr {addr}").unwrap();
+            writeln!(self.out, "  {tmp} = load {leaf_llvm}, ptr {addr}{tbaa}").unwrap();
             tmp
         }
     }
@@ -203,12 +204,13 @@ impl<'a> Lowerer<'a> {
         } else {
             self.lower_place_address(place)
         };
+        let tbaa = self.place_payload_tbaa(place);
         if self.place_is_packed_byte_element(place) {
             let byte = self.fresh();
             writeln!(self.out, "  {byte} = trunc {llvm_ty} {value} to i8").unwrap();
-            writeln!(self.out, "  store i8 {byte}, ptr {addr}").unwrap();
+            writeln!(self.out, "  store i8 {byte}, ptr {addr}{tbaa}").unwrap();
         } else {
-            writeln!(self.out, "  store {llvm_ty} {value}, ptr {addr}").unwrap();
+            writeln!(self.out, "  store {llvm_ty} {value}, ptr {addr}{tbaa}").unwrap();
         }
     }
 
@@ -370,6 +372,86 @@ impl<'a> Lowerer<'a> {
             }
         }
         current
+    }
+
+    /// The `!tbaa` suffix for the leaf load/store of a projected place:
+    /// [`TBAA_DATA`] when the leaf address provably lies in aggregate payload
+    /// memory, or the empty string when it may not.
+    ///
+    /// This mirrors the pointer steps [`Self::lower_place_address`] takes.
+    /// Struct/tuple/fixed-array projections walk byte offsets inside one flat
+    /// i64 slot slab, and a `&T` dereference lands on another such slab or on
+    /// a `Vec` element-buffer slot - all payload memory, disjoint from the
+    /// `GosVec` / string header words `crate::lower::TBAA_HEADER` tags. A
+    /// pointer step through a runtime-managed type (`Vec`, `Slice`, `String`,
+    /// `HashMap`, an opaque handle) instead starts at that type's header, so
+    /// those places stay untagged and keep aliasing everything.
+    pub(crate) fn place_payload_tbaa(&self, place: &Place) -> &'static str {
+        if place.projection.is_empty() {
+            return "";
+        }
+        let mut ty = self.body.local_ty(place.local);
+        let skip_auto_deref = matches!(place.projection.first(), Some(Projection::Deref));
+        if !skip_auto_deref && Self::is_pointer_local_ty(self.tcx, ty) {
+            // One pointer load, so peel exactly one reference layer; anything
+            // else the slot can hold addresses a runtime header.
+            let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(ty) else {
+                return "";
+            };
+            ty = *inner;
+        }
+        for proj in &place.projection {
+            match proj {
+                Projection::Field(idx) => {
+                    // The integer-typed root reinterprets the slot's bits as a
+                    // pointer to storage this walk cannot classify.
+                    if matches!(self.tcx.kind(ty), Some(TyKind::Int(_))) {
+                        return "";
+                    }
+                    ty = match self.tcx.kind(ty) {
+                        Some(TyKind::Adt { def, substs }) => self
+                            .tcx
+                            .adt_field_tys(*def, substs)
+                            .and_then(|tys| tys.get(*idx as usize).copied())
+                            .unwrap_or(ty),
+                        Some(TyKind::Tuple(elems)) => {
+                            elems.get(*idx as usize).copied().unwrap_or(ty)
+                        }
+                        Some(TyKind::Array { elem, .. }) => *elem,
+                        _ => return "",
+                    };
+                }
+                Projection::Index(_) => match self.tcx.kind(ty) {
+                    Some(TyKind::Array { elem, .. }) => ty = *elem,
+                    _ => return "",
+                },
+                Projection::Deref => match self.tcx.kind(ty) {
+                    Some(TyKind::Ref { inner, .. }) => ty = *inner,
+                    _ => return "",
+                },
+                Projection::Discriminant | Projection::Downcast(_) => {}
+            }
+        }
+        TBAA_DATA
+    }
+
+    /// The `!tbaa` suffix for the slot writes an aggregate construction makes
+    /// into `place`'s storage: [`TBAA_DATA`] when that storage is provably an
+    /// inline slot slab, or the empty string when it may not be.
+    ///
+    /// A bare inline-aggregate local owns its whole `alloca` /
+    /// `gos_rt_aggr_alloc` slab, so every slot in it is payload memory; a
+    /// projected destination is classified by [`Self::place_payload_tbaa`].
+    pub(crate) fn aggregate_dest_tbaa(&self, place: &Place) -> &'static str {
+        if !place.projection.is_empty() {
+            return self.place_payload_tbaa(place);
+        }
+        let ty = self.body.local_ty(place.local);
+        if is_aggregate(self.tcx, ty) && slot_count(self.tcx, ty).is_some() {
+            TBAA_DATA
+        } else {
+            ""
+        }
     }
 
     pub(crate) fn place_is_packed_byte_element(&self, place: &Place) -> bool {

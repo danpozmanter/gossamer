@@ -17,6 +17,7 @@ gossamer-diagnostics = { workspace = true }
 gossamer-lex = { workspace = true }
 gossamer-pkg = { workspace = true }
 gossamer-resolve = { workspace = true }
+serde = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

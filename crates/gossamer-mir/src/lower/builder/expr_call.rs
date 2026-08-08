@@ -902,13 +902,15 @@ impl<'a> Builder<'a> {
             HirExprKind::Path { def: Some(def), .. } => self.fn_inputs.get(def).cloned(),
             _ => None,
         };
-        // `__concat` carries every `println!` / `format!` argument. A struct
-        // argument with a derived `Type::fmt` is rendered to a String first so
-        // the compiled tiers can format it (they cannot print an aggregate).
+        // `__concat` / `__debug` carry every `println!` / `format!` argument.
+        // A struct argument with a derived `Type::fmt` is rendered to a String
+        // first so the compiled tiers can format it (they cannot print an
+        // aggregate).
         let callee_is_concat = matches!(
             &callee.kind,
             HirExprKind::Path { segments, .. }
-                if segments.len() == 1 && segments[0].name.as_str() == "__concat"
+                if segments.len() == 1
+                    && matches!(segments[0].name.as_str(), "__concat" | "__debug")
         );
         let mut arg_operands = Vec::with_capacity(args.len());
         // `&mut <bare-local>` arguments of a writeback type (scalar / String)

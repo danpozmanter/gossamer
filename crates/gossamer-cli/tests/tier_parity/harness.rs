@@ -1,9 +1,12 @@
-// Tier parity gate - VM, Cranelift debug, LLVM release.
+// Tier parity gate - VM, Cranelift JIT, LLVM release, LLVM debug.
 //
 // Every `.gos` source under `examples/` and
-// `feature-testing-examples/` is run in all three tiers and the
-// captured stdout / exit code must match. The harness is the
-// single source of truth for cross-tier behaviour: a regression in
+// `feature-testing-examples/` is run in the bytecode VM, the forced
+// Cranelift JIT, and the LLVM AOT release binary, and the captured
+// stdout / exit code must match. A justified subset also runs through
+// the LLVM AOT *debug* binary, whose MIR profile, `opt`/`llc` levels,
+// and integer-overflow semantics differ from release. The harness is
+// the single source of truth for cross-tier behaviour: a regression in
 // any backend turns this suite red.
 //
 // Examples needing CLI args, stdin, or running an HTTP server
@@ -11,10 +14,9 @@
 // examples are bounded with a hard 60 s wall clock cap so a
 // regression that hangs a tier cannot stall CI.
 //
-// `GOSSAMER_FAIL_ON_LLVM_FALLBACK` is enabled separately by
-// `llvm_release_lowers_every_example_without_fallback`, surfacing
-// "LLVM body silently routed to Cranelift" regressions distinct
-// from output-level parity.
+// `llvm_strict_lower_group_N` builds every spec with `gos build
+// --release` on its own, surfacing an LLVM lowering gap (a hard build
+// error) distinct from an output-level parity failure.
 
 use std::env;
 use std::fs;
@@ -63,6 +65,10 @@ enum Tier {
     Vm,
     Cranelift,
     Llvm,
+    /// `gos build` without `--release`: a different MIR optimisation
+    /// profile, `opt -O1` + `llc -O0` instead of `-O3`, and panicking
+    /// (rather than wrapping) integer overflow.
+    LlvmDebug,
 }
 
 impl Tier {
@@ -71,6 +77,7 @@ impl Tier {
             Tier::Vm => "vm",
             Tier::Cranelift => "cranelift",
             Tier::Llvm => "llvm",
+            Tier::LlvmDebug => "llvm-debug",
         }
     }
 }
@@ -91,6 +98,10 @@ struct Spec {
     skip_parity: Option<&'static str>,
     /// Skip everything (including the VM run) with a reason.
     skip_all: Option<&'static str>,
+    /// Skip the debug-AOT tier only, with the reason the fixture is
+    /// expected to read differently there (debug builds panic on
+    /// integer overflow where release wraps).
+    skip_debug_aot: Option<&'static str>,
     /// HTTP-server fixture: spawn, sleep `boot_ms`, send a probe,
     /// kill, compare the probe response across tiers.
     server: Option<ServerFixture>,
@@ -115,6 +126,7 @@ const fn spec(path: &'static str) -> Spec {
         allow_nonzero: false,
         skip_parity: None,
         skip_all: None,
+        skip_debug_aot: None,
         server: None,
     }
 }
@@ -389,6 +401,29 @@ const SPECS: &[Spec] = &[
     // (scalar / string / float / struct payloads, two type parameters,
     // nesting, and an array of generic structs).
     spec("feature-testing-examples/generic_struct_types.gos"),
+    // A method on a bounded `impl<T: Trait>` block dispatching through its
+    // type parameter, with the receiver reached through a field. The concrete
+    // impl takes `&self`, so the specialised copy passes its address.
+    spec("feature-testing-examples/generic_impl_bound_dispatch.gos"),
+    // A variable-bound range loop must not advance the binding that supplied
+    // its start, so re-entering it from an enclosing loop starts over.
+    spec("feature-testing-examples/range_loop_bound_not_mutated.gos"),
+    // A tagged-pointer enum reached through the combinator surface, through a
+    // closure argument at a direct call site, and a generic struct whose field
+    // offsets come from the per-instantiation layout rather than the declared
+    // one. Each shape previously read a slot address as a handle.
+    spec("feature-testing-examples/aggr_enum_vec_combinators.gos"),
+    spec("feature-testing-examples/aggr_enum_closure_arg.gos"),
+    spec("feature-testing-examples/aggr_generic_struct_layout.gos"),
+    // Two bounds on one parameter, the same pair written as a `where`
+    // clause, one clause constraining two parameters, and impl-level plus
+    // method-level bounds side by side - every bound resolves its own
+    // trait's methods.
+    spec("feature-testing-examples/typing_multi_bound.gos"),
+    // Product and nested-payload match coverage: a tuple scrutinee, a fixed
+    // array with a rest pattern, a nested `Option<Result<..>>`, and a
+    // struct-variant pattern binding named fields through a reference.
+    spec("feature-testing-examples/typing_match_exhaustiveness.gos"),
     // An enum-variant payload (`Ok(..)` / `Some(..)`) whose struct has a
     // nested struct-typed field: reading `v.inner.field` after the match must
     // resolve the leaf against the inner struct's type on every tier, so the
@@ -611,6 +646,7 @@ const SPECS: &[Spec] = &[
         nondeterministic: true,
         ..spec("feature-testing-examples/channel_fan_in.gos")
     },
+    spec("feature-testing-examples/capture_by_reference.gos"),
     spec("feature-testing-examples/closure_capture_mutation.gos"),
     spec("feature-testing-examples/closure_lifetime_inference.gos"),
     spec("feature-testing-examples/closure_payload_typing.gos"),
@@ -736,6 +772,9 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/struct_tuple_map_key.gos"),
     spec("feature-testing-examples/struct_keyed_map_value_iter.gos"),
     spec("feature-testing-examples/debug_option_result.gos"),
+    spec("feature-testing-examples/debugfmt_floats.gos"),
+    spec("feature-testing-examples/debugfmt_aggregates.gos"),
+    spec("feature-testing-examples/debugfmt_nested_floats.gos"),
     spec("feature-testing-examples/goroutine_panic_join.gos"),
     spec("feature-testing-examples/chan_struct_local_recv.gos"),
     spec("feature-testing-examples/chan_select_struct_payload.gos"),
@@ -746,6 +785,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/option_result_chain_methods.gos"),
     spec("feature-testing-examples/process_spawn_piped.gos"),
     spec("feature-testing-examples/method_dispatch_collision.gos"),
+    spec("feature-testing-examples/module_qualified_enum_ctor.gos"),
     spec("feature-testing-examples/module_same_fn_names.gos"),
     spec("feature-testing-examples/mutex_poison_recovery.gos"),
     spec("feature-testing-examples/mutex_vs_channel_counter.gos"),
@@ -787,6 +827,14 @@ const SPECS: &[Spec] = &[
     // cell pinned by the creating scope, so liveness never depends on the
     // source binding's last read on any tier.
     spec("feature-testing-examples/weak_value_referent.gos"),
+    // A `Weak` into a member of the classic reference-cycle shape: aggregate
+    // stores copy and `downgrade()` pins its referent for the enclosing
+    // scope, so `upgrade()` never observes when the collector ran.
+    spec("feature-testing-examples/weak_into_strong_cycle.gos"),
+    // A Gossamer `String` carries a byte length and may hold interior NULs;
+    // every compiled-tier shim must read it through that length rather than
+    // scanning for a terminator.
+    spec("feature-testing-examples/nul_in_strings.gos"),
     spec("feature-testing-examples/recursive_enum_walk.gos"),
     // Structural `==` / `!=` on heap (recursive / Box / Vec-bearing) enums:
     // equal-but-distinct allocations compare true on every tier.
@@ -837,6 +885,10 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/stdlib_strings_free.gos"),
     spec("feature-testing-examples/stdlib_compiled_wiring.gos"),
     spec("feature-testing-examples/stdlib_path_free.gos"),
+    spec("feature-testing-examples/stdlib_path_glob.gos"),
+    spec("feature-testing-examples/stdlib_sort_module.gos"),
+    spec("feature-testing-examples/stdlib_errors_chain.gos"),
+    spec("feature-testing-examples/stdlib_io_adapters.gos"),
     spec("feature-testing-examples/stdlib_time_free.gos"),
     spec("feature-testing-examples/stdlib_hash.gos"),
     spec("feature-testing-examples/stdlib_math_bits.gos"),
@@ -1060,6 +1112,36 @@ const SPECS: &[Spec] = &[
     // MIR dispatch wiring so the parses stay bit-identical across the VM,
     // Cranelift JIT, and LLVM AOT.
     spec("feature-testing-examples/stdlib_surface_join_parse_take.gos"),
+    // Eager combinator shims index a `GosVec`, while a range is lazy iterator
+    // state. A chain whose element or output type keeps it off the lazy path
+    // has to snapshot its source first, so the snapshot must happen on every
+    // tier: the VM walked the range while the compiled tiers read the lazy
+    // handle's words as a Vec header.
+    spec("feature-testing-examples/nested_vec_capture.gos"),
+    // Associated types: projected through a bound, defaulted by the trait,
+    // and pinned by an `Item = T` equality constraint. Each projection
+    // resolves to a concrete type before lowering, so the three tiers agree.
+    spec("feature-testing-examples/assoc_type_through_bound.gos"),
+    spec("feature-testing-examples/assoc_type_default.gos"),
+    spec("feature-testing-examples/assoc_type_binding.gos"),
+    // Associated constants read through a concrete type, `Self`, and a bound
+    // parameter. Each hoists to a top-level constant, so the value is the
+    // same one every tier folds.
+    spec("feature-testing-examples/assoc_const_read.gos"),
+    Spec {
+        skip_all: Some("rejected at check: the impl omits a required associated type"),
+        ..spec("feature-testing-examples/assoc_missing_impl_item.gos")
+    },
+    // Element-typed combinator surfaces: the element's own class decides the
+    // runtime helper, the callback's register classes, and the terminal's
+    // result type, so every tier reads the same bits.
+    spec("feature-testing-examples/elemty_float_terminals.gos"),
+    spec("feature-testing-examples/elemty_float_eager.gos"),
+    spec("feature-testing-examples/elemty_string_closures.gos"),
+    spec("feature-testing-examples/elemty_aggregate_elements.gos"),
+    spec("feature-testing-examples/elemty_struct_keyed_map.gos"),
+    spec("feature-testing-examples/elemty_btreemap_shapes.gos"),
+    spec("feature-testing-examples/elemty_narrow_element_stride.gos"),
 ];
 
 const DEDICATED_FEATURE_TESTING_EXAMPLES: &[&str] = &[
@@ -1071,6 +1153,7 @@ const DEDICATED_FEATURE_TESTING_EXAMPLES: &[&str] = &[
     "http_server_headers.gos",
     "http_middleware_bearer.gos",
     "http_middleware_compose.gos",
+    "stdlib_http_middleware_stack.gos",
     "http_middleware_ws.gos",
     "http_router_params.gos",
     "http_router_typed_params.gos",
@@ -1395,6 +1478,10 @@ fn run_jit(src: &Path, args: &[&str], stdin: &[u8]) -> Run {
     cmd.arg("run")
         .arg(src)
         .env("GOSSAMER_JIT_THRESHOLD", "1")
+        // Makes the Cranelift tier report how many native entries it
+        // installed, so `parity_walk` can prove the run was not a second
+        // bytecode-VM execution wearing the JIT's label.
+        .env("GOS_JIT_STATS", "1")
         .env_remove("GOS_JIT");
     let mut parts: Vec<String> = vec![
         "GOSSAMER_JIT_THRESHOLD=1".to_string(),
@@ -1529,9 +1616,14 @@ fn run_tier(spec: &Spec, tier: Tier) -> Result<Run, String> {
     match tier {
         Tier::Vm => Ok(run_vm(&src, spec.args, spec.stdin)),
         Tier::Cranelift => Ok(run_jit(&src, spec.args, spec.stdin)),
-        Tier::Llvm => {
-            let scratch = fresh_dir(&format!("ll-{}", file_tag(spec.path)));
-            let bin = build_native(&src, true, &scratch)?;
+        Tier::Llvm | Tier::LlvmDebug => {
+            let release = tier == Tier::Llvm;
+            let scratch = fresh_dir(&format!(
+                "{prefix}-{tag}",
+                prefix = if release { "ll" } else { "lldbg" },
+                tag = file_tag(spec.path),
+            ));
+            let bin = build_native(&src, release, &scratch)?;
             let run = run_native(&bin, spec.args, spec.stdin);
             let _ = fs::remove_dir_all(&scratch);
             Ok(run)
@@ -1633,7 +1725,7 @@ fn vm_runs_every_example_without_crashing() {
 const PARITY_GROUPS: usize = 6;
 
 macro_rules! parity_group_tests {
-    ($($g:literal => $cranelift:ident, $llvm:ident, $strict:ident;)*) => {
+    ($($g:literal => $cranelift:ident, $llvm:ident, $llvm_debug:ident, $strict:ident;)*) => {
         $(
             #[test]
             fn $cranelift() {
@@ -1644,20 +1736,149 @@ macro_rules! parity_group_tests {
                 parity_walk(Tier::Llvm, $g);
             }
             #[test]
+            fn $llvm_debug() {
+                parity_walk(Tier::LlvmDebug, $g);
+            }
+            #[test]
             fn $strict() {
-                lowers_without_fallback_group($g);
+                strict_lowering_group($g);
             }
         )*
     };
 }
 
 parity_group_tests! {
-    0 => cranelift_parity_group_0, llvm_parity_group_0, llvm_strict_lower_group_0;
-    1 => cranelift_parity_group_1, llvm_parity_group_1, llvm_strict_lower_group_1;
-    2 => cranelift_parity_group_2, llvm_parity_group_2, llvm_strict_lower_group_2;
-    3 => cranelift_parity_group_3, llvm_parity_group_3, llvm_strict_lower_group_3;
-    4 => cranelift_parity_group_4, llvm_parity_group_4, llvm_strict_lower_group_4;
-    5 => cranelift_parity_group_5, llvm_parity_group_5, llvm_strict_lower_group_5;
+    0 => cranelift_parity_group_0, llvm_parity_group_0, llvm_debug_parity_group_0, llvm_strict_lower_group_0;
+    1 => cranelift_parity_group_1, llvm_parity_group_1, llvm_debug_parity_group_1, llvm_strict_lower_group_1;
+    2 => cranelift_parity_group_2, llvm_parity_group_2, llvm_debug_parity_group_2, llvm_strict_lower_group_2;
+    3 => cranelift_parity_group_3, llvm_parity_group_3, llvm_debug_parity_group_3, llvm_strict_lower_group_3;
+    4 => cranelift_parity_group_4, llvm_parity_group_4, llvm_debug_parity_group_4, llvm_strict_lower_group_4;
+    5 => cranelift_parity_group_5, llvm_parity_group_5, llvm_debug_parity_group_5, llvm_strict_lower_group_5;
+}
+
+/// The overflow fixtures `skip_all` excludes from the parity walk, because
+/// their VM result must differ from an optimised release build: debug
+/// execution checks integer overflow where release wraps.
+///
+/// The debug-AOT tier keeps the checking semantics, so these fixtures DO have
+/// a defined cross-tier contract there - one the release-only walk could never
+/// state. Running them here is the coverage `skip_all` gives up.
+const DEBUG_AOT_OVERFLOW_FIXTURES: &[&str] = &[
+    "feature-testing-examples/byte_vec_i64_model.gos",
+    "feature-testing-examples/integer_overflow_edges.gos",
+    "feature-testing-examples/neg_int_min_wraps.gos",
+];
+
+#[test]
+fn debug_aot_matches_vm_on_overflow_checked_fixtures() {
+    let mut failures = Vec::new();
+    for path in DEBUG_AOT_OVERFLOW_FIXTURES {
+        let fixture = Spec {
+            allow_nonzero: true,
+            ..spec(path)
+        };
+        let vm = match run_tier(&fixture, Tier::Vm) {
+            Ok(r) => r,
+            Err(e) => {
+                failures.push(format!("{path}: vm error: {e}"));
+                continue;
+            }
+        };
+        let debug_aot = match run_tier(&fixture, Tier::LlvmDebug) {
+            Ok(r) => r,
+            Err(e) => {
+                failures.push(format!("{path}: llvm-debug error: {e}"));
+                continue;
+            }
+        };
+        if let Some(d) = divergence(&fixture, (Tier::Vm, &vm), (Tier::LlvmDebug, &debug_aot)) {
+            failures.push(d);
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} debug-AOT overflow parity failures:\n{}",
+        failures.len(),
+        failures.join("\n\n"),
+    );
+}
+
+/// Highest native-entry count the Cranelift tier reported on stderr, or
+/// `None` when it never reported one.
+///
+/// `GOS_JIT_STATS=1` makes every JIT compilation attempt emit one
+/// `gos-jit-stats: compiled=N` line. A program compiles more than once (the
+/// VM re-promotes as new bodies get hot), so the run installed native code
+/// whenever the highest reported count is non-zero.
+fn jit_installed_entries(stderr: &str) -> Option<usize> {
+    stderr
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("gos-jit-stats: compiled="))
+        .filter_map(|n| n.trim().parse::<usize>().ok())
+        .max()
+}
+
+/// Fixtures whose Cranelift-tier run installs no native entry, each with the
+/// admission reason `GOS_JIT_TRACE` reports for it. Every other fixture must
+/// compile at least one body: otherwise the "cranelift" column of the parity
+/// walk is a second bytecode-VM run and proves nothing about the JIT.
+///
+/// The rows live in `jit_no_compile.tsv` rather than in a Rust literal so the
+/// list stays one line per fixture and reads as data. Its header documents
+/// each reason. Shrinking the file is the point: every row that disappears is
+/// a fixture whose Cranelift column started meaning something.
+fn jit_compiles_nothing() -> &'static [(String, String)] {
+    static ROWS: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
+    ROWS.get_or_init(|| {
+        include_str!("jit_no_compile.tsv")
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(|line| {
+                let (path, reason) = line.split_once('\t').unwrap_or_else(|| {
+                    panic!("jit_no_compile.tsv row is not TAB-separated: {line:?}")
+                });
+                (path.to_string(), reason.to_string())
+            })
+            .collect()
+    })
+}
+
+#[test]
+fn jit_allowlist_rows_name_real_specs() {
+    use std::collections::BTreeSet;
+
+    let known: BTreeSet<&str> = SPECS.iter().map(|spec| spec.path).collect();
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    let mut problems = Vec::new();
+    for (path, reason) in jit_compiles_nothing() {
+        if !known.contains(path.as_str()) {
+            problems.push(format!("{path}: not a SPECS row"));
+        }
+        if !seen.insert(path.as_str()) {
+            problems.push(format!("{path}: duplicate row"));
+        }
+        if reason.is_empty() {
+            problems.push(format!("{path}: empty reason"));
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "jit_no_compile.tsv is stale:\n  {}",
+        problems.join("\n  "),
+    );
+}
+
+#[test]
+fn jit_stats_line_is_parsed_from_stderr() {
+    assert_eq!(
+        jit_installed_entries("gos-jit-stats: compiled=0\n"),
+        Some(0)
+    );
+    assert_eq!(
+        jit_installed_entries("noise\ngos-jit-stats: compiled=3\ngos-jit-stats: compiled=1\n"),
+        Some(3),
+    );
+    assert_eq!(jit_installed_entries("no stats here\n"), None);
 }
 
 /// Serialises every parity walk so concurrent test functions can't
@@ -1678,6 +1899,9 @@ fn parity_walk(compiled: Tier, group: usize) {
             continue;
         }
         if spec.skip_all.is_some() || spec.skip_parity.is_some() || spec.server.is_some() {
+            continue;
+        }
+        if compiled == Tier::LlvmDebug && spec.skip_debug_aot.is_some() {
             continue;
         }
         if trace {
@@ -1710,6 +1934,30 @@ fn parity_walk(compiled: Tier, group: usize) {
         };
         if let Some(d) = divergence(spec, (Tier::Vm, &vm), (compiled, &other)) {
             failures.push(d);
+        }
+        if compiled == Tier::Cranelift {
+            let allowlisted = jit_compiles_nothing()
+                .iter()
+                .any(|(path, _)| path == spec.path);
+            let installed = jit_installed_entries(&other.stderr).unwrap_or(0);
+            if !allowlisted && installed == 0 {
+                failures.push(format!(
+                    "{path}: the cranelift tier installed no native entry, so this row \
+                     compared the bytecode VM against itself. Run `GOS_JIT_TRACE=1 \
+                     GOSSAMER_JIT_THRESHOLD=1 gos run {path}` to see which admission \
+                     rule excluded every body, then either restore JIT coverage or add \
+                     the fixture to jit_no_compile.tsv with the reason.",
+                    path = spec.path,
+                ));
+            }
+            if allowlisted && installed > 0 {
+                failures.push(format!(
+                    "{path}: listed in jit_no_compile.tsv but the cranelift tier \
+                     installed {installed} native entries. Delete the row - this \
+                     fixture now exercises the JIT.",
+                    path = spec.path,
+                ));
+            }
         }
     }
     assert!(

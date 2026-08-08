@@ -1,0 +1,52 @@
+// A generic parameter carrying two bounds resolves methods from both
+// traits, and a `where` clause bounds a parameter exactly as the angle
+// brackets do. Impl-level and method-level bounds coexist without
+// displacing one another. Output must be bit-identical across the VM,
+// Cranelift, and LLVM.
+trait Named { fn label(&self) -> String }
+
+trait Weighed { fn grams(&self) -> i64 }
+
+struct Item { name: String, mass: i64 }
+
+impl Named for Item {
+    fn label(&self) -> String { self.name }
+}
+
+impl Weighed for Item {
+    fn grams(&self) -> i64 { self.mass }
+}
+
+// Both bounds in the angle brackets.
+fn describe<T: Named + Weighed>(x: &T) -> String {
+    format!("{} weighs {}g", x.label(), x.grams())
+}
+
+// The same two bounds, written as a `where` clause.
+fn summarize<T>(x: &T) -> String where T: Named + Weighed {
+    format!("{}:{}", x.label(), x.grams())
+}
+
+// One `where` clause constraining two parameters.
+fn heavier<T, U>(a: &T, b: &U) -> String where T: Named + Weighed, U: Weighed {
+    if a.grams() >= b.grams() { a.label() } else { "other".to_string() }
+}
+
+struct Crate<T: Weighed> { content: T }
+
+impl<T: Weighed> Crate<T> {
+    fn shipping<U: Named>(&self, tag: &U) -> String {
+        format!("{} {}", tag.label(), self.content.grams())
+    }
+}
+
+fn main() {
+    let bolt = Item { name: "bolt", mass: 12 }
+    let plate = Item { name: "plate", mass: 340 }
+    println!("{}", describe(&bolt))
+    println!("{}", summarize(&plate))
+    println!("{}", heavier(&plate, &bolt))
+    println!("{}", heavier(&bolt, &plate))
+    let boxed = Crate { content: plate }
+    println!("{}", boxed.shipping(&bolt))
+}

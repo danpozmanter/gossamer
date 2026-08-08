@@ -210,7 +210,6 @@ pub(super) fn lower_intrinsic_call_handles(
         | "gos_rt_vec_mark_rc_elems"
         | "gos_rt_vec_mark_vec_elems"
         | "gos_rt_set_free"
-        | "gos_rt_btmap_free"
         | "gos_rt_arr_iter_free" => {
             let static_name: &'static str = match name {
                 "gos_rt_map_free" => "gos_rt_map_free",
@@ -219,7 +218,6 @@ pub(super) fn lower_intrinsic_call_handles(
                 "gos_rt_vec_mark_rc_elems" => "gos_rt_vec_mark_rc_elems",
                 "gos_rt_vec_mark_vec_elems" => "gos_rt_vec_mark_vec_elems",
                 "gos_rt_set_free" => "gos_rt_set_free",
-                "gos_rt_btmap_free" => "gos_rt_btmap_free",
                 "gos_rt_arr_iter_free" => "gos_rt_arr_iter_free",
                 _ => unreachable!(),
             };
@@ -240,21 +238,19 @@ pub(super) fn lower_intrinsic_call_handles(
         // HashMap iteration helpers - each returns a *mut GosVec
         // snapshot of the requested column so the for-loop lowerer
         // can iterate it through the regular gos_rt_vec_* helpers.
-        // The btmap_keys helper is the BTreeMap equivalent and
-        // shares the same dispatch shape (`m: *mut Tagged → *mut
-        // GosVec`), enabling `for (k, v) in btmap.iter()` to work
-        // in compiled mode (was infinite-looping before).
+        // The aggregate-key snapshot shares the same shape, rebuilding each
+        // struct or tuple key from the map's own slot descriptor.
         "gos_rt_map_keys_i64"
         | "gos_rt_map_values_i64"
         | "gos_rt_map_keys_str"
         | "gos_rt_map_values_str"
-        | "gos_rt_btmap_keys" => {
+        | "gos_rt_map_keys_skey" => {
             let static_name: &'static str = match name {
                 "gos_rt_map_keys_i64" => "gos_rt_map_keys_i64",
                 "gos_rt_map_values_i64" => "gos_rt_map_values_i64",
                 "gos_rt_map_keys_str" => "gos_rt_map_keys_str",
                 "gos_rt_map_values_str" => "gos_rt_map_values_str",
-                "gos_rt_btmap_keys" => "gos_rt_btmap_keys",
+                "gos_rt_map_keys_skey" => "gos_rt_map_keys_skey",
                 _ => unreachable!(),
             };
             let rt_fn = intrinsics.extern_fn(module, static_name, &[ptr_ty], &[ptr_ty])?;

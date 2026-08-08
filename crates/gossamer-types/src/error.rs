@@ -324,6 +324,79 @@ pub enum TypeError {
         /// Traits the parameter is bound by, in source order.
         bounds: Vec<String>,
     },
+    /// An operator was applied to a generic parameter that none of its
+    /// trait bounds gives the operator's method. The parameter stands for
+    /// every type a caller may supply, so a bound has to license the
+    /// operation.
+    #[error("`{op}` cannot be applied to type parameter `{param}`")]
+    OperatorNotOnBound {
+        /// Source-level name of the type parameter (`T`, `U`, ...).
+        param: String,
+        /// Operator as written.
+        op: String,
+        /// Trait that licenses the operator (`Add`, `Neg`, ...).
+        trait_name: String,
+        /// Method the operator dispatches to (`add`, `neg`, ...).
+        method: String,
+        /// Traits the parameter is bound by, in source order.
+        bounds: Vec<String>,
+    },
+    /// A trait impl leaves out a method the trait declares without a
+    /// default body. Every call through the trait lowers to a direct call
+    /// to that method, so the impl has to define it.
+    #[error(
+        "`impl {trait_name} for {ty}` is missing {}: {}",
+        if missing.len() == 1 { "method" } else { "methods" },
+        missing.iter().map(|m| format!("`{m}`")).collect::<Vec<_>>().join(", ")
+    )]
+    MissingTraitImplMethods {
+        /// Trait being implemented.
+        trait_name: String,
+        /// Type the impl attaches to.
+        ty: String,
+        /// Trait methods with no body in this impl and no default.
+        missing: Vec<String>,
+    },
+    /// A trait impl leaves out an associated type or constant the trait
+    /// declares without a default. Every projection through the trait has
+    /// to land on a concrete item, so the impl has to supply it.
+    #[error(
+        "`impl {trait_name} for {ty}` is missing associated {}: {}",
+        if missing.len() == 1 { "item" } else { "items" },
+        missing.iter().map(|m| format!("`{m}`")).collect::<Vec<_>>().join(", ")
+    )]
+    MissingTraitImplAssocItems {
+        /// Trait being implemented.
+        trait_name: String,
+        /// Type the impl attaches to.
+        ty: String,
+        /// Missing items rendered as `type Item` / `const MAX`.
+        missing: Vec<String>,
+    },
+    /// A path projected an associated item that nothing in scope declares.
+    #[error("no associated item named `{name}` on `{base}`")]
+    UnknownAssocItem {
+        /// Base the projection was written against (`T`, `Self`, a type).
+        base: String,
+        /// Associated item name as written.
+        name: String,
+        /// Associated item names the base's traits do declare.
+        declared: Vec<String>,
+    },
+    /// An associated item reached through a trait has more than one
+    /// candidate impl and no equality constraint picking one.
+    #[error("associated {kind} `{name}` of trait `{trait_name}` is ambiguous through `{base}`")]
+    AmbiguousAssocItem {
+        /// Base the projection was written against.
+        base: String,
+        /// Trait declaring the associated item.
+        trait_name: String,
+        /// Associated item name.
+        name: String,
+        /// `"type"` or `"const"` - an equality constraint pins a type,
+        /// while a constant needs a concrete base or a trait default.
+        kind: &'static str,
+    },
     /// A built-in iterator was passed to a parameter bound by an iteration
     /// trait. Only a type with an impl block can specialise such a call.
     #[error("`{ty}` cannot instantiate a parameter bound by an iteration trait")]
@@ -650,6 +723,11 @@ impl TypeError {
             Self::UnknownTraitBound { .. } => "unknown-trait-bound",
             Self::TraitBoundNotSatisfied { .. } => "trait-bound-not-satisfied",
             Self::MethodNotOnBound { .. } => "method-not-on-bound",
+            Self::OperatorNotOnBound { .. } => "operator-not-on-bound",
+            Self::MissingTraitImplMethods { .. } => "missing-trait-impl-methods",
+            Self::MissingTraitImplAssocItems { .. } => "missing-trait-impl-assoc-items",
+            Self::UnknownAssocItem { .. } => "unknown-assoc-item",
+            Self::AmbiguousAssocItem { .. } => "ambiguous-assoc-item",
             Self::BuiltinIteratorNotGeneric { .. } => "builtin-iterator-not-generic",
             Self::TooManyVariants { .. } => "too-many-variants",
             Self::ClosureParamUninferred { .. } => "closure-param-uninferred",
@@ -735,7 +813,11 @@ impl TypeError {
             Self::IteratorStateConsumed { .. } => "GT0042",
             Self::JsonNotSerializable { .. } => "GT0016",
             Self::TraitBoundNotSatisfied { .. } => "GT0017",
-            Self::MethodNotOnBound { .. } => "GT0056",
+            Self::MethodNotOnBound { .. } | Self::OperatorNotOnBound { .. } => "GT0056",
+            Self::MissingTraitImplMethods { .. } => "GT0058",
+            Self::MissingTraitImplAssocItems { .. } => "GT0059",
+            Self::UnknownAssocItem { .. } => "GT0060",
+            Self::AmbiguousAssocItem { .. } => "GT0061",
             Self::BuiltinIteratorNotGeneric { .. } => "GT0057",
             Self::CallArityMismatch { .. } => "GT0018",
             Self::UnknownVariant { .. } => "GT0019",
@@ -1091,6 +1173,94 @@ impl TypeDiagnostic {
                         bounds.join("`, `")
                     ),
                 });
+            }
+            TypeError::OperatorNotOnBound {
+                param,
+                op,
+                trait_name,
+                method,
+                bounds,
+            } => {
+                out = out
+                    .with_help(format!(
+                        "bound the parameter as `{param}: {trait_name}` so every instantiation \
+                         supplies `{op}`"
+                    ))
+                    .with_note(match bounds.as_slice() {
+                        [] => format!("`{param}` has no trait bound, so it has no `fn {method}`"),
+                        _ => format!("none of `{}` declares `fn {method}`", bounds.join("`, `")),
+                    });
+            }
+            TypeError::MissingTraitImplMethods {
+                trait_name,
+                ty,
+                missing,
+            } => {
+                out = out
+                    .with_help(format!(
+                        "add {} to `impl {trait_name} for {ty}`, or give {} a default body in \
+                         `trait {trait_name}`",
+                        missing
+                            .iter()
+                            .map(|m| format!("`fn {m}`"))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        if missing.len() == 1 { "it" } else { "them" },
+                    ))
+                    .with_note(
+                        "a call through the trait lowers to a direct call to each declared method",
+                    );
+            }
+            TypeError::MissingTraitImplAssocItems {
+                trait_name,
+                ty,
+                missing,
+            } => {
+                out = out
+                    .with_help(format!(
+                        "add {} to `impl {trait_name} for {ty}`, or give {} a default in \
+                         `trait {trait_name}`",
+                        missing
+                            .iter()
+                            .map(|m| format!("`{m} = ...`"))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        if missing.len() == 1 { "it" } else { "them" },
+                    ))
+                    .with_note(
+                        "a projection through the trait has to land on a concrete item in this impl",
+                    );
+            }
+            TypeError::UnknownAssocItem {
+                base,
+                name,
+                declared,
+            } => {
+                out = out.with_help(match declared.as_slice() {
+                    [] => format!("nothing in scope declares an associated `{name}` for `{base}`"),
+                    _ => format!("available here: `{}`", declared.join("`, `")),
+                });
+            }
+            TypeError::AmbiguousAssocItem {
+                base,
+                trait_name,
+                name,
+                kind,
+            } => {
+                let help = if *kind == "type" {
+                    format!(
+                        "write `{base}: {trait_name}<{name} = ...>` to pin it, or name the \
+                         concrete type instead of `{base}`"
+                    )
+                } else {
+                    format!(
+                        "name the concrete type instead of `{base}`, or give `{trait_name}` a \
+                         default `const {name}`"
+                    )
+                };
+                out = out.with_help(help).with_note(format!(
+                    "several impls of `{trait_name}` supply `{name}` and it has no default"
+                ));
             }
             TypeError::BuiltinIteratorNotGeneric { ty } => {
                 out = out.with_help(format!(

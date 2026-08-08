@@ -1,0 +1,32 @@
+// `BTreeMap<K, V>` is served by the sorted map snapshot for every key and
+// value pairing, not only `<String, i64>`: each instantiation keeps sorted
+// key order and reads its values at the right width.
+
+use std::collections
+
+fn main() {
+    let mut ints: BTreeMap<i64, i64> = BTreeMap::new()
+    ints.insert(5, 50)
+    ints.insert(2, 20)
+    ints.insert(300, 300)
+    println!("ints-len {}", ints.len())
+    for (k, v) in ints.iter() { println!("int {} {}", k, v) }
+
+    let mut texts: BTreeMap<String, String> = BTreeMap::new()
+    texts.insert("b", "bee")
+    texts.insert("a", "ay")
+    println!("texts-len {}", texts.len())
+    for (k, v) in texts.iter() { println!("text {} {}", k, v) }
+
+    let mut mixed: BTreeMap<i64, String> = BTreeMap::new()
+    mixed.insert(2, "two")
+    mixed.insert(1, "one")
+    for (k, v) in mixed.iter() { println!("mixed {} {}", k, v) }
+
+    let mut scores: BTreeMap<String, i64> = BTreeMap::new()
+    scores.insert("beta", 2)
+    scores.insert("alpha", 1)
+    println!("keys {}", scores.keys())
+    println!("values {}", scores.values())
+    println!("get_or {}", scores.get_or("alpha", 0))
+}

@@ -111,7 +111,6 @@ use chrono::{
     Timelike, Utc,
 };
 use chrono_tz::Tz;
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use crate::c_abi::{gos_rt_error_new, gos_rt_gc_alloc, gos_rt_result_new};
@@ -125,9 +124,7 @@ fn read_time_string(ptr: *const c_char) -> Result<String, String> {
     if ptr.is_null() {
         return Err("time: null string".to_string());
     }
-    Ok(unsafe { CStr::from_ptr(ptr) }
-        .to_string_lossy()
-        .into_owned())
+    Ok(unsafe { crate::c_abi::gos_str_arg_string(ptr) })
 }
 
 fn parse_location(spec: &str) -> Result<CivilLocation, String> {

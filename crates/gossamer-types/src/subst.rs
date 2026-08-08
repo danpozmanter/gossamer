@@ -5,7 +5,7 @@
 use crate::ty::Ty;
 
 /// One argument in a [`Substs`] list.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum GenericArg {
     /// A type argument - the `T` in `Vec<T>`.
     Type(Ty),
@@ -19,7 +19,7 @@ pub enum GenericArg {
 ///
 /// The first entries are type arguments in declaration order; const
 /// arguments follow. The empty substitution is written `Substs::EMPTY`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Substs {
     args: Vec<GenericArg>,
 }

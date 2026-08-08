@@ -10,7 +10,6 @@
 //! as `Vec<Vec<String>>` - an outer `GosVec` of inner `GosVec`
 //! pointers, each inner holding c-string pointers.
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::errors::gos_rt_error_new;
@@ -36,7 +35,7 @@ unsafe fn read_str_vec(v: *const GosVec) -> Vec<String> {
             if p.is_null() {
                 String::new()
             } else {
-                unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+                unsafe { crate::c_abi::gos_str_arg_string(p) }
             }
         })
         .collect()
@@ -86,11 +85,7 @@ fn parse_line(line: &str) -> Vec<String> {
 }
 
 unsafe fn cstr<'a>(p: *const c_char) -> &'a str {
-    if p.is_null() {
-        ""
-    } else {
-        unsafe { CStr::from_ptr(p) }.to_str().unwrap_or("")
-    }
+    unsafe { crate::c_abi::gos_str_arg_text(p) }
 }
 
 /// `encoding::csv::parse_line(line) -> [String]`.
@@ -184,6 +179,7 @@ pub unsafe extern "C" fn gos_rt_csv_write(records: *const GosVec) -> *mut c_char
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::CStr;
 
     /// Refcount word of an `alloc_cstring` builder-layout string:
     /// `[rc:u32][cap:u32][len:u32][tag][content][NUL]`, body at +13.

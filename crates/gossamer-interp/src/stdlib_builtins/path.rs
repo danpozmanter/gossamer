@@ -121,6 +121,8 @@ pub(crate) fn install_path(globals: &mut Vec<(&'static str, Value)>) {
             ("prefixes", builtin_path_prefixes),
             ("unique_prefixes", builtin_path_unique_prefixes),
             ("starts_with", builtin_path_starts_with),
+            ("matches", builtin_path_matches),
+            ("glob", builtin_path_glob),
         ],
         globals,
     );
@@ -183,6 +185,24 @@ pub(crate) fn builtin_path_starts_with(args: &[Value]) -> RuntimeResult<Value> {
     let path = args.first().and_then(as_str).unwrap_or("");
     let prefix = args.get(1).and_then(as_str).unwrap_or("");
     Ok(Value::Bool(path_std::has_prefix(path, prefix)))
+}
+
+/// `path::matches(pattern, name) -> bool` - Go `filepath.Match`
+/// single-segment shell-glob matching; `*` and `?` never cross a `/`.
+pub(crate) fn builtin_path_matches(args: &[Value]) -> RuntimeResult<Value> {
+    let pattern = args.first().and_then(as_str).unwrap_or("");
+    let name = args.get(1).and_then(as_str).unwrap_or("");
+    Ok(Value::Bool(path_std::matches(pattern, name)))
+}
+
+/// `path::glob(pattern) -> Result<Vec<String>, errors::Error>` - sorted
+/// filesystem matches for a `*` / `?` / `[abc]` / `**` pattern.
+pub(crate) fn builtin_path_glob(args: &[Value]) -> RuntimeResult<Value> {
+    let pattern = args.first().and_then(as_str).unwrap_or("");
+    match path_std::glob(pattern) {
+        Ok(paths) => Ok(ok_variant(string_array(paths))),
+        Err(e) => Ok(err_variant(e.to_string())),
+    }
 }
 
 pub(crate) fn builtin_path_parent(args: &[Value]) -> RuntimeResult<Value> {

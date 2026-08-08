@@ -364,7 +364,7 @@ impl<'a> Builder<'a> {
                 self.tcx.int_ty(gossamer_types::IntTy::I64)
             }
             "gos_rt_sync_map_contains" | "gos_rt_deque_is_empty" => self.tcx.bool_ty(),
-            "gos_rt_sync_map_keys" | "gos_rt_btmap_keys" => {
+            "gos_rt_sync_map_keys" => {
                 let s = self.tcx.string_ty();
                 self.tcx.intern(gossamer_types::TyKind::Vec(s))
             }
@@ -883,6 +883,7 @@ impl<'a> Builder<'a> {
             | "gos_rt_json_is_null"
             | "gos_rt_json_as_bool"
             | "gos_rt_error_is"
+            | "gos_rt_error_is_sentinel"
             | "gos_rt_regex_is_match"
             | "gos_rt_fs_write"
             | "gos_rt_fs_create_dir_all"
@@ -893,6 +894,17 @@ impl<'a> Builder<'a> {
             | "gos_rt_len_is_zero" => self.tcx.bool_ty(),
             "gos_rt_json_get" | "gos_rt_json_at" | "gos_rt_json_parse" => self.tcx.json_value_ty(),
             "gos_rt_error_cause" => self.option_adt_ty(),
+            "gos_rt_error_chain" => {
+                let e = self.tcx.dyn_error_ty();
+                self.tcx.intern(gossamer_types::TyKind::Vec(e))
+            }
+            "gos_rt_error_with_field" => self.tcx.dyn_error_ty(),
+            "gos_rt_error_field" => self.option_string_adt_ty(),
+            "gos_rt_error_fields" => {
+                let s = self.tcx.string_ty();
+                let pair = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![s, s]));
+                self.tcx.intern(gossamer_types::TyKind::Vec(pair))
+            }
             // `ResponseStream::next_line() -> Option<String>`.
             // Pin the dest type so `while let Some(line) =
             // stream.next_line()` binds `line: String` (printed

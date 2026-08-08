@@ -34,9 +34,16 @@ fn type_err<T>(expected: &str, found: &Value) -> RuntimeResult<T> {
     )))
 }
 
+/// `describe` for a value that must be cloned out of a lock first.
+fn describe_owned(v: &Value) -> &'static str {
+    describe(v)
+}
+
 fn describe(v: &Value) -> &'static str {
     match v {
         Value::NativeEnum(o) => o.shape.enum_name,
+        // A capture cell is transparent: it describes whatever it holds.
+        Value::CaptureCell(cell) => describe_owned(&cell.lock().clone()),
         Value::Unit => "()",
         Value::Bool(_) => "bool",
         Value::Int(_) => "i64",
@@ -736,6 +743,8 @@ fn value_to_dyn(value: &Value) -> DynValue {
         Value::NativeEnum(o) => value_to_dyn(&gossamer_interp::native_enum_to_variant(o)),
         // &mut-param writeback cell; convert through its current payload.
         Value::MutCell(cell) => value_to_dyn(&cell.lock().clone()),
+        // A closure capture cell is transparent to conversion.
+        Value::CaptureCell(cell) => value_to_dyn(&cell.lock().clone()),
         Value::Unit | Value::Void | Value::Weak(_) => DynValue::Nil,
         Value::Bool(b) => DynValue::Bool(*b),
         Value::Int(i) => DynValue::Int(*i),

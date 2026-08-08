@@ -9,7 +9,7 @@
 /// Opaque identifier for a single crate. The current compiler only ever
 /// resolves a single crate in one pass, so every [`CrateId`] carried
 /// around inside a resolution is the [`CrateId::LOCAL`] constant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct CrateId(u32);
 
 impl CrateId {
@@ -30,7 +30,7 @@ impl CrateId {
 }
 
 /// Identifier for a module within a crate. The crate root is `ModId::ROOT`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ModId(u32);
 
 impl ModId {
@@ -45,7 +45,7 @@ impl ModId {
 }
 
 /// Stable identifier for a named definition, unique within a crate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct DefId {
     /// Crate the definition belongs to.
     pub krate: CrateId,
@@ -109,7 +109,7 @@ impl Default for DefIdGenerator {
 }
 
 /// Kind tag attached to each [`DefId`] to distinguish items by shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum DefKind {
     /// A free function or associated function (`fn ...`).
     Fn,

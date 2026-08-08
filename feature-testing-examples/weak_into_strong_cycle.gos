@@ -1,0 +1,136 @@
+// A `Weak` that observes a member of the classic reference-cycle shape.
+// `weak_refs.gos` covers plain liveness and `cycle_reclaim.gos` covers the
+// collector; this fixture is the intersection the two leave open, and it
+// pins the two rules that make the intersection tier-independent:
+//
+//   * Storing an aggregate stores a copy of it, so `b.next = a` followed by
+//     `a.next = b` builds a finite chain rather than a ring - the traversal
+//     below terminates on every tier.
+//   * `x.downgrade()` pins its referent in the frame that took the weak, so
+//     the referent stays strongly reachable for the whole of that scope no
+//     matter when the collector runs.
+//
+// Together those make `upgrade()` independent of reclamation timing, so
+// every answer here is bit-identical on VM, Cranelift, and LLVM.
+
+use std::runtime
+
+struct Node {
+    id: i64,
+    next: Option<Box<Node>>,
+}
+
+fn probe(w: Weak<Node>) -> i64 {
+    if let Some(n) = w.upgrade() { n.id } else { -1 }
+}
+
+// Walks at most `steps` links and reports the ids reached, so the shape's
+// real topology is part of the output rather than an assumption.
+fn walk(start: Node, steps: i64) -> String {
+    let mut out = format!("{}", start.id)
+    let mut cur = start.next
+    let mut i = 0
+    while i < steps {
+        match cur {
+            Some(n) => {
+                out += format!(">{}", n.id)
+                cur = n.next
+            }
+            None => {
+                out += ">end"
+                i = steps
+            }
+        }
+        i += 1
+    }
+    out
+}
+
+// The pin dies with this frame, so the returned weak observes a referent
+// nothing else keeps alive.
+fn escaped_cycle_weak() -> Weak<Node> {
+    let mut a = Node { id: 11, next: None }
+    let mut b = Node { id: 22, next: None }
+    b.next = Some(Box::new(a))
+    a.next = Some(Box::new(b))
+    a.downgrade()
+}
+
+fn main() {
+    let mut a = Node { id: 1, next: None }
+    let mut b = Node { id: 2, next: None }
+    b.next = Some(Box::new(a))
+    a.next = Some(Box::new(b))
+    println!("shape={}", walk(a, 6))
+
+    let wa = a.downgrade()
+    let wb = b.downgrade()
+    println!("before_collect={} {}", probe(wa), probe(wb))
+    runtime::collect_cycles()
+    println!("after_collect={} {}", probe(wa), probe(wb))
+    runtime::collect_cycles()
+    println!("after_second_collect={} {}", probe(wa), probe(wb))
+    println!("still_reachable={} {}", a.id, b.id)
+
+    // Three-node ring shape, same guarantees.
+    let mut c = Node { id: 3, next: None }
+    let mut d = Node { id: 4, next: None }
+    let mut e = Node { id: 5, next: None }
+    e.next = Some(Box::new(c))
+    d.next = Some(Box::new(e))
+    c.next = Some(Box::new(d))
+    let wc = c.downgrade()
+    runtime::collect_cycles()
+    println!("ring={} {}", walk(c, 6), probe(wc))
+
+    // Self-referential node.
+    let mut s = Node { id: 9, next: None }
+    s.next = Some(Box::new(s))
+    let ws = s.downgrade()
+    runtime::collect_cycles()
+    println!("self={} {}", walk(s, 4), probe(ws))
+
+    // The weak's pin died with the frame that took it, so the referent is
+    // reclaimed and the weak reads dead - before and after an explicit
+    // collection alike.
+    let escaped = escaped_cycle_weak()
+    println!("escaped_before={}", probe(escaped))
+    runtime::collect_cycles()
+    println!("escaped_after={}", probe(escaped))
+
+    // A weak taken inside an arena observes its referent for the rest of the
+    // block; the escape check rejects any program that could observe it
+    // afterwards, so no tier ever reads a reclaimed arena slab through one.
+    let mut in_arena = -2
+    arena {
+        let n = Node { id: 77, next: None }
+        in_arena = probe(n.downgrade())
+    }
+    println!("arena={}", in_arena)
+
+    // Repeated build / observe / collect over a live cycle shape: the answer
+    // never drifts as the collector runs between rounds.
+    let mut live_total = 0
+    let mut round = 0
+    while round < 500 {
+        let mut p = Node { id: round, next: None }
+        let mut q = Node { id: round + 1, next: None }
+        q.next = Some(Box::new(p))
+        p.next = Some(Box::new(q))
+        let wp = p.downgrade()
+        runtime::collect_cycles()
+        live_total += probe(wp)
+        round += 1
+    }
+    println!("live_total={}", live_total)
+
+    // Same loop over the escaped (already reclaimed) weak.
+    let mut dead_total = 0
+    let mut dead_round = 0
+    while dead_round < 500 {
+        runtime::collect_cycles()
+        dead_total += probe(escaped_cycle_weak())
+        dead_round += 1
+    }
+    println!("dead_total={}", dead_total)
+}

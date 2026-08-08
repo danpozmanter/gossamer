@@ -1966,7 +1966,21 @@ impl<'tcx> FnBuilder<'tcx> {
         let inclusive = *inclusive;
 
         let start_tr = self.compile_expr_ex(start)?;
-        let counter_i = self.as_i64(start_tr);
+        let start_i = self.as_i64(start_tr);
+        // The loop owns its counter. `as_i64` hands back the start
+        // expression's own register when that expression is already a typed
+        // i64 local, and the fused increment below writes through it, so a
+        // bound named by a variable has to be copied into a register the loop
+        // is free to advance.
+        if self.next_int_reg == u16::MAX {
+            return Ok(None);
+        }
+        let counter_i = self.next_int_reg;
+        self.next_int_reg += 1;
+        self.emit(Op::MoveI64 {
+            dst_i: counter_i,
+            src_i: start_i,
+        });
         let end_i = if let Some(end) = end {
             let end_tr = self.compile_expr_ex(end)?;
             Some(self.as_i64(end_tr))

@@ -190,9 +190,10 @@ Left-associative, very low precedence.
 
 - `x |> f` is `f(x)`; `x |> f(a, b)` puts `x` in the LAST slot:
   `f(a, b, x)`; same for `x |> recv.m(a)`.
-- `_` makes the piped value the RECEIVER: `x |> _.m(a)` is `x.m(a)`;
-  bare `s |> _.trim |> _.to_uppercase` chains nullary methods; `_.0`,
-  `_[i]`, and bare `_` (identity) work.
+- `$` makes the piped value the RECEIVER: `x |> $.m(a)` is `x.m(a)`;
+  bare `s |> $.trim |> $.to_uppercase` chains nullary methods; `$.0`,
+  `$[i]`, and bare `$` (identity) work. One direct `$` also selects an
+  argument slot: `x |> f($, k)` is `f(x, k)`.
 - Closure steps thread the value into the last slot too.
 
 ```gossamer
@@ -226,10 +227,20 @@ let n = 3 |> double |> add(10) |> clamp(0, 100)
   implicit main (only the entry file; `?` there makes it return
   `Result<(), errors::Error>`; exit code via `process::exit(n)`).
 - **Generics**: `fn f<T: Trait>(x: &T)` monomorphises per call site
-  on every tier (single bound, struct-typed params; no `dyn Trait`).
+  on every tier (one or more bounds `T: A + B`, in the parameter list or a
+  `where` clause; struct-typed params; no `dyn Trait`).
   Generic structs `struct Wrapper<T>` + `impl<T>` work. Const-generic
   array length `fn sum<const N: usize>(xs: [i64; N])` is inferred
   from the argument (not usable as a bare value or repeat count).
+- **Associated items**: a trait declares `type Item` (optional default)
+  and `const MAX: i64` (optional default); each impl supplies one
+  concrete `type Item = T` / `const MAX: i64 = 10`. Project with
+  `Self::Item`, `T::Item`, `Type::MAX`, `T::MAX`. Pin an ambiguous
+  projection with an equality constraint: `T: Iterator<Item = i64>`.
+  Resolution order: equality constraint, the concrete base's impl,
+  the trait default, the trait's single implementor - several impls with
+  no constraint is GT0061, an impl missing a required item is GT0059.
+  No generic associated types, none on `dyn`.
 - **References**: `&x` is shared and `&mut x` writes through to the same
   source place; both are aliases, never copies. There are no lifetimes or
   non-lexical borrow analysis. A lightweight lexical check rejects a second
@@ -397,7 +408,7 @@ test` also compiles and runs fenced code in doc comments.
 mod arith_tests {
     use std::testing
     #[test]
-    fn add_adds() { testing::check_eq(&super::add(2, 3), &5, "2+3") }
+    fn add_adds() { let _ = testing::check_eq(&super::add(2, 3), &5, "2+3") }
 }
 ```
 
@@ -459,8 +470,8 @@ use std::http
 use std::http::router
 
 let r = router::Router::new()
-    |> _.get("/", handler_fn)
-    |> _.get("/ping", |_r| Ok(http::Response::text(200, "ok")))
+    |> $.get("/", handler_fn)
+    |> $.get("/ping", |_r| Ok(http::Response::text(200, "ok")))
 http::serve("0.0.0.0:8080", r)?
 ```
 

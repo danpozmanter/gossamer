@@ -15,7 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::*;
@@ -78,7 +77,7 @@ pub unsafe extern "C" fn gos_rt_url_query_escape(s: *const c_char) -> *mut c_cha
         if s.is_null() {
             return alloc_cstring(b"");
         }
-        let s = unsafe { CStr::from_ptr(s).to_str().unwrap_or("") };
+        let s = unsafe { crate::c_abi::gos_str_arg_text(s) };
         alloc_cstring(percent_encode(s, true).as_bytes())
     })
 }
@@ -89,7 +88,7 @@ pub unsafe extern "C" fn gos_rt_url_path_escape(s: *const c_char) -> *mut c_char
         if s.is_null() {
             return alloc_cstring(b"");
         }
-        let s = unsafe { CStr::from_ptr(s).to_str().unwrap_or("") };
+        let s = unsafe { crate::c_abi::gos_str_arg_text(s) };
         alloc_cstring(percent_encode(s, false).as_bytes())
     })
 }
@@ -100,7 +99,7 @@ pub unsafe extern "C" fn gos_rt_url_query_unescape(s: *const c_char) -> *mut c_c
         if s.is_null() {
             return alloc_cstring(b"");
         }
-        let s = unsafe { CStr::from_ptr(s).to_str().unwrap_or("") };
+        let s = unsafe { crate::c_abi::gos_str_arg_text(s) };
         alloc_cstring(percent_decode(s, true).as_bytes())
     })
 }
@@ -111,7 +110,7 @@ pub unsafe extern "C" fn gos_rt_url_path_unescape(s: *const c_char) -> *mut c_ch
         if s.is_null() {
             return alloc_cstring(b"");
         }
-        let s = unsafe { CStr::from_ptr(s).to_str().unwrap_or("") };
+        let s = unsafe { crate::c_abi::gos_str_arg_text(s) };
         alloc_cstring(percent_decode(s, false).as_bytes())
     })
 }

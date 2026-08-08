@@ -642,12 +642,10 @@ impl Parser<'_> {
         let (trait_ref, self_ty) = if self.eat_keyword(Keyword::For) {
             let self_ty = self.parse_type();
             let bound = match first_type.kind {
-                gossamer_ast::TypeKind::Path(path) => TraitBound { path },
-                _ => TraitBound {
-                    path: TypePath {
-                        segments: vec![TypePathSegment::new("<error>")],
-                    },
-                },
+                gossamer_ast::TypeKind::Path(path) => TraitBound::new(path),
+                _ => TraitBound::new(TypePath {
+                    segments: vec![TypePathSegment::new("<error>")],
+                }),
             };
             (Some(bound), self_ty)
         } else {

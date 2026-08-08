@@ -1,0 +1,32 @@
+// Associated constants read through a concrete type, through `Self`, and
+// through a bound type parameter, including a trait-supplied default.
+
+trait Bounded {
+    const MAX: i64
+    const STEP: i64 = 5
+    fn width(&self) -> i64
+}
+
+struct Gauge {
+    span: i64
+}
+
+impl Bounded for Gauge {
+    const MAX: i64 = 100
+
+    fn width(&self) -> i64 {
+        self.span + Self::MAX
+    }
+}
+
+fn headroom<T: Bounded>(gauge: &T) -> i64 {
+    T::MAX - gauge.width() + T::STEP
+}
+
+fn main() {
+    let gauge = Gauge { span: 30 }
+    println!("{}", Gauge::MAX)
+    println!("{}", Gauge::STEP)
+    println!("{}", gauge.width())
+    println!("{}", headroom(&gauge))
+}

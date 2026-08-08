@@ -797,13 +797,117 @@ fn count_vec_clone_elision_terminator_reads(block: &BasicBlock, reads: &mut [u32
     }
 }
 
+/// Blocks that lie on a cycle, i.e. that can reach themselves.
+///
+/// A clone written once in the source runs once per iteration inside a loop,
+/// so the static read count that licenses eliding it does not apply there:
+/// the second iteration would hand out the same buffer again.
+///
+/// Computed as the strongly-connected components of the CFG (Kosaraju, two
+/// iterative passes) so the cost stays linear in blocks plus edges. A block is
+/// on a cycle when its component holds more than one block, or when it branches
+/// to itself.
+fn blocks_on_a_cycle(body: &Body) -> Vec<bool> {
+    let n = body.blocks.len();
+    let index: HashMap<u32, usize> = body
+        .blocks
+        .iter()
+        .enumerate()
+        .map(|(i, b)| (b.id.0, i))
+        .collect();
+    let mut succ: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut pred: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut self_edge = vec![false; n];
+    for (i, block) in body.blocks.iter().enumerate() {
+        for target in terminator_targets(&block.terminator) {
+            let Some(&j) = index.get(&target.0) else {
+                continue;
+            };
+            if i == j {
+                self_edge[i] = true;
+            }
+            succ[i].push(j);
+            pred[j].push(i);
+        }
+    }
+
+    let mut visited = vec![false; n];
+    let mut order = Vec::with_capacity(n);
+    for root in 0..n {
+        if visited[root] {
+            continue;
+        }
+        // (node, next successor to visit); post-order push on exhaustion.
+        let mut stack = vec![(root, 0usize)];
+        visited[root] = true;
+        while let Some((node, cursor)) = stack.pop() {
+            match succ[node].get(cursor) {
+                Some(&next) => {
+                    stack.push((node, cursor + 1));
+                    if !visited[next] {
+                        visited[next] = true;
+                        stack.push((next, 0));
+                    }
+                }
+                None => order.push(node),
+            }
+        }
+    }
+
+    let mut component = vec![usize::MAX; n];
+    let mut sizes: Vec<usize> = Vec::new();
+    for &root in order.iter().rev() {
+        if component[root] != usize::MAX {
+            continue;
+        }
+        let id = sizes.len();
+        let mut size = 0;
+        let mut stack = vec![root];
+        component[root] = id;
+        while let Some(node) = stack.pop() {
+            size += 1;
+            for &back in &pred[node] {
+                if component[back] == usize::MAX {
+                    component[back] = id;
+                    stack.push(back);
+                }
+            }
+        }
+        sizes.push(size);
+    }
+
+    (0..n)
+        .map(|i| self_edge[i] || sizes.get(component[i]).copied().unwrap_or(1) > 1)
+        .collect()
+}
+
+/// Every block a terminator may transfer control to.
+fn terminator_targets(t: &Terminator) -> Vec<crate::ir::BlockId> {
+    match t {
+        Terminator::Goto { target }
+        | Terminator::Assert { target, .. }
+        | Terminator::Drop { target, .. } => vec![*target],
+        Terminator::SwitchInt { arms, default, .. } => {
+            let mut out: Vec<crate::ir::BlockId> = arms.iter().map(|(_, b)| *b).collect();
+            out.push(*default);
+            out
+        }
+        Terminator::Call { target, .. } => target.iter().copied().collect(),
+        Terminator::Return | Terminator::Unreachable | Terminator::Panic { .. } => Vec::new(),
+    }
+}
+
 fn collect_fresh_vec_clone_rewrites(
     body: &Body,
     fresh: &HashSet<Local>,
     reads: &[u32],
 ) -> Vec<VecCloneRewrite> {
+    let cyclic = blocks_on_a_cycle(body);
     let mut rewrites = Vec::new();
     for (bi, block) in body.blocks.iter().enumerate() {
+        if cyclic.get(bi).copied().unwrap_or(false) {
+            continue;
+        }
         let Terminator::Call {
             callee: Operand::Const(ConstValue::Str(name)),
             args,

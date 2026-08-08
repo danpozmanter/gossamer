@@ -404,6 +404,17 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_str_rfind_opt" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_strings_join" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_io_copy" => (&[ptr_ty, ptr_ty], Some(types::I64)),
+        "gos_rt_io_string_reader" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_io_buffer_writer" => (&[], Some(types::I64)),
+        "gos_rt_io_limit_reader" | "gos_rt_io_tee_reader" => {
+            (&[types::I64, types::I64], Some(types::I64))
+        }
+        "gos_rt_io_multi_reader" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_io_pipe" => (&[], Some(ptr_ty)),
+        "gos_rt_io_copy_n" => (&[types::I64, types::I64, types::I64], Some(types::I128)),
+        "gos_rt_io_drain" | "gos_rt_io_contents" => (&[types::I64], Some(ptr_ty)),
+        "gos_rt_io_write_str" => (&[types::I64, ptr_ty], Some(types::I64)),
+        "gos_rt_io_close_writer" => (&[types::I64], None),
         "gos_rt_io_read_all" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_uuid_v4" => (&[], Some(ptr_ty)),
         "gos_rt_uuid_v7" => (&[], Some(ptr_ty)),
@@ -418,6 +429,17 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_path_ext" | "gos_rt_path_file_name" | "gos_rt_path_parent" | "gos_rt_path_stem" => {
             (&[ptr_ty], Some(types::I128))
         }
+        "gos_rt_path_glob" => (&[ptr_ty], Some(types::I128)),
+        "gos_rt_path_matches" => (&[ptr_ty, ptr_ty], Some(types::I64)),
+        "gos_rt_sort_stable_i64" | "gos_rt_sort_stable_str" | "gos_rt_sort_stable_f64" => {
+            (&[ptr_ty], Some(ptr_ty))
+        }
+        "gos_rt_sort_binary_search_f64" => (&[ptr_ty, types::F64], Some(types::I128)),
+        "gos_rt_sort_partition_point_f64" => (&[ptr_ty, types::F64], Some(types::I64)),
+        "gos_rt_sort_binary_search_i64" => (&[ptr_ty, types::I64], Some(types::I128)),
+        "gos_rt_sort_binary_search_str" => (&[ptr_ty, ptr_ty], Some(types::I128)),
+        "gos_rt_sort_partition_point_i64" => (&[ptr_ty, types::I64], Some(types::I64)),
+        "gos_rt_sort_partition_point_str" => (&[ptr_ty, ptr_ty], Some(types::I64)),
         "gos_rt_vec_first" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_vec_mark_shared" => (&[ptr_ty], None),
         "gos_rt_vec_pop_opt" => (&[ptr_ty], Some(types::I128)),
@@ -464,6 +486,10 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_error_display" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_error_cause" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_error_is" => (&[ptr_ty, ptr_ty], Some(types::I64)),
+        "gos_rt_error_is_sentinel" => (&[ptr_ty, ptr_ty], Some(types::I64)),
+        "gos_rt_error_chain" | "gos_rt_error_fields" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_error_field" => (&[ptr_ty, ptr_ty], Some(types::I128)),
+        "gos_rt_error_with_field" => (&[ptr_ty, ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_regex_compile" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_regex_is_match" => (&[ptr_ty, ptr_ty], Some(types::I64)),
         "gos_rt_regex_find" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
@@ -692,6 +718,18 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_metrics_registry_register" => (&[ptr_ty, ptr_ty], None),
         "gos_rt_metrics_registry_render" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_middleware_new" => (&[types::I64, types::I64], Some(ptr_ty)),
+        "gos_rt_middleware_new_kind" => {
+            (&[types::I64, types::I64, types::I64, ptr_ty], Some(ptr_ty))
+        }
+        "gos_rt_mw_cors_permissive"
+        | "gos_rt_mw_hsts_safe_default"
+        | "gos_rt_mw_hsts_strict"
+        | "gos_rt_mw_security_strict"
+        | "gos_rt_mw_security_off"
+        | "gos_rt_mw_cache_no_store" => (&[], Some(ptr_ty)),
+        "gos_rt_mw_cors_new" => (&[ptr_ty, ptr_ty, ptr_ty, types::I64], Some(ptr_ty)),
+        "gos_rt_mw_cache_immutable_for" => (&[types::I64], Some(ptr_ty)),
+        "gos_rt_mw_rate_limit_per_ip" => (&[types::I64, types::I64], Some(ptr_ty)),
         "gos_rt_middleware_serve" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_trace_tracer_new" => (&[], Some(ptr_ty)),
         "gos_rt_trace_tracer_start_span" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
@@ -845,11 +883,6 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_set_is_subset" | "gos_rt_set_is_superset" | "gos_rt_set_is_disjoint" => {
             (&[ptr_ty, ptr_ty], Some(types::I64))
         }
-        "gos_rt_btmap_new" => (&[], Some(ptr_ty)),
-        "gos_rt_btmap_insert" => (&[ptr_ty, ptr_ty, types::I64], None),
-        "gos_rt_btmap_get_or" => (&[ptr_ty, ptr_ty, types::I64], Some(types::I64)),
-        "gos_rt_btmap_len" => (&[ptr_ty], Some(types::I64)),
-        "gos_rt_btmap_keys" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_str_as_bytes" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_string_from_utf8" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_vec_clone" => (&[ptr_ty], Some(ptr_ty)),

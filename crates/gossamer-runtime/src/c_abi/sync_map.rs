@@ -7,7 +7,6 @@
 #![allow(clippy::wildcard_imports)]
 
 use std::collections::HashMap;
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::*;
@@ -37,11 +36,7 @@ pub unsafe extern "C" fn gos_rt_sync_map_new() -> *mut GosSyncMap {
 }
 
 fn cstr_to_string(p: *const c_char) -> String {
-    if p.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(p).to_string_lossy().into_owned() }
-    }
+    unsafe { crate::c_abi::gos_str_arg_string(p) }
 }
 
 #[unsafe(no_mangle)]

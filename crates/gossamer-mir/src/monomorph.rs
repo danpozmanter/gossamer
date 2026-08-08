@@ -14,9 +14,11 @@
 use std::collections::{HashMap, HashSet};
 
 use gossamer_resolve::DefId;
-use gossamer_types::{GenericArg, Substs, Ty, TyCtxt, TyKind};
+use gossamer_types::{GenericArg, Mutbl, Substs, Ty, TyCtxt, TyKind};
 
-use crate::ir::{Body, ConstValue, Operand, Rvalue, StatementKind, Terminator};
+use crate::ir::{
+    Body, ConstValue, Local, Operand, Place, Projection, Rvalue, StatementKind, Terminator,
+};
 
 /// Cap on the number of fixed-point iterations the monomorphiser
 /// will run before bailing. Real workloads converge in ≤ 5; the
@@ -56,6 +58,10 @@ pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
     // through the uniform pointer-width ABI. Routing a scalar generic to a
     // copy instead would mis-pass an `i64` argument as a pointer.
     let mut trait_specialised_defs: HashSet<u32> = HashSet::new();
+    // Method templates whose specialisation resolved a trait call through a
+    // type parameter. The template keeps the unresolved bare callee, so once
+    // every call site routes to a copy the template has to go with it.
+    let mut trait_specialised_methods: HashSet<String> = HashSet::new();
     let mut function_scan_start = 0;
     let mut method_scan_start = 0;
     for iteration in 0..MAX_MONOMORPHISE_ITERATIONS {
@@ -70,8 +76,14 @@ pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
         );
         let fn_progress = !specialised.is_empty();
         bodies.extend(specialised);
-        let (method_progress, method_scan_end) =
-            specialise_methods_step(bodies, &method_bases, &mut emitted, tcx, method_scan_start);
+        let (method_progress, method_scan_end) = specialise_methods_step(
+            bodies,
+            &method_bases,
+            &mut emitted,
+            &mut trait_specialised_methods,
+            tcx,
+            method_scan_start,
+        );
         if !fn_progress && !method_progress {
             // No new copies - fixed point reached.
             break;
@@ -108,10 +120,11 @@ pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
     }
     // Trait-specialised templates carry an unresolved trait-method call in
     // their body; every caller now routes to a copy, so drop them.
-    if !trait_specialised_defs.is_empty() {
+    if !trait_specialised_defs.is_empty() || !trait_specialised_methods.is_empty() {
         bodies.retain(|b| {
             b.def
                 .is_none_or(|d| !trait_specialised_defs.contains(&d.local))
+                && !trait_specialised_methods.contains(&b.name)
         });
     }
     // Resolve every local's type one last time so specialised
@@ -215,6 +228,7 @@ fn specialise_methods_step(
     bodies: &mut Vec<Body>,
     method_bases: &HashMap<String, usize>,
     emitted: &mut HashSet<String>,
+    trait_specialised_methods: &mut HashSet<String>,
     tcx: &mut TyCtxt,
     scan_start: usize,
 ) -> (bool, usize) {
@@ -222,7 +236,7 @@ fn specialise_methods_step(
         return (false, bodies.len());
     }
     let mut rewrites: Vec<(usize, usize, String)> = Vec::new();
-    let mut to_create: Vec<(usize, Substs, String)> = Vec::new();
+    let mut to_create: Vec<(usize, Substs, String, String)> = Vec::new();
     let scan_end = bodies.len();
     for (bi, body) in bodies.iter().enumerate().take(scan_end).skip(scan_start) {
         for (blk, block) in body.blocks.iter().enumerate() {
@@ -253,12 +267,12 @@ fn specialise_methods_step(
             let spec_name = method_mangled_name(name, &substs);
             rewrites.push((bi, blk, spec_name.clone()));
             if emitted.insert(spec_name.clone()) {
-                to_create.push((base_idx, substs, spec_name));
+                to_create.push((base_idx, substs, spec_name, name.clone()));
             }
         }
     }
     let made = !to_create.is_empty();
-    for (base_idx, substs, spec_name) in to_create {
+    for (base_idx, substs, spec_name, base_name) in to_create {
         let mut copy = bodies[base_idx].clone();
         copy.name = spec_name;
         copy.def = None;
@@ -270,6 +284,14 @@ fn specialise_methods_step(
                 GenericArg::Const(_) => None,
             })
             .collect();
+        // A method on a bounded `impl<T: Trait>` block calls the trait method
+        // through its type parameter, so the same receiver rewrite a generic
+        // free function needs applies here. It runs while the locals still
+        // carry the template parameter, which is what identifies the receiver.
+        if rewrite_trait_method_calls(&mut copy, &substs, tcx) {
+            trait_specialised_methods.insert(base_name);
+        }
+        reference_aggregate_trait_receivers(&mut copy, &subst_tys, tcx);
         for local in &mut copy.locals {
             local.ty = subst_param_ty(tcx, local.ty, &subst_tys);
         }
@@ -440,10 +462,7 @@ fn rewrite_trait_method_calls(copy: &mut Body, substs: &Substs, tcx: &TyCtxt) ->
         let Some(Operand::Copy(recv)) = args.first() else {
             continue;
         };
-        if !recv.projection.is_empty() {
-            continue;
-        }
-        let Some(recv_ty) = local_tys.get(recv.local.0 as usize).copied() else {
+        let Some(recv_ty) = place_ty(tcx, &local_tys, recv) else {
             continue;
         };
         let Some(idx) = param_index(tcx, recv_ty) else {
@@ -458,6 +477,123 @@ fn rewrite_trait_method_calls(copy: &mut Body, substs: &Substs, tcx: &TyCtxt) ->
         }
     }
     rewrote
+}
+
+/// Repoints a trait-method receiver that reached the callee by value at the
+/// reference the concrete impl expects.
+///
+/// A method body written against `T` copies the receiver out of its slot,
+/// because a type parameter is one opaque slot to the generic template. The
+/// impl it resolves to declares `&self`, so once `T` is known to be an
+/// aggregate the copy has to become the address of that place, and the local
+/// holding it has to be typed as a reference so the backend keeps a pointer
+/// rather than an aggregate. A scalar receiver already travels correctly in
+/// its slot and is left alone.
+///
+/// Runs while the locals still carry their template parameters, which is what
+/// identifies the receiver.
+fn reference_aggregate_trait_receivers(
+    copy: &mut Body,
+    subst_tys: &[Option<Ty>],
+    tcx: &mut TyCtxt,
+) {
+    let mut retarget: Vec<(Local, Place, Ty)> = Vec::new();
+    for block in &copy.blocks {
+        let Terminator::Call { callee, args, .. } = &block.terminator else {
+            continue;
+        };
+        let Operand::Const(ConstValue::Str(name)) = callee else {
+            continue;
+        };
+        if !name.contains("::") {
+            continue;
+        }
+        let Some(Operand::Copy(recv)) = args.first() else {
+            continue;
+        };
+        if !recv.projection.is_empty() {
+            continue;
+        }
+        let Some(decl) = copy.locals.get(recv.local.0 as usize) else {
+            continue;
+        };
+        let TyKind::Param { idx, .. } = tcx.kind_of(decl.ty) else {
+            continue;
+        };
+        let Some(Some(concrete)) = subst_tys.get(idx.0 as usize).copied() else {
+            continue;
+        };
+        if !matches!(tcx.kind_of(concrete), TyKind::Adt { .. } | TyKind::Tuple(_)) {
+            continue;
+        }
+        for stmt in &block.stmts {
+            if let StatementKind::Assign { place, rvalue } = &stmt.kind
+                && place.local == recv.local
+                && place.projection.is_empty()
+                && let Rvalue::Use(Operand::Copy(source)) = rvalue
+            {
+                retarget.push((recv.local, source.clone(), concrete));
+            }
+        }
+    }
+    for (local, source, concrete) in retarget {
+        let referenced = tcx.intern(TyKind::Ref {
+            mutability: Mutbl::Not,
+            inner: concrete,
+        });
+        if let Some(decl) = copy.locals.get_mut(local.0 as usize) {
+            decl.ty = referenced;
+        }
+        for block in &mut copy.blocks {
+            for stmt in &mut block.stmts {
+                if let StatementKind::Assign { place, rvalue } = &mut stmt.kind
+                    && place.local == local
+                    && place.projection.is_empty()
+                    && matches!(rvalue, Rvalue::Use(Operand::Copy(_)))
+                {
+                    *rvalue = Rvalue::Ref {
+                        mutable: false,
+                        place: source.clone(),
+                    };
+                }
+            }
+        }
+    }
+}
+
+/// Type of the value `place` denotes, walking its projection chain from the
+/// root local's declared type. A receiver reached through a field - the shape
+/// `self.value.method()` produces inside a generic `impl` block - carries its
+/// type parameter on the projected field rather than on the local, so the
+/// trait-dispatch rewrite has to resolve the whole chain to find it.
+/// Returns `None` for any step whose type is not statically resolvable here.
+fn place_ty(tcx: &TyCtxt, local_tys: &[Ty], place: &Place) -> Option<Ty> {
+    let mut ty = local_tys.get(place.local.0 as usize).copied()?;
+    for step in &place.projection {
+        ty = match step {
+            Projection::Deref => match tcx.kind_of(ty) {
+                TyKind::Ref { inner, .. } => *inner,
+                _ => return None,
+            },
+            Projection::Field(index) => {
+                let mut base = ty;
+                while let TyKind::Ref { inner, .. } = tcx.kind_of(base) {
+                    base = *inner;
+                }
+                match tcx.kind_of(base) {
+                    TyKind::Adt { def, substs } => *tcx
+                        .adt_field_tys(*def, substs)
+                        .and_then(|fields| fields.get(*index as usize))?,
+                    TyKind::Tuple(elems) => *elems.get(*index as usize)?,
+                    _ => return None,
+                }
+            }
+            Projection::Index(_) | Projection::Downcast(_) | Projection::Discriminant => {
+                return None;
+            }
+        };
+    }
+    Some(ty)
 }
 
 /// Generic-parameter index of a receiver type (`&T` / `T`), or `None`.

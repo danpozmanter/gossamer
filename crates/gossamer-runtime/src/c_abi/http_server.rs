@@ -15,7 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::os::raw::c_char;
 use std::sync::OnceLock;
@@ -242,7 +241,7 @@ pub unsafe extern "C-unwind" fn gos_rt_http_serve(
         let addr_s = if addr.is_null() {
             "0.0.0.0:8080".to_string()
         } else {
-            unsafe { CStr::from_ptr(addr).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(addr) }
         };
         let listener = match TcpListener::bind(&addr_s) {
             Ok(l) => l,
@@ -406,17 +405,17 @@ pub unsafe extern "C-unwind" fn gos_rt_http_serve_tls(
         let addr_s = if addr.is_null() {
             "0.0.0.0:8443".to_string()
         } else {
-            unsafe { CStr::from_ptr(addr).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(addr) }
         };
         let cert = if cert_pem.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(cert_pem).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(cert_pem) }
         };
         let key = if key_pem.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(key_pem).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(key_pem) }
         };
         let server_config = match build_server_config_from_pem(cert.as_bytes(), key.as_bytes()) {
             Ok(c) => c,
@@ -512,7 +511,7 @@ pub unsafe extern "C" fn gos_rt_http2_bind_and_run_h2c(
     let addr_s = if addr.is_null() {
         "0.0.0.0:8080".to_string()
     } else {
-        unsafe { CStr::from_ptr(addr).to_string_lossy().into_owned() }
+        unsafe { crate::c_abi::gos_str_arg_string(addr) }
     };
     let env_addr = handler_env as usize;
     let fn_addr = handler_fn as usize;
@@ -1263,7 +1262,7 @@ pub(crate) fn extract_response_into(result: i128, out: &mut Vec<u8>) -> bool {
     let body_bytes: &[u8] = match &response.body_bytes {
         Some(bytes) => bytes.as_slice(),
         None if response.body.is_null() => b"",
-        None => unsafe { CStr::from_ptr(response.body.as_ptr()).to_bytes() },
+        None => unsafe { crate::c_abi::gos_str_arg_bytes(response.body.as_ptr()) },
     };
     out.extend_from_slice(b"HTTP/1.1 ");
     let mut buf = itoa::Buffer::new();
@@ -1371,7 +1370,7 @@ pub(crate) fn extract_response_struct(result: i128) -> Option<StructuredResponse
     let body: Vec<u8> = match &response.body_bytes {
         Some(bytes) => bytes.clone(),
         None if response.body.is_null() => Vec::new(),
-        None => unsafe { CStr::from_ptr(response.body.as_ptr()).to_bytes().to_vec() },
+        None => unsafe { crate::c_abi::gos_str_arg_bytes(response.body.as_ptr()) }.to_vec(),
     };
     let mut headers: Vec<(String, String)> = Vec::with_capacity(response.headers.len() + 1);
     let mut has_content_type = false;
@@ -1544,6 +1543,7 @@ const fn status_reason(status: i64) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::CStr;
 
     #[cfg(not(tsan))]
     fn scheduler_wait_timeout() -> std::time::Duration {

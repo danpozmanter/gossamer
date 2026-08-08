@@ -1,0 +1,35 @@
+// `{:?}` of a float always reads back as a float: an integral value keeps
+// its `.0` and a magnitude outside the plain-decimal window switches to
+// exponent form. `{}` (Display) keeps the bare integral spelling, so the
+// two channels are exercised side by side here.
+
+fn main() {
+    println!("{:?}", 7.0)
+    println!("{:?}", -0.5)
+    println!("{:?}", 0.0)
+    println!("{:?}", -0.0)
+    println!("{:?}", 42.0)
+    println!("{:?}", 1.25)
+    println!("{:?}", 1e300)
+    println!("{:?}", 1e-10)
+    println!("{:?}", 1e16)
+    println!("{:?}", 9999999999999998.0)
+
+    // Display is unchanged by the Debug channel.
+    println!("{}", 7.0)
+    println!("{}", -0.5)
+    println!("{}", 0.0)
+
+    // Named captures take the same two channels.
+    let v = 3.0
+    println!("{v} {v:?}")
+
+    // Width, precision, and `format!` all still compose.
+    println!("{:.2}", 7.0)
+    println!("{:>8}", 7.0)
+    println!("{}", format!("{:?}", 2.0))
+
+    // A float reached through an f32 binding widens to the same rendering.
+    let small: f32 = 2.5
+    println!("{:?}", small)
+}

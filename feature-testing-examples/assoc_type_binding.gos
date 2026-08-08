@@ -1,0 +1,44 @@
+// Two impls supply different associated types, so a projection through a
+// bare bound is ambiguous. An equality constraint on the bound pins it.
+
+trait Source {
+    type Item
+    fn take(&self) -> Self::Item
+}
+
+struct Counter {
+    value: i64
+}
+
+struct Greeting {
+    word: String
+}
+
+impl Source for Counter {
+    type Item = i64
+
+    fn take(&self) -> Self::Item {
+        self.value
+    }
+}
+
+impl Source for Greeting {
+    type Item = String
+
+    fn take(&self) -> Self::Item {
+        self.word
+    }
+}
+
+fn sum_of<T: Source<Item = i64>>(source: &T) -> T::Item {
+    source.take() + 1
+}
+
+fn text_of<T: Source<Item = String>>(source: &T) -> T::Item {
+    source.take()
+}
+
+fn main() {
+    println!("{}", sum_of(&Counter { value: 41 }))
+    println!("{}", text_of(&Greeting { word: "hello" }).to_uppercase())
+}

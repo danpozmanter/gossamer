@@ -29,7 +29,6 @@
 #![allow(clippy::wildcard_imports)]
 
 use std::collections::HashMap;
-use std::ffi::CStr;
 use std::net::TcpStream;
 use std::os::raw::c_char;
 use std::sync::Arc;
@@ -57,11 +56,7 @@ fn next_handle() -> i64 {
 }
 
 fn cstr_to_str(p: *const c_char) -> String {
-    if p.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(p).to_string_lossy().into_owned() }
-    }
+    unsafe { crate::c_abi::gos_str_arg_string(p) }
 }
 
 /// Packs `Err(errors::Error)` as the runtime's `i128` Result.
@@ -122,7 +117,7 @@ pub unsafe extern "C-unwind" fn gos_rt_ws_serve(
         let addr_s = if addr.is_null() {
             "0.0.0.0:8080".to_string()
         } else {
-            unsafe { CStr::from_ptr(addr).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(addr) }
         };
         let listener = match std::net::TcpListener::bind(&addr_s) {
             Ok(l) => l,

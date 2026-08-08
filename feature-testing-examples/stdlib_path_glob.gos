@@ -1,0 +1,56 @@
+// Cross-tier parity for `path::matches` (Go filepath.Match) and
+// `path::glob` (Go filepath.Glob, including `**` recursive descent).
+// The fixture builds its own tree under a fresh temp directory and
+// removes it, so the printed names are deterministic on every tier.
+use std::fs
+use std::path
+
+fn names_of(paths: &Vec<String>) -> Vec<String> {
+    let mut out = Vec::new()
+    for p in paths {
+        match path::file_name(p) {
+            Some(n) => out.push(n),
+            None => out.push(p),
+        }
+    }
+    out
+}
+
+fn main() {
+    println!("{}", path::matches("*.gos", "main.gos"))
+    println!("{}", path::matches("*.gos", "main.rs"))
+    println!("{}", path::matches("a*c", "a/c"))
+    println!("{}", path::matches("h[aeiou]llo", "hello"))
+    println!("{}", path::matches("h[aeiou]llo", "hxllo"))
+    println!("{}", path::matches("?ello", "hello"))
+    println!("{}", path::matches("data/*", "data/x"))
+
+    let root = match fs::temp_dir("gos-glob") {
+        Ok(d) => d,
+        Err(e) => { println!("temp_dir failed: {}", e); return },
+    }
+    let nested = path::join(&root, "nested")
+    if let Err(e) = fs::create_dir_all(&nested) {
+        println!("mkdir failed: {}", e)
+        return
+    }
+    let _ = fs::write(&path::join(&root, "alpha.gos"), "a".bytes())
+    let _ = fs::write(&path::join(&root, "beta.gos"), "b".bytes())
+    let _ = fs::write(&path::join(&root, "gamma.txt"), "c".bytes())
+    let _ = fs::write(&path::join(&nested, "delta.gos"), "d".bytes())
+
+    match path::glob(&path::join(&root, "*.gos")) {
+        Ok(found) => println!("top={}", names_of(&found).join(",")),
+        Err(e) => println!("glob failed: {}", e),
+    }
+    match path::glob(&path::join(&root, "**/*.gos")) {
+        Ok(found) => println!("deep={}", names_of(&found).join(",")),
+        Err(e) => println!("glob failed: {}", e),
+    }
+    match path::glob(&path::join(&root, "*.md")) {
+        Ok(found) => println!("none={}", found.len()),
+        Err(e) => println!("glob failed: {}", e),
+    }
+
+    let _ = fs::remove_dir_all(&root)
+}

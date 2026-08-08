@@ -612,10 +612,61 @@ TraitItem = FnSig
 Traits support:
 
 - Required and default methods.
-- Associated types and associated constants.
+- Associated types and associated constants (see below).
 - Bounds on trait generics.
 - Supertraits (`trait Foo: Bar + Baz`).
 - Default methods.
+
+**Associated types.** A trait declares `type Item`, optionally with a
+default; each `impl` supplies one concrete type for it. A projection
+`Self::Item` or `T::Item` names that type in a signature or a body:
+
+```
+trait Holder {
+    type Item
+    fn get(&self) -> Self::Item
+}
+impl Holder for Label {
+    type Item = String
+    fn get(&self) -> Self::Item { self.text }
+}
+fn shout<T: Holder>(h: &T) -> T::Item { h.get() }
+```
+
+A projection resolves, in order, to an equality constraint on the bound
+(`T: Holder<Item = String>`), to the concrete impl when the base names a
+type (`Label::Item`, or `Self::Item` inside an impl), to the trait's
+default, and finally to the trait's single implementor. It is a compile
+error when several impls supply the item and no equality constraint picks
+one (`GT0061`); write the constraint or name the concrete type. A
+supertrait's associated items are reachable through the subtrait that
+inherits them, since a projection resolves at check time rather than
+through dispatch. An impl that omits an associated item the trait
+declares without a default is rejected (`GT0059`), and a projection of an
+item nothing declares is rejected (`GT0060`). Every projection resolves to a concrete type before
+lowering, so all three tiers agree.
+
+Not supported: generic associated types (`type Item<T>`), associated
+types on `dyn Trait` (there are no trait objects, §3.11), and inferring a
+projection across several candidate impls without a constraint.
+
+**Associated constants.** A trait declares `const MAX: i64`, optionally
+with a default; each impl supplies a value. Read one as `Type::MAX`,
+`Self::MAX`, or `T::MAX` through a bound:
+
+```
+trait Bounded {
+    const MAX: i64
+    const STEP: i64 = 5
+}
+impl Bounded for Gauge { const MAX: i64 = 100 }
+fn headroom<T: Bounded>(g: &T) -> i64 { T::MAX + T::STEP }
+```
+
+Each associated constant becomes an ordinary constant, so its value is
+folded identically on every tier. `T::MAX` follows the same resolution
+order as a type projection: the trait's default, else the trait's single
+implementor.
 
 **Trait bounds on generic functions (static dispatch).** A generic
 function may bound its type parameters by a trait and call the trait's
@@ -639,10 +690,10 @@ parameter resolves to the trait method's declared return type. Every
 instantiation is monomorphised and the trait-method call is lowered to
 the concrete impl's symbol (`Square::name`), giving static dispatch that
 is bit-identical across the bytecode VM, the Cranelift JIT, and the LLVM
-AOT tiers. The currently-supported surface is single-bound type
-parameters with struct arguments; `dyn Trait`, operator traits,
-associated-type projection in bounds, blanket impls, and supertrait
-method inheritance through a bound are not yet part of static dispatch.
+AOT tiers. A type parameter may carry several bounds (`T: Read + Write`),
+and methods resolve from any of them. The arguments are struct-typed;
+`dyn Trait`, blanket impls, and supertrait method inheritance through a
+bound are not yet part of static dispatch.
 
 Gossamer does **not** support:
 
@@ -724,10 +775,10 @@ or with an aggregate - a struct, tuple, fixed-size array, `Vec<T>`,
 `String`, or `f64` - and the aggregate is threaded by value through the
 specialisation, including across recursive calls. Generic struct types
 (`struct Wrapper<T> { value: T }`) and their `impl<T>` methods
-specialise per instantiation on every tier. Bounds are single-bound
-static dispatch: there is no `dyn Trait`, no operator-trait or
-associated-type bound, and no supertrait method inheritance through the
-bound.
+specialise per instantiation on every tier. Bounds are static dispatch
+and may be written several to a parameter (`T: A + B`), in the parameter
+list or in a `where` clause; there is no `dyn Trait`, no blanket impl,
+and no supertrait method inheritance through the bound.
 
 ### 3.11 Dynamic dispatch
 
@@ -1122,16 +1173,16 @@ Desugaring rules (applied after parsing, before HIR lowering):
    → `(closure_expr)(x)` (arity must be 1).
 6. `x |> path::<T1, ..., Tk>(a1, ..., an)`:
    → `path::<T1, ..., Tk>(a1, ..., an, x)`.
-7. `x |> path(a1, ..., _, ..., an)` with exactly one direct `_` argument:
+7. `x |> path(a1, ..., $, ..., an)` with exactly one direct `$` argument:
    → `path(a1, ..., x, ..., an)`. This selects a non-trailing argument
-   position that the default data-last rule cannot express. A trailing `_` is
+   position that the default data-last rule cannot express. A trailing `$` is
    valid but redundant.
-8. `x |> _.method(a1, ..., an)`, `x |> _.field`, `x |> _[i]`, and `x |> _`:
+8. `x |> $.method(a1, ..., an)`, `x |> $.field`, `x |> $[i]`, and `x |> $`:
    → `x.method(a1, ..., an)`, `x.field`, `x[i]`, and `x` respectively.
 
 The direct-call placeholder may occur exactly once. It must be an immediate
 call argument, not part of a nested expression. The receiver forms in rule 8
-also consume the one available placeholder, so `x |> _.method(_, y)` is
+also consume the one available placeholder, so `x |> $.method($, y)` is
 invalid.
 
 If the right operand is not a call form matching one of the above, the
@@ -1146,11 +1197,11 @@ call.
 Examples:
 
 ```
-// The trailing `_` is explicit but has the same result as the default rule.
-name |> format!("hello {}", _) |> println
+// The trailing `$` is explicit but has the same result as the default rule.
+name |> format!("hello {}", $) |> println
 
-// `_` is useful when the piped value belongs before other arguments.
-text |> strings::slice(_, 1, 3)
+// `$` is useful when the piped value belongs before other arguments.
+text |> strings::slice($, 1, 3)
 ```
 
 Idiomatic iterator chains:

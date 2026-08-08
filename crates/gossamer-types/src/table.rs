@@ -9,7 +9,7 @@ use gossamer_ast::NodeId;
 use crate::ty::Ty;
 
 /// Persistent `NodeId → Ty` map produced by the type checker.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TypeTable {
     entries: HashMap<NodeId, Ty>,
 }

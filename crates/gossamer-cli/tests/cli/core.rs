@@ -3,7 +3,6 @@
 // asserts behaviour for `parse`, `check`, `run`, `build`, plus
 // cross-compilation via `--target`.
 
-
 use std::env;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -200,10 +199,7 @@ fn execute_flag_executes_inline_source() {
 #[test]
 fn adjacent_expression_is_not_implicit_function_application() {
     let invalid = Command::new(gos_bin())
-        .args([
-            "-e",
-            "for e in Vec::from([1, 2, 3]) { println e }",
-        ])
+        .args(["-e", "for e in Vec::from([1, 2, 3]) { println e }"])
         .output()
         .expect("spawn invalid adjacent expressions");
     assert!(!invalid.status.success());
@@ -235,9 +231,9 @@ fn help_wraps_to_narrow_terminal_width() {
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).expect("utf8");
     assert!(
-        stdout.lines().all(|line| {
-            line.chars().count() <= 40 || line.split_whitespace().count() == 1
-        }),
+        stdout
+            .lines()
+            .all(|line| { line.chars().count() <= 40 || line.split_whitespace().count() == 1 }),
         "wrappable help prose exceeded requested terminal width:\n{stdout}"
     );
     assert!(stdout.contains("The Gossamer toolchain"), "{stdout}");
@@ -333,18 +329,30 @@ fn cache_clear_removes_every_known_cache_class() {
             .as_nanos()
     ));
     let frontend = root.join("frontend");
-    let shared_ir = root.join("ir-cache");
     let binding = root.join("binding-cache");
     let runners = binding.join("gossamer").join("runners");
     let packages = root.join("packages");
     let home = root.join("home");
+    let user_cache = home.join(".cache").join("gossamer");
+    let shared_ir = user_cache.join("ir-cache");
     let build = home.join(".gossamer").join("build");
     let project = root.join("project");
     let project_ir = project.join(".gos-cache").join("ir-cache");
     let target = project.join("target");
     let vendor = project.join("vendor");
 
-    for path in [&frontend, &shared_ir, &runners, &packages, &build, &project_ir] {
+    // `GOSSAMER_CACHE_DIR` is set below, so the frontend class resolves to
+    // that one directory and the conventional frontend locations are not in
+    // scope for this run.
+    let cache_roots = [
+        &frontend,
+        &shared_ir,
+        &runners,
+        &packages,
+        &build,
+        &project_ir,
+    ];
+    for path in cache_roots {
         std::fs::create_dir_all(path).expect("create cache root");
         std::fs::write(path.join("entry"), b"cache").expect("write cache entry");
     }
@@ -374,7 +382,7 @@ fn cache_clear_removes_every_known_cache_class() {
         "stdout: {}",
         String::from_utf8_lossy(&out.stdout)
     );
-    for path in [&frontend, &shared_ir, &runners, &packages, &build, &project_ir] {
+    for path in cache_roots {
         assert!(!path.exists(), "cache root remains: {}", path.display());
     }
     assert!(target.exists(), "cache clear removed target/");
@@ -673,7 +681,10 @@ fn run_absolute_project_uses_entry_edition_for_lazy_iterators() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&out.stdout), LAZY_ITERATOR_TIER_OUTPUT);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        LAZY_ITERATOR_TIER_OUTPUT
+    );
     let jit_out = Command::new(gos_bin())
         .arg("run")
         .arg(&dir)
@@ -706,7 +717,6 @@ fn build_absolute_project_uses_entry_edition_for_lazy_iterators() {
     let build = Command::new(gos_bin())
         .args(["build"])
         .arg(&dir)
-        .env("GOSSAMER_FAIL_ON_LLVM_FALLBACK", "1")
         .output()
         .expect("spawn build");
     assert!(
@@ -725,12 +735,14 @@ fn build_absolute_project_uses_entry_edition_for_lazy_iterators() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&out.stdout), LAZY_ITERATOR_TIER_OUTPUT);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        LAZY_ITERATOR_TIER_OUTPUT
+    );
 
     let release_build = Command::new(gos_bin())
         .args(["build", "--release"])
         .arg(&dir)
-        .env("GOSSAMER_FAIL_ON_LLVM_FALLBACK", "1")
         .output()
         .expect("spawn release build");
     assert!(
@@ -775,8 +787,15 @@ fn eager_iterator_migration_aliases_run_on_vm_jit_and_llvm() {
         .arg(&dir)
         .output()
         .expect("spawn VM run");
-    assert!(vm.status.success(), "{}", String::from_utf8_lossy(&vm.stderr));
-    assert_eq!(String::from_utf8_lossy(&vm.stdout), EAGER_ITERATOR_ALIAS_OUTPUT);
+    assert!(
+        vm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&vm.stdout),
+        EAGER_ITERATOR_ALIAS_OUTPUT
+    );
 
     let jit = Command::new(gos_bin())
         .arg("run")
@@ -797,7 +816,6 @@ fn eager_iterator_migration_aliases_run_on_vm_jit_and_llvm() {
     let build = Command::new(gos_bin())
         .args(["build"])
         .arg(&dir)
-        .env("GOSSAMER_FAIL_ON_LLVM_FALLBACK", "1")
         .output()
         .expect("build LLVM fixture");
     assert!(
@@ -851,14 +869,20 @@ fn edition_2026_iterator_surface_remains_eager_on_all_tiers() {
         },
     ] {
         let out = command.output().expect("run eager compatibility fixture");
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        assert_eq!(String::from_utf8_lossy(&out.stdout), EAGER_2026_COMPAT_OUTPUT);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            EAGER_2026_COMPAT_OUTPUT
+        );
     }
 
     let build = Command::new(gos_bin())
         .args(["build"])
         .arg(&dir)
-        .env("GOSSAMER_FAIL_ON_LLVM_FALLBACK", "1")
         .output()
         .expect("build eager compatibility fixture");
     assert!(
@@ -897,13 +921,11 @@ fn lazy_pipeline_allocates_only_its_collected_vec_on_llvm() {
         "[project]\nid = \"example.com/lazy-iter-allocs\"\nversion = \"0.1.0\"\nedition = \"2027\"\n",
     )
     .expect("write manifest");
-    std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_ALLOCATION_SOURCE)
-        .expect("write source");
+    std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_ALLOCATION_SOURCE).expect("write source");
 
     let build = Command::new(gos_bin())
         .args(["build"])
         .arg(&dir)
-        .env("GOSSAMER_FAIL_ON_LLVM_FALLBACK", "1")
         .output()
         .expect("build allocation fixture");
     assert!(
@@ -920,7 +942,11 @@ fn lazy_pipeline_allocates_only_its_collected_vec_on_llvm() {
         .env("GOS_VEC_ALLOC_STATS", "1")
         .output()
         .expect("run allocation fixture");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "12\n");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -940,8 +966,7 @@ fn borrowed_lazy_vec_structural_mutation_fails_on_all_tiers() {
         "[project]\nid = \"example.com/lazy-iter-invalidation\"\nversion = \"0.1.0\"\nedition = \"2027\"\n",
     )
     .expect("write manifest");
-    std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_INVALIDATION_SOURCE)
-        .expect("write source");
+    std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_INVALIDATION_SOURCE).expect("write source");
 
     for mut command in [
         {
@@ -959,7 +984,11 @@ fn borrowed_lazy_vec_structural_mutation_fails_on_all_tiers() {
         },
     ] {
         let out = command.output().expect("run invalidation fixture");
-        assert!(!out.status.success(), "unexpected stdout: {}", String::from_utf8_lossy(&out.stdout));
+        assert!(
+            !out.status.success(),
+            "unexpected stdout: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
         assert!(
             String::from_utf8_lossy(&out.stderr)
                 .contains("borrowed Vec source was structurally mutated during iteration"),
@@ -971,7 +1000,6 @@ fn borrowed_lazy_vec_structural_mutation_fails_on_all_tiers() {
     let build = Command::new(gos_bin())
         .args(["build"])
         .arg(&dir)
-        .env("GOSSAMER_FAIL_ON_LLVM_FALLBACK", "1")
         .output()
         .expect("build invalidation fixture");
     assert!(
@@ -1024,7 +1052,11 @@ fn lazy_adapter_panic_propagates_on_all_tiers() {
         },
     ] {
         let out = command.output().expect("run adapter panic fixture");
-        assert!(!out.status.success(), "unexpected stdout: {}", String::from_utf8_lossy(&out.stdout));
+        assert!(
+            !out.status.success(),
+            "unexpected stdout: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
         assert!(
             String::from_utf8_lossy(&out.stderr).contains("lazy adapter panic sentinel"),
             "{}",
@@ -1035,7 +1067,6 @@ fn lazy_adapter_panic_propagates_on_all_tiers() {
     let build = Command::new(gos_bin())
         .args(["build"])
         .arg(&dir)
-        .env("GOSSAMER_FAIL_ON_LLVM_FALLBACK", "1")
         .output()
         .expect("build adapter panic fixture");
     assert!(
@@ -1416,10 +1447,7 @@ fn macos_build_records_15_0_deployment_target() {
         String::from_utf8_lossy(&build.stderr)
     );
 
-    let binary = dir
-        .join("target")
-        .join("debug")
-        .join("deployment_target");
+    let binary = dir.join("target").join("debug").join("deployment_target");
     let metadata = Command::new("otool")
         .arg("-l")
         .arg(&binary)

@@ -1750,7 +1750,7 @@ fn emit_native_objects(
     let cl_path = tmp_dir.join(format!("{unit_name}.cl.o"));
     let build =
         gossamer_driver::compile_at_paths_from_frontend(checked, &llvm_obj_dir, &cl_path, release)
-            .map_err(|err| NativeBuildError::BackendFailed(err.to_string()))?;
+            .map_err(|err| NativeBuildError::BackendFailed(format!("{err:#}")))?;
     timings.body_count = build.body_count;
     timings.llvm_object_count = build.llvm_object_count;
     timings.cranelift_companion = build.has_cranelift_companion;

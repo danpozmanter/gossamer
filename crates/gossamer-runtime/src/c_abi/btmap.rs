@@ -15,129 +15,10 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::*;
 
-// ---------------------------------------------------------------
-// BTreeMap - sorted-key map with String keys + i64 values.
-// Mirrors the `gos_rt_map_*` shape but iterates in key order.
-// ---------------------------------------------------------------
-
-pub struct GosBtMap {
-    inner: std::collections::BTreeMap<String, i64>,
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_btmap_new() -> *mut GosBtMap {
-    ffi_entry!(std::ptr::null_mut(), {
-        Box::into_raw(Box::new(GosBtMap {
-            inner: std::collections::BTreeMap::new(),
-        }))
-    })
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_btmap_insert(m: *mut GosBtMap, key: *const c_char, value: i64) {
-    ffi_entry!((), {
-        if m.is_null() || key.is_null() {
-            return;
-        }
-        let k = unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() };
-        let m = unsafe { &mut *m };
-        m.inner.insert(k, value);
-    });
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_btmap_get_or(
-    m: *const GosBtMap,
-    key: *const c_char,
-    def: i64,
-) -> i64 {
-    ffi_entry!(-1, {
-        if m.is_null() || key.is_null() {
-            return def;
-        }
-        let k = unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() };
-        let m = unsafe { &*m };
-        m.inner.get(&k).copied().unwrap_or(def)
-    })
-}
-
-/// `BTreeMap::get(k) -> Option<i64>` packed as `*mut GosResult`
-/// (disc=0 Some(v), disc=1 None). Mirrors `gos_rt_map_get_i64_opt`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_btmap_get(m: *const GosBtMap, key: *const c_char) -> i128 {
-    ffi_entry!(0i128, {
-        if m.is_null() || key.is_null() {
-            return unsafe { gos_rt_result_new(1, 0) };
-        }
-        let k = unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() };
-        let m = unsafe { &*m };
-        match m.inner.get(&k) {
-            Some(v) => unsafe { gos_rt_result_new(0, *v) },
-            None => unsafe { gos_rt_result_new(1, 0) },
-        }
-    })
-}
-
-/// `BTreeMap::contains(k) -> bool`. Mirrors `gos_rt_map_contains_key_str`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_btmap_contains(m: *const GosBtMap, key: *const c_char) -> i32 {
-    ffi_entry!(0, {
-        if m.is_null() || key.is_null() {
-            return 0;
-        }
-        let k = unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() };
-        let m = unsafe { &*m };
-        i32::from(m.inner.contains_key(&k))
-    })
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_btmap_len(m: *const GosBtMap) -> i64 {
-    ffi_entry!(-1, {
-        if m.is_null() {
-            return 0;
-        }
-        unsafe { (*m).inner.len() as i64 }
-    })
-}
-
-/// Returns a fresh `*mut GosVec` of the BTreeMap's keys (in sort
-/// order, since BTreeMap iterates ordered). Used by the
-/// `for (k, v) in m.iter()` lowering - the codegen iterates the
-/// keys vec by index and re-fetches the value via
-/// `gos_rt_btmap_get_or` so each binding gets a real value, not
-/// the ranked Vec header garbage the previous (missing) iter
-/// dispatch printed.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_btmap_keys(m: *const GosBtMap) -> *mut GosVec {
-    ffi_entry!(std::ptr::null_mut(), {
-        // STRING-typed: the snapshot owns its key strings, so
-        // `gos_rt_vec_free` reclaims them even on early `break`.
-        let v = unsafe {
-            crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::STRING)
-        };
-        if m.is_null() {
-            return v;
-        }
-        let m = unsafe { &*m };
-        for k in m.inner.keys() {
-            let cstr = alloc_cstring(k.as_bytes());
-            let ptr_val = cstr as i64;
-            unsafe {
-                gos_rt_vec_push(v, std::ptr::addr_of!(ptr_val).cast::<u8>());
-            }
-        }
-        v
-    })
-}
-
-/// Renders an i64-elem `Vec` as `[v0, v1, …]`. Returns a fresh
-/// String pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_format_i64(v: *const GosVec) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
@@ -151,8 +32,9 @@ pub unsafe extern "C" fn gos_rt_vec_format_i64(v: *const GosVec) -> *mut c_char 
             if i > 0 {
                 out.push_str(", ");
             }
-            let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
-            let n = unsafe { (p as *const i64).read_unaligned() };
+            // Byte-strided elements (`u8`, `bool`) store one byte per slot,
+            // so the value is read at the width the header declares.
+            let n = unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, i) };
             out.push_str(&format!("{n}"));
         }
         out.push(']');
@@ -177,7 +59,7 @@ pub unsafe extern "C" fn gos_rt_vec_format_f64(v: *const GosVec) -> *mut c_char 
             }
             let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
             let n = unsafe { (p as *const f64).read_unaligned() };
-            out.push_str(&format!("{n}"));
+            out.push_str(&crate::builtins::format_float_debug(n));
         }
         out.push(']');
         alloc_cstring(out.as_bytes())
@@ -208,6 +90,68 @@ pub unsafe extern "C" fn gos_rt_vec_format_bool(v: *const GosVec) -> *mut c_char
     })
 }
 
+/// Renders a `char`-elem `Vec` as `[c0, c1, …]`. Elements occupy a
+/// full slot each and hold the scalar value's code point. Returns a
+/// fresh String pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_format_char(v: *const GosVec) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if v.is_null() {
+            return alloc_cstring(b"[]");
+        }
+        let vec = unsafe { &*v };
+        let mut out = String::with_capacity(2 + (vec.len as usize) * 3);
+        out.push('[');
+        for i in 0..vec.len {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            let word = unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, i) };
+            if let Some(c) = char::from_u32(word as u32) {
+                out.push(c);
+            }
+        }
+        out.push(']');
+        alloc_cstring(out.as_bytes())
+    })
+}
+
+/// Renders an aggregate-elem `Vec` as `[e0, e1, …]` by calling the element
+/// type's derived `fmt` on each element. Elements are stored inline, so
+/// element `i` begins at `ptr + i * elem_bytes`. A struct's `fmt` reads its
+/// fields from that address (`by_ref`); an inline enum's `fmt` decodes the
+/// element word itself, so that word is loaded and passed instead.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_format_adt(
+    v: *const GosVec,
+    fmt: *const std::ffi::c_void,
+    by_ref: i32,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if v.is_null() || fmt.is_null() {
+            return alloc_cstring(b"[]");
+        }
+        let vec = unsafe { &*v };
+        let mut out = String::with_capacity(2 + (vec.len as usize) * 16);
+        out.push('[');
+        for i in 0..vec.len {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            let slot = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
+            let arg = if by_ref != 0 {
+                slot
+            } else {
+                let word = unsafe { (slot as *const usize).read_unaligned() };
+                std::ptr::with_exposed_provenance::<u8>(word)
+            };
+            out.push_str(&unsafe { crate::c_abi::vec::adt_fmt_string(arg, fmt) });
+        }
+        out.push(']');
+        alloc_cstring(out.as_bytes())
+    })
+}
+
 /// Renders a `String`-elem `Vec` as `[s0, s1, …]`. Each element
 /// in the Vec is a NUL-terminated `*const c_char`; we read it as
 /// an 8-byte word and dereference. Returns a fresh String
@@ -230,8 +174,7 @@ pub unsafe extern "C" fn gos_rt_vec_format_string(v: *const GosVec) -> *mut c_ch
                 std::ptr::with_exposed_provenance::<c_char>((p as *const usize).read_unaligned())
             };
             if !s_ptr.is_null() {
-                let cs = unsafe { std::ffi::CStr::from_ptr(s_ptr) };
-                out.push_str(&cs.to_string_lossy());
+                out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(s_ptr) });
             }
         }
         out.push(']');
@@ -267,8 +210,43 @@ pub unsafe extern "C" fn gos_rt_vec_format_vec_i64(v: *const GosVec) -> *mut c_c
                 if rendered.is_null() {
                     out.push_str("[]");
                 } else {
-                    let cs = unsafe { std::ffi::CStr::from_ptr(rendered) };
-                    out.push_str(&cs.to_string_lossy());
+                    out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(rendered) });
+                }
+            }
+        }
+        out.push(']');
+        alloc_cstring(out.as_bytes())
+    })
+}
+
+/// Renders a `Vec<Vec<f64>>` as `[[a, b], [c], …]`. Each element is a
+/// `*mut GosVec` (8-byte slot) whose rows render through the `f64` element
+/// formatter. Returns a fresh String pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_format_vec_f64(v: *const GosVec) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if v.is_null() {
+            return alloc_cstring(b"[]");
+        }
+        let vec = unsafe { &*v };
+        let mut out = String::with_capacity(2 + (vec.len as usize) * 8);
+        out.push('[');
+        for i in 0..vec.len {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
+            let inner_ptr = unsafe {
+                std::ptr::with_exposed_provenance::<GosVec>((p as *const usize).read_unaligned())
+            };
+            if inner_ptr.is_null() {
+                out.push_str("[]");
+            } else {
+                let rendered = unsafe { gos_rt_vec_format_f64(inner_ptr) };
+                if rendered.is_null() {
+                    out.push_str("[]");
+                } else {
+                    out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(rendered) });
                 }
             }
         }
@@ -305,8 +283,7 @@ pub unsafe extern "C" fn gos_rt_vec_format_vec_string(v: *const GosVec) -> *mut 
                 if rendered.is_null() {
                     out.push_str("[]");
                 } else {
-                    let cs = unsafe { std::ffi::CStr::from_ptr(rendered) };
-                    out.push_str(&cs.to_string_lossy());
+                    out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(rendered) });
                 }
             }
         }
@@ -357,7 +334,7 @@ pub unsafe extern "C" fn gos_rt_arr_format_f64(p: *const f64, len: i64) -> *mut 
                 out.push_str(", ");
             }
             let n = unsafe { p.add(i).read_unaligned() };
-            out.push_str(&format!("{n}"));
+            out.push_str(&crate::builtins::format_float_debug(n));
         }
         out.push(']');
         alloc_cstring(out.as_bytes())
@@ -387,6 +364,68 @@ pub unsafe extern "C" fn gos_rt_arr_format_bool(p: *const i64, len: i64) -> *mut
     })
 }
 
+/// Renders a flat `[char; N]` raw buffer. Each element is one 8-byte slot
+/// holding the scalar value's code point.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_arr_format_char(p: *const i64, len: i64) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if p.is_null() || len <= 0 {
+            return alloc_cstring(b"[]");
+        }
+        let len_usize = len.max(0) as usize;
+        let mut out = String::with_capacity(2 + len_usize * 3);
+        out.push('[');
+        for i in 0..len_usize {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            let raw = unsafe { p.add(i).read_unaligned() };
+            if let Some(c) = char::from_u32(raw as u32) {
+                out.push(c);
+            }
+        }
+        out.push(']');
+        alloc_cstring(out.as_bytes())
+    })
+}
+
+/// Renders a flat `[Adt; N]` raw buffer by calling the element type's derived
+/// `fmt` on each element. Rows are inline at `stride` bytes apart; `by_ref`
+/// distinguishes a struct's slot address from an enum's element word exactly
+/// as in [`gos_rt_vec_format_adt`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_arr_format_adt(
+    p: *const u8,
+    len: i64,
+    stride: i64,
+    fmt: *const std::ffi::c_void,
+    by_ref: i32,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if p.is_null() || len <= 0 || stride <= 0 || fmt.is_null() {
+            return alloc_cstring(b"[]");
+        }
+        let len_usize = len as usize;
+        let mut out = String::with_capacity(2 + len_usize * 16);
+        out.push('[');
+        for i in 0..len_usize {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            let slot = unsafe { p.add(i * (stride as usize)) };
+            let arg = if by_ref != 0 {
+                slot
+            } else {
+                let word = unsafe { (slot as *const usize).read_unaligned() };
+                std::ptr::with_exposed_provenance::<u8>(word)
+            };
+            out.push_str(&unsafe { crate::c_abi::vec::adt_fmt_string(arg, fmt) });
+        }
+        out.push(']');
+        alloc_cstring(out.as_bytes())
+    })
+}
+
 /// Renders a flat `[String; N]` raw buffer. Each element is a
 /// pointer to a NUL-terminated c-string.
 #[unsafe(no_mangle)]
@@ -407,8 +446,7 @@ pub unsafe extern "C" fn gos_rt_arr_format_string(
             }
             let s_ptr = unsafe { p.add(i).read_unaligned() };
             if !s_ptr.is_null() {
-                let cs = unsafe { std::ffi::CStr::from_ptr(s_ptr) };
-                out.push_str(&cs.to_string_lossy());
+                out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(s_ptr) });
             }
         }
         out.push(']');
@@ -477,7 +515,7 @@ pub unsafe extern "C" fn gos_rt_arr_format_arr_f64(
                     out.push_str(", ");
                 }
                 let n = unsafe { p.add(i * inner + j).read_unaligned() };
-                out.push_str(&format!("{n}"));
+                out.push_str(&crate::builtins::format_float_debug(n));
             }
             out.push(']');
         }
@@ -541,11 +579,11 @@ pub unsafe extern "C" fn gos_rt_os_set_env(name: *const c_char, value: *const c_
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
-        let name_str = unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() };
+        let name_str = unsafe { crate::c_abi::gos_str_arg_string(name) };
         let value_str = if value.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(value).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(value) }
         };
         crate::safe_env::set_env(&name_str, &value_str);
         unsafe { gos_rt_result_new(0, 0) }
@@ -561,7 +599,7 @@ pub unsafe extern "C" fn gos_rt_os_unset_env(name: *const c_char) {
         if name.is_null() {
             return;
         }
-        let name_str = unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() };
+        let name_str = unsafe { crate::c_abi::gos_str_arg_string(name) };
         crate::safe_env::unset_env(&name_str);
     });
 }
@@ -588,7 +626,7 @@ pub unsafe extern "C" fn gos_rt_exec_spawn(prog: *const c_char, args: *mut GosVe
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         } else {
-            unsafe { CStr::from_ptr(prog).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(prog) }
         };
         let mut cmd_args: Vec<String> = Vec::new();
         if !args.is_null() {
@@ -606,8 +644,7 @@ pub unsafe extern "C" fn gos_rt_exec_spawn(prog: *const c_char, args: *mut GosVe
                         cmd_args.push(String::new());
                         continue;
                     }
-                    let arg_str =
-                        unsafe { CStr::from_ptr(cstr_ptr).to_string_lossy().into_owned() };
+                    let arg_str = unsafe { crate::c_abi::gos_str_arg_string(cstr_ptr) };
                     cmd_args.push(arg_str);
                 }
             }

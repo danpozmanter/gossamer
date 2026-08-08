@@ -19,7 +19,6 @@
 #![allow(missing_docs)]
 
 use std::collections::HashMap;
-use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -51,13 +50,9 @@ pub(crate) fn driver_registry() -> &'static Mutex<Vec<Arc<dyn Driver>>> {
 // --- helpers -------------------------------------------------------
 
 fn c_str_to_string(p: *const c_char) -> String {
-    if p.is_null() {
-        return String::new();
-    }
-    // SAFETY: caller must pass NUL-terminated UTF-8 valid for the
-    // call. Gossamer codegen emits such pointers (string pool +
-    // alloc_cstring).
-    unsafe { CStr::from_ptr(p).to_str().unwrap_or("").to_string() }
+    // SAFETY: callers pass a Gossamer `String`, read through its length
+    // header; non-UTF-8 falls back to the empty string.
+    unsafe { crate::c_abi::gos_str_arg_text(p) }.to_string()
 }
 
 fn alloc_cstring(bytes: &[u8]) -> *mut c_char {

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use crate::ty::{FloatTy, IntTy, Ty, TyKind};
 
 /// Interner that maps [`TyKind`]s to stable [`Ty`] handles.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TyCtxt {
     kinds: Vec<TyKind>,
     index: HashMap<TyKind, Ty>,
@@ -87,7 +87,7 @@ pub struct TyCtxt {
 /// Cached handles for the primitive types that every program uses. The
 /// table is populated lazily on the first call to the corresponding
 /// accessor.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 struct Primitives {
     unit: Option<Ty>,
     never: Option<Ty>,

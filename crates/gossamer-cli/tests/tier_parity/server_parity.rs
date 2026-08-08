@@ -139,6 +139,29 @@ fn http_middleware_compose_parity_across_tiers() {
     );
 }
 
+/// The composable middleware stack - `cors` + `security_headers` + `etag` +
+/// `hsts` + `cache_control` + `compress_gzip` + `timeout` wrapped in a
+/// `rate_limit` - must produce the same headers, statuses, and bodies on
+/// every tier, including the 429 the token bucket returns once its
+/// budget is spent.
+#[test]
+fn stdlib_http_middleware_stack_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/stdlib_http_middleware_stack.gos",
+        &[
+            "cors=https://app.test|GET, PUT|X-Api-Key|600",
+            "allowed status=200 body=ok",
+            "  access-control-allow-origin: *",
+            "  content-security-policy: default-src 'self'",
+            "  strict-transport-security: max-age=31536000",
+            "  cache-control: no-store",
+            "  x-timeout-ms: 2500",
+            "limited status=429 body=rate limit exceeded",
+            "  retry-after: 1",
+        ],
+    );
+}
+
 /// The bare HTTP free-function aliases `native_client::{get,post,put,delete}`,
 /// `proxy::forward`, and `static_files::serve_file` must resolve to their
 /// canonical compiled shims and behave bit-identically on every tier.
@@ -835,16 +858,15 @@ fn probe_once(
 // LLVM strict-backend gate.
 //
 // `gos build --release` must lower frontend-valid programs through
-// LLVM directly. The legacy strict-lowering environment variable is
-// still accepted, and this test fails the moment any example body
-// trips an LLVM backend lowering bug.
+// LLVM directly: a lowering gap is a hard build error, so this test
+// fails the moment any example body trips an LLVM backend lowering bug.
 // ----------------------------------------------------------------
 
 /// One round-robin group of the strict-lowering battery (invoked by the
 /// `llvm_strict_lower_group_N` tests). Builds only (to fresh per-spec
 /// dirs), so groups can run concurrently without the parity lock.
-fn lowers_without_fallback_group(group: usize) {
-    let mut fallbacks: Vec<String> = Vec::new();
+fn strict_lowering_group(group: usize) {
+    let mut lowering_gaps: Vec<String> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
     for (idx, spec) in SPECS.iter().enumerate() {
         if idx % PARITY_GROUPS != group {
@@ -861,7 +883,6 @@ fn lowers_without_fallback_group(group: usize) {
             .arg("--out-dir")
             .arg(&scratch)
             .arg(&src)
-            .env("GOSSAMER_FAIL_ON_LLVM_FALLBACK", "1")
             .output()
             .expect("spawn gos build --release");
         let _ = fs::remove_dir_all(&scratch);
@@ -876,7 +897,7 @@ fn lowers_without_fallback_group(group: usize) {
                 .unwrap_or(&stderr)
                 .trim()
                 .to_string();
-            fallbacks.push(format!("{}: {summary}", spec.path));
+            lowering_gaps.push(format!("{}: {summary}", spec.path));
         } else {
             errors.push(format!(
                 "{}: gos build --release failed: {stderr}",
@@ -884,14 +905,11 @@ fn lowers_without_fallback_group(group: usize) {
             ));
         }
     }
-    if !fallbacks.is_empty() || !errors.is_empty() {
+    if !lowering_gaps.is_empty() || !errors.is_empty() {
         let mut report = String::new();
-        if !fallbacks.is_empty() {
-            report.push_str(&format!(
-                "{} LLVM fallback site(s) - see ai_driven_gaps.md for the open list:\n",
-                fallbacks.len(),
-            ));
-            for f in &fallbacks {
+        if !lowering_gaps.is_empty() {
+            report.push_str(&format!("{} LLVM lowering gap(s):\n", lowering_gaps.len()));
+            for f in &lowering_gaps {
                 report.push_str("  ");
                 report.push_str(f);
                 report.push('\n');

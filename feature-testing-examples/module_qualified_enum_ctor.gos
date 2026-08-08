@@ -1,0 +1,42 @@
+// A variant constructed through its module path (`shapes::Shape::Circle`)
+// must lower to the same enum construction the in-module `Shape::Circle`
+// spelling produces, on every tier.
+
+mod shapes {
+    pub enum Shape { Circle(f64), Rect(f64, f64), Point }
+
+    pub fn area(s: Shape) -> f64 {
+        match s {
+            Shape::Circle(r) => 3.14159 * r * r,
+            Shape::Rect(w, h) => w * h,
+            Shape::Point => 0.0,
+        }
+    }
+
+    pub fn total(shapes: Vec<Shape>) -> f64 {
+        let mut acc = 0.0
+        for s in shapes { acc += area(s) }
+        acc
+    }
+}
+
+fn describe(s: shapes::Shape) -> String {
+    match s {
+        shapes::Shape::Circle(r) => format!("circle {:.1}", r),
+        shapes::Shape::Rect(w, h) => format!("rect {:.1}x{:.1}", w, h),
+        shapes::Shape::Point => "point".to_string(),
+    }
+}
+
+fn main() {
+    let one = shapes::Shape::Circle(2.0)
+    println!("{:.4}", shapes::area(one))
+    println!("{}", describe(shapes::Shape::Rect(2.0, 3.0)))
+    println!("{}", describe(shapes::Shape::Point))
+    let all = #[
+        shapes::Shape::Circle(1.0),
+        shapes::Shape::Rect(2.0, 3.0),
+        shapes::Shape::Point
+    ]
+    println!("{:.4}", shapes::total(all))
+}

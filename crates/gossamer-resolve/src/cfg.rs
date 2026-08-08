@@ -80,6 +80,14 @@ pub fn set_test_cfg(enabled: bool) {
     TEST_CFG_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
+/// Reports whether `#[cfg(test)]` items are currently visible. The flag
+/// selects which items the resolver admits, so it is part of the identity
+/// of any cached front-end result.
+#[must_use]
+pub fn test_cfg_enabled() -> bool {
+    TEST_CFG_ENABLED.load(Ordering::Relaxed)
+}
+
 fn flag_is_active(name: &str) -> bool {
     if platform_flags().contains(&name) {
         return true;

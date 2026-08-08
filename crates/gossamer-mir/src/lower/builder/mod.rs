@@ -179,6 +179,7 @@ mod ctrl;
 mod expr;
 mod intrinsic;
 mod method_call;
+pub(crate) use method_call::{ElemAbi, LazyElemFamily};
 mod misc;
 mod scope;
 mod stdlib;

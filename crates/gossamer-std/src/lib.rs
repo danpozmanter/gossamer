@@ -100,6 +100,7 @@ pub mod http_websocket;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod image;
 pub mod io;
+pub mod io_handles;
 pub mod iter;
 /// JWT (JSON Web Tokens, RFC 7519) - HS256/384/512, ES256, EdDSA.
 #[cfg(not(target_arch = "wasm32"))]

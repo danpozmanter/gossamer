@@ -34,6 +34,9 @@ impl<'tcx> FnBuilder<'tcx> {
             flat_float_locals: std::collections::HashSet::new(),
             uint_display_locals: std::collections::HashSet::new(),
             reference_alias_regs: std::collections::HashSet::new(),
+            capture_cell_names: std::collections::HashSet::new(),
+            capture_cells: Vec::new(),
+            capture_cells_used: false,
             escaped_reference_reg_floor: 0,
             collection_locals: std::collections::HashSet::new(),
             lazy_iterator_locals: std::collections::HashSet::new(),
@@ -87,7 +90,9 @@ impl<'tcx> FnBuilder<'tcx> {
         debug_assert_eq!(self.instrs.len(), self.instruction_locations.len());
         optimize_float_accumulator_moves(&mut self.instrs, &mut self.instruction_locations);
         optimize_i64_to_f64_divs(&mut self.instrs, &mut self.instruction_locations);
-        optimize_tail_call_argument_moves(&mut self.instrs);
+        if !self.capture_cells_used {
+            optimize_tail_call_argument_moves(&mut self.instrs);
+        }
         let instruction_locations = encode_instruction_locations(&self.instruction_locations);
         let mut chunk = FnChunk {
             name: self.name,

@@ -2,11 +2,11 @@
 // so the piped value becomes the receiver of the step. A pure parse-time
 // desugar, so it runs identically on the VM, Cranelift, and LLVM tiers:
 //
-//   x |> _.trim          => x.trim()      (bare ident => nullary method)
-//   x |> _.replace(a, b) => x.replace(a, b)
-//   x |> _.0             => x.0           (tuple index)
-//   x |> _[i]                => x[i]
-//   x |> _               => x
+//   x |> $.trim          => x.trim()      (bare ident => nullary method)
+//   x |> $.replace(a, b) => x.replace(a, b)
+//   x |> $.0             => x.0           (tuple index)
+//   x |> $[i]                => x[i]
+//   x |> $               => x
 //
 // `_.method` composes with the data-last `iter::*` free-function pipe steps.
 
@@ -25,41 +25,41 @@ fn label(p: Point) -> String {
 
 fn main() {
     // bare method, no parens => nullary method call
-    let t = "  hello  " |> _.trim
+    let t = "  hello  " |> $.trim
     println!("[{}]", t)
 
     // method with args: piped value is the receiver, not an appended arg
-    let r = "a,b,c" |> _.replace(",", "-")
+    let r = "a,b,c" |> $.replace(",", "-")
     println!("{}", r)
 
     // chained method steps
-    let up = "go" |> _.to_uppercase |> _.repeat(3)
+    let up = "go" |> $.to_uppercase |> $.repeat(3)
     println!("{}", up)
 
     // tuple index and array index
     let pair = (10, 20)
-    println!("{}", pair |> _.1)
+    println!("{}", pair |> $.1)
     let xs = #[3, 6, 9]
-    println!("{}", xs |> _[1])
+    println!("{}", xs |> $[1])
 
     // identity
-    println!("{}", 42 |> _)
+    println!("{}", 42 |> $)
 
     // a direct `_` selects an argument position, including inside a format
     // macro after it expands to its ordinary call form.
-    println!("{}", "world" |> format!("hello, {}", _))
-    match "world" |> strings::slice(_, 1, 4) {
+    println!("{}", "world" |> format!("hello, {}", $))
+    match "world" |> strings::slice($, 1, 4) {
         Ok(part) => println!("{}", part),
         Err(_) => println!("slice failed"),
     }
 
     // mixed with data-last iter steps; `_.len()` consumes the iter result
-    let evens = #[1, 2, 3, 4, 5, 6] |> iter::filter(|x: i64| x % 2 == 0) |> _.len()
+    let evens = #[1, 2, 3, 4, 5, 6] |> iter::filter(|x: i64| x % 2 == 0) |> $.len()
     println!("{}", evens)
 
     // in-place method through a pipe, used as a statement
     let mut v = #[3, 1, 2]
-    v |> _.sort()
+    v |> $.sort()
     println!("{} {} {}", v[0], v[1], v[2])
 
     // placeholder threads a struct receiver into a free function's last slot
@@ -75,35 +75,35 @@ mod tests {
 
     #[test]
     fn bare_method_trims() {
-        let _ = testing::check(("  hi  " |> _.trim) == "hi", "_.trim => x.trim()")
+        let _ = testing::check(("  hi  " |> $.trim) == "hi", "_.trim => x.trim()")
     }
 
     #[test]
     fn method_with_args() {
-        let _ = testing::check(("a,b" |> _.replace(",", "-")) == "a-b", "_.replace threads receiver")
+        let _ = testing::check(("a,b" |> $.replace(",", "-")) == "a-b", "_.replace threads receiver")
     }
 
     #[test]
     fn chained_methods() {
-        let _ = testing::check(("go" |> _.to_uppercase |> _.repeat(2)) == "GOGO", "chains compose")
+        let _ = testing::check(("go" |> $.to_uppercase |> $.repeat(2)) == "GOGO", "chains compose")
     }
 
     #[test]
     fn tuple_and_index() {
-        let _ = testing::check(((1, 2) |> _.1) == 2, "_.1 tuple index")
-        let _ = testing::check((#[7, 8, 9] |> _[2]) == 9, "_[i] index")
+        let _ = testing::check(((1, 2) |> $.1) == 2, "_.1 tuple index")
+        let _ = testing::check((#[7, 8, 9] |> $[2]) == 9, "_[i] index")
     }
 
     #[test]
     fn identity_pipe() {
-        let _ = testing::check((99 |> _) == 99, "x |> _ is identity")
+        let _ = testing::check((99 |> $) == 99, "x |> $ is identity")
     }
 
     #[test]
     fn direct_argument_placeholder() {
-        let greeting = "world" |> format!("hello, {}", _)
+        let greeting = "world" |> format!("hello, {}", $)
         let _ = testing::check(greeting == "hello, world", "format argument receives pipe value")
-        match "world" |> strings::slice(_, 1, 4) {
+        match "world" |> strings::slice($, 1, 4) {
             Ok(part) => {
                 let _ = testing::check(part == "orl", "non-trailing placeholder selects first argument")
             },
@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn mixed_with_iter() {
-        let n = #[1, 2, 3, 4] |> iter::filter(|x: i64| x % 2 == 0) |> _.len()
+        let n = #[1, 2, 3, 4] |> iter::filter(|x: i64| x % 2 == 0) |> $.len()
         let _ = testing::check(n == 2, "_.len() consumes an iter result")
     }
 }

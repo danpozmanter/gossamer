@@ -237,6 +237,16 @@ pub const PATH: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "Reports whether the path begins with a prefix component-wise.",
         },
+        StdItem {
+            name: "matches",
+            kind: StdItemKind::Function,
+            doc: "`matches(pattern, name) -> bool` - Go `filepath.Match` shell-glob test over a single path segment: `*` and `?` never cross a `/`, `[abc]` is a character class. Spelled `matches` because `match` is a keyword. Example: `path::matches(\"*.gos\", \"main.gos\")` is true, `path::matches(\"a*c\", \"a/c\")` is false.",
+        },
+        StdItem {
+            name: "glob",
+            kind: StdItemKind::Function,
+            doc: "`glob(pattern) -> Result<Vec<String>, errors::Error>` - filesystem paths matching a shell glob, sorted so every tier reports the same order. Supports `*`, `?`, `[abc]`, and `**` (this directory and every descendant). Relative patterns resolve against the working directory. Example: `let found = path::glob(\"src/**/*.gos\")?`.",
+        },
     ],
 };
 
@@ -504,6 +514,61 @@ pub const IO: StdModule = StdModule {
             name: "Error",
             kind: StdItemKind::Type,
             doc: "Errors raised by I/O operations.",
+        },
+        StdItem {
+            name: "string_reader",
+            kind: StdItemKind::Function,
+            doc: "`string_reader(text: String) -> i64` - a Reader handle over an in-memory buffer. Reader and Writer handles are plain integers, so the adapters below compose by value. Example: `let src = io::string_reader(\"hello\")`.",
+        },
+        StdItem {
+            name: "buffer_writer",
+            kind: StdItemKind::Function,
+            doc: "`buffer_writer() -> i64` - a Writer handle collecting everything written to it; read it back with `io::contents`.",
+        },
+        StdItem {
+            name: "limit_reader",
+            kind: StdItemKind::Function,
+            doc: "`limit_reader(src: i64, limit: i64) -> i64` - a Reader yielding at most `limit` bytes from `src`, Go's `io.LimitReader`. Example: `io::drain(io::limit_reader(src, 5))`.",
+        },
+        StdItem {
+            name: "tee_reader",
+            kind: StdItemKind::Function,
+            doc: "`tee_reader(src: i64, sink: i64) -> i64` - a Reader mirroring every byte read from `src` into the Writer `sink`, Go's `io.TeeReader`.",
+        },
+        StdItem {
+            name: "multi_reader",
+            kind: StdItemKind::Function,
+            doc: "`multi_reader(sources: Vec<i64>) -> i64` - a Reader draining each source in turn, Go's `io.MultiReader`. Example: `io::multi_reader(#[a, b])`.",
+        },
+        StdItem {
+            name: "pipe",
+            kind: StdItemKind::Function,
+            doc: "`pipe() -> (i64, i64)` - a connected `(reader, writer)` pair sharing one in-memory buffer. Reads return the bytes written so far and never block; `io::close_writer` marks the writer done. Example: `let (r, w) = io::pipe()`.",
+        },
+        StdItem {
+            name: "copy_n",
+            kind: StdItemKind::Function,
+            doc: "`copy_n(dst: i64, src: i64, n: i64) -> Result<i64, errors::Error>` - copies at most `n` bytes and returns the count actually transferred. Go's `io.CopyN`.",
+        },
+        StdItem {
+            name: "drain",
+            kind: StdItemKind::Function,
+            doc: "`drain(src: i64) -> String` - reads a Reader handle to end of stream as UTF-8 text.",
+        },
+        StdItem {
+            name: "contents",
+            kind: StdItemKind::Function,
+            doc: "`contents(writer: i64) -> String` - everything written to a buffer or pipe Writer, as UTF-8 text.",
+        },
+        StdItem {
+            name: "write",
+            kind: StdItemKind::Function,
+            doc: "`write(writer: i64, text: String) -> i64` - appends text to a Writer handle and returns the byte count accepted.",
+        },
+        StdItem {
+            name: "close_writer",
+            kind: StdItemKind::Function,
+            doc: "`close_writer(writer: i64)` - signals end of stream on a pipe Writer; later writes are rejected.",
         },
     ],
 };

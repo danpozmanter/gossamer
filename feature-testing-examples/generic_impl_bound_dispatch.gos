@@ -1,0 +1,45 @@
+// A method on a bounded generic `impl<T: Trait>` block calls the trait method
+// through its type parameter. The receiver is an aggregate reached through a
+// field, so the specialised copy must pass its address to the concrete impl,
+// which declares `&self`.
+
+trait Shape {
+    fn area(&self) -> f64
+    fn name(&self) -> String
+}
+
+struct Square { side: f64 }
+struct Rect { w: f64, h: f64 }
+
+impl Shape for Square {
+    fn area(&self) -> f64 { self.side * self.side }
+    fn name(&self) -> String { "square" }
+}
+
+impl Shape for Rect {
+    fn area(&self) -> f64 { self.w * self.h }
+    fn name(&self) -> String { "rect" }
+}
+
+struct Wrapper<T> { value: T }
+
+impl<T: Shape> Wrapper<T> {
+    fn report(&self) -> String { format!("{}={}", self.value.name(), self.value.area()) }
+    fn doubled(&self) -> f64 { self.value.area() * 2.0 }
+}
+
+// A bound carried by a `where` clause reads the same as one in the list.
+fn describe<T>(shape: &T) -> String where T: Shape {
+    format!("{} has area {}", shape.name(), shape.area())
+}
+
+fn main() {
+    let sq = Wrapper { value: Square { side: 3.0 } }
+    let rc = Wrapper { value: Rect { w: 2.0, h: 5.0 } }
+    println!("{}", sq.report())
+    println!("{}", rc.report())
+    println!("{}", sq.doubled())
+    println!("{}", rc.doubled())
+    println!("{}", describe(&Square { side: 4.0 }))
+    println!("{}", describe(&Rect { w: 3.0, h: 3.0 }))
+}

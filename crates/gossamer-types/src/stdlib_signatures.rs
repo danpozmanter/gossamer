@@ -686,12 +686,12 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::encoding::binary",
         name: "uvarint",
-        signature: "fn uvarint(bytes: Vec<u8>) -> Result<i64, errors::Error>",
+        signature: "fn uvarint(bytes: Vec<u8>) -> Result<(i64, i64), errors::Error>",
     },
     StdFunctionSignature {
         module_path: "std::encoding::binary",
         name: "varint",
-        signature: "fn varint(bytes: Vec<u8>) -> Result<i64, errors::Error>",
+        signature: "fn varint(bytes: Vec<u8>) -> Result<(i64, i64), errors::Error>",
     },
     StdFunctionSignature {
         module_path: "std::encoding::csv",
@@ -931,7 +931,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::errors",
         name: "is",
-        signature: "fn is(error: errors::Error, needle: String) -> bool",
+        signature: "fn is(error: errors::Error, needle: T) -> bool",
     },
     StdFunctionSignature {
         module_path: "std::errors",
@@ -2532,6 +2532,161 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         module_path: "std::path",
         name: "starts_with",
         signature: "fn starts_with(path: String, prefix: String) -> bool",
+    },
+    StdFunctionSignature {
+        module_path: "std::http::middleware",
+        name: "request_id",
+        signature: "fn request_id(inner: T) -> T",
+    },
+    StdFunctionSignature {
+        module_path: "std::http::middleware",
+        name: "cors",
+        signature: "fn cors(inner: T, config: String) -> T",
+    },
+    StdFunctionSignature {
+        module_path: "std::http::middleware",
+        name: "security_headers",
+        signature: "fn security_headers(inner: T, preset: String) -> T",
+    },
+    StdFunctionSignature {
+        module_path: "std::http::middleware",
+        name: "etag",
+        signature: "fn etag(inner: T) -> T",
+    },
+    StdFunctionSignature {
+        module_path: "std::http::middleware",
+        name: "rate_limit",
+        signature: "fn rate_limit(inner: T, config: String) -> T",
+    },
+    StdFunctionSignature {
+        module_path: "std::http::middleware",
+        name: "hsts",
+        signature: "fn hsts(inner: T, config: String) -> T",
+    },
+    StdFunctionSignature {
+        module_path: "std::http::middleware",
+        name: "cache_control",
+        signature: "fn cache_control(inner: T, config: String) -> T",
+    },
+    StdFunctionSignature {
+        module_path: "std::http::middleware",
+        name: "body_limit",
+        signature: "fn body_limit(inner: T, max_bytes: i64) -> T",
+    },
+    StdFunctionSignature {
+        module_path: "std::http::middleware",
+        name: "compress_gzip",
+        signature: "fn compress_gzip(inner: T) -> T",
+    },
+    StdFunctionSignature {
+        module_path: "std::http::middleware",
+        name: "logger",
+        signature: "fn logger(inner: T) -> T",
+    },
+    StdFunctionSignature {
+        module_path: "std::http::middleware",
+        name: "recoverer",
+        signature: "fn recoverer(inner: T) -> T",
+    },
+    StdFunctionSignature {
+        module_path: "std::http::middleware",
+        name: "timeout",
+        signature: "fn timeout(inner: T, budget_ms: i64) -> T",
+    },
+    StdFunctionSignature {
+        module_path: "std::http::middleware",
+        name: "basic_auth",
+        signature: "fn basic_auth(inner: T, realm: String) -> T",
+    },
+    StdFunctionSignature {
+        module_path: "std::http::middleware",
+        name: "bearer_auth",
+        signature: "fn bearer_auth(inner: T, realm: String) -> T",
+    },
+    StdFunctionSignature {
+        module_path: "std::http::middleware",
+        name: "safe_defaults",
+        signature: "fn safe_defaults(inner: T) -> T",
+    },
+    StdFunctionSignature {
+        module_path: "std::io",
+        name: "string_reader",
+        signature: "fn string_reader(text: String) -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::io",
+        name: "buffer_writer",
+        signature: "fn buffer_writer() -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::io",
+        name: "limit_reader",
+        signature: "fn limit_reader(src: i64, limit: i64) -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::io",
+        name: "tee_reader",
+        signature: "fn tee_reader(src: i64, sink: i64) -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::io",
+        name: "multi_reader",
+        signature: "fn multi_reader(sources: Vec<i64>) -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::io",
+        name: "pipe",
+        signature: "fn pipe() -> (i64, i64)",
+    },
+    StdFunctionSignature {
+        module_path: "std::io",
+        name: "copy_n",
+        signature: "fn copy_n(dst: i64, src: i64, n: i64) -> Result<i64, errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::io",
+        name: "drain",
+        signature: "fn drain(src: i64) -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::io",
+        name: "contents",
+        signature: "fn contents(writer: i64) -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::io",
+        name: "write",
+        signature: "fn write(writer: i64, text: String) -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::io",
+        name: "close_writer",
+        signature: "fn close_writer(writer: i64)",
+    },
+    StdFunctionSignature {
+        module_path: "std::path",
+        name: "matches",
+        signature: "fn matches(pattern: String, name: String) -> bool",
+    },
+    StdFunctionSignature {
+        module_path: "std::path",
+        name: "glob",
+        signature: "fn glob(pattern: String) -> Result<Vec<String>, errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::sort",
+        name: "sort_stable",
+        signature: "fn sort_stable(xs: Vec<T>) -> Vec<T>",
+    },
+    StdFunctionSignature {
+        module_path: "std::sort",
+        name: "binary_search",
+        signature: "fn binary_search(xs: Vec<T>, target: T) -> Option<i64>",
+    },
+    StdFunctionSignature {
+        module_path: "std::sort",
+        name: "partition_point",
+        signature: "fn partition_point(xs: Vec<T>, pivot: T) -> i64",
     },
     StdFunctionSignature {
         module_path: "std::process",

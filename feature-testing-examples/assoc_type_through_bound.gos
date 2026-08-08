@@ -1,0 +1,30 @@
+// An associated type declared by a trait, supplied by its single impl, and
+// projected as `Self::Item` and `T::Item` in signatures.
+
+trait Holder {
+    type Item
+    fn get(&self) -> Self::Item
+}
+
+struct Label {
+    text: String
+}
+
+impl Holder for Label {
+    type Item = String
+
+    fn get(&self) -> Self::Item {
+        self.text
+    }
+}
+
+fn shout<T: Holder>(holder: &T) -> T::Item {
+    holder.get()
+}
+
+fn main() {
+    let label = Label { text: "gossamer" }
+    let item: String = shout(&label)
+    println!("{}", item.to_uppercase())
+    println!("{}", item.len())
+}

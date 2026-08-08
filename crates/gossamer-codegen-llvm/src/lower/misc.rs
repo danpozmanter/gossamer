@@ -290,8 +290,14 @@ impl<'a> Lowerer<'a> {
             return None;
         }
         declare_rt(&mut self.runtime_refs, "gos_rt_aggr_alloc");
+        // `noalias`: a fresh allocation, so the memcpy below cannot be writing
+        // through any other live pointer.
         let heap = self.fresh();
-        writeln!(self.out, "  {heap} = call ptr @gos_rt_aggr_alloc(i64 16)").unwrap();
+        writeln!(
+            self.out,
+            "  {heap} = call noalias ptr @gos_rt_aggr_alloc(i64 16)"
+        )
+        .unwrap();
         let src = local_slot(place.local);
         writeln!(
             self.out,
@@ -481,10 +487,12 @@ impl<'a> Lowerer<'a> {
             };
             declare_rt(&mut self.runtime_refs, "gos_rt_rc_alloc_copy");
             let src = local_slot(place.local);
+            // `noalias`: the RC block is freshly allocated, so nothing else
+            // live at this point addresses it.
             let heap = self.fresh();
             writeln!(
                 self.out,
-                "  {heap} = call ptr @gos_rt_rc_alloc_copy(i64 {bytes}, ptr {meta}, ptr {src})"
+                "  {heap} = call noalias ptr @gos_rt_rc_alloc_copy(i64 {bytes}, ptr {meta}, ptr {src})"
             )
             .unwrap();
             let heap_i64 = self.fresh();
@@ -497,8 +505,14 @@ impl<'a> Lowerer<'a> {
             "gos_rt_aggr_alloc"
         };
         declare_rt(&mut self.runtime_refs, helper);
+        // `noalias`: both helpers return a fresh allocation, so the memcpy
+        // below cannot be writing through any other live pointer.
         let heap = self.fresh();
-        writeln!(self.out, "  {heap} = call ptr @{helper}(i64 {bytes})").unwrap();
+        writeln!(
+            self.out,
+            "  {heap} = call noalias ptr @{helper}(i64 {bytes})"
+        )
+        .unwrap();
         let src = local_slot(place.local);
         writeln!(
             self.out,
@@ -582,10 +596,12 @@ impl<'a> Lowerer<'a> {
                     Some(TyKind::DynError) => ConcatKind::ErrorMessage,
                     Some(TyKind::Array { elem, len }) => {
                         let n = i64::try_from(len.to_usize()).unwrap_or(0);
-                        match self.tcx.kind(*elem) {
+                        let elem = *elem;
+                        match self.tcx.kind(elem) {
                             Some(TyKind::Int(_)) => ConcatKind::ArrI64(n),
                             Some(TyKind::Float(_)) => ConcatKind::ArrF64(n),
                             Some(TyKind::Bool) => ConcatKind::ArrBool(n),
+                            Some(TyKind::Char) => ConcatKind::ArrChar(n),
                             Some(TyKind::String) => ConcatKind::ArrString(n),
                             // Nested fixed array: rows are inline (N * M
                             // contiguous slots), so both static lengths
@@ -602,23 +618,48 @@ impl<'a> Lowerer<'a> {
                                     _ => ConcatKind::Unsupported,
                                 }
                             }
-                            _ => ConcatKind::Unsupported,
+                            // Array rows are inline, so element `i` starts at
+                            // `base + i * slots * 8`.
+                            _ => match self.adt_debug_fmt_symbol(elem) {
+                                Some(sym) => {
+                                    let slots = i64::from(
+                                        crate::ty::slot_count(self.tcx, elem).unwrap_or(1).max(1),
+                                    );
+                                    ConcatKind::ArrAdt(
+                                        n,
+                                        slots * 8,
+                                        sym,
+                                        self.adt_fmt_takes_slot_address(elem),
+                                    )
+                                }
+                                None => ConcatKind::Unsupported,
+                            },
                         }
                     }
-                    Some(TyKind::Slice(elem) | TyKind::Vec(elem)) => match self.tcx.kind(*elem) {
-                        Some(TyKind::Int(_)) => ConcatKind::VecI64,
-                        Some(TyKind::Float(_)) => ConcatKind::VecF64,
-                        Some(TyKind::Bool) => ConcatKind::VecBool,
-                        Some(TyKind::String) => ConcatKind::VecString,
-                        Some(TyKind::Vec(inner) | TyKind::Slice(inner)) => {
-                            match self.tcx.kind(*inner) {
-                                Some(TyKind::Int(_)) => ConcatKind::VecVecI64,
-                                Some(TyKind::String) => ConcatKind::VecVecString,
-                                _ => ConcatKind::Unsupported,
+                    Some(TyKind::Slice(elem) | TyKind::Vec(elem)) => {
+                        let elem = *elem;
+                        match self.tcx.kind(elem) {
+                            Some(TyKind::Int(_)) => ConcatKind::VecI64,
+                            Some(TyKind::Float(_)) => ConcatKind::VecF64,
+                            Some(TyKind::Bool) => ConcatKind::VecBool,
+                            Some(TyKind::Char) => ConcatKind::VecChar,
+                            Some(TyKind::String) => ConcatKind::VecString,
+                            Some(TyKind::Vec(inner) | TyKind::Slice(inner)) => {
+                                match self.tcx.kind(*inner) {
+                                    Some(TyKind::Int(_)) => ConcatKind::VecVecI64,
+                                    Some(TyKind::Float(_)) => ConcatKind::VecVecF64,
+                                    Some(TyKind::String) => ConcatKind::VecVecString,
+                                    _ => ConcatKind::Unsupported,
+                                }
                             }
+                            _ => match self.adt_debug_fmt_symbol(elem) {
+                                Some(sym) => {
+                                    ConcatKind::VecAdt(sym, self.adt_fmt_takes_slot_address(elem))
+                                }
+                                None => ConcatKind::Unsupported,
+                            },
                         }
-                        _ => ConcatKind::Unsupported,
-                    },
+                    }
                     // Tuple of scalar elements: route through
                     // `gos_rt_tuple_format`. Mixed/aggregate element
                     // types (or narrow ints whose flat-slot bytes
@@ -668,23 +709,23 @@ impl<'a> Lowerer<'a> {
                     {
                         let tys = substs.types();
                         if def.local == u32::MAX - 1 {
-                            match tys.first().and_then(|t| self.debug_payload_kind(*t)) {
+                            match tys.first().and_then(|t| self.debug_payload_plan(*t)) {
                                 Some(k) => ConcatKind::Option(k),
                                 None => ConcatKind::Unsupported,
                             }
                         } else {
                             match (
-                                tys.first().and_then(|t| self.debug_payload_kind(*t)),
-                                tys.get(1).and_then(|t| self.debug_payload_kind(*t)),
+                                tys.first().and_then(|t| self.debug_payload_plan(*t)),
+                                tys.get(1).and_then(|t| self.debug_payload_plan(*t)),
                             ) {
                                 (Some(ok), Some(err)) => ConcatKind::Result(ok, err),
                                 _ => ConcatKind::Unsupported,
                             }
                         }
                     }
-                    // Aggregate / collection / variant types we
-                    // can't yet route. Refuse loudly so the
-                    // backend triggers fallback.
+                    // Aggregate / collection / variant types this planner
+                    // cannot route. Refusing here surfaces the gap as a
+                    // hard build error instead of a silently wrong render.
                     Some(
                         kind @ (TyKind::Sender(_)
                         | TyKind::Receiver(_)
@@ -790,6 +831,49 @@ impl<'a> Lowerer<'a> {
         } else {
             None
         }
+    }
+
+    /// Symbol of `ty`'s derived `Debug` formatter (`Type::fmt`), or `None`
+    /// when `ty` is not a user ADT or the unit defines no such formatter.
+    /// Built-in generic ADTs (`Option`, `Result`, the set types) never carry
+    /// one, so they fall out through the same lookup.
+    pub(crate) fn adt_debug_fmt_symbol(&self, ty: Ty) -> Option<String> {
+        let ty = self.unwrap_ref(ty);
+        if !matches!(self.tcx.kind(ty), Some(TyKind::Adt { .. })) {
+            return None;
+        }
+        // Impl methods register under the type's bare source name, so a
+        // generic instantiation drops its argument suffix (`Wrap<f64>` ->
+        // `Wrap`); `adt#N` is the placeholder for an unnamed Adt.
+        let rendered = gossamer_types::printer::render_ty(self.tcx, ty);
+        let bare = rendered.rsplit("::").next().unwrap_or(&rendered);
+        let bare = bare.split('<').next().unwrap_or(bare);
+        if bare.starts_with("adt#") {
+            return None;
+        }
+        let sym = format!("{bare}::fmt");
+        self.param_tys_by_name.contains_key(&sym).then_some(sym)
+    }
+
+    /// True when `ty`'s derived `fmt` receives the address of the value's
+    /// slot buffer. A struct is stored as flat slots and read through that
+    /// address; an enum's value is a single word - an inline tag or an RC
+    /// node pointer - whose `fmt` decodes that word directly.
+    pub(crate) fn adt_fmt_takes_slot_address(&self, ty: Ty) -> bool {
+        match self.tcx.kind(self.unwrap_ref(ty)) {
+            Some(TyKind::Adt { def, .. }) => self.tcx.enum_variant_tys(*def).is_none(),
+            _ => false,
+        }
+    }
+
+    /// Rendering plan for an `Option` / `Result` payload: a fixed runtime tag
+    /// for scalars, Strings, and collections, or the payload ADT's derived
+    /// `fmt`. `None` for a payload no formatter reaches.
+    pub(crate) fn debug_payload_plan(&self, ty: Ty) -> Option<DebugPayload> {
+        if let Some(tag) = self.debug_payload_kind(ty) {
+            return Some(DebugPayload::Tag(tag));
+        }
+        self.adt_debug_fmt_symbol(ty).map(DebugPayload::Fmt)
     }
 
     /// Maps an `Option` / `Result` payload type to the `gos_rt_debug_*`

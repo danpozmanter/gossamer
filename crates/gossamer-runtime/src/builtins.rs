@@ -30,6 +30,16 @@ pub fn format_float(f: f64) -> String {
     format!("{f}")
 }
 
+/// Canonical `{:?}` rendering of a float: always recoverable as a float, so
+/// an integral value keeps a `.0` and a magnitude outside the plain-decimal
+/// window switches to exponent form. Mirrors Rust's `Debug for f64`, which
+/// prints decimals with at least one fractional digit for `0` and for
+/// `1e-4 <= |x| < 1e16`, and exponent form otherwise.
+#[must_use]
+pub fn format_float_debug(f: f64) -> String {
+    format!("{f:?}")
+}
+
 /// Canonical rendering of a boolean: `"true"` / `"false"`. The
 /// constant is shared so both paths format the value identically -
 /// subtle case differences would otherwise cause parity-harness
@@ -61,6 +71,19 @@ pub fn runtime_error_prefix(code: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn format_float_debug_always_reads_back_as_a_float() {
+        assert_eq!(format_float_debug(7.0), "7.0");
+        assert_eq!(format_float_debug(-0.5), "-0.5");
+        assert_eq!(format_float_debug(-0.0), "-0.0");
+        assert_eq!(format_float_debug(1e300), "1e300");
+        assert_eq!(format_float_debug(1e-10), "1e-10");
+        assert_eq!(format_float_debug(f64::NAN), "NaN");
+        assert_eq!(format_float_debug(f64::INFINITY), "inf");
+        // Display keeps the bare integral spelling.
+        assert_eq!(format_float(7.0), "7");
+    }
 
     #[test]
     fn format_int_matches_rust_display_for_extremes() {

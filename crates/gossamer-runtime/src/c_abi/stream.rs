@@ -15,7 +15,7 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::io::{BufRead, Read};
 use std::os::raw::c_char;
 
@@ -205,7 +205,7 @@ pub unsafe extern "C" fn gos_rt_stream_write_str(stream: *const GosStream, s: *c
         let bytes = if s.is_null() {
             b"" as &[u8]
         } else {
-            unsafe { CStr::from_ptr(s).to_bytes() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(s) }
         };
         unsafe { write_fd(fd, bytes) };
     });
@@ -366,13 +366,7 @@ pub unsafe extern "C" fn gos_rt_stream_read_line(
         match read {
             Ok(Ok((n, line))) => {
                 let current = unsafe { *buf_slot };
-                let mut out = if current.is_null() {
-                    String::new()
-                } else {
-                    unsafe { CStr::from_ptr(current) }
-                        .to_string_lossy()
-                        .into_owned()
-                };
+                let mut out = unsafe { crate::c_abi::gos_str_arg_string(current) };
                 out.push_str(&line);
                 let updated = alloc_cstring(out.as_bytes());
                 unsafe {

@@ -6,7 +6,6 @@
 #![allow(clippy::single_match_else)]
 #![allow(clippy::uninlined_format_args)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::*;
@@ -16,7 +15,7 @@ unsafe fn str_of<'a>(s: *const c_char) -> &'a str {
     if s.is_null() {
         ""
     } else {
-        unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+        unsafe { crate::c_abi::gos_str_arg_text(s) }
     }
 }
 
@@ -29,14 +28,7 @@ unsafe fn bytes_of<'a>(ptr: *const u8, len: i64) -> Option<&'a str> {
 }
 
 unsafe fn str_range_of<'a>(s: *const c_char, start: i64, end: i64) -> Result<&'a str, String> {
-    let len = if s.is_null() {
-        0i64
-    } else {
-        match unsafe { super::string::str_header_len(s) } {
-            Some(l) => l as i64,
-            None => unsafe { super::string::c_str_len(s) as i64 },
-        }
-    };
+    let len = unsafe { crate::c_abi::gos_str_arg_len(s) } as i64;
     if start < 0 || end < 0 || start > end || end > len {
         return Err(format!(
             "slice: range [{start}, {end}) out of bounds for length {len}"
@@ -366,7 +358,7 @@ pub unsafe extern "C" fn gos_rt_strconv_quote(s: *const c_char) -> *mut c_char {
         let text = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { crate::c_abi::gos_str_arg_text(s) }
         };
         let mut out = String::with_capacity(text.len() + 2);
         out.push('"');

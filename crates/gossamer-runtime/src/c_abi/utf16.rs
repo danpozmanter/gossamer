@@ -11,7 +11,6 @@
 //! the ABI as i64-per-element `GosVec`s (the compiled-tier narrow
 //! integer Vec representation).
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 const HIGH_MIN: u16 = 0xD800;
@@ -59,7 +58,7 @@ pub unsafe extern "C" fn gos_rt_utf16_encode_string(s: *const c_char) -> *mut su
         let text = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s) }.to_str().unwrap_or("")
+            unsafe { crate::c_abi::gos_str_arg_text(s) }
         };
         let units: Vec<u16> = text.encode_utf16().collect();
         let out = unsafe { super::vec::gos_rt_vec_with_capacity(8, units.len() as i64) };

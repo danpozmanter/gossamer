@@ -31,7 +31,7 @@ impl Neg for Sign {
 
 struct Wrap<T> { v: T }
 
-impl<T> Add for Wrap<T> {
+impl<T: Add> Add for Wrap<T> {
     fn add(self, o: Wrap<T>) -> Wrap<T> { Wrap { v: self.v + o.v } }
 }
 

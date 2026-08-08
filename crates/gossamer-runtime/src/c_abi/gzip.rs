@@ -15,7 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::*;
@@ -30,7 +29,7 @@ pub unsafe extern "C" fn gos_rt_gzip_encode(data: *const c_char) -> *mut c_char 
         if data.is_null() {
             return alloc_cstring(b"");
         }
-        let bytes = unsafe { CStr::from_ptr(data).to_bytes() };
+        let bytes = unsafe { crate::c_abi::gos_str_arg_bytes(data) };
         use std::io::Write;
         let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         if enc.write_all(bytes).is_err() {
@@ -47,7 +46,7 @@ pub unsafe extern "C" fn gos_rt_gzip_decode(data: *const c_char) -> *mut c_char 
         if data.is_null() {
             return alloc_cstring(b"");
         }
-        let bytes = unsafe { CStr::from_ptr(data).to_bytes() };
+        let bytes = unsafe { crate::c_abi::gos_str_arg_bytes(data) };
         use std::io::Read;
         let mut dec = flate2::read::GzDecoder::new(bytes);
         let mut out = Vec::new();

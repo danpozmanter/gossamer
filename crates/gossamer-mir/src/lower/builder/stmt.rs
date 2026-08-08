@@ -594,14 +594,28 @@ impl<'a> Builder<'a> {
                         if !self.try_rebind_ctor_call(value, local) {
                             let init_ty = self.locals[value.0 as usize].ty;
                             let binding_ty = self.locals[local.0 as usize].ty;
-                            if self.is_fresh_user_call_result(value) {
-                                // The call-result temporary has no
-                                // source-language identity. Copy its aggregate
-                                // words and managed child handles, allowing RC
-                                // insertion to retain the children before the
-                                // temporary dies. Deep-cloning a nested Vec
-                                // here detached a fresh buffer on every loop
-                                // iteration.
+                            if gossamer_hir::is_capture_env_load(init) {
+                                // A closure capture aliases the enclosing
+                                // scope's value, so a heap type mutated
+                                // through it reaches the original.
+                                self.emit_assign(
+                                    Place::local(local),
+                                    Rvalue::Use(Operand::Copy(Place::local(value))),
+                                    stmt.span,
+                                );
+                            } else if gossamer_hir::is_capture_env_load(init)
+                                || self.is_fresh_user_call_result(value)
+                            {
+                                // Neither shape owns a fresh value. A closure's
+                                // capture prologue reads the environment slot,
+                                // and the closure observes the captured value
+                                // rather than a copy of it; a call-result
+                                // temporary has no source-language identity.
+                                // Copy the aggregate words and managed child
+                                // handles so RC insertion retains the children,
+                                // rather than deep-cloning a nested Vec into a
+                                // detached buffer whose element metadata no
+                                // longer describes the original.
                                 self.emit_assign(
                                     Place::local(local),
                                     Rvalue::Use(Operand::Copy(Place::local(value))),
@@ -795,6 +809,5 @@ fn is_container_ctor(name: &str) -> bool {
             | "gos_rt_map_new"
             | "gos_rt_map_new_with_capacity"
             | "gos_rt_set_new"
-            | "gos_rt_btmap_new"
     )
 }

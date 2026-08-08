@@ -264,6 +264,7 @@ const PRELUDE_VALUES: &[&str] = &[
     // Both are resolved in the interpreter/codegen, not by user
     // code, but the resolver still traverses the expanded form.
     "__concat",
+    "__debug",
     "__fmt_prec",
     // Format-spec intrinsics emitted by `{:spec}` macro expansion:
     // `__fmt_pad` (width/align/fill), `__fmt_radix` (`{:x}`/`{:b}`/`{:o}`),

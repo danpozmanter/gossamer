@@ -16,7 +16,6 @@
 #![allow(clippy::wildcard_imports)]
 
 #[cfg(unix)]
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::*;
@@ -127,7 +126,7 @@ pub unsafe extern "C" fn gos_rt_os_user_lookup_name(name: *const c_char) -> i64 
         }
         #[cfg(unix)]
         {
-            let n = unsafe { CStr::from_ptr(name).to_str().unwrap_or("") };
+            let n = unsafe { crate::c_abi::gos_str_arg_text(name) };
             use nix::unistd::User;
             match User::from_name(n) {
                 Ok(Some(u)) => i64::from(u.uid.as_raw()),

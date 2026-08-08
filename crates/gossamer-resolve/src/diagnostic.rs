@@ -102,6 +102,25 @@ pub enum ResolveError {
         /// The canonical name to import instead.
         replacement: String,
     },
+    /// An item declared without `pub` named from outside the module
+    /// that declares it.
+    #[error("{kind} `{name}` is private to module `{module}`")]
+    PrivateItem {
+        /// Item name as declared.
+        name: String,
+        /// `::`-joined path of the module the item is private to.
+        module: String,
+        /// Item shape, for the message.
+        kind: &'static str,
+    },
+    /// A bare enum-variant name that more than one enum declares.
+    #[error("`{name}` is a variant of more than one enum")]
+    AmbiguousVariant {
+        /// Variant name as written.
+        name: String,
+        /// Enums that declare a variant of this name, in source order.
+        enums: Vec<String>,
+    },
 }
 
 impl ResolveError {
@@ -116,6 +135,8 @@ impl ResolveError {
             Self::DuplicateImport { .. } => "duplicate-import",
             Self::UnknownStdItem { .. } => "unknown-std-item",
             Self::RemovedStdItem { .. } => "removed-std-item",
+            Self::PrivateItem { .. } => "private-item",
+            Self::AmbiguousVariant { .. } => "ambiguous-variant",
         }
     }
 
@@ -131,8 +152,15 @@ impl ResolveError {
             Self::UnresolvedName { name }
             | Self::WrongNamespace { name, .. }
             | Self::DuplicateItem { name }
+            | Self::AmbiguousVariant { name, .. }
             | Self::DuplicateImport { name } => name,
             Self::UnknownModulePath { path } | Self::RemovedStdItem { path, .. } => path,
+            Self::PrivateItem { name, module, .. } => {
+                return name
+                    .split("::")
+                    .chain(module.split("::"))
+                    .any(gossamer_ast::common::is_error_name);
+            }
             Self::UnknownStdItem { name, module } => {
                 return name
                     .split("::")
@@ -156,6 +184,8 @@ impl ResolveError {
             Self::UnknownModulePath { .. } => "GR0005",
             Self::RemovedStdItem { .. } => "GR0006",
             Self::UnknownStdItem { .. } => "GR0007",
+            Self::PrivateItem { .. } => "GR0008",
+            Self::AmbiguousVariant { .. } => "GR0009",
         }
     }
 }
@@ -217,53 +247,77 @@ impl ResolveDiagnostic {
                 ));
             }
         } else {
-            out = match &self.error {
-                ResolveError::WrongNamespace {
-                    name,
-                    expected,
-                    found,
-                } => out.with_help(format!(
-                    "use a {expected} in this position; `{name}` resolves to a {found}"
-                )),
-                ResolveError::UnknownModulePath { path } => match closest_module_path(path) {
-                    Some(known) => out.with_suggestion(Suggestion::replacement(
-                        location,
-                        format!("did you mean `std::{known}`?"),
-                        format!("std::{known}"),
-                    )),
-                    None => out.with_help(
-                        "a standard library path is spelled in full, as in \
-                             `use std::encoding::json`; `gos doc std` lists the modules"
-                            .to_string(),
-                    ),
-                },
-                ResolveError::DuplicateItem { name } => out.with_help(format!(
-                    "rename or remove one `{name}` declaration in this module"
-                )),
-                ResolveError::DuplicateImport { name } => out.with_help(format!(
-                    "remove one import of `{name}`, or alias one with `as`"
-                )),
-                ResolveError::RemovedStdItem { replacement, .. } => out.with_help(format!(
-                    "`{replacement}` is the one spelling for this type; import it as \
-                     `use std::collections::{replacement}`"
-                )),
-                ResolveError::UnknownStdItem { name, module } => {
-                    let exports = crate::stdlib_exports::stdlib_module_item_names(module);
-                    match suggest(name, exports.iter().copied(), 2) {
-                        Some(known) => out.with_suggestion(Suggestion::replacement(
-                            location,
-                            format!("did you mean `std::{module}::{known}`?"),
-                            format!("std::{module}::{known}"),
-                        )),
-                        None => out.with_help(format!(
-                            "`gos doc std::{module}` lists what this module exports"
-                        )),
-                    }
-                }
-                ResolveError::UnresolvedName { .. } => out,
-            };
+            out = self.with_error_specific_help(out);
         }
         out
+    }
+
+    /// Attaches the help line for every resolve error that is not an
+    /// unresolved name, which carries its own did-you-mean search.
+    fn with_error_specific_help(
+        &self,
+        out: gossamer_diagnostics::Diagnostic,
+    ) -> gossamer_diagnostics::Diagnostic {
+        use gossamer_diagnostics::{Location, Suggestion, suggest};
+        let location = Location::new(self.span.file, self.span);
+        match &self.error {
+            ResolveError::WrongNamespace {
+                name,
+                expected,
+                found,
+            } => out.with_help(format!(
+                "use a {expected} in this position; `{name}` resolves to a {found}"
+            )),
+            ResolveError::UnknownModulePath { path } => match closest_module_path(path) {
+                Some(known) => out.with_suggestion(Suggestion::replacement(
+                    location,
+                    format!("did you mean `std::{known}`?"),
+                    format!("std::{known}"),
+                )),
+                None => out.with_help(
+                    "a standard library path is spelled in full, as in \
+                         `use std::encoding::json`; `gos doc std` lists the modules"
+                        .to_string(),
+                ),
+            },
+            ResolveError::DuplicateItem { name } => out.with_help(format!(
+                "rename or remove one `{name}` declaration in this module"
+            )),
+            ResolveError::DuplicateImport { name } => out.with_help(format!(
+                "remove one import of `{name}`, or alias one with `as`"
+            )),
+            ResolveError::RemovedStdItem { replacement, .. } => out.with_help(format!(
+                "`{replacement}` is the one spelling for this type; import it as \
+                 `use std::collections::{replacement}`"
+            )),
+            ResolveError::UnknownStdItem { name, module } => {
+                let exports = crate::stdlib_exports::stdlib_module_item_names(module);
+                match suggest(name, exports.iter().copied(), 2) {
+                    Some(known) => out.with_suggestion(Suggestion::replacement(
+                        location,
+                        format!("did you mean `std::{module}::{known}`?"),
+                        format!("std::{module}::{known}"),
+                    )),
+                    None => out.with_help(format!(
+                        "`gos doc std::{module}` lists what this module exports"
+                    )),
+                }
+            }
+            ResolveError::PrivateItem { name, module, kind } => out.with_help(format!(
+                "`{name}` is declared without `pub`, so only `{module}` and its child \
+                 modules can name it; write `pub` on the {kind} to reach it from here"
+            )),
+            ResolveError::AmbiguousVariant { name, enums } => out.with_help(format!(
+                "{} declare a variant named `{name}`; write the enum, as in `{}::{name}`",
+                enums
+                    .iter()
+                    .map(|e| format!("`{e}`"))
+                    .collect::<Vec<_>>()
+                    .join(" and "),
+                enums.first().map_or("Enum", String::as_str)
+            )),
+            ResolveError::UnresolvedName { .. } => out,
+        }
     }
 }
 

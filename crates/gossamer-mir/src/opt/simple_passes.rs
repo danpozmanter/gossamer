@@ -258,6 +258,9 @@ fn try_fold_typed_int(
     else {
         return try_fold(rvalue);
     };
+    if matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge) {
+        return fold_typed_integer_ordering(*op, *lhs, *rhs, int_ty);
+    }
     if !matches!(
         op,
         BinOp::Add | BinOp::WrappingAdd | BinOp::Sub | BinOp::Mul | BinOp::WrappingMul
@@ -272,6 +275,48 @@ fn try_fold_typed_int(
     let checked = checked_overflow && matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul);
     fold_typed_integer_arithmetic(fold_op, *lhs, *rhs, int_ty, checked)
         .map(ConstValue::Int)
+}
+
+/// Folds `<`, `<=`, `>`, `>=` at the operands' declared signedness.
+///
+/// An unsigned operand is stored sign-extended in `ConstValue::Int`, so a
+/// `u64` at or above 2^63 reads as negative. Comparing it as `i128` would
+/// disagree with the `ucmp` the three tiers emit for that type, which is the
+/// one thing a constant fold must never do.
+fn fold_typed_integer_ordering(
+    op: BinOp,
+    lhs: i128,
+    rhs: i128,
+    int_ty: gossamer_types::IntTy,
+) -> Option<ConstValue> {
+    use gossamer_types::IntTy;
+
+    let unsigned_width = match int_ty {
+        IntTy::U8 => Some(8),
+        IntTy::U16 => Some(16),
+        IntTy::U32 => Some(32),
+        IntTy::U64 | IntTy::U128 | IntTy::Usize => Some(64),
+        _ => None,
+    };
+    let ordering = match unsigned_width {
+        // Mask to the declared width first: a narrow operand may still be
+        // carrying sign extension from an earlier signed step, and the tiers
+        // compare only the bits the type actually holds.
+        Some(64) => (lhs as u64).cmp(&(rhs as u64)),
+        Some(bits) => {
+            let mask = (1u64 << bits) - 1;
+            ((lhs as u64) & mask).cmp(&((rhs as u64) & mask))
+        }
+        None => lhs.cmp(&rhs),
+    };
+    let value = match op {
+        BinOp::Lt => ordering.is_lt(),
+        BinOp::Le => ordering.is_le(),
+        BinOp::Gt => ordering.is_gt(),
+        BinOp::Ge => ordering.is_ge(),
+        _ => return None,
+    };
+    Some(ConstValue::Bool(value))
 }
 
 fn fold_typed_integer_arithmetic(
@@ -376,12 +421,14 @@ fn fold_binary(op: BinOp, lhs: &ConstValue, rhs: &ConstValue) -> Option<ConstVal
             BinOp::BitAnd => Some(ConstValue::Int(x & y)),
             BinOp::BitOr => Some(ConstValue::Int(x | y)),
             BinOp::BitXor => Some(ConstValue::Int(x ^ y)),
+            // Equality is width- and sign-independent on the raw bits.
             BinOp::Eq => Some(ConstValue::Bool(x == y)),
             BinOp::Ne => Some(ConstValue::Bool(x != y)),
-            BinOp::Lt => Some(ConstValue::Bool(x < y)),
-            BinOp::Le => Some(ConstValue::Bool(x <= y)),
-            BinOp::Gt => Some(ConstValue::Bool(x > y)),
-            BinOp::Ge => Some(ConstValue::Bool(x >= y)),
+            // Ordering is not: `ConstValue` carries no signedness, and a
+            // `u64`/`usize` operand at or above 2^63 is stored sign-extended,
+            // so folding it with signed comparison would disagree with the
+            // unsigned comparison the tiers emit for that type.
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => None,
             _ => None,
         },
         (ConstValue::Bool(x), ConstValue::Bool(y)) => match op {
@@ -752,4 +799,52 @@ pub fn const_value_of(body: &Body, local: Local) -> Option<ConstValue> {
         }
     }
     found
+}
+
+#[cfg(test)]
+mod simple_passes_tests {
+    use gossamer_types::IntTy;
+
+    use super::{ConstValue, BinOp, fold_binary, fold_typed_integer_ordering};
+
+    #[test]
+    fn unsigned_ordering_folds_above_the_signed_range() {
+        // `u64::MAX` is stored sign-extended, so a signed fold would call it
+        // the smaller operand.
+        let max = ConstValue::Int(-1);
+        let ConstValue::Int(max) = max else { unreachable!() };
+        assert_eq!(
+            fold_typed_integer_ordering(BinOp::Gt, max, 5, IntTy::U64),
+            Some(ConstValue::Bool(true))
+        );
+        assert_eq!(
+            fold_typed_integer_ordering(BinOp::Lt, max, 5, IntTy::U64),
+            Some(ConstValue::Bool(false))
+        );
+        assert_eq!(
+            fold_typed_integer_ordering(BinOp::Ge, 5, max, IntTy::Usize),
+            Some(ConstValue::Bool(false))
+        );
+    }
+
+    #[test]
+    fn signed_ordering_keeps_signed_semantics() {
+        assert_eq!(
+            fold_typed_integer_ordering(BinOp::Lt, -1, 5, IntTy::I64),
+            Some(ConstValue::Bool(true))
+        );
+    }
+
+    #[test]
+    fn untyped_ordering_is_left_unfolded() {
+        // Without a declared integer type there is no signedness to fold at.
+        assert_eq!(
+            fold_binary(BinOp::Lt, &ConstValue::Int(-1), &ConstValue::Int(5)),
+            None
+        );
+        assert_eq!(
+            fold_binary(BinOp::Eq, &ConstValue::Int(-1), &ConstValue::Int(5)),
+            Some(ConstValue::Bool(false))
+        );
+    }
 }

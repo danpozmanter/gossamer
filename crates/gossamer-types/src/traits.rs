@@ -10,7 +10,7 @@ use crate::ty::Ty;
 
 /// A concrete trait reference - the [`DefId`] of a trait together with
 /// the substitutions that instantiate its generics.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct TraitRef {
     /// `DefId` of the trait being referenced.
     pub def: DefId,

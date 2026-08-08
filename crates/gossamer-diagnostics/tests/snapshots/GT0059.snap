@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0059]: A trait impl leaves out an associated type or constant the trait - here
+--- framed ---
+error[GT0059]: A trait impl leaves out an associated type or constant the trait
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

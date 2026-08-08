@@ -15,7 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::sync::atomic::Ordering;
 
@@ -242,20 +241,8 @@ pub unsafe extern "C" fn gos_rt_arr_sort_str(p: *mut usize, len: i64) {
         }
         let slots = unsafe { std::slice::from_raw_parts_mut(p, len as usize) };
         slots.sort_by(|&a, &b| {
-            let a = if a == 0 {
-                ""
-            } else {
-                unsafe { CStr::from_ptr(a as *const c_char) }
-                    .to_str()
-                    .unwrap_or("")
-            };
-            let b = if b == 0 {
-                ""
-            } else {
-                unsafe { CStr::from_ptr(b as *const c_char) }
-                    .to_str()
-                    .unwrap_or("")
-            };
+            let a = unsafe { crate::c_abi::gos_str_arg_bytes(a as *const c_char) };
+            let b = unsafe { crate::c_abi::gos_str_arg_bytes(b as *const c_char) };
             a.cmp(b)
         });
     });
@@ -335,20 +322,8 @@ pub unsafe extern "C" fn gos_rt_vec_sort_str(v: *mut GosVec) {
         let len_usize = vec.len.max(0) as usize;
         let slots = unsafe { std::slice::from_raw_parts_mut(vec.ptr.cast::<usize>(), len_usize) };
         slots.sort_by(|&a, &b| {
-            let sa = if a == 0 {
-                ""
-            } else {
-                unsafe { CStr::from_ptr(a as *const c_char) }
-                    .to_str()
-                    .unwrap_or("")
-            };
-            let sb = if b == 0 {
-                ""
-            } else {
-                unsafe { CStr::from_ptr(b as *const c_char) }
-                    .to_str()
-                    .unwrap_or("")
-            };
+            let sa = unsafe { crate::c_abi::gos_str_arg_bytes(a as *const c_char) };
+            let sb = unsafe { crate::c_abi::gos_str_arg_bytes(b as *const c_char) };
             sa.cmp(sb)
         });
     });
@@ -981,6 +956,33 @@ pub unsafe extern "C" fn gos_rt_vec_take(v: *const GosVec, n: i64) -> *mut GosVe
     })
 }
 
+/// `xs.skip(n)` - a fresh Vec of the elements past the first `n`, clamped to
+/// `[0, len]`. The copy keeps the source's element width and takes its own
+/// share of every element's heap children, exactly as `take` does.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_skip(v: *const GosVec, n: i64) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        if n < 0 {
+            unsafe { gos_rt_panic(c"Vec::skip: count must be non-negative".as_ptr()) };
+        }
+        if v.is_null() {
+            return unsafe { gos_rt_vec_new(8) };
+        }
+        let src = unsafe { &*v };
+        let start = n.min(src.len);
+        let count = src.len - start;
+        let out = unsafe { gos_rt_vec_with_capacity(src.elem_bytes, count.max(1)) };
+        if !out.is_null() {
+            for i in start..src.len {
+                let src_ptr = unsafe { src.ptr.add((i as usize) * (src.elem_bytes as usize)) };
+                unsafe { gos_rt_vec_push(out, src_ptr) };
+            }
+        }
+        unsafe { crate::c_abi::vec::vec_share_owned_elements(v, out) };
+        out
+    })
+}
+
 /// `xs.index_of(&needle) -> Option<i64>` for an i64-shaped Vec.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_index_of_i64(v: *const GosVec, needle: i64) -> i128 {
@@ -1012,7 +1014,11 @@ pub unsafe extern "C" fn gos_rt_vec_index_of_str(v: *const GosVec, needle: *cons
             let elem = unsafe {
                 std::ptr::with_exposed_provenance::<c_char>((p as *const usize).read_unaligned())
             };
-            if !elem.is_null() && unsafe { CStr::from_ptr(elem) == CStr::from_ptr(needle) } {
+            if !elem.is_null()
+                && unsafe {
+                    crate::c_abi::gos_str_arg_bytes(elem) == crate::c_abi::gos_str_arg_bytes(needle)
+                }
+            {
                 return unsafe { gos_rt_result_new(0, i) };
             }
         }
@@ -1052,7 +1058,11 @@ pub unsafe extern "C" fn gos_rt_vec_count_of_str(v: *const GosVec, needle: *cons
             let elem = unsafe {
                 std::ptr::with_exposed_provenance::<c_char>((p as *const usize).read_unaligned())
             };
-            if !elem.is_null() && unsafe { CStr::from_ptr(elem) == CStr::from_ptr(needle) } {
+            if !elem.is_null()
+                && unsafe {
+                    crate::c_abi::gos_str_arg_bytes(elem) == crate::c_abi::gos_str_arg_bytes(needle)
+                }
+            {
                 count += 1;
             }
         }
@@ -1090,7 +1100,11 @@ pub unsafe extern "C" fn gos_rt_vec_contains_str(v: *const GosVec, needle: *cons
             let elem = unsafe {
                 std::ptr::with_exposed_provenance::<c_char>((p as *const usize).read_unaligned())
             };
-            if !elem.is_null() && unsafe { CStr::from_ptr(elem) == CStr::from_ptr(needle) } {
+            if !elem.is_null()
+                && unsafe {
+                    crate::c_abi::gos_str_arg_bytes(elem) == crate::c_abi::gos_str_arg_bytes(needle)
+                }
+            {
                 return 1;
             }
         }

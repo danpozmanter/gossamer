@@ -1,24 +1,30 @@
-//! Infrastructure hook for per-source frontend caching.
+//! Per-source frontend cache.
 //!
-//! `gos` / `gos check` / `gos test` currently re-parse and
-//! re-typecheck every `.gos` source on every invocation. This
-//! module lays the groundwork for skipping that work when the
-//! source hasn't changed: it computes a content-addressed cache
-//! key (source bytes + toolchain version) and persists a marker
-//! per successful compile under a cache directory rooted at
-//! `$XDG_CACHE_HOME/gossamer` (or `$HOME/.cache/gossamer` / the
-//! workspace `target/` as a fallback).
+//! `gos`, `gos check`, `gos test`, and `gos build` all reach the compiler
+//! through [`crate::frontend::check_frontend_with_edition`]. This module
+//! stores that gate's complete output - the parsed [`SourceFile`], the
+//! [`Resolutions`] side table, the [`TypeTable`], and the [`TyCtxt`]
+//! interner - as one postcard blob addressed by a key covering every input
+//! that can change the result. A second invocation over unchanged inputs
+//! deserializes the blob and skips parse, resolve, typecheck,
+//! exhaustiveness, and arena-escape analysis outright.
 //!
-//! What it does **today**: persists a successfully parsed source file and
-//! treats a complete, deserializable blob as a cache hit.
+//! Only a run that produced zero diagnostics publishes a blob, so a hit is
+//! also proof that the program was accepted.
 //!
-//! What it does **not yet do**: skip the actual compile. Achieving
-//! that needs the frontend to serialize its intermediate
-//! structures (`SourceFile`, `Resolutions`, `TypeTable`,
-//! `HirProgram`) so a hit can deserialize instead of re-running
-//! the pipeline. That work is scoped as the second half of this
-//! feature and is deliberately out of this first slice - see
-//! `docs/incremental.md` for the staged rollout.
+//! Blobs live under `<project>/.gos-cache/frontend` when the working
+//! directory sits inside a project, and otherwise under
+//! `$XDG_CACHE_HOME/gossamer/frontend` (`$HOME/.cache/gossamer/frontend`,
+//! `%LOCALAPPDATA%\gossamer\frontend` on Windows). `GOSSAMER_CACHE_DIR`
+//! overrides the choice; `GOS_NO_CACHE` disables the cache entirely.
+//!
+//! Writes go to a uniquely-named temporary file that is renamed into place,
+//! so concurrent `gos` processes never observe a partial blob. Every read is
+//! length-capped and magic-checked, and a decode failure is a miss rather
+//! than an error: cache contents are advisory and disposable.
+//!
+//! `docs_src/design/incremental.md` documents the key recipe and the
+//! retention story in full.
 
 #![forbid(unsafe_code)]
 
@@ -27,11 +33,75 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use gossamer_ast::SourceFile;
+use gossamer_lex::FileId;
 use gossamer_pkg::sha256;
+use gossamer_resolve::Resolutions;
+use gossamer_types::{TyCtxt, TypeTable};
 
-const BLOB_MAGIC: &[u8; 8] = b"GOSFC001";
-const MAX_BLOB_BYTES: usize = 16 * 1024 * 1024;
+/// Bumped whenever the payload layout or the key recipe changes, so blobs
+/// written by an older schema are rejected instead of mis-decoded.
+const BLOB_MAGIC: &[u8; 8] = b"GOSFC002";
+const MAX_BLOB_BYTES: usize = 64 * 1024 * 1024;
 static CACHE_WRITE_ID: AtomicU64 = AtomicU64::new(0);
+
+/// The complete output of one accepted front-end pass, in the form the
+/// cache persists.
+#[derive(Debug, serde::Deserialize)]
+pub struct CachedFrontend {
+    /// Parsed and augmented AST.
+    pub sf: SourceFile,
+    /// Name-resolution side table.
+    pub resolutions: Resolutions,
+    /// Node-to-type side table.
+    pub table: TypeTable,
+    /// Type interner backing every [`gossamer_types::Ty`] in `table`.
+    pub tcx: TyCtxt,
+}
+
+/// Borrowed mirror of [`CachedFrontend`] used on the write path so
+/// publishing a blob does not deep-copy the whole front-end result.
+/// postcard encodes struct fields positionally, so the two must keep the
+/// same field order.
+#[derive(serde::Serialize)]
+struct FrontendView<'a> {
+    sf: &'a SourceFile,
+    resolutions: &'a Resolutions,
+    table: &'a TypeTable,
+    tcx: &'a TyCtxt,
+}
+
+/// Publishes one accepted front-end result under `key`.
+pub fn store_frontend(
+    key: &FrontendCacheKey,
+    sf: &SourceFile,
+    resolutions: &Resolutions,
+    table: &TypeTable,
+    tcx: &TyCtxt,
+) {
+    store_frontend_in(&cache_dir(), key, sf, resolutions, table, tcx);
+}
+
+/// Variant of [`store_frontend`] that writes into `root`.
+pub fn store_frontend_in(
+    root: &Path,
+    key: &FrontendCacheKey,
+    sf: &SourceFile,
+    resolutions: &Resolutions,
+    table: &TypeTable,
+    tcx: &TyCtxt,
+) {
+    store_blob_in(
+        root,
+        key,
+        &FrontendView {
+            sf,
+            resolutions,
+            table,
+            tcx,
+        },
+    );
+}
 
 /// Content-addressed identifier for one frontend compile. The key
 /// combines the source bytes with the toolchain version so a
@@ -113,25 +183,81 @@ fn exe_fingerprint() -> &'static str {
     })
 }
 
-/// Resolves the cache root directory, creating it when absent.
-/// Order of precedence: `GOSSAMER_CACHE_DIR` env var,
-/// `$XDG_CACHE_HOME/gossamer`, `$HOME/.cache/gossamer`, then a
-/// workspace-relative fallback under `target/gossamer-frontend`.
+/// Builds the cache key for one front-end pass over `source`.
+///
+/// Beyond the source bytes and the compiler's own identity, the key covers
+/// every other input the gate reads: the language edition, the [`FileId`]
+/// that anchors spans in the cached AST, the compile target, whether
+/// `#[cfg(test)]` items are visible, and the registered Rust-binding
+/// signatures. Imports need no separate term because the CLI hands the gate
+/// a single bundled source containing every sibling module.
+#[must_use]
+pub fn frontend_key(source: &str, edition: &str, file_id: FileId) -> FrontendCacheKey {
+    let bindings = gossamer_resolve::all_external_modules();
+    let bindings_digest = if bindings.is_empty() {
+        String::new()
+    } else {
+        sha256::hex(format!("{bindings:?}").as_bytes())
+    };
+    let context = format!(
+        "edition={edition}|file={}|target={}|cfg_test={}|bindings={bindings_digest}",
+        file_id.as_u32(),
+        gossamer_codegen_llvm::active_target_triple(),
+        gossamer_resolve::test_cfg_enabled(),
+    );
+    FrontendCacheKey::new_with_context(source, env!("CARGO_PKG_VERSION"), &context)
+}
+
+/// Reports whether the frontend cache is enabled. `GOS_NO_CACHE` turns it
+/// off, matching the LLVM object cache's opt-out.
+#[must_use]
+pub fn cache_enabled() -> bool {
+    std::env::var_os("GOS_NO_CACHE").is_none()
+}
+
+/// Resolves the directory blobs are read from and written to.
+///
+/// Order of precedence: the `GOSSAMER_CACHE_DIR` override, the nearest
+/// ancestor project's `.gos-cache/frontend`, then the user cache root.
+/// Anchoring to the project keeps a checkout's warm cache with the
+/// checkout, mirroring where `gos build` puts its object and link caches.
 #[must_use]
 pub fn cache_dir() -> PathBuf {
-    if let Ok(explicit) = std::env::var("GOSSAMER_CACHE_DIR") {
+    if let Some(explicit) = std::env::var_os("GOSSAMER_CACHE_DIR") {
         return PathBuf::from(explicit);
     }
-    if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
-        return PathBuf::from(xdg).join("gossamer").join("frontend");
+    if let Some(root) = project_root() {
+        return root.join(".gos-cache").join("frontend");
     }
-    if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home)
-            .join(".cache")
-            .join("gossamer")
-            .join("frontend");
+    user_cache_root().join("frontend")
+}
+
+/// Root of the per-user toolchain cache shared by every cache class:
+/// `$XDG_CACHE_HOME/gossamer`, `$HOME/.cache/gossamer`, or
+/// `%LOCALAPPDATA%\gossamer`, falling back to a workspace-relative
+/// `target/gossamer-cache` when no home directory is discoverable.
+#[must_use]
+pub fn user_cache_root() -> PathBuf {
+    if cfg!(windows)
+        && let Some(local) = std::env::var_os("LOCALAPPDATA")
+    {
+        return PathBuf::from(local).join("gossamer");
     }
-    PathBuf::from("target").join("gossamer-frontend")
+    if let Some(xdg) = std::env::var_os("XDG_CACHE_HOME") {
+        return PathBuf::from(xdg).join("gossamer");
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home).join(".cache").join("gossamer");
+    }
+    PathBuf::from("target").join("gossamer-cache")
+}
+
+/// Nearest ancestor of the current directory containing a `project.toml`.
+fn project_root() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    cwd.ancestors()
+        .find(|dir| dir.join("project.toml").is_file())
+        .map(Path::to_path_buf)
 }
 
 /// Serializes `value` as a postcard blob keyed by `key`. Errors
@@ -287,6 +413,18 @@ mod tests {
         let eager = FrontendCacheKey::new_with_context("fn main() {}\n", "0.0.0", "edition=2026");
         let lazy = FrontendCacheKey::new_with_context("fn main() {}\n", "0.0.0", "edition=2027");
         assert_ne!(eager, lazy);
+    }
+
+    #[test]
+    fn frontend_key_separates_editions_and_file_ids() {
+        let mut map = gossamer_lex::SourceMap::new();
+        let first = map.add_file("a.gos", "fn main() {}\n".to_string());
+        let second = map.add_file("b.gos", "fn main() {}\n".to_string());
+        let base = frontend_key("fn main() {}\n", "2026", first);
+        assert_eq!(base, frontend_key("fn main() {}\n", "2026", first));
+        assert_ne!(base, frontend_key("fn main() {}\n", "2027", first));
+        assert_ne!(base, frontend_key("fn main() {}\n", "2026", second));
+        assert_ne!(base, frontend_key("fn main() { }\n", "2026", first));
     }
 
     #[test]

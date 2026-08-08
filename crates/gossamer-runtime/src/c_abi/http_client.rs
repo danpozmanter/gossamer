@@ -15,7 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -254,7 +253,7 @@ pub unsafe extern "C" fn gos_rt_http_client_builder_proxy(
             let proxy = if url.is_null() {
                 None
             } else {
-                let s = unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() };
+                let s = unsafe { crate::c_abi::gos_str_arg_string(url) };
                 if s.is_empty() { None } else { Some(s) }
             };
             unsafe { (*builder).config.proxy = proxy };
@@ -297,7 +296,7 @@ unsafe fn client_pending_request(
     let url = if url.is_null() {
         String::new()
     } else {
-        unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+        unsafe { crate::c_abi::gos_str_arg_string(url) }
     };
     let agent = if client.is_null() {
         None
@@ -389,12 +388,12 @@ pub unsafe extern "C" fn gos_rt_http_request_header(
         let n = if name.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(name) }
         };
         let v = if value.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(value).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(value) }
         };
         unsafe { (*req).headers.push((n, v)) };
         req
@@ -416,12 +415,12 @@ pub unsafe extern "C" fn gos_rt_http_request_set_header(
         let n = if name.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(name) }
         };
         let v = if value.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(value).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(value) }
         };
         let req = unsafe { &mut *req };
         req.headers.retain(|(k, _)| !k.eq_ignore_ascii_case(&n));
@@ -438,7 +437,7 @@ pub unsafe extern "C" fn gos_rt_http_request_get_header(
         if req.is_null() || name.is_null() {
             return alloc_cstring(b"");
         }
-        let n = unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() };
+        let n = unsafe { crate::c_abi::gos_str_arg_string(name) };
         let req = unsafe { &*req };
         let found = req
             .headers
@@ -461,7 +460,7 @@ pub unsafe extern "C" fn gos_rt_http_request_body(
         let b = if body.is_null() {
             Vec::new()
         } else {
-            unsafe { CStr::from_ptr(body).to_bytes().to_vec() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(body) }.to_vec()
         };
         unsafe {
             (*req).body = b;
@@ -583,7 +582,7 @@ unsafe fn path_param_lookup(req: *const GosHttpRequest, name: *const c_char) -> 
     if req.is_null() || name.is_null() {
         return None;
     }
-    let wanted = unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() };
+    let wanted = unsafe { crate::c_abi::gos_str_arg_string(name) };
     let r = unsafe { &*req };
     r.params
         .iter()
@@ -657,7 +656,7 @@ fn gos_response_own_body(body: *const c_char) -> *mut c_char {
     if body.is_null() {
         std::ptr::null_mut()
     } else {
-        alloc_cstring(unsafe { CStr::from_ptr(body).to_bytes() })
+        alloc_cstring(unsafe { crate::c_abi::gos_str_arg_bytes(body) })
     }
 }
 
@@ -729,7 +728,7 @@ pub unsafe extern "C" fn gos_rt_http_response_stream_new(
         let ct = if content_type.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(content_type).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(content_type) }
         };
         Box::into_raw(Box::new(GosHttpResponse {
             status,
@@ -790,7 +789,7 @@ pub unsafe extern "C" fn gos_rt_http_response_raw_bytes(
             if cstr_ptr.is_null() {
                 &[]
             } else {
-                unsafe { CStr::from_ptr(cstr_ptr).to_bytes() }
+                unsafe { crate::c_abi::gos_str_arg_bytes(cstr_ptr) }
             }
         };
         // Allocate the GosVec with capacity for all bytes and write
@@ -945,12 +944,12 @@ pub unsafe extern "C" fn gos_rt_http_response_set_header(
         let n = if name.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(name) }
         };
         let v = if value.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(value).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(value) }
         };
         let resp = unsafe { &mut *resp };
         resp.headers.retain(|(k, _)| !k.eq_ignore_ascii_case(&n));
@@ -990,7 +989,7 @@ pub unsafe extern "C" fn gos_rt_http_response_set_content_type(
         if resp.is_null() || content_type.is_null() {
             return;
         }
-        let ct = unsafe { CStr::from_ptr(content_type).to_string_lossy().into_owned() };
+        let ct = unsafe { crate::c_abi::gos_str_arg_string(content_type) };
         unsafe { (*resp).content_type = ct };
     });
 }
@@ -1048,7 +1047,7 @@ pub unsafe extern "C" fn gos_rt_http_response_get_header(
         if resp.is_null() || name.is_null() {
             return alloc_cstring(b"");
         }
-        let n = unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() };
+        let n = unsafe { crate::c_abi::gos_str_arg_string(name) };
         let resp = unsafe { &*resp };
         let found = resp
             .headers
@@ -1187,12 +1186,12 @@ fn decode_header_tuple_vec(headers: *const GosVec) -> Vec<(String, String)> {
         let key = if key_ptr.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(key_ptr).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(key_ptr) }
         };
         let val = if val_ptr.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(val_ptr).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(val_ptr) }
         };
         header_pairs.push((key, val));
     }
@@ -1440,17 +1439,17 @@ pub unsafe extern "C" fn gos_rt_http_request(
         let method_str = if method.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(method).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(method) }
         };
         let url_str = if url.is_null() {
             return err_result_with_msg("http::request: url is null");
         } else {
-            unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(url) }
         };
         let body_bytes = if body.is_null() {
             Vec::new()
         } else {
-            unsafe { CStr::from_ptr(body).to_bytes().to_vec() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(body) }.to_vec()
         };
         let header_pairs = decode_header_tuple_vec(headers);
         http_request_buffered(
@@ -1479,12 +1478,12 @@ pub unsafe extern "C" fn gos_rt_http_request_bytes(
         let method_str = if method.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(method).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(method) }
         };
         let url_str = if url.is_null() {
             return err_result_with_msg("http::request_bytes: url is null");
         } else {
-            unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(url) }
         };
         let body_bytes = unsafe { super::encoding::gosvec_u8(body) };
         let header_pairs = decode_header_tuple_vec(headers);
@@ -1516,17 +1515,17 @@ pub unsafe extern "C" fn gos_rt_http_client_request(
         let method_str = if method.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(method).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(method) }
         };
         let url_str = if url.is_null() {
             return err_result_with_msg("Client::request: url is null");
         } else {
-            unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(url) }
         };
         let body_bytes = if body.is_null() {
             Vec::new()
         } else {
-            unsafe { CStr::from_ptr(body).to_bytes().to_vec() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(body) }.to_vec()
         };
         let header_pairs = decode_header_tuple_vec(headers);
         http_request_buffered(
@@ -1554,12 +1553,12 @@ pub unsafe extern "C" fn gos_rt_http_client_request_bytes(
         let method_str = if method.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(method).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(method) }
         };
         let url_str = if url.is_null() {
             return err_result_with_msg("Client::request_bytes: url is null");
         } else {
-            unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(url) }
         };
         let body_bytes = unsafe { super::encoding::gosvec_u8(body) };
         let header_pairs = decode_header_tuple_vec(headers);
@@ -1584,7 +1583,7 @@ pub extern "C" fn gos_rt_http_get(url: *const c_char, headers: *mut GosVec) -> i
         let url_str = if url.is_null() {
             return unsafe { err_result_with_msg("http::get: url is null") };
         } else {
-            unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(url) }
         };
         let header_pairs = decode_header_tuple_vec(headers);
         http_request_buffered(
@@ -1604,7 +1603,7 @@ fn http_verb_no_body(method: &str, label: &str, url: *const c_char, headers: *mu
     let url_str = if url.is_null() {
         return unsafe { err_result_with_msg(&format!("{label}: url is null")) };
     } else {
-        unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+        unsafe { crate::c_abi::gos_str_arg_string(url) }
     };
     let header_pairs = decode_header_tuple_vec(headers);
     http_request_buffered(
@@ -1629,17 +1628,17 @@ fn http_verb_body(
     let url_str = if url.is_null() {
         return unsafe { err_result_with_msg(&format!("{label}: url is null")) };
     } else {
-        unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+        unsafe { crate::c_abi::gos_str_arg_string(url) }
     };
     let body_bytes = if body.is_null() {
         Vec::new()
     } else {
-        unsafe { CStr::from_ptr(body).to_bytes().to_vec() }
+        unsafe { crate::c_abi::gos_str_arg_bytes(body) }.to_vec()
     };
     let ct = if content_type.is_null() {
         String::new()
     } else {
-        unsafe { CStr::from_ptr(content_type).to_string_lossy().into_owned() }
+        unsafe { crate::c_abi::gos_str_arg_string(content_type) }
     };
     let header_pairs = vec![("Content-Type".to_string(), ct)];
     http_request_buffered(
@@ -1705,12 +1704,12 @@ pub unsafe extern "C" fn gos_rt_http_delete(
         let url_str = if url.is_null() {
             return err_result_with_msg("http::delete: url is null");
         } else {
-            unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(url) }
         };
         let body_bytes = if body.is_null() {
             Vec::new()
         } else {
-            unsafe { CStr::from_ptr(body).to_bytes().to_vec() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(body) }.to_vec()
         };
         let header_pairs = decode_header_tuple_vec(headers);
         http_request_buffered(
@@ -1748,7 +1747,7 @@ fn nc_content_type(content_type: *const c_char) -> String {
     let ct = if content_type.is_null() {
         String::new()
     } else {
-        unsafe { CStr::from_ptr(content_type).to_string_lossy().into_owned() }
+        unsafe { crate::c_abi::gos_str_arg_string(content_type) }
     };
     if ct.is_empty() {
         "application/octet-stream".to_string()
@@ -1768,12 +1767,12 @@ pub extern "C" fn gos_rt_nc_post(
         let url_str = if url.is_null() {
             return unsafe { err_result_with_msg("native_client::post: url is null") };
         } else {
-            unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(url) }
         };
         let body_bytes = if body.is_null() {
             Vec::new()
         } else {
-            unsafe { CStr::from_ptr(body).to_bytes().to_vec() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(body) }.to_vec()
         };
         let header_pairs = vec![("Content-Type".to_string(), nc_content_type(content_type))];
         http_request_buffered(
@@ -1798,12 +1797,12 @@ pub extern "C" fn gos_rt_nc_put(
         let url_str = if url.is_null() {
             return unsafe { err_result_with_msg("native_client::put: url is null") };
         } else {
-            unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(url) }
         };
         let body_bytes = if body.is_null() {
             Vec::new()
         } else {
-            unsafe { CStr::from_ptr(body).to_bytes().to_vec() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(body) }.to_vec()
         };
         let header_pairs = vec![("Content-Type".to_string(), nc_content_type(content_type))];
         http_request_buffered(
@@ -1831,17 +1830,17 @@ pub extern "C" fn gos_rt_proxy_forward_url(
         let url_str = if upstream_url.is_null() {
             return unsafe { err_result_with_msg("proxy::forward: url is null") };
         } else {
-            unsafe { CStr::from_ptr(upstream_url).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(upstream_url) }
         };
         let method_str = if method.is_null() {
             "GET".to_string()
         } else {
-            unsafe { CStr::from_ptr(method).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(method) }
         };
         let body_bytes = if body.is_null() {
             Vec::new()
         } else {
-            unsafe { CStr::from_ptr(body).to_bytes().to_vec() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(body) }.to_vec()
         };
         let agent = build_agent(&ClientConfig::DEFAULT);
         match method_str.to_ascii_uppercase().as_str() {
@@ -1895,17 +1894,17 @@ pub unsafe extern "C" fn gos_rt_http_stream(
         let method_str = if method.is_null() {
             "GET".to_string()
         } else {
-            unsafe { CStr::from_ptr(method).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(method) }
         };
         let url_str = if url.is_null() {
             return unsafe { err_result_with_msg("http::stream: url is null") };
         } else {
-            unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(url) }
         };
         let body_str = if body.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(body).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(body) }
         };
         let header_pairs = decode_header_tuple_vec(headers);
 
@@ -2068,6 +2067,7 @@ pub unsafe extern "C" fn gos_rt_http_stream_next_chunk(rs: *const i64, max_bytes
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::CStr;
 
     #[test]
     fn only_idempotent_requests_retry_interrupted_transport() {

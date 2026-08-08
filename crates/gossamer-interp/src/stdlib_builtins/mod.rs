@@ -114,6 +114,8 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     #[cfg(not(target_arch = "wasm32"))]
     install_net(globals);
     install_set(globals);
+    install_sort(globals);
+    install_io_streams(globals);
     install_sync_extras(globals);
     install_math(globals);
     install_math_bits(globals);
@@ -287,6 +289,7 @@ pub mod http_ws;
 pub mod http_ws_accept;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod image;
+pub mod io_streams;
 pub mod iter;
 pub mod json_builtins;
 #[cfg(not(target_arch = "wasm32"))]
@@ -309,6 +312,7 @@ pub mod path;
 pub mod result;
 pub mod rwlock;
 pub mod set;
+pub mod sort;
 pub mod strconv;
 pub mod strings;
 pub mod sync;
@@ -425,6 +429,7 @@ pub use http_ws_accept::*;
 pub(crate) use image::install_image;
 #[cfg(not(target_arch = "wasm32"))]
 pub use image::*;
+pub(crate) use io_streams::install_io_streams;
 pub(crate) use iter::install_iter;
 pub use iter::*;
 pub(crate) use json_builtins::install_json_builtins;
@@ -469,6 +474,7 @@ pub(crate) use rwlock::install_rwlock;
 pub use rwlock::*;
 pub(crate) use set::install_set;
 pub use set::*;
+pub(crate) use sort::install_sort;
 pub(crate) use strconv::install_strconv;
 pub use strconv::*;
 pub(crate) use strings::install_strings;

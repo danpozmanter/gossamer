@@ -12,7 +12,6 @@
 #![allow(clippy::ptr_as_ptr)]
 #![allow(unused_unsafe)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 #[cfg(unix)]
 use std::time::{Duration, Instant};
@@ -93,7 +92,7 @@ unsafe fn gather_command_lines(commands: *mut GosVec) -> Result<Vec<Vec<String>>
         if cstr_ptr.is_null() {
             continue;
         }
-        let line = unsafe { CStr::from_ptr(cstr_ptr).to_string_lossy().into_owned() };
+        let line = unsafe { crate::c_abi::gos_str_arg_string(cstr_ptr) };
         let parts = tokenize_shell(&line);
         if !parts.is_empty() {
             stages.push(parts);
@@ -541,7 +540,7 @@ fn argv_strings(args: *mut GosVec) -> Vec<String> {
         if cstr_ptr.is_null() {
             out.push(String::new());
         } else {
-            out.push(unsafe { CStr::from_ptr(cstr_ptr).to_string_lossy().into_owned() });
+            out.push(unsafe { crate::c_abi::gos_str_arg_string(cstr_ptr) });
         }
     }
     out
@@ -561,7 +560,7 @@ pub unsafe extern "C" fn gos_rt_exec_spawn_piped(prog: *const c_char, args: *mut
         if prog.is_null() {
             return err_result("process::spawn_piped: program is null".to_string());
         }
-        let prog_str = unsafe { CStr::from_ptr(prog).to_string_lossy().into_owned() };
+        let prog_str = unsafe { crate::c_abi::gos_str_arg_string(prog) };
         match piped_child_spawn(&prog_str, &argv_strings(args)) {
             Ok(handle) => unsafe { gos_rt_result_new(0, handle) },
             Err(msg) => err_result(msg),
@@ -576,7 +575,7 @@ pub unsafe extern "C" fn gos_rt_child_write_stdin(handle: i64, s: *const c_char)
         let bytes = if s.is_null() {
             Vec::new()
         } else {
-            unsafe { CStr::from_ptr(s).to_bytes().to_vec() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(s) }.to_vec()
         };
         i64::from(piped_child_write_stdin(handle, &bytes))
     })

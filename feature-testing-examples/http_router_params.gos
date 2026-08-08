@@ -34,9 +34,9 @@ fn missing(r: http::Request) -> http::Response {
 
 fn serve_router() {
     let r = router::Router::new()
-        |> _.get("/users/{id}", show_user)
-        |> _.get("/files/{path...}", show_file)
-        |> _.get("/plain", missing)
+        |> $.get("/users/{id}", show_user)
+        |> $.get("/files/{path...}", show_file)
+        |> $.get("/plain", missing)
     if let Err(e) = http::serve("127.0.0.1:23881", r) {
         eprintln!("serve failed: {e}")
     }

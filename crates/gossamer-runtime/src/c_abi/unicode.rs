@@ -30,7 +30,6 @@
 //! - `Vec<String>` results return a `*mut GosVec` with
 //!   `elem_kind = STRING`.
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use unicode_normalization::UnicodeNormalization;
@@ -51,7 +50,7 @@ unsafe fn cstr_to_str<'a>(s: *const c_char) -> &'a str {
     if s.is_null() {
         return "";
     }
-    unsafe { CStr::from_ptr(s) }.to_str().unwrap_or("")
+    unsafe { crate::c_abi::gos_str_arg_text(s) }
 }
 
 fn alloc_string_vec(strings: Vec<String>) -> *mut GosVec {

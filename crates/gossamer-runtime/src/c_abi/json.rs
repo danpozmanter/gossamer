@@ -15,7 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use serde::Deserialize;
@@ -277,7 +276,7 @@ pub unsafe extern "C" fn gos_rt_json_valid(text: *const c_char) -> i8 {
         let bytes: &[u8] = if text.is_null() {
             b""
         } else {
-            unsafe { CStr::from_ptr(text).to_bytes() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(text) }
         };
         let ok = checked_json_text(bytes)
             .ok()
@@ -295,7 +294,7 @@ pub unsafe extern "C" fn gos_rt_json_parse(text: *const c_char) -> i128 {
         let bytes: &[u8] = if text.is_null() {
             b""
         } else {
-            unsafe { CStr::from_ptr(text).to_bytes() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(text) }
         };
         match checked_json_text(bytes) {
             Ok(s) => match validate_checked_json(s) {
@@ -549,7 +548,7 @@ pub unsafe extern "C" fn gos_rt_json_get(j: *const GosJson, key: *const c_char) 
         let key_bytes: &[u8] = if key.is_null() {
             b""
         } else {
-            unsafe { CStr::from_ptr(key).to_bytes() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(key) }
         };
         let Ok(key_str) = std::str::from_utf8(key_bytes) else {
             return GosJson::null_ptr();
@@ -770,7 +769,7 @@ pub unsafe extern "C" fn gos_rt_json_get_opt(j: *const GosJson, key: *const c_ch
         let key_bytes: &[u8] = if key.is_null() {
             b""
         } else {
-            unsafe { CStr::from_ptr(key).to_bytes() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(key) }
         };
         let Ok(key_str) = std::str::from_utf8(key_bytes) else {
             return gos_rt_result_new(1, 0);
@@ -866,7 +865,7 @@ pub unsafe extern "C" fn gos_rt_json_value_string(s: *const c_char) -> *mut GosJ
         let text = if s.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(s).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(s) }
         };
         GosJson::into_raw(serde_json::Value::String(text))
     })
@@ -965,7 +964,7 @@ pub unsafe extern "C" fn gos_rt_json_array_from_scalar_vec(
                                 serde_json::Value::String(String::new())
                             } else {
                                 serde_json::Value::String(unsafe {
-                                    CStr::from_ptr(p).to_string_lossy().into_owned()
+                                    crate::c_abi::gos_str_arg_string(p)
                                 })
                             }
                         }
@@ -1001,7 +1000,7 @@ pub unsafe extern "C" fn gos_rt_json_value_object_n(n: i64, pairs: *const i64) -
                 let key = if key_ptr.is_null() {
                     String::new()
                 } else {
-                    unsafe { CStr::from_ptr(key_ptr).to_string_lossy().into_owned() }
+                    unsafe { crate::c_abi::gos_str_arg_string(key_ptr) }
                 };
                 let v = if let Some(v) = unsafe { json_borrow(val_ptr) } {
                     v.clone()
@@ -1059,7 +1058,7 @@ pub unsafe extern "C" fn gos_rt_json_value_object(vec: *const GosVec) -> *mut Go
                     let key = if key_ptr.is_null() {
                         String::new()
                     } else {
-                        unsafe { CStr::from_ptr(key_ptr).to_string_lossy().into_owned() }
+                        unsafe { crate::c_abi::gos_str_arg_string(key_ptr) }
                     };
                     let v = if let Some(v) = unsafe { json_borrow(val_ptr) } {
                         v.clone()
@@ -1094,7 +1093,7 @@ pub unsafe extern "C" fn gos_rt_json_set(
         let key_str = if key.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(key) }
         };
         let new_val = if let Some(child) = unsafe { json_borrow(val) } {
             child.clone()
@@ -1110,6 +1109,7 @@ pub unsafe extern "C" fn gos_rt_json_set(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::CStr;
 
     /// Refcount word of an `alloc_cstring` builder-layout string:
     /// `[rc:u32][cap:u32][len:u32][tag][content][NUL]`, body at +13.

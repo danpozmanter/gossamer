@@ -113,7 +113,7 @@ pub const ERRORS: StdModule = StdModule {
         StdItem {
             name: "Error",
             kind: StdItemKind::Type,
-            doc: "Reference-counted error value with optional cause chain.",
+            doc: "Error value carrying a message, an optional cause, and structured diagnostic fields. Methods: `message() -> String` (top message only), `cause() -> Option<Error>`, `chain() -> Vec<Error>` (self then every ancestor cause), `is(needle) -> bool`, `with_field(key, value) -> Error` (an immutable copy carrying one more field; re-setting a key replaces its value), `field(key) -> Option<String>`, `fields() -> Vec<(String, String)>` in insertion order. `{}` renders the colon-joined chain. Example: `let e = errors::new(\"query failed\").with_field(\"sqlstate\", \"23505\")`.",
         },
         StdItem {
             name: "new",
@@ -133,7 +133,7 @@ pub const ERRORS: StdModule = StdModule {
         StdItem {
             name: "is",
             kind: StdItemKind::Function,
-            doc: "Checks whether an error's chain contains a matching message.",
+            doc: "`is(error, needle) -> bool` - true when `needle` matches `error` or any link of its cause chain. Prefer a sentinel error VALUE, which matches by identity so two errors sharing a message stay distinct: `let NOT_FOUND = errors::new(\"not found\")`, then `errors::is(err, NOT_FOUND)`. A String `needle` falls back to a message substring test.",
         },
         StdItem {
             name: "join",

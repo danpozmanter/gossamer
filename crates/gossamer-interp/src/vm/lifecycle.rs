@@ -652,7 +652,15 @@ impl Vm {
             let (shapes, enum_shape_handles) = build_native_enum_shapes(program, &jit_tcx);
             let (struct_shapes, struct_shape_handles) =
                 build_native_struct_shapes(program, &jit_tcx);
-            let mut bodies = gossamer_mir::lower_program(program, &mut jit_tcx);
+            // Lift closures exactly as the AOT pipeline does: MIR represents a
+            // callable as a top-level body plus an env blob holding its
+            // address, so a closure that is still an inline expression here
+            // lowers to a null placeholder the native tier would call through.
+            // The VM's own bytecode comes from the unlifted `program`, so the
+            // rewrite happens on a private copy.
+            let lifted = gossamer_hir::lift_closures(program.clone(), &mut jit_tcx);
+            let mut bodies = gossamer_mir::lower_program(&lifted, &mut jit_tcx);
+            drop(lifted);
             bodies.retain(|body| !slice_pattern_bodies.contains(body.name.as_str()));
             // Monomorphise before the JIT sees the bodies, exactly as the LLVM
             // AOT pipeline does. A generic function / method / struct

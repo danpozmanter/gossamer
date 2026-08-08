@@ -20,6 +20,79 @@ impl Area for Shape {
 }
 ```
 
+## Associated types
+
+A trait declares `type Item` and each `impl` supplies one concrete type
+for it. `Self::Item` and `T::Item` name that type in signatures and
+bodies; the projection resolves before lowering, so every tier sees the
+concrete type.
+
+```gossamer
+trait Holder {
+    type Item
+    fn get(&self) -> Self::Item
+}
+
+struct Label { text: String }
+
+impl Holder for Label {
+    type Item = String
+    fn get(&self) -> Self::Item { self.text }
+}
+
+fn shout<T: Holder>(holder: &T) -> T::Item { holder.get() }
+```
+
+A trait may give the associated type a default (`type Count = i64`),
+which an impl inherits unless it restates it.
+
+When several impls supply different types, pin the projection with an
+equality constraint on the bound:
+
+```gossamer
+fn sum_of<T: Source<Item = i64>>(source: &T) -> T::Item { source.take() + 1 }
+```
+
+Resolution order is: the equality constraint, the impl named by a
+concrete base (`Label::Item`, or `Self::Item` inside an impl), the
+trait's default, then the trait's single implementor. A supertrait's
+associated items are reachable through the subtrait that inherits them.
+An impl that omits a required associated item is rejected (`GT0059`), a
+projection of an undeclared item is rejected (`GT0060`), and an ambiguous
+projection is rejected with the constraint to write (`GT0061`).
+
+Out of scope: generic associated types (`type Item<T>`), associated types
+on `dyn Trait` (Gossamer has no trait objects), and inferring a
+projection across several candidate impls without a constraint.
+
+## Associated constants
+
+A trait declares `const MAX: i64`, optionally with a default; each impl
+supplies a value. Read one as `Type::MAX`, `Self::MAX`, or `T::MAX`
+through a bound.
+
+```gossamer
+trait Bounded {
+    const MAX: i64
+    const STEP: i64 = 5
+    fn width(&self) -> i64
+}
+
+struct Gauge { span: i64 }
+
+impl Bounded for Gauge {
+    const MAX: i64 = 100
+    fn width(&self) -> i64 { self.span + Self::MAX }
+}
+
+fn headroom<T: Bounded>(gauge: &T) -> i64 { T::MAX - gauge.width() + T::STEP }
+```
+
+Each associated constant compiles to an ordinary constant, so its value
+folds identically on the bytecode VM, the JIT, and the LLVM AOT tier.
+`T::MAX` follows the same resolution order as a type projection: the
+trait's default, else the trait's single implementor.
+
 ## Operator overloading
 
 Implementing the matching trait makes an operator dispatch to its method

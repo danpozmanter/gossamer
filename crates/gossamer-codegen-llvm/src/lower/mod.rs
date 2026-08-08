@@ -199,7 +199,12 @@ impl StringPool {
     /// which preserves interior symbols on every target.
     pub(crate) fn render(&self) -> String {
         let mut out = String::new();
-        for (text, (name, size)) in &self.entries {
+        // Constant layout is part of the emitted module, so the pool is
+        // walked in a total order over the literal text rather than in
+        // hash order: identical input must yield identical IR.
+        let mut ordered: Vec<(&String, &(String, usize))> = self.entries.iter().collect();
+        ordered.sort_unstable_by_key(|(text, _)| *text);
+        for (text, (name, size)) in ordered {
             let escaped = escape_c_string(text);
             let content_len = text.len();
             let index_slots = content_len / 32 + 2;
@@ -241,7 +246,7 @@ impl StringPool {
 /// need richer display planning before they can be concatenated.
 /// Reaching it after frontend validation is treated as a backend
 /// invariant failure.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(super) enum ConcatKind {
     StrPtr,
     Int,
@@ -258,14 +263,26 @@ pub(super) enum ConcatKind {
     VecF64,
     VecBool,
     VecString,
+    VecChar,
     VecVecI64,
+    VecVecF64,
     VecVecString,
+    /// `Vec<Adt>` whose element type derives `Debug`, rendered element-wise
+    /// via `gos_rt_vec_format_adt`. The `String` names that type's `fmt`; the
+    /// `bool` is true when `fmt` takes the element's slot address (a struct)
+    /// rather than the element word itself (an inline enum).
+    VecAdt(String, bool),
     /// `[i64; N]` flat-buffer literal; the embedded length is
     /// passed alongside the buffer pointer to the runtime helper.
     ArrI64(i64),
     ArrF64(i64),
     ArrBool(i64),
+    ArrChar(i64),
     ArrString(i64),
+    /// `[Adt; N]` whose element type derives `Debug`. Carries the length, the
+    /// per-element stride in bytes, the `fmt` symbol, and whether `fmt` takes
+    /// the element's slot address (see [`ConcatKind::VecAdt`]).
+    ArrAdt(i64, i64, String, bool),
     /// `[[i64; M]; N]` flat-buffer nested array (`N * M` contiguous
     /// slots, rows inline); both static lengths are passed to
     /// `gos_rt_arr_format_arr_i64`.
@@ -289,15 +306,34 @@ pub(super) enum ConcatKind {
     /// `HashSet<T>` / `BTreeSet<T>` with String elements. The bool is true
     /// for `BTreeSet`, which only changes the display prefix.
     SetString(bool),
-    /// `{:?}` of an `Option<T>` with a scalar / String payload, rendered
-    /// via `gos_rt_debug_option`. The `u8` is the payload formatter kind
-    /// (see `debug_payload_kind`).
-    Option(u8),
-    /// `{:?}` of a `Result<T, E>` with scalar / String payloads, rendered
-    /// via `gos_rt_debug_result`. The two `u8`s are the Ok / Err payload
-    /// formatter kinds.
-    Result(u8, u8),
+    /// `{:?}` of an `Option<T>`, rendered via the runtime's option debug
+    /// helper with the payload's rendering plan.
+    Option(DebugPayload),
+    /// `{:?}` of a `Result<T, E>`, rendered via the runtime's result debug
+    /// helper with the Ok / Err payload rendering plans.
+    Result(DebugPayload, DebugPayload),
     Unsupported,
+}
+
+/// How the runtime renders one `Option` / `Result` payload word.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum DebugPayload {
+    /// A scalar, String, or collection payload the runtime renders from a
+    /// fixed tag (see `debug_payload_kind`).
+    Tag(u8),
+    /// An aggregate payload: the word is the address of its slot buffer and
+    /// the `String` names the type's derived `fmt`.
+    Fmt(String),
+}
+
+impl DebugPayload {
+    /// The `payload_kind` tag byte the runtime dispatches on.
+    pub(super) fn tag(&self) -> u8 {
+        match self {
+            Self::Tag(t) => *t,
+            Self::Fmt(_) => gossamer_abi::DEBUG_PAYLOAD_ADT,
+        }
+    }
 }
 
 /// `true` if `t` is one of `u8 / u16 / u32 / u64 / u128 / usize`.
@@ -365,6 +401,23 @@ fn llvm_vec_elem_bytes_from_local(body: &Body, tcx: &TyCtxt, dest_local: Local) 
     };
     Some(bytes)
 }
+
+/// `!tbaa` suffix for a load/store of an aggregate *header* field: a `GosVec`
+/// / `GosI64Vec` / `GosU8Vec` len/cap/elem_bytes/data-pointer, or a string
+/// builder's rc/cap/len/tag prefix. Pairs with [`TBAA_DATA`]; the two reference
+/// the sibling TBAA type nodes defined by `crate::emit::TBAA_METADATA` (`!4` =
+/// header access tag, `!5` = element-data access tag). The header lives in a
+/// distinct allocation from - or a disjoint byte range of the same allocation
+/// as - the element buffer, so tagging the two distinctly lets `-O3` hoist a
+/// `len`/`data` load out of an element loop it would otherwise treat as
+/// clobbered by every element store.
+pub(crate) const TBAA_HEADER: &str = ", !tbaa !4";
+/// `!tbaa` suffix for a load/store of aggregate payload memory: element /
+/// string-content bytes (the memory a header's data pointer addresses) and the
+/// flat i64 slot slabs that hold struct fields, tuple elements, and fixed-array
+/// elements. Pairs with [`TBAA_HEADER`]: every access carrying this tag lands
+/// in payload memory, never on a runtime header word.
+pub(crate) const TBAA_DATA: &str = ", !tbaa !5";
 
 mod emit_aggregate;
 mod emit_misc;

@@ -1437,3 +1437,355 @@ mod tests {
         assert_eq!(resp.headers.get("x-frame-options"), Some("DENY"));
     }
 }
+
+// --- Gossamer-facing middleware transforms ---------------------------
+//
+// The language surface composes middleware as handler handles carrying a
+// transform selector plus one configuration string. The transform itself
+// is a pure function over the response parts, which is what lets the
+// bytecode VM and the compiled tiers produce byte-identical responses.
+// `gossamer-runtime`'s `c_abi::http_middleware` mirrors this section; the
+// two must stay behaviourally identical.
+
+/// Transform selector shared with the runtime's `middleware_kind`. The
+/// numbering is ABI between the MIR lowering and both tiers; append only.
+pub mod kind {
+    /// Prepend `mw:` to the body - the deterministic composition probe.
+    pub const TAG: i64 = 0;
+    /// Stamp `X-Request-Id` on the response.
+    pub const REQUEST_ID: i64 = 1;
+    /// CORS response headers; config is `origin|methods|headers|max_age`.
+    pub const CORS: i64 = 2;
+    /// Baseline security headers; config is the preset name.
+    pub const SECURITY_HEADERS: i64 = 3;
+    /// Strong `ETag` derived from the response body.
+    pub const ETAG: i64 = 4;
+    /// Token-bucket limiter; config is `capacity|refill_per_sec`.
+    pub const RATE_LIMIT: i64 = 5;
+    /// `Strict-Transport-Security`; config is the header value.
+    pub const HSTS: i64 = 6;
+    /// `Cache-Control`; config is the header value.
+    pub const CACHE_CONTROL: i64 = 7;
+    /// Reject bodies larger than the configured byte budget.
+    pub const BODY_LIMIT: i64 = 8;
+    /// Advertise gzip support via `Vary: Accept-Encoding`.
+    pub const COMPRESS_GZIP: i64 = 9;
+    /// One request line per response on stderr.
+    pub const LOGGER: i64 = 10;
+    /// Turn a handler `Err` into a 500 response.
+    pub const RECOVERER: i64 = 11;
+    /// Stamp the configured budget as `X-Timeout-Ms`.
+    pub const TIMEOUT: i64 = 12;
+    /// `WWW-Authenticate: Basic` on an unauthenticated response.
+    pub const BASIC_AUTH: i64 = 13;
+    /// `WWW-Authenticate: Bearer` on an unauthenticated response.
+    pub const BEARER_AUTH: i64 = 14;
+    /// Security headers plus HSTS plus a request id, in one wrapper.
+    pub const SAFE_DEFAULTS: i64 = 15;
+}
+
+/// The mutable parts of a response a middleware transform may rewrite.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ResponseParts {
+    /// HTTP status code.
+    pub status: i64,
+    /// Response body bytes.
+    pub body: Vec<u8>,
+    /// Response headers in emission order.
+    pub headers: Vec<(String, String)>,
+}
+
+/// Process-monotonic request counter behind `request_id`. Counting rather
+/// than sampling a clock keeps a fixture's output identical on every tier.
+static REQUEST_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Next request id, formatted `req-<n>` from a process-monotonic counter.
+/// Counting keeps a chain's output identical on every tier.
+#[must_use]
+pub fn sequential_request_id() -> String {
+    format!("req-{}", REQUEST_SEQ.fetch_add(1, Ordering::Relaxed) + 1)
+}
+
+/// Remaining tokens per rate-limit configuration, keyed by the config
+/// string so two limiters with different budgets never share a bucket.
+static BUCKETS: parking_lot::Mutex<Option<std::collections::HashMap<String, i64>>> =
+    parking_lot::Mutex::new(None);
+
+/// Consumes one token from the bucket named by `config`
+/// (`capacity|refill_per_sec`); false when the budget is exhausted.
+#[must_use]
+pub fn rate_limit_allow(config: &str) -> bool {
+    let capacity = config
+        .split('|')
+        .next()
+        .and_then(|c| c.parse::<i64>().ok())
+        .unwrap_or(0)
+        .max(0);
+    let mut guard = BUCKETS.lock();
+    let table = guard.get_or_insert_with(std::collections::HashMap::new);
+    let remaining = table.entry(config.to_string()).or_insert(capacity);
+    if *remaining <= 0 {
+        return false;
+    }
+    *remaining -= 1;
+    true
+}
+
+/// FNV-1a 64 of the body, the ETag validator both tiers compute.
+fn etag_of(body: &[u8]) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in body {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("\"{hash:016x}\"")
+}
+
+/// Sets `name` to `value`, replacing any existing entry with that name so
+/// a chained middleware never emits the header twice.
+fn set_header(headers: &mut Vec<(String, String)>, name: &str, value: &str) {
+    match headers
+        .iter_mut()
+        .find(|(existing, _)| existing.eq_ignore_ascii_case(name))
+    {
+        Some((_, current)) => *current = value.to_string(),
+        None => headers.push((name.to_string(), value.to_string())),
+    }
+}
+
+fn security_header_set(preset: &str) -> &'static [(&'static str, &'static str)] {
+    const BASELINE: &[(&str, &str)] = &[
+        ("X-Content-Type-Options", "nosniff"),
+        ("X-Frame-Options", "DENY"),
+        ("Referrer-Policy", "no-referrer"),
+    ];
+    const STRICT: &[(&str, &str)] = &[
+        ("X-Content-Type-Options", "nosniff"),
+        ("X-Frame-Options", "DENY"),
+        ("Referrer-Policy", "no-referrer"),
+        ("Content-Security-Policy", "default-src 'self'"),
+        ("Cross-Origin-Opener-Policy", "same-origin"),
+        ("Permissions-Policy", "geolocation=(), microphone=()"),
+    ];
+    match preset {
+        "off" => &[],
+        "strict" => STRICT,
+        _ => BASELINE,
+    }
+}
+
+/// `middleware::CorsConfig::new(origin, methods, headers, max_age)` -
+/// the pipe-joined CORS configuration both tiers pass to `cors`.
+#[must_use]
+pub fn cors_config(origin: &str, methods: &str, headers: &str, max_age: i64) -> String {
+    format!("{origin}|{methods}|{headers}|{max_age}")
+}
+
+/// `middleware::CorsConfig::permissive()` - any origin, the common verbs.
+#[must_use]
+pub fn cors_permissive() -> String {
+    cors_config(
+        "*",
+        "GET, POST, PUT, DELETE, OPTIONS",
+        "Content-Type, Authorization",
+        86400,
+    )
+}
+
+/// `middleware::HstsConfig::safe_default()` - one year, this host only.
+#[must_use]
+pub fn hsts_safe_default() -> String {
+    "max-age=31536000".to_string()
+}
+
+/// `middleware::HstsConfig::strict()` - two years, subdomains, preload.
+#[must_use]
+pub fn hsts_strict() -> String {
+    "max-age=63072000; includeSubDomains; preload".to_string()
+}
+
+/// `middleware::SecurityHeaders::strict()` - baseline plus CSP, COOP,
+/// and Permissions-Policy.
+#[must_use]
+pub fn security_headers_strict() -> String {
+    "strict".to_string()
+}
+
+/// `middleware::SecurityHeaders::off()` - emit nothing.
+#[must_use]
+pub fn security_headers_off() -> String {
+    "off".to_string()
+}
+
+/// `middleware::CacheControl::no_store()` - never cache.
+#[must_use]
+pub fn cache_control_no_store() -> String {
+    "no-store".to_string()
+}
+
+/// `middleware::CacheControl::immutable_for(seconds)` - a content-hashed
+/// asset that may be cached for `seconds` without revalidation.
+#[must_use]
+pub fn cache_control_immutable_for(seconds: i64) -> String {
+    format!("public, max-age={seconds}, immutable")
+}
+
+/// `middleware::RateLimit::per_ip(capacity, refill_per_sec)` - the
+/// token-bucket configuration `rate_limit` consumes.
+#[must_use]
+pub fn rate_limit_config(capacity: i64, refill_per_sec: i64) -> String {
+    format!("{capacity}|{refill_per_sec}")
+}
+
+/// Applies the transform selected by `kind` to `parts`.
+pub fn apply(kind_id: i64, config: &str, parts: &mut ResponseParts) {
+    match kind_id {
+        kind::TAG => {
+            let mut body = b"mw:".to_vec();
+            body.extend_from_slice(&parts.body);
+            parts.body = body;
+        }
+        kind::REQUEST_ID => {
+            set_header(&mut parts.headers, "X-Request-Id", &sequential_request_id());
+        }
+        kind::CORS => {
+            let mut fields = config.split('|');
+            let origin = fields.next().unwrap_or("*");
+            let methods = fields.next().unwrap_or("GET, POST, OPTIONS");
+            let allowed = fields.next().unwrap_or("Content-Type");
+            let max_age = fields.next().unwrap_or("86400");
+            set_header(&mut parts.headers, "Access-Control-Allow-Origin", origin);
+            set_header(&mut parts.headers, "Access-Control-Allow-Methods", methods);
+            set_header(&mut parts.headers, "Access-Control-Allow-Headers", allowed);
+            set_header(&mut parts.headers, "Access-Control-Max-Age", max_age);
+            if origin != "*" {
+                set_header(&mut parts.headers, "Vary", "Origin");
+            }
+        }
+        kind::SECURITY_HEADERS => {
+            for (name, value) in security_header_set(config) {
+                set_header(&mut parts.headers, name, value);
+            }
+        }
+        kind::ETAG => {
+            let tag = etag_of(&parts.body);
+            set_header(&mut parts.headers, "ETag", &tag);
+        }
+        kind::RATE_LIMIT => {
+            // The bucket is consumed exactly once per served response, so
+            // the token draw stays out of the match guard.
+            let allowed = rate_limit_allow(config);
+            if !allowed {
+                parts.status = 429;
+                parts.body = b"rate limit exceeded".to_vec();
+                set_header(&mut parts.headers, "Retry-After", "1");
+            }
+        }
+        kind::HSTS => set_header(&mut parts.headers, "Strict-Transport-Security", config),
+        kind::CACHE_CONTROL => set_header(&mut parts.headers, "Cache-Control", config),
+        kind::BODY_LIMIT => {
+            let max = config.parse::<usize>().unwrap_or(usize::MAX);
+            if parts.body.len() > max {
+                parts.status = 413;
+                parts.body = b"payload too large".to_vec();
+            }
+        }
+        kind::COMPRESS_GZIP => set_header(&mut parts.headers, "Vary", "Accept-Encoding"),
+        kind::LOGGER => eprintln!("[http] {} {}b", parts.status, parts.body.len()),
+        kind::RECOVERER if parts.status >= 500 => {
+            parts.body = b"internal server error".to_vec();
+        }
+        kind::TIMEOUT => set_header(&mut parts.headers, "X-Timeout-Ms", config),
+        kind::BASIC_AUTH if parts.status == 401 => {
+            let realm = if config.is_empty() {
+                "restricted"
+            } else {
+                config
+            };
+            set_header(
+                &mut parts.headers,
+                "WWW-Authenticate",
+                &format!("Basic realm=\"{realm}\""),
+            );
+        }
+        kind::BEARER_AUTH if parts.status == 401 => {
+            set_header(&mut parts.headers, "WWW-Authenticate", "Bearer");
+        }
+        kind::SAFE_DEFAULTS => {
+            for (name, value) in security_header_set("strict") {
+                set_header(&mut parts.headers, name, value);
+            }
+            set_header(
+                &mut parts.headers,
+                "Strict-Transport-Security",
+                "max-age=31536000; includeSubDomains",
+            );
+            set_header(&mut parts.headers, "X-Request-Id", &sequential_request_id());
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod transform_tests {
+    use super::*;
+
+    fn parts(body: &str) -> ResponseParts {
+        ResponseParts {
+            status: 200,
+            body: body.as_bytes().to_vec(),
+            headers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn cors_sets_every_configured_field() {
+        let mut p = parts("ok");
+        apply(
+            kind::CORS,
+            "https://app.test|GET, PUT|X-Api-Key|600",
+            &mut p,
+        );
+        assert!(p.headers.contains(&(
+            "Access-Control-Allow-Origin".to_string(),
+            "https://app.test".to_string()
+        )));
+        assert!(
+            p.headers
+                .contains(&("Vary".to_string(), "Origin".to_string()))
+        );
+    }
+
+    #[test]
+    fn security_headers_off_preset_adds_nothing() {
+        let mut p = parts("ok");
+        apply(kind::SECURITY_HEADERS, "off", &mut p);
+        assert!(p.headers.is_empty());
+    }
+
+    #[test]
+    fn etag_is_stable_for_the_same_body() {
+        let mut a = parts("payload");
+        let mut b = parts("payload");
+        apply(kind::ETAG, "", &mut a);
+        apply(kind::ETAG, "", &mut b);
+        assert_eq!(a.headers, b.headers);
+    }
+
+    #[test]
+    fn rate_limit_rejects_past_capacity() {
+        let config = "2|1|rate_limit_rejects_past_capacity";
+        assert!(rate_limit_allow(config));
+        assert!(rate_limit_allow(config));
+        assert!(!rate_limit_allow(config));
+    }
+
+    #[test]
+    fn set_header_replaces_rather_than_duplicates() {
+        let mut p = parts("ok");
+        apply(kind::CACHE_CONTROL, "no-store", &mut p);
+        apply(kind::CACHE_CONTROL, "max-age=60", &mut p);
+        assert_eq!(p.headers.len(), 1);
+        assert_eq!(p.headers[0].1, "max-age=60");
+    }
+}

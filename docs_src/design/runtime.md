@@ -142,9 +142,9 @@ worker M sees `Step::Yield` plus a pending-park flag and moves
 the task into `MultiScheduler::parked` keyed by gid. The wakeup
 source (poller readiness, channel send, mutex unlock, blocking-pool
 worker, ...) calls `MultiScheduler::unpark(gid)` which pushes the
-task back onto the injector. Any free worker picks it up and
-resumes the coroutine - possibly on a different OS thread than the
-one it suspended on.
+task back onto its home worker's inbox. A stackful coroutine cannot
+migrate between OS threads while suspended, so a goroutine resumes on
+the worker it first landed on.
 
 A blocked goroutine costs only the few KiB of stack its shallow
 frame actually touched - not an OS thread, and not the 1 MiB

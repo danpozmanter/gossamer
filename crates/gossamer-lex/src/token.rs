@@ -267,6 +267,7 @@ pub enum Punct {
     Question,
     Hash,
     At,
+    Dollar,
 }
 
 impl Punct {
@@ -324,6 +325,7 @@ impl Punct {
             Self::Question => "?",
             Self::Hash => "#",
             Self::At => "@",
+            Self::Dollar => "$",
         }
     }
 }

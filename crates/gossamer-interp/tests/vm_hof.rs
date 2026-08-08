@@ -65,8 +65,8 @@ fn main() {
 fn pipe_into_format_macros_uses_the_explicit_placeholder() {
     let src = r#"
 fn main() {
-    "two" |> println!("one {}", _)
-    let text = "four" |> format!("three {}", _)
+    "two" |> println!("one {}", $)
+    let text = "four" |> format!("three {}", $)
     println!("{}", text)
     println!("{:#x} {:#b} {:#o}", 255, 5, 8)
     println("plain", "function")

@@ -49,6 +49,32 @@ use super::*;
 use super::Builder;
 
 impl<'a> Builder<'a> {
+    /// True when a value of `ty` is stored inline in its container slot
+    /// (the flat struct / tuple / array layout the compiled tiers use), so
+    /// the slot's ADDRESS is the value. False for the tagged-pointer and
+    /// opaque-handle shapes, where the slot HOLDS the value as one word.
+    /// Mirrors the compiled-tier `slot_count(ty).is_some()` classification.
+    pub(crate) fn is_inline_aggregate(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        match self.tcx.kind_of(ty) {
+            TyKind::Tuple(_) | TyKind::Array { .. } => true,
+            TyKind::Adt { def, substs } => {
+                // `Result` / `Option` (sentinels `u32::MAX` / `u32::MAX - 1`)
+                // and inline-able user enums are the 2-word by-value shape.
+                if def.local == u32::MAX || def.local == u32::MAX - 1 {
+                    return true;
+                }
+                if self.tcx.is_inline_enum_ty(ty) {
+                    return true;
+                }
+                // `http::Response` (`u32::MAX - 5`) is a `repr(Rust)` runtime
+                // struct reached through the handle word, not an inline blob.
+                def.local != u32::MAX - 5 && self.tcx.adt_field_tys(*def, substs).is_some()
+            }
+            _ => false,
+        }
+    }
+
     /// Lowers Rust-style `fill` for fixed arrays, slices, and Vec values as a
     /// typed element-store loop. Using MIR places preserves aggregate and RC
     /// element semantics instead of copying an erased machine word.
@@ -352,10 +378,13 @@ impl<'a> Builder<'a> {
         // comparator receives the value directly like any scalar - the
         // aggregate helper would hand it a pointer to the slot (a pointer
         // to the pointer) and the comparison would read the wrong bytes.
+        // A tagged-pointer user enum is the same single-slot shape: the slot
+        // holds the handle, so the comparator takes it by word.
         let elem_is_opaque_handle = matches!(
             elem_kind,
             TyKind::Adt { def, .. } if (u32::MAX - 16..=u32::MAX - 2).contains(&def.local)
-        );
+        ) || matches!(elem_kind, TyKind::Adt { .. })
+            && !self.is_inline_aggregate(elem_ty_concrete);
         let elem_is_scalar = matches!(
             elem_kind,
             TyKind::Int(IntTy::I64) | TyKind::String | TyKind::Bool
@@ -825,27 +854,25 @@ impl<'a> Builder<'a> {
         match (joined, args.len()) {
             // Non-closure constructors / accessors.
             ("iter::collect", 1) => {
-                if let TyKind::Iterator(elem) = self.tcx.kind_of(args[0].ty).clone()
-                    && self.lazy_iter_carries_elem(elem)
-                {
-                    let iter = self.lower_expr(&args[0])?;
+                let (v, lazy) = self.lower_iter_seq_arg(&args[0])?;
+                if let Some(family) = lazy {
+                    let elem = match self.tcx.kind_of(self.locals[v.0 as usize].ty) {
+                        TyKind::Iterator(elem) => *elem,
+                        _ => i64_ty,
+                    };
                     let dest_ty = self.tcx.intern(TyKind::Vec(elem));
-                    let helper = match self.tcx.kind_of(elem) {
-                        TyKind::Tuple(fields)
-                            if fields.len() == 2 && fields.iter().all(|field| *field == i64_ty) =>
-                        {
-                            "gos_rt_lazy_iter_collect_pair_i64"
-                        }
-                        _ => "gos_rt_lazy_iter_collect_i64",
+                    let helper = if family == LazyElemFamily::PairWord {
+                        "gos_rt_lazy_iter_collect_pair_i64"
+                    } else {
+                        "gos_rt_lazy_iter_collect_i64"
                     };
                     return Some(self.emit_combinator_call(
                         helper,
-                        vec![Operand::Copy(Place::local(iter))],
+                        vec![Operand::Copy(Place::local(v))],
                         dest_ty,
                         span,
                     ));
                 }
-                let v = self.lower_iter_vec_arg(&args[0])?;
                 let dest_ty = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_) | TyKind::Slice(_)) {
                     ty
                 } else {
@@ -859,26 +886,20 @@ impl<'a> Builder<'a> {
                 ))
             }
             ("iter::count", 1) => {
-                if let TyKind::Iterator(elem) = self.tcx.kind_of(args[0].ty).clone()
-                    && self.lazy_iter_carries_elem(elem)
-                {
-                    let iter = self.lower_expr(&args[0])?;
-                    let helper = match self.tcx.kind_of(elem) {
-                        TyKind::Tuple(fields)
-                            if fields.len() == 2 && fields.iter().all(|field| *field == i64_ty) =>
-                        {
-                            "gos_rt_lazy_iter_count_pair_i64"
-                        }
-                        _ => "gos_rt_lazy_iter_count_i64",
+                let (v, lazy) = self.lower_iter_seq_arg(&args[0])?;
+                if let Some(family) = lazy {
+                    let helper = if family == LazyElemFamily::PairWord {
+                        "gos_rt_lazy_iter_count_pair_i64"
+                    } else {
+                        "gos_rt_lazy_iter_count_i64"
                     };
                     return Some(self.emit_combinator_call(
                         helper,
-                        vec![Operand::Copy(Place::local(iter))],
+                        vec![Operand::Copy(Place::local(v))],
                         i64_ty,
                         span,
                     ));
                 }
-                let v = self.lower_iter_vec_arg(&args[0])?;
                 let dest = self.fresh(i64_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
@@ -924,14 +945,12 @@ impl<'a> Builder<'a> {
             }
             ("iter::once", 1) => {
                 let v = self.lower_expr(&args[0])?;
-                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(e) if self.lazy_iter_carries_elem(*e))
-                {
+                if let Some(family) = self.lazy_iter_ty_family(ty) {
+                    let helper = format!("gos_rt_lazy_iter_once_{}", family.word_or_float_suffix());
                     let dest = self.fresh(ty);
                     let next = self.new_block(span);
                     self.terminate(Terminator::Call {
-                        callee: Operand::Const(ConstValue::Str(
-                            "gos_rt_lazy_iter_once_i64".to_string(),
-                        )),
+                        callee: Operand::Const(ConstValue::Str(helper)),
                         args: vec![Operand::Copy(Place::local(v))],
                         destination: Place::local(dest),
                         target: Some(next),
@@ -960,19 +979,23 @@ impl<'a> Builder<'a> {
             }
             ("iter::sum", 1) => {
                 // Element-type dispatch: f64 vec → sum_f64, otherwise sum_i64.
-                if matches!(self.tcx.kind_of(args[0].ty), TyKind::Iterator(e) if self.lazy_iter_carries_elem(*e))
-                {
-                    let iter = self.lower_expr(&args[0])?;
+                let (v, lazy) = self.lower_iter_seq_arg(&args[0])?;
+                if let Some(family) = lazy {
+                    let (helper, dest_ty) = match family {
+                        LazyElemFamily::Float => (
+                            "gos_rt_lazy_iter_sum_f64",
+                            self.tcx.float_ty(gossamer_types::FloatTy::F64),
+                        ),
+                        _ => ("gos_rt_lazy_iter_sum_i64", i64_ty),
+                    };
                     return Some(self.emit_combinator_call(
-                        "gos_rt_lazy_iter_sum_i64",
-                        vec![Operand::Copy(Place::local(iter))],
-                        i64_ty,
+                        helper,
+                        vec![Operand::Copy(Place::local(v))],
+                        dest_ty,
                         span,
                     ));
                 }
-                let v = self.lower_iter_vec_arg(&args[0])?;
-                let elem_is_f64 =
-                    matches!(self.iter_element_kind(args[0].ty), Some(TyKind::Float(_)));
+                let elem_is_f64 = self.iter_elem_abi(args[0].ty).1 == ElemAbi::Float;
                 let helper = if elem_is_f64 {
                     "gos_rt_iter_sum_f64"
                 } else {
@@ -995,19 +1018,23 @@ impl<'a> Builder<'a> {
                 Some(dest)
             }
             ("iter::product", 1) => {
-                if matches!(self.tcx.kind_of(args[0].ty), TyKind::Iterator(e) if self.lazy_iter_carries_elem(*e))
-                {
-                    let iter = self.lower_expr(&args[0])?;
+                let (v, lazy) = self.lower_iter_seq_arg(&args[0])?;
+                if let Some(family) = lazy {
+                    let (helper, dest_ty) = match family {
+                        LazyElemFamily::Float => (
+                            "gos_rt_lazy_iter_product_f64",
+                            self.tcx.float_ty(gossamer_types::FloatTy::F64),
+                        ),
+                        _ => ("gos_rt_lazy_iter_product_i64", i64_ty),
+                    };
                     return Some(self.emit_combinator_call(
-                        "gos_rt_lazy_iter_product_i64",
-                        vec![Operand::Copy(Place::local(iter))],
-                        i64_ty,
+                        helper,
+                        vec![Operand::Copy(Place::local(v))],
+                        dest_ty,
                         span,
                     ));
                 }
-                let v = self.lower_iter_vec_arg(&args[0])?;
-                let elem_is_f64 =
-                    matches!(self.iter_element_kind(args[0].ty), Some(TyKind::Float(_)));
+                let elem_is_f64 = self.iter_elem_abi(args[0].ty).1 == ElemAbi::Float;
                 let helper = if elem_is_f64 {
                     "gos_rt_iter_product_f64"
                 } else {
@@ -1034,15 +1061,24 @@ impl<'a> Builder<'a> {
             // scalar forms (`min(a, b)`) are handled separately; only the
             // single Vec/array argument reaches here.
             ("iter::min" | "min" | "math::min", 1) => {
-                if matches!(self.tcx.kind_of(args[0].ty), TyKind::Iterator(e) if self.lazy_iter_carries_elem(*e))
-                {
-                    let iter = self.lower_expr(&args[0])?;
-                    return Some(self.emit_combinator_call(
-                        "gos_rt_lazy_iter_min_i64",
-                        vec![Operand::Copy(Place::local(iter))],
-                        ty,
+                if let Some(family) = self.lazy_iter_source_family(args[0].ty) {
+                    let (iter, lazy) = self.lower_iter_seq_arg(&args[0])?;
+                    if lazy.is_some() {
+                        let helper =
+                            format!("gos_rt_lazy_iter_min_{}", family.word_or_float_suffix());
+                        return Some(self.emit_combinator_call(
+                            &helper,
+                            vec![Operand::Copy(Place::local(iter))],
+                            ty,
+                            span,
+                        ));
+                    }
+                    return self.lower_iter_vec_opt_local(
+                        iter,
+                        "gos_rt_iter_min_i64",
+                        "gos_rt_iter_min_f64",
                         span,
-                    ));
+                    );
                 }
                 self.lower_iter_simple_vec_opt(
                     "gos_rt_iter_min_i64",
@@ -1052,15 +1088,24 @@ impl<'a> Builder<'a> {
                 )
             }
             ("iter::max" | "max" | "math::max", 1) => {
-                if matches!(self.tcx.kind_of(args[0].ty), TyKind::Iterator(e) if self.lazy_iter_carries_elem(*e))
-                {
-                    let iter = self.lower_expr(&args[0])?;
-                    return Some(self.emit_combinator_call(
-                        "gos_rt_lazy_iter_max_i64",
-                        vec![Operand::Copy(Place::local(iter))],
-                        ty,
+                if let Some(family) = self.lazy_iter_source_family(args[0].ty) {
+                    let (iter, lazy) = self.lower_iter_seq_arg(&args[0])?;
+                    if lazy.is_some() {
+                        let helper =
+                            format!("gos_rt_lazy_iter_max_{}", family.word_or_float_suffix());
+                        return Some(self.emit_combinator_call(
+                            &helper,
+                            vec![Operand::Copy(Place::local(iter))],
+                            ty,
+                            span,
+                        ));
+                    }
+                    return self.lower_iter_vec_opt_local(
+                        iter,
+                        "gos_rt_iter_max_i64",
+                        "gos_rt_iter_max_f64",
                         span,
-                    ));
+                    );
                 }
                 self.lower_iter_simple_vec_opt(
                     "gos_rt_iter_max_i64",
@@ -1145,14 +1190,13 @@ impl<'a> Builder<'a> {
             ("iter::repeat", 2) => {
                 let v = self.lower_expr(&args[0])?;
                 let n = self.lower_expr(&args[1])?;
-                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(e) if self.lazy_iter_carries_elem(*e))
-                {
+                if let Some(family) = self.lazy_iter_ty_family(ty) {
+                    let helper =
+                        format!("gos_rt_lazy_iter_repeat_{}", family.word_or_float_suffix());
                     let dest = self.fresh(ty);
                     let next = self.new_block(span);
                     self.terminate(Terminator::Call {
-                        callee: Operand::Const(ConstValue::Str(
-                            "gos_rt_lazy_iter_repeat_i64".to_string(),
-                        )),
+                        callee: Operand::Const(ConstValue::Str(helper)),
                         args: vec![
                             Operand::Copy(Place::local(v)),
                             Operand::Copy(Place::local(n)),
@@ -1180,9 +1224,9 @@ impl<'a> Builder<'a> {
             }
             ("iter::take", 2) => {
                 let n = self.lower_expr(&args[0])?;
-                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(e) if self.lazy_iter_carries_elem(*e))
+                if self.lazy_iter_ty_family(ty).is_some()
+                    && let Some(iter) = self.lower_lazy_iter_source(&args[1])
                 {
-                    let iter = self.lower_lazy_iter_i64_arg(&args[1])?;
                     let dest = self.fresh(ty);
                     let next = self.new_block(span);
                     self.terminate(Terminator::Call {
@@ -1217,9 +1261,9 @@ impl<'a> Builder<'a> {
             }
             ("iter::step_by", 2) => {
                 let step = self.lower_expr(&args[0])?;
-                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(e) if self.lazy_iter_carries_elem(*e))
+                if self.lazy_iter_ty_family(ty).is_some()
+                    && let Some(iter) = self.lower_lazy_iter_source(&args[1])
                 {
-                    let iter = self.lower_lazy_iter_i64_arg(&args[1])?;
                     let dest = self.fresh(ty);
                     let next = self.new_block(span);
                     self.terminate(Terminator::Call {
@@ -1254,9 +1298,9 @@ impl<'a> Builder<'a> {
             }
             ("iter::skip", 2) => {
                 let n = self.lower_expr(&args[0])?;
-                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(e) if self.lazy_iter_carries_elem(*e))
+                if self.lazy_iter_ty_family(ty).is_some()
+                    && let Some(iter) = self.lower_lazy_iter_source(&args[1])
                 {
-                    let iter = self.lower_lazy_iter_i64_arg(&args[1])?;
                     let dest = self.fresh(ty);
                     let next = self.new_block(span);
                     self.terminate(Terminator::Call {
@@ -1290,13 +1334,13 @@ impl<'a> Builder<'a> {
                 Some(dest)
             }
             ("iter::rev", 1) => {
-                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(e) if self.lazy_iter_carries_elem(*e))
+                if self.lazy_iter_ty_family(ty).is_some()
+                    && let Some(iter) = self.lower_lazy_iter_source(&args[0])
                 {
                     // Reversal is only defined once the source's length is
                     // known, so the pipeline is snapshotted, reversed, and
                     // handed back as iterator state the rest of the chain
                     // (and the `for` desugar) can keep pulling from.
-                    let iter = self.lower_lazy_iter_i64_arg(&args[0])?;
                     let elem = match self.tcx.kind_of(ty) {
                         TyKind::Iterator(elem) => *elem,
                         _ => i64_ty,
@@ -1325,10 +1369,10 @@ impl<'a> Builder<'a> {
                 self.lower_iter_simple_vec_in_vec_out("gos_rt_iter_reversed_i64", args, ty, span)
             }
             ("iter::chain", 2) => {
-                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(e) if self.lazy_iter_carries_elem(*e))
+                if self.lazy_iter_ty_family(ty).is_some()
+                    && let Some(a) = self.lower_lazy_iter_source(&args[0])
+                    && let Some(b) = self.lower_lazy_iter_source(&args[1])
                 {
-                    let a = self.lower_lazy_iter_i64_arg(&args[0])?;
-                    let b = self.lower_lazy_iter_i64_arg(&args[1])?;
                     let dest = self.fresh(ty);
                     let next = self.new_block(span);
                     self.terminate(Terminator::Call {
@@ -1376,9 +1420,9 @@ impl<'a> Builder<'a> {
                 ))
             }
             ("iter::enumerate", 1) => {
-                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(e) if self.lazy_iter_carries_elem(*e))
+                if self.lazy_iter_ty_family(ty).is_some()
+                    && let Some(iter_local) = self.lower_lazy_iter_source(&args[0])
                 {
-                    let iter_local = self.lower_lazy_iter_i64_arg(&args[0])?;
                     let dest = self.fresh(ty);
                     let next = self.new_block(span);
                     self.terminate(Terminator::Call {
@@ -1403,10 +1447,10 @@ impl<'a> Builder<'a> {
                 ))
             }
             ("iter::zip", 2) => {
-                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(e) if self.lazy_iter_carries_elem(*e))
+                if self.lazy_iter_ty_family(ty).is_some()
+                    && let Some(a) = self.lower_lazy_iter_source(&args[0])
+                    && let Some(b) = self.lower_lazy_iter_source(&args[1])
                 {
-                    let a = self.lower_lazy_iter_i64_arg(&args[0])?;
-                    let b = self.lower_lazy_iter_i64_arg(&args[1])?;
                     let dest = self.fresh(ty);
                     let next = self.new_block(span);
                     self.terminate(Terminator::Call {
@@ -1500,12 +1544,7 @@ impl<'a> Builder<'a> {
                     .map(|kind| self.tcx.intern(kind));
                 let elem_is_f64 =
                     elem_ty.is_some_and(|elem| matches!(self.tcx.kind_of(elem), TyKind::Float(_)));
-                let elem_is_aggregate = elem_ty.is_some_and(|elem| {
-                    matches!(
-                        self.tcx.kind_of(elem),
-                        TyKind::Adt { .. } | TyKind::Tuple(_) | TyKind::Array { .. }
-                    )
-                });
+                let elem_is_aggregate = elem_ty.is_some_and(|elem| self.is_inline_aggregate(elem));
                 let (in_ty, helper) = if elem_is_f64 {
                     (f64_ty, "gos_rt_iter_for_each_f64")
                 } else if elem_is_aggregate {
@@ -1543,35 +1582,30 @@ impl<'a> Builder<'a> {
                 // garbage double. The output shape stays the closure's own
                 // return type so a `[f64] -> [i64]` map (or the reverse) is
                 // typed correctly.
-                let f64_ty = self.tcx.float_ty(gossamer_types::FloatTy::F64);
-                let elem_is_f64 =
-                    matches!(self.iter_element_kind(args[1].ty), Some(TyKind::Float(_)));
-                let elem_ty = self
-                    .iter_element_kind(args[1].ty)
-                    .map(|kind| self.tcx.intern(kind));
-                let elem_is_aggregate = elem_ty.is_some_and(|elem| {
-                    matches!(
-                        self.tcx.kind_of(elem),
-                        TyKind::Adt { .. } | TyKind::Tuple(_) | TyKind::Array { .. }
-                    )
-                });
+                let (in_ty, in_abi) = self.iter_elem_abi(args[1].ty);
                 let out_ty = self
                     .iter_element_kind(ty)
                     .map_or(i64_ty, |k| self.tcx.intern(k));
-                let out_is_f64 = matches!(self.tcx.kind_of(out_ty), TyKind::Float(_));
-                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(e) if self.lazy_iter_carries_elem(*e))
-                    && !elem_is_f64
-                    && !out_is_f64
+                let out_abi = self.scalar_abi_of(out_ty);
+                // The lazy state carries the SOURCE elements, so a lazy result
+                // type alone does not qualify the call: the input's own family
+                // decides whether a handle can exist at all.
+                if let Some(source) = self.lazy_iter_source_family(args[1].ty)
+                    && self.lazy_iter_ty_family(ty).is_some()
                 {
+                    let helper = match (source, out_abi) {
+                        (LazyElemFamily::Float, ElemAbi::Float) => "gos_rt_lazy_iter_map_f64",
+                        (LazyElemFamily::Float, _) => "gos_rt_lazy_iter_map_f64_word",
+                        (_, ElemAbi::Float) => "gos_rt_lazy_iter_map_word_f64",
+                        _ => "gos_rt_lazy_iter_map_i64",
+                    };
                     let closure_local =
-                        self.lower_iter_closure(&args[0], &[i64_ty], out_ty, span)?;
-                    let iter_local = self.lower_lazy_iter_i64_arg(&args[1])?;
+                        self.lower_iter_closure(&args[0], &[in_ty], out_ty, span)?;
+                    let iter_local = self.lower_lazy_iter_source(&args[1])?;
                     let dest = self.fresh(ty);
                     let next = self.new_block(span);
                     self.terminate(Terminator::Call {
-                        callee: Operand::Const(ConstValue::Str(
-                            "gos_rt_lazy_iter_map_i64".to_string(),
-                        )),
+                        callee: Operand::Const(ConstValue::Str(helper.to_string())),
                         args: vec![
                             Operand::Copy(Place::local(closure_local)),
                             Operand::Copy(Place::local(iter_local)),
@@ -1582,29 +1616,36 @@ impl<'a> Builder<'a> {
                     self.set_current(next);
                     return Some(dest);
                 }
-                let (in_ty, helper) = if elem_is_aggregate && !out_is_f64 {
-                    (
-                        elem_ty.expect("aggregate iterator has an element type"),
-                        "gos_rt_iter_map_ptr_i64",
-                    )
-                } else {
-                    match (elem_is_f64, out_is_f64) {
-                        (true, true) => (f64_ty, "gos_rt_iter_map_f64"),
-                        (true, false) => (f64_ty, "gos_rt_iter_map_f64_word"),
-                        (false, true) => (i64_ty, "gos_rt_iter_map_word_f64"),
-                        (false, false) => (i64_ty, "gos_rt_iter_map_i64"),
-                    }
+                // A word-result map changes the element type, so the output
+                // vec cannot inherit the source's stride: the mapped element's
+                // own declared width travels with the call.
+                let (helper, declares_width) = match (in_abi, out_abi) {
+                    (ElemAbi::Ptr, ElemAbi::Float) => ("gos_rt_iter_map_ptr_f64", false),
+                    (ElemAbi::Ptr, _) => ("gos_rt_iter_map_ptr_i64", true),
+                    (ElemAbi::Float, ElemAbi::Float) => ("gos_rt_iter_map_f64", false),
+                    (ElemAbi::Float, _) => ("gos_rt_iter_map_f64_word", true),
+                    (ElemAbi::Word, ElemAbi::Float) => ("gos_rt_iter_map_word_f64", false),
+                    (ElemAbi::Word, _) => ("gos_rt_iter_map_i64", true),
                 };
                 let closure_local = self.lower_iter_closure(&args[0], &[in_ty], out_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                let dest = self.fresh(ty);
+                // The eager shim answers with a `GosVec`, so the destination
+                // carries a Vec type even where the surface promised iterator
+                // state: downstream terminals read the value's real shape.
+                let dest_ty = self.eager_seq_result_ty(ty, out_ty);
+                let dest = self.fresh(dest_ty);
+                let mut call_args = vec![
+                    Operand::Copy(Place::local(closure_local)),
+                    Operand::Copy(Place::local(vec_local)),
+                ];
+                if declares_width {
+                    let width = i128::from(self.elem_bytes_of(out_ty));
+                    call_args.push(Operand::Const(ConstValue::Int(width)));
+                }
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
                     callee: Operand::Const(ConstValue::Str(helper.to_string())),
-                    args: vec![
-                        Operand::Copy(Place::local(closure_local)),
-                        Operand::Copy(Place::local(vec_local)),
-                    ],
+                    args: call_args,
                     destination: Place::local(dest),
                     target: Some(next),
                 });
@@ -1613,21 +1654,19 @@ impl<'a> Builder<'a> {
             }
             ("iter::filter", 2) => {
                 let bool_ty = self.tcx.bool_ty();
-                let f64_ty = self.tcx.float_ty(gossamer_types::FloatTy::F64);
-                let elem_is_f64 =
-                    matches!(self.iter_element_kind(args[1].ty), Some(TyKind::Float(_)));
-                if matches!(self.tcx.kind_of(ty), TyKind::Iterator(e) if self.lazy_iter_carries_elem(*e))
-                    && !elem_is_f64
+                let (in_ty, in_abi) = self.iter_elem_abi(args[1].ty);
+                if let Some(source) = self.lazy_iter_source_family(args[1].ty)
+                    && self.lazy_iter_ty_family(ty).is_some()
                 {
+                    let helper =
+                        format!("gos_rt_lazy_iter_filter_{}", source.word_or_float_suffix());
                     let closure_local =
-                        self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
-                    let iter_local = self.lower_lazy_iter_i64_arg(&args[1])?;
+                        self.lower_iter_closure(&args[0], &[in_ty], bool_ty, span)?;
+                    let iter_local = self.lower_lazy_iter_source(&args[1])?;
                     let dest = self.fresh(ty);
                     let next = self.new_block(span);
                     self.terminate(Terminator::Call {
-                        callee: Operand::Const(ConstValue::Str(
-                            "gos_rt_lazy_iter_filter_i64".to_string(),
-                        )),
+                        callee: Operand::Const(ConstValue::Str(helper)),
                         args: vec![
                             Operand::Copy(Place::local(closure_local)),
                             Operand::Copy(Place::local(iter_local)),
@@ -1638,15 +1677,15 @@ impl<'a> Builder<'a> {
                     self.set_current(next);
                     return Some(dest);
                 }
-                let in_ty = if elem_is_f64 { f64_ty } else { i64_ty };
-                let helper = if elem_is_f64 {
-                    "gos_rt_iter_filter_f64"
-                } else {
-                    "gos_rt_iter_filter_i64"
+                let helper = match in_abi {
+                    ElemAbi::Ptr => "gos_rt_iter_filter_ptr",
+                    ElemAbi::Float => "gos_rt_iter_filter_f64",
+                    ElemAbi::Word => "gos_rt_iter_filter_i64",
                 };
                 let closure_local = self.lower_iter_closure(&args[0], &[in_ty], bool_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                let dest = self.fresh(ty);
+                let dest_ty = self.eager_seq_result_ty(ty, in_ty);
+                let dest = self.fresh(dest_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
                     callee: Operand::Const(ConstValue::Str(helper.to_string())),
@@ -1661,18 +1700,29 @@ impl<'a> Builder<'a> {
                 Some(dest)
             }
             ("iter::fold", 3) => {
+                // The accumulator's type is the fold's result and the
+                // callback's first parameter; the element's ABI fills its
+                // second. Both classes pick the helper together, so the
+                // closure the runtime calls always matches the signature it
+                // transmutes to.
                 let init_local = self.lower_expr(&args[0])?;
+                let acc_ty = self.locals[init_local.0 as usize].ty;
+                let acc_abi = self.scalar_abi_of(acc_ty);
+                let (elem_ty, elem_abi) = self.iter_elem_abi(args[2].ty);
                 let closure_local =
-                    self.lower_iter_closure(&args[1], &[i64_ty, i64_ty], i64_ty, span)?;
-                if matches!(self.tcx.kind_of(args[2].ty), TyKind::Iterator(e) if self.lazy_iter_carries_elem(*e))
-                {
-                    let iter_local = self.lower_expr(&args[2])?;
-                    let dest = self.fresh(i64_ty);
+                    self.lower_iter_closure(&args[1], &[acc_ty, elem_ty], acc_ty, span)?;
+                if let Some(source) = self.lazy_iter_source_family(args[2].ty) {
+                    let helper = match (acc_abi, source) {
+                        (ElemAbi::Float, LazyElemFamily::Float) => "gos_rt_lazy_iter_fold_f64",
+                        (ElemAbi::Float, _) => "gos_rt_lazy_iter_fold_f64_word",
+                        (_, LazyElemFamily::Float) => "gos_rt_lazy_iter_fold_word_f64",
+                        _ => "gos_rt_lazy_iter_fold_i64",
+                    };
+                    let iter_local = self.lower_lazy_iter_source(&args[2])?;
+                    let dest = self.fresh(acc_ty);
                     let next = self.new_block(span);
                     self.terminate(Terminator::Call {
-                        callee: Operand::Const(ConstValue::Str(
-                            "gos_rt_lazy_iter_fold_i64".to_string(),
-                        )),
+                        callee: Operand::Const(ConstValue::Str(helper.to_string())),
                         args: vec![
                             Operand::Copy(Place::local(init_local)),
                             Operand::Copy(Place::local(closure_local)),
@@ -1684,11 +1734,19 @@ impl<'a> Builder<'a> {
                     self.set_current(next);
                     return Some(dest);
                 }
+                let helper = match (acc_abi, elem_abi) {
+                    (ElemAbi::Float, ElemAbi::Ptr) => "gos_rt_iter_fold_f64_ptr",
+                    (ElemAbi::Float, ElemAbi::Float) => "gos_rt_iter_fold_f64",
+                    (ElemAbi::Float, ElemAbi::Word) => "gos_rt_iter_fold_f64_word",
+                    (_, ElemAbi::Ptr) => "gos_rt_iter_fold_ptr",
+                    (_, ElemAbi::Float) => "gos_rt_iter_fold_word_f64",
+                    (_, ElemAbi::Word) => "gos_rt_iter_fold_i64",
+                };
                 let vec_local = self.lower_iter_vec_arg(&args[2])?;
-                let dest = self.fresh(i64_ty);
+                let dest = self.fresh(acc_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_fold_i64".to_string())),
+                    callee: Operand::Const(ConstValue::Str(helper.to_string())),
                     args: vec![
                         Operand::Copy(Place::local(init_local)),
                         Operand::Copy(Place::local(closure_local)),
@@ -1701,12 +1759,26 @@ impl<'a> Builder<'a> {
                 Some(dest)
             }
             ("iter::sum_by", 2) => {
-                let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], i64_ty, span)?;
+                let (elem_ty, elem_abi) = self.iter_elem_abi(args[1].ty);
+                let out_abi = self.scalar_abi_of(ty);
+                let out_ty = match out_abi {
+                    ElemAbi::Float => self.tcx.float_ty(gossamer_types::FloatTy::F64),
+                    _ => i64_ty,
+                };
+                let helper = match (elem_abi, out_abi) {
+                    (ElemAbi::Ptr, ElemAbi::Float) => "gos_rt_iter_sum_by_ptr_f64",
+                    (ElemAbi::Ptr, _) => "gos_rt_iter_sum_by_ptr",
+                    (ElemAbi::Float, ElemAbi::Float) => "gos_rt_iter_sum_by_f64",
+                    (ElemAbi::Float, _) => "gos_rt_iter_sum_by_f64_word",
+                    (ElemAbi::Word, ElemAbi::Float) => "gos_rt_iter_sum_by_word_f64",
+                    (ElemAbi::Word, _) => "gos_rt_iter_sum_by_i64",
+                };
+                let closure_local = self.lower_iter_closure(&args[0], &[elem_ty], out_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                let dest = self.fresh(i64_ty);
+                let dest = self.fresh(out_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_sum_by_i64".to_string())),
+                    callee: Operand::Const(ConstValue::Str(helper.to_string())),
                     args: vec![
                         Operand::Copy(Place::local(closure_local)),
                         Operand::Copy(Place::local(vec_local)),
@@ -1719,17 +1791,16 @@ impl<'a> Builder<'a> {
             }
             ("iter::any", 2) => {
                 let bool_ty = self.tcx.bool_ty();
-                if matches!(self.tcx.kind_of(args[1].ty), TyKind::Iterator(e) if self.lazy_iter_carries_elem(*e))
-                {
+                if let Some(source) = self.lazy_iter_ty_family(args[1].ty) {
+                    let (elem_ty, _) = self.iter_elem_abi(args[1].ty);
+                    let helper = format!("gos_rt_lazy_iter_any_{}", source.word_or_float_suffix());
                     let closure_local =
-                        self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
-                    let iter_local = self.lower_expr(&args[1])?;
+                        self.lower_iter_closure(&args[0], &[elem_ty], bool_ty, span)?;
+                    let iter_local = self.lower_lazy_iter_source(&args[1])?;
                     let dest = self.fresh(bool_ty);
                     let next = self.new_block(span);
                     self.terminate(Terminator::Call {
-                        callee: Operand::Const(ConstValue::Str(
-                            "gos_rt_lazy_iter_any_i64".to_string(),
-                        )),
+                        callee: Operand::Const(ConstValue::Str(helper)),
                         args: vec![
                             Operand::Copy(Place::local(closure_local)),
                             Operand::Copy(Place::local(iter_local)),
@@ -1740,23 +1811,16 @@ impl<'a> Builder<'a> {
                     self.set_current(next);
                     return Some(dest);
                 }
+                // A wide element is handed to the predicate by slot address,
+                // so the closure takes the element type and the by-pointer
+                // shim feeds it; matches `iter::all`.
+                let (elem_ty, elem_abi) = self.iter_elem_abi(args[1].ty);
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                // A struct element is handed to the predicate by slot
-                // address, so the closure takes the element type and the
-                // by-pointer shim feeds it; matches `iter::all`.
-                let ptr_elem_ty = self.iter_struct_elem_ty(vec_local);
-                let float_elem = ptr_elem_ty.is_none() && self.iter_elem_is_float(vec_local);
-                let closure_inputs = match (ptr_elem_ty, float_elem) {
-                    (Some(elem), _) => vec![elem],
-                    (None, true) => vec![self.tcx.float_ty(gossamer_types::FloatTy::F64)],
-                    (None, false) => vec![i64_ty],
-                };
-                let closure_local =
-                    self.lower_iter_closure(&args[0], &closure_inputs, bool_ty, span)?;
-                let helper = match (ptr_elem_ty.is_some(), float_elem) {
-                    (true, _) => "gos_rt_iter_any_ptr",
-                    (false, true) => "gos_rt_iter_any_f64",
-                    (false, false) => "gos_rt_iter_any_i64",
+                let closure_local = self.lower_iter_closure(&args[0], &[elem_ty], bool_ty, span)?;
+                let helper = match elem_abi {
+                    ElemAbi::Ptr => "gos_rt_iter_any_ptr",
+                    ElemAbi::Float => "gos_rt_iter_any_f64",
+                    ElemAbi::Word => "gos_rt_iter_any_i64",
                 };
                 // Bool-typed destination so `{}` renders true/false
                 // like the VM; the shim returns i64 0/1.
@@ -1776,17 +1840,16 @@ impl<'a> Builder<'a> {
             }
             ("iter::all", 2) => {
                 let bool_ty = self.tcx.bool_ty();
-                if matches!(self.tcx.kind_of(args[1].ty), TyKind::Iterator(e) if self.lazy_iter_carries_elem(*e))
-                {
+                if let Some(source) = self.lazy_iter_ty_family(args[1].ty) {
+                    let (elem_ty, _) = self.iter_elem_abi(args[1].ty);
+                    let helper = format!("gos_rt_lazy_iter_all_{}", source.word_or_float_suffix());
                     let closure_local =
-                        self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
-                    let iter_local = self.lower_expr(&args[1])?;
+                        self.lower_iter_closure(&args[0], &[elem_ty], bool_ty, span)?;
+                    let iter_local = self.lower_lazy_iter_source(&args[1])?;
                     let dest = self.fresh(bool_ty);
                     let next = self.new_block(span);
                     self.terminate(Terminator::Call {
-                        callee: Operand::Const(ConstValue::Str(
-                            "gos_rt_lazy_iter_all_i64".to_string(),
-                        )),
+                        callee: Operand::Const(ConstValue::Str(helper)),
                         args: vec![
                             Operand::Copy(Place::local(closure_local)),
                             Operand::Copy(Place::local(iter_local)),
@@ -1797,25 +1860,13 @@ impl<'a> Builder<'a> {
                     self.set_current(next);
                     return Some(dest);
                 }
+                let (elem_ty, elem_abi) = self.iter_elem_abi(args[1].ty);
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                let vec_elem_ty = match self.tcx.kind_of(self.locals[vec_local.0 as usize].ty) {
-                    TyKind::Vec(elem) | TyKind::Slice(elem) => Some(*elem),
-                    _ => None,
-                };
-                let ptr_elem_ty = vec_elem_ty.filter(|elem| {
-                    self.struct_name_of(*elem).is_some_and(|name| {
-                        self.struct_defs
-                            .values()
-                            .any(|struct_name| struct_name == &name)
-                    })
-                });
-                let closure_inputs = ptr_elem_ty.map_or_else(|| vec![i64_ty], |elem| vec![elem]);
-                let closure_local =
-                    self.lower_iter_closure(&args[0], &closure_inputs, bool_ty, span)?;
-                let helper = if ptr_elem_ty.is_some() {
-                    "gos_rt_iter_all_ptr"
-                } else {
-                    "gos_rt_iter_all_i64"
+                let closure_local = self.lower_iter_closure(&args[0], &[elem_ty], bool_ty, span)?;
+                let helper = match elem_abi {
+                    ElemAbi::Ptr => "gos_rt_iter_all_ptr",
+                    ElemAbi::Float => "gos_rt_iter_all_f64",
+                    ElemAbi::Word => "gos_rt_iter_all_i64",
                 };
                 // Bool-typed destination so `{}` renders true/false
                 // like the VM; the shim returns i64 0/1.
@@ -1837,12 +1888,16 @@ impl<'a> Builder<'a> {
                 // Build an Option<i64> from a (flag, value) pair so
                 // pattern matching on the result keeps working.
                 let bool_ty = self.tcx.bool_ty();
-                let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
-                if matches!(self.tcx.kind_of(args[1].ty), TyKind::Iterator(e) if self.lazy_iter_carries_elem(*e))
-                {
-                    let iter_local = self.lower_expr(&args[1])?;
+                let (elem_ty, elem_abi) = self.iter_elem_abi(args[1].ty);
+                // A wide element has no single-word `Option` payload to carry,
+                // so it keeps the eager word-slot path only when its slots fit
+                // a word; the combinator surface rejects the rest upstream.
+                let closure_local = self.lower_iter_closure(&args[0], &[elem_ty], bool_ty, span)?;
+                if let Some(source) = self.lazy_iter_ty_family(args[1].ty) {
+                    let helper = format!("gos_rt_lazy_iter_find_{}", source.word_or_float_suffix());
+                    let iter_local = self.lower_lazy_iter_source(&args[1])?;
                     return Some(self.emit_combinator_call(
-                        "gos_rt_lazy_iter_find_i64",
+                        &helper,
                         vec![
                             Operand::Copy(Place::local(closure_local)),
                             Operand::Copy(Place::local(iter_local)),
@@ -1851,6 +1906,7 @@ impl<'a> Builder<'a> {
                         span,
                     ));
                 }
+                let _ = elem_abi;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
                 let value = self.fresh(i64_ty);
                 let after_value = self.new_block(span);
@@ -2036,8 +2092,17 @@ impl<'a> Builder<'a> {
             // a fresh Option packed in `*mut GosResult` with disc=0
             // for Some(mapped) and disc=1 for None passthrough.
             ("option::map", 2) => {
-                let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], i64_ty, span)?;
+                // Lower the option first so the closure's parameter can be
+                // typed from the payload it actually receives. A payload wider
+                // than a slot - a tuple or a struct - travels as one word, but
+                // the closure must still see its real type or a destructuring
+                // pattern reads that word as the wrong shape.
                 let opt_local = self.lower_expr(&args[1])?;
+                let payload_ty = self
+                    .option_payload_of(self.locals[opt_local.0 as usize].ty)
+                    .unwrap_or(i64_ty);
+                let closure_local =
+                    self.lower_iter_closure(&args[0], &[payload_ty], i64_ty, span)?;
                 let opt_ty = {
                     let substs = gossamer_types::Substs::from_types([i64_ty]);
                     self.tcx.intern(gossamer_types::TyKind::Adt {
@@ -2732,12 +2797,8 @@ impl<'a> Builder<'a> {
                     TyKind::Vec(elem) | TyKind::Slice(elem) => Some(*elem),
                     _ => None,
                 };
-                let elem_is_aggregate = vec_elem_ty.is_some_and(|elem| {
-                    matches!(
-                        self.tcx.kind_of(elem),
-                        TyKind::Adt { .. } | TyKind::Tuple(_) | TyKind::Array { .. }
-                    )
-                });
+                let elem_is_aggregate =
+                    vec_elem_ty.is_some_and(|elem| self.is_inline_aggregate(elem));
                 let in_ty = if elem_is_aggregate {
                     vec_elem_ty.expect("aggregate iterator has an element type")
                 } else {
@@ -2947,6 +3008,29 @@ impl<'a> Builder<'a> {
         Some(dest)
     }
 
+    /// `min` / `max` over an already-lowered sequence local, returning
+    /// `Option<T>` typed from the local's own element type.
+    pub(crate) fn lower_iter_vec_opt_local(
+        &mut self,
+        v: Local,
+        helper_i64: &str,
+        helper_f64: &str,
+        span: Span,
+    ) -> Option<Local> {
+        let (elem_ty, elem_abi) = self.iter_elem_abi(self.locals[v.0 as usize].ty);
+        let payload_ty = match elem_abi {
+            ElemAbi::Float => self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            _ => elem_ty,
+        };
+        let helper = if elem_abi == ElemAbi::Float {
+            helper_f64
+        } else {
+            helper_i64
+        };
+        let opt_ty = self.option_payload_adt_ty(payload_ty);
+        Some(self.emit_combinator_call(helper, vec![Operand::Copy(Place::local(v))], opt_ty, span))
+    }
+
     pub(crate) fn lower_iter_simple_vec_in_vec_out(
         &mut self,
         helper: &str,
@@ -2976,6 +3060,41 @@ impl<'a> Builder<'a> {
         });
         self.set_current(next);
         Some(dest)
+    }
+
+    /// How a combinator's callback receives one element of an eager sequence.
+    ///
+    /// The runtime reads a slot either as a word, as a double, or - when the
+    /// element is wider than one slot - as the address of its storage. The
+    /// helper name and the callback's parameter type both follow from this,
+    /// so they are decided together and never drift apart.
+    pub(crate) fn iter_elem_abi(&mut self, seq_ty: Ty) -> (Ty, ElemAbi) {
+        use gossamer_types::TyKind;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let Some(elem) = self.iter_element_kind(seq_ty).map(|k| self.tcx.intern(k)) else {
+            return (i64_ty, ElemAbi::Word);
+        };
+        if matches!(self.tcx.kind_of(elem), TyKind::Float(_)) {
+            return (
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+                ElemAbi::Float,
+            );
+        }
+        if self.elem_bytes_of(elem) > 8 {
+            return (elem, ElemAbi::Ptr);
+        }
+        (elem, ElemAbi::Word)
+    }
+
+    /// ABI class of a combinator's result element (`map`'s output, `fold`'s
+    /// accumulator, `sum_by`'s projection): float or word.
+    pub(crate) fn scalar_abi_of(&mut self, ty: Ty) -> ElemAbi {
+        use gossamer_types::TyKind;
+        if matches!(self.tcx.kind_of(ty), TyKind::Float(_)) {
+            ElemAbi::Float
+        } else {
+            ElemAbi::Word
+        }
     }
 
     /// Element type of an iterated sequence local when that element is a user
@@ -3018,14 +3137,27 @@ impl<'a> Builder<'a> {
         Some(self.coerce_to_fn_trait_if_needed(raw, cb_trait_ty, span))
     }
 
+    /// Lowers an iterator source to a `GosVec` handle the eager combinator
+    /// shims can index. A fixed array widens to a Vec; lazy iterator state is
+    /// a distinct runtime object, so it is drained into a snapshot Vec first.
     pub(crate) fn lower_iter_vec_arg(&mut self, arg: &HirExpr) -> Option<Local> {
         use gossamer_types::TyKind;
         let raw = self.lower_expr(arg)?;
         let raw_ty = self.locals[raw.0 as usize].ty;
-        if let TyKind::Array { elem, len } = self.tcx.kind_of(raw_ty).clone() {
-            return Some(self.coerce_array_to_vec(raw, elem, len, arg.span));
+        match self.tcx.kind_of(raw_ty).clone() {
+            TyKind::Array { elem, len } => Some(self.coerce_array_to_vec(raw, elem, len, arg.span)),
+            TyKind::Iterator(elem) if self.lazy_iter_carries_elem(elem) => {
+                let vec_ty = self.tcx.intern(TyKind::Vec(elem));
+                let collect_symbol = self.lazy_collect_symbol(elem);
+                Some(self.emit_combinator_call(
+                    collect_symbol,
+                    vec![Operand::Copy(Place::local(raw))],
+                    vec_ty,
+                    arg.span,
+                ))
+            }
+            _ => Some(raw),
         }
-        Some(raw)
     }
 
     /// Runtime symbol that drains iterator state into a `Vec` of `elem`.
@@ -3044,25 +3176,113 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Element family a lazy-combinator input can supply, whether it is
+    /// iterator state already or a sequence about to be borrowed as one.
+    /// `None` for a source the lazy slot cannot carry, which keeps the caller
+    /// on the eager sequence surface - including the pair shape, whose state
+    /// only `zip` and `enumerate` produce.
+    pub(crate) fn lazy_iter_source_family(&self, arg_ty: Ty) -> Option<LazyElemFamily> {
+        use gossamer_types::TyKind;
+        let mut peeled = arg_ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
+            peeled = *inner;
+        }
+        let elem = match self.tcx.kind_of(peeled) {
+            TyKind::Iterator(elem)
+            | TyKind::Range(elem)
+            | TyKind::Vec(elem)
+            | TyKind::Slice(elem)
+            | TyKind::Array { elem, .. } => *elem,
+            _ => return None,
+        };
+        self.lazy_iter_elem_family(elem)
+            .filter(|family| *family != LazyElemFamily::PairWord)
+    }
+
+    /// Result type for an adapter that answered eagerly. A surface type of
+    /// `Iterator<T>` describes state the eager shim does not build, so the
+    /// value is typed as the `Vec<T>` it really is.
+    pub(crate) fn eager_seq_result_ty(&mut self, surface: Ty, elem: Ty) -> Ty {
+        use gossamer_types::TyKind;
+        match self.tcx.kind_of(surface) {
+            TyKind::Iterator(_) => self.tcx.intern(TyKind::Vec(elem)),
+            _ => surface,
+        }
+    }
+
+    /// Lazy family of the state a lowered local actually holds.
+    ///
+    /// A combinator's result type says what the surface promises; the local's
+    /// MIR type says what the producing arm built. Only the second decides
+    /// whether a value is an iterator handle or a `GosVec`, so every consumer
+    /// asks this rather than re-deriving the producer's choice from types.
+    pub(crate) fn lowered_lazy_family(&self, local: Local) -> Option<LazyElemFamily> {
+        self.lazy_iter_ty_family(self.locals[local.0 as usize].ty)
+    }
+
+    /// Lowers a combinator's sequence argument once, reporting whether the
+    /// lowered value is genuinely lazy iterator state.
+    ///
+    /// Unlike [`Self::lower_iter_vec_arg`] this keeps iterator state as state;
+    /// the caller decides between the lazy and the eager surface from the
+    /// family this reports.
+    pub(crate) fn lower_iter_seq_arg(
+        &mut self,
+        arg: &HirExpr,
+    ) -> Option<(Local, Option<LazyElemFamily>)> {
+        use gossamer_types::TyKind;
+        let raw = self.lower_expr(arg)?;
+        let raw_ty = self.locals[raw.0 as usize].ty;
+        let local = match self.tcx.kind_of(raw_ty).clone() {
+            TyKind::Array { elem, len } => self.coerce_array_to_vec(raw, elem, len, arg.span),
+            _ => raw,
+        };
+        let family = self.lowered_lazy_family(local);
+        Some((local, family))
+    }
+
+    /// Borrows a lowered `GosVec` as lazy state tagged with its own element
+    /// family, or returns `None` when the elements are too wide for the slot.
+    fn borrow_lazy_state(&mut self, source: Local, span: Span) -> Option<(Local, LazyElemFamily)> {
+        use gossamer_types::TyKind;
+        let family = self.lazy_iter_source_family(self.locals[source.0 as usize].ty)?;
+        // The pair state is built by `zip` / `enumerate`, never borrowed from
+        // a sequence, so a pair source stays on the eager surface.
+        if family == LazyElemFamily::PairWord {
+            return None;
+        }
+        let elem_ty = match family {
+            LazyElemFamily::Float => self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
+        };
+        let iter_ty = self.tcx.intern(TyKind::Iterator(elem_ty));
+        let helper = match family {
+            LazyElemFamily::Float => "gos_rt_lazy_iter_from_vec_f64",
+            _ => "gos_rt_lazy_iter_from_vec_i64",
+        };
+        let handle = self.emit_combinator_call(
+            helper,
+            vec![Operand::Copy(Place::local(source))],
+            iter_ty,
+            span,
+        );
+        Some((handle, family))
+    }
+
     /// Lowers an edition-2027 scalar iterator input. Existing iterator state
     /// passes through unchanged; Vec, slice, and fixed-array sources become a
     /// retained borrowed runtime iterator handle before an adapter consumes
     /// them.
-    fn lower_lazy_iter_i64_arg(&mut self, arg: &HirExpr) -> Option<Local> {
-        use gossamer_types::TyKind;
-        if matches!(self.tcx.kind_of(arg.ty), TyKind::Iterator(e) if self.lazy_iter_carries_elem(*e))
-        {
-            return self.lower_expr(arg);
+    ///
+    /// The borrow helper is chosen from the source's own element family, so
+    /// the handle the adapter receives is tagged with the class its elements
+    /// really have.
+    fn lower_lazy_iter_source(&mut self, arg: &HirExpr) -> Option<Local> {
+        let (local, family) = self.lower_iter_seq_arg(arg)?;
+        if family.is_some() {
+            return Some(local);
         }
-        let source = self.lower_iter_vec_arg(arg)?;
-        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-        let iter_ty = self.tcx.intern(TyKind::Iterator(i64_ty));
-        Some(self.emit_combinator_call(
-            "gos_rt_lazy_iter_from_vec_i64",
-            vec![Operand::Copy(Place::local(source))],
-            iter_ty,
-            arg.span,
-        ))
+        self.borrow_lazy_state(local, arg.span).map(|(h, _)| h)
     }
 
     pub(crate) fn try_lower_for_hashmap_iter(
@@ -3088,15 +3308,10 @@ impl<'a> Builder<'a> {
         while let TyKind::Ref { inner, .. } = self.tcx.kind_of(recv_ty) {
             recv_ty = *inner;
         }
-        let recv_runtime_kind = self
-            .receiver_local_from_path(receiver)
-            .and_then(|l| self.local_runtime_kind.get(&l).copied());
-        let is_hashmap = matches!(self.tcx.kind_of(recv_ty), TyKind::HashMap { .. });
-        let is_btmap = recv_runtime_kind == Some("collections::BTreeMap");
-        if !is_hashmap && !is_btmap {
+        if !matches!(self.tcx.kind_of(recv_ty), TyKind::HashMap { .. }) {
             return None;
         }
-        self.lower_for_hashmap_pairs(receiver, recv_ty, is_btmap, for_loop, span)
+        self.lower_for_hashmap_pairs(receiver, recv_ty, for_loop, span)
     }
 
     pub(crate) fn try_lower_for_bare_hashmap_iter(
@@ -3112,22 +3327,16 @@ impl<'a> Builder<'a> {
         while let TyKind::Ref { inner, .. } = self.tcx.kind_of(recv_ty) {
             recv_ty = *inner;
         }
-        let recv_runtime_kind = self
-            .receiver_local_from_path(receiver)
-            .and_then(|l| self.local_runtime_kind.get(&l).copied());
-        let is_hashmap = matches!(self.tcx.kind_of(recv_ty), TyKind::HashMap { .. });
-        let is_btmap = recv_runtime_kind == Some("collections::BTreeMap");
-        if !is_hashmap && !is_btmap {
+        if !matches!(self.tcx.kind_of(recv_ty), TyKind::HashMap { .. }) {
             return None;
         }
-        self.lower_for_hashmap_pairs(receiver, recv_ty, is_btmap, for_loop, span)
+        self.lower_for_hashmap_pairs(receiver, recv_ty, for_loop, span)
     }
 
     fn lower_for_hashmap_pairs(
         &mut self,
         receiver: &HirExpr,
         recv_ty: Ty,
-        is_btmap: bool,
         for_loop: &ForLoopShape<'_>,
         span: Span,
     ) -> Option<Local> {
@@ -3155,29 +3364,35 @@ impl<'a> Builder<'a> {
         };
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let str_ty = self.tcx.string_ty();
-        // A struct / tuple key hashes to opaque bytes the runtime cannot turn
-        // back into the user's value, so `keys()` is empty and cannot drive the
-        // loop. When the key is unused (`_`) and the values are scalar, iterate
-        // the live values directly - matching the VM, which yields each entry's
-        // value. (A used key needs key materialisation, and String / struct
-        // values need owned-pointer recovery; both fall through to the generic
-        // path for now.)
-        if !is_btmap
-            && key_binding.is_none()
+        // An aggregate-keyed map stores its keys as flat content bytes under a
+        // slot descriptor, so the snapshot rebuilds each key and the entry
+        // lookup goes through the same content-keyed helper the inserts used.
+        let skey = self
+            .hash_map_kv_tys(recv_ty)
+            .filter(|(key, _)| self.is_aggregate_key(*key))
+            .and_then(|(key, _)| self.key_descriptor(key).map(|desc| (key, desc)));
+        if let Some((key_struct_ty, descriptor)) = skey {
+            return self.lower_for_skey_pairs(
+                receiver,
+                recv_ty,
+                key_struct_ty,
+                descriptor,
+                key_binding,
+                val_binding,
+                for_loop,
+                span,
+            );
+        }
+        // A key the runtime cannot rebuild cannot drive the loop. When the key
+        // is unused (`_`) and the values are scalar, iterate the live values
+        // directly - matching the VM, which yields each entry's value.
+        if key_binding.is_none()
             && matches!(self.hash_map_key_kind(recv_ty), Some(MapKeyKind::Other))
             && matches!(self.hash_map_value_kind(recv_ty), Some(MapValueKind::I64))
         {
             return self.lower_for_struct_keyed_values(receiver, for_loop.loop_pat, for_loop, span);
         }
-        let (key_ty, val_ty, keys_helper, get_or_helper) = if is_btmap {
-            // BTreeMap is hard-coded to `<String, i64>` in the
-            // runtime today (see `GosBtMap`). Mirror that shape
-            // here so the iter loop reads keys as strings and
-            // values as i64. The runtime helper
-            // `gos_rt_btmap_keys` returns a fresh `Vec<*c_char>`
-            // in sorted key order.
-            (str_ty, i64_ty, "gos_rt_btmap_keys", "gos_rt_btmap_get_or")
-        } else {
+        let (key_ty, val_ty, keys_helper, get_or_helper) = {
             let key_kind = self.hash_map_key_kind(recv_ty);
             let value_kind = self.hash_map_value_kind(recv_ty);
             let key_ty = match key_kind {
@@ -3405,6 +3620,171 @@ impl<'a> Builder<'a> {
         Some(unit)
     }
 
+    /// Lowers `for (k, v) in m.iter()` over an aggregate-keyed map.
+    ///
+    /// The key snapshot hands back the rebuilt aggregates as flat element
+    /// slots, so the key binding observes each slot's address and the value
+    /// comes from the same content-keyed lookup an explicit `m.get(k)` uses.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_for_skey_pairs(
+        &mut self,
+        receiver: &HirExpr,
+        recv_ty: Ty,
+        key_struct_ty: Ty,
+        descriptor: String,
+        key_binding: Option<(Ident, bool)>,
+        val_binding: Option<(Ident, bool)>,
+        for_loop: &ForLoopShape<'_>,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::TyKind;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let val_ty = self.hash_map_kv_tys(recv_ty).map_or(i64_ty, |(_, v)| v);
+        // The key binding names the element's storage, not a copy: an
+        // aggregate slot is addressed in place, exactly as a struct-valued
+        // binding is, so field reads deref the snapshot's own memory.
+        let key_ref_ty = self.tcx.intern(TyKind::Ref {
+            mutability: gossamer_types::Mutbl::Not,
+            inner: key_struct_ty,
+        });
+        let recv_local = self.lower_expr(receiver)?;
+        let keys_vec_ty = self.tcx.intern(TyKind::Vec(key_struct_ty));
+        let keys_vec = self.emit_combinator_call(
+            "gos_rt_map_keys_skey",
+            vec![Operand::Copy(Place::local(recv_local))],
+            keys_vec_ty,
+            span,
+        );
+        let len_local = self.emit_combinator_call(
+            "gos_rt_vec_len",
+            vec![Operand::Copy(Place::local(keys_vec))],
+            i64_ty,
+            span,
+        );
+
+        let counter = self.push_local(i64_ty, None, true);
+        self.emit_assign(
+            Place::local(counter),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+        let header = self.new_block(span);
+        let body_block = self.new_block(span);
+        let step_block = self.new_block(span);
+        let exit = self.new_block(span);
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(header);
+        let bool_ty = self.tcx.bool_ty();
+        let cmp = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(cmp),
+            Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(counter)),
+                rhs: Operand::Copy(Place::local(len_local)),
+            },
+            span,
+        );
+        self.terminate(Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(cmp)),
+            arms: vec![(0, exit)],
+            default: body_block,
+        });
+
+        self.set_current(body_block);
+        self.push_scope();
+        let key_local = self.push_local(
+            key_ref_ty,
+            key_binding.as_ref().map(|(n, _)| n.clone()),
+            key_binding.as_ref().is_some_and(|(_, m)| *m),
+        );
+        if let Some((name, _)) = &key_binding {
+            self.bind_local(&name.name, key_local);
+        }
+        let after_ptr = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_get_ptr".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(keys_vec)),
+                Operand::Copy(Place::local(counter)),
+            ],
+            destination: Place::local(key_local),
+            target: Some(after_ptr),
+        });
+        self.set_current(after_ptr);
+
+        // `m.get(k)` in its content-keyed form: an `Option<V>` whose payload
+        // word is the stored value, so the binding takes the payload directly.
+        let opt_ty = self.option_payload_adt_ty(val_ty);
+        let entry = self.emit_combinator_call(
+            "gos_rt_map_get_skey_opt",
+            vec![
+                Operand::Copy(Place::local(recv_local)),
+                Operand::Copy(Place::local(key_local)),
+                Operand::Const(ConstValue::Str(descriptor)),
+            ],
+            opt_ty,
+            span,
+        );
+        let val_local = self.push_local(
+            val_ty,
+            val_binding.as_ref().map(|(n, _)| n.clone()),
+            val_binding.as_ref().is_some_and(|(_, m)| *m),
+        );
+        if let Some((name, _)) = &val_binding {
+            self.bind_local(&name.name, val_local);
+        }
+        let after_val = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_result_payload".to_string())),
+            args: vec![Operand::Copy(Place::local(entry))],
+            destination: Place::local(val_local),
+            target: Some(after_val),
+        });
+        self.set_current(after_val);
+
+        let regioned = self.begin_loop_region(for_loop.body, span);
+        let _ = self.lower_expr(for_loop.body);
+        self.pop_scope();
+        self.end_loop_region(regioned, span);
+        self.terminate(Terminator::Goto { target: step_block });
+
+        self.set_current(step_block);
+        let one = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(one),
+            Rvalue::Use(Operand::Const(ConstValue::Int(1))),
+            span,
+        );
+        let bumped = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(bumped),
+            Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(counter)),
+                rhs: Operand::Copy(Place::local(one)),
+            },
+            span,
+        );
+        self.emit_assign(
+            Place::local(counter),
+            Rvalue::Use(Operand::Copy(Place::local(bumped))),
+            span,
+        );
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(exit);
+        let unit_ty = self.tcx.unit();
+        let unit = self.fresh(unit_ty);
+        self.emit_assign(
+            Place::local(unit),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+        Some(unit)
+    }
+
     /// Lowers `for (_, v) in m.iter()` over a struct / tuple-keyed map by
     /// driving the loop from the values snapshot. The key bytes a struct-keyed
     /// map stores are opaque (no `keys()` round-trip), so a key-driven loop
@@ -3576,7 +3956,6 @@ impl<'a> Builder<'a> {
         &mut self,
         receiver: &HirExpr,
         recv_ty: Ty,
-        is_btmap: bool,
         span: Span,
     ) -> Option<Local> {
         use gossamer_types::TyKind;
@@ -3584,17 +3963,11 @@ impl<'a> Builder<'a> {
         let str_ty = self.tcx.string_ty();
         let key_kind = self.hash_map_key_kind(recv_ty);
         let value_kind = self.hash_map_value_kind(recv_ty);
-        let key_ty = if is_btmap {
-            str_ty
-        } else {
-            match key_kind {
-                Some(MapKeyKind::String) => str_ty,
-                _ => i64_ty,
-            }
+        let key_ty = match key_kind {
+            Some(MapKeyKind::String) => str_ty,
+            _ => i64_ty,
         };
-        let val_ty = if is_btmap {
-            i64_ty
-        } else {
+        let val_ty = {
             match value_kind {
                 Some(MapValueKind::String) => str_ty,
                 // A struct value is stored as a boxed pointer; bind the
@@ -3619,17 +3992,11 @@ impl<'a> Builder<'a> {
                 _ => i64_ty,
             }
         };
-        let keys_helper = if is_btmap {
-            "gos_rt_btmap_keys"
-        } else {
-            match key_kind {
-                Some(MapKeyKind::String) => "gos_rt_map_keys_str",
-                _ => "gos_rt_map_keys_i64",
-            }
+        let keys_helper = match key_kind {
+            Some(MapKeyKind::String) => "gos_rt_map_keys_str",
+            _ => "gos_rt_map_keys_i64",
         };
-        let get_or_helper = if is_btmap {
-            "gos_rt_btmap_get_or"
-        } else {
+        let get_or_helper = {
             match (key_kind, value_kind) {
                 (Some(MapKeyKind::String), Some(MapValueKind::String)) => {
                     "gos_rt_map_get_or_str_str"

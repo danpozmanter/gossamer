@@ -2726,9 +2726,29 @@ const COPY_BLOB_DISC: u8 = 0xCB;
 const COPY_BLOB_OWNER_BYTES: usize = std::mem::size_of::<CopyBlobOwner>();
 static NEXT_COPY_BLOB_GENERATION: AtomicUsize = AtomicUsize::new(1);
 
+/// Whether `payload` could be a managed allocation this module may inspect.
+///
+/// An `Option` / `Result` payload word is untyped: it carries a pointer for a
+/// managed value and a plain scalar for `Option<i64>` and friends. Reading a
+/// header out of a scalar is a wild dereference, so a word that cannot be an
+/// allocation address is rejected before any load. Managed allocations come
+/// from the allocator with at least pointer alignment and sit well above the
+/// first page, which no small integer or `-1` sentinel satisfies.
+#[inline]
+fn payload_may_be_managed(payload: *const u8) -> bool {
+    let address = payload as usize;
+    address >= MIN_MANAGED_ADDRESS
+        && address.is_multiple_of(std::mem::align_of::<usize>())
+        && address != usize::MAX
+}
+
+/// Lowest address a managed allocation may occupy. The first page is never
+/// mapped, so any word below it is a scalar payload rather than a pointer.
+const MIN_MANAGED_ADDRESS: usize = 0x1000;
+
 #[inline]
 unsafe fn copy_blob_owner(payload: *mut u8) -> Option<&'static CopyBlobOwner> {
-    if payload.is_null() {
+    if !payload_may_be_managed(payload) {
         return None;
     }
     let header = unsafe { header_ptr(payload) };

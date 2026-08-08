@@ -27,22 +27,22 @@ pub const BUILTIN_MACROS: &[BuiltinMacro] = &[
     BuiltinMacro {
         name: "println!",
         signature: "println!(\"template\", values...)",
-        doc: "Formats a literal template to stdout followed by a newline; every explicit argument needs a positional placeholder, and a piped value occupies `_`.",
+        doc: "Formats a literal template to stdout followed by a newline; every explicit argument needs a positional placeholder, and a piped value occupies `$`.",
     },
     BuiltinMacro {
         name: "print!",
         signature: "print!(\"template\", values...)",
-        doc: "Formats a literal template to stdout without a newline; every explicit argument needs a positional placeholder, and a piped value occupies `_`.",
+        doc: "Formats a literal template to stdout without a newline; every explicit argument needs a positional placeholder, and a piped value occupies `$`.",
     },
     BuiltinMacro {
         name: "eprintln!",
         signature: "eprintln!(\"template\", values...)",
-        doc: "Formats a literal template to stderr followed by a newline; every explicit argument needs a positional placeholder, and a piped value occupies `_`.",
+        doc: "Formats a literal template to stderr followed by a newline; every explicit argument needs a positional placeholder, and a piped value occupies `$`.",
     },
     BuiltinMacro {
         name: "eprint!",
         signature: "eprint!(\"template\", values...)",
-        doc: "Formats a literal template to stderr without a newline; every explicit argument needs a positional placeholder, and a piped value occupies `_`.",
+        doc: "Formats a literal template to stderr without a newline; every explicit argument needs a positional placeholder, and a piped value occupies `$`.",
     },
     BuiltinMacro {
         name: "panic!",

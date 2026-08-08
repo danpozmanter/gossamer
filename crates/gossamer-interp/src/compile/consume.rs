@@ -23,9 +23,10 @@
 use std::collections::{HashMap, HashSet};
 
 use gossamer_hir::{
-    HirArrayExpr, HirBlock, HirExpr, HirExprKind, HirFn, HirPat, HirStmt, HirStmtKind,
+    HirArrayExpr, HirBlock, HirExpr, HirExprKind, HirFn, HirParam, HirPat, HirStmt, HirStmtKind,
     collect_pattern_names,
 };
+use gossamer_types::Ty;
 
 /// One recorded `Path` read of a local.
 #[derive(Clone, Copy)]
@@ -58,6 +59,13 @@ struct Analyzer {
     scopes: Vec<HashMap<String, usize>>,
     /// Every binding instance seen, in declaration order.
     slots: Vec<Slot>,
+    /// [`Self::slots`] length at the entry of each enclosing closure
+    /// body. A read that resolves to a slot below the innermost mark
+    /// names a binding the closure captures rather than one it declares.
+    closure_marks: Vec<usize>,
+    /// Captured binding names paired with the type at their reading
+    /// site, in first-seen order.
+    captured: Vec<(String, Ty)>,
 }
 
 impl Analyzer {
@@ -93,6 +101,25 @@ impl Analyzer {
     /// Resolves a name to the innermost in-scope binding instance.
     fn resolve(&self, name: &str) -> Option<usize> {
         self.scopes.iter().rev().find_map(|s| s.get(name).copied())
+    }
+
+    fn enter_closure(&mut self) {
+        self.closure_marks.push(self.slots.len());
+    }
+
+    fn exit_closure(&mut self) {
+        self.closure_marks.pop();
+    }
+
+    /// Records a read made inside a closure body against the enclosing
+    /// binding it resolves to.
+    fn record_capture(&mut self, name: &str, ty: Ty) {
+        let Some(mark) = self.closure_marks.last().copied() else {
+            return;
+        };
+        if self.resolve(name).is_some_and(|idx| idx < mark) {
+            self.captured.push((name.to_string(), ty));
+        }
     }
 
     fn record_read(&mut self, name: &str, depth: usize, in_closure: bool, bare: bool) {
@@ -132,7 +159,11 @@ impl Analyzer {
             HirStmtKind::Defer(expr) => self.visit_expr(expr, depth, in_closure, false),
             // A `go` body runs on another goroutine and may capture
             // locals; treat it like a closure boundary (never consumable).
-            HirStmtKind::Go(expr) => self.visit_expr(expr, depth, true, false),
+            HirStmtKind::Go(expr) => {
+                self.enter_closure();
+                self.visit_expr(expr, depth, true, false);
+                self.exit_closure();
+            }
             HirStmtKind::Item(_) => {}
         }
     }
@@ -142,6 +173,9 @@ impl Analyzer {
             HirExprKind::Path { segments, .. } => {
                 if let [seg] = segments.as_slice() {
                     self.record_read(&seg.name, depth, in_closure, bare);
+                    if in_closure {
+                        self.record_capture(&seg.name, expr.ty);
+                    }
                 }
             }
             HirExprKind::Call { callee, args } => {
@@ -225,18 +259,22 @@ impl Analyzer {
             HirExprKind::Block(block) => self.visit_block(block, depth, in_closure),
             HirExprKind::Closure { params, body, .. } => {
                 self.push_scope();
+                self.enter_closure();
                 for param in params {
                     self.record_bindings(&param.pattern, depth);
                 }
                 // A closure may run repeatedly; nothing referenced in its
                 // body is consumable.
                 self.visit_expr(body, depth, true, false);
+                self.exit_closure();
                 self.pop_scope();
             }
             HirExprKind::LiftedClosure { captures, .. } => {
+                self.enter_closure();
                 for cap in captures {
                     self.visit_expr(cap, depth, true, false);
                 }
+                self.exit_closure();
             }
             HirExprKind::Tuple(elems) => {
                 for e in elems {
@@ -256,7 +294,11 @@ impl Analyzer {
                     self.visit_expr(count, depth, in_closure, false);
                 }
             },
-            HirExprKind::Go(inner) => self.visit_expr(inner, depth, true, false),
+            HirExprKind::Go(inner) => {
+                self.enter_closure();
+                self.visit_expr(inner, depth, true, false);
+                self.exit_closure();
+            }
             HirExprKind::Cast { value, .. } => self.visit_expr(value, depth, in_closure, false),
             HirExprKind::Range { start, end, .. } => {
                 if let Some(start) = start {
@@ -494,6 +536,35 @@ impl super::FnBuilder<'_> {
             _ => false,
         }
     }
+}
+
+/// Returns every enclosing binding a closure inside `body` reads, paired
+/// with the type at the reading site. A name appears once per reading
+/// site; the caller filters by type and collects the names it stores in
+/// capture cells.
+pub(crate) fn closure_captured_locals(params: &[HirParam], body: &HirBlock) -> Vec<(String, Ty)> {
+    let mut a = Analyzer::default();
+    a.push_scope();
+    for param in params {
+        a.record_bindings(&param.pattern, 0);
+    }
+    a.visit_block(body, 0, false);
+    a.captured
+}
+
+/// [`closure_captured_locals`] for a closure body, which is a bare
+/// expression rather than a block.
+pub(crate) fn closure_captured_locals_in_expr(
+    params: &[HirParam],
+    body: &HirExpr,
+) -> Vec<(String, Ty)> {
+    let mut a = Analyzer::default();
+    a.push_scope();
+    for param in params {
+        a.record_bindings(&param.pattern, 0);
+    }
+    a.visit_expr(body, 0, false, false);
+    a.captured
 }
 
 /// Returns the set of local names that are safe to move at their single

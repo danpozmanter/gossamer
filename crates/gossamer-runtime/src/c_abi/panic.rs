@@ -15,7 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::*;
@@ -104,7 +103,7 @@ pub unsafe extern "C-unwind" fn gos_rt_panic(msg: *const c_char) {
     let text = if msg.is_null() {
         "panic".to_string()
     } else {
-        unsafe { CStr::from_ptr(msg).to_string_lossy().into_owned() }
+        unsafe { crate::c_abi::gos_str_arg_string(msg) }
     };
     install_silent_gos_hook();
     let hooked = call_user_panic_hook(&text);
@@ -188,11 +187,7 @@ pub extern "C" fn gos_rt_stack_set_line(line: u32) {
 }
 
 unsafe fn cstr_to_string(p: *const c_char) -> String {
-    if p.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(p).to_string_lossy().into_owned() }
-    }
+    unsafe { crate::c_abi::gos_str_arg_string(p) }
 }
 
 /// Returns 1 if any spawned goroutine has panicked since process
@@ -218,7 +213,7 @@ pub unsafe extern "C" fn gos_rt_panic_oob(what: *const c_char, idx: i64, len: i6
     let label = if what.is_null() {
         "array index".to_string()
     } else {
-        unsafe { CStr::from_ptr(what).to_string_lossy().into_owned() }
+        unsafe { crate::c_abi::gos_str_arg_string(what) }
     };
     let msg = format!("{label} out of bounds: the len is {len} but the index is {idx}");
     let cmsg = std::ffi::CString::new(msg).unwrap_or_else(|_| {

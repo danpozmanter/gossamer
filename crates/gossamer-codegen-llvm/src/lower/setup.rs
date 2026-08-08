@@ -155,6 +155,22 @@ impl<'a> Lowerer<'a> {
         std::mem::take(&mut self.runtime_refs).into_iter().collect()
     }
 
+    /// `true` when parameter `i` arrives as the address of the caller's
+    /// flat-slot storage, which [`Self::emit_param_stores`] copies into this
+    /// body's own slot. The two must agree: the parameter attributes in
+    /// [`Self::emit_prelude`] describe exactly what that copy does with the
+    /// pointer.
+    fn param_is_by_pointer(&self, i: u32) -> bool {
+        let local_ty = self.body.local_ty(Local(i + 1));
+        if is_unit(self.tcx, local_ty) || !is_aggregate(self.tcx, local_ty) {
+            return false;
+        }
+        let slots = slot_count(self.tcx, local_ty);
+        let raw_runtime_handler_param =
+            self.cabi_handlers.contains_key(&self.body.name) && slots.is_none();
+        !raw_runtime_handler_param && (slots.is_some() || !self.body.name.starts_with("__closure"))
+    }
+
     pub(crate) fn emit_prelude(&mut self) {
         let ret_ty = render_ty(self.tcx, self.body.local_ty(Local::RETURN));
         let mut params = String::new();
@@ -164,7 +180,25 @@ impl<'a> Lowerer<'a> {
             }
             let local = Local(i + 1);
             let p_ty = param_llvm_ty(self.tcx, self.body.local_ty(local));
-            let _ = write!(params, "{p_ty} %p{i}");
+            // `readonly nocapture`: the body's only use of a by-pointer
+            // aggregate parameter is the entry memcpy that copies it into this
+            // frame's own slot - it never writes through the pointer and never
+            // stores it anywhere, so callers may keep their copy of the
+            // aggregate in registers across the call.
+            //
+            // Deliberately NOT `noalias`. The pointer is whatever address the
+            // call site produced, and a projected argument yields an interior
+            // address: `f(v[0], &mut v)` hands the callee a pointer into `v`'s
+            // element buffer alongside `v` itself, and reference counting lets
+            // two arguments reach one object with no borrow checker to forbid
+            // it. `noalias` would then let `-O3` sink the entry memcpy past a
+            // write the other argument performs.
+            let attrs = if self.param_is_by_pointer(i) {
+                " readonly nocapture"
+            } else {
+                ""
+            };
+            let _ = write!(params, "{p_ty}{attrs} %p{i}");
         }
         writeln!(
             self.out,
@@ -192,9 +226,12 @@ impl<'a> Lowerer<'a> {
                 }
                 if let Some(bytes) = self.heap_spilled_local_bytes(Local(i as u32)) {
                     declare_rt(&mut self.runtime_refs, "gos_rt_aggr_alloc");
+                    // `noalias`: the allocator hands back a block no live
+                    // pointer reaches yet, so this local's storage stands in
+                    // for the `alloca` it spilled from.
                     writeln!(
                         self.out,
-                        "  {slot} = call ptr @gos_rt_aggr_alloc(i64 {bytes})"
+                        "  {slot} = call noalias ptr @gos_rt_aggr_alloc(i64 {bytes})"
                     )
                     .unwrap();
                     continue;

@@ -4107,7 +4107,7 @@ impl<'tcx> FnBuilder<'tcx> {
         segments.last().is_some_and(|s| {
             matches!(
                 s.name.as_str(),
-                "__concat" | "println" | "print" | "eprintln" | "format"
+                "__concat" | "__debug" | "println" | "print" | "eprintln" | "format"
             )
         })
     }

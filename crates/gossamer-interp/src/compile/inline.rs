@@ -207,6 +207,14 @@ impl<'tcx> FnBuilder<'tcx> {
         // compiles - a callee local sharing a caller name must not be
         // moved on the caller's read-once proof.
         let saved_consumable = std::mem::take(&mut self.consumable);
+        // The callee's own bindings never need a capture cell: an
+        // inlinable body holds no closure. Its scope stack is swapped
+        // out, so record the caller's active cells and restore them
+        // rather than relying on `pop_scope`. The caller's cells stay
+        // active meanwhile: an argument register may be a caller
+        // binding's home.
+        let saved_cell_names = std::mem::take(&mut self.capture_cell_names);
+        let capture_cell_mark = self.capture_cells.len();
         for (pattern, arg) in info.params.iter().zip(arg_regs.iter()) {
             if let HirPatKind::Binding {
                 name: param_name, ..
@@ -227,6 +235,8 @@ impl<'tcx> FnBuilder<'tcx> {
         // exit path, including the error path, before surfacing the result.
         self.scopes = saved_scopes;
         self.consumable = saved_consumable;
+        self.capture_cell_names = saved_cell_names;
+        self.capture_cells.truncate(capture_cell_mark);
         self.inlining.pop();
         Ok(Some(result?))
     }

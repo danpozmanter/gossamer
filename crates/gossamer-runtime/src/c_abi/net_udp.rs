@@ -26,7 +26,6 @@
 #![allow(clippy::wildcard_imports)]
 
 use std::collections::HashMap;
-use std::ffi::CStr;
 use std::net::UdpSocket;
 use std::os::raw::c_char;
 use std::sync::Arc;
@@ -42,11 +41,7 @@ fn next_handle() -> i64 {
 }
 
 fn cstr_to_str(p: *const c_char) -> String {
-    if p.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(p).to_string_lossy().into_owned() }
-    }
+    unsafe { crate::c_abi::gos_str_arg_string(p) }
 }
 
 fn udp_err(msg: &str) -> i128 {

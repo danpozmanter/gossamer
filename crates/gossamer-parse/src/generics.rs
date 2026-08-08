@@ -98,8 +98,8 @@ impl Parser<'_> {
     }
 
     fn parse_trait_bound(&mut self) -> TraitBound {
-        let path = self.parse_type_path();
-        TraitBound { path }
+        let (path, bindings) = self.parse_type_path_with_bindings();
+        TraitBound { path, bindings }
     }
 
     /// Parses an optional `where` clause.

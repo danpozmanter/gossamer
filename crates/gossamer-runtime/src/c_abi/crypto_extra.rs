@@ -27,7 +27,6 @@
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_sign_loss)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::encoding::{bytes_to_gosvec, gosvec_u8};
@@ -76,7 +75,7 @@ pub unsafe extern "C" fn gos_rt_crypto_md5_hex(input: *const c_char) -> *mut c_c
         let bytes: &[u8] = if input.is_null() {
             &[]
         } else {
-            unsafe { CStr::from_ptr(input).to_bytes() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(input) }
         };
         let digest: [u8; 16] = <md5::Md5 as md5::Digest>::digest(bytes).into();
         super::string::alloc_cstring(hex_encode(&digest).as_bytes())
@@ -92,7 +91,7 @@ pub unsafe extern "C" fn gos_rt_crypto_sha1_hex(input: *const c_char) -> *mut c_
         let bytes: &[u8] = if input.is_null() {
             &[]
         } else {
-            unsafe { CStr::from_ptr(input).to_bytes() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(input) }
         };
         let digest: [u8; 20] = <sha1::Sha1 as sha1::Digest>::digest(bytes).into();
         super::string::alloc_cstring(hex_encode(&digest).as_bytes())
@@ -206,7 +205,7 @@ pub unsafe extern "C" fn gos_rt_crypto_argon2id_verify(
         let phc_s = if phc.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(phc).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(phc) }
         };
         let parsed = match PasswordHash::new(&phc_s) {
             Ok(p) => p,

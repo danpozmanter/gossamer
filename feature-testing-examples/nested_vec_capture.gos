@@ -1,0 +1,27 @@
+// The eager combinator shims index a `GosVec`; a range is lazy iterator
+// state, a different runtime object. A chain whose element or output type
+// keeps it off the lazy path must therefore snapshot its source into a Vec
+// before the shim reads it. Covers a `char`-valued map over a range whose
+// closure captures a `Vec<Vec<char>>`, `f64` and `String` outputs, an
+// adapter fed by a range, and the same shapes from an already-eager Vec.
+
+fn pick(i: i64, ls: Vec<Vec<char>>) -> char { ls.map(|l| l[i]).first().unwrap() }
+
+fn main() {
+    let layers = "0222112222120000".chars().chunks(4)
+    let pixels = (0..4).map(|i| pick(i, layers)).collect()
+    println!("{} {} {}", pixels.len(), pixels[0], pixels[3])
+
+    let widened = (0..4).map(|i| i as f64).collect()
+    println!("{} {}", widened.len(), widened[2])
+
+    let labels = (0..3).map(|i| format!("n{}", i)).collect()
+    println!("{} {} {}", labels.len(), labels[0], labels[2])
+
+    let idxs = #[0, 1, 2, 3]
+    let eager = idxs.map(|i| pick(i, layers)).collect()
+    println!("{} {}", eager.len(), eager[1])
+
+    let squares = (1..5).map(|i| i * i).collect()
+    println!("{} {}", squares.len(), squares[3])
+}

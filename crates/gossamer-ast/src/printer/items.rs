@@ -212,7 +212,39 @@ impl Printer {
             if index > 0 {
                 self.write(" + ");
             }
+            self.print_trait_bound(bound);
+        }
+    }
+
+    /// Renders one bound, folding its associated-type constraints back into
+    /// the trait's argument list (`Iterator<Item = i64>`).
+    fn print_trait_bound(&mut self, bound: &TraitBound) {
+        if bound.bindings.is_empty() {
             self.print_type_path(&bound.path);
+            return;
+        }
+        for (index, segment) in bound.path.segments.iter().enumerate() {
+            if index > 0 {
+                self.write("::");
+            }
+            self.write_ident(&segment.name);
+            if index + 1 < bound.path.segments.len() {
+                continue;
+            }
+            self.write("<");
+            for arg in &segment.generics {
+                self.print_generic_arg(arg);
+                self.write(", ");
+            }
+            for (index, binding) in bound.bindings.iter().enumerate() {
+                if index > 0 {
+                    self.write(", ");
+                }
+                self.write_ident(&binding.name);
+                self.write(" = ");
+                self.print_type(&binding.ty);
+            }
+            self.write(">");
         }
     }
 

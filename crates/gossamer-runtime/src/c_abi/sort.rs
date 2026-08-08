@@ -1,0 +1,224 @@
+#![allow(clippy::missing_safety_doc)]
+#![allow(missing_docs)]
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+#![allow(clippy::must_use_candidate)]
+#![allow(clippy::wildcard_imports)]
+#![allow(clippy::cast_ptr_alignment)]
+#![allow(clippy::ptr_as_ptr)]
+
+//! Compiled-tier `std::sort` - the explicit stable-order and
+//! sorted-sequence search primitives. `Vec`'s inherent `sort` is
+//! unstable; these shims are the deliberate stable / search half of
+//! the same surface. Element access follows the flat 8-byte slot ABI:
+//! an `i64` Vec stores values, a `String` Vec stores `*mut c_char`.
+
+use std::os::raw::c_char;
+
+use super::*;
+
+/// Read the `i64` slots of a Vec whose elements are 8-byte primitives.
+unsafe fn i64_slots<'a>(v: *const GosVec) -> &'a [i64] {
+    if v.is_null() {
+        return &[];
+    }
+    let header = unsafe { &*v };
+    let len = header.len.max(0) as usize;
+    if len == 0 || header.elem_bytes != 8 {
+        return &[];
+    }
+    unsafe { std::slice::from_raw_parts(header.ptr.cast::<i64>(), len) }
+}
+
+/// Borrow slot `i` of a `String` Vec as a `&str`; an empty string for
+/// a null slot or non-UTF-8 content.
+unsafe fn str_slot<'a>(slots: &[i64], i: usize) -> &'a str {
+    let raw = slots[i];
+    if raw == 0 {
+        return "";
+    }
+    unsafe { crate::c_abi::gos_str_arg_text(raw as *const c_char) }
+}
+
+unsafe fn borrowed_str<'a>(p: *const c_char) -> &'a str {
+    if p.is_null() {
+        return "";
+    }
+    unsafe { crate::c_abi::gos_str_arg_text(p) }
+}
+
+/// Index of the first element not ordered before `pivot` (C++
+/// `lower_bound`). The sequence must already be sorted ascending.
+fn lower_bound<F: Fn(usize) -> std::cmp::Ordering>(len: usize, cmp: F) -> usize {
+    let (mut lo, mut hi) = (0usize, len);
+    while lo < hi {
+        let mid = usize::midpoint(lo, hi);
+        if cmp(mid) == std::cmp::Ordering::Less {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
+}
+
+/// Copy `src` into a fresh Vec sharing ownership of every element,
+/// mirroring the sharing contract of `gos_rt_vec_reversed`.
+unsafe fn clone_vec(src: *const GosVec, order: &[usize]) -> *mut GosVec {
+    let header = unsafe { &*src };
+    let elem_bytes = header.elem_bytes;
+    let out = unsafe { gos_rt_vec_with_capacity(elem_bytes, order.len() as i64) };
+    if out.is_null() {
+        return out;
+    }
+    for &from in order {
+        let elem = unsafe { header.ptr.add(from * (elem_bytes as usize)) };
+        unsafe { gos_rt_vec_push(out, elem) };
+    }
+    unsafe { crate::c_abi::vec::vec_share_owned_elements(src, out) };
+    out
+}
+
+/// `sort::sort_stable(xs) -> Vec<i64>` - ascending, equal elements
+/// keep their input order.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sort_stable_i64(v: *const GosVec) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        if v.is_null() {
+            return unsafe { gos_rt_vec_new(8) };
+        }
+        let slots = unsafe { i64_slots(v) };
+        let mut order: Vec<usize> = (0..slots.len()).collect();
+        order.sort_by_key(|&i| slots[i]);
+        unsafe { clone_vec(v, &order) }
+    })
+}
+
+/// `sort::sort_stable(xs) -> Vec<String>` - ascending by byte order,
+/// equal elements keep their input order.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sort_stable_str(v: *const GosVec) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        if v.is_null() {
+            return unsafe { gos_rt_vec_new(8) };
+        }
+        let slots = unsafe { i64_slots(v) };
+        let mut order: Vec<usize> = (0..slots.len()).collect();
+        order.sort_by(|&a, &b| unsafe { str_slot(slots, a).cmp(str_slot(slots, b)) });
+        unsafe { clone_vec(v, &order) }
+    })
+}
+
+/// `sort::binary_search(xs, target) -> Option<i64>` over a sorted
+/// `Vec<i64>`; `Some(index)` of a matching element, else `None`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sort_binary_search_i64(v: *const GosVec, target: i64) -> i128 {
+    ffi_entry!(unsafe { gos_rt_result_new(1, 0) }, {
+        let slots = unsafe { i64_slots(v) };
+        let at = lower_bound(slots.len(), |mid| slots[mid].cmp(&target));
+        if at < slots.len() && slots[at] == target {
+            unsafe { gos_rt_result_new(0, at as i64) }
+        } else {
+            unsafe { gos_rt_result_new(1, 0) }
+        }
+    })
+}
+
+/// `sort::binary_search(xs, target) -> Option<i64>` over a sorted
+/// `Vec<String>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sort_binary_search_str(
+    v: *const GosVec,
+    target: *const c_char,
+) -> i128 {
+    ffi_entry!(unsafe { gos_rt_result_new(1, 0) }, {
+        let slots = unsafe { i64_slots(v) };
+        let needle = unsafe { borrowed_str(target) };
+        let at = lower_bound(slots.len(), |mid| unsafe {
+            str_slot(slots, mid).cmp(needle)
+        });
+        if at < slots.len() && unsafe { str_slot(slots, at) } == needle {
+            unsafe { gos_rt_result_new(0, at as i64) }
+        } else {
+            unsafe { gos_rt_result_new(1, 0) }
+        }
+    })
+}
+
+/// `sort::partition_point(xs, pivot) -> i64` over a sorted
+/// `Vec<i64>`: the count of elements strictly less than `pivot`, which
+/// is also the insertion index that keeps `xs` sorted.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sort_partition_point_i64(v: *const GosVec, pivot: i64) -> i64 {
+    ffi_entry!(0, {
+        let slots = unsafe { i64_slots(v) };
+        lower_bound(slots.len(), |mid| slots[mid].cmp(&pivot)) as i64
+    })
+}
+
+/// `sort::partition_point(xs, pivot) -> i64` over a sorted
+/// `Vec<String>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sort_partition_point_str(
+    v: *const GosVec,
+    pivot: *const c_char,
+) -> i64 {
+    ffi_entry!(0, {
+        let slots = unsafe { i64_slots(v) };
+        let needle = unsafe { borrowed_str(pivot) };
+        lower_bound(slots.len(), |mid| unsafe {
+            str_slot(slots, mid).cmp(needle)
+        }) as i64
+    })
+}
+
+/// Read the `f64` slots of a Vec whose elements are 8-byte floats.
+unsafe fn f64_slots<'a>(v: *const GosVec) -> &'a [f64] {
+    if v.is_null() {
+        return &[];
+    }
+    let header = unsafe { &*v };
+    let len = header.len.max(0) as usize;
+    if len == 0 || header.elem_bytes != 8 {
+        return &[];
+    }
+    unsafe { std::slice::from_raw_parts(header.ptr.cast::<f64>(), len) }
+}
+
+/// `sort::sort_stable(xs) -> Vec<f64>` - ascending by total order, equal
+/// elements keep their input order.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sort_stable_f64(v: *const GosVec) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        if v.is_null() {
+            return unsafe { gos_rt_vec_new(8) };
+        }
+        let slots = unsafe { f64_slots(v) };
+        let mut order: Vec<usize> = (0..slots.len()).collect();
+        order.sort_by(|&a, &b| slots[a].total_cmp(&slots[b]));
+        unsafe { clone_vec(v, &order) }
+    })
+}
+
+/// `sort::binary_search(xs, target) -> Option<i64>` over a sorted
+/// `Vec<f64>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sort_binary_search_f64(v: *const GosVec, target: f64) -> i128 {
+    ffi_entry!(unsafe { gos_rt_result_new(1, 0) }, {
+        let slots = unsafe { f64_slots(v) };
+        let at = lower_bound(slots.len(), |mid| slots[mid].total_cmp(&target));
+        if at < slots.len() && slots[at].total_cmp(&target) == std::cmp::Ordering::Equal {
+            unsafe { gos_rt_result_new(0, at as i64) }
+        } else {
+            unsafe { gos_rt_result_new(1, 0) }
+        }
+    })
+}
+
+/// `sort::partition_point(xs, pivot) -> i64` over a sorted `Vec<f64>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sort_partition_point_f64(v: *const GosVec, pivot: f64) -> i64 {
+    ffi_entry!(0, {
+        let slots = unsafe { f64_slots(v) };
+        lower_bound(slots.len(), |mid| slots[mid].total_cmp(&pivot)) as i64
+    })
+}

@@ -24,13 +24,7 @@ use super::string::alloc_cstring;
 use super::vec::{GosVec, gos_rt_result_new, gos_rt_vec_push};
 
 unsafe fn cstr<'a>(p: *const c_char) -> &'a str {
-    if p.is_null() {
-        ""
-    } else {
-        unsafe { std::ffi::CStr::from_ptr(p) }
-            .to_str()
-            .unwrap_or("")
-    }
+    unsafe { crate::c_abi::gos_str_arg_text(p) }
 }
 
 fn byte_vec(bytes: &[u8]) -> *mut GosVec {

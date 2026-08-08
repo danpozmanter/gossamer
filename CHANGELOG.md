@@ -1,5 +1,153 @@
 # Changelog
 
+## 0.45.0 - Pipe placeholder, sound generics, wired stdlib
+
+- Ship associated types and associated constants. A trait declares `type Item`
+  and `const MAX: i64` with optional defaults, each `impl` supplies one, and
+  `Self::Item`, `T::Item`, `Type::MAX`, and `T::MAX` resolve through the impl,
+  the trait default, or the trait's single implementor. `T: Iterator<Item =
+  i64>` now parses and pins the projection. Both were parsed and resolved but
+  discarded before lowering, so a projection silently read as the base type and
+  an associated constant faulted at runtime. New diagnostics name an impl that
+  omits a required associated item (`GT0059`), a projection nothing declares
+  (`GT0060`), and an ambiguous projection with the constraint to write
+  (`GT0061`). Generic associated types and associated items on `dyn` remain out
+  of scope.
+- Skip the whole front end on a repeat `gos check` / `gos run` / `gos test` /
+  `gos build` over an unchanged program. The cache now stores the resolved and
+  typechecked result, not just the parse, and invalidates on source, imports,
+  compiler identity, edition, target, `#[cfg(test)]` visibility, and binding
+  signatures. Blobs live in the project's `.gos-cache/frontend`; `GOS_NO_CACHE`
+  turns the cache off.
+- Spell the pipe placeholder `$` instead of `_`: `text |> $.trim()` makes the
+  piped value the receiver, and `x |> f($, k)` selects the argument it fills.
+  `$` is punctuation, so it can never collide with a name in scope. A pipe
+  written with the retired `_` reports `GP0038` naming the new spelling.
+- Call a trait method through the type parameter of a bounded generic `impl`
+  block. `impl<T: Shape> Wrapper<T> { fn area(&self) -> f64 { self.value.area() } }`
+  ran on the bytecode VM and crashed a native build: the method copied the
+  receiver out of its slot, while the impl it resolves to takes `&self`, so the
+  callee read a struct value as a pointer. The generic template is also no
+  longer emitted once every call site routes to a specialisation, which left an
+  undefined symbol for the unresolved trait call.
+- Give every slot of a repeat literal its own element. `#[#[0; 3]; 3]` built one
+  inner Vec and stored it in all three slots on the compiled tiers, so writing
+  `c[0][0]` changed every row. The per-slot clone was also being discarded by an
+  optimisation that counts static reads, which cannot see that a clone written
+  once inside a loop runs once per iteration.
+- Parse a const generic argument as a literal or a braced block rather than a
+  full expression. `f::<3>(xs)` read `3 > (xs)` as a comparison and never closed
+  the argument list, so only the `f::<3,>(xs)` spelling reached the checker.
+- Call the HTTP middleware stack from Gossamer. `cors`, `rate_limit`, `timeout`,
+  `recoverer`, `compress_gzip`, `body_limit`, `hsts`, `security_headers`,
+  `cache_control`, `etag`, `logger`, basic and bearer auth, and `safe_defaults`
+  were implemented but reachable only from Rust; they now compose with `Chain`
+  and `http::serve`, with configuration types for CORS, HSTS, security headers,
+  cache control, and rate limiting.
+- Add `path::glob`, which walks `**`, and `path::matches`.
+- Add `std::sort` with `sort_stable`, `binary_search`, and `partition_point`
+  over integer, float, and string elements.
+- Add the `io` streaming adapters: `tee_reader`, `multi_reader`, `limit_reader`,
+  `pipe`, `copy_n`, and in-memory readers and writers.
+- Match an error by identity. `errors::is` now accepts a sentinel error value
+  and compares it through the cause chain, alongside the existing message
+  match, and `chain`, `with_field`, `field`, and `fields` are callable.
+- Observe a closure's mutation of a captured `Vec` from the enclosing binding on
+  the bytecode VM, as the compiled tiers already do. The VM snapshotted the
+  capture into the closure's own copy-on-write share, so `let add = || v.push(2)`
+  left `v` untouched. A captured sequence now lives in one shared cell that the
+  binding and the closure both name, mutations travel both ways, and assigning
+  the whole variable still gives the binding its own storage.
+- Iterate `String::bytes()` in a native build. It ran on the bytecode VM and
+  emitted an undefined symbol under LLVM AOT.
+- Sort a `Vec<f64>`. The comparison read float bits as string pointers and
+  crashed a native build.
+- Compare an error message the same way on every tier: the bytecode VM required
+  an exact match where the compiled tiers matched a substring.
+- Read a tagged-pointer enum through the combinator surface, through a closure
+  argument at a direct call site, and read a generic struct's fields from its
+  per-instantiation layout. Each read a slot address where the value's handle
+  belonged, so `.map()` over a `Vec<Enum>` always matched the first variant and a
+  `Wrapper<Point>` in a loop summed the wrong fields.
+- Stop reporting a used path dependency as an unused import. `use
+  "example.com/intcode"` was matched against the whole project id while call
+  sites spell the last segment (`intcode::item`), so the correct import always
+  warned. An import that really is unused still does.
+- Keep a `for` loop's counter separate from the binding that supplied its start.
+  `for x in lo..=hi` advanced `lo` itself, so `lo` held the end value afterwards
+  and re-entering the loop from an enclosing one started past the end and ran
+  the body zero times. Literal bounds were unaffected, which is why the failure
+  looked like it depended on an unrelated `.rev()` elsewhere in the program.
+- Run an `iter` combinator over a range whose result element the lazy iterator
+  runtime does not carry. A range produces a lazy handle, and a `char`, `bool`,
+  or float result falls to the eager path, which read that handle's words as a
+  vector header and dereferenced a null pointer in a native build. Closes the
+  crash reported for a program that ran on the bytecode VM and segfaulted once
+  compiled.
+- Infer the payload of `Option::map` / `Result::map` from the closure's return.
+  The closure's parameter was unconstrained when its body was checked, so a
+  projection out of the payload stayed a free variable that later unified with
+  whatever the context wanted; `some_pair.map(|p| p.0)` then printed an integer
+  through the string path and crashed a native build.
+- Let a closure observe the value it captured rather than a clone of it, which
+  matches the documented capture-by-managed-reference rule. Mutating a captured
+  `Vec` was a no-op, and a captured nested `Vec` reached the compiled tiers with
+  element metadata that no longer described the original buffer.
+- Stop reading an `Option` or `Result` payload word as a pointer when it holds a
+  scalar. The reference-count probe dereferenced the word to look for an
+  allocation header, so `Option<i64>` and friends read an arbitrary address; it
+  faulted only when the integer happened to be misaligned, which made the crash
+  look specific to one program.
+- Type the closure parameter of `option::map` from the option's payload rather
+  than assuming an integer, so a destructuring closure over a tuple payload sees
+  its real shape.
+- Snapshot a lazy iterator source into a `Vec` before an eager combinator reads
+  it. `(0..n).map(f)` whose element or result type keeps the chain off the lazy
+  path handed the range's iterator state to a shim that indexes a `Vec`, so a
+  native build read the handle's words as a vector header and crashed.
+- Honour a `where` clause. Its predicates were parsed, name-resolved, and then
+  dropped, so `fn f<T>(x: &T) where T: Shape` reported that `T` had no methods.
+- Read the bounds of a generic `impl` block inside its methods, and keep bound
+  positions aligned when the block and the method both declare parameters: a
+  method's own bound could be attributed to the block's parameter instead.
+- Check declared bounds on struct, enum, trait, and impl generics. An unknown
+  trait in `struct S<T: Hashabel>` was accepted, and an unsatisfied bound was
+  never reported when the type was instantiated.
+- Reject an operator applied to a type parameter that no bound supports, the way
+  a method call already was, and enforce a bound naming an operator trait.
+- Report a trait impl that leaves out a method the trait declares without a
+  default body (`GT0058`). Such an impl satisfied a bound and then lowered to a
+  call to a symbol that was never emitted.
+- Decide match exhaustiveness with the usefulness algorithm over a pattern
+  matrix. Tuple, fixed-array, and nested payload scrutinees were treated as
+  exhaustive whatever the arms covered, so `match (a, b) { (true, true) => 1 }`
+  type-checked and panicked at run time; the missing combinations are now
+  reported as witnesses.
+- Bind a struct-variant or struct pattern through a reference the way a tuple
+  variant already did. `Shape::Rect { w, h }` matched against `&self` left the
+  bindings as references and failed to type-check against their field types.
+- Type the return of a method resolved through a type-parameter bound. An impl
+  block's self type was lowered outside its own generic scope, so `Wrapper<T>`
+  never recorded its parameter and a `String` return printed as its pointer in a
+  native build.
+- Correct the declared signatures of `encoding::binary::uvarint` and `varint`,
+  which returned a pair at run time and a single integer in the type table.
+- Bind the suffix of a tuple rest pattern from the end: `(a, .., d)` over a
+  four-element tuple bound `d` to the second element.
+- Construct a module-qualified enum variant on the compiled tiers.
+  `shapes::Shape::Circle(1.0)` from outside the module ran on the bytecode VM
+  and emitted an undefined symbol in a native build, because variant lookup
+  matched only one- and two-segment paths.
+- Report the cause chain when a native build fails, instead of the outermost
+  message alone.
+- Fold a constant `u64` or `usize` comparison at its own signedness. Operands at
+  or above 2^63 are stored sign-extended, so `u64::MAX > 5` folded to `false`
+  while every execution tier computed `true`.
+- Document trait bounds as written: several bounds per parameter (`T: A + B`)
+  and `where` clauses both work, and the reference described only single bounds.
+  Correct the HTTP/2 and WebSocket status, and the scheduler's unpark path,
+  which pins a goroutine to its home worker rather than migrating it.
+
 ## 0.44.1 - Iterator elements, Doc fixes.
 
 - Accept an `Iterator<T>` argument for an `Iterator<T>` parameter. Passing

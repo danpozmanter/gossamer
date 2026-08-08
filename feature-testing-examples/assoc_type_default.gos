@@ -1,0 +1,27 @@
+// A trait supplies a default for its associated type; an impl that stays
+// silent inherits it, and one that restates it overrides it.
+
+trait Counted {
+    type Count = i64
+    fn amount(&self) -> Self::Count
+}
+
+struct Tally {
+    hits: i64
+}
+
+impl Counted for Tally {
+    fn amount(&self) -> Self::Count {
+        self.hits
+    }
+}
+
+fn total<T: Counted>(counter: &T) -> T::Count {
+    counter.amount()
+}
+
+fn main() {
+    let tally = Tally { hits: 7 }
+    let count: i64 = total(&tally)
+    println!("{}", count * 6)
+}

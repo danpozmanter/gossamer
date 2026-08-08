@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0038]: A `|>` right-hand side used `_` where the pipe placeholder belongs. - here
+--- framed ---
+error[GP0038]: A `|>` right-hand side used `_` where the pipe placeholder belongs.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

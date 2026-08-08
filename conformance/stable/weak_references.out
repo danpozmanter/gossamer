@@ -1,0 +1,6 @@
+live=1:alpha
+copied=2:beta
+orphan=dead
+link=7
+orphan_link=dead
+alive=2

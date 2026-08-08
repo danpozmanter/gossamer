@@ -1,0 +1,62 @@
+// Struct- and tuple-keyed maps and sets. An aggregate key hashes by value, so
+// two structurally equal keys built independently must reach the same entry on
+// every tier, and the entry snapshot a `for` loop walks must see every value.
+
+use std::collections::{Map, Set}
+
+struct Cell {
+    row: i64,
+    col: i64,
+}
+
+fn main() {
+    let mut grid: Map<Cell, String> = Map::new()
+    grid.insert(Cell { row: 0, col: 0 }, "origin")
+    grid.insert(Cell { row: 1, col: 2 }, "target")
+    grid.insert(Cell { row: 0, col: 0 }, "origin2")
+    println!("len={}", grid.len())
+
+    match grid.get(&Cell { row: 1, col: 2 }) {
+        Some(v) => println!("hit={v}"),
+        None => println!("hit=miss"),
+    }
+    match grid.get(&Cell { row: 9, col: 9 }) {
+        Some(v) => println!("absent={v}"),
+        None => println!("absent=miss"),
+    }
+    println!("rebound={}", grid.get(&Cell { row: 0, col: 0 }).unwrap_or("none"))
+    println!("contains={}", grid.contains_key(&Cell { row: 0, col: 0 }))
+
+    let mut weights: Map<Cell, i64> = Map::new()
+    weights.insert(Cell { row: 1, col: 1 }, 10)
+    weights.insert(Cell { row: 2, col: 2 }, 20)
+    weights.insert(Cell { row: 3, col: 3 }, 30)
+    let mut total = 0
+    for (_, v) in weights.iter() {
+        total += v
+    }
+    println!("weights={total}")
+
+    let mut tally: Map<(i64, i64), i64> = Map::new()
+    tally.insert((1, 1), 2)
+    tally.insert((2, 3), 5)
+    tally.insert((1, 1), 4)
+    println!("tally_len={}", tally.len())
+    match tally.get(&(2, 3)) {
+        Some(v) => println!("tally_hit={v}"),
+        None => println!("tally_hit=miss"),
+    }
+    let mut tally_total = 0
+    for (_, v) in tally.iter() {
+        tally_total += v
+    }
+    println!("tally_total={tally_total}")
+
+    let mut seen: Set<Cell> = Set::new()
+    seen.insert(Cell { row: 4, col: 5 })
+    seen.insert(Cell { row: 4, col: 5 })
+    seen.insert(Cell { row: 6, col: 7 })
+    println!("set_len={}", seen.len())
+    println!("set_hit={}", seen.contains(&Cell { row: 6, col: 7 }))
+    println!("set_miss={}", seen.contains(&Cell { row: 0, col: 1 }))
+}

@@ -1,0 +1,75 @@
+// Weak references over acyclic graphs. `downgrade` must not contribute to the
+// strong count, `upgrade` must observe the referent while a strong binding is
+// live, and must observe its death once the last strong binding leaves scope.
+// Every referent here is acyclic, so liveness is decided by scope alone and
+// reads the same on the bytecode VM, the JIT, and the AOT binary.
+
+struct Record {
+    id: i64,
+    name: String,
+}
+
+enum Link {
+    End,
+    Step(i64),
+}
+
+// The strong binding dies with this frame, so the returned weak is dead.
+fn orphan_record() -> Weak<Record> {
+    let strong = Record { id: 3, name: "gone" }
+    strong.downgrade()
+}
+
+fn orphan_link() -> Weak<Link> {
+    let strong = Link::Step(11)
+    strong.downgrade()
+}
+
+fn describe(w: Weak<Record>) -> String {
+    match w.upgrade() {
+        Some(r) => format!("{}:{}", r.id, r.name),
+        None => "dead",
+    }
+}
+
+fn main() {
+    let live = Record { id: 1, name: "alpha" }
+    let w = live.downgrade()
+    println!("live={}", describe(w))
+    let _hold_live = live
+
+    let copied = Record { id: 2, name: "beta" }
+    let wa = copied.downgrade()
+    let wb = wa
+    println!("copied={}", describe(wb))
+    let _hold_copied = copied
+
+    println!("orphan={}", describe(orphan_record()))
+
+    let step = Link::Step(7)
+    let ws = step.downgrade()
+    match ws.upgrade() {
+        Some(l) => match l {
+            Link::End => println!("link=end"),
+            Link::Step(n) => println!("link={n}"),
+        },
+        None => println!("link=dead"),
+    }
+    let _hold_step = step
+
+    match orphan_link().upgrade() {
+        Some(_) => println!("orphan_link=alive"),
+        None => println!("orphan_link=dead"),
+    }
+
+    let mut alive = 0
+    let held = Record { id: 4, name: "delta" }
+    let weaks = #[held.downgrade(), held.downgrade(), orphan_record()]
+    for weak in weaks {
+        if let Some(_r) = weak.upgrade() {
+            alive += 1
+        }
+    }
+    println!("alive={alive}")
+    let _hold_held = held
+}

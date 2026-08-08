@@ -260,28 +260,10 @@ impl<'a> Lowerer<'a> {
                 .unwrap();
                 Ok(dest)
             }
-            kind @ (ConcatKind::VecI64
-            | ConcatKind::VecF64
-            | ConcatKind::VecBool
-            | ConcatKind::VecString
-            | ConcatKind::VecVecI64
-            | ConcatKind::VecVecString
-            | ConcatKind::ArrI64(_)
-            | ConcatKind::ArrF64(_)
-            | ConcatKind::ArrBool(_)
-            | ConcatKind::ArrString(_)
-            | ConcatKind::ArrArrI64(_, _)
-            | ConcatKind::ArrArrF64(_, _)
-            | ConcatKind::ArrArrBool(_, _)
-            | ConcatKind::JsonValue
-            | ConcatKind::ErrorMessage
-            | ConcatKind::Tuple
-            | ConcatKind::Option(_)
-            | ConcatKind::Result(_, _)
-            | ConcatKind::Map
-            | ConcatKind::SetI64(_)
-            | ConcatKind::SetString(_)) => self.emit_concat_aggregate(arg, kind, &value),
             ConcatKind::Unsupported => unreachable!("checked above"),
+            // Every remaining kind is an aggregate its runtime formatter
+            // renders to a c-string.
+            kind => self.emit_concat_aggregate(arg, kind, &value),
         }
     }
 
@@ -356,7 +338,13 @@ impl<'a> Lowerer<'a> {
         // dispatch (one runtime print call per operand keyed off
         // the operand's MIR kind).
         if name == "__concat" {
-            self.lower_concat_call(args, destination, target)?;
+            self.lower_concat_call(args, destination, target, false)?;
+            return Ok(());
+        }
+        // `__debug` is the `{:?}` channel: identical to `__concat` except a
+        // float always renders with a fractional part or an exponent.
+        if name == "__debug" {
+            self.lower_concat_call(args, destination, target, true)?;
             return Ok(());
         }
         // `__fmt_prec(value, prec)` - emitted by macro expansion for
@@ -1258,16 +1246,33 @@ impl<'a> Lowerer<'a> {
     ///    memcpy from the Cons-node data instead of the pointer.
     ///
     /// 3. All other args: `lower_operand` → `lower_place_read`.
+    ///
+    /// A lifted closure (`__closure_N`) is the exception to case 2. The
+    /// runtime combinator shims call a closure body directly through a C
+    /// function pointer, handing each parameter in the shape its slot holds:
+    /// a multi-slot inline aggregate as a pointer, a one-word handle as the
+    /// word. `emit_param_stores` binds the body that way, so a direct call
+    /// site must pass a handle-shaped argument by value too.
     pub(crate) fn lower_call_arg(
         &mut self,
         op: &Operand,
         expected: Option<Ty>,
+        callee: &str,
     ) -> Result<(String, String), BuildError> {
         if let Some(want) = expected
             && let Operand::Copy(place) = op
             && place.projection.is_empty()
         {
             let local_ty = self.body.local_ty(place.local);
+            if is_aggregate(self.tcx, want)
+                && slot_count(self.tcx, want).is_none()
+                && callee.starts_with("__closure")
+            {
+                let slot = local_slot(place.local);
+                let tmp = self.fresh();
+                writeln!(self.out, "  {tmp} = load ptr, ptr {slot}").unwrap();
+                return Ok((tmp, "ptr".to_string()));
+            }
             if matches!(self.tcx.kind(want), Some(TyKind::Ref { .. })) {
                 // Case 1: &T param, enum-Adt slot → load heap ptr.
                 if matches!(self.tcx.kind(local_ty), Some(TyKind::Adt { .. }))
@@ -1421,7 +1426,11 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
                 let lv = self.fresh();
-                writeln!(self.out, "  {lv} = load i64, ptr {addr}").unwrap();
+                // Payload memory: `gos_enum_load` is emitted only for a match
+                // arm reading a variant payload word out of an enum node, and
+                // a node's words are a flat slot slab - the same class the
+                // projection walk tags, never a `GosVec` / string header word.
+                writeln!(self.out, "  {lv} = load i64, ptr {addr}{TBAA_DATA}").unwrap();
                 writeln!(self.out, "  br label %{done_l}").unwrap();
                 writeln!(self.out, "{done_l}:").unwrap();
                 let v = self.fresh();

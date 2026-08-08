@@ -20,6 +20,11 @@ pub mod types;
 /// is walked with separate tag and slot cursors.
 pub const TUPLE_TAG_NESTED: u8 = 8;
 
+/// `payload_kind` tag selecting rendering of an `Option` / `Result` payload
+/// through the payload type's derived `fmt`, whose address travels alongside
+/// the tag in `gos_rt_debug_option_fmt` / `gos_rt_debug_result_fmt`.
+pub const DEBUG_PAYLOAD_ADT: u8 = 9;
+
 pub use registry::{REGISTRY, all_llvm_declarations, lookup};
 pub use types::{AbiSig, AbiType, RuntimeEntry, Tier};
 

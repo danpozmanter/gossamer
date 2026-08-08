@@ -45,10 +45,10 @@ use std::http::router
 
 fn main() -> Result<(), http::Error> {
     router::Router::new()
-        |> _.get("/health", health)
-        |> _.get("/users", list_users)
-        |> _.post("/users", create_user)
-        |> _.get("/users/{id}", show_user)
+        |> $.get("/health", health)
+        |> $.get("/users", list_users)
+        |> $.post("/users", create_user)
+        |> $.get("/users/{id}", show_user)
         |> http::serve("0.0.0.0:8080")
 }
 ```

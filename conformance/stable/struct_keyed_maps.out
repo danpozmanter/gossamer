@@ -1,0 +1,12 @@
+len=2
+hit=target
+absent=miss
+rebound=origin2
+contains=true
+weights=60
+tally_len=2
+tally_hit=5
+tally_total=9
+set_len=2
+set_hit=true
+set_miss=false

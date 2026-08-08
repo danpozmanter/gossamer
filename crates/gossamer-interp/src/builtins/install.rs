@@ -63,11 +63,15 @@ fn install_io_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("assert", builtin("assert", builtin_assert)));
     globals.push(("assert_eq", builtin("assert_eq", builtin_assert_eq)));
     globals.push(("__concat", builtin("__concat", builtin_concat)));
+    globals.push(("__debug", builtin("__debug", builtin_debug)));
     globals.push(("__fmt_prec", builtin("__fmt_prec", builtin_fmt_prec)));
     globals.push(("__fmt_radix", builtin("__fmt_radix", builtin_fmt_radix)));
     globals.push(("__fmt_upper", builtin("__fmt_upper", builtin_fmt_upper)));
     globals.push(("__fmt_pad", builtin("__fmt_pad", builtin_fmt_pad)));
-    globals.push(("__repl_discard", builtin("__repl_discard", builtin_repl_discard)));
+    globals.push((
+        "__repl_discard",
+        builtin("__repl_discard", builtin_repl_discard),
+    ));
     globals.push(("__struct", builtin("__struct", builtin_struct_new)));
 }
 
@@ -1165,7 +1169,10 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     ));
     globals.push(("truncate", builtin("truncate", builtin_truncate)));
     globals.push(("reserve", builtin("reserve", builtin_vec_reserve)));
-    globals.push(("reserve_exact", builtin("reserve_exact", builtin_vec_reserve_exact)));
+    globals.push((
+        "reserve_exact",
+        builtin("reserve_exact", builtin_vec_reserve_exact),
+    ));
     globals.push(("capacity", builtin("capacity", builtin_vec_capacity)));
     globals.push(("sort", builtin("sort", builtin_sort)));
     globals.push(("sort_by", native("sort_by", native_sort_by)));
@@ -1391,8 +1398,31 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
         "errors::Error::is",
         builtin("errors::Error::is", builtin_errors_is_method),
     ));
+    globals.push((
+        "errors::Error::chain",
+        builtin("errors::Error::chain", builtin_errors_chain),
+    ));
+    globals.push((
+        "errors::Error::with_field",
+        builtin("errors::Error::with_field", builtin_errors_with_field),
+    ));
+    globals.push((
+        "errors::Error::field",
+        builtin("errors::Error::field", builtin_errors_field),
+    ));
+    globals.push((
+        "errors::Error::fields",
+        builtin("errors::Error::fields", builtin_errors_fields),
+    ));
     globals.push(("message", builtin("message", builtin_errors_message)));
     globals.push(("cause", builtin("cause", builtin_errors_cause)));
+    globals.push(("chain", builtin("chain", builtin_errors_chain)));
+    globals.push((
+        "with_field",
+        builtin("with_field", builtin_errors_with_field),
+    ));
+    globals.push(("field", builtin("field", builtin_errors_field)));
+    globals.push(("fields", builtin("fields", builtin_errors_fields)));
     globals.push(("to_vec", builtin("to_vec", builtin_clone)));
     globals.push((
         "std::sync::channel",
@@ -1417,11 +1447,145 @@ fn native_variant_map_err(
 }
 
 fn errors_struct(message: String, cause: Value) -> Value {
-    let fields = vec![
+    errors_struct_with(message, cause, Value::Array(Arc::new(Vec::new())))
+}
+
+/// Builds an `errors::Error` value carrying structured diagnostic
+/// fields; `fields` is a sequence of `(key, value)` string tuples in
+/// insertion order.
+fn errors_struct_with(message: String, cause: Value, fields: Value) -> Value {
+    let slots = vec![
         ("message", Value::String(SmolStr::from(message))),
         ("cause", cause),
+        ("__fields", fields),
     ];
-    Value::struct_("errors::Error", Arc::unwrap_or_clone(Arc::new(fields)))
+    Value::struct_("errors::Error", slots)
+}
+
+/// The structured-field pairs attached to an error value.
+fn errors_fields_of(v: &Value) -> Vec<(String, String)> {
+    let Value::Struct(inner) = v else {
+        return Vec::new();
+    };
+    if inner.name != "errors::Error" {
+        return Vec::new();
+    }
+    let Some((_, Value::Array(items))) = inner.fields.iter().find(|(n, _)| **n == "__fields")
+    else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| match item {
+            Value::Tuple(pair) if pair.len() == 2 => {
+                Some((pair[0].to_string(), pair[1].to_string()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn errors_fields_value(pairs: &[(String, String)]) -> Value {
+    Value::Array(Arc::new(
+        pairs
+            .iter()
+            .map(|(k, v)| {
+                Value::Tuple(Arc::from(vec![
+                    Value::String(SmolStr::from(k.as_str())),
+                    Value::String(SmolStr::from(v.as_str())),
+                ]))
+            })
+            .collect(),
+    ))
+}
+
+/// `errors::Error::chain() -> [errors::Error]` - this error followed by
+/// every ancestor cause, outermost first.
+fn builtin_errors_chain(args: &[Value]) -> RuntimeResult<Value> {
+    let mut out = Vec::new();
+    let mut cursor = args.first().cloned();
+    while let Some(cur) = cursor {
+        if errors_message_of(&cur).is_none() {
+            break;
+        }
+        cursor = match errors_cause_of(&cur) {
+            Some(Value::Variant(inner)) if inner.name == "Some" && !inner.fields.is_empty() => {
+                Some(inner.fields[0].clone())
+            }
+            _ => None,
+        };
+        out.push(cur);
+    }
+    Ok(Value::Array(Arc::new(out)))
+}
+
+/// `errors::Error::with_field(key, value) -> errors::Error` - a copy of
+/// the receiver carrying one more structured diagnostic field.
+fn builtin_errors_with_field(args: &[Value]) -> RuntimeResult<Value> {
+    let receiver = args.first().cloned().unwrap_or(Value::Unit);
+    let key = args.get(1).map(Value::to_string).unwrap_or_default();
+    let value = args.get(2).map(Value::to_string).unwrap_or_default();
+    let mut pairs = errors_fields_of(&receiver);
+    match pairs.iter_mut().find(|(name, _)| *name == key) {
+        Some((_, current)) => *current = value,
+        None => pairs.push((key, value)),
+    }
+    Ok(errors_struct_with(
+        errors_message_of(&receiver).unwrap_or_default(),
+        errors_cause_of(&receiver).unwrap_or_else(|| Value::variant("None", vec![])),
+        errors_fields_value(&pairs),
+    ))
+}
+
+/// `errors::Error::field(key) -> Option<String>`.
+fn builtin_errors_field(args: &[Value]) -> RuntimeResult<Value> {
+    let receiver = args.first().cloned().unwrap_or(Value::Unit);
+    let key = args.get(1).map(Value::to_string).unwrap_or_default();
+    match errors_fields_of(&receiver)
+        .into_iter()
+        .find(|(name, _)| *name == key)
+    {
+        Some((_, value)) => Ok(Value::variant(
+            "Some",
+            vec![Value::String(SmolStr::from(value))],
+        )),
+        None => Ok(Value::variant("None", vec![])),
+    }
+}
+
+/// `errors::Error::fields() -> [(String, String)]` in insertion order.
+fn builtin_errors_fields(args: &[Value]) -> RuntimeResult<Value> {
+    let receiver = args.first().cloned().unwrap_or(Value::Unit);
+    Ok(errors_fields_value(&errors_fields_of(&receiver)))
+}
+
+/// Identity of an error value: the shared payload address, which every
+/// clone of the same error preserves.
+fn error_identity(v: &Value) -> Option<usize> {
+    match v {
+        Value::Struct(inner) if inner.name == "errors::Error" => Some(Arc::as_ptr(inner) as usize),
+        _ => None,
+    }
+}
+
+/// Whether `sentinel` is `err` itself or any link of its cause chain.
+fn errors_chain_has_sentinel(err: &Value, sentinel: &Value) -> bool {
+    let Some(target) = error_identity(sentinel) else {
+        return false;
+    };
+    let mut cursor = Some(err.clone());
+    while let Some(cur) = cursor {
+        if error_identity(&cur) == Some(target) {
+            return true;
+        }
+        cursor = match errors_cause_of(&cur) {
+            Some(Value::Variant(inner)) if inner.name == "Some" && !inner.fields.is_empty() => {
+                Some(inner.fields[0].clone())
+            }
+            _ => None,
+        };
+    }
+    false
 }
 
 fn errors_message_of(v: &Value) -> Option<String> {
@@ -1527,7 +1691,7 @@ fn errors_chain_contains(err: &Value, needle: &str) -> bool {
     let mut cursor = Some(err.clone());
     while let Some(cur) = cursor {
         match errors_message_of(&cur) {
-            Some(m) if m == needle => return true,
+            Some(m) if m.contains(needle) => return true,
             Some(_) => {}
             None => return false,
         }
@@ -1541,22 +1705,24 @@ fn errors_chain_contains(err: &Value, needle: &str) -> bool {
     false
 }
 
+/// `errors::is(err, needle)` - `needle` is either a message (substring
+/// match down the cause chain, the Go `errors.Is` string fallback) or a
+/// sentinel error value (identity match).
+fn errors_is(args: &[Value]) -> Value {
+    let err = args.first().cloned().unwrap_or(Value::Unit);
+    match args.get(1) {
+        Some(Value::String(needle)) => Value::Bool(errors_chain_contains(&err, needle.as_str())),
+        Some(sentinel) => Value::Bool(errors_chain_has_sentinel(&err, sentinel)),
+        None => Value::Bool(false),
+    }
+}
+
 fn builtin_errors_is_method(args: &[Value]) -> RuntimeResult<Value> {
-    let receiver = args.first().cloned().unwrap_or(Value::Unit);
-    let needle = match args.get(1) {
-        Some(Value::String(s)) => s.as_str().to_string(),
-        _ => return Ok(Value::Bool(false)),
-    };
-    Ok(Value::Bool(errors_chain_contains(&receiver, &needle)))
+    Ok(errors_is(args))
 }
 
 fn builtin_errors_is_freefn(args: &[Value]) -> RuntimeResult<Value> {
-    let err = args.first().cloned().unwrap_or(Value::Unit);
-    let needle = match args.get(1) {
-        Some(Value::String(s)) => s.as_str().to_string(),
-        _ => return Ok(Value::Bool(false)),
-    };
-    Ok(Value::Bool(errors_chain_contains(&err, &needle)))
+    Ok(errors_is(args))
 }
 
 fn builtin_str_parse_result(args: &[Value]) -> RuntimeResult<Value> {

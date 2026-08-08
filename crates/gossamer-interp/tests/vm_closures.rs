@@ -87,21 +87,21 @@ fn main() {
 }
 
 #[test]
-fn aggregate_capture_is_copy_on_write_like_the_walker() {
-    // The VM's `Value` model is copy-on-write: a push through the
-    // captured aggregate rebinds the closure's own share and is not
-    // visible to the original binding. This matches the tree-walker's
-    // `gos` semantics exactly (the contract Phase 1 preserves).
+fn captured_sequence_mutation_reaches_the_enclosing_binding() {
+    // A heap sequence is captured by managed reference (SPEC 4.6): the
+    // closure's upvalue and the enclosing binding name one buffer, so a
+    // push made through the closure - even one invoked from another
+    // frame - is observed by the binding, matching the compiled tiers.
     let src = r#"
 fn run(f: Fn()) { f() }
 fn main() {
-    let mut v: [i64] = [1, 2]
+    let mut v: Vec<i64> = #[1, 2]
     let pusher = || { v.push(3) }
     run(pusher)
     println!("{:?}", v)
 }
 "#;
-    assert_eq!(run_main(src), "[1, 2]\n");
+    assert_eq!(run_main(src), "[1, 2, 3]\n");
 }
 
 #[test]

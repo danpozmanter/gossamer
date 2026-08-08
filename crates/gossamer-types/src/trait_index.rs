@@ -49,6 +49,12 @@ pub struct ImplEntry {
     pub trait_ref: Option<TraitRef>,
     /// Methods defined in this impl, keyed by declaration order.
     pub methods: Vec<ImplMethod>,
+    /// Concrete types this impl supplies for the trait's associated types,
+    /// in declaration order.
+    pub assoc_types: Vec<(String, Ty)>,
+    /// Declared types of the associated constants this impl supplies, in
+    /// declaration order.
+    pub assoc_consts: Vec<(String, Ty)>,
     /// Source range of the impl block.
     pub span: Span,
 }
@@ -76,6 +82,12 @@ pub struct TraitEntry {
     pub name: String,
     /// Method names in declaration order, used to compute vtable slots.
     pub methods: Vec<String>,
+    /// Associated type names in declaration order, paired with the trait's
+    /// default type where one is written.
+    pub assoc_types: Vec<(String, Option<Ty>)>,
+    /// Associated constant names in declaration order, paired with their
+    /// declared type.
+    pub assoc_consts: Vec<(String, Ty)>,
     /// Supertrait references extracted from the `: Bounds` clause.
     pub supertraits: Vec<TraitRef>,
     /// Source range of the trait declaration.
@@ -164,6 +176,23 @@ impl ImplIndex {
     #[must_use]
     pub fn trait_of(&self, def: DefId) -> Option<&TraitEntry> {
         self.traits.get(&def)
+    }
+
+    /// Concrete type `impl_id` supplies for the associated type `name`,
+    /// falling back to the implemented trait's default.
+    #[must_use]
+    pub fn assoc_type(&self, impl_id: ImplId, name: &str) -> Option<Ty> {
+        let entry = self.get(impl_id)?;
+        if let Some((_, ty)) = entry.assoc_types.iter().find(|(n, _)| n == name) {
+            return Some(*ty);
+        }
+        let trait_def = entry.trait_ref.as_ref()?.def;
+        self.traits
+            .get(&trait_def)?
+            .assoc_types
+            .iter()
+            .find(|(n, _)| n == name)
+            .and_then(|(_, default)| *default)
     }
 
     /// Finds an inherent method on `receiver` by name.
@@ -260,14 +289,22 @@ impl ImplIndex {
         let Some(def) = def else {
             return;
         };
-        let methods = decl
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                TraitItem::Fn(fn_decl) => Some(fn_decl.name.name.clone()),
-                TraitItem::Type { .. } | TraitItem::Const { .. } => None,
-            })
-            .collect();
+        let mut methods = Vec::new();
+        let mut assoc_types = Vec::new();
+        let mut assoc_consts = Vec::new();
+        for item in &decl.items {
+            match item {
+                TraitItem::Fn(fn_decl) => methods.push(fn_decl.name.name.clone()),
+                TraitItem::Type { name, default, .. } => {
+                    let default = default.as_ref().map(|ty| lowerer.lower_type(ty));
+                    assoc_types.push((name.name.clone(), default));
+                }
+                TraitItem::Const { name, ty, .. } => {
+                    let ty = lowerer.lower_type(ty);
+                    assoc_consts.push((name.name.clone(), ty));
+                }
+            }
+        }
         let supertraits = decl
             .supertraits
             .iter()
@@ -280,6 +317,8 @@ impl ImplIndex {
                 def,
                 name: decl.name.name.clone(),
                 methods,
+                assoc_types,
+                assoc_consts,
                 supertraits,
                 span,
             },
@@ -293,26 +332,40 @@ impl ImplIndex {
             .as_ref()
             .and_then(|bound| lowerer.lower_trait_bound(bound));
         let mut methods = Vec::new();
+        let mut assoc_types = Vec::new();
+        let mut assoc_consts = Vec::new();
         for item in &decl.items {
-            if let ImplItem::Fn(fn_decl) = item {
-                let sig = lowerer.lower_fn_sig(fn_decl);
-                let has_self = fn_decl
-                    .params
-                    .iter()
-                    .any(|param| matches!(param, gossamer_ast::FnParam::Receiver(_)));
-                methods.push(ImplMethod {
-                    name: fn_decl.name.name.clone(),
-                    id: ImplFnId(self.next_method_id),
-                    sig,
-                    has_self,
-                });
-                self.next_method_id = self.next_method_id.saturating_add(1);
+            match item {
+                ImplItem::Fn(fn_decl) => {
+                    let sig = lowerer.lower_fn_sig(fn_decl);
+                    let has_self = fn_decl
+                        .params
+                        .iter()
+                        .any(|param| matches!(param, gossamer_ast::FnParam::Receiver(_)));
+                    methods.push(ImplMethod {
+                        name: fn_decl.name.name.clone(),
+                        id: ImplFnId(self.next_method_id),
+                        sig,
+                        has_self,
+                    });
+                    self.next_method_id = self.next_method_id.saturating_add(1);
+                }
+                ImplItem::Type { name, ty, .. } => {
+                    let ty = lowerer.lower_type(ty);
+                    assoc_types.push((name.name.clone(), ty));
+                }
+                ImplItem::Const { name, ty, .. } => {
+                    let ty = lowerer.lower_type(ty);
+                    assoc_consts.push((name.name.clone(), ty));
+                }
             }
         }
         self.impls.push(ImplEntry {
             self_ty,
             trait_ref,
             methods,
+            assoc_types,
+            assoc_consts,
             span,
         });
     }

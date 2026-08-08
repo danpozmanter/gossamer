@@ -59,9 +59,7 @@ unsafe fn read_name_data_pairs(v: *const GosVec) -> Vec<(String, Vec<u8>)> {
         let name = if name_ptr.is_null() {
             String::new()
         } else {
-            unsafe { std::ffi::CStr::from_ptr(name_ptr) }
-                .to_string_lossy()
-                .into_owned()
+            unsafe { crate::c_abi::gos_str_arg_string(name_ptr) }
         };
         out.push((name, unsafe { vec_u8(data_ptr) }));
     }

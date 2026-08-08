@@ -71,20 +71,6 @@ use gossamer_abi as abi;
 use gossamer_mir::{BasicBlock, Body, ConstValue, Operand, Place, Projection, UnOp};
 use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
 
-/// `!tbaa` suffix for a load/store of an aggregate *header* field: a `GosVec`
-/// / `GosI64Vec` / `GosU8Vec` len/cap/elem_bytes/data-pointer, or a string
-/// builder's rc/cap/len/tag prefix. Pairs with [`TBAA_DATA`]; the two reference
-/// the sibling TBAA type nodes defined by `crate::emit::TBAA_METADATA` (`!4` =
-/// header access tag, `!5` = element-data access tag). The header lives in a
-/// distinct allocation from - or a disjoint byte range of the same allocation
-/// as - the element buffer, so tagging the two distinctly lets `-O3` hoist a
-/// `len`/`data` load out of an element loop it would otherwise treat as
-/// clobbered by every element store.
-const TBAA_HEADER: &str = ", !tbaa !4";
-/// `!tbaa` suffix for a load/store of aggregate element / string-content bytes
-/// (the memory the header's data pointer addresses). Pairs with [`TBAA_HEADER`].
-const TBAA_DATA: &str = ", !tbaa !5";
-
 impl<'a> Lowerer<'a> {
     /// Inline fast path for `gos_rt_stream_write_byte(stream, b)`.
     ///

@@ -2585,6 +2585,17 @@ impl<'a> Builder<'a> {
     /// element-preserving `rev`/`to_vec`/`clone` adapters (recursing into
     /// their receiver) - so the loop binds the right element type across every
     /// tier instead of defaulting to i64 and iterating heap pointers.
+    /// Whether `expr` denotes an `errors::Error` value. The checker leaves
+    /// stdlib method results unresolved, so a bound receiver's MIR local
+    /// type is the reliable source.
+    pub(crate) fn receiver_is_error(&mut self, expr: &HirExpr) -> bool {
+        use gossamer_types::TyKind;
+        let ty = self
+            .receiver_local_from_path(expr)
+            .map_or(expr.ty, |l| self.locals[l.0 as usize].ty);
+        matches!(self.tcx.kind_of(self.peel_ref_ty(ty)), TyKind::DynError)
+    }
+
     pub(crate) fn for_loop_elem_ty(&mut self, iter: &HirExpr) -> Option<Ty> {
         use gossamer_types::TyKind;
         let mut ty = self
@@ -2603,6 +2614,14 @@ impl<'a> Builder<'a> {
             return match name.name.as_str() {
                 "split" | "splitn" | "split_whitespace" | "lines" => Some(self.tcx.string_ty()),
                 "chars" => Some(self.tcx.intern(TyKind::Char)),
+                "bytes" | "as_bytes" => Some(self.tcx.int_ty(gossamer_types::IntTy::U8)),
+                // `err.fields()` yields the error's structured (key, value)
+                // string pairs; `err.chain()` yields error values.
+                "fields" if self.receiver_is_error(receiver) => {
+                    let text = self.tcx.string_ty();
+                    Some(self.tcx.intern(TyKind::Tuple(vec![text, text])))
+                }
+                "chain" if self.receiver_is_error(receiver) => Some(self.tcx.dyn_error_ty()),
                 // `set.to_vec()` / `set.iter()` snapshot a `HashSet<T>` whose
                 // handle type is erased to `i64`; recover the element type
                 // from the receiver's HIR generic so the loop binds it.
@@ -3219,6 +3238,19 @@ impl<'a> Builder<'a> {
                             }
                         }
                     }
+                }
+                // Last resort for a method-call iterand only: the shared
+                // best-effort element-type probe. It covers the stdlib method
+                // results the checker leaves as an unresolved `Var`, so an
+                // inline `for x in recv.m()` binds the same element type a
+                // `let`-bound receiver does. A concrete sequence type is
+                // already handled above, and a fixed array must keep its
+                // length-driven lowering below.
+                if for_vec_elem.is_none()
+                    && matches!(&for_loop.iter_expr.kind, HirExprKind::MethodCall { .. })
+                    && !matches!(self.tcx.kind_of(cur), TyKind::Array { .. })
+                {
+                    for_vec_elem = self.for_loop_elem_ty(for_loop.iter_expr);
                 }
                 if let Some(elem) = for_vec_elem {
                     return self.lower_for_vec(

@@ -10,6 +10,10 @@
 //! The contract: anything `gos` rejects dynamically or the LLVM
 //! backend cannot lower must be rejected here, statically, on every
 //! tier. `check` is the strongest gate, never a weaker one.
+//!
+//! An accepted pass publishes its complete result through
+//! [`crate::frontend_cache`], and a later pass over unchanged inputs
+//! restores it instead of re-running any stage.
 
 #![forbid(unsafe_code)]
 
@@ -24,7 +28,9 @@ use gossamer_types::{
 };
 use std::time::{Duration, Instant};
 
-use crate::frontend_cache::{FrontendCacheKey, load_blob, store_blob};
+use crate::frontend_cache::{
+    CachedFrontend, cache_enabled, frontend_key, load_blob, store_frontend,
+};
 use crate::pipeline::CheckedFrontend;
 
 /// Result of the shared front-end gate.
@@ -56,7 +62,7 @@ pub struct FrontendTimings {
     pub exhaustiveness: Duration,
     /// Arena-escape analysis time.
     pub arena_escape: Duration,
-    /// Whether the parsed source file was restored from the frontend cache.
+    /// Whether the whole front-end result was restored from the cache.
     pub parse_cache_hit: bool,
 }
 
@@ -96,26 +102,37 @@ pub fn check_frontend_with_edition(
     file_id: FileId,
     edition: Edition,
 ) -> FrontendOutcome {
-    let phase_started = Instant::now();
-    let cache_key = FrontendCacheKey::new_with_context(
-        source,
-        env!("CARGO_PKG_VERSION"),
-        &format!("edition={}", edition.as_str()),
-    );
     let trace = std::env::var_os("GOSSAMER_CACHE_TRACE").is_some();
-    let (sf, parse_diags, parsed_from_source) =
-        if let Some(cached) = load_blob::<SourceFile>(&cache_key) {
-            if trace {
-                eprintln!("cache: parse skipped for {}", cache_key.as_hex());
-            }
-            // The cached blob is the post-augmentation `SourceFile` stored after
-            // a previous successful gate, so the implicit `fn main` is present.
-            (cached, Vec::new(), false)
-        } else {
-            let (parsed, diagnostics) =
-                gossamer_parse::autoderive::parse_with_autoderive(source, file_id);
-            (parsed, diagnostics, true)
+    let cache_key = cache_enabled().then(|| frontend_key(source, edition.as_str(), file_id));
+
+    let restore_started = Instant::now();
+    if let Some(key) = &cache_key
+        && let Some(cached) = load_blob::<CachedFrontend>(key)
+    {
+        if trace {
+            eprintln!("cache: frontend restored for {}", key.as_hex());
+        }
+        // Only a pass that produced zero diagnostics publishes a blob, so a
+        // hit is proof the program was accepted under this exact key.
+        return FrontendOutcome {
+            checked: CheckedFrontend {
+                edition,
+                sf: cached.sf,
+                resolutions: cached.resolutions,
+                table: cached.table,
+                tcx: cached.tcx,
+            },
+            diagnostics: Vec::new(),
+            timings: FrontendTimings {
+                parse: restore_started.elapsed(),
+                parse_cache_hit: true,
+                ..FrontendTimings::default()
+            },
         };
+    }
+
+    let phase_started = Instant::now();
+    let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(source, file_id);
     let parse = phase_started.elapsed();
 
     let mut diagnostics: Vec<Diagnostic> = parse_diags
@@ -166,22 +183,30 @@ pub fn check_frontend_with_edition(
     }
     let arena_escape = phase_started.elapsed();
 
-    // The blob is the sole cache-validity marker. Rewriting it after a hit
-    // used to add two atomic, fsync-backed writes (a redundant `.ok` marker
-    // and the same AST) to every successful `gos`; that dominated small
-    // process startup. Only a clean parse miss publishes a new advisory blob.
-    if diagnostics.is_empty() && parsed_from_source {
-        store_blob(&cache_key, &sf);
+    // The blob is the sole cache-validity marker, and publishing it is what
+    // makes a later invocation's hit proof of acceptance. A rejected program
+    // therefore never reaches the cache.
+    let checked = CheckedFrontend {
+        edition,
+        sf,
+        resolutions,
+        table,
+        tcx,
+    };
+    if diagnostics.is_empty()
+        && let Some(key) = &cache_key
+    {
+        store_frontend(
+            key,
+            &checked.sf,
+            &checked.resolutions,
+            &checked.table,
+            &checked.tcx,
+        );
     }
 
     FrontendOutcome {
-        checked: CheckedFrontend {
-            edition,
-            sf,
-            resolutions,
-            table,
-            tcx,
-        },
+        checked,
         diagnostics,
         timings: FrontendTimings {
             parse,
@@ -189,7 +214,7 @@ pub fn check_frontend_with_edition(
             typecheck,
             exhaustiveness,
             arena_escape,
-            parse_cache_hit: !parsed_from_source,
+            parse_cache_hit: false,
         },
     }
 }

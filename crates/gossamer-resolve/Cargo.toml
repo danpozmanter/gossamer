@@ -16,6 +16,7 @@ gossamer-ast = { workspace = true }
 gossamer-diagnostics = { workspace = true }
 gossamer-lex = { workspace = true }
 parking_lot = { workspace = true }
+serde = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

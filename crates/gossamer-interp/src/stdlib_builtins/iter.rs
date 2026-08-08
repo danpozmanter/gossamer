@@ -1162,6 +1162,7 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         // Data-first single-argument reducers: the method call's
         // (receiver) argument list is already the free form's shape.
         ("sum", builtin_iter_sum),
+        ("product", builtin_iter_product),
         ("min", builtin_iter_min),
         ("max", builtin_iter_max),
     ];

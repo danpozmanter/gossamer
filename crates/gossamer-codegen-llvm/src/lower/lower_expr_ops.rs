@@ -919,6 +919,7 @@ impl<'a> Lowerer<'a> {
         args: &[Operand],
         destination: &Place,
         target: Option<&gossamer_mir::BlockId>,
+        debug: bool,
     ) -> Result<(), BuildError> {
         for sym in [
             "gos_rt_concat_init",
@@ -932,7 +933,18 @@ impl<'a> Lowerer<'a> {
         ] {
             declare_rt(&mut self.runtime_refs, sym);
         }
-        writeln!(self.out, "  call void @gos_rt_concat_init()").unwrap();
+        let concat_f64 = if debug {
+            declare_rt(&mut self.runtime_refs, "gos_rt_concat_f64_debug");
+            "gos_rt_concat_f64_debug"
+        } else {
+            "gos_rt_concat_f64"
+        };
+        // The concat buffer is a single thread-local frame, so nothing may
+        // append to it while another append is in flight. An aggregate
+        // formatter can re-enter it (a derived `fmt` builds its string
+        // through the same buffer), so every aggregate argument is rendered
+        // to a c-string here, before the buffer is opened below.
+        let mut plans: Vec<(ConcatKind, String)> = Vec::with_capacity(args.len());
         for arg in args {
             let kind = self.concat_print_kind(arg);
             if matches!(kind, ConcatKind::Unsupported) {
@@ -941,6 +953,20 @@ impl<'a> Lowerer<'a> {
                 ));
             }
             let value = self.lower_operand(arg)?;
+            let value = match kind {
+                ConcatKind::StrPtr
+                | ConcatKind::Int
+                | ConcatKind::Uint
+                | ConcatKind::Float
+                | ConcatKind::Bool
+                | ConcatKind::Char
+                | ConcatKind::Unsupported => value,
+                ref kind => self.emit_concat_aggregate(arg, kind.clone(), &value)?,
+            };
+            plans.push((kind, value));
+        }
+        writeln!(self.out, "  call void @gos_rt_concat_init()").unwrap();
+        for (arg, (kind, value)) in args.iter().zip(plans) {
             match kind {
                 ConcatKind::StrPtr => {
                     writeln!(self.out, "  call void @gos_rt_concat_str(ptr {value})").unwrap();
@@ -955,7 +981,7 @@ impl<'a> Lowerer<'a> {
                 }
                 ConcatKind::Float => {
                     let widened = self.widen_to_f64(arg, &value);
-                    writeln!(self.out, "  call void @gos_rt_concat_f64(double {widened})").unwrap();
+                    writeln!(self.out, "  call void @{concat_f64}(double {widened})").unwrap();
                 }
                 ConcatKind::Bool => {
                     let widened = self.widen_bool_to_i32(arg, &value);
@@ -965,31 +991,11 @@ impl<'a> Lowerer<'a> {
                     let widened = self.widen_char_to_i32(arg, &value);
                     writeln!(self.out, "  call void @gos_rt_concat_char(i32 {widened})").unwrap();
                 }
-                kind @ (ConcatKind::VecI64
-                | ConcatKind::VecF64
-                | ConcatKind::VecBool
-                | ConcatKind::VecString
-                | ConcatKind::VecVecI64
-                | ConcatKind::VecVecString
-                | ConcatKind::ArrI64(_)
-                | ConcatKind::ArrF64(_)
-                | ConcatKind::ArrBool(_)
-                | ConcatKind::ArrString(_)
-                | ConcatKind::ArrArrI64(_, _)
-                | ConcatKind::ArrArrF64(_, _)
-                | ConcatKind::ArrArrBool(_, _)
-                | ConcatKind::JsonValue
-                | ConcatKind::ErrorMessage
-                | ConcatKind::Tuple
-                | ConcatKind::Option(_)
-                | ConcatKind::Result(_, _)
-                | ConcatKind::Map
-                | ConcatKind::SetI64(_)
-                | ConcatKind::SetString(_)) => {
-                    let str_ptr = self.emit_concat_aggregate(arg, kind, &value)?;
-                    writeln!(self.out, "  call void @gos_rt_concat_str(ptr {str_ptr})").unwrap();
-                }
                 ConcatKind::Unsupported => unreachable!("checked above"),
+                // Every remaining kind was rendered to a c-string above.
+                _ => {
+                    writeln!(self.out, "  call void @gos_rt_concat_str(ptr {value})").unwrap();
+                }
             }
         }
         let result = self.fresh();

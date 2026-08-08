@@ -1,0 +1,47 @@
+// Product and nested-payload exhaustiveness: a tuple scrutinee, a fixed
+// array scrutinee, and a nested `Option<Result<..>>` each need every
+// combination covered, and the arms below supply them. A struct-variant
+// pattern binds its named fields through a reference scrutinee exactly as
+// a tuple variant does. Output must be bit-identical across the VM,
+// Cranelift, and LLVM.
+enum Shape { Circle(f64), Rect { w: f64, h: f64 } }
+
+fn pair(a: bool, b: bool) -> i64 {
+    match (a, b) {
+        (true, true) => 3,
+        (true, false) => 2,
+        (false, true) => 1,
+        (false, false) => 0,
+    }
+}
+
+fn ends(xs: [i64; 3]) -> i64 {
+    match xs {
+        [first, ..rest] => first + rest.len(),
+        [] => 0,
+    }
+}
+
+fn unwrap_or(o: Option<Result<i64, String>>) -> i64 {
+    match o {
+        Some(Ok(v)) => v,
+        Some(Err(_)) => -1,
+        None => -2,
+    }
+}
+
+fn area(s: &Shape) -> f64 {
+    match s {
+        Shape::Circle(r) => 3.0 * r * r,
+        Shape::Rect { w, h } => w * h,
+    }
+}
+
+fn main() {
+    println!("{} {} {} {}", pair(true, true), pair(true, false), pair(false, true), pair(false, false))
+    println!("{}", ends([4, 5, 6]))
+    println!("{}", unwrap_or(Some(Ok(7))))
+    println!("{}", unwrap_or(None))
+    println!("{}", area(&Shape::Circle(2.0)))
+    println!("{}", area(&Shape::Rect { w: 3.0, h: 4.0 }))
+}

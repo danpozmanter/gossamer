@@ -64,6 +64,31 @@ impl Parser<'_> {
         self.parse_expr_with_prec(PREC_BELOW_ASSIGN, true)
     }
 
+    /// Parses a const generic argument: a literal, or a braced block for a
+    /// computed value.
+    ///
+    /// Deliberately narrower than an expression. A generic argument list ends
+    /// at `>`, which is also a binary operator, so parsing the argument as a
+    /// full expression makes `f::<3>(xs)` read as the comparison `3 > (xs)`
+    /// and the list never closes.
+    pub(crate) fn parse_const_generic_arg(&mut self) -> Expr {
+        let start = self.peek_span();
+        if self.at_punct(Punct::LBrace) {
+            return self.parse_primary();
+        }
+        if let Some(literal) = self.try_parse_literal() {
+            let span = self.join(start, self.last_span());
+            let id = self.alloc_id();
+            return Expr::new(id, span, ExprKind::Literal(literal));
+        }
+        self.record(
+            ParseError::unexpected("a literal or `{ ... }` const argument", self.peek_text()),
+            start,
+        );
+        let id = self.alloc_id();
+        Expr::new(id, start, ExprKind::Error)
+    }
+
     /// Parses an expression that is not allowed to bind assignment at
     /// its top level (e.g. argument positions).
     pub(crate) fn parse_expr_no_assign(&mut self) -> Expr {
@@ -330,18 +355,22 @@ impl Parser<'_> {
     }
 
     fn validate_pipe_rhs(&mut self, lhs: Expr, mut rhs: Expr) -> Expr {
-        // `_`-headed RHS threads the piped value in as the receiver, so the
+        // `$`-headed RHS threads the piped value in as the receiver, so the
         // resolver only ever sees an ordinary method/field/index expression -
-        // no `_` placeholder escapes into later passes.
-        //   x |> _.trim          => x.trim()      (bare ident => nullary method)
-        //   x |> _.replace(a, b) => x.replace(a, b)
-        //   x |> _.0             => x.0           (tuple index)
-        //   x |> _[i]            => x[i]
-        //   x |> _               => x
-        // A direct `_.ident` with no parens is a nullary method call, not a
+        // no `$` placeholder escapes into later passes.
+        //   x |> $.trim          => x.trim()      (bare ident => nullary method)
+        //   x |> $.replace(a, b) => x.replace(a, b)
+        //   x |> $.0             => x.0           (tuple index)
+        //   x |> $[i]            => x[i]
+        //   x |> $               => x
+        // A direct `$.ident` with no parens is a nullary method call, not a
         // field access (bare `s.trim` is a field access elsewhere and would
         // not resolve). Field access through a pipe keeps the closure idiom
         // (`x |> |v| v.field`).
+        let legacy_placeholder = contains_legacy_pipe_placeholder(&rhs);
+        if legacy_placeholder {
+            self.record(ParseError::PipeUnderscorePlaceholder, rhs.span);
+        }
         if let ExprKind::FieldAccess { receiver, field } = &rhs.kind {
             if let (ExprKind::Path(p), FieldSelector::Named(name)) = (&receiver.kind, field) {
                 if is_pipe_placeholder(p) {
@@ -408,7 +437,7 @@ impl Parser<'_> {
                 | ExprKind::MacroCall(_)
                 | ExprKind::Closure { .. }
         );
-        if !valid {
+        if !valid && !legacy_placeholder {
             self.record(ParseError::PipeRhsInvalid, rhs_span);
         }
         let span = self.join(lhs.span, rhs.span);
@@ -791,7 +820,7 @@ impl Parser<'_> {
     fn parse_index_suffix(&mut self, base: Expr) -> Expr {
         // `_[a, b]` and `_[]` used to spell a min-heap literal. A single
         // index keeps its meaning as the pipe placeholder's index form
-        // (`x |> _[i]`), so only the list shapes are rejected here.
+        // (`x |> $[i]`), so only the list shapes are rejected here.
         if matches!(&base.kind, ExprKind::Path(path) if is_pipe_placeholder(path)) {
             return self.reject_min_heap_literal(base);
         }
@@ -977,6 +1006,10 @@ impl Parser<'_> {
         }
         if self.at_label_start() {
             return self.parse_labelled_loop();
+        }
+        if self.at_punct(Punct::Dollar) {
+            self.bump();
+            return ExprKind::Path(PathExpr::single(PIPE_PLACEHOLDER));
         }
         if self.is_path_expr_start() {
             return self.parse_path_expr_or_struct();
@@ -2376,6 +2409,8 @@ impl Parser<'_> {
         } else if let Some(prec) = spec.precision {
             let prec_lit = self.alloc_literal_expr(Literal::Int(prec.to_string()));
             self.alloc_function_call_expr("__fmt_prec", vec![value, prec_lit])
+        } else if spec.debug {
+            self.alloc_function_call_expr("__debug", vec![value])
         } else {
             self.alloc_function_call_expr("__concat", vec![value])
         };
@@ -2796,17 +2831,52 @@ pub(crate) fn at_block_end(parser: &Parser<'_>) -> bool {
 }
 
 /// One parsed segment of a format-string template.
-/// True if `path` is the bare `_` pipe placeholder: a single segment
-/// named `_` with no turbofish generics.
+/// Spelling of the pipe placeholder. `$` is punctuation rather than an
+/// identifier character, so no user-written name can collide with it.
+pub(crate) const PIPE_PLACEHOLDER: &str = "$";
+
+/// True if `path` is the bare pipe placeholder: a single segment with no
+/// turbofish generics. The retired `_` spelling is still recognised here so
+/// that a source file using it desugars normally and reports GP0038 alone,
+/// rather than cascading through the resolver as an unbound name.
 fn is_pipe_placeholder(path: &PathExpr) -> bool {
+    path.segments.len() == 1
+        && (path.segments[0].name.name == PIPE_PLACEHOLDER || path.segments[0].name.name == "_")
+        && path.segments[0].generics.is_empty()
+}
+
+/// True if `path` is a bare `_`, the placeholder spelling used before `$`.
+fn is_legacy_pipe_placeholder(path: &PathExpr) -> bool {
     path.segments.len() == 1
         && path.segments[0].name.name == "_"
         && path.segments[0].generics.is_empty()
 }
 
-/// Replaces a `_` placeholder at the head of `expr`'s receiver/base chain
+/// True when any `_` sits where the pipe placeholder `$` belongs: at the head
+/// of the receiver chain, or as a direct argument of the piped call.
+fn contains_legacy_pipe_placeholder(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::MethodCall { receiver, args, .. } => {
+            contains_legacy_pipe_placeholder(receiver)
+                || args.iter().any(|a| {
+                    matches!(&a.kind,
+                    ExprKind::Path(p) if is_legacy_pipe_placeholder(p))
+                })
+        }
+        ExprKind::FieldAccess { receiver, .. } => contains_legacy_pipe_placeholder(receiver),
+        ExprKind::Index { base, .. } => contains_legacy_pipe_placeholder(base),
+        ExprKind::Call { args, .. } => args.iter().any(|a| {
+            matches!(&a.kind,
+            ExprKind::Path(p) if is_legacy_pipe_placeholder(p))
+        }),
+        ExprKind::Path(path) => is_legacy_pipe_placeholder(path),
+        _ => false,
+    }
+}
+
+/// Replaces a `$` placeholder at the head of `expr`'s receiver/base chain
 /// with the piped value, consuming `value`. Walks through `MethodCall`,
-/// `FieldAccess`, and `Index` receivers down to the leading `_`. Returns
+/// `FieldAccess`, and `Index` receivers down to the leading placeholder. Returns
 /// true (and leaves `value` taken) when a placeholder was substituted;
 /// returns false and leaves `value` intact when the RHS has no `_` head.
 fn substitute_pipe_placeholder(expr: &mut Expr, value: &mut Option<Expr>) -> bool {
@@ -2905,7 +2975,7 @@ fn substitute_pipe_placeholder_in_args(
 /// Whether `expr` is the parser-level expansion of a Rust-style formatting
 /// macro. A value may not flow into this shape through the implicit data-last
 /// pipe rule: format arguments must be represented by `{}` and an explicit
-/// `_` placeholder.
+/// `$` placeholder.
 fn is_format_macro_expansion(expr: &Expr) -> bool {
     let ExprKind::Call { callee, args } = &expr.kind else {
         return false;
@@ -3013,6 +3083,8 @@ struct FormatSpec {
     upper: bool,
     /// `{:#x}` / `{:#b}` / `{:#o}` - include the radix prefix.
     alternate: bool,
+    /// `{:?}` - render through the Debug channel rather than Display.
+    debug: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3111,16 +3183,14 @@ fn parse_format_template(template: &str) -> Vec<FormatSegment> {
                 } else if let Some(seg) = parse_precision_spec(inner) {
                     segments.push(seg);
                 } else if inner == ":?" {
-                    // `{:?}` - Debug spec. Display already produces a
-                    // bracketed array / tuple / struct rendering, so
-                    // alias to a positional argument rather than
-                    // emitting the literal text the spec used to fall
-                    // through to.
-                    segments.push(FormatSegment::Positional);
+                    segments.push(FormatSegment::PositionalSpec(debug_format_spec()));
                 } else if let Some(name) = inner.strip_suffix(":?") {
                     let name = name.trim();
                     if is_capture_name(name) {
-                        segments.push(FormatSegment::Named(name.to_string()));
+                        segments.push(FormatSegment::NamedSpec(
+                            name.to_string(),
+                            debug_format_spec(),
+                        ));
                     } else {
                         segments.push(FormatSegment::Literal(format!("{{{inner}}}")));
                     }
@@ -3195,6 +3265,21 @@ fn strip_send_call(expr: Expr) -> Option<(Expr, Expr)> {
         }
     }
     None
+}
+
+/// The spec for a bare `{:?}`: Debug rendering with no width, fill, radix,
+/// or precision.
+fn debug_format_spec() -> FormatSpec {
+    FormatSpec {
+        fill: ' ',
+        align: Align::Default,
+        width: 0,
+        precision: None,
+        radix: None,
+        upper: false,
+        alternate: false,
+        debug: true,
+    }
 }
 
 /// Parses `:.N` or `name:.N` precision specs out of a `{...}` body.
@@ -3327,6 +3412,7 @@ fn parse_format_spec(inner: &str) -> Option<FormatSegment> {
         radix,
         upper,
         alternate,
+        debug: false,
     };
     if head.is_empty() {
         Some(FormatSegment::PositionalSpec(spec))

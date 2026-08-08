@@ -83,6 +83,7 @@ pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char
                 // retain/release dispatch would mis-read its byte-before-pointer
                 // as an RC header. The stored copy holds the base reference for
                 // the process lifetime (I4: string boundaries own their values).
+                // HOST-CSTRING: libc owns `argv[0]`.
                 let bytes = unsafe { CStr::from_ptr(name_ptr).to_bytes() };
                 let owned = alloc_cstring(bytes);
                 PROGRAM_NAME_PTR.store(owned as usize, Ordering::SeqCst);
@@ -118,6 +119,7 @@ pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char
                 for i in 0..len {
                     // SAFETY: `user_argv[0..len]` is valid (see above).
                     let p = unsafe { *user_argv.add(i as usize) };
+                    // HOST-CSTRING: libc owns each `argv` entry.
                     let bytes = if p.is_null() {
                         &b""[..]
                     } else {
@@ -310,7 +312,8 @@ pub unsafe extern "C" fn gos_rt_set_program_name(name: *const c_char) {
         if name.is_null() {
             return;
         }
-        // SAFETY: caller guarantees `name` is a valid NUL-terminated string.
+        // HOST-CSTRING: the interpreter passes a Rust `CString` for the script
+        // path, not a Gossamer `String`.
         let bytes = unsafe { CStr::from_ptr(name).to_bytes() };
         let owned = alloc_cstring(bytes);
         PROGRAM_NAME_PTR.store(owned as usize, Ordering::SeqCst);
@@ -366,7 +369,7 @@ pub unsafe extern "C" fn gos_rt_os_env(name: *const c_char) -> i128 {
         if name.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
-        let key = unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() };
+        let key = unsafe { crate::c_abi::gos_str_arg_string(name) };
         match std::env::var(&key) {
             Ok(value) => {
                 let cs = alloc_cstring(value.as_bytes());
@@ -607,7 +610,7 @@ pub unsafe extern "C" fn gos_rt_fs_list_dir(path: *const c_char) -> i128 {
         let p = if path.is_null() {
             ".".to_string()
         } else {
-            unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(path) }
         };
         match crate::sched_global::run_blocking("fs-list-dir", move || list_dir_data(&p)) {
             Ok(Ok(entries)) => dir_infos_result(entries),
@@ -639,7 +642,7 @@ pub unsafe extern "C" fn gos_rt_fs_walk_dir(path: *const c_char, env: *const u8)
         let root = if path.is_null() {
             ".".to_string()
         } else {
-            unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(path) }
         };
         if env.is_null() {
             return unsafe { gos_rt_result_new(0, 0) };
@@ -682,7 +685,7 @@ pub unsafe extern "C" fn gos_rt_os_exists(path: *const c_char) -> i64 {
         if path.is_null() {
             return 0;
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         i64::from(std::path::Path::new(&p).exists())
     })
 }
@@ -694,7 +697,7 @@ pub unsafe extern "C" fn gos_rt_os_is_file(path: *const c_char) -> i64 {
         if path.is_null() {
             return 0;
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         i64::from(std::fs::metadata(&p).is_ok_and(|m| m.is_file()))
     })
 }
@@ -706,7 +709,7 @@ pub unsafe extern "C" fn gos_rt_os_is_dir(path: *const c_char) -> i64 {
         if path.is_null() {
             return 0;
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         i64::from(std::fs::metadata(&p).is_ok_and(|m| m.is_dir()))
     })
 }
@@ -718,7 +721,7 @@ pub unsafe extern "C" fn gos_rt_os_is_symlink(path: *const c_char) -> i64 {
         if path.is_null() {
             return 0;
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         i64::from(std::fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink()))
     })
 }
@@ -731,7 +734,7 @@ pub unsafe extern "C" fn gos_rt_os_file_size(path: *const c_char) -> i64 {
         if path.is_null() {
             return 0;
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         std::fs::metadata(&p).map_or(0, |m| i64::try_from(m.len()).unwrap_or(i64::MAX))
     })
 }
@@ -754,7 +757,7 @@ pub unsafe extern "C" fn gos_rt_fs_metadata(path: *const c_char) -> i128 {
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         match std::fs::metadata(&p) {
             Ok(m) => {
                 let size = i64::try_from(m.len()).unwrap_or(i64::MAX);
@@ -784,7 +787,7 @@ pub unsafe extern "C" fn gos_rt_fs_metadata_raw(path: *const c_char) -> i128 {
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         match std::fs::metadata(&p) {
             Ok(m) => {
                 let modified = m
@@ -847,7 +850,7 @@ pub unsafe extern "C" fn gos_rt_exec_run(prog: *const c_char, args: *mut GosVec)
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         } else {
-            unsafe { CStr::from_ptr(prog).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(prog) }
         };
         let mut cmd_args: Vec<String> = Vec::new();
         if !args.is_null() {
@@ -865,8 +868,7 @@ pub unsafe extern "C" fn gos_rt_exec_run(prog: *const c_char, args: *mut GosVec)
                         cmd_args.push(String::new());
                         continue;
                     }
-                    let arg_str =
-                        unsafe { CStr::from_ptr(cstr_ptr).to_string_lossy().into_owned() };
+                    let arg_str = unsafe { crate::c_abi::gos_str_arg_string(cstr_ptr) };
                     cmd_args.push(arg_str);
                 }
             }

@@ -2009,6 +2009,9 @@ pub unsafe extern "C" fn gos_rt_binding_variant_to_result(p: *const u8) -> i128 
         let value_tag = unsafe { *payload_ptr.cast::<i32>() };
         let word = unsafe { *payload_ptr.add(8).cast::<i64>() };
         let payload = if value_tag == 4 && word != 0 {
+            // HOST-CSTRING: a native Rust binding owns this pointer and
+            // publishes it as a NUL-terminated C string, not a Gossamer
+            // `String`, so it carries no length header.
             let c = unsafe { std::ffi::CStr::from_ptr(word as *const std::ffi::c_char) };
             super::string::alloc_cstring(c.to_bytes()) as i64
         } else {
@@ -2063,13 +2066,43 @@ pub extern "C" fn gos_rt_result_payload_i128(r: i128) -> i128 {
     }
 }
 
+/// Signature of a derived `Type::fmt`: it reads the value's flat slot buffer
+/// and returns a freshly allocated runtime String the caller owns.
+type AdtFmt = unsafe extern "C" fn(*const u8) -> *mut std::ffi::c_char;
+
+/// Renders one aggregate by calling the derived `fmt` at `fmt`, taking
+/// ownership of the String it returns. `value` carries whatever that `fmt`
+/// receives as its receiver: a struct's slot address, or an inline enum's
+/// own word - which may be zero for a unit variant, so it is not guarded.
+pub(crate) unsafe fn adt_fmt_string(value: *const u8, fmt: *const std::ffi::c_void) -> String {
+    if fmt.is_null() {
+        return String::new();
+    }
+    // SAFETY: callers pass the address of a derived `Type::fmt`, emitted with
+    // the `ptr(ptr)` signature `AdtFmt` names, and `value` is the receiver
+    // that `fmt` expects for its type.
+    let f: AdtFmt = unsafe { std::mem::transmute::<*const std::ffi::c_void, AdtFmt>(fmt) };
+    unsafe { take_rt_string(f(value)) }
+}
+
+/// Renders one enum payload word, extending [`debug_payload_string`] with the
+/// aggregate tag: the word is then the address of the payload's slot buffer
+/// and `fmt` its derived formatter.
+fn debug_payload_string_with(payload: i64, kind: i64, fmt: *const std::ffi::c_void) -> String {
+    if kind == i64::from(gossamer_abi::DEBUG_PAYLOAD_ADT) {
+        let slots: *const u8 = std::ptr::with_exposed_provenance(payload as usize);
+        return unsafe { adt_fmt_string(slots, fmt) };
+    }
+    debug_payload_string(payload, kind)
+}
+
 /// Renders a single enum payload word for `{:?}` Debug output, matching the
 /// VM's Display-style rendering (no string quoting). `kind`: 0=i64, 1=u64,
 /// 2=f64 (bit pattern), 3=bool, 4=char, 5=String pointer.
 fn debug_payload_string(payload: i64, kind: i64) -> String {
     match kind {
         1 => (payload as u64).to_string(),
-        2 => format!("{}", f64::from_bits(payload as u64)),
+        2 => crate::builtins::format_float_debug(f64::from_bits(payload as u64)),
         3 => if payload != 0 { "true" } else { "false" }.to_string(),
         4 => char::from_u32(payload as u32).map_or_else(String::new, |c| c.to_string()),
         5 => {
@@ -2078,9 +2111,7 @@ fn debug_payload_string(payload: i64, kind: i64) -> String {
             } else {
                 let sptr: *const std::ffi::c_char =
                     std::ptr::with_exposed_provenance(payload as usize);
-                unsafe { std::ffi::CStr::from_ptr(sptr) }
-                    .to_string_lossy()
-                    .into_owned()
+                unsafe { crate::c_abi::gos_str_arg_string(sptr) }
             }
         }
         // A collection payload arrives as its `GosVec` pointer, so the
@@ -2108,9 +2139,7 @@ unsafe fn take_rt_string(ptr: *mut std::ffi::c_char) -> String {
     if ptr.is_null() {
         return String::new();
     }
-    let out = unsafe { std::ffi::CStr::from_ptr(ptr) }
-        .to_string_lossy()
-        .into_owned();
+    let out = unsafe { crate::c_abi::gos_str_arg_string(ptr) };
     unsafe { super::string::gos_rt_str_free(ptr) };
     out
 }
@@ -2145,6 +2174,52 @@ pub extern "C" fn gos_rt_debug_result(
         format!("Ok({})", debug_payload_string(payload, ok_kind))
     } else {
         format!("Err({})", debug_payload_string(payload, err_kind))
+    };
+    super::string::alloc_cstring(s.as_bytes())
+}
+
+/// [`gos_rt_debug_option`] for an `Option` whose payload is an aggregate:
+/// `payload_kind` may be `gossamer_abi::DEBUG_PAYLOAD_ADT`, in which case `fmt` is the
+/// payload type's derived formatter.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_debug_option_fmt(
+    opt: i128,
+    payload_kind: i64,
+    fmt: *const std::ffi::c_void,
+) -> *mut std::ffi::c_char {
+    let s = if result_disc_of(opt) != 0 {
+        "None".to_string()
+    } else {
+        format!(
+            "Some({})",
+            debug_payload_string_with(result_payload_of(opt), payload_kind, fmt)
+        )
+    };
+    super::string::alloc_cstring(s.as_bytes())
+}
+
+/// [`gos_rt_debug_result`] for a `Result` with an aggregate arm: either kind
+/// may be `gossamer_abi::DEBUG_PAYLOAD_ADT`, with the matching `fmt` naming that arm's
+/// derived formatter.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_debug_result_fmt(
+    res: i128,
+    ok_kind: i64,
+    err_kind: i64,
+    ok_fmt: *const std::ffi::c_void,
+    err_fmt: *const std::ffi::c_void,
+) -> *mut std::ffi::c_char {
+    let payload = result_payload_of(res);
+    let s = if result_disc_of(res) == 0 {
+        format!(
+            "Ok({})",
+            debug_payload_string_with(payload, ok_kind, ok_fmt)
+        )
+    } else {
+        format!(
+            "Err({})",
+            debug_payload_string_with(payload, err_kind, err_fmt)
+        )
     };
     super::string::alloc_cstring(s.as_bytes())
 }

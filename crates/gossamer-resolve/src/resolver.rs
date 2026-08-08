@@ -9,7 +9,7 @@ use gossamer_ast::{
     MatchArm, ModulePath, NodeId, PathExpr, Pattern, PatternKind, SelectArm, SelectOp, SourceFile,
     Stmt, StmtKind, StructBody, StructDecl, StructExprField, StructField, TraitBound, TraitDecl,
     TraitItem, TupleField, Type, TypeAliasDecl, TypeKind, TypePath, UseDecl, UseListEntry,
-    UseTarget, WhereClause,
+    UseTarget, Visibility, WhereClause,
 };
 use gossamer_lex::Span;
 
@@ -55,6 +55,29 @@ struct DeferredProjectUse {
     span: Span,
 }
 
+/// Where a definition was declared and how far it may be named from.
+#[derive(Debug, Clone)]
+struct ItemHome {
+    /// Chain of inline modules the item was declared inside, outermost
+    /// first. Empty for a crate-root item.
+    module: Vec<String>,
+    /// `pub` or absent, as written on the declaration.
+    visibility: Visibility,
+    /// Item name, for the diagnostic.
+    name: String,
+    /// Item shape, for the diagnostic.
+    kind: DefKind,
+}
+
+/// True for names the compiler synthesizes rather than the user writing
+/// them. The leading double underscore is reserved for such items across
+/// the whole front end (autoderive wrappers, format intrinsics), and
+/// their bodies stand in for code the user never spelled - source-level
+/// visibility is not theirs to satisfy.
+fn is_compiler_generated(name: &str) -> bool {
+    name.starts_with("__")
+}
+
 struct Resolver {
     resolutions: Resolutions,
     diagnostics: Vec<ResolveDiagnostic>,
@@ -82,6 +105,23 @@ struct Resolver {
     /// one of these directly - the crate root is the implicit base, the
     /// same default Rust gives `use`.
     local_module_paths: std::collections::HashSet<String>,
+    /// Declaring module and declared visibility of every item this unit
+    /// defines, keyed by its [`DefId`]. Drives the `pub` check.
+    item_homes: std::collections::HashMap<DefId, ItemHome>,
+    /// Visibility of each `mod` this unit declares, keyed by its
+    /// `::`-joined path. A path segment absent from this map belongs to
+    /// no local module, so it places no constraint on reachability.
+    module_visibility: std::collections::HashMap<String, Visibility>,
+    /// Module whose body is being resolved, outermost segment first.
+    /// Empty while resolving the crate root.
+    current_module: Vec<String>,
+    /// Depth of enclosing compiler-synthesized items. Visibility is a
+    /// property of source the user wrote, so checks pause inside them.
+    synthesized_depth: usize,
+    /// Enum-variant names this unit declares more than once, mapped to
+    /// the enums that declare them. A bare reference to one of these is
+    /// ambiguous and must be written with its enum.
+    ambiguous_variants: std::collections::HashMap<String, Vec<String>>,
 }
 
 impl Resolver {
@@ -97,6 +137,11 @@ impl Resolver {
             module_scopes: std::collections::HashMap::new(),
             collect_mod_stack: Vec::new(),
             local_module_paths: std::collections::HashSet::new(),
+            item_homes: std::collections::HashMap::new(),
+            module_visibility: std::collections::HashMap::new(),
+            current_module: Vec::new(),
+            synthesized_depth: 0,
+            ambiguous_variants: std::collections::HashMap::new(),
         }
     }
 
@@ -479,6 +524,7 @@ impl Resolver {
     }
 
     fn collect_item(&mut self, item: &Item, module_path: &mut Vec<String>) {
+        let vis = item.visibility;
         match &item.kind {
             ItemKind::Fn(decl) => {
                 self.register_item_with_module(
@@ -487,6 +533,7 @@ impl Resolver {
                     DefKind::Fn,
                     item.span,
                     module_path,
+                    vis,
                 );
             }
             ItemKind::Struct(decl) => {
@@ -496,6 +543,7 @@ impl Resolver {
                     DefKind::Struct,
                     item.span,
                     module_path,
+                    vis,
                 );
             }
             ItemKind::Enum(decl) => {
@@ -505,8 +553,9 @@ impl Resolver {
                     DefKind::Enum,
                     item.span,
                     module_path,
+                    vis,
                 );
-                self.register_enum_variants(decl, item.span);
+                self.register_enum_variants(decl, item.span, module_path, vis);
             }
             ItemKind::Trait(decl) => {
                 self.register_item_with_module(
@@ -515,6 +564,7 @@ impl Resolver {
                     DefKind::Trait,
                     item.span,
                     module_path,
+                    vis,
                 );
             }
             ItemKind::TypeAlias(decl) => {
@@ -524,6 +574,7 @@ impl Resolver {
                     DefKind::TypeAlias,
                     item.span,
                     module_path,
+                    vis,
                 );
             }
             ItemKind::Const(decl) => {
@@ -533,6 +584,7 @@ impl Resolver {
                     DefKind::Const,
                     item.span,
                     module_path,
+                    vis,
                 );
             }
             ItemKind::Static(decl) => {
@@ -542,33 +594,83 @@ impl Resolver {
                     DefKind::Static,
                     item.span,
                     module_path,
+                    vis,
                 );
             }
             ItemKind::Mod(decl) => {
-                self.register_item(item.id, &decl.name, DefKind::Mod, item.span);
+                self.register_item(
+                    item.id,
+                    &decl.name,
+                    DefKind::Mod,
+                    item.span,
+                    module_path,
+                    vis,
+                );
+                module_path.push(decl.name.name.clone());
+                self.module_visibility.insert(module_path.join("::"), vis);
                 if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
                     self.module_scopes
                         .insert(item.id, crate::scope::Scope::default());
                     self.collect_mod_stack.push(item.id);
-                    module_path.push(decl.name.name.clone());
                     self.collect_items_in(inner, module_path);
-                    module_path.pop();
                     self.collect_mod_stack.pop();
                 }
+                module_path.pop();
             }
             ItemKind::Impl(_) | ItemKind::AttrItem(_) => {}
         }
     }
 
-    fn register_enum_variants(&mut self, decl: &EnumDecl, span: Span) {
+    /// Registers an enum's variants in the value namespace. Variants
+    /// belong to their enum, so a sibling module declaring a variant of
+    /// the same name is not a redeclaration: the bare name registers in
+    /// the declaring module's own scope, and the crate-root slot is
+    /// claimed by the first declaration so unqualified references keep
+    /// working wherever exactly one enum offers the name.
+    fn register_enum_variants(
+        &mut self,
+        decl: &EnumDecl,
+        span: Span,
+        module_path: &[String],
+        visibility: Visibility,
+    ) {
         for variant in &decl.variants {
             let def = self.defs.next();
             let binding = Binding::def(def, DefKind::Variant);
-            if !self
+            self.item_homes.insert(
+                def,
+                ItemHome {
+                    module: module_path.to_vec(),
+                    // A variant is reached through its enum, so it is
+                    // exactly as visible as the enum that declares it.
+                    visibility,
+                    name: variant.name.name.clone(),
+                    kind: DefKind::Variant,
+                },
+            );
+            match self.ambiguous_variants.entry(variant.name.name.clone()) {
+                std::collections::hash_map::Entry::Occupied(mut owners) => {
+                    owners.get_mut().push(decl.name.name.clone());
+                }
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    slot.insert(vec![decl.name.name.clone()]);
+                }
+            }
+            let own_module_ok = match self.collect_mod_stack.last().copied() {
+                Some(mod_id) => self
+                    .module_scopes
+                    .get_mut(&mod_id)
+                    .is_none_or(|scope| scope.insert_value(&variant.name.name, binding)),
+                None => true,
+            };
+            let root_ok = self
                 .scopes
                 .module_mut()
-                .insert_value(&variant.name.name, binding)
-            {
+                .insert_value(&variant.name.name, binding);
+            // Two enums in one module competing for a bare variant name
+            // leave that name genuinely ambiguous, and every reference
+            // to it would have to guess.
+            if !own_module_ok || (module_path.is_empty() && !root_ok) {
                 self.emit(
                     ResolveError::DuplicateItem {
                         name: variant.name.name.clone(),
@@ -579,8 +681,17 @@ impl Resolver {
         }
     }
 
-    fn register_item(&mut self, node: NodeId, name: &Ident, kind: DefKind, span: Span) {
+    fn register_item(
+        &mut self,
+        node: NodeId,
+        name: &Ident,
+        kind: DefKind,
+        span: Span,
+        module_path: &[String],
+        visibility: Visibility,
+    ) {
         let def = self.alloc_def(node, kind);
+        self.record_home(def, name, kind, module_path, visibility);
         let binding = Binding::def(def, kind);
         let module = self.scopes.module_mut();
         let mut inserted_any = false;
@@ -612,12 +723,14 @@ impl Resolver {
         kind: DefKind,
         span: Span,
         module_path: &[String],
+        visibility: Visibility,
     ) {
         if module_path.is_empty() {
-            self.register_item(node, name, kind, span);
+            self.register_item(node, name, kind, span, module_path, visibility);
             return;
         }
         let def = self.alloc_def(node, kind);
+        self.record_home(def, name, kind, module_path, visibility);
         let binding = Binding::def(def, kind);
         // Duplicate detection is per module: the bare name registers
         // in the module's OWN scope (pushed while its body resolves),
@@ -684,7 +797,92 @@ impl Resolver {
         }
     }
 
+    /// Records where `def` was declared so references to it can be
+    /// checked against its declared visibility.
+    fn record_home(
+        &mut self,
+        def: DefId,
+        name: &Ident,
+        kind: DefKind,
+        module_path: &[String],
+        visibility: Visibility,
+    ) {
+        self.item_homes.insert(
+            def,
+            ItemHome {
+                module: module_path.to_vec(),
+                visibility,
+                name: name.name.clone(),
+                kind,
+            },
+        );
+    }
+
+    /// Reports `resolution` when it names an item the module currently
+    /// being resolved is not allowed to reach.
+    fn check_visibility(&mut self, resolution: Resolution, span: Span) {
+        if self.synthesized_depth > 0 {
+            return;
+        }
+        let Resolution::Def { def, .. } = resolution else {
+            return;
+        };
+        let Some(home) = self.item_homes.get(&def) else {
+            return;
+        };
+        if self.is_reachable(home) {
+            return;
+        }
+        let error = ResolveError::PrivateItem {
+            name: home.name.clone(),
+            module: home.module.join("::"),
+            kind: home.kind.as_str(),
+        };
+        self.emit(error, span);
+    }
+
+    /// An item is reachable when the module resolving it is the
+    /// declaring module or one of its descendants, or when the item is
+    /// `pub` and every module on the way in can be named from here.
+    fn is_reachable(&self, home: &ItemHome) -> bool {
+        if !self.current_module.starts_with(&home.module) && !home.visibility.is_public() {
+            return false;
+        }
+        self.module_is_nameable(&home.module)
+    }
+
+    /// True when every module along `path` is either declared in a
+    /// module enclosing the current one - a private `mod` is nameable
+    /// throughout the module that declares it - or is itself `pub`.
+    fn module_is_nameable(&self, path: &[String]) -> bool {
+        (1..=path.len()).all(|depth| {
+            if self.current_module.starts_with(&path[..depth - 1]) {
+                return true;
+            }
+            self.module_visibility
+                .get(&path[..depth].join("::"))
+                .copied()
+                .is_none_or(Visibility::is_public)
+        })
+    }
+
     fn resolve_item(&mut self, item: &Item) {
+        let synthesized = match &item.kind {
+            ItemKind::Fn(decl) => is_compiler_generated(&decl.name.name),
+            ItemKind::Struct(decl) => is_compiler_generated(&decl.name.name),
+            ItemKind::Enum(decl) => is_compiler_generated(&decl.name.name),
+            _ => false,
+        };
+        if synthesized {
+            self.synthesized_depth += 1;
+        }
+        self.resolve_item_inner(item);
+        if synthesized {
+            self.synthesized_depth -= 1;
+        }
+    }
+
+    fn resolve_item_inner(&mut self, item: &Item) {
         match &item.kind {
             ItemKind::Fn(decl) => self.resolve_fn(decl),
             ItemKind::Struct(decl) => self.resolve_struct(decl),
@@ -711,12 +909,14 @@ impl Resolver {
                         .cloned()
                         .unwrap_or_default();
                     self.scopes.push_scope(own_scope);
+                    self.current_module.push(decl.name.name.clone());
                     for nested in inner {
                         if !crate::cfg::item_is_active(&nested.attrs) {
                             continue;
                         }
                         self.resolve_item(nested);
                     }
+                    self.current_module.pop();
                     self.scopes.pop();
                 }
             }
@@ -938,6 +1138,10 @@ impl Resolver {
         if matches!(resolution, Resolution::Err) {
             self.emit_unresolved_or_rename(name, span);
         }
+        self.check_visibility(resolution, span);
+        if path.segments.len() == 1 {
+            self.reject_ambiguous_variant(resolution, name, span);
+        }
         self.resolutions.insert(anchor, resolution);
         for segment in &path.segments {
             self.resolve_generic_args(&segment.generics);
@@ -969,6 +1173,9 @@ impl Resolver {
                 .lookup_type(&effective.join("::"))
                 .map(|b| b.resolution)
             {
+                if let Some(span) = span {
+                    self.check_visibility(resolution, span);
+                }
                 if let Some(anchor) = anchor {
                     self.resolutions.insert(anchor, resolution);
                 }
@@ -986,11 +1193,11 @@ impl Resolver {
                 .lookup_type(name)
                 .map_or(Resolution::Err, |binding| binding.resolution)
         };
-        if matches!(resolution, Resolution::Err)
-            && !is_self_type(name)
-            && let Some(span) = span
-        {
-            self.emit_unresolved_or_rename(name, span);
+        if let Some(span) = span {
+            if matches!(resolution, Resolution::Err) && !is_self_type(name) {
+                self.emit_unresolved_or_rename(name, span);
+            }
+            self.check_visibility(resolution, span);
         }
         if let Some(anchor) = anchor {
             self.resolutions.insert(anchor, resolution);
@@ -1212,6 +1419,7 @@ impl Resolver {
                 return;
             }
             if let Some(resolution) = self.lookup_value_or_type(&joined) {
+                self.check_visibility(resolution, span);
                 self.resolutions.insert(anchor, resolution);
                 for segment in &path.segments {
                     self.resolve_generic_args(&segment.generics);
@@ -1323,10 +1531,40 @@ impl Resolver {
             );
             Resolution::Err
         });
+        self.check_visibility(resolution, span);
+        if effective.len() == 1 {
+            self.reject_ambiguous_variant(resolution, lookup_name, span);
+        }
         self.resolutions.insert(anchor, resolution);
         for segment in &path.segments {
             self.resolve_generic_args(&segment.generics);
         }
+    }
+
+    /// Rejects a bare reference to an enum-variant name that more than
+    /// one enum in this unit declares. Downstream dispatch identifies a
+    /// variant by name, so the enum has to be written out.
+    fn reject_ambiguous_variant(&mut self, resolution: Resolution, name: &str, span: Span) {
+        if !matches!(
+            resolution,
+            Resolution::Def {
+                kind: DefKind::Variant,
+                ..
+            }
+        ) {
+            return;
+        }
+        let Some(owners) = self.ambiguous_variants.get(name) else {
+            return;
+        };
+        if owners.len() < 2 {
+            return;
+        }
+        let error = ResolveError::AmbiguousVariant {
+            name: name.to_string(),
+            enums: owners.clone(),
+        };
+        self.emit(error, span);
     }
 
     /// True when a `module::member` (or `module::submodule::member`)
@@ -1396,6 +1634,7 @@ impl Resolver {
                 );
                 Resolution::Err
             });
+        self.check_visibility(resolution, span);
         self.resolutions.insert(anchor, resolution);
         for segment in &path.segments {
             self.resolve_generic_args(&segment.generics);

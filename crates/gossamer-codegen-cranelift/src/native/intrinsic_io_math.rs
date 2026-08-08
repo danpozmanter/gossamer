@@ -158,15 +158,22 @@ pub(super) fn lower_intrinsic_call_io_math(
     let ptr_ty = module.target_config().pointer_type();
     let _ = ptr_ty; // suppress unused if all arms inline
     match name {
-        "__concat" => {
+        // `__debug` is the `{:?}` channel: identical to `__concat` except a
+        // float always renders with a fractional part or an exponent.
+        "__concat" | "__debug" => {
             // Build the concatenated string into the runtime's
             // thread-local concat buffer, then return a fresh
             // String pointer. Lets `format!` produce a real value
             // that callers (errors::new, struct fields) can
             // consume past the surrounding `println`/`print`.
             if !destination.projection.is_empty() {
-                bail!("native codegen: __concat destination cannot have projections");
+                bail!("native codegen: {name} destination cannot have projections");
             }
+            let concat_f64 = if name == "__debug" {
+                "gos_rt_concat_f64_debug"
+            } else {
+                "gos_rt_concat_f64"
+            };
             let init = intrinsics.extern_fn_by_name(module, "gos_rt_concat_init")?;
             let init_ref = module.declare_func_in_func(init, builder.func);
             builder.ins().call(init_ref, &[]);
@@ -229,12 +236,7 @@ pub(super) fn lower_intrinsic_call_io_math(
                         } else {
                             value
                         };
-                        let f = intrinsics.extern_fn(
-                            module,
-                            "gos_rt_concat_f64",
-                            &[types::F64],
-                            &[],
-                        )?;
+                        let f = intrinsics.extern_fn(module, concat_f64, &[types::F64], &[])?;
                         let fref = module.declare_func_in_func(f, builder.func);
                         builder.ins().call(fref, &[d]);
                     }

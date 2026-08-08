@@ -101,6 +101,7 @@ fn classify_one(first: char) -> Option<Punct> {
         '?' => Punct::Question,
         '#' => Punct::Hash,
         '@' => Punct::At,
+        '$' => Punct::Dollar,
         _ => return None,
     })
 }

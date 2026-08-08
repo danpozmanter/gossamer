@@ -15,7 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use gossamer_abi::TUPLE_TAG_NESTED;
@@ -157,7 +156,15 @@ enum MapStorage {
     /// aggregate (so two distinct allocations of an equal value hash and
     /// compare equal, matching the VM), the value is an 8-byte word - an
     /// `i64`, or a heap pointer for `String` / struct values.
-    SkeyVal(FxHashMap<Box<[u8]>, i64>),
+    ///
+    /// `desc` is the slot descriptor the keys were encoded with (one byte per
+    /// slot, `s` for a scalar word and `S` for a string). Keeping it beside
+    /// the entries is what lets a snapshot turn the stored bytes back into
+    /// the aggregate the program wrote.
+    SkeyVal {
+        entries: FxHashMap<Box<[u8]>, i64>,
+        desc: Box<[u8]>,
+    },
 }
 
 struct I64BytesStorage {
@@ -359,15 +366,6 @@ unsafe fn byte_vec_from_slice(bytes: &[u8]) -> *mut GosVec {
     out
 }
 
-#[inline]
-unsafe fn string_key_bytes<'a>(key: *const c_char, typed: bool) -> &'a [u8] {
-    if typed {
-        unsafe { crate::c_abi::string::gos_typed_str_key_bytes(key) }
-    } else {
-        unsafe { crate::c_abi::string::gos_str_key_bytes(key) }
-    }
-}
-
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_new(_key_bytes: u32, _val_bytes: u32) -> *mut GosMap {
     ffi_entry!(std::ptr::null_mut(), {
@@ -544,19 +542,14 @@ pub unsafe extern "C" fn gos_rt_map_get_or_i64(m: *const GosMap, key: i64, defau
 /// `gos_rt_map_get_or_i64` but hashes the key via the same UTF-8
 /// byte slice the `_str_i64` insert path uses, so an `insert(k, v)`
 /// followed by `get_or(k, d)` round-trips.
-unsafe fn map_get_or_str_i64_impl(
-    m: *const GosMap,
-    key: *const c_char,
-    default: i64,
-    typed_key: bool,
-) -> i64 {
+unsafe fn map_get_or_str_i64_impl(m: *const GosMap, key: *const c_char, default: i64) -> i64 {
     ffi_entry!(-1, {
         if m.is_null() || key.is_null() {
             return default;
         }
         let map = unsafe { &*m };
         crate::c_abi::ledger::map_str_probe();
-        let key_bytes = unsafe { string_key_bytes(key, typed_key) };
+        let key_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(key) };
         let storage = map.storage.lock();
         match &*storage {
             MapStorage::StrI64(inner) => inner.get(key_bytes).copied().unwrap_or(default),
@@ -571,7 +564,7 @@ pub unsafe extern "C" fn gos_rt_map_get_or_str_i64(
     key: *const c_char,
     default: i64,
 ) -> i64 {
-    unsafe { map_get_or_str_i64_impl(m, key, default, false) }
+    unsafe { map_get_or_str_i64_impl(m, key, default) }
 }
 
 #[unsafe(no_mangle)]
@@ -580,7 +573,7 @@ pub unsafe extern "C" fn gos_rt_map_get_or_typed_str_i64(
     key: *const c_char,
     default: i64,
 ) -> i64 {
-    unsafe { map_get_or_str_i64_impl(m, key, default, true) }
+    unsafe { map_get_or_str_i64_impl(m, key, default) }
 }
 
 /// `get_or` for string-keyed, string-valued maps. Returns a fresh
@@ -596,13 +589,13 @@ pub unsafe extern "C" fn gos_rt_map_get_or_str_str(
         let default_bytes: &[u8] = if default.is_null() {
             b""
         } else {
-            unsafe { crate::c_abi::string::gos_str_key_bytes(default) }
+            unsafe { crate::c_abi::gos_str_arg_bytes(default) }
         };
         if m.is_null() || key.is_null() {
             return alloc_cstring(default_bytes);
         }
         let map = unsafe { &*m };
-        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
+        let key_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(key) };
         let storage = map.storage.lock();
         let MapStorage::StrStr(inner) = &*storage else {
             return alloc_cstring(default_bytes);
@@ -625,7 +618,7 @@ pub unsafe extern "C" fn gos_rt_map_get_or_i64_str(
         let default_bytes: &[u8] = if default.is_null() {
             b""
         } else {
-            unsafe { crate::c_abi::string::gos_str_key_bytes(default) }
+            unsafe { crate::c_abi::gos_str_arg_bytes(default) }
         };
         if m.is_null() {
             return alloc_cstring(default_bytes);
@@ -690,7 +683,7 @@ pub(crate) unsafe fn build_skey_for_set(key: *const u8, desc: *const c_char) -> 
     if key.is_null() || desc.is_null() {
         return None;
     }
-    let desc = unsafe { CStr::from_ptr(desc) }.to_bytes();
+    let desc = unsafe { crate::c_abi::gos_str_arg_bytes(desc) };
     let mut out = Vec::with_capacity(desc.len() * 8);
     let mut off = 0usize;
     for &c in desc {
@@ -705,7 +698,7 @@ pub(crate) unsafe fn build_skey_for_set(key: *const u8, desc: *const c_char) -> 
                 if sptr.is_null() {
                     out.extend_from_slice(&0u64.to_le_bytes());
                 } else {
-                    let bytes = unsafe { CStr::from_ptr(sptr) }.to_bytes();
+                    let bytes = unsafe { crate::c_abi::gos_str_arg_bytes(sptr) };
                     out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
                     out.extend_from_slice(bytes);
                 }
@@ -740,15 +733,20 @@ pub unsafe extern "C" fn gos_rt_map_insert_skey(
         if m.is_null() {
             return;
         }
+        // SAFETY: the caller supplies a live descriptor c-string.
+        let desc_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(desc) };
         let map = unsafe { &mut *m };
         let mut storage = map.storage.lock();
         if matches!(*storage, MapStorage::Empty) {
-            *storage = MapStorage::SkeyVal(FxHashMap::default());
+            *storage = MapStorage::SkeyVal {
+                entries: FxHashMap::default(),
+                desc: desc_bytes.into(),
+            };
         }
-        let MapStorage::SkeyVal(inner) = &mut *storage else {
+        let MapStorage::SkeyVal { entries, .. } = &mut *storage else {
             return;
         };
-        let prev = inner.insert(k.into_boxed_slice(), val);
+        let prev = entries.insert(k.into_boxed_slice(), val);
         if prev.is_none() {
             map.len_cache += 1;
         }
@@ -780,7 +778,7 @@ pub unsafe extern "C" fn gos_rt_map_get_skey_opt(
         let map = unsafe { &*m };
         let storage = map.storage.lock();
         let payload: Option<i64> = match &*storage {
-            MapStorage::SkeyVal(inner) => inner.get(k.as_slice()).copied(),
+            MapStorage::SkeyVal { entries, .. } => entries.get(k.as_slice()).copied(),
             _ => None,
         };
         if let Some(v) = payload
@@ -812,7 +810,7 @@ pub unsafe extern "C" fn gos_rt_map_contains_skey(
         let map = unsafe { &*m };
         let storage = map.storage.lock();
         match &*storage {
-            MapStorage::SkeyVal(inner) => inner.contains_key(k.as_slice()),
+            MapStorage::SkeyVal { entries, .. } => entries.contains_key(k.as_slice()),
             _ => false,
         }
     })
@@ -949,7 +947,7 @@ unsafe fn map_insert_str_i64_impl(m: *mut GosMap, key: *const c_char, val: i64, 
         }
         let map = unsafe { &mut *m };
         crate::c_abi::ledger::map_str_probe();
-        let key_bytes = unsafe { string_key_bytes(key, typed_key) };
+        let key_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(key) };
         let mut storage = map.storage.lock();
         if let MapStorage::StrBytes(inner) = &mut *storage {
             let vec = val as usize as *mut GosVec;
@@ -1024,14 +1022,14 @@ pub unsafe extern "C" fn gos_rt_map_insert_typed_str_i64(
     unsafe { map_insert_str_i64_impl(m, key, val, true) };
 }
 
-unsafe fn map_get_str_i64_impl(m: *const GosMap, key: *const c_char, typed_key: bool) -> i64 {
+unsafe fn map_get_str_i64_impl(m: *const GosMap, key: *const c_char) -> i64 {
     ffi_entry!(-1, {
         if m.is_null() || key.is_null() {
             return 0;
         }
         let map = unsafe { &*m };
         crate::c_abi::ledger::map_str_probe();
-        let key_bytes = unsafe { string_key_bytes(key, typed_key) };
+        let key_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(key) };
         let storage = map.storage.lock();
         match &*storage {
             MapStorage::StrI64(inner) => inner.get(key_bytes).copied().unwrap_or(0),
@@ -1042,24 +1040,24 @@ unsafe fn map_get_str_i64_impl(m: *const GosMap, key: *const c_char, typed_key: 
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_get_str_i64(m: *const GosMap, key: *const c_char) -> i64 {
-    unsafe { map_get_str_i64_impl(m, key, false) }
+    unsafe { map_get_str_i64_impl(m, key) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_get_typed_str_i64(m: *const GosMap, key: *const c_char) -> i64 {
-    unsafe { map_get_str_i64_impl(m, key, true) }
+    unsafe { map_get_str_i64_impl(m, key) }
 }
 
 /// `m.get(k) -> Option<V>` for a string-keyed map. Same `*mut GosResult`
 /// layout as [`gos_rt_map_get_i64_opt`]: 8-byte payload, MIR pin
 /// recovers V from the call's `Option<V>` substs.
-unsafe fn map_get_str_opt_impl(m: *const GosMap, key: *const c_char, typed_key: bool) -> i128 {
+unsafe fn map_get_str_opt_impl(m: *const GosMap, key: *const c_char) -> i128 {
     ffi_entry!(0i128, {
         if m.is_null() || key.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
         let map = unsafe { &*m };
-        let key_bytes = unsafe { string_key_bytes(key, typed_key) };
+        let key_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(key) };
         let storage = map.storage.lock();
         let payload: Option<i64> = match &*storage {
             MapStorage::StrI64(inner) => inner.get(key_bytes).copied(),
@@ -1091,7 +1089,7 @@ unsafe fn map_get_str_opt_impl(m: *const GosMap, key: *const c_char, typed_key: 
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_get_str_opt(m: *const GosMap, key: *const c_char) -> i128 {
-    unsafe { map_get_str_opt_impl(m, key, false) }
+    unsafe { map_get_str_opt_impl(m, key) }
 }
 
 #[unsafe(no_mangle)]
@@ -1099,7 +1097,7 @@ pub unsafe extern "C" fn gos_rt_map_get_typed_str_opt(
     m: *const GosMap,
     key: *const c_char,
 ) -> i128 {
-    unsafe { map_get_str_opt_impl(m, key, true) }
+    unsafe { map_get_str_opt_impl(m, key) }
 }
 
 #[unsafe(no_mangle)]
@@ -1113,8 +1111,8 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_str(
             return;
         }
         let map = unsafe { &mut *m };
-        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
-        let val_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(val) };
+        let key_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(key) };
+        let val_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(val) };
         let mut storage = map.storage.lock();
         if matches!(*storage, MapStorage::Empty) {
             *storage = MapStorage::StrStr(FxHashMap::default());
@@ -1156,7 +1154,7 @@ pub unsafe extern "C" fn gos_rt_map_get_str_str(
             return empty_cstring();
         }
         let map = unsafe { &*m };
-        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
+        let key_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(key) };
         let storage = map.storage.lock();
         let MapStorage::StrStr(inner) = &*storage else {
             return empty_cstring();
@@ -1168,14 +1166,14 @@ pub unsafe extern "C" fn gos_rt_map_get_str_str(
     })
 }
 
-unsafe fn map_contains_key_str_impl(m: *const GosMap, key: *const c_char, typed_key: bool) -> bool {
+unsafe fn map_contains_key_str_impl(m: *const GosMap, key: *const c_char) -> bool {
     ffi_entry!(false, {
         if m.is_null() || key.is_null() {
             return false;
         }
         let map = unsafe { &*m };
         crate::c_abi::ledger::map_str_probe();
-        let key_bytes = unsafe { string_key_bytes(key, typed_key) };
+        let key_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(key) };
         let storage = map.storage.lock();
         match &*storage {
             MapStorage::StrI64(inner) => inner.contains_key(key_bytes),
@@ -1188,7 +1186,7 @@ unsafe fn map_contains_key_str_impl(m: *const GosMap, key: *const c_char, typed_
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_contains_key_str(m: *const GosMap, key: *const c_char) -> bool {
-    unsafe { map_contains_key_str_impl(m, key, false) }
+    unsafe { map_contains_key_str_impl(m, key) }
 }
 
 #[unsafe(no_mangle)]
@@ -1196,16 +1194,16 @@ pub unsafe extern "C" fn gos_rt_map_contains_key_typed_str(
     m: *const GosMap,
     key: *const c_char,
 ) -> bool {
-    unsafe { map_contains_key_str_impl(m, key, true) }
+    unsafe { map_contains_key_str_impl(m, key) }
 }
 
-unsafe fn map_remove_str_impl(m: *mut GosMap, key: *const c_char, typed_key: bool) -> bool {
+unsafe fn map_remove_str_impl(m: *mut GosMap, key: *const c_char) -> bool {
     ffi_entry!(false, {
         if m.is_null() || key.is_null() {
             return false;
         }
         let map = unsafe { &mut *m };
-        let key_bytes = unsafe { string_key_bytes(key, typed_key) };
+        let key_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(key) };
         let mut storage = map.storage.lock();
         let owned_values = map_has_owned_values(map);
         let removed = match &mut *storage {
@@ -1231,12 +1229,12 @@ unsafe fn map_remove_str_impl(m: *mut GosMap, key: *const c_char, typed_key: boo
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_remove_str(m: *mut GosMap, key: *const c_char) -> bool {
-    unsafe { map_remove_str_impl(m, key, false) }
+    unsafe { map_remove_str_impl(m, key) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_remove_typed_str(m: *mut GosMap, key: *const c_char) -> bool {
-    unsafe { map_remove_str_impl(m, key, true) }
+    unsafe { map_remove_str_impl(m, key) }
 }
 
 /// `m.inc_at(seq, start, len, by)` for `HashMap<String, i64>` -
@@ -1275,7 +1273,7 @@ pub unsafe extern "C" fn gos_rt_map_inc_at_str_i64(
         // defensive registry check on general C ABI helpers while avoiding a
         // global lock for each k-mer window.
         crate::c_abi::ledger::map_str_probe();
-        let seq_bytes = unsafe { crate::c_abi::string::gos_typed_str_key_bytes(seq) };
+        let seq_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(seq) };
         let (start_u, len_u) = (start as usize, len as usize);
         let end_u = match start_u.checked_add(len_u) {
             Some(end) if end <= seq_bytes.len() => end,
@@ -1313,18 +1311,13 @@ pub unsafe extern "C" fn gos_rt_map_inc_at_str_i64(
 /// the entry if absent. Halves the lock + hash work compared to
 /// `m.insert(k, m.get_or(k, 0) + by)` and avoids the
 /// double-borrow that pattern triggers in compiled mode.
-unsafe fn map_inc_str_i64_impl(
-    m: *mut GosMap,
-    key: *const c_char,
-    by: i64,
-    typed_key: bool,
-) -> i64 {
+unsafe fn map_inc_str_i64_impl(m: *mut GosMap, key: *const c_char, by: i64) -> i64 {
     ffi_entry!(-1, {
         if m.is_null() || key.is_null() {
             return 0;
         }
         crate::c_abi::ledger::map_str_probe();
-        let key_bytes = unsafe { string_key_bytes(key, typed_key) };
+        let key_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(key) };
         let map = unsafe { &mut *m };
         let mut storage = map.storage.lock();
         if matches!(*storage, MapStorage::Empty) {
@@ -1350,7 +1343,7 @@ pub unsafe extern "C" fn gos_rt_map_inc_str_i64(
     key: *const c_char,
     by: i64,
 ) -> i64 {
-    unsafe { map_inc_str_i64_impl(m, key, by, false) }
+    unsafe { map_inc_str_i64_impl(m, key, by) }
 }
 
 #[unsafe(no_mangle)]
@@ -1359,7 +1352,7 @@ pub unsafe extern "C" fn gos_rt_map_inc_typed_str_i64(
     key: *const c_char,
     by: i64,
 ) -> i64 {
-    unsafe { map_inc_str_i64_impl(m, key, by, true) }
+    unsafe { map_inc_str_i64_impl(m, key, by) }
 }
 
 /// `m.or_insert(key, default)` - inserts `default` for `key` only when
@@ -1375,7 +1368,7 @@ unsafe fn map_or_insert_str_i64_impl(
         if m.is_null() || key.is_null() {
             return default;
         }
-        let key_bytes = unsafe { string_key_bytes(key, typed_key) };
+        let key_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(key) };
         let map = unsafe { &mut *m };
         let mut storage = map.storage.lock();
         if matches!(*storage, MapStorage::Empty) {
@@ -1474,7 +1467,7 @@ pub unsafe extern "C" fn gos_rt_map_insert_i64_str(m: *mut GosMap, key: i64, val
             return;
         }
         let map = unsafe { &mut *m };
-        let val_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(val) };
+        let val_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(val) };
         let mut storage = map.storage.lock();
         if matches!(*storage, MapStorage::Empty) {
             *storage = MapStorage::I64Str(FxHashMap::default());
@@ -1528,8 +1521,13 @@ pub unsafe extern "C" fn gos_rt_map_clear(m: *mut GosMap) {
                         unsafe { release_owned_value(map, v) };
                     }
                 }
-                MapStorage::StrI64(inner) | MapStorage::SkeyVal(inner) => {
+                MapStorage::StrI64(inner) => {
                     for &v in inner.values() {
+                        unsafe { release_owned_value(map, v) };
+                    }
+                }
+                MapStorage::SkeyVal { entries, .. } => {
+                    for &v in entries.values() {
                         unsafe { release_owned_value(map, v) };
                     }
                 }
@@ -1571,7 +1569,9 @@ unsafe fn render_tuple_elements(
         *slot_cursor += 1;
         match tag {
             0 => out.push_str(&crate::builtins::format_int(word)),
-            2 => out.push_str(&crate::builtins::format_float(f64::from_bits(word as u64))),
+            2 => out.push_str(&crate::builtins::format_float_debug(f64::from_bits(
+                word as u64,
+            ))),
             3 => out.push_str(crate::builtins::format_bool(word & 1 != 0)),
             4 => {
                 if let Some(c) = char::from_u32(word as u32) {
@@ -1581,21 +1581,21 @@ unsafe fn render_tuple_elements(
             5 => {
                 let sp: *const c_char = std::ptr::with_exposed_provenance(word as usize);
                 if !sp.is_null() {
-                    out.push_str(&unsafe { CStr::from_ptr(sp) }.to_string_lossy());
+                    out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(sp) });
                 }
             }
             6 => {
                 let vp = std::ptr::with_exposed_provenance(word as usize);
                 let rendered = unsafe { crate::c_abi::gos_rt_vec_format_i64(vp) };
                 if !rendered.is_null() {
-                    out.push_str(&unsafe { CStr::from_ptr(rendered) }.to_string_lossy());
+                    out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(rendered) });
                 }
             }
             7 => {
                 let mp = std::ptr::with_exposed_provenance(word as usize);
                 let rendered = unsafe { gos_rt_map_format(mp) };
                 if !rendered.is_null() {
-                    out.push_str(&unsafe { CStr::from_ptr(rendered) }.to_string_lossy());
+                    out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(rendered) });
                 }
             }
             _ => {}
@@ -2005,7 +2005,7 @@ pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
             MapStorage::StrBytes(inner) => inner.len(),
             MapStorage::I64Str(inner) => inner.len(),
             MapStorage::Bytes(inner) => inner.len(),
-            MapStorage::SkeyVal(inner) => inner.len(),
+            MapStorage::SkeyVal { entries, .. } => entries.len(),
         };
         crate::c_abi::ledger::map_format(entries);
         let mut out = String::from("{");
@@ -2095,7 +2095,7 @@ pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
                     push_entry(&mut out, &mut first, &key, &value);
                 }
             }
-            MapStorage::Empty | MapStorage::Bytes(_) | MapStorage::SkeyVal(_) => {}
+            MapStorage::Empty | MapStorage::Bytes(_) | MapStorage::SkeyVal { .. } => {}
         }
         out.push('}');
         alloc_cstring(out.as_bytes())
@@ -2218,7 +2218,22 @@ pub unsafe extern "C" fn gos_rt_map_mark_shared(m: *mut GosMap) {
                         }
                     }
                 }
-                MapStorage::StrI64(inner) | MapStorage::SkeyVal(inner) => {
+                MapStorage::SkeyVal { entries, .. } => {
+                    for &v in entries.values() {
+                        if map_value_owner(map) == MAP_VALUE_VEC {
+                            unsafe {
+                                crate::c_abi::vec::gos_rt_vec_mark_shared(
+                                    v as usize as *mut GosVec,
+                                );
+                            };
+                        } else {
+                            unsafe {
+                                crate::c_abi::rc::gos_rt_rc_mark_shared(v as usize as *mut u8);
+                            };
+                        }
+                    }
+                }
+                MapStorage::StrI64(inner) => {
                     for &v in inner.values() {
                         if map_value_owner(map) == MAP_VALUE_VEC {
                             unsafe {
@@ -2256,8 +2271,13 @@ pub unsafe extern "C" fn gos_rt_map_free(m: *mut GosMap) {
                         unsafe { release_owned_value(&boxed, v) };
                     }
                 }
-                MapStorage::StrI64(inner) | MapStorage::SkeyVal(inner) => {
+                MapStorage::StrI64(inner) => {
                     for &v in inner.values() {
+                        unsafe { release_owned_value(&boxed, v) };
+                    }
+                }
+                MapStorage::SkeyVal { entries, .. } => {
+                    for &v in entries.values() {
                         unsafe { release_owned_value(&boxed, v) };
                     }
                 }
@@ -2479,17 +2499,6 @@ pub unsafe extern "C" fn gos_rt_set_free(s: *mut GosSet) {
     });
 }
 
-/// Drops a `BTreeMap` allocated by [`gos_rt_btmap_new`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_btmap_free(m: *mut GosBtMap) {
-    ffi_entry!((), {
-        if m.is_null() {
-            return;
-        }
-        drop(unsafe { Box::from_raw(m) });
-    });
-}
-
 /// Snapshots the i64 keys of an i64-keyed `HashMap` into a fresh
 /// `GosVec<i64>` for the for-loop lowerer to drive with the
 /// regular `gos_rt_vec_*` helpers. Iteration order matches the
@@ -2549,11 +2558,19 @@ pub unsafe extern "C" fn gos_rt_map_values_i64(m: *const GosMap) -> *mut GosVec 
                     push_val(v);
                 }
             }
-            MapStorage::StrI64(inner) | MapStorage::SkeyVal(inner) => {
-                let mut entries: Vec<(&[u8], i64)> =
+            MapStorage::StrI64(inner) => {
+                let mut rows: Vec<(&[u8], i64)> =
                     inner.iter().map(|(k, v)| (k.as_ref(), *v)).collect();
-                entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
-                for (_, v) in entries {
+                rows.sort_unstable_by(|a, b| a.0.cmp(b.0));
+                for (_, v) in rows {
+                    push_val(v);
+                }
+            }
+            MapStorage::SkeyVal { entries, desc } => {
+                let mut rows: Vec<(&[u8], i64)> =
+                    entries.iter().map(|(k, v)| (k.as_ref(), *v)).collect();
+                rows.sort_by_cached_key(|(key, _)| skey_order(key, desc));
+                for (_, v) in rows {
                     push_val(v);
                 }
             }
@@ -2644,6 +2661,153 @@ fn empty_cstring() -> *mut c_char {
     alloc_cstring(b"")
 }
 
+/// Snapshots the aggregate keys of a struct- or tuple-keyed `HashMap` into a
+/// fresh `GosVec` of flat element slots, in key-byte order so `keys()`,
+/// `values()`, and `iter()` agree across tiers.
+///
+/// Each stored key is the encoding [`build_skey_for_set`] produced under the
+/// map's own slot descriptor, so decoding it slot by slot rebuilds exactly the
+/// aggregate the program inserted: a scalar slot is copied back verbatim and a
+/// string slot is reallocated as a c-string the snapshot owns.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_keys_skey(m: *const GosMap) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        if m.is_null() {
+            return unsafe { gos_rt_vec_new(8) };
+        }
+        let map = unsafe { &*m };
+        let storage = map.storage.lock();
+        let MapStorage::SkeyVal { entries, desc } = &*storage else {
+            return unsafe { gos_rt_vec_new(8) };
+        };
+        let slots = desc.len();
+        if slots == 0 {
+            return unsafe { gos_rt_vec_new(8) };
+        }
+        let elem_bytes = (slots * 8) as u32;
+        let mut keys: Vec<&[u8]> = entries.keys().map(|k| &**k).collect();
+        keys.sort_by_cached_key(|key| skey_order(key, desc));
+        let out = unsafe {
+            crate::c_abi::vec::gos_rt_vec_with_capacity_typed(
+                elem_bytes,
+                keys.len() as i64,
+                vec_elem_kind::PRIMITIVE,
+            )
+        };
+        let mut slot_buf = vec![0i64; slots];
+        for key in keys {
+            if !decode_skey_into(key, desc, &mut slot_buf) {
+                continue;
+            }
+            unsafe { gos_rt_vec_push(out, slot_buf.as_ptr().cast::<u8>()) };
+        }
+        // String slots hold freshly allocated c-strings the snapshot owns, so
+        // record where they sit for `gos_rt_vec_free` to release them.
+        let string_slots: Vec<i64> = desc
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| **c == b'S')
+            .flat_map(|(i, _)| [-1, 0, i as i64, i64::from(vec_elem_kind::STRING)])
+            .collect();
+        if !string_slots.is_empty() {
+            let mut meta = Vec::with_capacity(string_slots.len() + 1);
+            meta.push((string_slots.len() / 4) as i64);
+            meta.extend_from_slice(&string_slots);
+            unsafe { crate::c_abi::vec::gos_rt_vec_set_slot_children(out, meta.as_ptr()) };
+        }
+        out
+    })
+}
+
+/// One decoded field of an aggregate key, ordered the way the VM orders the
+/// matching `MapKey` field: numerically for a scalar word (integers, `char`
+/// code points, `bool`, and float bit patterns alike) and byte-lexicographic
+/// for a string.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum SkeyField<'a> {
+    Word(i64),
+    Text(&'a [u8]),
+}
+
+/// Field-wise ordering key for one stored aggregate key.
+///
+/// Sorting by the raw encoding would order scalar fields by their
+/// little-endian bytes; the snapshot orders by field value so a struct-keyed
+/// `keys()`, `values()`, and `iter()` all follow the same sequence the VM
+/// yields.
+fn skey_order<'a>(key: &'a [u8], desc: &[u8]) -> Vec<SkeyField<'a>> {
+    let mut fields = Vec::with_capacity(desc.len());
+    let mut cursor = 0usize;
+    for &code in desc {
+        match code {
+            b's' => {
+                let Some(word) = key.get(cursor..cursor + 8) else {
+                    break;
+                };
+                let mut bytes = [0u8; 8];
+                bytes.copy_from_slice(word);
+                fields.push(SkeyField::Word(i64::from_ne_bytes(bytes)));
+                cursor += 8;
+            }
+            b'S' => {
+                let Some(len_bytes) = key.get(cursor..cursor + 8) else {
+                    break;
+                };
+                let mut raw = [0u8; 8];
+                raw.copy_from_slice(len_bytes);
+                let len = u64::from_le_bytes(raw) as usize;
+                cursor += 8;
+                let Some(text) = key.get(cursor..cursor + len) else {
+                    break;
+                };
+                cursor += len;
+                fields.push(SkeyField::Text(text));
+            }
+            _ => break,
+        }
+    }
+    fields
+}
+
+/// Decodes one stored aggregate key back into `slots`, one word per descriptor
+/// entry. Returns false for a key whose bytes do not match the descriptor,
+/// which cannot happen for a key this map encoded.
+fn decode_skey_into(key: &[u8], desc: &[u8], slots: &mut [i64]) -> bool {
+    let mut cursor = 0usize;
+    for (index, &code) in desc.iter().enumerate() {
+        match code {
+            b's' => {
+                let Some(word) = key.get(cursor..cursor + 8) else {
+                    return false;
+                };
+                let mut bytes = [0u8; 8];
+                bytes.copy_from_slice(word);
+                slots[index] = i64::from_ne_bytes(bytes);
+                cursor += 8;
+            }
+            b'S' => {
+                let Some(len_bytes) = key.get(cursor..cursor + 8) else {
+                    return false;
+                };
+                let mut raw = [0u8; 8];
+                raw.copy_from_slice(len_bytes);
+                let len = u64::from_le_bytes(raw) as usize;
+                cursor += 8;
+                // A zero length covers both an empty string and an absent
+                // one; both rebuild as an owned empty c-string, which is the
+                // representation a `String` slot always holds.
+                let Some(text) = key.get(cursor..cursor + len) else {
+                    return false;
+                };
+                cursor += len;
+                slots[index] = alloc_cstring(text) as usize as i64;
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
 /// Auto-dispatch `m.keys() -> Vec<K>` based on the live map storage.
 /// I64-keyed maps return a `Vec<i64>`; string-keyed maps return a
 /// `Vec<*mut c_char>`. Empty Vec for empty / unknown storage shapes.
@@ -2667,10 +2831,11 @@ pub unsafe extern "C" fn gos_rt_map_keys_vec(m: *const GosMap) -> *mut GosVec {
                 drop(storage);
                 unsafe { gos_rt_map_keys_str(m) }
             }
-            // Struct keys are stored as flat content bytes; rebuilding the
-            // aggregate values would need the key's layout, which isn't
-            // threaded here. `keys()` over a struct-keyed map is unsupported.
-            MapStorage::SkeyVal(_) | MapStorage::Empty => unsafe { gos_rt_vec_new(8) },
+            MapStorage::SkeyVal { .. } => {
+                drop(storage);
+                unsafe { gos_rt_map_keys_skey(m) }
+            }
+            MapStorage::Empty => unsafe { gos_rt_vec_new(8) },
         }
     })
 }
@@ -2737,7 +2902,7 @@ pub unsafe extern "C" fn gos_rt_map_values_vec(m: *const GosMap) -> *mut GosVec 
             // Struct/tuple-keyed maps store i64 values just like `I64I64`;
             // route them through the i64 snapshot so `m.values()` / `for v in
             // m.values()` see the real values instead of an empty Vec.
-            MapStorage::SkeyVal(_) => {
+            MapStorage::SkeyVal { .. } => {
                 drop(storage);
                 unsafe { gos_rt_map_values_i64(m) }
             }
@@ -2782,13 +2947,13 @@ pub unsafe extern "C" fn gos_rt_map_pop_i64(m: *mut GosMap, key: i64) -> i128 {
 /// c-string pointer; the returned Option payload is the
 /// raw 8-byte previous value (i64 directly for `StrI64`,
 /// `*mut c_char` cast to i64 for `StrStr`).
-unsafe fn map_pop_str_impl(m: *mut GosMap, key: *const c_char, typed_key: bool) -> i128 {
+unsafe fn map_pop_str_impl(m: *mut GosMap, key: *const c_char) -> i128 {
     ffi_entry!(0i128, {
         if m.is_null() || key.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
         let map = unsafe { &mut *m };
-        let key_bytes = unsafe { string_key_bytes(key, typed_key) };
+        let key_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(key) };
         let mut storage = map.storage.lock();
         let popped: Option<i64> = match &mut *storage {
             MapStorage::StrI64(inner) => inner.remove(key_bytes),
@@ -2815,12 +2980,12 @@ unsafe fn map_pop_str_impl(m: *mut GosMap, key: *const c_char, typed_key: bool) 
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_pop_str(m: *mut GosMap, key: *const c_char) -> i128 {
-    unsafe { map_pop_str_impl(m, key, false) }
+    unsafe { map_pop_str_impl(m, key) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_pop_typed_str(m: *mut GosMap, key: *const c_char) -> i128 {
-    unsafe { map_pop_str_impl(m, key, true) }
+    unsafe { map_pop_str_impl(m, key) }
 }
 
 /// `m.pop(k) -> Option<V>` for a struct / tuple-keyed map. Content-hashes
@@ -2845,7 +3010,7 @@ pub unsafe extern "C" fn gos_rt_map_pop_skey(
         let map = unsafe { &mut *m };
         let mut storage = map.storage.lock();
         let popped: Option<i64> = match &mut *storage {
-            MapStorage::SkeyVal(inner) => inner.remove(k.as_slice()),
+            MapStorage::SkeyVal { entries, .. } => entries.remove(k.as_slice()),
             _ => None,
         };
         if popped.is_some() {
@@ -2906,7 +3071,7 @@ pub unsafe extern "C" fn gos_rt_map_insert_typed_str_i64_opt(
     key: *const c_char,
     val: i64,
 ) -> i128 {
-    let previous = unsafe { map_get_str_opt_impl(m, key, true) };
+    let previous = unsafe { map_get_str_opt_impl(m, key) };
     unsafe { map_insert_str_i64_impl(m, key, val, true) };
     previous
 }
@@ -2951,6 +3116,7 @@ pub unsafe extern "C" fn gos_rt_map_insert_skey_opt(
 #[cfg(test)]
 mod map_iter_tests {
     use super::*;
+    use std::ffi::CStr;
 
     unsafe fn formatted_map(map: *const GosMap) -> String {
         let rendered = unsafe { gos_rt_map_format(map) };

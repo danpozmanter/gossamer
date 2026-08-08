@@ -182,3 +182,44 @@ impl Target {
     assert_eq!(method.sig.output, i32_ty);
     assert!(method.has_self);
 }
+
+#[test]
+fn associated_items_are_indexed_on_the_trait_and_its_impl() {
+    let source = r"
+trait Holder {
+    type Item
+    type Count = i64
+    const MAX: i64
+    fn get(&self) -> i64 { 0 }
+}
+
+struct Label {}
+
+impl Holder for Label {
+    type Item = String
+    const MAX: i64 = 7
+    fn get(&self) -> i64 { 0 }
+}
+";
+    let mut built = build(source);
+    let string_ty = built.tcx.string_ty();
+    let i64_ty = built.tcx.int_ty(IntTy::I64);
+    let trait_entry = built.index.traits().next().expect("trait present");
+    assert_eq!(
+        trait_entry
+            .assoc_types
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Item", "Count"]
+    );
+    assert_eq!(trait_entry.assoc_types[0].1, None);
+    assert_eq!(trait_entry.assoc_types[1].1, Some(i64_ty));
+    assert_eq!(trait_entry.assoc_consts, vec![("MAX".to_string(), i64_ty)]);
+    let (impl_id, entry) = built.index.entries().next().expect("impl present");
+    assert_eq!(entry.assoc_types, vec![("Item".to_string(), string_ty)]);
+    assert_eq!(entry.assoc_consts, vec![("MAX".to_string(), i64_ty)]);
+    assert_eq!(built.index.assoc_type(impl_id, "Item"), Some(string_ty));
+    assert_eq!(built.index.assoc_type(impl_id, "Count"), Some(i64_ty));
+    assert_eq!(built.index.assoc_type(impl_id, "Missing"), None);
+}

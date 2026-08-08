@@ -123,6 +123,11 @@ pub struct TypePathSegment {
     pub name: Ident,
     /// Generic arguments applied at this segment, if any.
     pub generics: Vec<GenericArg>,
+    /// Associated-item equality bindings written inside the same
+    /// `<...>` list, as in the `Item = i64` of `Iterator<Item = i64>`.
+    /// Kept apart from [`Self::generics`] so a binding never shifts the
+    /// positional substitution a generic argument list denotes.
+    pub assoc_bindings: Vec<AssocBinding>,
 }
 
 impl TypePathSegment {
@@ -132,6 +137,7 @@ impl TypePathSegment {
         Self {
             name: Ident::new(name),
             generics: Vec::new(),
+            assoc_bindings: Vec::new(),
         }
     }
 
@@ -141,8 +147,18 @@ impl TypePathSegment {
         Self {
             name: Ident::new(name),
             generics,
+            assoc_bindings: Vec::new(),
         }
     }
+}
+
+/// An `Assoc = Type` equality binding inside a generic argument list.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AssocBinding {
+    /// Associated-item name on the left of `=`.
+    pub name: Ident,
+    /// Concrete type the association is pinned to.
+    pub ty: Type,
 }
 
 /// A generic argument in a type path segment.

@@ -122,9 +122,8 @@ described in the [concurrency memory model](design/memory_model.md).
   balanced retain/release pairs; a liveness pass releases owned values
   at their *last use* rather than at function exit, so a large
   structure does not pin memory while unrelated code runs.
-- **Cycle collector.** Reference cycles (`a.next = Some(b);
-  b.next = Some(a)`) are reclaimed by a Bacon-Rajan style cycle
-  collector that runs on demand (`runtime::collect_cycles()`) and from
+- **Cycle collector.** Reference cycles are reclaimed by a Bacon-Rajan
+  style collector that runs on demand (`runtime::collect_cycles()`) and from
   allocation pressure (a fixed candidate-count threshold, not a
   wall-clock timer, so collection is a deterministic function of
   allocation events). Acyclic data never pays for it. Because Gossamer
@@ -133,14 +132,15 @@ described in the [concurrency memory model](design/memory_model.md).
   cross-tier reproducibility.
 - **Weak references.** `Weak<T>` observes a value without keeping it
   alive; `w.upgrade()` returns `Option<T>` and answers `None` once the
-  referent has been reclaimed. One cross-tier caveat: a `Weak` that
-  points at a member of a *strong* cycle (an unusual shape - weak
-  references normally *break* cycles, in which case there is no strong
-  cycle and every tier agrees) observes that member as live on the
-  interpreter (`gos`, whose collector is a no-op and leaks the cycle)
-  but as `None` on the compiled tiers once the collector has run. Do not
-  branch on `upgrade()` of a known strong-cycle member if you need
-  identical behavior under `gos` and `gos build`.
+  referent has been reclaimed. `x.downgrade()` pins the referent it
+  observes in the frame that took the weak, so the referent stays
+  strongly reachable for the whole of that scope and is reclaimed when
+  the scope ends, whatever the collector is doing. That makes
+  `upgrade()` a function of scope, never of collection timing:
+  a `Weak` aimed at a member of a cyclic shape answers the same on
+  `gos`, the JIT, and `gos build`, before or after
+  `runtime::collect_cycles()`. `feature-testing-examples/weak_into_strong_cycle.gos`
+  pins the guarantee across all three tiers.
 - **Compact representation.** A heap enum node carries an 8-byte
   runtime header. Enums with at most 4 variants store their
   discriminant in pointer tag bits, so a two-pointer tree node costs
@@ -214,10 +214,13 @@ together* - build, traverse, summarize, exit. If a value must survive,
 let the block compute a scalar/string summary, or build the surviving
 value before (outside) the arena.
 
-Two deliberate edge-case rules: `Weak` references to arena values
-upgrade to `None` (the referent is not individually tracked), and a
-panic that unwinds out of a goroutine mid-arena abandons the arena's
-slabs to the goroutine's teardown rather than corrupting them.
+Two deliberate edge-case rules. A `Weak` taken inside a block keeps
+upgrading to `Some` for the rest of that block - the referent is not
+individually tracked, and the escape check (`GM0003`) rejects any
+program that could still hold the weak after the closing brace, so no
+tier ever reads a reclaimed slab through one. And a panic that unwinds
+out of a goroutine mid-arena abandons the arena's slabs to the
+goroutine's teardown rather than corrupting them.
 
 `runtime::arena_push()` / `runtime::arena_pop()` remain available as
 the low-level primitive when block structure does not fit; the block

@@ -9,7 +9,6 @@
 #![allow(clippy::ptr_as_ptr)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::*;
@@ -110,7 +109,7 @@ pub unsafe extern "C" fn gos_rt_yaml_parse(s: *const c_char) -> i128 {
         let text = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { crate::c_abi::gos_str_arg_text(s) }
         };
         match serde_norway::from_str::<serde_norway::Value>(text) {
             Ok(yaml_val) => {
@@ -132,7 +131,7 @@ pub unsafe extern "C" fn gos_rt_yaml_to_json(s: *const c_char) -> i128 {
         let text = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { crate::c_abi::gos_str_arg_text(s) }
         };
         let yaml_val: serde_norway::Value = match serde_norway::from_str(text) {
             Ok(v) => v,
@@ -152,7 +151,7 @@ pub unsafe extern "C" fn gos_rt_yaml_from_json(s: *const c_char) -> i128 {
         let text = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { crate::c_abi::gos_str_arg_text(s) }
         };
         let json_val: serde_json::Value = match serde_json::from_str(text) {
             Ok(v) => v,
@@ -195,7 +194,7 @@ pub unsafe extern "C" fn gos_rt_yaml_parse_all(s: *const c_char) -> i128 {
         let text = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { crate::c_abi::gos_str_arg_text(s) }
         };
         let vec = unsafe { crate::c_abi::vec::gos_rt_vec_new(8) };
         for doc in serde_norway::Deserializer::from_str(text) {
@@ -218,7 +217,7 @@ pub unsafe extern "C" fn gos_rt_yaml_is_valid(s: *const c_char) -> i64 {
         let text = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { crate::c_abi::gos_str_arg_text(s) }
         };
         i64::from(serde_norway::from_str::<serde_norway::Value>(text).is_ok())
     })

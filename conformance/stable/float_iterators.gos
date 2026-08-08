@@ -1,0 +1,36 @@
+// f64 iterator elements. The lazy iterator runtime carries one machine word
+// per element, so a float element has to survive every combinator hop without
+// being reinterpreted as an integer bit pattern.
+
+use std::iter
+
+fn main() {
+    let xs = #[1.5, 2.25, 3.75, 4.0]
+
+    let doubled = xs |> iter::map(|x| x * 2.0) |> iter::collect
+    for v in doubled {
+        println!("{v:.2}")
+    }
+
+    println!("sum={:.3}", xs.sum())
+    println!("scaled={:.4}", xs.map(|x| x * 0.5).sum())
+    println!("kept={:.4}", xs.filter(|x| x > 2.0).sum())
+
+    let big = xs |> iter::filter(|x| x > 2.0) |> iter::count
+    println!("big={big}")
+
+    match xs.max() {
+        Some(m) => println!("max={m:.2}"),
+        None => println!("max=none"),
+    }
+    match xs.min() {
+        Some(m) => println!("min={m:.2}"),
+        None => println!("min=none"),
+    }
+
+    let mut running = 0.0
+    for v in xs {
+        running += v * v
+    }
+    println!("squares={running:.4}")
+}

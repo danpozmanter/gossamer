@@ -1,0 +1,58 @@
+// A `Vec` whose element is a tagged-pointer enum flows through the
+// closure-taking sequence combinators. The element is a one-word handle the
+// slot holds, so every combinator hands the closure that word - not the
+// address of the slot, which is how an inline struct element travels.
+// Bit-identical on the VM, Cranelift, and LLVM tiers.
+use std::iter
+
+enum Shape {
+    Rect(i64, i64)
+    Square(i64)
+}
+
+fn tag(s: &Shape) -> i64 {
+    match s {
+        Rect(_, _) => 1
+        Square(_) => 2
+    }
+}
+
+fn area(s: &Shape) -> i64 {
+    match s {
+        Rect(w, h) => *w * *h
+        Square(n) => *n * *n
+    }
+}
+
+fn main() {
+    let mut shapes = #[Rect(3, 4), Square(5), Rect(1, 1)]
+
+    // Discriminant read through a by-reference closure param.
+    println!("{}", shapes.map(|s| tag(&s)).join(" "))
+    // Payload read - a slot address would decode as arm 0 with junk fields.
+    println!("{}", shapes.map(|s| area(&s)).join(" "))
+    // Explicitly by-value closure param.
+    println!("{}", shapes.map(|s: Shape| area(&s)).join(" "))
+
+    shapes.for_each(|s| println!("each {}", area(&s)))
+
+    // In-place keyed sort: the comparator takes the handle by word.
+    shapes.sort_by_key(|s| area(&s))
+    println!("sorted {}", shapes.map(|s| area(&s)).join(" "))
+
+    shapes.sort_by_key_desc(|s| area(&s))
+    println!("desc {}", shapes.map(|s| area(&s)).join(" "))
+
+    let biggest = shapes |> iter::max_by_key(|s| area(&s))
+    if let Some(s) = biggest {
+        println!("max {}", area(&s))
+    }
+    let smallest = shapes |> iter::min_by_key(|s| area(&s))
+    if let Some(s) = smallest {
+        println!("min {}", area(&s))
+    }
+
+    // Non-mutating free form returns a fresh Vec of the same handles.
+    let ordered = shapes |> iter::sort_by_key(|s| area(&s))
+    println!("free {}", ordered.map(|s| area(&s)).join(" "))
+}

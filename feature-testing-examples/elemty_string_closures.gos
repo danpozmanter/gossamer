@@ -1,0 +1,21 @@
+// String elements reach a combinator's closure as a managed pointer word.
+// The parameter is typed from the element, so a String method inside the
+// body resolves against a String receiver rather than an integer.
+
+fn shout(s: String) -> String { s.to_uppercase() }
+
+fn main() {
+    let words: Vec<String> = #["apple", "bob", "cherry", "fig"]
+    let loud: Vec<String> = words.iter().map(shout).collect()
+    println!("map {}", loud)
+    let long: Vec<String> = words.iter().filter(|w| w.len() > 3).collect()
+    println!("filter {}", long)
+    let lens: Vec<i64> = words.iter().map(|w: String| -> i64 { w.len() }).collect()
+    println!("lens {}", lens)
+    let total = words.iter().fold(0, |acc: i64, w: String| -> i64 { acc + w.len() })
+    println!("fold {}", total)
+    println!("any {}", words.iter().any(|w| w.starts_with("ch")))
+    println!("all {}", words.iter().all(|w| w.len() > 2))
+    println!("find {:?}", words.iter().find(|w| w.ends_with("g")))
+    println!("count {}", words.iter().filter(|w| w.contains("p")).count())
+}

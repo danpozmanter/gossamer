@@ -1,0 +1,58 @@
+// A generic struct's inline footprint follows its instantiation, not the
+// declared `Param` slot: `Wrapper<Point>` is two slots wide wherever its
+// layout is baked in - a Vec's element stride, a fixed array's stride, a
+// nested field's offset. Bit-identical on the VM, Cranelift, and LLVM tiers.
+
+struct Point {
+    x: i64
+    y: i64
+}
+
+struct Wrapper<T> {
+    value: T
+}
+
+struct Boxed {
+    inner: Wrapper<Point>
+    tail: i64
+}
+
+struct Triple {
+    a: i64
+    b: i64
+    c: i64
+}
+
+fn main() {
+    let xs = #[
+        Wrapper { value: Point { x: 1, y: 2 } },
+        Wrapper { value: Point { x: 3, y: 4 } },
+    ]
+    let mut sum = 0
+    for w in xs {
+        println!("elem {} {}", w.value.x, w.value.y)
+        sum += w.value.x + w.value.y
+    }
+    println!("sum {}", sum)
+    println!("index {} {}", xs[1].value.x, xs[1].value.y)
+
+    // Same layout through a fixed array.
+    let arr: [Wrapper<Point>; 2] = [
+        Wrapper { value: Point { x: 5, y: 6 } },
+        Wrapper { value: Point { x: 7, y: 8 } },
+    ]
+    println!("arr {} {} {} {}", arr[0].value.x, arr[0].value.y, arr[1].value.x, arr[1].value.y)
+
+    // A non-generic struct embedding the instantiation lays it out inline too.
+    let b = Boxed { inner: Wrapper { value: Point { x: 9, y: 10 } }, tail: 11 }
+    println!("nested {} {} {}", b.inner.value.x, b.inner.value.y, b.tail)
+
+    // A three-slot payload keeps the stride honest past two slots.
+    let ts = #[
+        Wrapper { value: Triple { a: 1, b: 2, c: 3 } },
+        Wrapper { value: Triple { a: 4, b: 5, c: 6 } },
+    ]
+    for t in ts {
+        println!("triple {} {} {}", t.value.a, t.value.b, t.value.c)
+    }
+}

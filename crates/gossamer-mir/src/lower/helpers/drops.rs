@@ -2104,7 +2104,6 @@ fn is_consuming_call(name: &str) -> bool {
     name.starts_with("gos_rt_vec_push")
         || name.starts_with("gos_rt_vec_insert")
         || name.starts_with("gos_rt_set_insert")
-        || name.starts_with("gos_rt_btmap_insert")
         || name.starts_with("gos_rt_map_insert")
         // `HashMap::or_insert` consumes its key and, on an absent key,
         // stores the supplied value. The retained value share becomes the
@@ -3639,7 +3638,6 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             | "gos_rt_set_intersection"
             | "gos_rt_set_difference"
             | "gos_rt_set_symmetric_difference" => Some("gos_rt_set_free"),
-            "gos_rt_btmap_new" => Some("gos_rt_btmap_free"),
             // Iterator over a Vec - the destination local is typed as
             // the source Vec so the `.next()` dispatch can recover the
             // element type. Without this entry the type-based
@@ -3658,7 +3656,9 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             | "Map::with_capacity"
             | "collections::Map::with_capacity"
             | "HashMap::with_capacity"
-            | "collections::HashMap::with_capacity" => Some("gos_rt_map_free"),
+            | "collections::HashMap::with_capacity"
+            | "BTreeMap::new"
+            | "collections::BTreeMap::new" => Some("gos_rt_map_free"),
             "Vec::new" | "Vec::with_capacity" => Some("gos_rt_vec_free"),
             "Set::new"
             | "collections::Set::new"
@@ -3666,7 +3666,6 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             | "collections::HashSet::new"
             | "BTreeSet::new"
             | "collections::BTreeSet::new" => Some("gos_rt_set_free"),
-            "BTreeMap::new" | "collections::BTreeMap::new" => Some("gos_rt_btmap_free"),
             "gos_rt_deque_new"
             | "Deque::new"
             | "collections::Deque::new"

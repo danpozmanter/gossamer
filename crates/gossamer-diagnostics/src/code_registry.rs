@@ -472,6 +472,12 @@ pub const REGISTRY: &[(&str, &str)] = &[
             { return }`.",
     ),
     (
+        "GP0038",
+        "A `|>` right-hand side used `_` where the pipe placeholder belongs.\n\
+            The placeholder is `$`: `s |> $.trim()` makes the piped value the\n\
+            receiver, and `x |> f($, k)` selects which argument it fills.",
+    ),
+    (
         "GR0001",
         "A name used in source could not be resolved to a declaration.\n\
                      Check the spelling, whether a `use` brings the name into scope,\n\
@@ -509,6 +515,18 @@ pub const REGISTRY: &[(&str, &str)] = &[
         "The `use` names a module that exists but an item that module does\n\
                      not export. Check the item spelling; `gos doc std::<module>`\n\
                      lists every name a module exports.",
+    ),
+    (
+        "GR0008",
+        "An item declared without `pub` is visible only inside the module\n\
+                     that declares it and that module's descendants. Write `pub` on\n\
+                     the declaration to let other modules name it.",
+    ),
+    (
+        "GR0009",
+        "A bare enum-variant name that two or more enums declare. Variant\n\
+                     dispatch identifies a variant by name, so write the enum out -\n\
+                     `Shape::Circle` rather than `Circle`.",
     ),
     (
         "GT0001",
@@ -859,6 +877,36 @@ pub const REGISTRY: &[(&str, &str)] = &[
         "A built-in iterator was passed to a parameter bound by an iteration\n\
                      trait. Only a type with an impl block can specialise such a\n\
                      call, so name the iterator type on the parameter directly.",
+    ),
+    (
+        "GT0058",
+        "A trait impl leaves out a method the trait declares without a\n\
+                     default body. A call through the trait lowers to a direct\n\
+                     call to each declared method, so every one needs a body.\n\
+                     Add the missing method to the impl, or give it a default\n\
+                     body in the trait.",
+    ),
+    (
+        "GT0059",
+        "A trait impl leaves out an associated type or constant the trait\n\
+                     declares without a default. A projection through the trait\n\
+                     has to land on a concrete item, so every impl supplies one.\n\
+                     Add it to the impl, or give the trait a default.",
+    ),
+    (
+        "GT0060",
+        "A path projected an associated item that nothing in scope declares.\n\
+                     Check the spelling against the trait's associated types and\n\
+                     constants, or bound the parameter by the trait that declares\n\
+                     the item.",
+    ),
+    (
+        "GT0061",
+        "An associated item reached through a trait has several candidate\n\
+                     impls and none is singled out. Pin an associated type with\n\
+                     an equality constraint on the bound, as in\n\
+                     `T: Iterator<Item = i64>`; for an associated constant, name\n\
+                     the concrete type or give the trait a default.",
     ),
     (
         "GX0001",

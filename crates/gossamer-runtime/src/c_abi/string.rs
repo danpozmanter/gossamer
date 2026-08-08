@@ -132,6 +132,10 @@ unsafe fn typed_managed_string_owner(s: *const c_char) -> Option<&'static String
     unsafe { typed_str_owner(s) }.filter(|owner| owner.destructor == STRING_DTOR_HEAP)
 }
 
+/// Byte length of a NUL-terminated buffer.
+///
+/// HOST-CSTRING: this is the `strlen` fallback that [`typed_str_len`] uses for
+/// pointers with no Gossamer length header.
 pub(crate) unsafe fn c_str_len(s: *const c_char) -> usize {
     if s.is_null() {
         return 0;
@@ -139,34 +143,13 @@ pub(crate) unsafe fn c_str_len(s: *const c_char) -> usize {
     unsafe { CStr::from_ptr(s).to_bytes().len() }
 }
 
-/// Borrows a runtime string's content bytes without a NUL scan when the
-/// string carries a length header (builder / static / region layouts all
-/// store `len:u32` at `ptr[-5]`); foreign / untagged pointers fall back to
-/// `strlen`. Map key shims call this instead of `CStr::from_ptr(_).to_bytes()`
-/// so hashing a k-mer key reads its length in O(1) rather than rescanning the
-/// bytes the hash is about to read again.
-///
-/// SAFETY: `s` is null or points at a valid c-string (NUL-terminated when it
-/// has no header). The returned slice borrows `s`; the caller keeps `s` alive
-/// for the borrow.
-#[inline]
-pub(crate) unsafe fn gos_str_key_bytes<'a>(s: *const c_char) -> &'a [u8] {
-    if s.is_null() {
-        return &[];
-    }
-    let len = unsafe { str_header_len(s) }.unwrap_or_else(|| unsafe { c_str_len(s) });
-    unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) }
-}
-
-/// Returns the byte length of a compiler-typed Gossamer string without the
-/// allocation-registry lookup used by raw C ABI entry points.
+/// Returns the byte length of a compiler-typed Gossamer string.
 ///
 /// Generated code only passes values of the language's `String` type here, so
 /// the byte immediately before the payload is always readable: heap builders,
 /// static literals, and region strings carry a length header; foreign strings
-/// are not part of this internal contract. Keeping this path separate from
-/// [`str_header_len`] preserves the defensive registry check for APIs that can
-/// genuinely receive arbitrary C pointers.
+/// are not part of this internal contract. Reading the header rather than
+/// scanning for a NUL is what lets a `String` hold interior NUL bytes.
 #[inline]
 unsafe fn typed_str_len(s: *const c_char) -> usize {
     if s.is_null() {
@@ -181,7 +164,7 @@ unsafe fn typed_str_len(s: *const c_char) -> usize {
 }
 
 /// Borrows bytes from a compiler-typed Gossamer string. See
-/// [`typed_str_len`] for why this does not consult the allocation registry.
+/// [`typed_str_len`] for the header contract.
 #[inline]
 unsafe fn typed_str_bytes<'a>(s: *const c_char) -> &'a [u8] {
     if s.is_null() {
@@ -191,12 +174,55 @@ unsafe fn typed_str_bytes<'a>(s: *const c_char) -> &'a [u8] {
     unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) }
 }
 
-/// Borrows bytes from a compiler-typed Gossamer string without checking the
-/// heap-string registry. Runtime helpers that are only called from generated
-/// code use this to avoid a global lock on hot string-keyed loops.
+/// Borrows the content bytes of a Gossamer `String` argument arriving over the
+/// C ABI.
+///
+/// A Gossamer string carries an explicit length and may contain interior NUL
+/// bytes, so every shim whose parameter is a language `String` reads it through
+/// the length header. `CStr::from_ptr` is reserved for the few parameters that
+/// are genuinely host C strings (an `environ` entry, an OS callback argument).
+///
+/// SAFETY: `s` is null or points at a Gossamer string body, or at a
+/// NUL-terminated buffer when it carries no length header. The returned slice
+/// borrows `s`; the caller keeps `s` alive for the borrow.
 #[inline]
-pub(crate) unsafe fn gos_typed_str_key_bytes<'a>(s: *const c_char) -> &'a [u8] {
+pub(crate) unsafe fn gos_str_arg_bytes<'a>(s: *const c_char) -> &'a [u8] {
     unsafe { typed_str_bytes(s) }
+}
+
+/// Borrows a Gossamer `String` argument as UTF-8 text, yielding the empty
+/// string when the bytes are not valid UTF-8.
+///
+/// SAFETY: see [`gos_str_arg_bytes`].
+#[inline]
+pub(crate) unsafe fn gos_str_arg_text<'a>(s: *const c_char) -> &'a str {
+    unsafe { typed_str_text(s) }
+}
+
+/// Borrows a Gossamer `String` argument as UTF-8 text, replacing invalid
+/// sequences with `U+FFFD`.
+///
+/// SAFETY: see [`gos_str_arg_bytes`].
+#[inline]
+pub(crate) unsafe fn gos_str_arg_lossy<'a>(s: *const c_char) -> std::borrow::Cow<'a, str> {
+    String::from_utf8_lossy(unsafe { gos_str_arg_bytes(s) })
+}
+
+/// Copies a Gossamer `String` argument into an owned `String`, replacing
+/// invalid sequences with `U+FFFD`.
+///
+/// SAFETY: see [`gos_str_arg_bytes`].
+#[inline]
+pub(crate) unsafe fn gos_str_arg_string(s: *const c_char) -> String {
+    unsafe { gos_str_arg_lossy(s) }.into_owned()
+}
+
+/// Byte length of a Gossamer `String` argument arriving over the C ABI.
+///
+/// SAFETY: see [`gos_str_arg_bytes`].
+#[inline]
+pub(crate) unsafe fn gos_str_arg_len(s: *const c_char) -> usize {
+    unsafe { typed_str_len(s) }
 }
 
 #[inline]
@@ -376,20 +402,6 @@ unsafe fn typed_str_cap(s: *const c_char) -> Option<usize> {
 #[inline]
 fn is_managed_string(s: *const c_char) -> bool {
     managed_string_owner(s).is_some() && unsafe { *s.cast::<u8>().sub(1) == STR_BUILDER_TAG }
-}
-
-/// O(1) byte length for a compiler-typed Gossamer string. Returns `None` for a
-/// foreign/untagged pointer, where callers fall back to `strlen`.
-#[inline]
-pub(crate) unsafe fn str_header_len(s: *const c_char) -> Option<usize> {
-    str_owner(s)?;
-    let tag = unsafe { *s.cast::<u8>().sub(1) };
-    if !matches!(tag, STR_BUILDER_TAG | STR_STATIC_TAG | STR_REGION_TAG) {
-        return None;
-    }
-    let p = unsafe { s.cast::<u8>().sub(5) };
-    let len = u32::from_le_bytes(unsafe { [*p, *p.add(1), *p.add(2), *p.add(3)] });
-    Some(len as usize)
 }
 
 /// Copies `n` non-overlapping bytes from `src` to `dst`, keeping short copies
@@ -862,7 +874,7 @@ pub unsafe extern "C" fn gos_rt_str_truncate(s: *const c_char, n: i64) -> *mut c
         if s.is_null() || n <= 0 {
             return alloc_cstring(b"");
         }
-        let len = unsafe { str_header_len(s) }.unwrap_or_else(|| unsafe { c_str_len(s) });
+        let len = unsafe { gos_str_arg_len(s) };
         let cap = (n as usize).min(len);
         let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) };
         let end = match std::str::from_utf8(bytes) {
@@ -983,7 +995,7 @@ pub unsafe extern "C" fn gos_rt_str_as_bytes(s: *const c_char) -> *mut GosVec {
         let len = if s.is_null() {
             0
         } else {
-            unsafe { CStr::from_ptr(s).to_bytes().len() }
+            unsafe { gos_str_arg_len(s) }
         };
         let bytes = if len == 0 || s.is_null() {
             &[][..]
@@ -1007,7 +1019,7 @@ pub unsafe extern "C" fn gos_rt_str_chars(s: *const c_char) -> *mut GosVec {
         let st = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(s) }
         };
         // A UTF-8 string has at most one scalar per byte, so its byte length is
         // a safe capacity upper bound. Allocate once and discover the exact
@@ -1100,7 +1112,7 @@ pub unsafe extern "C" fn gos_rt_os_read_dir(path: *const c_char) -> *mut GosVec 
         let p = if path.is_null() {
             std::path::PathBuf::from(".")
         } else {
-            let encoded = unsafe { CStr::from_ptr(path).to_string_lossy() };
+            let encoded = unsafe { gos_str_arg_lossy(path) };
             super::args::decode_os_path(&encoded)
         };
         let entries: Vec<String> = match std::fs::read_dir(&p) {
@@ -1168,24 +1180,13 @@ pub unsafe extern "C" fn gos_rt_str_substring(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        // Cheap empty-checks that only touch the first byte. We still
-        // need `strlen` on the non-empty side(s) to size the new
-        // allocation, but writing into the destination directly via
-        // `alloc_cstring_from_slices` saves one intermediate `Vec`
-        // and the two `extend_from_slice` copies the previous body
-        // performed.
-        let a_empty = a.is_null() || unsafe { *a.cast::<u8>() } == 0;
-        let b_empty = b.is_null() || unsafe { *b.cast::<u8>() } == 0;
-        let a_bytes: &[u8] = if a_empty {
-            &[]
-        } else {
-            unsafe { gos_str_key_bytes(a) }
-        };
-        let b_bytes: &[u8] = if b_empty {
-            &[]
-        } else {
-            unsafe { gos_str_key_bytes(b) }
-        };
+        // Both operands are language `String` values, so their length comes
+        // from the header rather than a NUL scan: a string may contain
+        // interior NULs, and one that starts with a NUL is not empty.
+        // Writing into the destination directly sizes the allocation from
+        // the two lengths without an intermediate `Vec`.
+        let a_bytes: &[u8] = unsafe { gos_str_arg_bytes(a) };
+        let b_bytes: &[u8] = unsafe { gos_str_arg_bytes(b) };
         let force_heap = crate::c_abi::rc::in_region_arena(a.cast())
             || crate::c_abi::rc::in_region_arena(b.cast());
         alloc_growable_forced(
@@ -1217,25 +1218,20 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
     // FFI boundary - pointer arithmetic, memcpy, and a stack `write!` never
     // unwind; the only failure path (`alloc_growable` OOM) aborts.
     {
-        let a_empty = a.is_null() || unsafe { *a.cast::<u8>() } == 0;
-        let b_empty = b.is_null() || unsafe { *b.cast::<u8>() } == 0;
+        // Emptiness is a header length of zero. A `String` whose first byte
+        // is a NUL still has content to append.
+        let b_bytes: &[u8] = unsafe { typed_str_bytes(b) };
+        let len_b = b_bytes.len();
 
-        if b_empty {
+        if len_b == 0 {
             // Nothing new to append; return a as-is when it is already owned.
             if is_managed_string(a) {
                 return a.cast_mut();
             }
-            let a_bytes: &[u8] = if a_empty {
-                &[]
-            } else {
-                unsafe { gos_str_key_bytes(a) }
-            };
+            let a_bytes: &[u8] = unsafe { gos_str_arg_bytes(a) };
             let force_heap = crate::c_abi::rc::in_region_arena(a.cast());
             return alloc_growable_forced(&[a_bytes], 64.max(a_bytes.len()), force_heap);
         }
-
-        let b_bytes: &[u8] = unsafe { typed_str_bytes(b) };
-        let len_b = b_bytes.len();
 
         // Fast path: a is a known live heap builder - try in-place append.
         // Region/static pointers intentionally take the copying path: their
@@ -1277,11 +1273,7 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
         }
 
         // a is null, a literal, or a fixed heap string - allocate fresh growable.
-        let a_bytes: &[u8] = if a_empty {
-            &[]
-        } else {
-            unsafe { gos_str_key_bytes(a) }
-        };
+        let a_bytes: &[u8] = unsafe { gos_str_arg_bytes(a) };
         let new_len = a_bytes.len() + len_b;
         let new_cap = (new_len * 2).max(64);
         let force_heap = crate::c_abi::rc::in_region_arena(a.cast())
@@ -1298,7 +1290,7 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
 /// `acc`, and returns the result. The byte-counted counterpart of
 /// [`gos_rt_str_concat_drop_a`]: the caller supplies the fragment length
 /// (a compile-time constant for string-literal appends), so the hot path
-/// skips the `strlen` (`CStr::from_ptr`) that `concat_drop_a` pays per call.
+/// skips even the header read that `concat_drop_a` pays per call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_append_bytes(
     acc: *const c_char,
@@ -1344,12 +1336,7 @@ pub unsafe extern "C" fn gos_rt_str_append_bytes(
         return result;
     }
 
-    let a_empty = acc.is_null() || unsafe { *acc.cast::<u8>() } == 0;
-    let a_bytes: &[u8] = if a_empty {
-        &[]
-    } else {
-        unsafe { gos_str_key_bytes(acc) }
-    };
+    let a_bytes: &[u8] = unsafe { gos_str_arg_bytes(acc) };
     let force_heap =
         crate::c_abi::rc::in_region_arena(acc.cast()) || crate::c_abi::rc::in_region_arena(b);
     let result = alloc_growable_forced(
@@ -1436,7 +1423,7 @@ pub unsafe extern "C" fn gos_rt_str_trim(s: *const c_char) -> *mut c_char {
         let bytes = if s.is_null() {
             b"" as &[u8]
         } else {
-            unsafe { CStr::from_ptr(s).to_bytes() }
+            unsafe { gos_str_arg_bytes(s) }
         };
         let st = std::str::from_utf8(bytes).unwrap_or("");
         alloc_cstring(st.trim().as_bytes())
@@ -1451,7 +1438,7 @@ pub unsafe extern "C" fn gos_rt_str_trim_start(s: *const c_char) -> *mut c_char 
         let bytes = if s.is_null() {
             b"" as &[u8]
         } else {
-            unsafe { CStr::from_ptr(s).to_bytes() }
+            unsafe { gos_str_arg_bytes(s) }
         };
         let st = std::str::from_utf8(bytes).unwrap_or("");
         alloc_cstring(st.trim_start().as_bytes())
@@ -1466,7 +1453,7 @@ pub unsafe extern "C" fn gos_rt_str_trim_end(s: *const c_char) -> *mut c_char {
         let bytes = if s.is_null() {
             b"" as &[u8]
         } else {
-            unsafe { CStr::from_ptr(s).to_bytes() }
+            unsafe { gos_str_arg_bytes(s) }
         };
         let st = std::str::from_utf8(bytes).unwrap_or("");
         alloc_cstring(st.trim_end().as_bytes())
@@ -1479,7 +1466,7 @@ pub unsafe extern "C" fn gos_rt_str_to_upper(s: *const c_char) -> *mut c_char {
         let bytes = if s.is_null() {
             b"" as &[u8]
         } else {
-            unsafe { CStr::from_ptr(s).to_bytes() }
+            unsafe { gos_str_arg_bytes(s) }
         };
         if bytes.is_ascii() {
             return alloc_ascii_upper_cstring(bytes);
@@ -1495,7 +1482,7 @@ pub unsafe extern "C" fn gos_rt_str_to_lower(s: *const c_char) -> *mut c_char {
         let bytes = if s.is_null() {
             b"" as &[u8]
         } else {
-            unsafe { CStr::from_ptr(s).to_bytes() }
+            unsafe { gos_str_arg_bytes(s) }
         };
         let st = std::str::from_utf8(bytes).unwrap_or("");
         alloc_cstring(st.to_lowercase().as_bytes())
@@ -1508,8 +1495,8 @@ pub unsafe extern "C" fn gos_rt_str_contains(s: *const c_char, needle: *const c_
         if s.is_null() || needle.is_null() {
             return 0;
         }
-        let s = unsafe { CStr::from_ptr(s).to_bytes() };
-        let n = unsafe { CStr::from_ptr(needle).to_bytes() };
+        let s = unsafe { gos_str_arg_bytes(s) };
+        let n = unsafe { gos_str_arg_bytes(needle) };
         if n.is_empty() {
             return 1;
         }
@@ -1531,8 +1518,8 @@ pub unsafe extern "C" fn gos_rt_str_starts_with(s: *const c_char, prefix: *const
         if s.is_null() || prefix.is_null() {
             return 0;
         }
-        let s = unsafe { CStr::from_ptr(s).to_bytes() };
-        let p = unsafe { CStr::from_ptr(prefix).to_bytes() };
+        let s = unsafe { gos_str_arg_bytes(s) };
+        let p = unsafe { gos_str_arg_bytes(prefix) };
         i32::from(s.starts_with(p))
     })
 }
@@ -1543,8 +1530,8 @@ pub unsafe extern "C" fn gos_rt_str_ends_with(s: *const c_char, suffix: *const c
         if s.is_null() || suffix.is_null() {
             return 0;
         }
-        let s = unsafe { CStr::from_ptr(s).to_bytes() };
-        let suf = unsafe { CStr::from_ptr(suffix).to_bytes() };
+        let s = unsafe { gos_str_arg_bytes(s) };
+        let suf = unsafe { gos_str_arg_bytes(suffix) };
         i32::from(s.ends_with(suf))
     })
 }
@@ -1555,8 +1542,8 @@ pub unsafe extern "C" fn gos_rt_str_find(s: *const c_char, needle: *const c_char
         if s.is_null() || needle.is_null() {
             return -1;
         }
-        let s = unsafe { CStr::from_ptr(s).to_bytes() };
-        let n = unsafe { CStr::from_ptr(needle).to_bytes() };
+        let s = unsafe { gos_str_arg_bytes(s) };
+        let n = unsafe { gos_str_arg_bytes(needle) };
         if n.is_empty() {
             return 0;
         }
@@ -1600,7 +1587,7 @@ pub unsafe extern "C" fn gos_rt_str_to_i64_opt(s: *const c_char) -> i128 {
         if s.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
-        let text = unsafe { std::ffi::CStr::from_ptr(s) }.to_string_lossy();
+        let text = unsafe { gos_str_arg_lossy(s) };
         match text.parse::<i64>() {
             Ok(n) => unsafe { gos_rt_result_new(0, n) },
             Err(_) => unsafe { gos_rt_result_new(1, 0) },
@@ -1616,7 +1603,7 @@ pub unsafe extern "C" fn gos_rt_str_to_f64_opt(s: *const c_char) -> i128 {
         if s.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
-        let text = unsafe { std::ffi::CStr::from_ptr(s) }.to_string_lossy();
+        let text = unsafe { gos_str_arg_lossy(s) };
         match text.parse::<f64>() {
             Ok(f) => crate::c_abi::gos_rt_result_new_f64(0, f),
             Err(_) => unsafe { gos_rt_result_new(1, 0) },
@@ -1631,7 +1618,7 @@ pub unsafe extern "C" fn gos_rt_str_to_bool_opt(s: *const c_char) -> i128 {
         if s.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
-        let text = unsafe { std::ffi::CStr::from_ptr(s) }.to_string_lossy();
+        let text = unsafe { gos_str_arg_lossy(s) };
         match text.as_ref() {
             "true" => unsafe { gos_rt_result_new(0, 1) },
             "false" => unsafe { gos_rt_result_new(0, 0) },
@@ -1650,8 +1637,8 @@ pub unsafe extern "C" fn gos_rt_str_rfind_opt(s: *const c_char, needle: *const c
         if s.is_null() || needle.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
-        let hay = unsafe { CStr::from_ptr(s).to_bytes() };
-        let n = unsafe { CStr::from_ptr(needle).to_bytes() };
+        let hay = unsafe { gos_str_arg_bytes(s) };
+        let n = unsafe { gos_str_arg_bytes(needle) };
         if n.is_empty() {
             return unsafe { gos_rt_result_new(0, typed_str_char_len(s) as i64) };
         }
@@ -1674,17 +1661,7 @@ pub unsafe extern "C" fn gos_rt_str_rfind_opt(s: *const c_char, needle: *const c
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_eq(a: *const c_char, b: *const c_char) -> bool {
     ffi_entry!(false, {
-        let a = if a.is_null() {
-            ""
-        } else {
-            unsafe { CStr::from_ptr(a).to_str() }.unwrap_or("")
-        };
-        let b = if b.is_null() {
-            ""
-        } else {
-            unsafe { CStr::from_ptr(b).to_str() }.unwrap_or("")
-        };
-        a == b
+        unsafe { gos_str_arg_bytes(a) == gos_str_arg_bytes(b) }
     })
 }
 
@@ -1698,12 +1675,12 @@ pub unsafe extern "C" fn gos_rt_str_compare(a: *const c_char, b: *const c_char) 
         let a = if a.is_null() {
             b""
         } else {
-            unsafe { CStr::from_ptr(a).to_bytes() }
+            unsafe { gos_str_arg_bytes(a) }
         };
         let b = if b.is_null() {
             b""
         } else {
-            unsafe { CStr::from_ptr(b).to_bytes() }
+            unsafe { gos_str_arg_bytes(b) }
         };
         match a.cmp(b) {
             std::cmp::Ordering::Less => -1,
@@ -1723,17 +1700,17 @@ pub unsafe extern "C" fn gos_rt_str_replace(
         let s = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(s) }
         };
         let f = if from.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(from).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(from) }
         };
         let t = if to.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(to).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(to) }
         };
         alloc_cstring(s.replace(f, t).as_bytes())
     })
@@ -1750,8 +1727,8 @@ pub unsafe extern "C" fn gos_rt_str_split_once(s: *const c_char, sep: *const c_c
         if s.is_null() || sep.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
-        let s = unsafe { CStr::from_ptr(s).to_str().unwrap_or("") };
-        let sep = unsafe { CStr::from_ptr(sep).to_str().unwrap_or("") };
+        let s = unsafe { gos_str_arg_text(s) };
+        let sep = unsafe { gos_str_arg_text(sep) };
         if sep.is_empty() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
@@ -1781,8 +1758,8 @@ pub unsafe extern "C" fn gos_rt_str_rsplit_once(s: *const c_char, sep: *const c_
         if s.is_null() || sep.is_null() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
-        let s = unsafe { CStr::from_ptr(s).to_str().unwrap_or("") };
-        let sep = unsafe { CStr::from_ptr(sep).to_str().unwrap_or("") };
+        let s = unsafe { gos_str_arg_text(s) };
+        let sep = unsafe { gos_str_arg_text(sep) };
         if sep.is_empty() {
             return unsafe { gos_rt_result_new(1, 0) };
         }
@@ -1813,8 +1790,8 @@ pub unsafe extern "C" fn gos_rt_str_count(s: *const c_char, needle: *const c_cha
         if s.is_null() || needle.is_null() {
             return 0;
         }
-        let s = unsafe { CStr::from_ptr(s).to_str().unwrap_or("") };
-        let n = unsafe { CStr::from_ptr(needle).to_str().unwrap_or("") };
+        let s = unsafe { gos_str_arg_text(s) };
+        let n = unsafe { gos_str_arg_text(needle) };
         if n.is_empty() {
             return 0;
         }
@@ -1833,12 +1810,12 @@ pub unsafe extern "C" fn gos_rt_str_strip_chars(
         let s = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(s) }
         };
         let cutset = if cutset.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(cutset).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(cutset) }
         };
         if cutset.is_empty() {
             return alloc_cstring(s.as_bytes());
@@ -1857,12 +1834,12 @@ pub unsafe extern "C" fn gos_rt_str_lstrip_chars(
         let s = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(s) }
         };
         let cutset = if cutset.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(cutset).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(cutset) }
         };
         if cutset.is_empty() {
             return alloc_cstring(s.as_bytes());
@@ -1881,12 +1858,12 @@ pub unsafe extern "C" fn gos_rt_str_rstrip_chars(
         let s = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(s) }
         };
         let cutset = if cutset.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(cutset).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(cutset) }
         };
         if cutset.is_empty() {
             return alloc_cstring(s.as_bytes());
@@ -1904,7 +1881,7 @@ pub unsafe extern "C" fn gos_rt_str_zfill(s: *const c_char, width: i64) -> *mut 
         let s = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(s) }
         };
         if width < 0 {
             unsafe { gos_rt_panic(c"strings::center: width must be non-negative".as_ptr()) };
@@ -1938,7 +1915,7 @@ pub unsafe extern "C" fn gos_rt_str_center(
         let s = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(s) }
         };
         if width <= 0 {
             return alloc_cstring(s.as_bytes());
@@ -2015,12 +1992,12 @@ pub unsafe extern "C" fn gos_rt_str_split(s: *const c_char, sep: *const c_char) 
         let s = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(s) }
         };
         let sep = if sep.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(sep).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(sep) }
         };
         let parts: Vec<*mut c_char> = s.split(sep).map(|p| alloc_cstring(p.as_bytes())).collect();
         // STRING-typed: the vec owns the pieces, so `gos_rt_vec_free`
@@ -2059,7 +2036,7 @@ pub unsafe extern "C" fn gos_rt_strings_join(
         let sep_str = if sep.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(sep).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(sep) }
         };
         let len = vec.len.max(0) as usize;
         let mut out = String::new();
@@ -2073,7 +2050,7 @@ pub unsafe extern "C" fn gos_rt_strings_join(
             // packing).
             let elem_ptr = unsafe { (p as *const i64).read_unaligned() } as *const c_char;
             if !elem_ptr.is_null() {
-                let s = unsafe { CStr::from_ptr(elem_ptr).to_str().unwrap_or("") };
+                let s = unsafe { gos_str_arg_text(elem_ptr) };
                 out.push_str(s);
             }
         }
@@ -2104,7 +2081,7 @@ pub unsafe extern "C" fn gos_rt_vec_join_i64(v: *const GosVec, sep: *const c_cha
         let sep_str = if sep.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(sep).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(sep) }
         };
         let len = vec.len.max(0) as usize;
         let mut out = String::new();
@@ -2130,7 +2107,7 @@ pub unsafe extern "C" fn gos_rt_vec_join_f64(v: *const GosVec, sep: *const c_cha
         let sep_str = if sep.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(sep).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(sep) }
         };
         let len = vec.len.max(0) as usize;
         let mut out = String::new();
@@ -2157,7 +2134,7 @@ pub unsafe extern "C" fn gos_rt_vec_join_bool(v: *const GosVec, sep: *const c_ch
         let sep_str = if sep.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(sep).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(sep) }
         };
         let len = vec.len.max(0) as usize;
         let mut out = String::new();
@@ -2183,7 +2160,7 @@ pub unsafe extern "C" fn gos_rt_vec_join_char(v: *const GosVec, sep: *const c_ch
         let sep_str = if sep.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(sep).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(sep) }
         };
         let len = vec.len.max(0) as usize;
         let mut out = String::new();
@@ -2208,7 +2185,7 @@ pub unsafe extern "C" fn gos_rt_str_lines(s: *const c_char) -> *mut GosVec {
         let s = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(s) }
         };
         let parts: Vec<*mut c_char> = s.lines().map(|l| alloc_cstring(l.as_bytes())).collect();
         // STRING-typed - same ownership contract as `gos_rt_str_split`.
@@ -2264,7 +2241,7 @@ pub unsafe extern "C" fn gos_rt_str_repeat(s: *const c_char, n: i64) -> *mut c_c
         let s = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(s) }
         };
         if n < 0 {
             unsafe { gos_rt_panic(c"strings::repeat: count must be non-negative".as_ptr()) };
@@ -2286,7 +2263,7 @@ pub unsafe extern "C" fn gos_rt_parse_i64(s: *const c_char, ok_out: *mut i32) ->
             }
             return 0;
         }
-        let text = unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }.trim();
+        let text = unsafe { gos_str_arg_text(s) }.trim();
         if let Ok(n) = text.parse::<i64>() {
             if !ok_out.is_null() {
                 unsafe { *ok_out = 1 };
@@ -2312,7 +2289,7 @@ pub unsafe extern "C" fn gos_rt_parse_i64_result(s: *const c_char) -> i128 {
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
-        let text = unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }.trim();
+        let text = unsafe { gos_str_arg_text(s) }.trim();
         if let Ok(n) = text.parse::<i64>() {
             unsafe { gos_rt_result_new(0, n) }
         } else {
@@ -2544,7 +2521,7 @@ pub unsafe extern "C" fn gos_rt_flag_parse(decls: *mut GosVec) -> *mut GosFlagMa
                 let name = if name_cs.is_null() {
                     String::new()
                 } else {
-                    unsafe { CStr::from_ptr(name_cs).to_string_lossy().into_owned() }
+                    unsafe { gos_str_arg_string(name_cs) }
                 };
                 let short = u32::try_from(short_raw).ok().and_then(char::from_u32);
                 let kind = match kind_tag {
@@ -2554,7 +2531,7 @@ pub unsafe extern "C" fn gos_rt_flag_parse(decls: *mut GosVec) -> *mut GosFlagMa
                     _ => FlagKind::String,
                 };
                 let str_val = if matches!(kind, FlagKind::String) && !str_cs.is_null() {
-                    Some(unsafe { CStr::from_ptr(str_cs).to_bytes().to_vec() })
+                    Some(unsafe { gos_str_arg_bytes(str_cs) }.to_vec())
                 } else {
                     None
                 };
@@ -2581,6 +2558,7 @@ pub unsafe extern "C" fn gos_rt_flag_parse(decls: *mut GosVec) -> *mut GosFlagMa
 
 /// Parse `argv`/`argc` into positional strings, applying flag values
 /// to `entries` in place.
+/// HOST-CSTRING: every read below is of a libc-owned `argv` entry.
 fn parse_argv_flag_values(entries: &mut [GosFlagMapEntry], argv: usize, argc: i64) -> Vec<String> {
     let argv = argv as *const *const c_char;
     let mut idx: i64 = 0;
@@ -2694,7 +2672,7 @@ pub unsafe extern "C" fn gos_rt_flag_map_get(map: *const GosFlagMap, key: *const
             return unsafe { gos_rt_result_new(1, 0) };
         }
         let m = unsafe { &*map };
-        let k = unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() };
+        let k = unsafe { gos_str_arg_string(key) };
         if let Some(entry) = m.entries.iter().find(|e| e.name == k) {
             let payload = match entry.kind {
                 FlagKind::String | FlagKind::StringList => {
@@ -2784,7 +2762,7 @@ pub unsafe extern "C" fn gos_rt_time_parse_rfc3339(s: *const c_char) -> i128 {
         if s.is_null() {
             return err();
         }
-        let text = unsafe { CStr::from_ptr(s).to_str().unwrap_or("") };
+        let text = unsafe { gos_str_arg_text(s) };
         match parse_rfc3339_ms(text) {
             Some(ms) => unsafe { gos_rt_result_new(0, ms) },
             None => err(),
@@ -2950,7 +2928,7 @@ pub unsafe extern "C" fn gos_rt_parse_f64(s: *const c_char, ok_out: *mut i32) ->
             }
             return 0.0;
         }
-        let text = unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }.trim();
+        let text = unsafe { gos_str_arg_text(s) }.trim();
         if let Ok(x) = text.parse::<f64>() {
             if !ok_out.is_null() {
                 unsafe { *ok_out = 1 };
@@ -3041,11 +3019,7 @@ pub unsafe extern "C" fn gos_rt_char_to_str(c: i32) -> *mut c_char {
 // produce identical output.
 
 unsafe fn cstr<'a>(p: *const c_char) -> &'a str {
-    if p.is_null() {
-        ""
-    } else {
-        unsafe { CStr::from_ptr(p).to_str().unwrap_or("") }
-    }
+    unsafe { typed_str_text(p) }
 }
 
 /// Builds a `*mut GosVec` of c-string pointers from owned strings.
@@ -3248,7 +3222,7 @@ pub unsafe extern "C" fn gos_rt_fmt_pad(
         let text = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { gos_str_arg_text(s) }
         };
         if width < 0 {
             unsafe { gos_rt_panic(c"__fmt_pad: width must be non-negative".as_ptr()) };

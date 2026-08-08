@@ -15,7 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::*;
@@ -31,8 +30,10 @@ fn netip_parse_ip(s: *const c_char) -> Option<std::net::IpAddr> {
     if s.is_null() {
         return None;
     }
-    let s = unsafe { CStr::from_ptr(s).to_str().ok()? };
-    s.parse().ok()
+    std::str::from_utf8(unsafe { crate::c_abi::gos_str_arg_bytes(s) })
+        .ok()?
+        .parse()
+        .ok()
 }
 
 #[unsafe(no_mangle)]
@@ -104,7 +105,7 @@ pub unsafe extern "C" fn gos_rt_netip_host_of(s: *const c_char) -> *mut c_char {
         if s.is_null() {
             return alloc_cstring(b"");
         }
-        let s_str = unsafe { CStr::from_ptr(s).to_str().unwrap_or("") };
+        let s_str = unsafe { crate::c_abi::gos_str_arg_text(s) };
         let out = match s_str.parse::<std::net::SocketAddr>() {
             Ok(a) => a.ip().to_string(),
             Err(_) => String::new(),
@@ -119,7 +120,7 @@ pub unsafe extern "C" fn gos_rt_netip_port_of(s: *const c_char) -> i64 {
         if s.is_null() {
             return -1;
         }
-        let s_str = unsafe { CStr::from_ptr(s).to_str().unwrap_or("") };
+        let s_str = unsafe { crate::c_abi::gos_str_arg_text(s) };
         match s_str.parse::<std::net::SocketAddr>() {
             Ok(a) => i64::from(a.port()),
             Err(_) => -1,
@@ -136,7 +137,7 @@ pub unsafe extern "C" fn gos_rt_netip_join_addr_port(
         if host.is_null() {
             return alloc_cstring(b"");
         }
-        let h = unsafe { CStr::from_ptr(host).to_str().unwrap_or("") };
+        let h = unsafe { crate::c_abi::gos_str_arg_text(host) };
         let out = match (h.parse::<std::net::IpAddr>(), u16::try_from(port)) {
             (Ok(ip), Ok(p)) => std::net::SocketAddr::new(ip, p).to_string(),
             _ => String::new(),

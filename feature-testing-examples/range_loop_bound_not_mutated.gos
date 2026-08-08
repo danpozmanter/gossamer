@@ -1,0 +1,35 @@
+// A `for` over a variable-bound range owns its counter: the loop must not
+// advance the binding that supplied its start, or a second entry to the loop
+// starts past the end and the body never runs.
+
+fn main() {
+    let lo = 0
+    let hi = 2
+    for x in lo..=hi {
+        let _ = x
+    }
+    println!("bounds {} {}", lo, hi)
+
+    // Re-entering the inner loop from an enclosing loop must reset it.
+    for y in 0..2 {
+        let mut n = 0
+        for x in lo..=hi {
+            let _ = x
+            n += 1
+        }
+        println!("y={} n={}", y, n)
+    }
+
+    // The same holds under a reversed outer range and an exclusive inner one.
+    let a = -1
+    let b = 0
+    for y in (a..=b).rev() {
+        let mut n = 0
+        for x in lo..hi {
+            let _ = x
+            n += 1
+        }
+        println!("rev y={} n={}", y, n)
+    }
+    println!("bounds still {} {} {} {}", lo, hi, a, b)
+}

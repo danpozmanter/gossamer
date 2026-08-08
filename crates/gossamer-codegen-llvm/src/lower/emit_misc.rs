@@ -325,31 +325,13 @@ impl<'a> Lowerer<'a> {
                     let widened = self.widen_char_to_i32(arg, &value);
                     writeln!(self.out, "  call void @gos_rt_print_char(i32 {widened})").unwrap();
                 }
-                kind @ (ConcatKind::VecI64
-                | ConcatKind::VecF64
-                | ConcatKind::VecBool
-                | ConcatKind::VecString
-                | ConcatKind::VecVecI64
-                | ConcatKind::VecVecString
-                | ConcatKind::ArrI64(_)
-                | ConcatKind::ArrF64(_)
-                | ConcatKind::ArrBool(_)
-                | ConcatKind::ArrString(_)
-                | ConcatKind::ArrArrI64(_, _)
-                | ConcatKind::ArrArrF64(_, _)
-                | ConcatKind::ArrArrBool(_, _)
-                | ConcatKind::JsonValue
-                | ConcatKind::ErrorMessage
-                | ConcatKind::Tuple
-                | ConcatKind::Option(_)
-                | ConcatKind::Result(_, _)
-                | ConcatKind::Map
-                | ConcatKind::SetI64(_)
-                | ConcatKind::SetString(_)) => {
+                ConcatKind::Unsupported => unreachable!("checked above"),
+                // Every remaining kind is an aggregate its runtime
+                // formatter renders to a c-string.
+                kind => {
                     let str_ptr = self.emit_concat_aggregate(arg, kind, &value)?;
                     writeln!(self.out, "  call void @gos_rt_print_str(ptr {str_ptr})").unwrap();
                 }
-                ConcatKind::Unsupported => unreachable!("checked above"),
             }
         }
         Ok(())
@@ -509,7 +491,7 @@ impl<'a> Lowerer<'a> {
                 arg_text.push_str(", ");
             }
             let want = expected_param_tys.get(i).copied().flatten();
-            let (a_v, mut a_ty) = self.lower_call_arg(arg, want)?;
+            let (a_v, mut a_ty) = self.lower_call_arg(arg, want, symbol)?;
             if result_new_heap_copy
                 && i == 1
                 && let Some(heap_v) = self

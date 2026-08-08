@@ -22,7 +22,6 @@
 //! where the node round-trips straight back into `encode`.
 
 use std::collections::BTreeMap;
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use quick_xml::Reader;
@@ -64,13 +63,9 @@ pub struct GosXml {
 }
 
 fn cstr_to_str<'a>(s: *const c_char) -> &'a str {
-    if s.is_null() {
-        return "";
-    }
-    // SAFETY: callers pass a null-terminated c-string (Gossamer
-    // `String` ABI); non-UTF-8 falls back to the empty string.
-    let bytes = unsafe { CStr::from_ptr(s).to_bytes() };
-    std::str::from_utf8(bytes).unwrap_or("")
+    // SAFETY: callers pass a Gossamer `String`, read through its length
+    // header so interior NUL bytes survive; non-UTF-8 falls back to empty.
+    unsafe { crate::c_abi::gos_str_arg_text(s) }
 }
 
 fn err_result(msg: &str) -> i128 {

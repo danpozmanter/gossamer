@@ -1,11 +1,10 @@
-//! Positive-form silent-fallback gate.
+//! Positive-form silent-stub gate.
 //!
-//! `llvm_release_lowers_every_example_without_fallback` (in
-//! `tier_parity.rs`) catches a body that *errored* during
-//! lowering - it asserts no per-fn fallback fired. That gate
-//! is necessary but not sufficient: a body can also be lowered
-//! to an empty stub that compiles cleanly, links, and runs but
-//! computes the wrong answer. The fallback gate sees nothing;
+//! `llvm_strict_lower_group_N` (in `tier_parity.rs`) catches a body
+//! that *errored* during lowering - an LLVM lowering gap fails the
+//! build. That gate is necessary but not sufficient: a body can also
+//! be lowered to an empty stub that compiles cleanly, links, and runs
+//! but computes the wrong answer. The strict gate sees nothing;
 //! tier-parity only catches it if the wrong answer differs from
 //! the other tiers.
 //!
@@ -49,11 +48,10 @@ fn rand_suffix() -> u64 {
         .map_or(0, |d| d.as_nanos() as u64)
 }
 
-/// Build `source` in release mode with `GOS_LLVM_DUMP=1` and
-/// `GOSSAMER_FAIL_ON_LLVM_FALLBACK=1`, return the `unit.ll` IR
-/// string and the produced binary path. A body that trips a backend
-/// lowering bug fails the build. Together with the per-fn `define`
-/// check below this gives both shape-positive and shape-negative
+/// Build `source` in release mode with `GOS_LLVM_DUMP=1` and return the
+/// `unit.ll` IR string plus the produced binary path. A body that trips a
+/// backend lowering gap fails the build outright. Together with the per-fn
+/// `define` check below this gives both shape-positive and shape-negative
 /// coverage.
 fn build_and_capture_ir(source: &str, tag: &str) -> (String, PathBuf) {
     let dir = fresh_dir(tag);
@@ -61,7 +59,6 @@ fn build_and_capture_ir(source: &str, tag: &str) -> (String, PathBuf) {
     std::fs::write(&src, source).expect("write source");
     let mut cmd = Command::new(gos_bin());
     cmd.env("GOS_LLVM_DUMP", "1")
-        .env("GOSSAMER_FAIL_ON_LLVM_FALLBACK", "1")
         .arg("build")
         .arg("--release")
         .arg("--out-dir")

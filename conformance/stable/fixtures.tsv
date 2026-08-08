@@ -9,3 +9,9 @@ callbacks.gos	callbacks.out
 channel_roundtrip.gos	channel_roundtrip.out
 result_propagation.gos	result_propagation.out
 lazy_iterators.gos	lazy_iterators.out	2027
+float_iterators.gos	float_iterators.out
+aggregate_iterators.gos	aggregate_iterators.out
+struct_keyed_maps.gos	struct_keyed_maps.out
+debug_nested.gos	debug_nested.out
+embedded_nul_strings.gos	embedded_nul_strings.out
+weak_references.gos	weak_references.out

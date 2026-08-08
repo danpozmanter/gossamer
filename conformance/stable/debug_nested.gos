@@ -1,0 +1,43 @@
+// `{:?}` over nested shapes. Each layer renders through its own runtime
+// decoder, so a struct inside a struct, every enum variant form, nested and
+// mixed-type tuples, and sequences all have to agree with the bytecode VM's
+// formatter down to the punctuation.
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+#[derive(Debug)]
+struct Tagged {
+    label: String,
+    point: Point,
+}
+
+enum Shape {
+    Dot,
+    Line(i64, i64),
+    Box { w: i64, h: i64 },
+}
+
+fn main() {
+    println!("{:?}", Tagged { label: "a", point: Point { x: 1, y: 2 } })
+    println!("{:?}", Point { x: -3, y: 0 })
+
+    println!("{:?}", Shape::Dot)
+    println!("{:?}", Shape::Line(3, 4))
+    println!("{:?}", Shape::Box { w: 5, h: 6 })
+
+    println!("{:?}", (1, "two", 3.5))
+    println!("{:?}", ((1, 2), (3, 4)))
+    println!("{:?}", (true, 'z', -7))
+
+    println!("{:?}", #[1, 2, 3])
+    println!("{:?}", #["a", "b"])
+    println!("{:?}", #[1.5, 2.5])
+
+    let ok: Result<i64, String> = Ok(9)
+    let err: Result<i64, String> = Err("nope")
+    println!("{:?} {:?} {:?}", ok, err, Some("text"))
+    println!("{}", format!("{:?}|{:?}|{:?}", Shape::Box { w: 1, h: 2 }, (5, 6), Tagged { label: "c", point: Point { x: 8, y: 9 } }))
+}

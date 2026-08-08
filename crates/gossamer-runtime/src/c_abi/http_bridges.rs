@@ -15,7 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::*;
@@ -131,17 +130,12 @@ pub unsafe extern "C" fn gos_rt_router_add(
         let m = if method.is_null() {
             String::new()
         } else {
-            unsafe {
-                CStr::from_ptr(method)
-                    .to_string_lossy()
-                    .into_owned()
-                    .to_ascii_uppercase()
-            }
+            unsafe { crate::c_abi::gos_str_arg_string(method) }.to_ascii_uppercase()
         };
         let pat = if pattern.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(pattern).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(pattern) }
         };
         let segments = parse_route_pattern(&pat);
         super::fn_registry::register(fn_addr as usize, super::fn_registry::FnKind::HttpHandlerEnv);
@@ -173,17 +167,12 @@ pub unsafe extern "C" fn gos_rt_router_add_pattern(
         let m = if method.is_null() {
             String::new()
         } else {
-            unsafe {
-                CStr::from_ptr(method)
-                    .to_string_lossy()
-                    .into_owned()
-                    .to_ascii_uppercase()
-            }
+            unsafe { crate::c_abi::gos_str_arg_string(method) }.to_ascii_uppercase()
         };
         let pat = if pattern.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(pattern).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(pattern) }
         };
         let segments = parse_route_pattern(&pat);
         r.routes.push(GosRoute {
@@ -214,17 +203,12 @@ pub unsafe extern "C" fn gos_rt_router_lookup(
         let m = if method.is_null() {
             String::new()
         } else {
-            unsafe {
-                CStr::from_ptr(method)
-                    .to_string_lossy()
-                    .into_owned()
-                    .to_ascii_uppercase()
-            }
+            unsafe { crate::c_abi::gos_str_arg_string(method) }.to_ascii_uppercase()
         };
         let p = if path.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(path) }
         };
         for (i, route) in r.routes.iter().enumerate() {
             if (route.method.is_empty() || route.method == m)
@@ -253,17 +237,12 @@ unsafe fn router_add_bare(
     let m = if method.is_null() {
         String::new()
     } else {
-        unsafe {
-            CStr::from_ptr(method)
-                .to_string_lossy()
-                .into_owned()
-                .to_ascii_uppercase()
-        }
+        unsafe { crate::c_abi::gos_str_arg_string(method) }.to_ascii_uppercase()
     };
     let pat = if pattern.is_null() {
         String::new()
     } else {
-        unsafe { CStr::from_ptr(pattern).to_string_lossy().into_owned() }
+        unsafe { crate::c_abi::gos_str_arg_string(pattern) }
     };
     let segments = parse_route_pattern(&pat);
     super::fn_registry::register(
@@ -760,12 +739,12 @@ pub unsafe extern "C" fn gos_rt_file_server_new(
         let root_s = if root.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(root).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(root) }
         };
         let prefix_s = if prefix.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(prefix).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(prefix) }
         };
         Box::into_raw(Box::new(GosFileServer {
             root: root_s,
@@ -890,7 +869,7 @@ pub unsafe extern "C" fn gos_rt_static_serve_file(path: *const c_char) -> i128 {
         let path_s = if path.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(path) }
         };
         match std::fs::read(&path_s) {
             Ok(bytes) => {
@@ -982,7 +961,7 @@ pub unsafe extern "C" fn gos_rt_proxy_new(upstream: *const c_char) -> *mut GosPr
         let u = if upstream.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(upstream).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(upstream) }
         };
         Box::into_raw(Box::new(GosProxy { upstream: u }))
     })
@@ -1022,7 +1001,7 @@ pub unsafe extern "C" fn gos_rt_ws_frame_text(payload: *const c_char) -> *mut c_
         if payload.is_null() {
             return alloc_cstring(b"");
         }
-        let bytes = unsafe { CStr::from_ptr(payload).to_bytes() };
+        let bytes = unsafe { crate::c_abi::gos_str_arg_bytes(payload) };
         let mut out: Vec<u8> = Vec::with_capacity(bytes.len() + 14);
         out.push(0x81); // FIN + text opcode
         let len = bytes.len();
@@ -1057,7 +1036,7 @@ pub unsafe extern "C" fn gos_rt_chunked_encode(data: *const c_char) -> *mut c_ch
         if data.is_null() {
             return alloc_cstring(b"");
         }
-        let bytes = unsafe { CStr::from_ptr(data).to_bytes() };
+        let bytes = unsafe { crate::c_abi::gos_str_arg_bytes(data) };
         let out = format!("{:x}\r\n", bytes.len());
         let mut buf: Vec<u8> = Vec::with_capacity(bytes.len() + out.len() + 7);
         buf.extend_from_slice(out.as_bytes());
@@ -1075,7 +1054,7 @@ pub unsafe extern "C" fn gos_rt_chunked_decode(data: *const c_char) -> *mut c_ch
         if data.is_null() {
             return alloc_cstring(b"");
         }
-        let bytes = unsafe { CStr::from_ptr(data).to_bytes() };
+        let bytes = unsafe { crate::c_abi::gos_str_arg_bytes(data) };
         let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
         let mut i = 0usize;
         while i < bytes.len() {
@@ -1128,17 +1107,17 @@ pub unsafe extern "C" fn gos_rt_sse_encode_event(
         let n = if name.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(name) }
         };
         let d = if data.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(data).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(data) }
         };
         let id_s = if id.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(id).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(id) }
         };
         let mut out = String::new();
         if !id_s.is_empty() {
@@ -1168,7 +1147,7 @@ pub unsafe extern "C" fn gos_rt_sse_encode_comment(text: *const c_char) -> *mut 
         let t = if text.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(text).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(text) }
         };
         alloc_cstring(format!(": {t}\n\n").as_bytes())
     })
@@ -1205,7 +1184,7 @@ pub unsafe extern "C" fn gos_rt_mw_accepts_gzip(header: *const c_char) -> i32 {
         if header.is_null() {
             return 0;
         }
-        let h = unsafe { CStr::from_ptr(header).to_string_lossy() };
+        let h = unsafe { crate::c_abi::gos_str_arg_lossy(header) };
         let accepts = h
             .split(',')
             .any(|tok| tok.trim().eq_ignore_ascii_case("gzip"));
@@ -1222,7 +1201,7 @@ pub unsafe extern "C" fn gos_rt_ws_accept_key(client_key: *const c_char) -> *mut
         if client_key.is_null() {
             return alloc_cstring(b"");
         }
-        let k = unsafe { CStr::from_ptr(client_key).to_bytes() };
+        let k = unsafe { crate::c_abi::gos_str_arg_bytes(client_key) };
         let mut input: Vec<u8> = Vec::with_capacity(k.len() + WS_GUID.len());
         input.extend_from_slice(k);
         input.extend_from_slice(WS_GUID);
@@ -1239,7 +1218,7 @@ pub unsafe extern "C" fn gos_rt_static_mime_for_path(path: *const c_char) -> *mu
         if path.is_null() {
             return alloc_cstring(b"application/octet-stream");
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         let ext = std::path::Path::new(&p)
             .extension()
             .and_then(|e| e.to_str())

@@ -36,10 +36,7 @@ unsafe fn vec_u8(v: *const super::vec::GosVec) -> Vec<u8> {
 }
 
 unsafe fn cstr_bytes<'a>(s: *const c_char) -> &'a [u8] {
-    if s.is_null() {
-        return b"";
-    }
-    unsafe { std::ffi::CStr::from_ptr(s) }.to_bytes()
+    unsafe { crate::c_abi::gos_str_arg_bytes(s) }
 }
 
 // ---------------------------------------------------------------

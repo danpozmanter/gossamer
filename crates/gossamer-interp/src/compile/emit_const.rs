@@ -23,10 +23,60 @@ impl<'tcx> FnBuilder<'tcx> {
         idx
     }
 
-    pub(crate) fn emit(&mut self, op: Op) -> InstrIdx {
+    /// Appends `op` verbatim, outside the capture-cell bracketing. Used
+    /// by the cell traffic itself and by the ops that install a cell.
+    pub(crate) fn push_instr(&mut self, op: Op) -> InstrIdx {
         let idx = u32::try_from(self.instrs.len()).expect("instruction overflow");
         self.instrs.push(op);
         self.instruction_locations.push(None);
+        idx
+    }
+
+    /// Appends `op`, preceded and followed by the capture-cell traffic
+    /// every binding it names requires. Returns the index of `op`
+    /// itself, so a jump emitted here is still patched through its own
+    /// slot and a label taken beforehand still names the whole sequence.
+    pub(crate) fn emit(&mut self, op: Op) -> InstrIdx {
+        if self.capture_cells.is_empty() {
+            return self.push_instr(op);
+        }
+        self.emit_through_capture_cells(op)
+    }
+
+    fn emit_through_capture_cells(&mut self, op: Op) -> InstrIdx {
+        let effects = crate::validate::register_effects(
+            op,
+            &self.closure_protos,
+            &self.select_arms,
+            &self.wide_ops,
+        );
+        let mut loads: Vec<Op> = Vec::new();
+        let mut stores: Vec<Op> = Vec::new();
+        for &(home, cell) in &self.capture_cells {
+            let reads = effects.v_reads.contains(&home);
+            let writes = effects.v_writes.contains(&home);
+            match (reads, writes) {
+                (false, false) => {}
+                (false, true) => stores.push(Op::CaptureCellSet { cell, src: home }),
+                (true, _) if reads_capture_binding_by_value(op, home) => {
+                    loads.push(Op::CaptureCellGet { dst: home, cell });
+                    if writes {
+                        stores.push(Op::CaptureCellSet { cell, src: home });
+                    }
+                }
+                (true, _) => {
+                    loads.push(Op::CaptureCellTake { dst: home, cell });
+                    stores.push(Op::CaptureCellSet { cell, src: home });
+                }
+            }
+        }
+        for load in loads {
+            self.push_instr(load);
+        }
+        let idx = self.push_instr(op);
+        for store in stores {
+            self.push_instr(store);
+        }
         idx
     }
 
@@ -99,5 +149,37 @@ impl<'tcx> FnBuilder<'tcx> {
         self.globals.push(name.into());
         self.global_cache.insert(name.to_string(), idx);
         idx
+    }
+}
+
+/// `true` when `op` reads the capture-cell binding in register `home`
+/// only as a plain value it hands on - a call or goroutine argument, a
+/// returned value, a branch operand. Such an instruction leaves the cell
+/// populated, so a closure reached from inside it still observes the
+/// binding. Every other instruction borrows the binding exclusively for
+/// its own duration: the value moves into the home register so an
+/// in-place mutation keeps its refcount at one, and the paired store
+/// returns it.
+fn reads_capture_binding_by_value(op: Op, home: Reg) -> bool {
+    match op {
+        Op::Call { .. }
+        | Op::CallGlobal { .. }
+        | Op::Spawn { .. }
+        | Op::SpawnMethod { .. }
+        | Op::MakeClosure { .. }
+        | Op::Select { .. }
+        | Op::Return { .. }
+        | Op::Jump { .. }
+        | Op::BranchIf { .. }
+        | Op::BranchIfNot { .. }
+        | Op::BranchIfLtI64 { .. }
+        | Op::BranchIfGeI64 { .. }
+        | Op::BranchIfGtI64 { .. }
+        | Op::BranchIfLtF64 { .. }
+        | Op::BranchIfGeF64 { .. }
+        | Op::IncJumpIfLtI64 { .. }
+        | Op::IncJumpIfLeI64 { .. } => true,
+        Op::MethodCall { receiver, .. } => receiver != home,
+        _ => false,
     }
 }

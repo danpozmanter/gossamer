@@ -506,8 +506,8 @@ fn use_brace_group_accepts_nested_groups() {
 #[test]
 fn pipe_direct_argument_placeholder_parses_and_desugars() {
     let source = "use std::strings\nfn main() {\n\
-        let greeting = \"world\" |> format!(\"hello, {}\", _)\n\
-        let part = \"world\" |> strings::slice(_, 1, 4)\n\
+        let greeting = \"world\" |> format!(\"hello, {}\", $)\n\
+        let part = \"world\" |> strings::slice($, 1, 4)\n\
     }\n";
     let mut map = SourceMap::new();
     let file = map.add_file("pipe_args.gos", source.to_string());
@@ -521,8 +521,8 @@ fn pipe_direct_argument_placeholder_parses_and_desugars() {
 #[test]
 fn pipe_rejects_multiple_direct_argument_placeholders() {
     let source = "fn main() {\n\
-        let _ = 1 |> pair(_, _)\n\
-        let _ = 1 |> outer(inner(_))\n\
+        let _ = 1 |> pair($, $)\n\
+        let _ = 1 |> outer(inner($))\n\
     }\n";
     let mut map = SourceMap::new();
     let file = map.add_file("pipe_many_args.gos", source.to_string());
@@ -537,7 +537,7 @@ fn pipe_rejects_multiple_direct_argument_placeholders() {
 
 #[test]
 fn pipe_accepts_dotdot_as_range_argument() {
-    let source = "fn main() { let _ = [1, 2] |> iter::zip(..) |> _.collect() }\n";
+    let source = "fn main() { let _ = [1, 2] |> iter::zip(..) |> $.collect() }\n";
     let mut map = SourceMap::new();
     let file = map.add_file("pipe_dotdot.gos", source.to_string());
     let (_sf, diags) = parse_source_file(source, file);
@@ -617,7 +617,7 @@ fn format_macro_family_requires_literal_templates() {
 fn pipes_require_an_explicit_format_macro_placeholder() {
     let source = "fn main() {\n\
         let value = \"world\"\n\
-        value |> println!(\"hello, {}\", _)\n\
+        value |> println!(\"hello, {}\", $)\n\
     }\n";
     let mut map = SourceMap::new();
     let file = map.add_file("pipe_format_placeholder.gos", source.to_string());
@@ -803,4 +803,44 @@ fn newline_separates_break_match_arm_without_comma() {
         diags.is_empty(),
         "newline must terminate a valueless break arm: {diags:?}"
     );
+}
+
+#[test]
+fn assoc_type_binding_parses_into_the_bound() {
+    let source = "trait Holder { type Item }\nfn f<T: Holder<Item = i64>>(x: &T) -> i64 { 1 }\n";
+    let mut map = SourceMap::new();
+    let file = map.add_file("assoc_binding.gos", source.to_string());
+    let (sf, diags) = parse_source_file(source, file);
+    assert!(diags.is_empty(), "diagnostics: {diags:?}");
+    let ItemKind::Fn(decl) = &sf.items[1].kind else {
+        panic!("expected a function item");
+    };
+    let gossamer_ast::GenericParam::Type { bounds, .. } = &decl.generics.params[0] else {
+        panic!("expected a type parameter");
+    };
+    assert_eq!(bounds[0].trait_name(), Some("Holder"));
+    assert!(
+        bounds[0].path.segments[0].generics.is_empty(),
+        "the constraint must not land in the ordinary argument list"
+    );
+    assert_eq!(bounds[0].bindings.len(), 1);
+    assert_eq!(bounds[0].bindings[0].name.name, "Item");
+}
+
+#[test]
+fn assoc_type_binding_coexists_with_a_type_argument() {
+    let source = "trait Pair<A> { type Item }\nfn f<T: Pair<i64, Item = String>>(x: &T) {}\n";
+    let mut map = SourceMap::new();
+    let file = map.add_file("assoc_binding_mixed.gos", source.to_string());
+    let (sf, diags) = parse_source_file(source, file);
+    assert!(diags.is_empty(), "diagnostics: {diags:?}");
+    let ItemKind::Fn(decl) = &sf.items[1].kind else {
+        panic!("expected a function item");
+    };
+    let gossamer_ast::GenericParam::Type { bounds, .. } = &decl.generics.params[0] else {
+        panic!("expected a type parameter");
+    };
+    assert_eq!(bounds[0].path.segments[0].generics.len(), 1);
+    assert_eq!(bounds[0].bindings.len(), 1);
+    assert_eq!(bounds[0].bindings[0].name.name, "Item");
 }

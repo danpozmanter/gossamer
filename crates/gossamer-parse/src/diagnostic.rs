@@ -75,11 +75,14 @@ pub enum ParseError {
     PipeRhsInvalid,
     /// A pipe placeholder was repeated or placed somewhere it cannot select a
     /// call argument.
-    #[error("E0602: pipe placeholder `_` must occur exactly once in a direct call argument")]
+    #[error("E0602: pipe placeholder `$` must occur exactly once in a direct call argument")]
     PipePlaceholderInvalid,
     /// An open range was used where a pipe placeholder was intended.
     #[error("E0603: `..` is a range expression, not a pipe placeholder")]
     PipeDotDotPlaceholder,
+    /// `_` was used where the pipe placeholder `$` belongs.
+    #[error("`_` is not the pipe placeholder; write `$`")]
+    PipeUnderscorePlaceholder,
     /// An assignment appeared in a non-statement expression position.
     #[error("assignment is only valid at statement position")]
     AssignmentNotAllowed,
@@ -435,15 +438,23 @@ impl ParseError {
             ),
             ParseError::PipePlaceholderInvalid => (
                 "GP0027",
-                "pipe placeholder `_` must occur exactly once in a direct call argument"
+                "pipe placeholder `$` must occur exactly once in a direct call argument"
                     .to_string(),
-                Some("place one `_` directly in the call argument list".to_string()),
+                Some("place one `$` directly in the call argument list".to_string()),
             ),
             ParseError::PipeDotDotPlaceholder => (
                 "GP0028",
                 "`..` is a range expression, not a pipe placeholder".to_string(),
                 Some(
-                    "use `_`, or omit the placeholder for the default trailing position"
+                    "use `$`, or omit the placeholder for the default trailing position"
+                        .to_string(),
+                ),
+            ),
+            ParseError::PipeUnderscorePlaceholder => (
+                "GP0038",
+                "`_` is not the pipe placeholder".to_string(),
+                Some(
+                    "write `$` to make the piped value the receiver, as in `x |> $.len()`"
                         .to_string(),
                 ),
             ),
@@ -520,7 +531,7 @@ impl ParseError {
                 "GP0025",
                 "piped format value needs an explicit positional placeholder".to_string(),
                 Some(
-                    "write `value |> println!(\"… {}\", _)` so the piped value fills that placeholder"
+                    "write `value |> println!(\"… {}\", $)` so the piped value fills that placeholder"
                         .to_string(),
                 ),
             ),

@@ -34,7 +34,6 @@
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_sign_loss)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::encoding::gosvec_u8;
@@ -159,11 +158,7 @@ fn sec_err(msg: &str) -> i128 {
 }
 
 unsafe fn cstr_bytes<'a>(p: *const c_char) -> &'a [u8] {
-    if p.is_null() {
-        &[]
-    } else {
-        unsafe { CStr::from_ptr(p).to_bytes() }
-    }
+    unsafe { crate::c_abi::gos_str_arg_bytes(p) }
 }
 
 unsafe fn cstr_str<'a>(p: *const c_char) -> &'a str {

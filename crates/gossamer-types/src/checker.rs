@@ -75,6 +75,7 @@ pub fn typecheck_source_file_for_repl_inspection(
 impl TypeChecker<'_> {
     fn run(mut self, source: &SourceFile) -> (TypeTable, Vec<TypeDiagnostic>) {
         self.collect_import_targets(&source.uses);
+        self.assoc = gossamer_ast::AssocIndex::build(source);
         self.collect_signatures(&source.items);
         for item in &source.items {
             self.check_item(item);
@@ -82,6 +83,7 @@ impl TypeChecker<'_> {
         self.infer.default_unresolved_int_vars(self.tcx);
         self.infer.default_unresolved_float_vars(self.tcx);
         self.check_deferred_reference_storage();
+        self.check_deferred_adt_bounds();
         self.check_deferred_type_mismatches();
         self.check_deferred_literal_type_mismatches();
         self.check_deferred_mutating_receivers();
@@ -371,6 +373,32 @@ struct TypeChecker<'a> {
     /// never binds. Merged ahead of each method's own generics in
     /// [`Self::check_fn`].
     current_impl_generics: Option<gossamer_ast::Generics>,
+    /// `where` clause of the `impl` block currently being checked. Its
+    /// predicates bound the same parameters `current_impl_generics`
+    /// introduces, so both fold into one per-parameter bound table.
+    current_impl_where: gossamer_ast::WhereClause,
+    /// Source name of the `impl` block's self type, used to resolve a
+    /// `Self::Item` projection against the impl that supplies `Item`.
+    current_self_ty_name: Option<String>,
+    /// Name of the `trait` declaration currently being checked. A
+    /// `Self::Item` written in a trait method signature resolves through
+    /// this trait rather than through a concrete self type.
+    current_trait_name: Option<String>,
+    /// Associated-type equality constraints in scope, keyed by
+    /// `(type parameter name, associated type name)`. `fn f<T: Holder<Item
+    /// = i64>>` records `("T", "Item") -> i64` and pins `T::Item` for the
+    /// whole signature and body.
+    current_assoc_bindings: HashMap<(String, String), gossamer_ast::Type>,
+    /// Projections currently being expanded, so a self-referential
+    /// associated type terminates instead of recursing.
+    assoc_expanding: std::collections::HashSet<(String, String)>,
+    /// Program-wide view of which traits declare which associated items
+    /// and which impls supply them.
+    assoc: gossamer_ast::AssocIndex,
+    /// `DefId` of every user struct and enum by source name. Types written
+    /// where the resolver does not walk - an associated-type binding inside
+    /// a trait bound - resolve nominally through this table.
+    adt_def_by_name: HashMap<String, gossamer_resolve::DefId>,
     /// Running depth of recursive entries into expression / block /
     /// pattern type checks. Reaching [`RECURSION_LIMIT`] short-circuits
     /// the offending subtree to `tcx.error_ty()` after emitting one
@@ -478,6 +506,11 @@ struct TypeChecker<'a> {
     /// `[u8]`, not a fixed `[i64; 3]` whose first slot would pose as
     /// the payload word on the compiled tier.
     enum_variant_payloads: HashMap<(String, String), Vec<Ty>>,
+    /// Struct-variant field types keyed by `(enum_name, variant_name)`,
+    /// each entry a declared field name paired with its type. A
+    /// `Shape::Rect { w, h }` pattern binds through these exactly as a
+    /// tuple variant binds through [`Self::enum_variant_payloads`].
+    enum_variant_named_payloads: HashMap<(String, String), Vec<(String, Ty)>>,
     /// `Adt` type of every non-generic user enum, keyed by name. A
     /// tuple-variant constructor call (`E::B(1)`) resolves its result
     /// to this so the value carries the concrete enum type instead of a
@@ -525,6 +558,19 @@ struct TypeChecker<'a> {
     /// trait names. After a call's parameters resolve to concrete types,
     /// each bound is checked against [`Self::trait_impl_types`].
     fn_param_bounds: HashMap<gossamer_resolve::DefId, Vec<Vec<String>>>,
+    /// Declared trait bounds on each user struct / enum's generic
+    /// parameters, keyed by `DefId` and indexed by parameter position.
+    /// Bounds written on an `impl` block whose self type instantiates the
+    /// declaration with its own parameters in order fold in here too, so
+    /// every construction site of the type is checked against them.
+    adt_param_bounds: HashMap<gossamer_resolve::DefId, Vec<Vec<String>>>,
+    /// `DefId` of every user struct / enum, keyed by declared name, so an
+    /// `impl` block can attach its parameter bounds to the type it targets.
+    user_type_defs: HashMap<String, gossamer_resolve::DefId>,
+    /// Construction sites of a generic user type, held until inference
+    /// finishes so each argument is checked against the declaration's
+    /// bounds at its final resolved type.
+    deferred_adt_bounds: Vec<(gossamer_resolve::DefId, Vec<Ty>, Span)>,
     /// Per-position flags marking which of each generic function's
     /// parameters are const parameters, keyed by `DefId`. Lets a call
     /// site record a `GenericArg::Const` (rather than a type argument)
@@ -542,6 +588,11 @@ struct TypeChecker<'a> {
     trait_method_ret: HashMap<(String, String), Ty>,
     /// Declared non-receiver parameter types of trait methods.
     trait_method_params: HashMap<(String, String), Vec<Ty>>,
+    /// Associated type a trait method's return projects (`-> Self::Item`
+    /// records `"Item"`), keyed by trait and method. The concrete type
+    /// depends on the receiver, so a call resolves it against the
+    /// receiver's own impl or bound rather than once at declaration.
+    trait_method_ret_assoc: HashMap<(String, String), String>,
     /// Whether a trait method declares `&mut self`, keyed by trait and method.
     trait_method_requires_mut: HashMap<(String, String), bool>,
     /// Per-parameter trait bounds of the function currently being checked,
@@ -605,6 +656,10 @@ struct TypeChecker<'a> {
     /// Used with [`Self::trait_supertraits`] to detect a method reached
     /// only through a bound's supertrait (P0-5).
     trait_own_methods: HashMap<String, std::collections::HashSet<String>>,
+    /// Method names each trait declares without a default body, in
+    /// declaration order. Every `impl Trait for Type` has to supply them;
+    /// monomorphisation emits a direct call to each one.
+    trait_required_methods: HashMap<String, Vec<String>>,
     /// Supertrait names of each trait, keyed by trait name, from the
     /// `trait Pet: Animal` clause.
     trait_supertraits: HashMap<String, Vec<String>>,
@@ -624,6 +679,8 @@ struct TypeChecker<'a> {
 struct GenericScope {
     types: HashMap<String, (crate::ParamIdx, Box<str>)>,
     consts: HashMap<String, crate::ParamIdx>,
+    bounds: Vec<Vec<String>>,
+    assoc_bindings: HashMap<(String, String), gossamer_ast::Type>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -643,6 +700,13 @@ impl<'a> TypeChecker<'a> {
             binding_types: HashMap::new(),
             current_self_ty: None,
             current_impl_generics: None,
+            current_impl_where: gossamer_ast::WhereClause::default(),
+            current_self_ty_name: None,
+            current_trait_name: None,
+            current_assoc_bindings: HashMap::new(),
+            assoc_expanding: std::collections::HashSet::new(),
+            assoc: gossamer_ast::AssocIndex::default(),
+            adt_def_by_name: HashMap::new(),
             recursion_depth: 0,
             recursion_limit_reported: false,
             consumed_iterators: vec![HashMap::new()],
@@ -668,6 +732,7 @@ impl<'a> TypeChecker<'a> {
             deferred_type_mismatches: Vec::new(),
             deferred_literal_type_mismatches: Vec::new(),
             enum_variant_payloads: HashMap::new(),
+            enum_variant_named_payloads: HashMap::new(),
             enum_tys: HashMap::new(),
             const_tys: HashMap::new(),
             static_mutability: HashMap::new(),
@@ -676,10 +741,14 @@ impl<'a> TypeChecker<'a> {
             struct_generic_arity: HashMap::new(),
             fn_generic_arity: HashMap::new(),
             fn_param_bounds: HashMap::new(),
+            adt_param_bounds: HashMap::new(),
+            user_type_defs: HashMap::new(),
+            deferred_adt_bounds: Vec::new(),
             fn_generic_const_mask: HashMap::new(),
             trait_impl_types: HashMap::new(),
             trait_method_ret: HashMap::new(),
             trait_method_params: HashMap::new(),
+            trait_method_ret_assoc: HashMap::new(),
             trait_method_requires_mut: HashMap::new(),
             current_param_bounds: Vec::new(),
             current_generic_scope: HashMap::new(),
@@ -691,6 +760,7 @@ impl<'a> TypeChecker<'a> {
             user_type_decls: std::collections::HashSet::new(),
             user_method_owners: HashMap::new(),
             trait_own_methods: HashMap::new(),
+            trait_required_methods: HashMap::new(),
             trait_supertraits: HashMap::new(),
             pipe_stage_callees: std::collections::HashSet::new(),
             enum_variants: HashMap::new(),
@@ -784,14 +854,68 @@ impl<'a> TypeChecker<'a> {
             .params
             .iter()
             .map(|p| match p {
-                gossamer_ast::GenericParam::Type { bounds, .. } => bounds
-                    .iter()
-                    .filter_map(|b| b.path.segments.last())
-                    .map(|s| s.name.name.clone())
-                    .collect(),
+                gossamer_ast::GenericParam::Type { bounds, .. } => bound_names(bounds),
                 _ => Vec::new(),
             })
             .collect()
+    }
+
+    /// Per-parameter bound trait names for a declaration's generics with its
+    /// `where` predicates folded in, so `where T: Shape` constrains `T`
+    /// exactly as `<T: Shape>` does. Indexed by full parameter position.
+    fn declared_param_bounds(
+        generics: &gossamer_ast::Generics,
+        where_clause: &gossamer_ast::WhereClause,
+    ) -> Vec<Vec<String>> {
+        let mut bounds = Self::type_param_bounds(generics);
+        merge_where_predicates(&generics.params, 0, where_clause, &mut bounds);
+        bounds
+    }
+
+    /// Per-parameter bound trait names for an `impl` block's generics
+    /// followed by a method's own generics, in the index order
+    /// [`Self::enter_generic_scope_combined`] assigns. Both `where` clauses
+    /// fold into the same table, so an impl-level and a method-level bound
+    /// on distinct parameters never displace one another.
+    fn combined_param_bounds(
+        outer: &gossamer_ast::Generics,
+        outer_where: &gossamer_ast::WhereClause,
+        inner: &gossamer_ast::Generics,
+        inner_where: &gossamer_ast::WhereClause,
+    ) -> Vec<Vec<String>> {
+        let mut bounds = Vec::with_capacity(outer.params.len() + inner.params.len());
+        for param in outer.params.iter().chain(inner.params.iter()) {
+            bounds.push(match param {
+                gossamer_ast::GenericParam::Type { bounds, .. } => bound_names(bounds),
+                _ => Vec::new(),
+            });
+        }
+        merge_where_predicates(&outer.params, 0, outer_where, &mut bounds);
+        merge_where_predicates(&inner.params, outer.params.len(), inner_where, &mut bounds);
+        bounds
+    }
+
+    /// Associated-type equality constraints written on `generics` and its
+    /// `where` predicates, keyed by `(parameter name, associated type
+    /// name)`. Parameter names are unique inside one scope, so an impl's
+    /// and a method's constraints merge into a single table.
+    fn assoc_bindings_of(
+        generics: &gossamer_ast::Generics,
+        where_clause: &gossamer_ast::WhereClause,
+        out: &mut HashMap<(String, String), gossamer_ast::Type>,
+    ) {
+        for param in &generics.params {
+            let gossamer_ast::GenericParam::Type { name, bounds, .. } = param else {
+                continue;
+            };
+            collect_assoc_bindings(&name.name, bounds, out);
+        }
+        for predicate in &where_clause.predicates {
+            let Some(name) = bare_path_type_name(&predicate.bounded) else {
+                continue;
+            };
+            collect_assoc_bindings(name, &predicate.bounds, out);
+        }
     }
 
     /// Per-parameter flags marking which generic positions are const
@@ -807,6 +931,17 @@ impl<'a> TypeChecker<'a> {
     fn enter_generic_scope(&mut self, generics: &gossamer_ast::Generics) -> GenericScope {
         let prior_types = std::mem::take(&mut self.current_generic_scope);
         let prior_consts = std::mem::take(&mut self.current_const_generic_scope);
+        let prior_bounds = std::mem::replace(
+            &mut self.current_param_bounds,
+            Self::type_param_bounds(generics),
+        );
+        let mut bindings = HashMap::new();
+        Self::assoc_bindings_of(
+            generics,
+            &gossamer_ast::WhereClause::default(),
+            &mut bindings,
+        );
+        let prior_bindings = std::mem::replace(&mut self.current_assoc_bindings, bindings);
         for (i, param) in generics.params.iter().enumerate() {
             match param {
                 gossamer_ast::GenericParam::Type { name, .. } => {
@@ -824,6 +959,8 @@ impl<'a> TypeChecker<'a> {
         GenericScope {
             types: prior_types,
             consts: prior_consts,
+            bounds: prior_bounds,
+            assoc_bindings: prior_bindings,
         }
     }
 
@@ -840,19 +977,33 @@ impl<'a> TypeChecker<'a> {
     ) -> GenericScope {
         let prior_types = std::mem::take(&mut self.current_generic_scope);
         let prior_consts = std::mem::take(&mut self.current_const_generic_scope);
-        let mut idx = 0u32;
-        for param in outer.params.iter().chain(inner.params.iter()) {
+        let prior_bounds = std::mem::replace(
+            &mut self.current_param_bounds,
+            Self::combined_param_bounds(
+                outer,
+                &gossamer_ast::WhereClause::default(),
+                inner,
+                &gossamer_ast::WhereClause::default(),
+            ),
+        );
+        let mut bindings = HashMap::new();
+        Self::assoc_bindings_of(outer, &gossamer_ast::WhereClause::default(), &mut bindings);
+        Self::assoc_bindings_of(inner, &gossamer_ast::WhereClause::default(), &mut bindings);
+        let prior_bindings = std::mem::replace(&mut self.current_assoc_bindings, bindings);
+        // Every parameter position advances the index, matching the full
+        // positional numbering `type_param_bounds` and `const_param_mask`
+        // use, so a bounds or const-mask lookup indexes the same slot.
+        for (idx, param) in outer.params.iter().chain(inner.params.iter()).enumerate() {
+            let idx = crate::ParamIdx(idx as u32);
             match param {
                 gossamer_ast::GenericParam::Type { name, .. } => {
                     let owned: Box<str> = name.name.clone().into_boxed_str();
                     self.current_generic_scope
-                        .insert(name.name.clone(), (crate::ParamIdx(idx), owned));
-                    idx += 1;
+                        .insert(name.name.clone(), (idx, owned));
                 }
                 gossamer_ast::GenericParam::Const { name, .. } => {
                     self.current_const_generic_scope
-                        .insert(name.name.clone(), crate::ParamIdx(idx));
-                    idx += 1;
+                        .insert(name.name.clone(), idx);
                 }
                 gossamer_ast::GenericParam::Lifetime { .. } => {}
             }
@@ -860,6 +1011,8 @@ impl<'a> TypeChecker<'a> {
         GenericScope {
             types: prior_types,
             consts: prior_consts,
+            bounds: prior_bounds,
+            assoc_bindings: prior_bindings,
         }
     }
 
@@ -868,6 +1021,8 @@ impl<'a> TypeChecker<'a> {
     fn leave_generic_scope(&mut self, prior: GenericScope) {
         self.current_generic_scope = prior.types;
         self.current_const_generic_scope = prior.consts;
+        self.current_param_bounds = prior.bounds;
+        self.current_assoc_bindings = prior.assoc_bindings;
     }
 
     /// Verifies each instantiated type parameter of a generic call
@@ -891,18 +1046,193 @@ impl<'a> TypeChecker<'a> {
                 continue;
             };
             for bound in bounds.get(i).into_iter().flatten() {
-                // A trait declared in this unit is checked against its impls
-                // even when its name matches a built-in one. Only names with
-                // no declaration behind them are exempt, since there is no
-                // impl set to check them against.
-                if known_builtin_trait(bound) && !self.declared_trait_names.contains(bound) {
+                if self.bound_is_satisfied(bound, &ty_name) {
                     continue;
                 }
-                let satisfied = self
-                    .trait_impl_types
-                    .get(bound)
-                    .is_some_and(|s| s.contains(&ty_name));
-                if !satisfied {
+                self.emit(
+                    TypeError::TraitBoundNotSatisfied {
+                        ty: ty_name.clone(),
+                        bound: bound.clone(),
+                    },
+                    span,
+                );
+            }
+        }
+    }
+
+    /// Records the declared bounds on a struct / enum's generic parameters,
+    /// merging with anything an earlier `impl` block already attached.
+    fn record_adt_param_bounds(
+        &mut self,
+        def: gossamer_resolve::DefId,
+        generics: &gossamer_ast::Generics,
+        where_clause: &gossamer_ast::WhereClause,
+    ) {
+        let bounds = Self::declared_param_bounds(generics, where_clause);
+        if bounds.iter().all(Vec::is_empty) {
+            return;
+        }
+        merge_bound_table(self.adt_param_bounds.entry(def).or_default(), &bounds);
+    }
+
+    /// Attaches an `impl` block's parameter bounds to the type it targets
+    /// when the self type instantiates that type with the impl's own
+    /// parameters in declaration order (`impl<T: Shape> Wrapper<T>`). Any
+    /// other self-type shape names no declaration position to bound.
+    fn record_impl_param_bounds(&mut self, decl: &ImplDecl) {
+        let bounds = Self::declared_param_bounds(&decl.generics, &decl.where_clause);
+        if bounds.iter().all(Vec::is_empty) {
+            return;
+        }
+        let gossamer_ast::ty::TypeKind::Path(path) = &decl.self_ty.kind else {
+            return;
+        };
+        let Some(segment) = path.segments.last() else {
+            return;
+        };
+        let Some(def) = self.user_type_defs.get(&segment.name.name).copied() else {
+            return;
+        };
+        let param_names: Vec<&str> = decl
+            .generics
+            .params
+            .iter()
+            .map(|param| match param {
+                gossamer_ast::GenericParam::Type { name, .. }
+                | gossamer_ast::GenericParam::Const { name, .. } => name.name.as_str(),
+                gossamer_ast::GenericParam::Lifetime { name } => name.as_str(),
+            })
+            .collect();
+        let applied: Vec<Option<&str>> = segment
+            .generics
+            .iter()
+            .map(|arg| match arg {
+                AstGenericArg::Type(ty) => bare_path_type_name(ty),
+                AstGenericArg::Const(_) => None,
+            })
+            .collect();
+        if applied.len() != param_names.len()
+            || !applied
+                .iter()
+                .zip(&param_names)
+                .all(|(applied, declared)| *applied == Some(*declared))
+        {
+            return;
+        }
+        merge_bound_table(self.adt_param_bounds.entry(def).or_default(), &bounds);
+    }
+
+    /// Reports every method a trait declares without a default body that
+    /// this `impl` block leaves out. Monomorphisation emits a direct call
+    /// to each such method, so the impl has to supply a body for it.
+    fn check_trait_impl_completeness(&mut self, decl: &ImplDecl, span: Span) {
+        let Some(trait_name) = decl
+            .trait_ref
+            .as_ref()
+            .and_then(|trait_ref| trait_ref.path.segments.last())
+            .map(|segment| segment.name.name.clone())
+        else {
+            return;
+        };
+        let Some(required) = self.trait_required_methods.get(&trait_name).cloned() else {
+            return;
+        };
+        let supplied: std::collections::HashSet<&str> = decl
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ImplItem::Fn(fn_decl) => Some(fn_decl.name.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        let missing: Vec<String> = required
+            .into_iter()
+            .filter(|method| !supplied.contains(method.as_str()))
+            .collect();
+        if missing.is_empty() {
+            return;
+        }
+        let ty = match &decl.self_ty.kind {
+            gossamer_ast::ty::TypeKind::Path(path) => path
+                .segments
+                .last()
+                .map_or_else(|| "this type".to_string(), |s| s.name.name.clone()),
+            _ => "this type".to_string(),
+        };
+        self.emit(
+            TypeError::MissingTraitImplMethods {
+                trait_name,
+                ty,
+                missing,
+            },
+            span,
+        );
+    }
+
+    /// Reports every associated type and constant a trait declares without
+    /// a default that this `impl` block leaves out. A projection through
+    /// the trait has to land on a concrete item in the impl.
+    fn check_trait_impl_assoc_items(&mut self, decl: &ImplDecl, span: Span) {
+        let Some(trait_name) = decl.trait_ref.as_ref().and_then(|b| b.trait_name()) else {
+            return;
+        };
+        let trait_name = trait_name.to_string();
+        let required = self.assoc.required_assoc_items(&trait_name);
+        if required.is_empty() {
+            return;
+        }
+        let missing: Vec<String> = required
+            .iter()
+            .filter(|item| {
+                !decl.items.iter().any(|supplied| match supplied {
+                    ImplItem::Type { name, .. } => item.kind == "type" && name.name == item.name,
+                    ImplItem::Const { name, .. } => item.kind == "const" && name.name == item.name,
+                    ImplItem::Fn(_) => false,
+                })
+            })
+            .map(|item| format!("{} {}", item.kind, item.name))
+            .collect();
+        if missing.is_empty() {
+            return;
+        }
+        let ty = gossamer_ast::assoc::type_head_name(&decl.self_ty)
+            .map_or_else(|| "this type".to_string(), ToString::to_string);
+        self.emit(
+            TypeError::MissingTraitImplAssocItems {
+                trait_name,
+                ty,
+                missing,
+            },
+            span,
+        );
+    }
+
+    /// Records a construction of `def` with `substs` for the end-of-run
+    /// bound check. Sites with no declared bounds are dropped immediately.
+    fn defer_adt_bounds(&mut self, def: gossamer_resolve::DefId, substs: &[Ty], span: Span) {
+        if substs.is_empty() || !self.adt_param_bounds.contains_key(&def) {
+            return;
+        }
+        self.deferred_adt_bounds.push((def, substs.to_vec(), span));
+    }
+
+    /// Verifies every recorded construction of a bounded generic type
+    /// against its declared bounds, once inference has pinned the
+    /// arguments.
+    fn check_deferred_adt_bounds(&mut self) {
+        for (def, substs, span) in std::mem::take(&mut self.deferred_adt_bounds) {
+            let Some(bounds) = self.adt_param_bounds.get(&def).cloned() else {
+                continue;
+            };
+            for (i, arg) in substs.iter().enumerate() {
+                let resolved = self.infer.resolve(self.tcx, *arg);
+                let Some(ty_name) = self.concrete_type_name(resolved) else {
+                    continue;
+                };
+                for bound in bounds.get(i).into_iter().flatten() {
+                    if self.bound_is_satisfied(bound, &ty_name) {
+                        continue;
+                    }
                     self.emit(
                         TypeError::TraitBoundNotSatisfied {
                             ty: ty_name.clone(),
@@ -913,6 +1243,26 @@ impl<'a> TypeChecker<'a> {
                 }
             }
         }
+    }
+
+    /// Whether the concrete type named `ty_name` carries `bound`.
+    ///
+    /// A trait declared in this unit is always checked against its impls,
+    /// even when its name matches a built-in one. A built-in name with no
+    /// declaration behind it is checked only when the language expects an
+    /// explicit `impl` block to supply it: the operator traits. Every other
+    /// built-in name (`Clone`, `Debug`, `Ord`, ...) names behaviour the
+    /// language derives automatically and so is always satisfied.
+    fn bound_is_satisfied(&self, bound: &str, ty_name: &str) -> bool {
+        if known_builtin_trait(bound)
+            && !self.declared_trait_names.contains(bound)
+            && !builtin_trait_needs_impl(bound)
+        {
+            return true;
+        }
+        self.trait_impl_types
+            .get(bound)
+            .is_some_and(|types| types.contains(ty_name))
     }
 
     /// Name of a concrete named type (`Dog`, `Cat`), peeling `&` / `&mut`.
@@ -1768,14 +2118,22 @@ impl<'a> TypeChecker<'a> {
         for item in items {
             match &item.kind {
                 ItemKind::Fn(decl) => self.register_fn_sig(item.id, decl, item.span),
-                ItemKind::Impl(decl) => self.collect_impl_signatures(decl),
-                ItemKind::Trait(decl) => self.collect_trait_signatures(decl),
+                ItemKind::Impl(decl) => {
+                    self.validate_declared_bounds(&decl.generics, &decl.where_clause, item.span);
+                    self.collect_impl_signatures(decl);
+                }
+                ItemKind::Trait(decl) => {
+                    self.validate_declared_bounds(&decl.generics, &decl.where_clause, item.span);
+                    self.collect_trait_signatures(decl);
+                }
                 ItemKind::Struct(decl) => {
                     self.validate_derives(&item.attrs, item.span);
+                    self.validate_declared_bounds(&decl.generics, &decl.where_clause, item.span);
                     self.register_struct(item.id, decl);
                 }
                 ItemKind::Enum(decl) => {
                     self.validate_derives(&item.attrs, item.span);
+                    self.validate_declared_bounds(&decl.generics, &decl.where_clause, item.span);
                     self.register_enum(item.id, decl, item.span);
                 }
                 ItemKind::Const(decl) => self.register_const(item.id, &decl.ty),
@@ -1790,6 +2148,31 @@ impl<'a> TypeChecker<'a> {
                 ItemKind::Mod(decl) => {
                     if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
                         self.collect_signatures(inner);
+                    }
+                }
+                _ => {}
+            }
+        }
+        // Every user type is registered by now, so an `impl` block can be
+        // matched to the declaration its self type names regardless of the
+        // order the two appear in.
+        self.collect_impl_obligations(items);
+    }
+
+    /// Attaches each `impl` block's generic bounds to the type it targets
+    /// and verifies every trait impl supplies the methods its trait
+    /// requires.
+    fn collect_impl_obligations(&mut self, items: &[Item]) {
+        for item in items {
+            match &item.kind {
+                ItemKind::Impl(decl) => {
+                    self.record_impl_param_bounds(decl);
+                    self.check_trait_impl_completeness(decl, item.span);
+                    self.check_trait_impl_assoc_items(decl, item.span);
+                }
+                ItemKind::Mod(decl) => {
+                    if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                        self.collect_impl_obligations(inner);
                     }
                 }
                 _ => {}
@@ -1820,6 +2203,18 @@ impl<'a> TypeChecker<'a> {
                         .entry(decl.name.name.clone())
                         .or_default()
                         .extend(methods);
+                    let required = self
+                        .trait_required_methods
+                        .entry(decl.name.name.clone())
+                        .or_default();
+                    for it in &decl.items {
+                        if let TraitItem::Fn(fn_decl) = it
+                            && fn_decl.body.is_none()
+                            && !required.contains(&fn_decl.name.name)
+                        {
+                            required.push(fn_decl.name.name.clone());
+                        }
+                    }
                     for item in &decl.items {
                         if let TraitItem::Fn(fn_decl) = item {
                             let requires_mut = fn_decl.params.iter().any(|param| {
@@ -1843,9 +2238,15 @@ impl<'a> TypeChecker<'a> {
                 }
                 ItemKind::Struct(decl) => {
                     self.user_type_decls.insert(decl.name.name.clone());
+                    if let Some(def) = self.resolutions.definition_of(item.id) {
+                        self.adt_def_by_name.insert(decl.name.name.clone(), def);
+                    }
                 }
                 ItemKind::Enum(decl) => {
                     self.user_type_decls.insert(decl.name.name.clone());
+                    if let Some(def) = self.resolutions.definition_of(item.id) {
+                        self.adt_def_by_name.insert(decl.name.name.clone(), def);
+                    }
                 }
                 ItemKind::Mod(decl) => {
                     if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
@@ -1904,6 +2305,8 @@ impl<'a> TypeChecker<'a> {
     fn register_enum(&mut self, item_id: NodeId, decl: &gossamer_ast::EnumDecl, span: Span) {
         if let Some(def) = self.resolutions.definition_of(item_id) {
             self.tcx.register_def_name(def, decl.name.name.as_str());
+            self.user_type_defs.insert(decl.name.name.clone(), def);
+            self.record_adt_param_bounds(def, &decl.generics, &decl.where_clause);
             self.tcx.register_enum_variant_names(
                 def,
                 decl.variants
@@ -1946,10 +2349,21 @@ impl<'a> TypeChecker<'a> {
             variant_names.insert(variant.name.name.clone());
         }
         for variant in &decl.variants {
-            if let StructBody::Tuple(fields) = &variant.body {
-                let tys: Vec<Ty> = fields.iter().map(|f| self.type_from_ast(&f.ty)).collect();
-                self.enum_variant_payloads
-                    .insert((decl.name.name.clone(), variant.name.name.clone()), tys);
+            match &variant.body {
+                StructBody::Tuple(fields) => {
+                    let tys: Vec<Ty> = fields.iter().map(|f| self.type_from_ast(&f.ty)).collect();
+                    self.enum_variant_payloads
+                        .insert((decl.name.name.clone(), variant.name.name.clone()), tys);
+                }
+                StructBody::Named(fields) => {
+                    let tys: Vec<(String, Ty)> = fields
+                        .iter()
+                        .map(|f| (f.name.name.clone(), self.type_from_ast(&f.ty)))
+                        .collect();
+                    self.enum_variant_named_payloads
+                        .insert((decl.name.name.clone(), variant.name.name.clone()), tys);
+                }
+                StructBody::Unit => {}
             }
         }
         // Per-variant field types in declaration (discriminant) order, for the
@@ -2026,6 +2440,8 @@ impl<'a> TypeChecker<'a> {
         };
         let name = decl.name.name.as_str();
         self.tcx.register_def_name(def, name);
+        self.user_type_defs.insert(decl.name.name.clone(), def);
+        self.record_adt_param_bounds(def, &decl.generics, &decl.where_clause);
         // Build the generic-parameter scope so `Pair<A, B> { fst:
         // A, snd: B }` field-type references resolve to the right
         // `TyKind::Param` indices.
@@ -2179,8 +2595,14 @@ impl<'a> TypeChecker<'a> {
         // binding has to be in place here too - otherwise a `-> Self`
         // constructor records an unconstrained return type and every call
         // on its result goes unchecked.
+        let self_scope = self.enter_generic_scope(&decl.generics);
         let impl_self_ty = self.type_from_ast(&decl.self_ty);
+        self.leave_generic_scope(self_scope);
         let prev_self_ty = self.current_self_ty.replace(impl_self_ty);
+        let prev_self_name = std::mem::replace(
+            &mut self.current_self_ty_name,
+            gossamer_ast::assoc::type_head_name(&decl.self_ty).map(ToString::to_string),
+        );
         for item in &decl.items {
             if let ImplItem::Fn(fn_decl) = item {
                 let id = NodeId::DUMMY;
@@ -2237,6 +2659,7 @@ impl<'a> TypeChecker<'a> {
                 }
             }
         }
+        self.current_self_ty_name = prev_self_name;
         self.current_self_ty = prev_self_ty;
     }
 
@@ -2292,6 +2715,9 @@ impl<'a> TypeChecker<'a> {
 
     fn collect_trait_signatures(&mut self, decl: &gossamer_ast::TraitDecl) {
         let trait_name = decl.name.name.clone();
+        // `Self::Item` in a trait method signature resolves through the
+        // declaring trait, since no concrete self type is known yet.
+        let prev_trait = self.current_trait_name.replace(trait_name.clone());
         for item in &decl.items {
             if let TraitItem::Fn(fn_decl) = item {
                 self.register_fn_sig_anonymous(fn_decl);
@@ -2310,6 +2736,10 @@ impl<'a> TypeChecker<'a> {
                     .insert((trait_name.clone(), fn_decl.name.name.clone()), params);
                 self.trait_method_ret
                     .insert((trait_name.clone(), fn_decl.name.name.clone()), ret);
+                if let Some(assoc) = fn_decl.ret.as_ref().and_then(self_assoc_projection) {
+                    self.trait_method_ret_assoc
+                        .insert((trait_name.clone(), fn_decl.name.name.clone()), assoc);
+                }
                 let requires_mut = fn_decl.params.iter().any(|param| {
                     matches!(param, FnParam::Receiver(gossamer_ast::Receiver::RefMut))
                 });
@@ -2319,6 +2749,7 @@ impl<'a> TypeChecker<'a> {
                 );
             }
         }
+        self.current_trait_name = prev_trait;
     }
 
     /// Records a method's non-receiver parameter types under its bare
@@ -2369,39 +2800,59 @@ impl<'a> TypeChecker<'a> {
             if has_type_or_const {
                 self.fn_generic_arity
                     .insert(def, decl.generics.params.len());
-                self.fn_param_bounds
-                    .insert(def, Self::type_param_bounds(&decl.generics));
+                self.fn_param_bounds.insert(
+                    def,
+                    Self::declared_param_bounds(&decl.generics, &decl.where_clause),
+                );
                 self.fn_generic_const_mask
                     .insert(def, Self::const_param_mask(&decl.generics));
             }
         }
-        // Validate that every declared trait bound on the fn's
-        // generic parameters names a trait this source file (or a
-        // recognised built-in) actually declares. Catches typos
-        // (`Hashabel` → `Hashable`) at the declaration site
-        // instead of as a runtime "no method" error later.
-        for param in &decl.generics.params {
-            if let gossamer_ast::GenericParam::Type { name, bounds, .. } = param {
-                for bound in bounds {
-                    let Some(seg) = bound.path.segments.last() else {
-                        continue;
-                    };
-                    let bound_name = seg.name.name.as_str();
-                    if bound_name.is_empty() {
-                        continue;
-                    }
-                    let resolved = self.declared_trait_names.contains(bound_name)
-                        || known_builtin_trait(bound_name);
-                    if !resolved {
-                        self.emit(
-                            TypeError::UnknownTraitBound {
-                                param: name.name.clone(),
-                                name: bound_name.to_string(),
-                            },
-                            span,
-                        );
-                    }
+        self.validate_declared_bounds(&decl.generics, &decl.where_clause, span);
+    }
+
+    /// Validates that every trait bound written on a declaration's generic
+    /// parameters - in the angle brackets or in its `where` clause - names a
+    /// trait this unit (or a recognised built-in) declares. Catches typos
+    /// (`Hashabel` for `Hashable`) at the declaration site rather than as a
+    /// "no method" error at the use site.
+    fn validate_declared_bounds(
+        &mut self,
+        generics: &gossamer_ast::Generics,
+        where_clause: &gossamer_ast::WhereClause,
+        span: Span,
+    ) {
+        let mut declared: Vec<(String, Vec<String>)> = generics
+            .params
+            .iter()
+            .filter_map(|param| match param {
+                gossamer_ast::GenericParam::Type { name, bounds, .. } => {
+                    Some((name.name.clone(), bound_names(bounds)))
                 }
+                _ => None,
+            })
+            .collect();
+        for predicate in &where_clause.predicates {
+            let Some(name) = bare_path_type_name(&predicate.bounded) else {
+                continue;
+            };
+            declared.push((name.to_string(), bound_names(&predicate.bounds)));
+        }
+        for (param, bounds) in declared {
+            for bound in bounds {
+                if bound.is_empty()
+                    || self.declared_trait_names.contains(&bound)
+                    || known_builtin_trait(&bound)
+                {
+                    continue;
+                }
+                self.emit(
+                    TypeError::UnknownTraitBound {
+                        param: param.clone(),
+                        name: bound,
+                    },
+                    span,
+                );
             }
         }
     }
@@ -2416,6 +2867,15 @@ impl<'a> TypeChecker<'a> {
         // slot rather than a fresh inference variable. The `Param` slots are
         // what per-call-site instantiation substitutes with fresh variables.
         let prior = self.enter_generic_scope(&decl.generics);
+        // A `where` predicate constrains the same parameters the angle
+        // brackets introduce, so an associated-type projection written in
+        // the signature resolves through either spelling.
+        self.current_param_bounds = Self::declared_param_bounds(&decl.generics, &decl.where_clause);
+        Self::assoc_bindings_of(
+            &decl.generics,
+            &decl.where_clause,
+            &mut self.current_assoc_bindings,
+        );
         let inputs: Vec<Ty> = decl
             .params
             .iter()
@@ -2436,35 +2896,75 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Checks every item of an `impl` block inside a scope where `Self`
+    /// names the type being implemented, so a `-> Self` return and a
+    /// `Self::Item` projection both land on it.
+    fn check_impl(&mut self, decl: &ImplDecl) {
+        // The self type is lowered inside the impl's own generic scope, so
+        // `impl<T: Shape> Wrapper<T>` records `Wrapper` at `Param(0)`. Field
+        // reads off `self` then carry that rigid parameter, which is what
+        // bound-method resolution keys on.
+        let self_scope = self.enter_generic_scope(&decl.generics);
+        let self_ty = self.type_from_ast(&decl.self_ty);
+        self.leave_generic_scope(self_scope);
+        let prev_self = self.current_self_ty.replace(self_ty);
+        let prev_self_name = std::mem::replace(
+            &mut self.current_self_ty_name,
+            gossamer_ast::assoc::type_head_name(&decl.self_ty).map(ToString::to_string),
+        );
+        let prev_impl_generics = self.current_impl_generics.replace(decl.generics.clone());
+        let prev_impl_where =
+            std::mem::replace(&mut self.current_impl_where, decl.where_clause.clone());
+        for impl_item in &decl.items {
+            match impl_item {
+                ImplItem::Fn(fn_decl) => self.check_fn(fn_decl),
+                ImplItem::Const { ty, value, .. } => {
+                    let annotated = self.type_from_ast(ty);
+                    let init = self.check_expr_expecting(value, Expectation::HasType(annotated));
+                    self.unify(annotated, init, value.span);
+                }
+                ImplItem::Type { ty, .. } => {
+                    self.type_from_ast(ty);
+                }
+            }
+        }
+        self.current_impl_generics = prev_impl_generics;
+        self.current_impl_where = prev_impl_where;
+        self.current_self_ty_name = prev_self_name;
+        self.current_self_ty = prev_self;
+    }
+
+    /// Checks a trait's default bodies and the types of its associated
+    /// declarations. `Self` stands for every implementor here, so a
+    /// projection resolves through the trait rather than a concrete type.
+    fn check_trait(&mut self, decl: &gossamer_ast::TraitDecl) {
+        let prev_trait = self.current_trait_name.replace(decl.name.name.clone());
+        for trait_item in &decl.items {
+            match trait_item {
+                TraitItem::Fn(fn_decl) => self.check_fn(fn_decl),
+                TraitItem::Const { ty, default, .. } => {
+                    let annotated = self.type_from_ast(ty);
+                    if let Some(value) = default {
+                        let init =
+                            self.check_expr_expecting(value, Expectation::HasType(annotated));
+                        self.unify(annotated, init, value.span);
+                    }
+                }
+                TraitItem::Type { default, .. } => {
+                    if let Some(ty) = default {
+                        self.type_from_ast(ty);
+                    }
+                }
+            }
+        }
+        self.current_trait_name = prev_trait;
+    }
+
     fn check_item(&mut self, item: &Item) {
         match &item.kind {
             ItemKind::Fn(decl) => self.check_fn(decl),
-            ItemKind::Impl(decl) => {
-                // Type the impl's `Self` so HIR lowering can pin
-                // each method's `self` parameter to it. Without
-                // this, `self.field` reads later fall through MIR
-                // lowering's struct-name lookup and abort with
-                // the unsupported placeholder.
-                let self_ty = self.type_from_ast(&decl.self_ty);
-                let prev_self = self.current_self_ty.replace(self_ty);
-                let prev_impl_generics = self.current_impl_generics.replace(decl.generics.clone());
-                for impl_item in &decl.items {
-                    if let ImplItem::Fn(fn_decl) = impl_item {
-                        self.check_fn(fn_decl);
-                    } else if let ImplItem::Const { value, .. } = impl_item {
-                        self.check_expr(value);
-                    }
-                }
-                self.current_impl_generics = prev_impl_generics;
-                self.current_self_ty = prev_self;
-            }
-            ItemKind::Trait(decl) => {
-                for trait_item in &decl.items {
-                    if let TraitItem::Fn(fn_decl) = trait_item {
-                        self.check_fn(fn_decl);
-                    }
-                }
-            }
+            ItemKind::Impl(decl) => self.check_impl(decl),
+            ItemKind::Trait(decl) => self.check_trait(decl),
             ItemKind::Const(decl) => {
                 let annotated = self.type_from_ast(&decl.ty);
                 let static_string_reference = matches!(
@@ -2554,16 +3054,33 @@ impl<'a> TypeChecker<'a> {
         // type that names a type parameter (`&T`) records a rigid
         // `TyKind::Param`. Monomorphisation substitutes those `Param` slots,
         // and trait-method dispatch on a `T` receiver keys off them.
-        let prior_scope = match self.current_impl_generics.clone() {
+        // The bound table is built from the same parameter sequence as the
+        // scope, so index `i` of one names index `i` of the other.
+        let mut assoc_bindings = HashMap::new();
+        let (prior_scope, bounds) = match self.current_impl_generics.clone() {
             Some(impl_g) if !impl_g.params.is_empty() => {
-                self.enter_generic_scope_combined(&impl_g, &decl.generics)
+                let impl_where = self.current_impl_where.clone();
+                let bounds = Self::combined_param_bounds(
+                    &impl_g,
+                    &impl_where,
+                    &decl.generics,
+                    &decl.where_clause,
+                );
+                Self::assoc_bindings_of(&impl_g, &impl_where, &mut assoc_bindings);
+                (
+                    self.enter_generic_scope_combined(&impl_g, &decl.generics),
+                    bounds,
+                )
             }
-            _ => self.enter_generic_scope(&decl.generics),
+            _ => (
+                self.enter_generic_scope(&decl.generics),
+                Self::declared_param_bounds(&decl.generics, &decl.where_clause),
+            ),
         };
-        let prior_bounds = std::mem::replace(
-            &mut self.current_param_bounds,
-            Self::type_param_bounds(&decl.generics),
-        );
+        Self::assoc_bindings_of(&decl.generics, &decl.where_clause, &mut assoc_bindings);
+        let prior_assoc_bindings =
+            std::mem::replace(&mut self.current_assoc_bindings, assoc_bindings);
+        let prior_bounds = std::mem::replace(&mut self.current_param_bounds, bounds);
         self.push_scope();
         for param in &decl.params {
             self.bind_fn_param(param);
@@ -2641,6 +3158,7 @@ impl<'a> TypeChecker<'a> {
         }
         self.pop_scope();
         self.current_param_bounds = prior_bounds;
+        self.current_assoc_bindings = prior_assoc_bindings;
         self.leave_generic_scope(prior_scope);
     }
 
@@ -2736,27 +3254,118 @@ impl<'a> TypeChecker<'a> {
         cur
     }
 
-    fn param_method_sig(&mut self, receiver_ty: Ty, method: &str) -> Option<(Ty, Vec<Ty>)> {
+    fn param_method_sig(
+        &mut self,
+        receiver_ty: Ty,
+        method: &str,
+        span: Span,
+    ) -> Option<(Ty, Vec<Ty>)> {
         let mut t = self.infer.resolve(self.tcx, receiver_ty);
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(t) {
             t = self.infer.resolve(self.tcx, *inner);
         }
-        let TyKind::Param { idx, .. } = self.tcx.kind(t)? else {
+        let TyKind::Param { idx, name } = self.tcx.kind(t)? else {
             return None;
         };
+        let param_name = name.to_string();
         let bounds = self.current_param_bounds.get(idx.0 as usize)?.clone();
         for bound in bounds {
             let key = (bound, method.to_string());
-            if let Some(ret) = self.trait_method_ret.get(&key) {
+            if let Some(ret) = self.trait_method_ret.get(&key).copied() {
                 let params = self
                     .trait_method_params
                     .get(&key)
                     .cloned()
                     .unwrap_or_default();
-                return Some((*ret, params));
+                // A `-> Self::Item` return is concrete only once the
+                // receiver is known, so resolve it against this
+                // parameter's own bound rather than the trait's
+                // declaration-time placeholder.
+                let ret = match self.trait_method_ret_assoc.get(&key).cloned() {
+                    Some(assoc) => self.resolve_assoc_type_projection_inner(
+                        &param_name,
+                        &assoc,
+                        true,
+                        false,
+                        span,
+                        false,
+                    ),
+                    None => ret,
+                };
+                return Some((ret, params));
             }
         }
         None
+    }
+
+    /// Rejects a binary operator whose left or right operand is a generic
+    /// parameter with no bound licensing it. Returns `true` when a
+    /// diagnostic was emitted.
+    fn reject_operands_off_bound(
+        &mut self,
+        lhs_ty: Ty,
+        rhs_ty: Ty,
+        op: &str,
+        method: &str,
+        span: Span,
+    ) -> bool {
+        self.reject_operator_off_bound(lhs_ty, op, method, span)
+            || self.reject_operator_off_bound(rhs_ty, op, method, span)
+    }
+
+    /// Rejects an operator applied to a generic-parameter operand whose
+    /// bounds do not license it.
+    ///
+    /// A parameter stands for every type a caller may supply, so only a
+    /// bound declaring the operator's method guarantees each instantiation
+    /// can perform the operation. Returns `true` when a diagnostic was
+    /// emitted.
+    fn reject_operator_off_bound(
+        &mut self,
+        operand_ty: Ty,
+        op: &str,
+        method: &str,
+        span: Span,
+    ) -> bool {
+        let peeled = self.peel_refs(operand_ty);
+        let Some(TyKind::Param { idx, name }) = self.tcx.kind(peeled) else {
+            return false;
+        };
+        let param = name.to_string();
+        let bounds = self
+            .current_param_bounds
+            .get(idx.0 as usize)
+            .cloned()
+            .unwrap_or_default();
+        let trait_name = op_trait_name(method);
+        // A bound licenses the operator when it is the operator's own trait,
+        // when it (or one of its supertraits) declares the operator method,
+        // or when its method surface is unknown and so cannot rule the
+        // operation out.
+        let licensed = bounds.iter().any(|bound| {
+            bound == trait_name
+                || self
+                    .trait_own_methods
+                    .get(bound)
+                    .is_some_and(|methods| methods.contains(method))
+                || self.supertrait_owning_method(bound, method).is_some()
+                || (!self.declared_trait_names.contains(bound)
+                    && builtin_trait_methods(bound).is_none())
+        });
+        if licensed {
+            return false;
+        }
+        self.emit(
+            TypeError::OperatorNotOnBound {
+                param,
+                op: op.to_string(),
+                trait_name: trait_name.to_string(),
+                method: method.to_string(),
+                bounds,
+            },
+            span,
+        );
+        true
     }
 
     /// Rejects a method on a bound type-parameter receiver that resolves
@@ -3170,6 +3779,7 @@ impl<'a> TypeChecker<'a> {
                             let arity = self.struct_generic_arity.get(&def).copied().unwrap_or(0);
                             let substs: Vec<Ty> = (0..arity).map(|_| self.fresh()).collect();
                             let substs_obj = crate::Substs::from_types(substs.iter().copied());
+                            self.defer_adt_bounds(def, &substs, expr.span);
                             (
                                 self.tcx.intern(TyKind::Adt {
                                     def,
@@ -3762,9 +4372,16 @@ impl<'a> TypeChecker<'a> {
                 _ => None,
             })
             .collect();
+        // An explicit `f::<N>(..)` argument is authoritative: inference fills
+        // only the positions the call site left open, so an argument of a
+        // different length reports a mismatch against the written `N`.
         for (param, arg_ty) in sig.inputs.iter().zip(arg_tys.iter()) {
             if let Some((idx, value)) = self.infer_array_const_len(*param, *arg_ty)
                 && idx < n
+                && !matches!(
+                    explicit_substs.as_slice().get(idx),
+                    Some(crate::GenericArg::Const(_))
+                )
             {
                 const_substs[idx] = Some(value);
             }
@@ -4375,6 +4992,7 @@ impl<'a> TypeChecker<'a> {
         let fields = self.struct_fields.get(&def)?.clone();
         let arity = self.struct_generic_arity.get(&def).copied().unwrap_or(0);
         let substs: Vec<Ty> = (0..arity).map(|_| self.fresh()).collect();
+        self.defer_adt_bounds(def, &substs, callee.span);
         if fields.len() == arg_tys.len() {
             for ((_, field_ty), (arg_ty, arg_expr)) in fields.iter().zip(arg_tys.iter().zip(args)) {
                 let field_ty = self.subst_params_in_ty(*field_ty, &substs);
@@ -5514,6 +6132,7 @@ impl<'a> TypeChecker<'a> {
         }
         let ty = match name {
             "__concat"
+            | "__debug"
             | "__fmt_prec"
             | "__fmt_pad"
             | "__fmt_radix"
@@ -6399,6 +7018,30 @@ impl<'a> TypeChecker<'a> {
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
             resolved = self.infer.resolve(self.tcx, *inner);
         }
+        // An `Option` / `Result` receiver hands its payload to the closure the
+        // same way a sequence hands over its element. Without this the closure
+        // body is checked against an unconstrained parameter, so a projection
+        // out of the payload never resolves and the mapped payload stays a
+        // free variable.
+        if let Some(TyKind::Adt { def, substs }) = self.tcx.kind(resolved) {
+            let payload_family = match def.local {
+                d if d == u32::MAX - 1 => Some(0),
+                d if d == u32::MAX => Some(0),
+                _ => None,
+            };
+            if let Some(index) = payload_family {
+                let payloads = substs.types();
+                let ok = payloads.get(index).copied();
+                let err = payloads.get(1).copied();
+                if let Some(ok) = ok {
+                    return match method {
+                        "map" | "and_then" | "filter" | "is_some_and" | "inspect" => Some(vec![ok]),
+                        "map_err" | "or_else" => err.map(|e| vec![e]),
+                        _ => None,
+                    };
+                }
+            }
+        }
         let elem = match self.tcx.kind(resolved) {
             Some(TyKind::Vec(elem) | TyKind::Slice(elem) | TyKind::Array { elem, .. }) => *elem,
             _ => return None,
@@ -7003,7 +7646,7 @@ impl<'a> TypeChecker<'a> {
         // `s: &T`, `T: Shape`) resolves to the trait method's declared
         // return type, so a `String`-returning trait method is not left to
         // default to i64 and render its pointer bits on the compiled tiers.
-        let (ret, params) = self.param_method_sig(receiver_ty, method)?;
+        let (ret, params) = self.param_method_sig(receiver_ty, method, span)?;
         let arg_tys: Vec<Ty> = args.iter().map(|arg| self.check_expr(arg)).collect();
         if params.len() == args.len() {
             for (param, (arg_ty, arg)) in params.iter().zip(arg_tys.iter().zip(args)) {
@@ -9208,7 +9851,29 @@ impl<'a> TypeChecker<'a> {
             return None;
         }
         let span = args.first().map_or(receiver_span, |arg| arg.span);
-        let lead_tys: Vec<Ty> = args.iter().map(|arg| self.check_expr(arg)).collect();
+        // Check a closure argument against the payload it will receive. Its
+        // body is checked once, so an unconstrained parameter leaves any
+        // projection out of the payload as a free variable that later unifies
+        // with whatever context demands - and the mapped payload never gets
+        // the closure's real return type.
+        let closure_inputs = self.vec_combinator_closure_inputs(method, resolved);
+        let lead_tys: Vec<Ty> = args
+            .iter()
+            .map(|arg| match (&closure_inputs, &arg.kind) {
+                (Some(inputs), ExprKind::Closure { params, .. })
+                    if params.len() == inputs.len() =>
+                {
+                    let output = self.fresh();
+                    let sig = FnSig {
+                        inputs: inputs.clone(),
+                        output,
+                    };
+                    let want = self.tcx.intern(TyKind::FnPtr(sig));
+                    self.check_expr_expecting(arg, Expectation::HasType(want))
+                }
+                _ => self.check_expr(arg),
+            })
+            .collect();
         self.std_combinator_ty(module, method, &lead_tys, resolved, span)
     }
 
@@ -9236,6 +9901,8 @@ impl<'a> TypeChecker<'a> {
             UnaryOp::Not => {
                 if matches!(self.tcx.kind(resolved), Some(TyKind::Bool)) {
                     self.tcx.bool_ty()
+                } else if self.reject_operator_off_bound(resolved, "!", "not", span) {
+                    self.tcx.error_ty()
                 } else if self.is_concrete(resolved) && !self.is_integer(resolved) {
                     let lhs = self.render_public_ty(resolved);
                     self.emit(
@@ -9259,7 +9926,9 @@ impl<'a> TypeChecker<'a> {
                 // the call. An ADT with no `impl Neg` is rejected here
                 // rather than faulting at runtime. Scalars keep the
                 // operand type.
-                if self.adt_name_of(resolved).is_some() {
+                if self.reject_operator_off_bound(resolved, "-", "neg", span) {
+                    self.tcx.error_ty()
+                } else if self.adt_name_of(resolved).is_some() {
                     self.record(operand.id, resolved);
                     if let Some(ret) = self.adt_op_method_ret(resolved, "neg", 0) {
                         ret
@@ -9477,6 +10146,9 @@ impl<'a> TypeChecker<'a> {
                 // the right of a non-ADT left operand - is rejected here
                 // rather than miscompiling to a runtime fault.
                 if let Some(method) = arith_op_method(op) {
+                    if self.reject_operands_off_bound(lhs_ty, rhs_ty, op.as_str(), method, span) {
+                        return self.tcx.error_ty();
+                    }
                     let lhs_res = self.infer.resolve(self.tcx, lhs_ty);
                     let rhs_res = self.infer.resolve(self.tcx, rhs_ty);
                     let lhs_adt = self.adt_name_of(lhs_res);
@@ -10542,6 +11214,7 @@ impl<'a> TypeChecker<'a> {
                 // before checking the body so nested structs expose fields
                 // and nested functions/types use the same DefId-keyed
                 // metadata as module-level items.
+                self.assoc.extend(std::slice::from_ref(item));
                 self.collect_signatures(std::slice::from_ref(item));
                 self.check_item(item);
             }
@@ -11073,6 +11746,9 @@ impl<'a> TypeChecker<'a> {
         if self.reject_unknown_variant_path(path, span) {
             return self.tcx.error_ty();
         }
+        if let Some(ty) = self.check_assoc_const_path(path, span) {
+            return self.record(node, ty);
+        }
         let Some(resolution) = self.resolutions.get(node) else {
             return self.check_std_path_value(node, path, span);
         };
@@ -11516,6 +12192,11 @@ impl<'a> TypeChecker<'a> {
         {
             return self_ty;
         }
+        if path.segments.len() >= 2
+            && let Some(projected) = self.resolve_assoc_type_projection(path, span)
+        {
+            return projected;
+        }
         // Recognise the stdlib's opaque dynamic JSON value by
         // surface name. The resolver doesn't allocate a `DefId`
         // for it (it comes in via `use std::encoding::json` as a
@@ -11903,7 +12584,248 @@ impl<'a> TypeChecker<'a> {
                 substs: crate::Substs::new(),
             });
         }
+        // A type written inside an associated-type binding (`T: Holder<Item
+        // = Point>`) sits outside every path the resolver walks, so its
+        // node carries no resolution. A user type named there still has to
+        // land on its nominal Adt rather than a fresh variable.
+        if let Some(def) = self.adt_def_by_name.get(tail).copied() {
+            let substs = self.substs_from_ast(path);
+            return self.tcx.intern(TyKind::Adt { def, substs });
+        }
         self.fresh()
+    }
+
+    /// `traits` followed by every supertrait reachable from them, in
+    /// breadth-first order. A projection resolves at check time rather
+    /// than through a vtable, so an associated item a supertrait declares
+    /// is reachable through the subtrait that inherits it.
+    fn with_supertraits(&self, traits: Vec<String>) -> Vec<String> {
+        let mut seen: std::collections::HashSet<String> = traits.iter().cloned().collect();
+        let mut out = traits;
+        let mut next = 0;
+        while next < out.len() {
+            let current = out[next].clone();
+            next += 1;
+            for supertrait in self.trait_supertraits.get(&current).into_iter().flatten() {
+                if seen.insert(supertrait.clone()) {
+                    out.push(supertrait.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// Trait names bounding the generic parameter `name` in the scope
+    /// currently being checked, from its inline bounds and `where`
+    /// predicates alike.
+    fn bounds_of_param(&self, name: &str) -> Vec<String> {
+        let Some((idx, _)) = self.current_generic_scope.get(name) else {
+            return Vec::new();
+        };
+        self.current_param_bounds
+            .get(idx.0 as usize)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Resolves a two-segment type path that projects an associated type
+    /// (`T::Item`, `Self::Item`, `Point::Item`). Returns `None` when the
+    /// path is not a projection at all, so ordinary qualified type paths
+    /// keep their existing handling.
+    ///
+    /// A projection resolves, in order, through an equality constraint on
+    /// the base's bound, through the impl that supplies it for a concrete
+    /// base, and through the bounding trait's default or its single
+    /// implementor. Everything reachable here is concrete, so the recorded
+    /// type never carries a projection into HIR.
+    fn resolve_assoc_type_projection(&mut self, path: &TypePath, span: Span) -> Option<Ty> {
+        // The last two segments carry the projection, so a module-qualified
+        // `inner::Holder::Item` reads the same as a bare `Holder::Item`.
+        let count = path.segments.len();
+        let base = path.segments.get(count.checked_sub(2)?)?.name.name.clone();
+        let name = path.segments.last()?.name.name.clone();
+        let is_param = self.current_generic_scope.contains_key(&base);
+        let is_self = base == "Self";
+        if !is_param
+            && !is_self
+            && self.assoc.assoc_type_for_self(&base, &name).is_none()
+            && self.assoc.assoc_const_ty_for_self(&base, &name).is_none()
+        {
+            return None;
+        }
+        if !self.assoc_expanding.insert((base.clone(), name.clone())) {
+            self.emit(
+                TypeError::CyclicTypeAlias {
+                    name: format!("{base}::{name}"),
+                },
+                span,
+            );
+            return Some(self.tcx.error_ty());
+        }
+        let resolved =
+            self.resolve_assoc_type_projection_inner(&base, &name, is_param, is_self, span, true);
+        self.assoc_expanding.remove(&(base, name));
+        Some(resolved)
+    }
+
+    /// Body of [`Self::resolve_assoc_type_projection`], also reached from a
+    /// method call whose receiver pins the projection. `report` is false
+    /// when the same projection was already diagnosed at its declaration.
+    fn resolve_assoc_type_projection_inner(
+        &mut self,
+        base: &str,
+        name: &str,
+        is_param: bool,
+        is_self: bool,
+        span: Span,
+        report: bool,
+    ) -> Ty {
+        if let Some(bound_ty) = self
+            .current_assoc_bindings
+            .get(&(base.to_string(), name.to_string()))
+            .cloned()
+        {
+            return self.type_from_ast(&bound_ty);
+        }
+        let concrete_base = if is_self {
+            self.current_self_ty_name.clone()
+        } else if is_param {
+            None
+        } else {
+            Some(base.to_string())
+        };
+        if let Some(concrete) = concrete_base.as_deref() {
+            if let Some(ast_ty) = self.assoc.assoc_type_for_self(concrete, name).cloned() {
+                return self.type_from_ast(&ast_ty);
+            }
+            if self.assoc.self_ty_trait_declares(concrete, name) {
+                // The trait declares the item and this impl leaves it out.
+                // GT0059 names the impl; a second report here would only
+                // repeat it at every projection site.
+                return self.tcx.error_ty();
+            }
+        }
+        let traits: Vec<String> = if is_self {
+            self.with_supertraits(self.current_trait_name.iter().cloned().collect())
+        } else if is_param {
+            self.with_supertraits(self.bounds_of_param(base))
+        } else {
+            Vec::new()
+        };
+        // Inside the trait declaration itself `Self` stands for every
+        // implementor, so a projection that no single impl pins is not an
+        // error: each specialisation resolves it against its own impl.
+        let self_is_abstract = is_self && self.current_self_ty_name.is_none();
+        let mut ambiguous_in = None;
+        for trait_name in &traits {
+            match self.assoc.assoc_type_for_trait(trait_name, name) {
+                gossamer_ast::AssocResolution::Found(ast_ty) => {
+                    let ast_ty = ast_ty.clone();
+                    return self.type_from_ast(&ast_ty);
+                }
+                gossamer_ast::AssocResolution::Ambiguous => {
+                    ambiguous_in = Some(trait_name.clone());
+                }
+                gossamer_ast::AssocResolution::Unknown => {}
+            }
+        }
+        if let Some(trait_name) = ambiguous_in {
+            if self_is_abstract || !report {
+                return self.tcx.error_ty();
+            }
+            self.emit(
+                TypeError::AmbiguousAssocItem {
+                    base: base.to_string(),
+                    trait_name,
+                    name: name.to_string(),
+                    kind: "type",
+                },
+                span,
+            );
+            return self.tcx.error_ty();
+        }
+        if self_is_abstract
+            && traits
+                .iter()
+                .any(|t| self.assoc.trait_declares_type(t, name))
+        {
+            return self.tcx.error_ty();
+        }
+        if !report {
+            return self.tcx.error_ty();
+        }
+        let declared = traits
+            .iter()
+            .flat_map(|t| self.assoc.declared_assoc_names(t))
+            .map(ToString::to_string)
+            .collect();
+        self.emit(
+            TypeError::UnknownAssocItem {
+                base: base.to_string(),
+                name: name.to_string(),
+                declared,
+            },
+            span,
+        );
+        self.tcx.error_ty()
+    }
+
+    /// Types a two-segment path expression that reads an associated
+    /// constant (`Point::MAX`, `T::MAX`, `Self::MAX`). Returns `None` when
+    /// the path names no associated constant, leaving ordinary path
+    /// resolution in charge.
+    fn check_assoc_const_path(&mut self, path: &gossamer_ast::PathExpr, span: Span) -> Option<Ty> {
+        let count = path.segments.len();
+        let base = path.segments.get(count.checked_sub(2)?)?.name.name.clone();
+        let name = path.segments.last()?.name.name.clone();
+        let is_param = self.current_generic_scope.contains_key(&base);
+        let is_self = base == "Self";
+        let concrete_base = if is_self {
+            self.current_self_ty_name.clone()
+        } else if is_param {
+            None
+        } else {
+            Some(base.clone())
+        };
+        if let Some(concrete) = concrete_base.as_deref()
+            && let Some(ast_ty) = self.assoc.assoc_const_ty_for_self(concrete, &name).cloned()
+        {
+            return Some(self.type_from_ast(&ast_ty));
+        }
+        let traits: Vec<String> = if is_self {
+            self.with_supertraits(self.current_trait_name.iter().cloned().collect())
+        } else if is_param {
+            self.with_supertraits(self.bounds_of_param(&base))
+        } else {
+            return None;
+        };
+        let declaring: Vec<&String> = traits
+            .iter()
+            .filter(|t| self.assoc.trait_declares_const(t, &name))
+            .collect();
+        let trait_name = declaring.first().map(|t| (*t).clone())?;
+        match self.assoc.assoc_const_owner_for_trait(&trait_name, &name) {
+            gossamer_ast::AssocResolution::Found(owner) => {
+                let ast_ty = self.assoc.assoc_const_ty_for_self(&owner, &name).cloned();
+                match ast_ty {
+                    Some(ast_ty) => Some(self.type_from_ast(&ast_ty)),
+                    None => Some(self.tcx.error_ty()),
+                }
+            }
+            gossamer_ast::AssocResolution::Ambiguous => {
+                self.emit(
+                    TypeError::AmbiguousAssocItem {
+                        base,
+                        trait_name,
+                        name,
+                        kind: "const",
+                    },
+                    span,
+                );
+                Some(self.tcx.error_ty())
+            }
+            gossamer_ast::AssocResolution::Unknown => None,
+        }
     }
 
     fn substs_from_ast(&mut self, path: &TypePath) -> crate::Substs {
@@ -12034,6 +12956,15 @@ impl<'a> TypeChecker<'a> {
             | PatternKind::Rest => self.fresh(),
             PatternKind::Error => self.tcx.error_ty(),
             PatternKind::Literal(lit) => self.type_of_literal(lit, pattern.span),
+            // A `..` rest leaves the width open, so the tuple's type comes
+            // from the scrutinee rather than from the pattern's arity.
+            PatternKind::Tuple(parts)
+                if parts
+                    .iter()
+                    .any(|part| matches!(part.kind, PatternKind::Rest)) =>
+            {
+                self.fresh()
+            }
             PatternKind::Tuple(parts) => {
                 let tys: Vec<Ty> = parts.iter().map(|p| self.type_of_pattern(p)).collect();
                 self.tcx.intern(TyKind::Tuple(tys))
@@ -12099,7 +13030,9 @@ impl<'a> TypeChecker<'a> {
                     self.bind_pattern(part, elem_ty);
                 }
             }
-            PatternKind::Struct { fields, .. } => self.bind_struct_pattern(fields, ty),
+            PatternKind::Struct { path, fields, .. } => {
+                self.bind_struct_pattern(path, fields, ty);
+            }
             PatternKind::TupleStruct { path, elems } => {
                 // For built-in generic enums (`Option<T>`,
                 // `Result<T, E>`) pull the payload type out of the
@@ -12163,8 +13096,20 @@ impl<'a> TypeChecker<'a> {
             self.emit(TypeError::StructPatternNameRequired { ty }, pattern.span);
         }
         let element_tys = self.tuple_pattern_element_tys(resolved, ref_mutability, parts.len());
+        // A `..` rest spans the elements the written prefix and suffix leave
+        // between them, so the suffix binds from the end of the tuple.
+        let rest_at = parts
+            .iter()
+            .position(|part| matches!(part.kind, PatternKind::Rest));
         for (i, part) in parts.iter().enumerate() {
-            let elem_ty = element_tys.get(i).copied().unwrap_or_else(|| self.fresh());
+            let position = match rest_at {
+                Some(at) if i > at => element_tys.len() + i - parts.len(),
+                _ => i,
+            };
+            let elem_ty = element_tys
+                .get(position)
+                .copied()
+                .unwrap_or_else(|| self.fresh());
             self.bind_pattern(part, elem_ty);
         }
     }
@@ -12187,14 +13132,17 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn bind_struct_pattern(&mut self, fields: &[FieldPattern], ty: Ty) {
+    fn bind_struct_pattern(&mut self, path: &gossamer_ast::Path, fields: &[FieldPattern], ty: Ty) {
         let mut resolved = self.infer.resolve(self.tcx, ty);
         let mut ref_mutability = None;
-        if let Some(TyKind::Ref { inner, mutability }) = self.tcx.kind(resolved).cloned() {
+        while let Some(TyKind::Ref { inner, mutability }) = self.tcx.kind(resolved).cloned() {
             resolved = self.infer.resolve(self.tcx, inner);
             ref_mutability = Some(mutability);
         }
-        let declared = match self.tcx.kind(resolved).cloned() {
+        // A struct-variant pattern reads the enum's declared variant fields;
+        // any other struct pattern reads the struct's own fields.
+        let variant_fields = self.struct_variant_field_tys(path, resolved);
+        let declared = variant_fields.unwrap_or_else(|| match self.tcx.kind(resolved).cloned() {
             Some(TyKind::Adt { def, substs }) => {
                 let names = self.struct_fields.get(&def).cloned().unwrap_or_default();
                 let tys = self.tcx.adt_field_tys(def, &substs).unwrap_or_default();
@@ -12205,19 +13153,55 @@ impl<'a> TypeChecker<'a> {
                     .collect::<HashMap<_, _>>()
             }
             _ => HashMap::new(),
-        };
+        });
         for field in fields {
             let mut field_ty = declared
                 .get(&field.name.name)
                 .copied()
                 .unwrap_or_else(|| self.fresh());
             if let Some(mutability) = ref_mutability {
-                field_ty = self.tcx.intern(TyKind::Ref {
-                    inner: field_ty,
-                    mutability,
-                });
+                field_ty = self.reference_binding_ty(field_ty, mutability);
             }
             self.bind_field_pattern(field, field_ty);
+        }
+    }
+
+    /// Declared field types of the enum struct-variant `path` names on the
+    /// `resolved` scrutinee enum, or `None` when the pattern is a plain
+    /// struct pattern. Generic enums are excluded: their stored field types
+    /// mention un-substituted parameters.
+    fn struct_variant_field_tys(
+        &mut self,
+        path: &gossamer_ast::Path,
+        resolved: Ty,
+    ) -> Option<HashMap<String, Ty>> {
+        let TyKind::Adt { def, substs } = self.tcx.kind(resolved)? else {
+            return None;
+        };
+        if !substs.types().is_empty() {
+            return None;
+        }
+        let enum_name = self.tcx.def_name(*def)?.to_string();
+        let variant = path.segments.last()?.name.name.clone();
+        let fields = self
+            .enum_variant_named_payloads
+            .get(&(enum_name, variant))?
+            .clone();
+        Some(fields.into_iter().collect())
+    }
+
+    /// Type a payload field binds at when it is reached through a reference
+    /// scrutinee. A scalar copies through the borrow and binds by value; a
+    /// heap-shaped payload binds as a borrow so the referent stays live.
+    fn reference_binding_ty(&mut self, inner: Ty, mutability: Mutbl) -> Ty {
+        let scalar = matches!(
+            self.tcx.kind(inner),
+            Some(TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char)
+        );
+        if scalar {
+            inner
+        } else {
+            self.tcx.intern(TyKind::Ref { inner, mutability })
         }
     }
 
@@ -12938,6 +13922,7 @@ fn op_trait_name(method: &str) -> &'static str {
         "shl" => "Shl",
         "shr" => "Shr",
         "neg" => "Neg",
+        "not" => "Not",
         "index" => "Index",
         _ => "Add",
     }
@@ -13822,6 +14807,126 @@ fn callee_display_name(callee: &Expr) -> String {
             .join("::"),
         _ => "this function".to_string(),
     }
+}
+
+/// Trailing segment name of each trait bound in a `: A + B` list.
+fn bound_names(bounds: &[gossamer_ast::TraitBound]) -> Vec<String> {
+    bounds
+        .iter()
+        .filter_map(|b| b.path.segments.last())
+        .map(|s| s.name.name.clone())
+        .collect()
+}
+
+/// Source name of a type written as a single unqualified path segment
+/// (`T`, `Shape`). Structural, generic, and qualified types name no single
+/// declaration position, so they return `None`.
+/// Records each `Name = Type` constraint written on `bounds` under the
+/// parameter `param` they constrain.
+fn collect_assoc_bindings(
+    param: &str,
+    bounds: &[gossamer_ast::TraitBound],
+    out: &mut HashMap<(String, String), gossamer_ast::Type>,
+) {
+    for bound in bounds {
+        for binding in &bound.bindings {
+            out.insert(
+                (param.to_string(), binding.name.name.clone()),
+                binding.ty.clone(),
+            );
+        }
+    }
+}
+
+/// Associated type name a `-> Self::Item` return projects, or `None` for
+/// any other return type.
+fn self_assoc_projection(ty: &gossamer_ast::Type) -> Option<String> {
+    let gossamer_ast::ty::TypeKind::Path(path) = &ty.kind else {
+        return None;
+    };
+    if path.segments.len() != 2 || path.segments[0].name.name != "Self" {
+        return None;
+    }
+    Some(path.segments[1].name.name.clone())
+}
+
+fn bare_path_type_name(ty: &gossamer_ast::Type) -> Option<&str> {
+    let gossamer_ast::ty::TypeKind::Path(path) = &ty.kind else {
+        return None;
+    };
+    if path.segments.len() != 1 {
+        return None;
+    }
+    Some(path.segments.last()?.name.name.as_str())
+}
+
+/// Appends each `where` predicate's bounds onto the entry of the parameter
+/// it names. `offset` is the index the first entry of `params` occupies in
+/// `out`, so an impl's and a method's clauses can share one table.
+fn merge_where_predicates(
+    params: &[gossamer_ast::GenericParam],
+    offset: usize,
+    where_clause: &gossamer_ast::WhereClause,
+    out: &mut [Vec<String>],
+) {
+    for predicate in &where_clause.predicates {
+        let Some(name) = bare_path_type_name(&predicate.bounded) else {
+            continue;
+        };
+        let Some(position) = params.iter().position(|param| {
+            matches!(param, gossamer_ast::GenericParam::Type { name: param_name, .. }
+                if param_name.name == name)
+        }) else {
+            continue;
+        };
+        let Some(entry) = out.get_mut(offset + position) else {
+            continue;
+        };
+        for bound in bound_names(&predicate.bounds) {
+            if !entry.contains(&bound) {
+                entry.push(bound);
+            }
+        }
+    }
+}
+
+/// Appends `extra`'s bound names onto `table`, growing it as needed and
+/// keeping each parameter's list free of repeats.
+fn merge_bound_table(table: &mut Vec<Vec<String>>, extra: &[Vec<String>]) {
+    if table.len() < extra.len() {
+        table.resize(extra.len(), Vec::new());
+    }
+    for (entry, names) in table.iter_mut().zip(extra) {
+        for name in names {
+            if !entry.contains(name) {
+                entry.push(name.clone());
+            }
+        }
+    }
+}
+
+/// Whether a built-in trait name is one the language expects an explicit
+/// `impl` block to supply. The operator traits are written out by hand;
+/// every other built-in name (`Clone`, `Debug`, `Hash`, `Ord`, ...) names
+/// behaviour every value already has.
+fn builtin_trait_needs_impl(name: &str) -> bool {
+    matches!(
+        name,
+        "Add"
+            | "Sub"
+            | "Mul"
+            | "Div"
+            | "Rem"
+            | "Neg"
+            | "Not"
+            | "BitAnd"
+            | "BitOr"
+            | "BitXor"
+            | "Shl"
+            | "Shr"
+            | "Index"
+            | "IndexMut"
+    )
 }
 
 fn known_builtin_trait(name: &str) -> bool {

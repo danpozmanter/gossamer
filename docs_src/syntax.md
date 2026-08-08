@@ -167,12 +167,13 @@ let n = 3 |> double |> add(10) |> clamp(0, 100)
 let same = clamp(0, 100, add(10, double(3)))
 ```
 
-Use one direct `_` argument when the value belongs in a different
-position: `text |> strings::slice(_, 1, 3)` becomes
-`strings::slice(text, 1, 3)`. A trailing `_` is accepted but is only
-an explicit spelling of the default data-last rule. `_` can also be
-the receiver in forms such as `text |> _.trim`; it may not be used
-more than once in one pipe step.
+Use one direct `$` argument when the value belongs in a different
+position: `text |> strings::slice($, 1, 3)` becomes
+`strings::slice(text, 1, 3)`. A trailing `$` is accepted but is only
+an explicit spelling of the default data-last rule. `$` can also be
+the receiver in forms such as `text |> $.trim`; it may not be used
+more than once in one pipe step. `$` is punctuation rather than an
+identifier, so it never collides with a name in scope.
 
 ## Pattern matching
 

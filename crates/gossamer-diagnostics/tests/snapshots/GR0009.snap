@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GR0009]: A bare enum-variant name that two or more enums declare. Variant - here
+--- framed ---
+error[GR0009]: A bare enum-variant name that two or more enums declare. Variant
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

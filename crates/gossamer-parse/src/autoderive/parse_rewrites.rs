@@ -277,6 +277,7 @@ pub fn parse_with_autoderive(source: &str, file: FileId) -> (SourceFile, Vec<Par
     rewrite_open_range_take(&mut sf);
     infer_serde_turbofish(&mut sf);
     desugar_sort_by_key(&mut sf);
+    hoist_associated_consts(&mut sf);
     // Runs on the un-mangled AST: `rewrite_serde_generic_calls` below turns a
     // serde turbofish into a bare mangled name, erasing the type argument the
     // check keys on.

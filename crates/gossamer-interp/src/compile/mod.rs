@@ -340,6 +340,10 @@ pub fn compile_fn(
         cov,
     );
     builder.consumable = consume::consumable_locals(decl);
+    builder.capture_cell_names = capture_cell_names(
+        tcx,
+        &consume::closure_captured_locals(&decl.params, &body.block),
+    );
     for (idx, param) in decl.params.iter().enumerate() {
         let reg = builder.alloc_reg();
         if matches!(tcx.kind(param.ty), Some(TyKind::Int(_))) {
@@ -385,6 +389,13 @@ pub fn compile_fn(
                 _ => {}
             }
         }
+        if let HirPatKind::Binding { name, .. } = &param.pattern.kind {
+            let typed = TypedReg {
+                reg,
+                kind: RegKind::Value,
+            };
+            builder.install_capture_cell(&name.name, typed, param.ty);
+        }
     }
     let result = builder.compile_block(&body.block)?;
     if matches!(result, BlockResult::ValueIn(_)) {
@@ -397,6 +408,20 @@ pub fn compile_fn(
     }
     let arity = u16::try_from(decl.params.len()).unwrap_or(u16::MAX);
     Ok(builder.finish(arity))
+}
+
+/// Filters the captured bindings a closure analysis reported down to the
+/// names this function stores in capture cells: those whose type the
+/// compiled tiers name through a shared heap buffer.
+fn capture_cell_names(
+    tcx: &TyCtxt,
+    captured: &[(String, gossamer_types::Ty)],
+) -> std::collections::HashSet<String> {
+    captured
+        .iter()
+        .filter(|(_, ty)| matches!(tcx.kind(*ty), Some(TyKind::Vec(_) | TyKind::Slice(_))))
+        .map(|(name, _)| name.clone())
+        .collect()
 }
 
 /// Compiles a single `const`/`static` initializer expression into a
@@ -501,6 +526,18 @@ pub(crate) struct FnBuilder<'tcx> {
     /// register restores because a temporary value register became the
     /// referent of a local reference binding.
     pub(crate) escaped_reference_reg_floor: Reg,
+    /// Local names this function stores in a capture cell: a closure in
+    /// the body reads them from an enclosing binding and their type is
+    /// one the compiled tiers share by pointer.
+    pub(crate) capture_cell_names: std::collections::HashSet<String>,
+    /// Active capture-cell bindings as `(home register, cell register)`,
+    /// innermost scope last. Every emitted instruction that names a home
+    /// register is bracketed with the cell's load / store.
+    pub(crate) capture_cells: Vec<(Reg, Reg)>,
+    /// `true` once any binding in this function has been cell-backed.
+    /// Peepholes that assume a call's argument moves sit in one
+    /// uninterrupted run are skipped, since cell traffic separates them.
+    pub(crate) capture_cells_used: bool,
     /// Registers bound by a pattern to an array / vec / slice value
     /// (`Some(arr)`, `(head, tail)`, …). A pattern binding's `Path`
     /// reference carries the binding's *declared* type only when the
@@ -619,6 +656,10 @@ pub(crate) struct Scope {
     /// Local names whose storage is a direct reference alias rather than an
     /// independent value register.
     pub(crate) reference_bindings: std::collections::HashSet<String>,
+    /// `FnBuilder::capture_cells` length when this scope opened. Cells
+    /// installed inside the scope stop applying when it closes, which is
+    /// also when their home register becomes reusable.
+    pub(crate) capture_cell_mark: usize,
 }
 
 #[derive(Debug)]

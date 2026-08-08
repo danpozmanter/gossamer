@@ -372,6 +372,21 @@ pub enum Value {
     /// VM's clone-on-write value model. Never escapes the call
     /// protocol: no user-visible op ever observes a `MutCell`.
     MutCell(Arc<ThreadConfinedCell>),
+    /// Shared storage for a local that a closure captures by managed
+    /// reference.
+    ///
+    /// The enclosing binding's cell register and the closure's upvalue
+    /// name the same cell, so an in-place mutation reached through
+    /// either is observed by the other - the VM's stand-in for the
+    /// single heap buffer the compiled tiers share. Assigning the whole
+    /// variable installs a *fresh* cell instead of writing through this
+    /// one, which keeps each binding's slot independent exactly as a
+    /// pointer-sized slot is on the compiled tiers. The mutex keeps
+    /// `Value: Send + Sync`, so a captured local may cross a goroutine
+    /// boundary. Never observed by a user-visible op: the compiler
+    /// brackets every instruction that names the binding with the
+    /// matching capture-cell load / store.
+    CaptureCell(Arc<Mutex<Value>>),
     /// Poisoned / uninitialised sentinel.
     Void,
 }
@@ -409,6 +424,7 @@ impl Value {
             Self::Uint(_) => "u64".to_string(),
             Self::Weak(_) => "Weak".to_string(),
             Self::MutCell(cell) => cell.lock().type_name(),
+            Self::CaptureCell(cell) => cell.lock().type_name(),
             Self::Void => "uninitialized value".to_string(),
         }
     }
@@ -481,6 +497,11 @@ fn dismantle_children(mut stack: Vec<Value>) {
                 }
             }
             Value::MutCell(a) => {
+                if let Ok(m) = Arc::try_unwrap(a) {
+                    stack.push(m.into_inner());
+                }
+            }
+            Value::CaptureCell(a) => {
                 if let Ok(m) = Arc::try_unwrap(a) {
                     stack.push(m.into_inner());
                 }
@@ -723,6 +744,20 @@ pub enum MapKey {
     Agg(Box<AggKey>),
 }
 
+/// Shape an aggregate map key was built from, so the key can be rebuilt as
+/// the value the program wrote rather than an anonymous field list.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AggShape {
+    /// A tuple: positional, rebuilt as [`Value::Tuple`].
+    Tuple,
+    /// An array: positional, rebuilt as [`Value::Array`].
+    Array,
+    /// An enum variant: positional under its variant name.
+    Variant,
+    /// A struct, carrying its field names in declaration order.
+    Struct(Arc<[&'static str]>),
+}
+
 /// Boxed payload of [`MapKey::Agg`]: an aggregate map key hashed by value.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AggKey {
@@ -730,6 +765,8 @@ pub struct AggKey {
     pub name: TypeTag,
     /// Each field's key, recursively.
     pub fields: Box<[MapKey]>,
+    /// How to rebuild the original value from `name` and `fields`.
+    pub shape: AggShape,
 }
 
 impl MapKey {
@@ -748,26 +785,32 @@ impl MapKey {
             Value::Tuple(vals) => Self::Agg(Box::new(AggKey {
                 name: intern_type_tag(""),
                 fields: vals.iter().map(Self::from_value).collect(),
+                shape: AggShape::Tuple,
             })),
             Value::Array(vals) => Self::Agg(Box::new(AggKey {
                 name: intern_type_tag("[]"),
                 fields: vals.iter().map(Self::from_value).collect(),
+                shape: AggShape::Array,
             })),
             Value::IntArray(ns) => Self::Agg(Box::new(AggKey {
                 name: intern_type_tag("[]"),
                 fields: ns.iter().map(|n| Self::Int(*n)).collect(),
+                shape: AggShape::Array,
             })),
             Value::ByteArray(bytes) => Self::Agg(Box::new(AggKey {
                 name: intern_type_tag("[]"),
                 fields: bytes.iter().map(|n| Self::Int(i64::from(*n))).collect(),
+                shape: AggShape::Array,
             })),
             Value::InlineByteArray(bytes) => Self::Agg(Box::new(AggKey {
                 name: intern_type_tag("[]"),
                 fields: bytes.iter().map(|n| Self::Int(i64::from(*n))).collect(),
+                shape: AggShape::Array,
             })),
             Value::ByteVec(bytes) => Self::Agg(Box::new(AggKey {
                 name: intern_type_tag("[]"),
                 fields: bytes.iter().map(|n| Self::Int(i64::from(*n))).collect(),
+                shape: AggShape::Array,
             })),
             Value::Struct(inner) => Self::Agg(Box::new(AggKey {
                 name: inner.name.clone(),
@@ -776,10 +819,12 @@ impl MapKey {
                     .iter()
                     .map(|(_, fv)| Self::from_value(fv))
                     .collect(),
+                shape: AggShape::Struct(inner.fields.field_names()),
             })),
             Value::Variant(inner) => Self::Agg(Box::new(AggKey {
                 name: inner.name.clone(),
                 fields: inner.fields.iter().map(Self::from_value).collect(),
+                shape: AggShape::Variant,
             })),
             // A native enum hashes through its boxed shape so a user enum used
             // as a map key keeps working after Step 8 (VM-built enums are
@@ -798,10 +843,24 @@ impl MapKey {
             Self::Int(n) => Value::Int(*n),
             Self::Char(c) => Value::Char(*c),
             Self::Str(s) => Value::String(s.clone()),
-            // Aggregate keys don't round-trip to their original typed shape
-            // (field names / element types aren't retained); `keys()` over a
-            // struct-keyed map is unsupported, matching the compiled tier.
-            Self::NonHashable | Self::Agg(_) => Value::Unit,
+            // An aggregate key retains the shape it was hashed from, so it
+            // rebuilds as the value the program wrote.
+            Self::Agg(agg) => {
+                let fields: Vec<Value> = agg.fields.iter().map(Self::to_value).collect();
+                match &agg.shape {
+                    AggShape::Tuple => Value::Tuple(Arc::new(fields)),
+                    AggShape::Array => Value::Array(Arc::new(fields)),
+                    AggShape::Variant => Value::Variant(Arc::new(VariantInner {
+                        name: agg.name.clone(),
+                        fields: fields.into_iter().collect(),
+                    })),
+                    AggShape::Struct(names) => Value::Struct(Arc::new(StructInner {
+                        name: agg.name.clone(),
+                        fields: StructFields::from_parts(Arc::clone(names), fields),
+                    })),
+                }
+            }
+            Self::NonHashable => Value::Unit,
         }
     }
 }
@@ -852,6 +911,22 @@ impl StructFields {
         let (names, values): (Vec<_>, Vec<_>) = fields.into_iter().unzip();
         Self {
             names: intern_struct_field_names(&names),
+            values: values.into_boxed_slice(),
+        }
+    }
+
+    /// The interned field-name layout this struct instance shares.
+    #[must_use]
+    pub fn field_names(&self) -> Arc<[&'static str]> {
+        Arc::clone(&self.names)
+    }
+
+    /// Rebuilds a struct body from an already-interned name layout and its
+    /// values in declaration order.
+    #[must_use]
+    pub fn from_parts(names: Arc<[&'static str]>, values: Vec<Value>) -> Self {
+        Self {
+            names,
             values: values.into_boxed_slice(),
         }
     }
@@ -2413,6 +2488,7 @@ impl Value {
             // boundary serialises one anyway, its current inner value
             // is the only meaningful payload.
             Self::MutCell(c) => c.lock().to_raw(),
+            Self::CaptureCell(c) => c.lock().to_raw(),
             Self::Unit => from_singleton(SINGLETON_UNIT),
             Self::Bool(false) => from_singleton(SINGLETON_FALSE),
             Self::Bool(true) => from_singleton(SINGLETON_TRUE),
@@ -2578,6 +2654,10 @@ impl fmt::Display for Value {
             // Cells render as their inner value - they are a call-
             // protocol artifact, never a user-visible shape.
             Self::MutCell(c) => {
+                let inner = c.lock().clone();
+                fmt::Display::fmt(&inner, out)
+            }
+            Self::CaptureCell(c) => {
                 let inner = c.lock().clone();
                 fmt::Display::fmt(&inner, out)
             }
@@ -2842,12 +2922,7 @@ fn repr_binary_heap(value: &Value, owner: &str) -> String {
 }
 
 fn repr_float(number: f64) -> String {
-    let rendered = number.to_string();
-    if number.is_finite() && number.fract() == 0.0 {
-        format!("{rendered}.0")
-    } else {
-        rendered
-    }
+    gossamer_runtime::builtins::format_float_debug(number)
 }
 
 fn repr_struct(name: &str, fields: &[(&'static str, Value)]) -> String {
@@ -2888,13 +2963,23 @@ fn source_facing_nested_item_name(name: &str) -> &str {
     }
 }
 
+/// Renders one element of an aggregate. A float always keeps a fractional
+/// part or an exponent so the text reads back as a float, matching how a
+/// struct field renders; every other value keeps its Display text.
+fn write_element(out: &mut fmt::Formatter<'_>, value: &Value) -> fmt::Result {
+    match value {
+        Value::Float(f) => out.write_str(&gossamer_runtime::builtins::format_float_debug(*f)),
+        other => write!(out, "{other}"),
+    }
+}
+
 fn write_tuple(out: &mut fmt::Formatter<'_>, parts: &[Value]) -> fmt::Result {
     out.write_str("(")?;
     for (i, part) in parts.iter().enumerate() {
         if i > 0 {
             out.write_str(", ")?;
         }
-        write!(out, "{part}")?;
+        write_element(out, part)?;
     }
     if parts.len() == 1 {
         out.write_str(",")?;
@@ -2914,7 +2999,8 @@ fn write_map(out: &mut fmt::Formatter<'_>, map: &DenseMap<MapKey, Value>) -> fmt
         if i > 0 {
             out.write_str(", ")?;
         }
-        write!(out, "{}: {v}", repr_value(&k.to_value()))?;
+        write!(out, "{}: ", repr_value(&k.to_value()))?;
+        write_element(out, v)?;
     }
     out.write_str("}")
 }
@@ -2956,7 +3042,7 @@ fn write_array(out: &mut fmt::Formatter<'_>, parts: &[Value]) -> fmt::Result {
         if i > 0 {
             out.write_str(", ")?;
         }
-        write!(out, "{part}")?;
+        write_element(out, part)?;
     }
     out.write_str("]")
 }
@@ -2971,7 +3057,7 @@ fn write_variant(out: &mut fmt::Formatter<'_>, name: &str, fields: &[Value]) -> 
         if i > 0 {
             out.write_str(", ")?;
         }
-        write!(out, "{field}")?;
+        write_element(out, field)?;
     }
     out.write_str(")")
 }

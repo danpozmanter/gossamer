@@ -15,7 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::*;
@@ -92,7 +91,7 @@ pub unsafe extern "C" fn gos_rt_toml_to_json(s: *const c_char) -> i128 {
         let text = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { crate::c_abi::gos_str_arg_text(s) }
         };
         let value: toml::Value = match toml::from_str(text) {
             Ok(v) => v,
@@ -112,7 +111,7 @@ pub unsafe extern "C" fn gos_rt_toml_from_json(s: *const c_char) -> i128 {
         let text = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { crate::c_abi::gos_str_arg_text(s) }
         };
         let v: serde_json::Value = match serde_json::from_str(text) {
             Ok(v) => v,
@@ -135,7 +134,7 @@ pub unsafe extern "C" fn gos_rt_toml_is_valid(s: *const c_char) -> i64 {
         let text = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { crate::c_abi::gos_str_arg_text(s) }
         };
         i64::from(toml::from_str::<toml::Value>(text).is_ok())
     })
@@ -147,7 +146,7 @@ pub unsafe extern "C" fn gos_rt_toml_pretty(s: *const c_char) -> i128 {
         let text = if s.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+            unsafe { crate::c_abi::gos_str_arg_text(s) }
         };
         let value: toml::Value = match toml::from_str(text) {
             Ok(v) => v,

@@ -138,6 +138,7 @@ impl<'a> Lowerer<'a> {
         };
         let place_ty = self.place_leaf_ty(place);
         let packed_bytes = packed_byte_array_len(self.tcx, place_ty).is_some();
+        let tbaa = self.aggregate_dest_tbaa(place);
         let mut slot_idx = 0u32;
         for operand in operands {
             let op_ty = self.operand_ty(operand);
@@ -182,14 +183,14 @@ impl<'a> Lowerer<'a> {
                     .unwrap();
                     let byte = self.fresh();
                     writeln!(self.out, "  {byte} = trunc {op_llvm} {v} to i8").unwrap();
-                    writeln!(self.out, "  store i8 {byte}, ptr {dst}").unwrap();
+                    writeln!(self.out, "  store i8 {byte}, ptr {dst}{tbaa}").unwrap();
                 } else {
                     writeln!(
                         self.out,
                         "  {dst} = getelementptr i64, ptr {base}, i64 {slot_idx}"
                     )
                     .unwrap();
-                    writeln!(self.out, "  store {op_llvm} {v}, ptr {dst}").unwrap();
+                    writeln!(self.out, "  store {op_llvm} {v}, ptr {dst}{tbaa}").unwrap();
                 }
             } else {
                 // Nested aggregate. The operand may be either a
@@ -258,6 +259,7 @@ impl<'a> Lowerer<'a> {
         };
         let place_ty = self.place_leaf_ty(place);
         let packed_bytes = packed_byte_array_len(self.tcx, place_ty).is_some();
+        let tbaa = self.aggregate_dest_tbaa(place);
         let op_ty = self.operand_ty(value);
         let mut op_slots = slot_count(self.tcx, op_ty).unwrap_or(1);
         if matches!(value, Operand::Const(_) | Operand::FnRef { .. }) {
@@ -322,7 +324,7 @@ impl<'a> Lowerer<'a> {
                             "  {child_dst} = getelementptr i64, ptr {dst}, i64 {child_word}"
                         )
                         .unwrap();
-                        writeln!(self.out, "  store ptr {cloned}, ptr {child_dst}").unwrap();
+                        writeln!(self.out, "  store ptr {cloned}, ptr {child_dst}{tbaa}").unwrap();
                     }
                 }
             } else {
@@ -379,7 +381,7 @@ impl<'a> Lowerer<'a> {
                         "  {child_dst} = getelementptr i64, ptr {dst}, i64 {child_word}"
                     )
                     .unwrap();
-                    writeln!(self.out, "  store ptr {cloned}, ptr {child_dst}").unwrap();
+                    writeln!(self.out, "  store ptr {cloned}, ptr {child_dst}{tbaa}").unwrap();
                 }
                 let next = self.fresh();
                 writeln!(self.out, "  {next} = add i64 {cur}, 1").unwrap();
@@ -424,7 +426,7 @@ impl<'a> Lowerer<'a> {
                     "  {dst} = getelementptr i8, ptr {base}, i64 {cur}"
                 )
                 .unwrap();
-                writeln!(self.out, "  store i8 {byte}, ptr {dst}").unwrap();
+                writeln!(self.out, "  store i8 {byte}, ptr {dst}{tbaa}").unwrap();
                 let next = self.fresh();
                 writeln!(self.out, "  {next} = add i64 {cur}, 1").unwrap();
                 writeln!(self.out, "  store i64 {next}, ptr {counter}").unwrap();
@@ -437,7 +439,7 @@ impl<'a> Lowerer<'a> {
             for i in 0..count {
                 let dst = self.fresh();
                 writeln!(self.out, "  {dst} = getelementptr i64, ptr {base}, i64 {i}").unwrap();
-                writeln!(self.out, "  store {v_llvm} {v}, ptr {dst}").unwrap();
+                writeln!(self.out, "  store {v_llvm} {v}, ptr {dst}{tbaa}").unwrap();
             }
         } else {
             let head = self.fresh_label("repeat_head");
@@ -460,7 +462,7 @@ impl<'a> Lowerer<'a> {
                 "  {dst} = getelementptr i64, ptr {base}, i64 {cur}"
             )
             .unwrap();
-            writeln!(self.out, "  store {v_llvm} {v}, ptr {dst}").unwrap();
+            writeln!(self.out, "  store {v_llvm} {v}, ptr {dst}{tbaa}").unwrap();
             let next = self.fresh();
             writeln!(self.out, "  {next} = add i64 {cur}, 1").unwrap();
             writeln!(self.out, "  store i64 {next}, ptr {counter}").unwrap();
@@ -511,11 +513,36 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
             }
+            ConcatKind::VecChar => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_char");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_vec_format_char(ptr {value})"
+                )
+                .unwrap();
+            }
+            ConcatKind::VecAdt(ref fmt, by_ref) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_adt");
+                let by_ref = i32::from(by_ref);
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_vec_format_adt(ptr {value}, ptr @\"{fmt}\", i32 {by_ref})"
+                )
+                .unwrap();
+            }
             ConcatKind::VecVecI64 => {
                 declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_vec_i64");
                 writeln!(
                     self.out,
                     "  {dest} = call ptr @gos_rt_vec_format_vec_i64(ptr {value})"
+                )
+                .unwrap();
+            }
+            ConcatKind::VecVecF64 => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_vec_f64");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_vec_format_vec_f64(ptr {value})"
                 )
                 .unwrap();
             }
@@ -548,6 +575,23 @@ impl<'a> Lowerer<'a> {
                 writeln!(
                     self.out,
                     "  {dest} = call ptr @gos_rt_arr_format_bool(ptr {value}, i64 {n})"
+                )
+                .unwrap();
+            }
+            ConcatKind::ArrChar(n) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_arr_format_char");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_arr_format_char(ptr {value}, i64 {n})"
+                )
+                .unwrap();
+            }
+            ConcatKind::ArrAdt(n, stride, ref fmt, by_ref) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_arr_format_adt");
+                let by_ref = i32::from(by_ref);
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_arr_format_adt(ptr {value}, i64 {n}, i64 {stride}, ptr @\"{fmt}\", i32 {by_ref})"
                 )
                 .unwrap();
             }
@@ -632,27 +676,64 @@ impl<'a> Lowerer<'a> {
             // `fat_i128_call_arg`, which on Win64 spills it to a 16-byte slot
             // and passes `ptr` (matching the runtime's `__int128` ABI) and on
             // SysV passes the bare `i128`.
-            ConcatKind::Option(payload_kind) => {
-                declare_rt(&mut self.runtime_refs, "gos_rt_debug_option");
+            ConcatKind::Option(ref payload) => {
+                let tag = payload.tag();
                 let opt_arg = self.fat_i128_call_arg(value);
-                writeln!(
-                    self.out,
-                    "  {dest} = call ptr @gos_rt_debug_option({opt_arg}, i64 {payload_kind})"
-                )
-                .unwrap();
+                match payload {
+                    DebugPayload::Tag(_) => {
+                        declare_rt(&mut self.runtime_refs, "gos_rt_debug_option");
+                        writeln!(
+                            self.out,
+                            "  {dest} = call ptr @gos_rt_debug_option({opt_arg}, i64 {tag})"
+                        )
+                        .unwrap();
+                    }
+                    DebugPayload::Fmt(fmt) => {
+                        declare_rt(&mut self.runtime_refs, "gos_rt_debug_option_fmt");
+                        writeln!(
+                            self.out,
+                            "  {dest} = call ptr @gos_rt_debug_option_fmt({opt_arg}, i64 {tag}, ptr @\"{fmt}\")"
+                        )
+                        .unwrap();
+                    }
+                }
             }
-            ConcatKind::Result(ok_kind, err_kind) => {
-                declare_rt(&mut self.runtime_refs, "gos_rt_debug_result");
+            ConcatKind::Result(ref ok, ref err) => {
+                let (ok_tag, err_tag) = (ok.tag(), err.tag());
                 let res_arg = self.fat_i128_call_arg(value);
-                writeln!(
-                    self.out,
-                    "  {dest} = call ptr @gos_rt_debug_result({res_arg}, i64 {ok_kind}, i64 {err_kind})"
-                )
-                .unwrap();
+                match (ok, err) {
+                    (DebugPayload::Tag(_), DebugPayload::Tag(_)) => {
+                        declare_rt(&mut self.runtime_refs, "gos_rt_debug_result");
+                        writeln!(
+                            self.out,
+                            "  {dest} = call ptr @gos_rt_debug_result({res_arg}, i64 {ok_tag}, i64 {err_tag})"
+                        )
+                        .unwrap();
+                    }
+                    _ => {
+                        declare_rt(&mut self.runtime_refs, "gos_rt_debug_result_fmt");
+                        let ok_fmt = Self::debug_fmt_operand(ok);
+                        let err_fmt = Self::debug_fmt_operand(err);
+                        writeln!(
+                            self.out,
+                            "  {dest} = call ptr @gos_rt_debug_result_fmt({res_arg}, i64 {ok_tag}, i64 {err_tag}, ptr {ok_fmt}, ptr {err_fmt})"
+                        )
+                        .unwrap();
+                    }
+                }
             }
             _ => unreachable!("emit_aggregate_format called with non-aggregate kind"),
         }
         dest
+    }
+
+    /// The `ptr` operand naming a payload's derived `fmt`, or `null` for a
+    /// payload the runtime renders from its tag alone.
+    fn debug_fmt_operand(payload: &DebugPayload) -> String {
+        match payload {
+            DebugPayload::Tag(_) => "null".to_string(),
+            DebugPayload::Fmt(sym) => format!("@\"{sym}\""),
+        }
     }
 
     /// Routes an aggregate-print operand to its runtime formatter.

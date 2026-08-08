@@ -109,17 +109,20 @@ impl Tarjan<'_> {
 /// Module-level TBAA metadata tree emitted once per LLVM module (both render
 /// paths), right after the empty `!0` node.
 ///
-/// Two sibling scalar type nodes - an aggregate *header* node (`!2`) and an
-/// element-*data* node (`!3`) - let the inline vec/string fast paths in
-/// `crate::lower::lower_inline` tag header-field accesses (a `GosVec` /
-/// `GosI64Vec` / `GosU8Vec` len/cap/elem_bytes/data-pointer, or a string's
-/// rc/cap/len/tag prefix) distinctly from element-buffer accesses via the
-/// access tags `!4` (header) and `!5` (data).
+/// Two sibling scalar type nodes - an aggregate *header* node (`!2`) and a
+/// *payload* node (`!3`) - split every tagged access into two never-aliasing
+/// classes via the access tags `!4` (header) and `!5` (payload).
 ///
-/// This is sound because the two never alias: a vec header and its element
-/// buffer are separate allocations, and a string's header prefix and its
-/// content bytes occupy disjoint byte ranges of one allocation - no single
-/// access spans both. With the distinction in place `-O3` can prove an element
+/// The header class covers a `GosVec` / `GosI64Vec` / `GosU8Vec`
+/// len/cap/elem_bytes/data-pointer and a string's rc/cap/len/tag prefix. The
+/// payload class covers element-buffer and string-content bytes plus the flat
+/// i64 slot slabs that hold struct fields, tuple elements, and fixed-array
+/// elements.
+///
+/// This is sound because the two never alias: a header and its element buffer
+/// are separate allocations or disjoint byte ranges of one allocation, slot
+/// slabs are separate allocations again, and no single access spans a header
+/// and a payload byte. With the distinction in place `-O3` can prove a payload
 /// store does not clobber a hoisted `len`/`cap`/`elem_bytes`/`data` load, so
 /// LICM hoists the data pointer and the loop vectorizer fires on element loops.
 ///
@@ -457,6 +460,14 @@ pub fn set_target_triple(triple: String) {
     let _ = TARGET_TRIPLE_OVERRIDE.set(triple);
 }
 
+/// The triple this process compiles for: the `--target` override when one
+/// was set, otherwise the detected host. Callers fold it into cache
+/// identities so an artifact never crosses a target boundary.
+#[must_use]
+pub fn active_target_triple() -> String {
+    host_triple()
+}
+
 /// Resolves the active incremental cache directory in priority order:
 /// 1. [`set_cache_dir`] override (process-level)
 /// 2. `GOS_BUILD_CACHE` env var
@@ -658,6 +669,17 @@ fn codegen_chunks(bodies: &[Body], requested_chunks: usize) -> Vec<Vec<usize>> {
     chunks
 }
 
+/// RC type-meta blobs in symbol order.
+///
+/// The type context stores them in a hash map, and their emission order
+/// fixes their relative layout in the object's constant pool, so the
+/// emitter imposes a total order before writing them out.
+fn sorted_rc_metas(tcx: &TyCtxt) -> Vec<(&str, &[i64])> {
+    let mut metas: Vec<(&str, &[i64])> = tcx.rc_metas().collect();
+    metas.sort_unstable_by_key(|(symbol, _)| *symbol);
+    metas
+}
+
 /// Renders all bodies in `chunk_indices` as a single LLVM IR module.
 ///
 /// Bodies not in the chunk get `declare` stubs; bodies in the chunk get
@@ -770,7 +792,7 @@ fn render_chunk_module(chunk_indices: &[usize], ctx: &ModuleCtx<'_>) -> Result<S
     // each object file self-contained and unreferenced copies are
     // stripped by `opt`/the linker.
     let mut emitted_any_meta = false;
-    for (symbol, blob) in ctx.tcx.rc_metas() {
+    for (symbol, blob) in sorted_rc_metas(ctx.tcx) {
         let elems: Vec<String> = blob.iter().map(|v| format!("i64 {v}")).collect();
         writeln!(
             out,
@@ -951,13 +973,22 @@ fn compile_bodies_parallel_incremental(
     //
     // Bound fan-out by both available CPUs and the memory-aware LLVM job
     // policy. The bodies-per-chunk cap still preserves the inlining floor.
-    let available_threads =
-        std::thread::available_parallelism().map_or(PARALLEL_MAX_THREADS, std::num::NonZero::get);
-    let max_threads = available_threads.min(codegen_job_limit(bodies.len()));
-    let ideal_n_chunks = max_threads.min(bodies.len());
-    let n_chunks = ideal_n_chunks
-        .min(bodies.len().div_ceil(MIN_BODIES_PER_CHUNK))
-        .max(1);
+    //
+    // The chunk count decides which bodies share a module, and therefore
+    // the emitted code and its layout. Reproducible mode pins it to one
+    // module so the artifact depends only on the source and the target,
+    // never on the host's CPU count or a job-limit override.
+    let n_chunks = if want_reproducible() {
+        1
+    } else {
+        let available_threads = std::thread::available_parallelism()
+            .map_or(PARALLEL_MAX_THREADS, std::num::NonZero::get);
+        let max_threads = available_threads.min(codegen_job_limit(bodies.len()));
+        let ideal_n_chunks = max_threads.min(bodies.len());
+        ideal_n_chunks
+            .min(bodies.len().div_ceil(MIN_BODIES_PER_CHUNK))
+            .max(1)
+    };
     let body_chunks = codegen_chunks(bodies, n_chunks);
 
     // ---------------------------------------------------------------
@@ -1373,7 +1404,7 @@ fn render_module_to_path(
     // RC-managed allocations routed through here (fallback bodies,
     // DWARF, single-body programs).
     let mut any_meta = false;
-    for (symbol, blob) in tcx.rc_metas() {
+    for (symbol, blob) in sorted_rc_metas(tcx) {
         let elems: Vec<String> = blob.iter().map(|v| format!("i64 {v}")).collect();
         writeln!(
             ll_w,
@@ -1948,6 +1979,7 @@ const CABI_HANDLER_REGISTRATIONS: &[(&str, usize)] = &[
     ("gos_rt_http_serve", 2),
     ("gos_rt_http_serve_tls", 4),
     ("gos_rt_middleware_new", 1),
+    ("gos_rt_middleware_new_kind", 1),
     ("gos_rt_router_add", 4),
     ("gos_rt_router_add_fn", 3),
     ("gos_rt_router_delete", 3),

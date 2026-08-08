@@ -2,7 +2,10 @@
 
 #![forbid(unsafe_code)]
 
-use gossamer_ast::{FnTypeKind, GenericArg, Mutability, Type, TypeKind, TypePath, TypePathSegment};
+use gossamer_ast::{
+    AssocBinding, FnTypeKind, GenericArg, Ident, Mutability, Type, TypeKind, TypePath,
+    TypePathSegment,
+};
 use gossamer_lex::{Keyword, Punct, TokenKind};
 
 use crate::diagnostic::ParseError;
@@ -172,15 +175,31 @@ impl Parser<'_> {
 
     /// Parses a `TypePath` - a path in type position (no turbofish `::<>`).
     pub(crate) fn parse_type_path(&mut self) -> TypePath {
-        let first = self.parse_type_path_segment();
+        self.parse_type_path_inner(None)
+    }
+
+    /// Parses a `TypePath` in trait-bound position, where the argument list
+    /// may carry `Name = Type` associated-type constraints alongside the
+    /// ordinary type and const arguments.
+    pub(crate) fn parse_type_path_with_bindings(&mut self) -> (TypePath, Vec<AssocBinding>) {
+        let mut bindings = Vec::new();
+        let path = self.parse_type_path_inner(Some(&mut bindings));
+        (path, bindings)
+    }
+
+    fn parse_type_path_inner(&mut self, mut bindings: Option<&mut Vec<AssocBinding>>) -> TypePath {
+        let first = self.parse_type_path_segment(bindings.as_deref_mut());
         let mut segments = vec![first];
         while self.eat_punct(Punct::ColonColon) {
-            segments.push(self.parse_type_path_segment());
+            segments.push(self.parse_type_path_segment(bindings.as_deref_mut()));
         }
         TypePath { segments }
     }
 
-    fn parse_type_path_segment(&mut self) -> TypePathSegment {
+    fn parse_type_path_segment(
+        &mut self,
+        bindings: Option<&mut Vec<AssocBinding>>,
+    ) -> TypePathSegment {
         let name = self.parse_path_ident_text();
         // Primitive type names never carry generic arguments. Refusing
         // to consume `<` after a primitive disambiguates the ambiguity
@@ -192,7 +211,7 @@ impl Parser<'_> {
         // See `examples/list_dir.gos::pad_right` for the regression
         // that motivated this guard.
         let generics = if self.at_punct(Punct::Lt) && !is_non_generic_primitive(&name) {
-            self.parse_type_generic_args()
+            self.parse_type_generic_args(bindings)
         } else {
             Vec::new()
         };
@@ -232,13 +251,23 @@ impl Parser<'_> {
         }
     }
 
-    fn parse_type_generic_args(&mut self) -> Vec<GenericArg> {
+    fn parse_type_generic_args(
+        &mut self,
+        mut bindings: Option<&mut Vec<AssocBinding>>,
+    ) -> Vec<GenericArg> {
         if !self.eat_punct(Punct::Lt) {
             return Vec::new();
         }
         let mut args = Vec::new();
         while !self.at_close_angle() && !self.at_eof() {
-            args.push(self.parse_generic_arg());
+            match self.parse_assoc_binding(bindings.is_some()) {
+                Some(binding) => {
+                    if let Some(sink) = bindings.as_deref_mut() {
+                        sink.push(binding);
+                    }
+                }
+                None => args.push(self.parse_generic_arg()),
+            }
             if !self.eat_punct(Punct::Comma) {
                 break;
             }
@@ -247,10 +276,34 @@ impl Parser<'_> {
         args
     }
 
+    /// Reads a `Name = Type` associated-type constraint when one starts here
+    /// and the surrounding argument list accepts constraints. Returns `None`
+    /// without consuming anything otherwise, so the caller falls back to an
+    /// ordinary generic argument.
+    fn parse_assoc_binding(&mut self, accepts_bindings: bool) -> Option<AssocBinding> {
+        if !accepts_bindings || !self.at_assoc_binding_start() {
+            return None;
+        }
+        let name_span = self.peek_span();
+        self.bump();
+        let name = Ident::new(self.slice(name_span).to_string());
+        self.bump();
+        let ty = self.parse_type();
+        Some(AssocBinding { name, ty })
+    }
+
+    /// `true` when the cursor sits on `Ident =`, the shape of an
+    /// associated-type constraint inside a trait bound. `==` lexes as one
+    /// token, so it never matches here.
+    fn at_assoc_binding_start(&self) -> bool {
+        matches!(self.peek().kind, TokenKind::Ident)
+            && matches!(self.peek_nth(1).kind, TokenKind::Punct(Punct::Eq))
+    }
+
     /// Parses one generic argument (type or const expression).
     pub(crate) fn parse_generic_arg(&mut self) -> GenericArg {
         if is_const_arg_start(self) {
-            return GenericArg::Const(self.parse_expr());
+            return GenericArg::Const(self.parse_const_generic_arg());
         }
         GenericArg::Type(self.parse_type())
     }

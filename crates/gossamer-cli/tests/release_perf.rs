@@ -7,11 +7,11 @@
 //! the existing test suite was *green*. The same shape regressed again
 //! a few weeks later (`spectral_norm_regression_fix.md` 2026-04-30).
 //!
-//! `tier_parity.rs::llvm_release_lowers_every_example_without_fallback`
-//! gates the CASE WHERE THE BUILD ITSELF CALLS THE FALLBACK (it errors
-//! when `GOSSAMER_FAIL_ON_LLVM_FALLBACK=1`). But a regression that
-//! lowers a body to a no-op stub or to wrong-but-runnable code passes
-//! that gate. The end-to-end signal for that class is wall-clock: the release
+//! `tier_parity.rs::llvm_strict_lower_group_N` gates the case where the
+//! build itself refuses a body: an LLVM lowering gap is a hard build
+//! error. But a regression that lowers a body to a no-op stub or to
+//! wrong-but-runnable code passes that gate. The end-to-end signal for
+//! that class is wall-clock: the release
 //! LLVM tier must materially outperform the debug LLVM tier on a workload
 //! where `-O3` can simplify the hot loop.
 //!

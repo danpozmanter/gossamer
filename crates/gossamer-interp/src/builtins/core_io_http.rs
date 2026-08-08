@@ -325,6 +325,23 @@ fn builtin_concat(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(out.into()))
 }
 
+/// `__debug(value)` - the `{:?}` rendering channel. It matches Display
+/// everywhere the two agree; a bare float keeps a fractional part or an
+/// exponent so the text reads back as a float, which is also how a float
+/// nested in an aggregate renders.
+fn builtin_debug(args: &[Value]) -> RuntimeResult<Value> {
+    let mut out = String::with_capacity(args.len() * 8);
+    for arg in args {
+        match arg {
+            Value::Float(f) => out.push_str(&gossamer_runtime::builtins::format_float_debug(*f)),
+            other => {
+                let _ = write!(out, "{other}");
+            }
+        }
+    }
+    Ok(Value::String(out.into()))
+}
+
 /// `__fmt_prec(value, prec)` - format-string `{:.N}` lowering. Returns
 /// a `String` containing `value` rendered with `prec` fractional
 /// digits. Mirrors the runtime helper `gos_rt_f64_prec_to_str` so

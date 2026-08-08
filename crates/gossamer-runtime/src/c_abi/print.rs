@@ -355,7 +355,7 @@ pub unsafe extern "C" fn gos_rt_print_str(s: *const c_char) {
         let bytes = if s.is_null() {
             b"" as &[u8]
         } else {
-            unsafe { crate::c_abi::gos_str_key_bytes(s) }
+            unsafe { crate::c_abi::gos_str_arg_bytes(s) }
         };
         unsafe { write_stdout(bytes) };
     });
@@ -450,7 +450,7 @@ pub unsafe extern "C" fn gos_rt_eprint_str(s: *const c_char) {
         let bytes = if s.is_null() {
             b"" as &[u8]
         } else {
-            unsafe { crate::c_abi::gos_str_key_bytes(s) }
+            unsafe { crate::c_abi::gos_str_arg_bytes(s) }
         };
         unsafe { gos_rt_flush_stdout() };
         write_terminal(2, bytes);

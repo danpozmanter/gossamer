@@ -3229,3 +3229,479 @@ fn self_returning_constructor_types_its_result() {
         checked.diagnostics
     );
 }
+
+#[test]
+fn where_clause_bound_resolves_a_trait_method_on_a_parameter() {
+    let checked = run("trait Shape { fn area(&self) -> f64 }\n\
+         struct Sq { s: f64 }\n\
+         impl Shape for Sq { fn area(&self) -> f64 { self.s * self.s } }\n\
+         fn total<T>(x: &T) -> f64 where T: Shape { x.area() }\n\
+         fn main() { let _ = total(&Sq { s: 3.0 }) }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn where_clause_carries_several_predicates_and_several_bounds() {
+    let checked = run("trait A { fn a(&self) -> i64 }\n\
+         trait B { fn b(&self) -> i64 }\n\
+         struct P { v: i64 }\n\
+         impl A for P { fn a(&self) -> i64 { self.v } }\n\
+         impl B for P { fn b(&self) -> i64 { self.v } }\n\
+         fn both<T, U>(x: &T, y: &U) -> i64 where T: A + B, U: A { x.a() + x.b() + y.a() }\n\
+         fn main() { let _ = both(&P { v: 1 }, &P { v: 2 }) }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn impl_level_and_method_level_bounds_index_their_own_parameters() {
+    let checked = run("trait A { fn a(&self) -> i64 }\n\
+         trait B { fn b(&self) -> i64 }\n\
+         struct P { v: i64 }\n\
+         impl A for P { fn a(&self) -> i64 { self.v } }\n\
+         impl B for P { fn b(&self) -> i64 { self.v } }\n\
+         struct W<T> { value: T }\n\
+         impl<T: A> W<T> {\n\
+             fn mixed<U: B>(&self, other: &U) -> i64 { self.value.a() + other.b() }\n\
+         }\n\
+         fn main() { let w = W { value: P { v: 1 } }; let _ = w.mixed(&P { v: 2 }) }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn impl_level_bound_alone_still_resolves_its_method() {
+    let checked = run("trait Shape { fn area(&self) -> f64 }\n\
+         struct Sq { s: f64 }\n\
+         impl Shape for Sq { fn area(&self) -> f64 { self.s } }\n\
+         struct Wrapper<T> { value: T }\n\
+         impl<T: Shape> Wrapper<T> { fn run_it(&self) -> f64 { self.value.area() } }\n\
+         fn main() { let w = Wrapper { value: Sq { s: 1.0 } }; let _ = w.run_it() }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn method_off_every_bound_is_still_reported_under_a_where_clause() {
+    let checked = run("trait A { fn a(&self) -> i64 }\n\
+         fn f<T>(x: &T) -> i64 where T: A { x.zzz() }\n");
+    assert!(
+        checked
+            .diagnostics
+            .iter()
+            .any(|d| matches!(d.error, TypeError::MethodNotOnBound { .. })),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn multi_bound_parameter_resolves_methods_from_both_traits() {
+    let checked = run("trait Named { fn name(&self) -> String }\n\
+         trait Sized2 { fn size(&self) -> i64 }\n\
+         struct Item { n: String, s: i64 }\n\
+         impl Named for Item { fn name(&self) -> String { self.n } }\n\
+         impl Sized2 for Item { fn size(&self) -> i64 { self.s } }\n\
+         fn describe<T: Named + Sized2>(x: &T) -> String { format!(\"{} {}\", x.name(), x.size()) }\n\
+         fn main() { let _ = describe(&Item { n: \"a\", s: 1 }) }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn multi_bound_reports_the_violated_bound_at_the_call_site() {
+    let checked = run("trait Named { fn name(&self) -> String }\n\
+         trait Weighed { fn size(&self) -> i64 }\n\
+         struct Item { n: String }\n\
+         impl Named for Item { fn name(&self) -> String { self.n } }\n\
+         fn describe<T: Named + Weighed>(x: &T) -> String { x.name() }\n\
+         fn main() { let _ = describe(&Item { n: \"a\" }) }\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::TraitBoundNotSatisfied { ty, bound } if ty == "Item" && bound == "Weighed"
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn unknown_trait_in_a_struct_bound_is_reported() {
+    let checked = run("struct S<T: Hashabel> { v: T }\n\
+         fn main() { let _ = S { v: 1 } }\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::UnknownTraitBound { name, .. } if name == "Hashabel"
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn unknown_trait_in_a_where_clause_is_reported() {
+    let checked = run("fn f<T>(x: &T) -> i64 where T: Hashabel { 0 }\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::UnknownTraitBound { name, .. } if name == "Hashabel"
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn struct_generic_bound_is_enforced_at_construction() {
+    let checked = run("trait Shape { fn area(&self) -> f64 }\n\
+         struct Sq { s: f64 }\n\
+         struct Holder<T: Shape> { v: T }\n\
+         fn main() { let _ = Holder { v: Sq { s: 1.0 } } }\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::TraitBoundNotSatisfied { ty, bound } if ty == "Sq" && bound == "Shape"
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn struct_generic_bound_is_satisfied_by_an_impl() {
+    let checked = run("trait Shape { fn area(&self) -> f64 }\n\
+         struct Sq { s: f64 }\n\
+         impl Shape for Sq { fn area(&self) -> f64 { self.s } }\n\
+         struct Holder<T: Shape> { v: T }\n\
+         fn main() { let _ = Holder { v: Sq { s: 1.0 } } }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn operator_on_an_unbounded_parameter_is_rejected() {
+    let checked = run("struct Wrap<T> { v: T }\n\
+         impl<T> Add for Wrap<T> {\n\
+             fn add(self, o: Wrap<T>) -> Wrap<T> { Wrap { v: self.v + o.v } }\n\
+         }\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::OperatorNotOnBound { op, trait_name, .. } if op == "+" && trait_name == "Add"
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn operator_on_a_bounded_parameter_is_accepted() {
+    let checked = run("struct Wrap<T> { v: T }\n\
+         impl<T: Add> Add for Wrap<T> {\n\
+             fn add(self, o: Wrap<T>) -> Wrap<T> { Wrap { v: self.v + o.v } }\n\
+         }\n\
+         fn main() { let a = Wrap { v: 1 }; let b = Wrap { v: 2 }; let _ = (a + b).v }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn builtin_operator_bound_is_enforced_against_the_impl_table() {
+    let checked = run("struct Point { x: i64 }\n\
+         fn twice<T: Add>(a: T, b: T) -> T { a + b }\n\
+         fn main() { let _ = twice(Point { x: 1 }, Point { x: 2 }) }\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::TraitBoundNotSatisfied { ty, bound } if ty == "Point" && bound == "Add"
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn automatic_builtin_bound_stays_satisfied_without_an_impl_block() {
+    let checked = run("struct Point { x: i64 }\n\
+         fn show<T: Debug>(a: T) -> T { a }\n\
+         fn main() { let _ = show(Point { x: 1 }) }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn trait_impl_missing_a_required_method_is_reported() {
+    let checked = run("trait Shape { fn area(&self) -> f64 }\n\
+         struct Sq { s: f64 }\n\
+         impl Shape for Sq {}\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::MissingTraitImplMethods { trait_name, ty, missing }
+                if trait_name == "Shape" && ty == "Sq" && missing == &vec!["area".to_string()]
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn trait_impl_may_omit_a_method_that_has_a_default_body() {
+    let checked = run("trait Shape { fn area(&self) -> f64 { 0.0 } }\n\
+         struct Sq { s: f64 }\n\
+         impl Shape for Sq {}\n");
+    assert!(
+        !checked
+            .diagnostics
+            .iter()
+            .any(|d| matches!(d.error, TypeError::MissingTraitImplMethods { .. })),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn explicit_const_generic_argument_overrides_the_inferred_length() {
+    let checked = run(
+        "fn sum_arr<const N: usize>(xs: [i64; N]) -> i64 { xs.len() }\n\
+         fn main() { let _ = sum_arr::<3,>([1, 2, 3, 4]) }\n",
+    );
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::TypeMismatch { expected, found }
+                if expected == "[i64; 3]" && found == "[i64; 4]"
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn explicit_const_generic_argument_matching_the_argument_checks_clean() {
+    let checked = run(
+        "fn sum_arr<const N: usize>(xs: [i64; N]) -> i64 { xs.len() }\n\
+         fn main() { let _ = sum_arr::<3,>([1, 2, 3]) }\n",
+    );
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn struct_variant_fields_bind_by_value_through_a_reference_scrutinee() {
+    let checked = run("enum Shape { Circle(f64), Rect { w: f64, h: f64 } }\n\
+         fn area(s: &Shape) -> f64 {\n\
+             match s {\n\
+                 Shape::Circle(r) => 3.14 * r * r,\n\
+                 Shape::Rect { w, h } => w * h,\n\
+             }\n\
+         }\n\
+         fn main() { let _ = area(&Shape::Circle(1.0)) }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn bound_method_in_a_generic_impl_records_its_string_return() {
+    let checked = run("trait Shape { fn name(&self) -> String }\n\
+         struct Sq { s: f64 }\n\
+         impl Shape for Sq { fn name(&self) -> String { \"sq\" } }\n\
+         struct Wrapper<T> { value: T }\n\
+         impl<T: Shape> Wrapper<T> { fn label(&self) -> i64 { self.value.name() } }\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::TypeMismatch { expected, found } if expected == "i64" && found == "String"
+        )),
+        "bound method return went unrecorded: {:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn bound_method_in_a_generic_impl_records_its_float_return() {
+    let checked = run("trait Shape { fn area(&self) -> f64 }\n\
+         struct Sq { s: f64 }\n\
+         impl Shape for Sq { fn area(&self) -> f64 { self.s } }\n\
+         struct Wrapper<T> { value: T }\n\
+         impl<T: Shape> Wrapper<T> { fn size(&self) -> String { self.value.area() } }\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::TypeMismatch { expected, found } if expected == "String" && found == "f64"
+        )),
+        "bound method return went unrecorded: {:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn bound_method_in_a_generic_impl_records_a_struct_return() {
+    let checked = run("struct Point { x: i64 }\n\
+         trait Located { fn at(&self) -> Point }\n\
+         struct Sq { s: i64 }\n\
+         impl Located for Sq { fn at(&self) -> Point { Point { x: self.s } } }\n\
+         struct Wrapper<T> { value: T }\n\
+         impl<T: Located> Wrapper<T> { fn spot(&self) -> i64 { self.value.at() } }\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::TypeMismatch { expected, found } if expected == "i64" && found == "Point"
+        )),
+        "bound method return went unrecorded: {:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn bound_method_in_a_generic_impl_checks_clean_at_its_declared_return() {
+    let checked = run(
+        "trait Shape { fn area(&self) -> f64\n fn name(&self) -> String }\n\
+         struct Sq { s: f64 }\n\
+         impl Shape for Sq { fn area(&self) -> f64 { self.s }\n fn name(&self) -> String { \"sq\" } }\n\
+         struct Wrapper<T> { value: T }\n\
+         impl<T: Shape> Wrapper<T> {\n\
+             fn report(&self) -> String { format!(\"{}={}\", self.value.name(), self.value.area()) }\n\
+             fn doubled(&self) -> f64 { self.value.area() * 2.0 }\n\
+         }\n\
+         fn main() { let w = Wrapper { value: Sq { s: 3.0 } }; println!(\"{} {}\", w.report(), w.doubled()) }\n",
+    );
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn tuple_rest_pattern_binds_its_suffix_from_the_end() {
+    let checked = run("fn rest_pat(t: (i64, String, bool, i64)) -> i64 {\n\
+             match t { (a, .., d) => a + d }\n\
+         }\n\
+         fn main() { let _ = rest_pat((1, \"x\", true, 2)) }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn struct_pattern_scalar_fields_bind_by_value_through_a_reference() {
+    let checked = run("struct P { x: i64, y: i64 }\n\
+         fn f(p: &P) -> i64 { match p { P { x, y } => x + y } }\n\
+         fn main() { let _ = f(&P { x: 1, y: 2 }) }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn unary_not_on_an_unbounded_parameter_is_rejected() {
+    let checked = run("fn flip<T>(x: T) -> T { !x }\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::OperatorNotOnBound { op, trait_name, .. } if op == "!" && trait_name == "Not"
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn unary_neg_on_an_unbounded_parameter_is_rejected() {
+    let checked = run("fn flip<T>(x: T) -> T { -x }\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::OperatorNotOnBound { op, trait_name, .. } if op == "-" && trait_name == "Neg"
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn unary_neg_on_a_bounded_parameter_is_accepted() {
+    let checked = run("trait Flip { fn neg(self) -> Self }\n\
+         fn flip<T: Flip>(x: T) -> T { -x }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn assoc_type_projects_through_a_bound() {
+    let checked = run(
+        "trait Holder { type Item\n    fn get(&self) -> Self::Item }\n\
+         struct Label { text: String }\n\
+         impl Holder for Label { type Item = String\n\
+             fn get(&self) -> Self::Item { self.text } }\n\
+         fn shout<T: Holder>(h: &T) -> T::Item { h.get() }\n\
+         fn main() { println!(\"{}\", shout(&Label { text: \"x\" }).to_uppercase()) }\n",
+    );
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn assoc_type_default_applies_when_the_impl_omits_it() {
+    let checked = run(
+        "trait Counted { type Count = i64\n    fn amount(&self) -> Self::Count }\n\
+         struct Tally { hits: i64 }\n\
+         impl Counted for Tally { fn amount(&self) -> Self::Count { self.hits } }\n\
+         fn total<T: Counted>(c: &T) -> T::Count { c.amount() }\n\
+         fn main() { let n: i64 = total(&Tally { hits: 1 })\n    println!(\"{}\", n) }\n",
+    );
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn assoc_type_equality_constraint_pins_an_ambiguous_projection() {
+    let source = "trait Source { type Item\n    fn take(&self) -> Self::Item }\n\
+         struct A { v: i64 }\n\
+         struct B { s: String }\n\
+         impl Source for A { type Item = i64\n    fn take(&self) -> Self::Item { self.v } }\n\
+         impl Source for B { type Item = String\n    fn take(&self) -> Self::Item { self.s } }\n";
+    let ambiguous = run(&format!(
+        "{source}fn pick<T: Source>(x: &T) -> T::Item {{ x.take() }}\n"
+    ));
+    assert!(
+        ambiguous.diagnostics.iter().any(
+            |d| matches!(&d.error, TypeError::AmbiguousAssocItem { name, .. } if name == "Item")
+        ),
+        "{:?}",
+        ambiguous.diagnostics
+    );
+    let pinned = run(&format!(
+        "{source}fn pick<T: Source<Item = i64>>(x: &T) -> T::Item {{ x.take() + 1 }}\n"
+    ));
+    assert!(pinned.diagnostics.is_empty(), "{:?}", pinned.diagnostics);
+}
+
+#[test]
+fn impl_omitting_a_required_assoc_item_is_reported() {
+    let checked = run(
+        "trait Holder { type Item\n    const MAX: i64\n    fn get(&self) -> Self::Item }\n\
+         struct Label { text: String }\n\
+         impl Holder for Label { fn get(&self) -> Self::Item { self.text } }\n",
+    );
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::MissingTraitImplAssocItems { missing, .. }
+                if missing == &["type Item".to_string(), "const MAX".to_string()]
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn unknown_assoc_item_names_what_the_bound_declares() {
+    let checked = run("trait Holder { type Item }\n\
+         struct A {}\n\
+         impl Holder for A { type Item = i64 }\n\
+         fn pick<T: Holder>(x: &T) -> T::Nope { 1 }\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::UnknownAssocItem { name, declared, .. }
+                if name == "Nope" && declared == &["Item".to_string()]
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn assoc_item_is_reachable_through_a_supertrait() {
+    let checked = run("trait Base { type Item\n    const MAX: i64 }\n\
+         trait Ext: Base { fn get(&self) -> Self::Item }\n\
+         struct S { v: i64 }\n\
+         impl Base for S { type Item = i64\n    const MAX: i64 = 6 }\n\
+         impl Ext for S { fn get(&self) -> Self::Item { self.v } }\n\
+         fn top<T: Ext>(x: &T) -> i64 { T::MAX }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}

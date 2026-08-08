@@ -62,7 +62,8 @@ know:
 
 Open caveats:
 
-- HTTP/2 + WebSockets are deferred to v1.x.
+- HTTP/2 negotiates over ALPN and WebSockets serve over `ws://`; `wss://`
+  client connections are not yet supported.
 - Per-line coverage instrumentation (Phase 2 follow-up) -
   the `--coverage` output today is at the test-file
   granularity.

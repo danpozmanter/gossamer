@@ -25,7 +25,6 @@
 //! is exposed; parent/child propagation rides on an explicit
 //! `start_span` argument shape left for a follow-up.
 
-use std::ffi::CStr;
 use std::fmt::Write as _;
 use std::os::raw::c_char;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -37,10 +36,7 @@ use super::string::alloc_cstring;
 static SPAN_SEQ: AtomicU64 = AtomicU64::new(1);
 
 unsafe fn read_cstr(s: *const c_char) -> String {
-    if s.is_null() {
-        return String::new();
-    }
-    unsafe { CStr::from_ptr(s) }.to_string_lossy().into_owned()
+    unsafe { crate::c_abi::gos_str_arg_string(s) }
 }
 
 /// Process-level span sink. The explicit handle surface does not yet

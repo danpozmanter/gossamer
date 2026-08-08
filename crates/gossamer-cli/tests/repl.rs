@@ -2556,7 +2556,7 @@ fn repl_iter_receiver_methods_pipe_dotdot_and_range_index_work() {
          a.skip(2)\n\
          a.enumerate()\n\
          a.zip(0..).collect()\n\
-         a |> iter::zip(..) |> _.collect()\n\
+         a |> iter::zip(..) |> $.collect()\n\
          a[..2]\n\
          Vec::from([1, 1, 2, 2]).dedup()\n\
          a.windows(2)\n\

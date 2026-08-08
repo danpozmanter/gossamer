@@ -8,6 +8,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod assoc;
 pub mod common;
 pub mod expr;
 pub mod items;
@@ -20,6 +21,7 @@ pub mod stmt;
 pub mod ty;
 pub mod visitor;
 
+pub use assoc::{AssocIndex, AssocResolution, MissingAssocItem};
 pub use common::{
     AssignOp, BinaryOp, ERROR_IDENT, Ident, Mutability, RangeKind, UnaryOp, Visibility,
     is_error_name,
@@ -29,10 +31,10 @@ pub use expr::{
     MacroDelim, MatchArm, PathExpr, PathSegment, SelectArm, SelectOp, StructExprField,
 };
 pub use items::{
-    Attribute, Attrs, ConstDecl, EnumDecl, EnumVariant, FnDecl, FnParam, GenericParam, Generics,
-    ImplDecl, ImplItem, Item, ItemKind, ModBody, ModDecl, Receiver, StaticDecl, StructBody,
-    StructDecl, StructField, TraitBound, TraitDecl, TraitItem, TupleField, TypeAliasDecl,
-    WhereClause, WherePredicate,
+    AssocBinding, Attribute, Attrs, ConstDecl, EnumDecl, EnumVariant, FnDecl, FnParam,
+    GenericParam, Generics, ImplDecl, ImplItem, Item, ItemKind, ModBody, ModDecl, Receiver,
+    StaticDecl, StructBody, StructDecl, StructField, TraitBound, TraitDecl, TraitItem, TupleField,
+    TypeAliasDecl, WhereClause, WherePredicate,
 };
 pub use node_id::{NodeId, NodeIdGenerator};
 pub use path::{Path, Segment};

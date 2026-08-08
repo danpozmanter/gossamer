@@ -1483,6 +1483,46 @@ pub enum Op {
         /// Register holding the `MutCell` created by [`Op::CellNew`].
         cell: Reg,
     },
+    /// `registers[dst] = CaptureCell(take(registers[src]))` - installs a
+    /// fresh capture cell as a local's storage. Emitted where the
+    /// binding receives a whole new value (its `let`, a parameter that a
+    /// closure captures, a reassignment), so the identity a previously
+    /// created closure holds is left untouched.
+    CaptureCellNew {
+        /// Destination Value register (the binding's cell register).
+        dst: Reg,
+        /// Register whose value is moved into the cell (left `Unit`).
+        src: Reg,
+    },
+    /// `registers[dst] = cell.inner.clone()` - loads a capture cell's
+    /// value into the binding's home register for an instruction that
+    /// only reads it.
+    CaptureCellGet {
+        /// Destination Value register (the binding's home register).
+        dst: Reg,
+        /// Register holding the `CaptureCell`.
+        cell: Reg,
+    },
+    /// `registers[dst] = take(cell.inner)` - moves a capture cell's
+    /// value into the binding's home register for the duration of one
+    /// instruction that may mutate it. Moving keeps the aggregate's
+    /// refcount at one so the mutation happens in place; the matching
+    /// [`Op::CaptureCellSet`] returns the value on the next instruction.
+    CaptureCellTake {
+        /// Destination Value register (the binding's home register).
+        dst: Reg,
+        /// Register holding the `CaptureCell`.
+        cell: Reg,
+    },
+    /// `cell.inner = take(registers[src])` - returns the home register's
+    /// value to the capture cell, publishing the instruction's mutation
+    /// to every closure that captured the binding.
+    CaptureCellSet {
+        /// Register holding the `CaptureCell`.
+        cell: Reg,
+        /// Register whose value is moved into the cell.
+        src: Reg,
+    },
     /// `dst = (src is Value::Variant with name == consts[name_idx]
     /// and field count == arity)`. Drives native `match` arm tests
     /// on enum / tuple-struct patterns. The name is interned the

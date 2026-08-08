@@ -22,6 +22,35 @@ use crate::tree::{
     HirPat, HirPatKind, HirProgram, HirStmt, HirStmtKind,
 };
 
+/// Parameter name of the environment pointer a capturing closure's lifted
+/// function receives.
+const ENV_PARAM: &str = "__env";
+
+/// Intrinsic that projects one captured value out of the env pointer.
+const ENV_LOAD: &str = "gos_load";
+
+/// True when `init` is the env projection that binds a captured variable in
+/// a lifted closure's prologue. Such a binding names the value the enclosing
+/// scope still owns, so lowering must alias it rather than take an owned
+/// copy: a heap type mutated through the capture has to reach the original.
+#[must_use]
+pub fn is_capture_env_load(init: &HirExpr) -> bool {
+    let HirExprKind::Call { callee, args } = &init.kind else {
+        return false;
+    };
+    let HirExprKind::Path { segments, .. } = &callee.kind else {
+        return false;
+    };
+    if segments.len() != 1 || segments[0].name != ENV_LOAD {
+        return false;
+    }
+    matches!(
+        args.first().map(|a| &a.kind),
+        Some(HirExprKind::Path { segments, .. })
+            if segments.len() == 1 && segments[0].name == ENV_PARAM
+    )
+}
+
 /// Walks `program` and lifts every closure with no free variables
 /// into a top-level [`HirItemKind::Fn`] item with a synthetic name,
 /// replacing the original closure expression with a
@@ -662,7 +691,7 @@ impl Lifter {
         for (i, cap) in captures.iter().enumerate() {
             let offset = (i as i64 + 1) * 8;
             let cap_ty = capture_types[i];
-            let load_call = self.make_env_load("__env", offset, body.span, cap_ty);
+            let load_call = self.make_env_load(ENV_PARAM, offset, body.span, cap_ty);
             stmts.push(HirStmt {
                 id: self.ids.next(),
                 span: body.span,
@@ -695,7 +724,7 @@ impl Lifter {
                 span,
                 ty: self.env_ty,
                 kind: HirPatKind::Binding {
-                    name: Ident::new("__env"),
+                    name: Ident::new(ENV_PARAM),
                     mutable: false,
                 },
             },
@@ -770,7 +799,7 @@ impl Lifter {
             span,
             ty,
             kind: HirExprKind::Path {
-                segments: vec![Ident::new("gos_load")],
+                segments: vec![Ident::new(ENV_LOAD)],
                 def: None,
             },
         };
@@ -872,6 +901,7 @@ fn is_closed<S: std::hash::BuildHasher + Clone>(
                 if matches!(
                     first.name.as_str(),
                     "__concat"
+                        | "__debug"
                         | "__struct"
                         | "__fmt_prec"
                         | "__update"
@@ -1101,6 +1131,7 @@ fn walk_free<S: std::hash::BuildHasher + Clone>(
                 if matches!(
                     first.name.as_str(),
                     "__concat"
+                        | "__debug"
                         | "__struct"
                         | "__fmt_prec"
                         | "__update"

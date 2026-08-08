@@ -15,7 +15,6 @@
 #![allow(clippy::missing_safety_doc)]
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use gossamer_http3::{H3Request, H3Response};
@@ -31,7 +30,7 @@ fn cstr_or(ptr: *const c_char, default: &str) -> String {
     if ptr.is_null() {
         default.to_string()
     } else {
-        unsafe { CStr::from_ptr(ptr).to_string_lossy().into_owned() }
+        unsafe { crate::c_abi::gos_str_arg_string(ptr) }
     }
 }
 

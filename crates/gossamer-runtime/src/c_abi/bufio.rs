@@ -15,7 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::*;
@@ -49,7 +48,7 @@ pub unsafe extern "C" fn gos_rt_bufio_scanner_new(
             if cstr.is_null() {
                 String::new()
             } else {
-                unsafe { CStr::from_ptr(cstr).to_string_lossy().into_owned() }
+                unsafe { crate::c_abi::gos_str_arg_string(cstr) }
             }
         };
         let lines: Vec<String> = text.lines().map(str::to_string).collect();

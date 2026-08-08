@@ -65,11 +65,92 @@ impl<'tcx> FnBuilder<'tcx> {
     }
 
     pub(crate) fn push_scope(&mut self) {
-        self.scopes.push(Scope::default());
+        self.scopes.push(Scope {
+            capture_cell_mark: self.capture_cells.len(),
+            ..Scope::default()
+        });
     }
 
     pub(crate) fn pop_scope(&mut self) {
-        self.scopes.pop();
+        if let Some(scope) = self.scopes.pop() {
+            self.capture_cells.truncate(scope.capture_cell_mark);
+        }
+    }
+
+    /// Register holding the capture cell that backs a local binding.
+    /// Typed locals live in their own register files, where a matching
+    /// number names a different slot, so only a `Value` binding can be
+    /// cell-backed.
+    pub(crate) fn capture_cell_for_local(&self, local: TypedReg) -> Option<Reg> {
+        (local.kind == RegKind::Value)
+            .then(|| self.capture_cell_for(local.reg))
+            .flatten()
+    }
+
+    /// Register holding the capture cell that backs the `Value`-file
+    /// binding in `home`, when this function stores it in one.
+    pub(crate) fn capture_cell_for(&self, home: Reg) -> Option<Reg> {
+        self.capture_cells
+            .iter()
+            .rev()
+            .find(|(reg, _)| *reg == home)
+            .map(|(_, cell)| *cell)
+    }
+
+    /// `true` when a binding of type `ty` is one the compiled tiers name
+    /// through a shared heap buffer, so a closure capturing it observes
+    /// the enclosing binding's mutations and vice versa.
+    pub(crate) fn is_capture_cell_ty(&self, ty: Ty) -> bool {
+        matches!(self.tcx.kind(ty), Some(TyKind::Vec(_) | TyKind::Slice(_)))
+    }
+
+    /// Moves a freshly bound local into a capture cell when a closure in
+    /// this function reads it from an enclosing scope. The binding's
+    /// register becomes a working copy that every later instruction
+    /// loads from, and stores back to, the cell.
+    pub(crate) fn install_capture_cell(&mut self, name: &str, typed: TypedReg, ty: Ty) {
+        if typed.kind != RegKind::Value
+            || !self.capture_cell_names.contains(name)
+            || !self.is_capture_cell_ty(ty)
+            || self.capture_cell_for(typed.reg).is_some()
+            || self.mut_ref_params.contains(&typed.reg)
+        {
+            return;
+        }
+        let cell = self.alloc_reg();
+        self.push_instr(Op::CaptureCellNew {
+            dst: cell,
+            src: typed.reg,
+        });
+        self.capture_cells.push((typed.reg, cell));
+        self.capture_cells_used = true;
+    }
+
+    /// Installs a fresh capture cell holding `src` as the storage for the
+    /// binding whose home register is `home`. Assigning the whole
+    /// variable replaces the binding's storage rather than writing
+    /// through the shared one, so a closure created earlier keeps naming
+    /// the value it captured.
+    pub(crate) fn rebind_capture_cell(&mut self, home: Reg, cell: Reg, src: Reg) {
+        // Materialize the assigned value first, with every cell-backed
+        // binding loaded - including this one, which `v = v` reads. The
+        // fresh cell is then installed with this binding's own cell
+        // inactive, so the new value lands in new storage rather than
+        // the storage a closure already holds.
+        let scratch = self.alloc_reg();
+        self.emit(Op::Move { dst: scratch, src });
+        let entry = (home, cell);
+        let slot = self.capture_cells.iter().position(|e| *e == entry);
+        if let Some(slot) = slot {
+            self.capture_cells.remove(slot);
+        }
+        self.push_instr(Op::CaptureCellNew {
+            dst: cell,
+            src: scratch,
+        });
+        if let Some(slot) = slot {
+            self.capture_cells.insert(slot, entry);
+        }
     }
 
     /// Compiles a defer frame's expressions for their side effects in

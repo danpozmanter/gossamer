@@ -6,7 +6,7 @@ struct Record {
     active: bool,
 }
 fn main() -> Result<(), errors::Error> {
-    let value = Record(42, "gossamer", true)
+    let value = Record { id: 42, name: "gossamer", active: true }
     let mut total = 0
     for _ in 0..10_000 {
         let text = to_json::<Record>(&value)?

@@ -32,8 +32,8 @@ fn cstr<'a>(s: *const c_char) -> &'a str {
     if s.is_null() {
         return "0";
     }
-    // SAFETY: callers pass a null-terminated c-string (Gossamer String ABI).
-    let bytes = unsafe { std::ffi::CStr::from_ptr(s).to_bytes() };
+    // SAFETY: callers pass a Gossamer `String`, read through its length header.
+    let bytes = unsafe { crate::c_abi::gos_str_arg_bytes(s) };
     std::str::from_utf8(bytes).unwrap_or("0")
 }
 

@@ -682,6 +682,10 @@ impl Lowerer<'_> {
                 ImplItem::Fn(fn_decl) => {
                     Some(self.lower_fn_with_self(fn_decl, span, Some(self_ty)))
                 }
+                // Associated types are already resolved to concrete types
+                // in the type table, and every associated constant is a
+                // top-level constant by the time lowering runs, so neither
+                // needs a body-level HIR node.
                 ImplItem::Const { .. } | ImplItem::Type { .. } => None,
             })
             .collect();
@@ -699,6 +703,9 @@ impl Lowerer<'_> {
             .iter()
             .filter_map(|item| match item {
                 TraitItem::Fn(fn_decl) => Some(self.lower_fn(fn_decl, span)),
+                // Associated declarations carry no executable code: a
+                // projection resolves during type checking and a constant
+                // is hoisted to a top-level `const` before lowering.
                 TraitItem::Type { .. } | TraitItem::Const { .. } => None,
             })
             .collect();

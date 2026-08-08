@@ -7,15 +7,10 @@
 #![allow(clippy::missing_safety_doc)]
 #![allow(missing_docs)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 unsafe fn cstr_to_string(p: *const c_char) -> String {
-    if p.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(p).to_string_lossy().into_owned() }
-    }
+    unsafe { crate::c_abi::gos_str_arg_string(p) }
 }
 
 /// Records one hit at `(file, line, branch)`. NULL `file` is

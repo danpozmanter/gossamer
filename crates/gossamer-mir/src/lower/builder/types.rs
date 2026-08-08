@@ -1022,7 +1022,7 @@ impl<'a> Builder<'a> {
             "Set" => Some("collections::HashSet"),
             "BTreeSet" => Some("collections::BTreeSet"),
             "Map" => Some("collections::HashMap"),
-            "BTreeMap" => Some("collections::BTreeMap"),
+            "BTreeMap" => Some("collections::HashMap"),
             "Deque" => Some("collections::VecDeque"),
             "Queue" => Some("collections::VecQueue"),
             "Stack" => Some("collections::VecStack"),
@@ -1512,10 +1512,65 @@ impl<'a> Builder<'a> {
         self.tcx.intern(TyKind::Adt { def, substs })
     }
 
+    /// Payload type of an `Option<T>`, or `None` for any other type.
+    pub(crate) fn option_payload_of(&self, ty: Ty) -> Option<Ty> {
+        use gossamer_types::TyKind;
+        match self.tcx.kind_of(ty) {
+            TyKind::Adt { def, substs } if def.local == u32::MAX - 1 => {
+                substs.types().first().copied()
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn type_slot_bytes(&self, ty: Ty) -> u32 {
         // Single source of truth on the `TyCtxt` so the vec-element
         // layout passes (`insert_vec_elem_metas`) and the builder agree.
-        self.tcx.slot_bytes(ty)
+        // A generic ADT whose per-instantiation field table is not on the
+        // `TyCtxt` yet still has its concrete arguments in its own `substs`,
+        // so resolve the declared `Param` fields through them here: a layout
+        // baked into MIR (a Vec's element width, an aggregate copy size)
+        // has to describe the instantiation, not the template.
+        self.slot_bytes_instantiated(ty, &[])
+    }
+
+    /// Slot footprint of `ty` in bytes with `params` supplying the enclosing
+    /// instantiation's type arguments for any `Param` field it reaches.
+    fn slot_bytes_instantiated(&self, ty: Ty, params: &[Ty]) -> u32 {
+        use gossamer_types::TyKind;
+        match self.tcx.kind_of(ty) {
+            TyKind::Param { idx, .. } => params
+                .get(idx.0 as usize)
+                .map_or_else(|| self.tcx.slot_bytes(ty), |t| self.type_slot_bytes(*t)),
+            TyKind::Tuple(elems) => {
+                let total: u32 = elems
+                    .iter()
+                    .map(|t| self.slot_bytes_instantiated(*t, params).max(8) / 8)
+                    .sum();
+                total.max(1) * 8
+            }
+            TyKind::Array { elem, len } => {
+                let elem_bytes = self.slot_bytes_instantiated(*elem, params).max(8);
+                u32::try_from(len.to_usize())
+                    .unwrap_or(1)
+                    .saturating_mul(elem_bytes)
+            }
+            // Sentinel ADTs (`Option` / `Result` and the opaque stdlib
+            // handles) carry a fixed width the `TyCtxt` owns.
+            TyKind::Adt { def, .. } if def.local >= u32::MAX - 6 => self.tcx.slot_bytes(ty),
+            TyKind::Adt { def, substs } => {
+                let Some(field_tys) = self.tcx.adt_field_tys(*def, substs) else {
+                    return self.tcx.slot_bytes(ty);
+                };
+                let args = substs.types();
+                let total: u32 = field_tys
+                    .iter()
+                    .map(|t| self.slot_bytes_instantiated(*t, &args).max(8) / 8)
+                    .sum();
+                total.max(1) * 8
+            }
+            _ => self.tcx.slot_bytes(ty),
+        }
     }
 
     pub(crate) fn binding_type_to_mir(&mut self, t: &gossamer_resolve::BindingType) -> Ty {

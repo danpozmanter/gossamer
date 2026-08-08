@@ -15,7 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::*;
@@ -61,7 +60,7 @@ pub unsafe extern "C" fn gos_rt_regex_compile(pat: *const c_char) -> *mut GosReg
         if pat.is_null() {
             return std::ptr::null_mut();
         }
-        let s = unsafe { CStr::from_ptr(pat).to_str() }.unwrap_or("");
+        let s = unsafe { crate::c_abi::gos_str_arg_text(pat) };
         match ::regex::Regex::new(s) {
             Ok(re) => Box::into_raw(Box::new(GosRegex { inner: re })),
             Err(_) => std::ptr::null_mut(),
@@ -81,7 +80,7 @@ pub unsafe extern "C" fn gos_rt_regex_compile_result(pat: *const c_char) -> i128
             let msg = alloc_cstring(b"regex: invalid pattern ``: null pattern");
             return gos_rt_result_new(1, msg as i64);
         }
-        let s = unsafe { CStr::from_ptr(pat).to_str() }.unwrap_or("");
+        let s = unsafe { crate::c_abi::gos_str_arg_text(pat) };
         match ::regex::Regex::new(s) {
             Ok(re) => {
                 let handle = Box::into_raw(Box::new(GosRegex { inner: re }));
@@ -101,7 +100,7 @@ pub unsafe extern "C" fn gos_rt_regex_is_match(re: *const GosRegex, text: *const
         if re.is_null() || text.is_null() {
             return 0;
         }
-        let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
+        let s = unsafe { crate::c_abi::gos_str_arg_text(text) };
         i64::from(unsafe { (*re).inner.is_match(s) })
     })
 }
@@ -115,7 +114,7 @@ pub unsafe extern "C" fn gos_rt_regex_find(
         if re.is_null() || text.is_null() {
             return alloc_cstring(b"");
         }
-        let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
+        let s = unsafe { crate::c_abi::gos_str_arg_text(text) };
         match unsafe { (*re).inner.find(s) } {
             Some(m) => alloc_cstring(m.as_str().as_bytes()),
             None => alloc_cstring(b""),
@@ -132,7 +131,7 @@ pub unsafe extern "C" fn gos_rt_regex_find_opt(re: *const GosRegex, text: *const
         if re.is_null() || text.is_null() {
             return gos_rt_result_new(1, 0);
         }
-        let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
+        let s = unsafe { crate::c_abi::gos_str_arg_text(text) };
         match unsafe { (*re).inner.find(s) } {
             None => gos_rt_result_new(1, 0),
             Some(m) => {
@@ -162,7 +161,7 @@ pub unsafe extern "C" fn gos_rt_regex_captures(re: *const GosRegex, text: *const
         if re.is_null() || text.is_null() {
             return gos_rt_result_new(1, 0);
         }
-        let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
+        let s = unsafe { crate::c_abi::gos_str_arg_text(text) };
         match unsafe { (*re).inner.captures(s) } {
             None => gos_rt_result_new(1, 0),
             Some(caps) => {
@@ -205,7 +204,7 @@ pub unsafe extern "C" fn gos_rt_regex_find_all(
         if re.is_null() || text.is_null() {
             return vec;
         }
-        let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
+        let s = unsafe { crate::c_abi::gos_str_arg_text(text) };
         for m in unsafe { (*re).inner.find_iter(s) } {
             let cstr = alloc_cstring(m.as_str().as_bytes());
             #[repr(C)]
@@ -241,11 +240,11 @@ pub unsafe extern "C" fn gos_rt_regex_replace_all(
         if re.is_null() || text.is_null() {
             return alloc_cstring(b"");
         }
-        let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
+        let s = unsafe { crate::c_abi::gos_str_arg_text(text) };
         let r = if repl.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(repl).to_str() }.unwrap_or("")
+            unsafe { crate::c_abi::gos_str_arg_text(repl) }
         };
         alloc_cstring(unsafe { (*re).inner.replace_all(s, r) }.as_bytes())
     })
@@ -264,11 +263,11 @@ pub unsafe extern "C" fn gos_rt_regex_replace(
         if re.is_null() || text.is_null() {
             return alloc_cstring(b"");
         }
-        let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
+        let s = unsafe { crate::c_abi::gos_str_arg_text(text) };
         let r = if repl.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(repl).to_str() }.unwrap_or("")
+            unsafe { crate::c_abi::gos_str_arg_text(repl) }
         };
         alloc_cstring(unsafe { (*re).inner.replace(s, r) }.as_bytes())
     })
@@ -289,7 +288,7 @@ pub unsafe extern "C" fn gos_rt_regex_split(
         if re.is_null() || text.is_null() {
             return vec;
         }
-        let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
+        let s = unsafe { crate::c_abi::gos_str_arg_text(text) };
         for piece in unsafe { (*re).inner.split(s) } {
             let cstr = alloc_cstring(piece.as_bytes());
             let ptr_val = cstr as i64;
@@ -320,7 +319,7 @@ pub unsafe extern "C" fn gos_rt_regex_captures_all(
         if re.is_null() || text.is_null() {
             return outer;
         }
-        let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
+        let s = unsafe { crate::c_abi::gos_str_arg_text(text) };
         for caps in unsafe { (*re).inner.captures_iter(s) } {
             // Each group is an `Option<String>` - the 2-word by-value `i128`
             // (16-byte) representation, so the inner Vec stores 16-byte

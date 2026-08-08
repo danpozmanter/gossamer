@@ -5,8 +5,8 @@ struct Rec(i64, String, bool)
 struct Id(i64)
 
 fn main() {
-    let s = to_json::<Rec>(Rec(7, "hi", true)) |> _.unwrap_or("")
-    let r: Rec = from_json::<Rec>(&s) |> _.unwrap_or(Rec(0, "", false))
-    let id_s = to_json::<Id>(Id(42)) |> _.unwrap_or("")
+    let s = to_json::<Rec>(Rec(7, "hi", true)) |> $.unwrap_or("")
+    let r: Rec = from_json::<Rec>(&s) |> $.unwrap_or(Rec(0, "", false))
+    let id_s = to_json::<Id>(Id(42)) |> $.unwrap_or("")
     println!("{} {} {} {} {}", s, r.0, r.1, r.2, id_s)
 }

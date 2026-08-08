@@ -114,7 +114,9 @@ The literal spelling of each container is in
 | `m.inc(k)` / `m.inc(k, by)` | `()` | Increment an `i64` counter, inserting `0` first if absent. |
 | `m.or_insert(k, default)` | `V` | Value for `k`, inserting `default` first when absent; works for aggregate values (structs, tuples) too. |
 | `m.len()` | `i64` | |
-| `m.iter()` | `Vec<(K, V)>` | `keys()` / `values()` return `Vec<K>` / `Vec<V>`. |
+| `m.iter()` | `Vec<(K, V)>` | Pairs in key order. A struct, tuple, or array key is rebuilt from the map's own key layout, so a bound key sees the value that was inserted. |
+| `m.values()` | `Vec<V>` | Values in key order, for every key type. |
+| `m.keys()` | `Vec<K>` | Scalar and `String` keys only. A struct, tuple, or array key is rejected at check time; use `for (key, value) in m.iter()`. |
 | `m.is_empty()` / `m.clear()` | `bool` / `()` | Empty test and in-place removal of all entries. |
 
 ## BTreeMap
@@ -133,8 +135,8 @@ iteration.
 | `m.contains(k)` / `m.contains_key(k)` | `bool` | Key-membership test. |
 | `m.len()` | `i64` | |
 | `m.is_empty()` / `m.clear()` | `bool` / `()` | Empty test and in-place removal of all entries. |
-| `m.iter()` | `Vec<(String, i64)>` | Yields pairs in ascending key order. |
-| `m.keys()` / `m.values()` | `Vec<String>` / `Vec<i64>` | Snapshots keys or values in key order. |
+| `m.iter()` | `Vec<(K, V)>` | Yields pairs in ascending key order, for every key and value pairing. |
+| `m.keys()` / `m.values()` | `Vec<K>` / `Vec<V>` | Snapshots keys or values in key order. |
 
 ## Set
 

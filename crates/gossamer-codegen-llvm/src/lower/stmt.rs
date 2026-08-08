@@ -509,7 +509,8 @@ impl<'a> Lowerer<'a> {
         } else if self.place_is_packed_byte_element(place) {
             self.store_value_to_place(place, &leaf_llvm, &value);
         } else {
-            writeln!(self.out, "  store {leaf_llvm} {value}, ptr {addr}").unwrap();
+            let tbaa = self.place_payload_tbaa(place);
+            writeln!(self.out, "  store {leaf_llvm} {value}, ptr {addr}{tbaa}").unwrap();
         }
         Ok(())
     }
@@ -540,10 +541,12 @@ impl<'a> Lowerer<'a> {
                         // pointer.
                         let bytes = u64::from(slots.max(1)) * 8;
                         declare_rt(&mut self.runtime_refs, "gos_rt_gc_alloc");
+                        // `noalias`: a fresh allocation, so the memcpy below
+                        // cannot be writing through any other live pointer.
                         let heap = self.fresh();
                         writeln!(
                             self.out,
-                            "  {heap} = call ptr @gos_rt_gc_alloc(i64 {bytes})"
+                            "  {heap} = call noalias ptr @gos_rt_gc_alloc(i64 {bytes})"
                         )
                         .unwrap();
                         writeln!(

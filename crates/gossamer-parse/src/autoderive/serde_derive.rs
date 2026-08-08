@@ -824,7 +824,9 @@ fn emit_named_struct_fmt_impl(
             tmpl.push_str(", ");
         }
         tmpl.push_str(f);
-        tmpl.push_str(": {}");
+        // `{:?}` so a float field keeps a fractional part, matching how a
+        // struct field renders in the VM.
+        tmpl.push_str(": {:?}");
     }
     tmpl.push_str(" }}");
     let argvals: Vec<String> = fields

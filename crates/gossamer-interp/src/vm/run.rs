@@ -3807,6 +3807,39 @@ impl Vm {
                     registers[dst as usize] =
                         Value::MutCell(Arc::new(ThreadConfinedCell::new(inner)));
                 }
+                Op::CaptureCellNew { dst, src } => {
+                    let inner = std::mem::replace(&mut registers[src as usize], Value::Unit);
+                    registers[dst as usize] =
+                        Value::CaptureCell(Arc::new(parking_lot::Mutex::new(inner)));
+                }
+                Op::CaptureCellGet { dst, cell } => {
+                    let Value::CaptureCell(c) = &registers[cell as usize] else {
+                        return Err(capture_cell_expected("CaptureCellGet"));
+                    };
+                    let loaded = c.lock().clone();
+                    registers[dst as usize] = loaded;
+                }
+                Op::CaptureCellTake { dst, cell } => {
+                    // Exclusive borrow for one instruction: the value moves
+                    // out so an in-place mutation sees a refcount of one, and
+                    // the paired `CaptureCellSet` returns it.
+                    let Value::CaptureCell(c) = &registers[cell as usize] else {
+                        return Err(capture_cell_expected("CaptureCellTake"));
+                    };
+                    let taken = std::mem::replace(&mut *c.lock(), Value::Unit);
+                    registers[dst as usize] = taken;
+                }
+                Op::CaptureCellSet { cell, src } => {
+                    // Move (not clone) the value home: leaving the register a
+                    // second owner would copy-on-write the whole aggregate on
+                    // the next mutation. Every later read of the binding is
+                    // preceded by its own load.
+                    let Value::CaptureCell(c) = &registers[cell as usize] else {
+                        return Err(capture_cell_expected("CaptureCellSet"));
+                    };
+                    let c = Arc::clone(c);
+                    *c.lock() = std::mem::replace(&mut registers[src as usize], Value::Unit);
+                }
                 Op::CellTake { dst, cell } => {
                     // Last use of the cell, so move its inner out rather than
                     // clone - the caller re-homes it through this register.
@@ -4523,6 +4556,13 @@ pub(super) fn vec_push_value(recv: &mut Value, new_value: Value) {
         },
         _ => {}
     }
+}
+
+/// The compiler brackets a capture-cell binding's instructions with cell
+/// traffic keyed on the binding's own cell register, so an operand that
+/// is not a cell means the bracketing itself is malformed.
+fn capture_cell_expected(op: &str) -> RuntimeError {
+    RuntimeError::Panic(format!("{op}: operand does not hold a capture cell"))
 }
 
 fn publish_ref_cells(cells: &[(usize, Arc<ThreadConfinedCell>)], registers: &mut [Value]) {

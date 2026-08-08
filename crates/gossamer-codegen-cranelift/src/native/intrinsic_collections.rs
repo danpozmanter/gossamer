@@ -1073,7 +1073,9 @@ pub(super) fn lower_intrinsic_call_collections(
             Ok(true)
         }
         "BTreeMap::new" | "collections::BTreeMap::new" => {
-            let new_fn = intrinsics.extern_fn_by_name(module, "gos_rt_btmap_new")?;
+            // A `BTreeMap` is the ordinary map runtime with key-sorted
+            // snapshots, so its constructor allocates the same `GosMap`.
+            let new_fn = intrinsics.extern_fn_by_name(module, "gos_rt_map_new")?;
             let fref = module.declare_func_in_func(new_fn, builder.func);
             let call = builder.ins().call(fref, &[]);
             let ptr = builder.inst_results(call)[0];

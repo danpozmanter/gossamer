@@ -122,6 +122,9 @@ fn walk_where_clause<V: Visitor + ?Sized>(visitor: &mut V, where_clause: &WhereC
 
 fn walk_trait_bound<V: Visitor + ?Sized>(visitor: &mut V, bound: &TraitBound) {
     visitor.visit_type_path(&bound.path);
+    for binding in &bound.bindings {
+        visitor.visit_type(&binding.ty);
+    }
 }
 
 fn walk_struct_decl<V: Visitor + ?Sized>(visitor: &mut V, decl: &StructDecl) {

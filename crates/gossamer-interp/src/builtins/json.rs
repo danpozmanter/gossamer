@@ -510,6 +510,10 @@ fn gossamer_to_json_value(value: &Value) -> json_std::Value {
             let inner = c.lock().clone();
             gossamer_to_json_value(&inner)
         }
+        Value::CaptureCell(c) => {
+            let inner = c.lock().clone();
+            gossamer_to_json_value(&inner)
+        }
         Value::Unit | Value::Void | Value::Weak(_) => json_std::Value::Null,
         Value::Bool(b) => json_std::Value::Bool(*b),
         Value::Int(n) => json_std::Value::Int(*n),

@@ -1,0 +1,43 @@
+// Cross-tier parity for the `std::io` stream adapters: in-memory
+// readers and writers, limit_reader, tee_reader, multi_reader, pipe,
+// and copy_n. A Reader or Writer is an i64 handle, so every adapter
+// composes by value on the VM, the JIT, and LLVM AOT alike.
+use std::io
+
+fn main() {
+    let src = io::string_reader("abcdefgh")
+    println!("limit={}", io::drain(io::limit_reader(src, 3)))
+
+    let teed = io::string_reader("hello world")
+    let sink = io::buffer_writer()
+    println!("tee={}", io::drain(io::tee_reader(teed, sink)))
+    println!("sink={}", io::contents(sink))
+
+    let a = io::string_reader("one ")
+    let b = io::string_reader("two ")
+    let c = io::string_reader("three")
+    println!("multi={}", io::drain(io::multi_reader(#[a, b, c])))
+
+    let (reader, writer) = io::pipe()
+    println!("wrote={}", io::write(writer, "payload"))
+    io::close_writer(writer)
+    println!("pipe={}", io::drain(reader))
+
+    let from = io::string_reader("0123456789")
+    let to = io::buffer_writer()
+    match io::copy_n(to, from, 4) {
+        Ok(n) => println!("copied={} body={}", n, io::contents(to)),
+        Err(e) => println!("copy failed: {}", e),
+    }
+    match io::copy_n(to, from, 100) {
+        Ok(n) => println!("rest={} body={}", n, io::contents(to)),
+        Err(e) => println!("copy failed: {}", e),
+    }
+
+    // A limit reader stacked under a tee still mirrors only what it yields.
+    let deep = io::string_reader("abcdefgh")
+    let audit = io::buffer_writer()
+    let chained = io::tee_reader(io::limit_reader(deep, 5), audit)
+    println!("chained={}", io::drain(chained))
+    println!("audit={}", io::contents(audit))
+}

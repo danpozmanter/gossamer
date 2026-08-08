@@ -256,3 +256,232 @@ fn example_programs_have_no_spurious_exhaustiveness_errors() {
         );
     }
 }
+
+#[test]
+fn tuple_of_bools_reports_the_missing_combination() {
+    let source = r#"
+fn main() {
+    let a = true
+    let b = true
+    let r = match (a, b) { (true, true) => 1 }
+    println!("{}", r)
+}
+"#;
+    let diagnostics = run(source);
+    assert!(
+        diagnostics.iter().any(|d| matches!(
+            &d.error,
+            ExhaustivenessError::NonExhaustive { missing } if missing.iter().any(|m| m.starts_with('('))
+        )),
+        "expected a tuple witness: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn tuple_of_bools_covering_every_combination_is_exhaustive() {
+    let source = r#"
+fn main() {
+    let a = true
+    let b = true
+    let r = match (a, b) {
+        (true, true) => 1,
+        (true, false) => 2,
+        (false, true) => 3,
+        (false, false) => 4,
+    }
+    println!("{}", r)
+}
+"#;
+    let diagnostics = run(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| matches!(d.error, ExhaustivenessError::NonExhaustive { .. })),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn tuple_with_a_wildcard_column_is_exhaustive() {
+    let source = r#"
+fn main() {
+    let a = 1
+    let b = true
+    let r = match (a, b) {
+        (1, true) => 1,
+        (_, true) => 2,
+        (_, false) => 3,
+    }
+    println!("{}", r)
+}
+"#;
+    let diagnostics = run(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| matches!(d.error, ExhaustivenessError::NonExhaustive { .. })),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn nested_option_of_result_reports_the_missing_payload_shape() {
+    let source = r#"
+fn main() {
+    let o: Option<Result<i64, String>> = Some(Ok(1))
+    let r = match o { Some(Ok(x)) => x }
+    println!("{}", r)
+}
+"#;
+    let diagnostics = run(source);
+    let missing: Vec<String> = diagnostics
+        .iter()
+        .filter_map(|d| match &d.error {
+            ExhaustivenessError::NonExhaustive { missing } => Some(missing.clone()),
+            ExhaustivenessError::UnreachableArm => None,
+        })
+        .flatten()
+        .collect();
+    assert!(
+        missing.iter().any(|m| m == "Some(Err(_))"),
+        "expected `Some(Err(_))`: {missing:?}"
+    );
+    assert!(
+        missing.iter().any(|m| m == "None"),
+        "expected `None`: {missing:?}"
+    );
+}
+
+#[test]
+fn nested_option_of_result_covering_every_shape_is_exhaustive() {
+    let source = r#"
+fn main() {
+    let o: Option<Result<i64, String>> = Some(Ok(1))
+    let r = match o {
+        Some(Ok(x)) => x,
+        Some(Err(_)) => 0,
+        None => -1,
+    }
+    println!("{}", r)
+}
+"#;
+    let diagnostics = run(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| matches!(d.error, ExhaustivenessError::NonExhaustive { .. })),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn enum_payload_gap_is_reported_through_the_variant() {
+    let source = r#"
+enum Flag { On(bool), Off }
+
+fn main() {
+    let f = Flag::On(true)
+    let r = match f {
+        Flag::On(true) => 1,
+        Flag::Off => 2,
+    }
+    println!("{}", r)
+}
+"#;
+    let diagnostics = run(source);
+    let missing: Vec<String> = diagnostics
+        .iter()
+        .filter_map(|d| match &d.error {
+            ExhaustivenessError::NonExhaustive { missing } => Some(missing.clone()),
+            ExhaustivenessError::UnreachableArm => None,
+        })
+        .flatten()
+        .collect();
+    assert!(
+        missing.iter().any(|m| m == "On(false)"),
+        "expected `On(false)`: {missing:?}"
+    );
+}
+
+#[test]
+fn fixed_array_length_patterns_are_exhaustive_together() {
+    let source = r#"
+fn pick(xs: [i64; 2]) -> i64 {
+    match xs {
+        [a, b] => a + b,
+    }
+}
+
+fn main() { println!("{}", pick([1, 2])) }
+"#;
+    let diagnostics = run(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| matches!(d.error, ExhaustivenessError::NonExhaustive { .. })),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn fixed_array_rest_pattern_covers_every_length_it_fits() {
+    let source = r#"
+fn head(xs: [i64; 3]) -> i64 {
+    match xs {
+        [first, ..rest] => first + rest.len(),
+        [] => 0,
+    }
+}
+
+fn main() { println!("{}", head([1, 2, 3])) }
+"#;
+    let diagnostics = run(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| matches!(d.error, ExhaustivenessError::NonExhaustive { .. })),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn range_patterns_still_require_a_catch_all_arm() {
+    let source = r#"
+fn main() {
+    let n = 3
+    let r = match n { 1..=5 => 1 }
+    println!("{}", r)
+}
+"#;
+    let diagnostics = run(source);
+    assert!(
+        diagnostics.iter().any(|d| matches!(
+            &d.error,
+            ExhaustivenessError::NonExhaustive { missing } if missing.iter().any(|m| m == "_")
+        )),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn name_only_variant_patterns_cover_their_payload() {
+    let source = r#"
+enum Shape { Dot, Line(i64), Box(i64, i64) }
+
+fn main() {
+    let kind = match Shape::Box(7, 8) {
+        Shape::Dot => 0,
+        Shape::Line(..) => 1,
+        Shape::Box(..) => 2,
+    }
+    println!("{}", kind)
+}
+"#;
+    let diagnostics = run(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| matches!(d.error, ExhaustivenessError::NonExhaustive { .. })),
+        "{diagnostics:?}"
+    );
+}

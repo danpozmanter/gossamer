@@ -1,12 +1,20 @@
 //! Match exhaustiveness and reachability.
-//! Implements a Maranget-lite usefulness algorithm over a simplified
-//! pattern form. For every `match` expression in a source file, reports
-//! missing patterns that would make the match exhaustive and flags
-//! arms that are dominated by earlier arms as unreachable.
-//! The checker is conservative: when it cannot enumerate the scrutinee
-//! type (e.g. integers, strings, external ADTs), exhaustiveness
-//! requires a wildcard arm but concrete values covered by earlier arms
-//! are still tracked for redundancy detection.
+//!
+//! Implements Maranget's usefulness algorithm over a pattern matrix,
+//! specialising each column by the constructors its type admits. For every
+//! `match` expression in a source file it reports missing patterns that
+//! would make the match exhaustive, each rendered as a concrete witness
+//! value, and flags arms dominated by earlier arms as unreachable.
+//!
+//! A column's type decides how far the search goes. Booleans, tuples,
+//! fixed-length arrays, user enums, `Option`, and `Result` enumerate their
+//! constructors and are decomposed recursively. Integers, floats, strings,
+//! and chars have no finite constructor list, so covering them takes a
+//! catch-all arm. Every other type contributes no witness of its own: the
+//! search cannot enumerate it, and reporting a gap it cannot see would be a
+//! guess. Range patterns and slice patterns whose fixed elements sit around
+//! a rest constrain a span of values rather than one constructor, so they
+//! stay opaque to the usefulness lattice.
 
 #![forbid(unsafe_code)]
 
@@ -276,192 +284,428 @@ impl Checker<'_> {
         ));
     }
 
+    /// Missing witnesses for a single-column matrix over the scrutinee.
     fn compute_missing(&self, scrutinee_ty: Option<Ty>, patterns: &[&Pat]) -> Vec<String> {
-        if let Some(ty) = scrutinee_ty {
-            if let Some(missing) = self.missing_for_ty(ty, patterns) {
-                return missing;
-            }
-        }
-        Vec::new()
+        let rows: Vec<Vec<Pat>> = patterns.iter().map(|pat| vec![(*pat).clone()]).collect();
+        self.missing_rows(rows, &[scrutinee_ty], 0)
+            .into_iter()
+            .filter_map(|witness| witness.into_iter().next())
+            .take(MAX_WITNESSES)
+            .collect()
     }
 
-    fn missing_for_ty(&self, ty: Ty, patterns: &[&Pat]) -> Option<Vec<String>> {
-        match self.tcx.kind(ty)? {
-            TyKind::Bool => Some(missing_bool(patterns)),
-            TyKind::Adt { def, .. } => {
-                if let Some(variants) = self.enums_by_def(*def) {
-                    return Some(missing_variants(&variants, patterns));
-                }
-                // `Option` / `Result` are built-in sentinel ADTs, absent from
-                // the user-enum table but finitely enumerable. Without this a
-                // `match o { Some(n) => .. }` missing `None` was treated as
-                // exhaustive, and the compiled tier read an uninitialised
-                // discriminant.
-                match self.tcx.def_name(*def) {
-                    Some("Option") => Some(missing_variants(
-                        &["Some".to_string(), "None".to_string()],
-                        patterns,
-                    )),
-                    Some("Result") => Some(missing_variants(
-                        &["Ok".to_string(), "Err".to_string()],
-                        patterns,
-                    )),
-                    _ => None,
-                }
-            }
-            // Scalar types whose value domain cannot be exhausted by listing
-            // literals require a catch-all arm. `report_non_exhaustive`
-            // returns before reaching here when an unguarded wildcard is
-            // present, so arriving here means the match has no catch-all and
-            // is therefore non-exhaustive - the witness is `_`.
-            TyKind::Int(_) | TyKind::Float(_) | TyKind::String | TyKind::Char => {
-                Some(vec!["_".to_string()])
-            }
-            _ => None,
-        }
-    }
-
-    fn enums_by_def(&self, def: DefId) -> Option<Vec<String>> {
-        self.enums.get(&def).cloned()
-    }
-}
-
-fn missing_bool(patterns: &[&Pat]) -> Vec<String> {
-    let mut saw_true = false;
-    let mut saw_false = false;
-    for pat in patterns {
-        scan_bool(pat, &mut saw_true, &mut saw_false);
-    }
-    let mut missing = Vec::new();
-    if !saw_true {
-        missing.push("true".to_string());
-    }
-    if !saw_false {
-        missing.push("false".to_string());
-    }
-    missing
-}
-
-fn scan_bool(pat: &Pat, saw_true: &mut bool, saw_false: &mut bool) {
-    match pat {
-        Pat::Wild => {
-            *saw_true = true;
-            *saw_false = true;
-        }
-        Pat::Bool(true) => *saw_true = true,
-        Pat::Bool(false) => *saw_false = true,
-        Pat::Or(alts) => {
-            for alt in alts {
-                scan_bool(alt, saw_true, saw_false);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn missing_variants(all: &[String], patterns: &[&Pat]) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    for pat in patterns {
-        scan_variants(pat, &mut seen);
-        if seen.contains("*") {
+    /// Maranget usefulness over a pattern matrix: returns one rendered
+    /// witness per uncovered value shape, or an empty list when the rows
+    /// cover every value the column types can take.
+    ///
+    /// A column whose type carries no usable information contributes no
+    /// witness of its own, so an unknown scrutinee is never reported as
+    /// non-exhaustive on the strength of its own column.
+    fn missing_rows(
+        &self,
+        rows: Vec<Vec<Pat>>,
+        tys: &[Option<Ty>],
+        depth: usize,
+    ) -> Vec<Vec<String>> {
+        let Some((head_ty, rest_tys)) = tys.split_first() else {
+            return if rows.is_empty() {
+                vec![Vec::new()]
+            } else {
+                Vec::new()
+            };
+        };
+        if depth >= MAX_DEPTH {
             return Vec::new();
         }
-    }
-    // for each named variant we've seen, check
-    // whether the patterns that match it are exhaustive over its
-    // payload's finite domain. The first uncovered payload shape
-    // becomes the missing witness. Today we only know how to
-    // enumerate finite domains for `Pat::Bool` payloads (`true` /
-    // `false`); non-bool payloads default to "exhaustive" because
-    // we lack the type context here.
-    let mut out: Vec<String> = all
-        .iter()
-        .filter(|name| !seen.contains(name.as_str()))
-        .cloned()
-        .collect();
-    for name in all {
-        if !seen.contains(name.as_str()) {
-            continue;
+        let rows = expand_or_heads(rows);
+        let mut out: Vec<Vec<String>> = Vec::new();
+        let domain = self.domain_of(*head_ty);
+        let signature = match &domain {
+            Domain::Finite(ctors) => Some(ctors.clone()),
+            Domain::Infinite | Domain::Unknown => None,
+        };
+        // A signature constructor counts as tested once some row head other
+        // than a wildcard can match it, whatever shape that head takes: a
+        // name-only variant pattern and a rest-carrying slice pattern test
+        // their constructor just as a fully written one does.
+        let tested = |ctor: &Ctor| {
+            rows.iter().any(|row| {
+                row.first().is_some_and(|head| {
+                    !matches!(head, Pat::Wild) && head_fields(head, ctor).is_some()
+                })
+            })
+        };
+        let used = head_ctors(&rows);
+        // Every constructor the rows already test is descended into, so a
+        // gap nested under a present constructor is still reported.
+        let explore: Vec<Ctor> = match &signature {
+            Some(ctors) => ctors.iter().filter(|c| tested(c)).cloned().collect(),
+            None => used.clone(),
+        };
+        for ctor in &explore {
+            let field_tys = self.field_tys(*head_ty, ctor);
+            let specialized = specialize(&rows, ctor);
+            let mut sub_tys = field_tys;
+            sub_tys.extend_from_slice(rest_tys);
+            for witness in self.missing_rows(specialized, &sub_tys, depth + 1) {
+                out.push(apply_ctor(ctor, witness));
+            }
         }
-        if let Some(witness) = missing_payload_witness(name, patterns) {
-            out.push(witness);
+        let uncovered: Vec<Ctor> = match &signature {
+            Some(ctors) => ctors.iter().filter(|c| !tested(c)).cloned().collect(),
+            None => Vec::new(),
+        };
+        let head_is_open = match domain {
+            Domain::Finite(_) => !uncovered.is_empty(),
+            Domain::Infinite => true,
+            // An unknown head only leaves a gap when no row constrains it.
+            Domain::Unknown => used.is_empty(),
+        };
+        if head_is_open {
+            let default_rows: Vec<Vec<Pat>> = rows
+                .iter()
+                .filter(|row| matches!(row.first(), Some(Pat::Wild)))
+                .map(|row| row[1..].to_vec())
+                .collect();
+            for witness in self.missing_rows(default_rows, rest_tys, depth + 1) {
+                if uncovered.is_empty() {
+                    let mut full = vec!["_".to_string()];
+                    full.extend(witness);
+                    out.push(full);
+                } else {
+                    for ctor in &uncovered {
+                        let mut full = vec![render_ctor(ctor)];
+                        full.extend(witness.iter().cloned());
+                        out.push(full);
+                    }
+                }
+            }
+        }
+        out.truncate(MAX_WITNESSES);
+        out
+    }
+
+    /// Value domain of a column's type.
+    fn domain_of(&self, ty: Option<Ty>) -> Domain {
+        let Some(kind) = ty.and_then(|ty| self.tcx.kind(ty)) else {
+            return Domain::Unknown;
+        };
+        match kind {
+            TyKind::Bool => Domain::Finite(vec![Ctor::Bool(true), Ctor::Bool(false)]),
+            TyKind::Unit => Domain::Finite(vec![Ctor::Tuple(0)]),
+            TyKind::Tuple(items) => Domain::Finite(vec![Ctor::Tuple(items.len())]),
+            TyKind::Array {
+                len: crate::ArrayLen::Concrete(n),
+                ..
+            } => Domain::Finite(vec![Ctor::List(*n)]),
+            TyKind::Adt { def, .. } => self.adt_domain(*def),
+            // A domain no finite list of patterns can exhaust: only a
+            // catch-all arm covers it.
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::String | TyKind::Char => Domain::Infinite,
+            _ => Domain::Unknown,
+        }
+    }
+
+    /// Constructor signature of a named ADT: a user enum's declared
+    /// variants, or the built-in `Option` / `Result` sentinels. Structs
+    /// carry no discriminant to enumerate.
+    fn adt_domain(&self, def: DefId) -> Domain {
+        if let Some(variants) = self.enums.get(&def) {
+            let arities = self.tcx.enum_variant_tys(def);
+            return Domain::Finite(
+                variants
+                    .iter()
+                    .enumerate()
+                    .map(|(i, name)| {
+                        let arity = arities.and_then(|all| all.get(i)).map_or(0, Vec::len);
+                        Ctor::Variant {
+                            name: name.clone(),
+                            arity,
+                        }
+                    })
+                    .collect(),
+            );
+        }
+        match self.tcx.def_name(def) {
+            Some("Option") => Domain::Finite(vec![
+                Ctor::Variant {
+                    name: "Some".to_string(),
+                    arity: 1,
+                },
+                Ctor::Variant {
+                    name: "None".to_string(),
+                    arity: 0,
+                },
+            ]),
+            Some("Result") => Domain::Finite(vec![
+                Ctor::Variant {
+                    name: "Ok".to_string(),
+                    arity: 1,
+                },
+                Ctor::Variant {
+                    name: "Err".to_string(),
+                    arity: 1,
+                },
+            ]),
+            _ => Domain::Unknown,
+        }
+    }
+
+    /// Column types a constructor's fields occupy when the value it
+    /// destructures has type `ty`. `None` entries stand for a field whose
+    /// type is not recoverable here.
+    fn field_tys(&self, ty: Option<Ty>, ctor: &Ctor) -> Vec<Option<Ty>> {
+        let unknown = vec![None; ctor.arity()];
+        let Some(kind) = ty.and_then(|ty| self.tcx.kind(ty)) else {
+            return unknown;
+        };
+        match (kind, ctor) {
+            (TyKind::Tuple(items), Ctor::Tuple(n)) if items.len() == *n => {
+                items.iter().map(|item| Some(*item)).collect()
+            }
+            (TyKind::Array { elem, .. }, Ctor::List(n)) => vec![Some(*elem); *n],
+            (TyKind::Adt { def, substs }, Ctor::Variant { name, arity }) => {
+                let args = substs.types();
+                match (self.tcx.def_name(*def), name.as_str()) {
+                    (Some("Option"), "Some") | (Some("Result"), "Ok") => {
+                        vec![args.first().copied()]
+                    }
+                    (Some("Result"), "Err") => vec![args.get(1).copied()],
+                    _ => {
+                        // A generic enum's stored field types mention
+                        // un-substituted parameters, so they name no usable
+                        // column type here.
+                        if !args.is_empty() {
+                            return unknown;
+                        }
+                        let Some(variants) = self.enums.get(def) else {
+                            return unknown;
+                        };
+                        let Some(position) = variants.iter().position(|v| v == name) else {
+                            return unknown;
+                        };
+                        match self
+                            .tcx
+                            .enum_variant_tys(*def)
+                            .and_then(|all| all.get(position))
+                        {
+                            Some(tys) if tys.len() == *arity => {
+                                tys.iter().map(|ty| Some(*ty)).collect()
+                            }
+                            _ => unknown,
+                        }
+                    }
+                }
+            }
+            _ => unknown,
+        }
+    }
+}
+
+/// Largest number of witnesses reported for one match.
+const MAX_WITNESSES: usize = 3;
+
+/// Deepest constructor nesting the usefulness search descends into. A
+/// deeper gap is left unreported rather than driving the search into an
+/// exponential expansion.
+const MAX_DEPTH: usize = 8;
+
+/// Value domain of a scrutinee column.
+enum Domain {
+    /// Every constructor the type admits.
+    Finite(Vec<Ctor>),
+    /// A domain no finite pattern list exhausts, such as the integers.
+    Infinite,
+    /// No usable type information.
+    Unknown,
+}
+
+/// One constructor a column's values can take.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Ctor {
+    /// A boolean value.
+    Bool(bool),
+    /// A named enum variant with its payload arity.
+    Variant {
+        /// Variant name as written.
+        name: String,
+        /// Number of payload fields.
+        arity: usize,
+    },
+    /// A tuple of the given width.
+    Tuple(usize),
+    /// A fixed-length sequence.
+    List(usize),
+    /// A literal value in an unbounded domain, keyed by its spelling.
+    Literal(String),
+}
+
+impl Ctor {
+    fn arity(&self) -> usize {
+        match self {
+            Self::Bool(_) | Self::Literal(_) => 0,
+            Self::Variant { arity, .. } => *arity,
+            Self::Tuple(n) | Self::List(n) => *n,
+        }
+    }
+}
+
+/// Expands every row whose head is an or-pattern into one row per
+/// alternative, so head-constructor analysis sees a flat matrix.
+fn expand_or_heads(rows: Vec<Vec<Pat>>) -> Vec<Vec<Pat>> {
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        match row.split_first() {
+            Some((Pat::Or(alts), tail)) => {
+                for alt in alts.clone() {
+                    let mut expanded = vec![alt];
+                    expanded.extend_from_slice(tail);
+                    out.push(expanded);
+                }
+            }
+            _ => out.push(row),
+        }
+    }
+    // A nested or-pattern head becomes a fresh or-pattern head after one
+    // expansion, so keep flattening until none remain.
+    if out
+        .iter()
+        .any(|row| matches!(row.first(), Some(Pat::Or(_))))
+    {
+        return expand_or_heads(out);
+    }
+    out
+}
+
+/// Distinct constructors appearing in the matrix's head column, in first
+/// occurrence order. Wildcards and opaque patterns name no constructor.
+fn head_ctors(rows: &[Vec<Pat>]) -> Vec<Ctor> {
+    let mut out: Vec<Ctor> = Vec::new();
+    for row in rows {
+        let Some(ctor) = row.first().and_then(pat_ctor) else {
+            continue;
+        };
+        if !out.contains(&ctor) {
+            out.push(ctor);
         }
     }
     out
 }
 
-/// Returns a missing payload witness for `variant_name` when its
-/// matched arms don't cover every shape its payload can take.
-/// Currently handles single-field bool payloads
-/// (`enum E { V(bool) }` - missing `V(true)` if only `V(false)`
-/// was matched).
-fn missing_payload_witness(variant_name: &str, patterns: &[&Pat]) -> Option<String> {
-    let mut bool_field_seen_true = false;
-    let mut bool_field_seen_false = false;
-    let mut bool_field_seen_wild = false;
-    let mut any_with_bool_payload = false;
-    for pat in patterns {
-        match pat {
-            Pat::Variant { name, fields } if name == variant_name && fields.len() == 1 => {
-                match &fields[0] {
-                    Pat::Bool(true) => {
-                        any_with_bool_payload = true;
-                        bool_field_seen_true = true;
-                    }
-                    Pat::Bool(false) => {
-                        any_with_bool_payload = true;
-                        bool_field_seen_false = true;
-                    }
-                    Pat::Wild => {
-                        // Wildcard payload covers both. Only treat
-                        // as bool-domain if we've also seen a real
-                        // bool field elsewhere - otherwise a
-                        // wildcard payload is a wildcard over an
-                        // unknown type.
-                        bool_field_seen_wild = true;
-                    }
-                    _ => return None,
-                }
-            }
-            Pat::Or(alts) => {
-                if let Some(w) =
-                    missing_payload_witness(variant_name, &alts.iter().collect::<Vec<_>>())
-                {
-                    return Some(w);
-                }
-            }
-            _ => {}
-        }
+/// The constructor a head pattern tests for, or `None` for a wildcard or
+/// an opaque pattern that constrains no single constructor.
+fn pat_ctor(pat: &Pat) -> Option<Ctor> {
+    match pat {
+        Pat::Bool(value) => Some(Ctor::Bool(*value)),
+        Pat::Variant { name, fields } => Some(Ctor::Variant {
+            name: name.clone(),
+            arity: fields.len(),
+        }),
+        Pat::Tuple(fields) => Some(Ctor::Tuple(fields.len())),
+        Pat::List(fields) => Some(Ctor::List(fields.len())),
+        Pat::Literal(text) => Some(Ctor::Literal(text.clone())),
+        // A rest-carrying slice spans a range of lengths, so it pins no
+        // single constructor of its own.
+        Pat::Wild | Pat::Or(_) | Pat::Opaque | Pat::SliceRest { .. } => None,
     }
-    if !any_with_bool_payload {
-        return None;
-    }
-    if bool_field_seen_wild {
-        return None;
-    }
-    if !bool_field_seen_true {
-        return Some(format!("{variant_name}(true)"));
-    }
-    if !bool_field_seen_false {
-        return Some(format!("{variant_name}(false)"));
-    }
-    None
 }
 
-fn scan_variants(pat: &Pat, seen: &mut std::collections::HashSet<String>) {
-    match pat {
-        Pat::Wild => {
-            seen.insert("*".to_string());
+/// Field patterns a head pattern contributes when the value it matches is
+/// built with `ctor`, or `None` when the head cannot match that
+/// constructor at all.
+fn head_fields(head: &Pat, ctor: &Ctor) -> Option<Vec<Pat>> {
+    let arity = ctor.arity();
+    match head {
+        Pat::Wild => Some(vec![Pat::Wild; arity]),
+        // A name-only variant pattern (`Shape::Box(..)`, a struct-variant
+        // pattern, or a bare path) tests the name and leaves the payload
+        // open.
+        Pat::Variant { name, fields } => match ctor {
+            Ctor::Variant { name: want, .. } if name == want => Some(if fields.len() == arity {
+                fields.clone()
+            } else {
+                vec![Pat::Wild; arity]
+            }),
+            _ => None,
+        },
+        Pat::Bool(value) => match ctor {
+            Ctor::Bool(want) if value == want => Some(Vec::new()),
+            _ => None,
+        },
+        Pat::Literal(text) => match ctor {
+            Ctor::Literal(want) if text == want => Some(Vec::new()),
+            _ => None,
+        },
+        Pat::Tuple(fields) => match ctor {
+            Ctor::Tuple(n) if fields.len() == *n => Some(fields.clone()),
+            _ => None,
+        },
+        Pat::List(fields) => match ctor {
+            Ctor::List(n) if fields.len() == *n => Some(fields.clone()),
+            _ => None,
+        },
+        // `[a, ..rest]` / `(a, .., d)` matches every width the fixed
+        // elements fit into; the rest spans the middle.
+        Pat::SliceRest { prefix, suffix } => match ctor {
+            Ctor::List(n) | Ctor::Tuple(n) if prefix.len() + suffix.len() <= *n => {
+                let mut fields = prefix.clone();
+                fields.resize(n - suffix.len(), Pat::Wild);
+                fields.extend(suffix.iter().cloned());
+                Some(fields)
+            }
+            _ => None,
+        },
+        Pat::Or(_) | Pat::Opaque => None,
+    }
+}
+
+/// Matrix rows that can match a value built with `ctor`, with the head
+/// column replaced by the constructor's fields.
+fn specialize(rows: &[Vec<Pat>], ctor: &Ctor) -> Vec<Vec<Pat>> {
+    let mut out = Vec::new();
+    for row in rows {
+        let Some((head, tail)) = row.split_first() else {
+            continue;
+        };
+        if let Some(fields) = head_fields(head, ctor) {
+            let mut expanded = fields;
+            expanded.extend_from_slice(tail);
+            out.push(expanded);
         }
-        Pat::Variant { name, .. } => {
-            seen.insert(name.clone());
-        }
-        Pat::Or(alts) => {
-            for alt in alts {
-                scan_variants(alt, seen);
+    }
+    out
+}
+
+/// Folds a constructor's field witnesses back into one rendered witness,
+/// leaving the remaining columns untouched.
+fn apply_ctor(ctor: &Ctor, mut witness: Vec<String>) -> Vec<String> {
+    let arity = ctor.arity();
+    let rest = witness.split_off(arity.min(witness.len()));
+    let mut out = vec![render_ctor_with(ctor, &witness)];
+    out.extend(rest);
+    out
+}
+
+/// Renders a constructor with wildcard fields.
+fn render_ctor(ctor: &Ctor) -> String {
+    let fields = vec!["_".to_string(); ctor.arity()];
+    render_ctor_with(ctor, &fields)
+}
+
+/// Renders a constructor applied to the given field witnesses.
+fn render_ctor_with(ctor: &Ctor, fields: &[String]) -> String {
+    match ctor {
+        Ctor::Bool(value) => value.to_string(),
+        Ctor::Literal(text) => text.clone(),
+        Ctor::Variant { name, arity } => {
+            if *arity == 0 {
+                name.clone()
+            } else {
+                format!("{name}({})", fields.join(", "))
             }
         }
-        _ => {}
+        Ctor::Tuple(_) => format!("({})", fields.join(", ")),
+        Ctor::List(_) => format!("[{}]", fields.join(", ")),
     }
 }
 
@@ -533,7 +777,19 @@ fn subsumes(earlier: &Pat, later: &Pat) -> bool {
             Pat::Or(alts) => alts.iter().all(|a| subsumes(earlier, a)),
             _ => false,
         },
-        Pat::Opaque => false,
+        Pat::List(ef) => match later {
+            Pat::List(lf) => {
+                if lf.len() != ef.len() {
+                    return false;
+                }
+                ef.iter().zip(lf.iter()).all(|(e, l)| subsumes(e, l))
+            }
+            Pat::Or(alts) => alts.iter().all(|a| subsumes(earlier, a)),
+            _ => false,
+        },
+        // A rest-carrying slice imposes a length range rather than a single
+        // shape, so it is opaque to the subsumption lattice.
+        Pat::SliceRest { .. } | Pat::Opaque => false,
     }
 }
 
@@ -586,22 +842,36 @@ fn lower_pattern(pattern: &Pattern) -> Pat {
                 fields: Vec::new(),
             }
         }
-        PatternKind::Tuple(parts) => Pat::Tuple(parts.iter().map(lower_pattern).collect()),
+        // `(a, .., d)` names a prefix and a suffix around a rest that spans
+        // however many elements the tuple's width leaves between them.
+        PatternKind::Tuple(parts) => match parts
+            .iter()
+            .position(|part| matches!(part.kind, PatternKind::Rest))
+        {
+            Some(at) => Pat::SliceRest {
+                prefix: parts[..at].iter().map(lower_pattern).collect(),
+                suffix: parts[at + 1..].iter().map(lower_pattern).collect(),
+            },
+            None => Pat::Tuple(parts.iter().map(lower_pattern).collect()),
+        },
         // A `[..]` / `[..rest]` slice (no fixed elements) matches any
-        // slice, so it acts as a catch-all; any slice carrying fixed
-        // elements imposes a length constraint and is opaque to the
+        // slice, so it acts as a catch-all. A fixed-width `[a, b]` slice
+        // constrains the length, which is a constructor over a scrutinee
+        // whose length is part of its type. A slice mixing fixed elements
+        // with a rest spans a range of lengths and stays opaque to the
         // usefulness lattice (it never subsumes another pattern).
         PatternKind::Slice {
             prefix,
             rest,
             suffix,
-        } => {
-            if rest.is_some() && prefix.is_empty() && suffix.is_empty() {
-                Pat::Wild
-            } else {
-                Pat::Opaque
-            }
-        }
+        } => match rest {
+            Some(_) if prefix.is_empty() && suffix.is_empty() => Pat::Wild,
+            Some(_) => Pat::SliceRest {
+                prefix: prefix.iter().map(lower_pattern).collect(),
+                suffix: suffix.iter().map(lower_pattern).collect(),
+            },
+            None => Pat::List(prefix.iter().map(lower_pattern).collect()),
+        },
         PatternKind::Or(alts) => Pat::Or(alts.iter().map(lower_pattern).collect()),
         PatternKind::Range { .. } => Pat::Opaque,
         PatternKind::Ref { inner, .. } => lower_pattern(inner),
@@ -615,6 +885,9 @@ fn lower_literal(lit: &Literal) -> Pat {
         Literal::Int(text) | Literal::Float(text) => Pat::Literal(text.clone()),
         Literal::String(text) => Pat::Literal(format!("\"{text}\"")),
         Literal::Char(c) => Pat::Literal(format!("'{c}'")),
+        // The unit type has exactly one value, so `()` is the whole of its
+        // domain.
+        Literal::Unit => Pat::Tuple(Vec::new()),
         _ => Pat::Opaque,
     }
 }
@@ -660,6 +933,8 @@ enum Pat {
     Bool(bool),
     Variant { name: String, fields: Vec<Pat> },
     Tuple(Vec<Pat>),
+    List(Vec<Pat>),
+    SliceRest { prefix: Vec<Pat>, suffix: Vec<Pat> },
     Literal(String),
     Or(Vec<Pat>),
     Opaque,
@@ -748,15 +1023,11 @@ fn format_missing(missing: &[String]) -> String {
 }
 
 #[cfg(test)]
-mod m13_tests {
+mod exhaustiveness_tests {
     use super::*;
 
-    /// Audit M13 tuple bug: element-blind subsumption flagged the
-    /// second arm of `(true, false) => .., (true, true) => ..`
-    /// as redundant because both lowered to `Pat::Tuple(_)`. The
-    /// 0.6.0 fix recurses field-by-field; (true, false) does NOT
-    /// subsume (true, true) because Bool(false) does not subsume
-    /// Bool(true).
+    /// Tuple subsumption descends field by field: disjoint elements make
+    /// two same-width tuples disjoint.
     #[test]
     fn tuple_subsumption_recurses_through_fields() {
         let earlier = Pat::Tuple(vec![Pat::Bool(true), Pat::Bool(false)]);
@@ -777,44 +1048,78 @@ mod m13_tests {
         assert!(subsumes(&earlier, &later));
     }
 
-    /// Audit M13 enum-payload bug: `Foo::A(true)` matched alone is NOT
-    /// exhaustive for `enum Foo { A(bool) }`; `Foo::A(false)`
-    /// is missing. The 0.6.0 fix recurses into the payload's
-    /// finite domain.
+    /// Specialising by a constructor keeps the rows that can match it and
+    /// replaces the head column with that constructor's fields.
     #[test]
-    fn variant_with_bool_payload_reports_missing_false() {
-        let all = vec!["A".to_string()];
-        let pat = Pat::Variant {
+    fn specialize_keeps_matching_rows_and_expands_fields() {
+        let rows = vec![
+            vec![Pat::Variant {
+                name: "A".to_string(),
+                fields: vec![Pat::Bool(true)],
+            }],
+            vec![Pat::Variant {
+                name: "B".to_string(),
+                fields: Vec::new(),
+            }],
+            vec![Pat::Wild],
+        ];
+        let ctor = Ctor::Variant {
             name: "A".to_string(),
-            fields: vec![Pat::Bool(true)],
+            arity: 1,
         };
-        let pats: Vec<&Pat> = vec![&pat];
-        let missing = missing_variants(&all, &pats);
-        assert!(
-            missing.iter().any(|m| m == "A(false)"),
-            "expected `A(false)` missing, got {missing:?}"
+        let specialized = specialize(&rows, &ctor);
+        assert_eq!(
+            specialized,
+            vec![vec![Pat::Bool(true)], vec![Pat::Wild]],
+            "only `A(..)` and the wildcard row match `A`"
         );
     }
 
-    /// Both bool payloads present → exhaustive.
+    /// A name-only variant pattern tests the name alone, so specialising
+    /// it against a payload-carrying constructor yields wildcard fields.
     #[test]
-    fn variant_with_bool_payload_both_seen_is_exhaustive() {
-        let all = vec!["A".to_string()];
-        let true_pat = Pat::Variant {
+    fn specialize_treats_name_only_variant_as_wildcard_fields() {
+        let rows = vec![vec![Pat::Variant {
             name: "A".to_string(),
-            fields: vec![Pat::Bool(true)],
-        };
-        let false_pat = Pat::Variant {
+            fields: Vec::new(),
+        }]];
+        let ctor = Ctor::Variant {
             name: "A".to_string(),
-            fields: vec![Pat::Bool(false)],
+            arity: 2,
         };
-        let pats: Vec<&Pat> = vec![&true_pat, &false_pat];
-        let missing = missing_variants(&all, &pats);
-        assert!(missing.is_empty(), "expected no missing, got {missing:?}");
+        assert_eq!(specialize(&rows, &ctor), vec![vec![Pat::Wild, Pat::Wild]]);
     }
 
-    /// Variant subsumption is name-AND-field aware: same-name but
-    /// disjoint payload does NOT subsume.
+    /// An or-pattern head becomes one row per alternative, including when
+    /// the alternatives nest.
+    #[test]
+    fn or_heads_expand_to_one_row_each() {
+        let rows = vec![vec![
+            Pat::Or(vec![
+                Pat::Bool(true),
+                Pat::Or(vec![Pat::Bool(false), Pat::Wild]),
+            ]),
+            Pat::Wild,
+        ]];
+        let expanded = expand_or_heads(rows);
+        assert_eq!(expanded.len(), 3);
+        assert!(expanded.iter().all(|row| row.len() == 2));
+    }
+
+    /// A witness for a constructor's fields folds back into the
+    /// constructor's own spelling, leaving later columns untouched.
+    #[test]
+    fn apply_ctor_folds_field_witnesses_into_the_constructor() {
+        let ctor = Ctor::Variant {
+            name: "A".to_string(),
+            arity: 1,
+        };
+        let witness = apply_ctor(&ctor, vec!["false".to_string(), "true".to_string()]);
+        assert_eq!(witness, vec!["A(false)".to_string(), "true".to_string()]);
+    }
+
+    /// Variant subsumption is name-and-field aware: a shared name with a
+    /// disjoint payload does not subsume.
     #[test]
     fn variant_subsumption_name_and_field_aware() {
         let earlier = Pat::Variant {
@@ -831,9 +1136,8 @@ mod m13_tests {
         );
     }
 
-    /// `x @ p` should be treated as `p` for usefulness purposes.
-    /// We verify by lowering through the standard path and
-    /// checking field-aware subsumption holds.
+    /// A name-only variant pattern leaves the payload open, so it subsumes
+    /// every occurrence of the same variant.
     #[test]
     fn name_only_variant_treated_as_wildcard_over_fields() {
         let earlier = Pat::Variant {

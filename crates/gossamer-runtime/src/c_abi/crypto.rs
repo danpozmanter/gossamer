@@ -10,7 +10,6 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 #![allow(clippy::cast_possible_truncation)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::vec::GosVec;
@@ -22,7 +21,7 @@ pub unsafe extern "C" fn gos_rt_sha256_hex(input: *const c_char) -> *mut c_char 
         let bytes: &[u8] = if input.is_null() {
             &[]
         } else {
-            unsafe { CStr::from_ptr(input).to_bytes() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(input) }
         };
         let hex = gossamer_pkg::sha256::hex(bytes);
         super::string::alloc_cstring(hex.as_bytes())
@@ -37,7 +36,7 @@ pub unsafe extern "C" fn gos_rt_sha512_hex(input: *const c_char) -> *mut c_char 
         let bytes: &[u8] = if input.is_null() {
             &[]
         } else {
-            unsafe { CStr::from_ptr(input).to_bytes() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(input) }
         };
         let mut h = sha2::Sha512::new();
         h.update(bytes);
@@ -53,7 +52,7 @@ pub unsafe extern "C" fn gos_rt_blake3_hex(input: *const c_char) -> *mut c_char 
         let bytes: &[u8] = if input.is_null() {
             &[]
         } else {
-            unsafe { CStr::from_ptr(input).to_bytes() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(input) }
         };
         let mut hasher = ::blake3::Hasher::new();
         hasher.update(bytes);
@@ -73,12 +72,12 @@ pub unsafe extern "C" fn gos_rt_hmac_sha256_hex(
         let key_bytes: &[u8] = if key.is_null() {
             &[]
         } else {
-            unsafe { CStr::from_ptr(key).to_bytes() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(key) }
         };
         let msg_bytes: &[u8] = if message.is_null() {
             &[]
         } else {
-            unsafe { CStr::from_ptr(message).to_bytes() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(message) }
         };
         let mac = hmac_sha256(key_bytes, msg_bytes);
         super::string::alloc_cstring(hex_encode(&mac).as_bytes())
@@ -234,7 +233,7 @@ pub unsafe extern "C" fn gos_rt_crypto_password_hash(plaintext: *const c_char) -
         let pw = if plaintext.is_null() {
             Vec::new()
         } else {
-            unsafe { CStr::from_ptr(plaintext).to_bytes().to_vec() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(plaintext) }.to_vec()
         };
         let mut salt_bytes = [0u8; 16];
         if getrandom::fill(&mut salt_bytes).is_err() {
@@ -269,12 +268,12 @@ pub unsafe extern "C" fn gos_rt_crypto_password_verify(
         let pw = if plaintext.is_null() {
             Vec::new()
         } else {
-            unsafe { CStr::from_ptr(plaintext).to_bytes().to_vec() }
+            unsafe { crate::c_abi::gos_str_arg_bytes(plaintext) }.to_vec()
         };
         let phc_s = if phc.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(phc).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(phc) }
         };
         let parsed = match PasswordHash::new(&phc_s) {
             Ok(p) => p,
@@ -296,7 +295,7 @@ pub unsafe extern "C" fn gos_rt_crypto_password_needs_rehash(phc: *const c_char)
         let phc_s = if phc.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(phc).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(phc) }
         };
         let Ok(parsed) = PasswordHash::new(&phc_s) else {
             return 0;

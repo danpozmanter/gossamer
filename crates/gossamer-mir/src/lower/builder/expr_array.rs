@@ -318,7 +318,7 @@ impl<'a> Builder<'a> {
         };
         let vec_local = destination.unwrap_or_else(|| self.fresh(vec_ty));
         self.locals[vec_local.0 as usize].ty = vec_ty;
-        if let Some(name) = value_struct {
+        if let Some(name) = value_struct.clone() {
             self.local_elem_struct.insert(vec_local, name);
         }
         let primitive_repeat = elem_bytes_val <= 8
@@ -383,6 +383,15 @@ impl<'a> Builder<'a> {
         });
 
         self.set_current(body_block);
+        // Every slot of a repeat literal owns its element. The element word of
+        // a growable or aggregate type is a handle, so pushing the same local
+        // `count` times would leave all N slots naming one object; clone it
+        // per iteration to give each slot independent storage.
+        let slot_local = self.fresh(elem_src_ty);
+        if let Some(name) = value_struct.clone() {
+            self.local_struct.insert(slot_local, name);
+        }
+        self.emit_owned_clone_binding(value_local, slot_local, span);
         let after_push = self.new_block(span);
         let unit_ty = self.tcx.unit();
         let push_dest = self.fresh(unit_ty);
@@ -393,7 +402,7 @@ impl<'a> Builder<'a> {
             callee: Operand::Const(ConstValue::Str("gos_rt_vec_push".to_string())),
             args: vec![
                 Operand::Copy(Place::local(vec_local)),
-                Operand::Copy(Place::local(value_local)),
+                Operand::Copy(Place::local(slot_local)),
             ],
             destination: Place::local(push_dest),
             target: Some(after_push),

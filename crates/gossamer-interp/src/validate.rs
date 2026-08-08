@@ -751,9 +751,19 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, dst)?;
                 check_v(op_idx, src)?;
             }
-            Op::CellTake { dst, cell } => {
+            Op::CellTake { dst, cell }
+            | Op::CaptureCellGet { dst, cell }
+            | Op::CaptureCellTake { dst, cell } => {
                 check_v(op_idx, dst)?;
                 check_v(op_idx, cell)?;
+            }
+            Op::CaptureCellNew { dst, src } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, src)?;
+            }
+            Op::CaptureCellSet { cell, src } => {
+                check_v(op_idx, cell)?;
+                check_v(op_idx, src)?;
             }
             Op::IntArrayGetI64 {
                 dst_i,
@@ -1615,13 +1625,15 @@ fn validate_control_flow(chunk: &FnChunk) -> Result<(), ValidationError> {
 
 /// Per-instruction register reads, writes, and explicit invalidations. Keeping
 /// this separate from the bounds pass makes the write-before-read audit
-/// exhaustive without adding any cost to bytecode execution.
+/// exhaustive without adding any cost to bytecode execution. The compiler
+/// reads the same table when it brackets an instruction that names a
+/// capture-cell binding with the cell's load / store.
 #[derive(Default)]
-struct RegisterEffects {
-    v_reads: Vec<Reg>,
+pub(crate) struct RegisterEffects {
+    pub(crate) v_reads: Vec<Reg>,
     f_reads: Vec<Reg>,
     i_reads: Vec<Reg>,
-    v_writes: Vec<Reg>,
+    pub(crate) v_writes: Vec<Reg>,
     f_writes: Vec<Reg>,
     i_writes: Vec<Reg>,
     v_clears: Vec<Reg>,
@@ -1708,7 +1720,7 @@ fn validate_register_initialization(chunk: &FnChunk) -> Result<(), ValidationErr
 
     while let Some(op_idx) = pending.pop() {
         let state = incoming[op_idx].as_ref().expect("queued state").clone();
-        let effects = register_effects(chunk, op_idx);
+        let effects = op_effects(chunk, op_idx);
         let mut out = state;
         out.apply(&effects);
 
@@ -1760,7 +1772,7 @@ fn validate_register_initialization(chunk: &FnChunk) -> Result<(), ValidationErr
 
     for (op_idx, state) in incoming.into_iter().enumerate() {
         let Some(state) = state else { continue };
-        let effects = register_effects(chunk, op_idx);
+        let effects = op_effects(chunk, op_idx);
         // The boxed register file is materialized as `Value::Void` on every
         // frame entry. Reading a compiler-temporary before a write is still a
         // lowering bug, but it cannot expose uninitialized host memory; a
@@ -1790,13 +1802,31 @@ fn validate_register_initialization(chunk: &FnChunk) -> Result<(), ValidationErr
     Ok(())
 }
 
+/// [`register_effects`] for the instruction at `op_idx` of `chunk`.
+fn op_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
+    register_effects(
+        chunk.instrs[op_idx],
+        &chunk.closure_protos,
+        &chunk.select_arms,
+        &chunk.wide_ops,
+    )
+}
+
+/// Register reads, writes, and invalidations performed by one instruction.
+/// `closure_protos` / `select_arms` / `wide_ops` are the side tables whose
+/// entries carry the remaining operands of `Op::MakeClosure`, `Op::Select`,
+/// and `Op::Wide`.
 #[allow(
     clippy::too_many_lines,
     reason = "one exhaustive table keeps every opcode's reads explicit"
 )]
-fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
+pub(crate) fn register_effects(
+    op: Op,
+    closure_protos: &[crate::bytecode::ClosureProto],
+    select_arms: &[crate::bytecode::SelectArmMeta],
+    wide_ops: &[WideOp],
+) -> RegisterEffects {
     let mut effect = RegisterEffects::default();
-    let op = chunk.instrs[op_idx];
     match op {
         Op::LoadConst { dst, .. }
         | Op::LoadGlobal { dst, .. }
@@ -1811,6 +1841,9 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
         | Op::CellNew { dst, .. }
         | Op::CellNewMove { dst, .. }
         | Op::CellTake { dst, .. }
+        | Op::CaptureCellNew { dst, .. }
+        | Op::CaptureCellGet { dst, .. }
+        | Op::CaptureCellTake { dst, .. }
         | Op::IndexGet { dst, .. }
         | Op::IndexGetChecked { dst, .. }
         | Op::StrByteAt { dst, .. }
@@ -1961,6 +1994,7 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
         | Op::CastScalar { src, .. }
         | Op::CellNew { src, .. }
         | Op::CellNewMove { src, .. }
+        | Op::CaptureCellNew { src, .. }
         | Op::MoveConsume { src, .. }
         | Op::VariantIs { src, .. }
         | Op::VariantField { src, .. }
@@ -2043,7 +2077,10 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
         Op::BuildRange { start, end, .. } => effect.v_reads.extend([start, end]),
         Op::BuildVariant1 { field, .. } => effect.v_reads.push(field),
         Op::BuildVariant2 { first, second, .. } => effect.v_reads.extend([first, second]),
-        Op::CellTake { cell, .. } => effect.v_reads.push(cell),
+        Op::CellTake { cell, .. }
+        | Op::CaptureCellGet { cell, .. }
+        | Op::CaptureCellTake { cell, .. } => effect.v_reads.push(cell),
+        Op::CaptureCellSet { cell, src } => effect.v_reads.extend([cell, src]),
         Op::IndexGet { base, index, .. }
         | Op::IndexGetChecked { base, index, .. }
         | Op::IndexGetConsume { base, index, .. }
@@ -2343,14 +2380,11 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
             effect.i_reads.push(index_i);
             effect.f_reads.push(value_f);
         }
-        Op::MakeClosure { proto, .. } => effect.v_reads.extend(
-            chunk.closure_protos[proto as usize]
-                .capture_regs
-                .iter()
-                .copied(),
-        ),
+        Op::MakeClosure { proto, .. } => effect
+            .v_reads
+            .extend(closure_protos[proto as usize].capture_regs.iter().copied()),
         Op::Select { first, count } => {
-            for arm in &chunk.select_arms[first as usize..first as usize + count as usize] {
+            for arm in &select_arms[first as usize..first as usize + count as usize] {
                 match arm.kind {
                     crate::bytecode::SelectArmKind::Recv => effect.v_reads.push(arm.channel_reg),
                     crate::bytecode::SelectArmKind::Send => {
@@ -2360,7 +2394,7 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
                 }
             }
         }
-        Op::Wide { idx } => match &chunk.wide_ops[idx as usize] {
+        Op::Wide { idx } => match &wide_ops[idx as usize] {
             WideOp::StrConcatPadI64 {
                 dst,
                 prefix,
@@ -2416,7 +2450,10 @@ fn register_effects(chunk: &FnChunk, op_idx: usize) -> RegisterEffects {
     }
 
     match op {
-        Op::CellNewMove { src, .. } | Op::MoveConsume { src, .. } => effect.v_clears.push(src),
+        Op::CellNewMove { src, .. }
+        | Op::CaptureCellNew { src, .. }
+        | Op::CaptureCellSet { src, .. }
+        | Op::MoveConsume { src, .. } => effect.v_clears.push(src),
         Op::IncJumpIfLtI64 { counter_i, .. } | Op::IncJumpIfLeI64 { counter_i, .. } => {
             effect.i_writes.push(counter_i);
         }

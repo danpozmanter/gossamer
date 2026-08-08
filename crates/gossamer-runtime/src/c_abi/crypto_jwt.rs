@@ -68,13 +68,7 @@ fn jwt_err(msg: &str) -> i128 {
 }
 
 unsafe fn cstr<'a>(p: *const c_char) -> &'a str {
-    if p.is_null() {
-        ""
-    } else {
-        unsafe { std::ffi::CStr::from_ptr(p) }
-            .to_str()
-            .unwrap_or("")
-    }
+    unsafe { crate::c_abi::gos_str_arg_text(p) }
 }
 
 // -- algorithm tag ---------------------------------------------------------

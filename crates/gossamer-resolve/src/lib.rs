@@ -24,7 +24,7 @@ mod resolver;
 mod scope;
 mod stdlib_exports;
 
-pub use cfg::{item_is_active, set_test_cfg};
+pub use cfg::{item_is_active, set_test_cfg, test_cfg_enabled};
 
 pub use def_id::{CrateId, DefId, DefIdGenerator, DefKind, ModId};
 pub use diagnostic::{ResolveDiagnostic, ResolveError};

@@ -9,7 +9,7 @@ use gossamer_ast::NodeId;
 use crate::def_id::{DefId, DefKind};
 
 /// Where a named reference points after resolution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Resolution {
     /// A local binding introduced by a `let`, pattern, or parameter. The
     /// `NodeId` identifies the binding occurrence.
@@ -35,7 +35,7 @@ pub enum Resolution {
 }
 
 /// Built-in primitive types recognised directly by the resolver.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum PrimitiveTy {
     /// `bool`.
     Bool,
@@ -60,7 +60,7 @@ pub enum PrimitiveTy {
 }
 
 /// Width tag for integer primitive types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum IntWidth {
     /// Pointer-sized (`isize` / `usize`).
     Size,
@@ -77,7 +77,7 @@ pub enum IntWidth {
 }
 
 /// Width tag for floating-point primitive types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum FloatWidth {
     /// 32-bit IEEE-754 binary32.
     W32,
@@ -86,7 +86,7 @@ pub enum FloatWidth {
 }
 
 /// Side table produced by [`crate::resolve_source_file`].
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Resolutions {
     entries: HashMap<NodeId, Resolution>,
     bindings: HashMap<NodeId, DefId>,

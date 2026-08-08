@@ -14,7 +14,7 @@ use crate::traits::TraitRef;
 
 /// Interner handle for a type. Cheap to copy; meaningful only when
 /// paired with the [`crate::TyCtxt`] that produced it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Ty(pub(crate) u32);
 
 impl Ty {
@@ -27,7 +27,7 @@ impl Ty {
 }
 
 /// Width tag for signed and unsigned integer types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum IntTy {
     /// Signed 8-bit integer.
     I8,
@@ -86,7 +86,7 @@ impl IntTy {
 }
 
 /// Width tag for floating-point types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum FloatTy {
     /// 32-bit IEEE-754 binary32.
     F32,
@@ -106,7 +106,7 @@ impl FloatTy {
 }
 
 /// Reference mutability marker used by [`TyKind::Ref`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Mutbl {
     /// `&T` - shared GC reference.
     Not,
@@ -127,7 +127,7 @@ impl Mutbl {
 
 /// Type-inference variable identifier produced by
 /// [`crate::InferCtxt::fresh_var`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct TyVid(pub u32);
 
 impl TyVid {
@@ -140,7 +140,7 @@ impl TyVid {
 
 /// Zero-based index of a bound generic parameter within its defining
 /// item's generics list.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ParamIdx(pub u32);
 
 impl ParamIdx {
@@ -152,7 +152,7 @@ impl ParamIdx {
 }
 
 /// Length of a fixed-size array `[T; N]`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ArrayLen {
     /// A statically-known element count.
     Concrete(usize),
@@ -187,7 +187,7 @@ impl ArrayLen {
 }
 
 /// Signature of a bare function pointer or `fn`-typed item.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct FnSig {
     /// Parameter types in source order.
     pub inputs: Vec<Ty>,
@@ -196,7 +196,7 @@ pub struct FnSig {
 }
 
 /// Closure-trait kind attached to a [`TyKind::Closure`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ClosureKind {
     /// Non-mutating closure (`Fn`).
     Fn,
@@ -219,7 +219,7 @@ impl ClosureKind {
 }
 
 /// Structural payload of an interned type.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum TyKind {
     /// `bool`.
     Bool,

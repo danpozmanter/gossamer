@@ -15,7 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::*;
@@ -54,7 +53,7 @@ pub unsafe extern "C" fn gos_rt_concat_str(s: *const c_char) {
         if s.is_null() {
             return;
         }
-        let bytes = unsafe { CStr::from_ptr(s).to_bytes() };
+        let bytes = unsafe { crate::c_abi::gos_str_arg_bytes(s) };
         CONCAT_BUF.with(|b| b.borrow_mut().extend_from_slice(bytes));
     });
 }
@@ -93,6 +92,17 @@ pub unsafe extern "C" fn gos_rt_concat_f64(x: f64) {
         CONCAT_BUF.with(|b| {
             let _ = write!(&mut *b.borrow_mut(), "{x}");
         });
+    });
+}
+
+/// Appends `x` to the concat buffer in its `{:?}` spelling: an integral
+/// value keeps a `.0` and an out-of-window magnitude switches to exponent
+/// form, so the text always reads back as a float.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_concat_f64_debug(x: f64) {
+    ffi_entry!((), {
+        let s = crate::builtins::format_float_debug(x);
+        CONCAT_BUF.with(|b| b.borrow_mut().extend_from_slice(s.as_bytes()));
     });
 }
 
@@ -157,6 +167,13 @@ pub unsafe extern "C" fn gos_rt_error_cause(err: *const GosError) -> i128 {
     })
 }
 
+/// Substring search over raw bytes, so a message or needle containing an
+/// interior NUL still matches on its full content.
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    needle.is_empty()
+        || (haystack.len() >= needle.len() && haystack.windows(needle.len()).any(|w| w == needle))
+}
+
 /// Walks the cause chain looking for a substring match.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_error_is(err: *const GosError, needle: *const c_char) -> i64 {
@@ -164,15 +181,15 @@ pub unsafe extern "C" fn gos_rt_error_is(err: *const GosError, needle: *const c_
         if err.is_null() || needle.is_null() {
             return 0;
         }
-        let Ok(needle) = (unsafe { CStr::from_ptr(needle).to_str() }) else {
-            return 0;
-        };
+        let needle = unsafe { crate::c_abi::gos_str_arg_bytes(needle) };
         let mut cur = err;
         while !cur.is_null() {
             let m = unsafe { (*cur).message };
             if !m.is_null()
-                && let Ok(text) = unsafe { CStr::from_ptr(m.as_ptr()).to_str() }
-                && text.contains(needle)
+                && contains_bytes(
+                    unsafe { crate::c_abi::gos_str_arg_bytes(m.as_ptr()) },
+                    needle,
+                )
             {
                 return 1;
             }
@@ -205,9 +222,7 @@ pub unsafe extern "C" fn gos_rt_errors_join(ptr: *const *mut GosError, len: i64)
             if m.is_null() {
                 continue;
             }
-            if let Ok(s) = unsafe { CStr::from_ptr(m.as_ptr()).to_str() } {
-                parts.push(s.to_string());
-            }
+            parts.push(unsafe { crate::c_abi::gos_str_arg_string(m.as_ptr()) });
         }
         if parts.is_empty() {
             return none();
@@ -217,6 +232,7 @@ pub unsafe extern "C" fn gos_rt_errors_join(ptr: *const *mut GosError, len: i64)
         let err = Box::into_raw(Box::new(GosError {
             message: SyncRawPtr::new(leaked),
             cause: SyncRawPtr::NULL,
+            fields: Vec::new(),
         }));
         crate::c_abi::vec::pack_result(0, err as i64)
     })
@@ -247,9 +263,7 @@ pub unsafe extern "C" fn gos_rt_errors_join_vec(vec: *mut GosVec) -> i128 {
             if m.is_null() {
                 continue;
             }
-            if let Ok(s) = unsafe { CStr::from_ptr(m.as_ptr()).to_str() } {
-                parts.push(s.to_string());
-            }
+            parts.push(unsafe { crate::c_abi::gos_str_arg_string(m.as_ptr()) });
         }
         if parts.is_empty() {
             return none();
@@ -259,6 +273,7 @@ pub unsafe extern "C" fn gos_rt_errors_join_vec(vec: *mut GosVec) -> i128 {
         let err = Box::into_raw(Box::new(GosError {
             message: SyncRawPtr::new(leaked),
             cause: SyncRawPtr::NULL,
+            fields: Vec::new(),
         }));
         crate::c_abi::vec::pack_result(0, err as i64)
     })

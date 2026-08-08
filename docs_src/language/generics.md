@@ -28,11 +28,15 @@ fn report<T: Shape>(s: &T) -> String {
 - Every instantiation is monomorphised and the trait-method call lowers
   to the concrete impl symbol (`Square::name`), giving static dispatch
   that is bit-identical across the VM, Cranelift, and LLVM tiers.
+- A bound may pin an associated type with an equality constraint
+  (`T: Holder<Item = i64>`), and `T::Item` / `T::MAX` project the bound
+  trait's associated type / constant - see
+  [trait](trait.md#associated-types).
 
-Supported today: single-bound type parameters with struct arguments and
-inherent static dispatch. Not yet part of static dispatch: `dyn Trait`,
-operator traits, associated-type projection in bounds, blanket impls, and
-supertrait method inheritance through a bound.
+Supported today: type parameters with one or more bounds (`T: A + B`),
+written in the parameter list or a `where` clause, with struct arguments
+and inherent static dispatch. Not yet part of static dispatch: `dyn Trait`,
+blanket impls, and supertrait method inheritance through a bound.
 
 ## Generic struct types
 

@@ -1,9 +1,10 @@
 //! High-level orchestration of the Gossamer compiler pipeline.
-//! Introduces the linker/static-assembly path: every upstream
-//! crate is chained together by [`pipeline::compile_source`] and the
-//! result is turned into a deterministic [`link::Artifact`] by
-//! [`link::link`]. Later phases (package manager, cross-compilation)
-//! hang new options off the shared [`link::LinkerOptions`].
+//! [`frontend::check_frontend`] is the single authoritative front-end
+//! gate and [`frontend_cache`] makes a repeat pass over unchanged inputs
+//! a deserialization. [`pipeline::compile_source`] chains the upstream
+//! crates together and [`link::link`] turns the result into a
+//! deterministic [`link::Artifact`]; package management and
+//! cross-compilation hang new options off [`link::LinkerOptions`].
 
 // `deny` rather than `forbid` so the single FFI liveness probe in
 // `binding_runner::pid_alive` (`libc::kill` / Win32 `OpenProcess`) can opt in
@@ -12,7 +13,6 @@
 #![deny(unsafe_code)]
 
 pub mod binding_runner;
-pub mod build;
 pub mod cache_maintenance;
 pub mod frontend;
 pub mod frontend_cache;
@@ -27,14 +27,11 @@ pub use binding_runner::{
     parse_signature_dump,
 };
 
-pub use build::{
-    BuildCache, BuildError, BuildGraph, BuildOutput, Crate, Profile, build_workspace,
-    fingerprint as crate_fingerprint, fingerprint_all, timed,
-};
 pub use frontend::{FrontendOutcome, check_frontend, check_frontend_with_edition};
 pub use frontend_cache::{
-    FrontendCacheKey, cache_dir, load_blob, load_blob_in, raw_blob_path, raw_blob_path_in,
-    store_blob, store_blob_in, store_raw, store_raw_in,
+    CachedFrontend, FrontendCacheKey, cache_dir, cache_enabled, frontend_key, load_blob,
+    load_blob_in, raw_blob_path, raw_blob_path_in, store_blob, store_blob_in, store_frontend,
+    store_frontend_in, store_raw, store_raw_in, user_cache_root,
 };
 pub use link::{
     ARTIFACT_MAGIC, Artifact, LinkerOptions, Symbol, TargetTriple, TranslationUnit, fingerprint,

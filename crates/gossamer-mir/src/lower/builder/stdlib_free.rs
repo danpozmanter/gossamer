@@ -307,6 +307,97 @@ impl<'a> Builder<'a> {
         Some(dest)
     }
 
+    /// Lowers `middleware::<name>(inner[, config]) -> Handler`. Same
+    /// wrap-and-return shape as `tag`, with the transform selector and its
+    /// configuration string bound into the `GosMiddleware` handle.
+    fn lower_middleware_kind(
+        &mut self,
+        inner_expr: &HirExpr,
+        kind: i64,
+        config_expr: Option<&HirExpr>,
+        numeric_config: bool,
+        span: Span,
+    ) -> Option<Local> {
+        let inner_local = self.lower_expr(inner_expr)?;
+        let inner_serve = self.middleware_inner_serve(inner_local)?;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let string_ty = self.tcx.string_ty();
+        let serve_addr = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(serve_addr),
+            Rvalue::CallIntrinsic {
+                name: "gos_fn_addr",
+                args: vec![Operand::Const(ConstValue::Str(inner_serve))],
+            },
+            span,
+        );
+        let kind_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(kind_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(kind)))),
+            span,
+        );
+        let config_local = match config_expr {
+            Some(expr) => {
+                let raw = self.lower_expr(expr)?;
+                if numeric_config {
+                    let text = self.fresh(string_ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str("gos_rt_i64_to_str".to_string())),
+                        args: vec![Operand::Copy(Place::local(raw))],
+                        destination: Place::local(text),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    text
+                } else {
+                    raw
+                }
+            }
+            None => {
+                let empty = self.fresh(string_ty);
+                self.emit_assign(
+                    Place::local(empty),
+                    Rvalue::Use(Operand::Const(ConstValue::Str(String::new()))),
+                    span,
+                );
+                empty
+            }
+        };
+        let dest = self.fresh(i64_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_middleware_new_kind".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(inner_local)),
+                Operand::Copy(Place::local(serve_addr)),
+                Operand::Copy(Place::local(kind_local)),
+                Operand::Copy(Place::local(config_local)),
+            ],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        self.local_runtime_kind.insert(dest, "http::Middleware");
+        Some(dest)
+    }
+
+    /// Serve fn-address symbol of a wrapped handler: a nested middleware
+    /// serves through `gos_rt_middleware_serve`, a struct handler through
+    /// its possibly ok-wrapped `{Struct}::serve`.
+    fn middleware_inner_serve(&mut self, inner_local: Local) -> Option<String> {
+        match self.local_runtime_kind.get(&inner_local).copied() {
+            Some("http::Middleware") => Some("gos_rt_middleware_serve".to_string()),
+            Some("http::Router") => Some("gos_rt_router_serve".to_string()),
+            _ => {
+                let inner_ty = self.locals[inner_local.0 as usize].ty;
+                let struct_name = self.struct_name_of(inner_ty)?;
+                Some(self.handler_dispatch_symbol(format!("{struct_name}::serve")))
+            }
+        }
+    }
+
     /// `Set::from(values)` where `values` is a sequence *value* rather than a
     /// literal list: the elements are only known at run time, so the runtime
     /// builds the set from the buffer in one call.
@@ -506,6 +597,8 @@ impl<'a> Builder<'a> {
         resolved = resolved.or_else(|| self.lower_os_2_free(joined, args));
         resolved = resolved.or_else(|| self.lower_path_free(joined, args));
         resolved = resolved.or_else(|| self.lower_io_net_free(joined, args));
+        resolved = resolved.or_else(|| self.lower_sort_free(joined, args));
+        resolved = resolved.or_else(|| self.lower_middleware_config_free(joined, args));
         resolved = resolved.or_else(|| self.lower_hash_free(joined, args));
         resolved = resolved.or_else(|| self.lower_crypto_free(joined, args));
         resolved = resolved.or_else(|| self.lower_crypto_2_free(joined, args));
@@ -685,13 +778,38 @@ impl<'a> Builder<'a> {
         {
             return ControlFlow::Break(self.lower_middleware_wrap(&args[0], span));
         }
+        if !callee_def_some
+            && !args.is_empty()
+            && let Some(name) = joined
+                .strip_prefix("http::middleware::")
+                .or_else(|| joined.strip_prefix("middleware::"))
+            && let Some((kind, arity, numeric_config)) = middleware_kind_of(name)
+            && args.len() == arity
+        {
+            return ControlFlow::Break(self.lower_middleware_kind(
+                &args[0],
+                kind,
+                args.get(1),
+                numeric_config,
+                span,
+            ));
+        }
         ControlFlow::Continue(())
+    }
+
+    /// Whether `ty` is an `errors::Error` value (possibly behind
+    /// references), as opposed to the `String` message form.
+    fn is_error_valued_ty(&self, ty: gossamer_types::Ty) -> bool {
+        matches!(
+            self.tcx.kind_of(self.peel_ref_ty(ty)),
+            gossamer_types::TyKind::DynError
+        )
     }
 
     fn lower_errors_regex_free(
         &mut self,
         joined: &str,
-        _args: &[HirExpr],
+        args: &[HirExpr],
     ) -> Option<(&'static str, gossamer_types::Ty)> {
         Some(match joined {
             // DynError (not bare I64) so a let-bound error classifies
@@ -703,7 +821,20 @@ impl<'a> Builder<'a> {
             // Returns Option<Error> as *mut GosResult (disc=0→Some, disc=1→None).
             // Takes *mut GosVec; MIR coerces the array literal before the call.
             "errors::join" => ("gos_rt_errors_join_vec", self.option_adt_ty()),
-            "errors::is" => ("gos_rt_error_is", self.tcx.bool_ty()),
+            // `errors::is(err, needle)` accepts either a message (substring
+            // match down the chain) or a sentinel error value (identity
+            // match). The needle's type picks the shim so the runtime never
+            // has to guess what the second pointer refers to.
+            "errors::is" => {
+                let sentinel = args
+                    .get(1)
+                    .is_some_and(|arg| self.is_error_valued_ty(arg.ty));
+                if sentinel {
+                    ("gos_rt_error_is_sentinel", self.tcx.bool_ty())
+                } else {
+                    ("gos_rt_error_is", self.tcx.bool_ty())
+                }
+            }
             // Result-shaped so an invalid pattern lands in the Err arm
             // on the compiled tiers exactly as it does on the VM; the
             // bare-pointer `gos_rt_regex_compile` shim made every
@@ -1024,11 +1155,82 @@ impl<'a> Builder<'a> {
             // 0.10.0 - path Option-returning free fns. Each wraps
             // the matching `gos_rt_path_*_opt` helper which packs a
             // `*mut GosResult` (disc=0 Some(String), disc=1 None).
+            "path::glob" => ("gos_rt_path_glob", self.result_vec_string_error_ty()),
+            "path::matches" => ("gos_rt_path_matches", self.tcx.bool_ty()),
             "path::parent" => ("gos_rt_path_parent", self.option_string_adt_ty()),
             "path::file_stem" => ("gos_rt_path_stem", self.option_string_adt_ty()),
             "path::file_name" => ("gos_rt_path_file_name", self.option_string_adt_ty()),
             _ => return None,
         })
+    }
+
+    /// `std::sort` - the explicit stable-order and sorted-sequence search
+    /// half of the sequence surface. The element type selects the shim:
+    /// `Vec<i64>` compares values, every other 8-byte element compares as
+    /// a `String`.
+    /// `middleware::<Config>::<ctor>(..) -> String` - the configuration
+    /// values the middleware wrappers consume.
+    fn lower_middleware_config_free(
+        &mut self,
+        joined: &str,
+        _args: &[HirExpr],
+    ) -> Option<(&'static str, gossamer_types::Ty)> {
+        let name = joined
+            .strip_prefix("http::middleware::")
+            .or_else(|| joined.strip_prefix("middleware::"))?;
+        let sym = match name {
+            "CorsConfig::permissive" => "gos_rt_mw_cors_permissive",
+            "CorsConfig::new" => "gos_rt_mw_cors_new",
+            "HstsConfig::safe_default" => "gos_rt_mw_hsts_safe_default",
+            "HstsConfig::strict" => "gos_rt_mw_hsts_strict",
+            "SecurityHeaders::strict" => "gos_rt_mw_security_strict",
+            "SecurityHeaders::off" => "gos_rt_mw_security_off",
+            "CacheControl::no_store" => "gos_rt_mw_cache_no_store",
+            "CacheControl::immutable_for" => "gos_rt_mw_cache_immutable_for",
+            "RateLimit::per_ip" => "gos_rt_mw_rate_limit_per_ip",
+            _ => return None,
+        };
+        Some((sym, self.tcx.string_ty()))
+    }
+
+    fn lower_sort_free(
+        &mut self,
+        joined: &str,
+        args: &[HirExpr],
+    ) -> Option<(&'static str, gossamer_types::Ty)> {
+        if !joined.starts_with("sort::") || args.is_empty() {
+            return None;
+        }
+        let elem = self.vec_receiver_elem_ty(args[0].ty);
+        let (int_shim, float_shim, str_shim) = match joined {
+            "sort::sort_stable" => (
+                "gos_rt_sort_stable_i64",
+                "gos_rt_sort_stable_f64",
+                "gos_rt_sort_stable_str",
+            ),
+            "sort::binary_search" => (
+                "gos_rt_sort_binary_search_i64",
+                "gos_rt_sort_binary_search_f64",
+                "gos_rt_sort_binary_search_str",
+            ),
+            "sort::partition_point" => (
+                "gos_rt_sort_partition_point_i64",
+                "gos_rt_sort_partition_point_f64",
+                "gos_rt_sort_partition_point_str",
+            ),
+            _ => return None,
+        };
+        let sym = match self.tcx.kind_of(self.peel_ref_ty(elem)) {
+            gossamer_types::TyKind::Int(_) | gossamer_types::TyKind::Char => int_shim,
+            gossamer_types::TyKind::Float(_) => float_shim,
+            _ => str_shim,
+        };
+        let ret = match joined {
+            "sort::sort_stable" => self.tcx.intern(gossamer_types::TyKind::Vec(elem)),
+            "sort::binary_search" => self.option_i64_adt_ty(),
+            _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
+        };
+        Some((sym, ret))
     }
 
     fn lower_io_net_free(
@@ -1059,6 +1261,33 @@ impl<'a> Builder<'a> {
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
             "io::ReadAll" => ("gos_rt_io_read_all", self.result_string_error_adt_ty()),
+            // Handle-based stream adapters: a Reader / Writer is an i64
+            // registry id, so the whole family composes as plain scalars
+            // across the C-ABI.
+            "io::string_reader" | "io::buffer_writer" | "io::limit_reader" | "io::tee_reader"
+            | "io::multi_reader" | "io::write" => {
+                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let sym = match joined {
+                    "io::string_reader" => "gos_rt_io_string_reader",
+                    "io::buffer_writer" => "gos_rt_io_buffer_writer",
+                    "io::limit_reader" => "gos_rt_io_limit_reader",
+                    "io::tee_reader" => "gos_rt_io_tee_reader",
+                    "io::multi_reader" => "gos_rt_io_multi_reader",
+                    _ => "gos_rt_io_write_str",
+                };
+                (sym, i64_ty)
+            }
+            "io::pipe" => {
+                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let tup = self
+                    .tcx
+                    .intern(gossamer_types::TyKind::Tuple(vec![i64_ty, i64_ty]));
+                ("gos_rt_io_pipe", tup)
+            }
+            "io::copy_n" => ("gos_rt_io_copy_n", self.result_i64_error_adt_ty()),
+            "io::drain" => ("gos_rt_io_drain", self.tcx.string_ty()),
+            "io::contents" => ("gos_rt_io_contents", self.tcx.string_ty()),
+            "io::close_writer" => ("gos_rt_io_close_writer", self.tcx.unit()),
             "net::lookup" => ("gos_rt_net_resolve", self.result_vec_string_error_ty()),
             "fs::open" | "fs::File::open" => {
                 ("gos_rt_fs_file_open", self.result_i64_error_adt_ty())
@@ -4003,7 +4232,6 @@ impl<'a> Builder<'a> {
             "gos_rt_regex_compile" | "gos_rt_regex_compile_result" => Some("regex::Pattern"),
             "gos_rt_set_new" => Some("collections::HashSet"),
             "gos_rt_btree_set_new" => Some("collections::BTreeSet"),
-            "gos_rt_btmap_new" => Some("collections::BTreeMap"),
             "gos_rt_deque_new" | "gos_rt_deque_from_vec_i64" => Some("collections::VecDeque"),
             "gos_rt_queue_new" | "gos_rt_queue_from_vec_i64" => Some("collections::VecQueue"),
             "gos_rt_stack_new" | "gos_rt_stack_from_vec_i64" => Some("collections::VecStack"),
@@ -4050,4 +4278,29 @@ impl<'a> Builder<'a> {
             _ => None,
         }
     }
+}
+
+/// `(kind, arity, config_is_numeric)` for a `middleware::<name>` wrapper,
+/// or `None` when the name is not a middleware. `arity` counts the inner
+/// handler plus the optional configuration argument. The kind numbering
+/// is ABI with `gossamer_runtime::c_abi::http_middleware::middleware_kind`.
+fn middleware_kind_of(name: &str) -> Option<(i64, usize, bool)> {
+    Some(match name {
+        "request_id" => (1, 1, false),
+        "cors" => (2, 2, false),
+        "security_headers" => (3, 2, false),
+        "etag" => (4, 1, false),
+        "rate_limit" => (5, 2, false),
+        "hsts" => (6, 2, false),
+        "cache_control" => (7, 2, false),
+        "body_limit" => (8, 2, true),
+        "compress_gzip" => (9, 1, false),
+        "logger" => (10, 1, false),
+        "recoverer" => (11, 1, false),
+        "timeout" => (12, 2, true),
+        "basic_auth" => (13, 2, false),
+        "bearer_auth" => (14, 2, false),
+        "safe_defaults" => (15, 1, false),
+        _ => return None,
+    })
 }

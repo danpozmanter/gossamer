@@ -1,0 +1,33 @@
+// A struct- or tuple-keyed map stores its keys as flat content bytes under a
+// slot descriptor. The snapshot rebuilds each key from that descriptor, so a
+// bound key in `iter()` observes the value the program inserted and `values()`
+// follows the same order.
+
+struct Coord { x: i64, y: i64 }
+struct Label { name: String, rank: i64 }
+
+fn main() {
+    let mut grid: Map<Coord, i64> = {}
+    grid.insert(Coord { x: 5, y: 1 }, 50)
+    grid.insert(Coord { x: 2, y: 9 }, 20)
+    grid.insert(Coord { x: 300, y: 0 }, 30)
+    println!("len {}", grid.len())
+    for (k, v) in grid.iter() { println!("grid {} {} {}", k.x, k.y, v) }
+    println!("values {}", grid.values())
+    println!("get {:?}", grid.get(Coord { x: 2, y: 9 }))
+
+    let mut named: Map<Label, String> = {}
+    named.insert(Label { name: "bob", rank: 2 }, "second")
+    named.insert(Label { name: "amy", rank: 1 }, "first")
+    for (k, v) in named.iter() { println!("named {} {} {}", k.name, k.rank, v) }
+    println!("named-values {}", named.values())
+
+    let mut cells: Map<(i64, i64), i64> = {}
+    cells.insert((1, 2), 12)
+    cells.insert((0, 9), 9)
+    for (k, v) in cells.iter() { println!("cell {} {} {}", k.0, k.1, v) }
+
+    let mut ignored: Map<Coord, i64> = {}
+    ignored.insert(Coord { x: 7, y: 7 }, 77)
+    for (_, v) in ignored.iter() { println!("ignored {}", v) }
+}

@@ -1,0 +1,18 @@
+// Eager sequence combinators over `f64` elements, including the mixed
+// accumulator and projection shapes where the callback's register classes
+// differ from the element's.
+
+use std::iter
+
+fn main() {
+    let xs: Vec<f64> = #[1.5, 2.5, 3.0]
+    let ns: Vec<i64> = #[1, 2, 3]
+    println!("fold-ff {}", iter::fold(0.0, |a: f64, x: f64| a + x, xs))
+    println!("fold-fi {}", iter::fold(0.5, |a: f64, x: i64| a + (x as f64), ns))
+    println!("fold-if {}", iter::fold(10, |a: i64, x: f64| a + (x as i64), xs))
+    println!("sumby-ff {}", iter::sum_by(|x: f64| x * 2.0, xs))
+    println!("sumby-fi {}", iter::sum_by(|x: f64| x as i64, xs))
+    println!("sumby-if {}", iter::sum_by(|x: i64| x as f64, ns))
+    println!("all {}", iter::all(|x: f64| x > 1.0, xs))
+    println!("any {}", iter::any(|x: f64| x > 2.9, xs))
+}

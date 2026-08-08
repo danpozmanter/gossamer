@@ -208,7 +208,7 @@ mod top_level_stmt_tests {
 
     #[test]
     fn piped_format_with_an_extra_placeholder_reports_only_arity() {
-        let (_sf, diags) = parse("\"two\" |> println!(\"one\", _)\n");
+        let (_sf, diags) = parse("\"two\" |> println!(\"one\", $)\n");
         assert!(
             diags.iter().any(|diag| matches!(
                 diag.error,
@@ -223,15 +223,32 @@ mod top_level_stmt_tests {
             !diags
                 .iter()
                 .any(|diag| matches!(diag.error, ParseError::PipedFormatArgumentNeedsPlaceholder)),
-            "explicit `_` must not trigger a missing-placeholder diagnostic: {diags:?}"
+            "explicit `$` must not trigger a missing-placeholder diagnostic: {diags:?}"
         );
     }
 
     #[test]
     fn pipe_placeholder_indexing_parses_as_rhs_index() {
         let (_sf, diags) =
-            parse("fn main() { let xs = [7, 8, 9]\n println!(\"{}\", xs |> _[1]) }\n");
+            parse("fn main() { let xs = [7, 8, 9]\n println!(\"{}\", xs |> $[1]) }\n");
         assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+    }
+
+    #[test]
+    fn retired_underscore_placeholder_reports_the_dollar_spelling() {
+        let (_sf, diags) = parse("fn main() { let t = \"  hi  \" |> _.trim }\n");
+        assert!(
+            diags
+                .iter()
+                .any(|diag| matches!(diag.error, ParseError::PipeUnderscorePlaceholder)),
+            "expected the `$` migration diagnostic: {diags:?}"
+        );
+        assert!(
+            !diags
+                .iter()
+                .any(|diag| matches!(diag.error, ParseError::PipeRhsInvalid)),
+            "the migration diagnostic must not cascade into GP0007: {diags:?}"
+        );
     }
 
     #[test]

@@ -975,3 +975,32 @@ fn main() {
         native.0
     );
 }
+
+#[test]
+fn assoc_missing_impl_item_is_rejected() {
+    // `impl Holder for Label` without the trait's `type Item`: every
+    // projection through the trait needs a concrete item to land on, so
+    // `gos check` names the omission instead of accepting it and faulting
+    // later.
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../feature-testing-examples/assoc_missing_impl_item.gos");
+    let out = Command::new(gos_bin())
+        .arg("check")
+        .arg(&fixture)
+        .output()
+        .expect("spawn gos check");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "check unexpectedly passed: {stderr}");
+    assert!(
+        stderr.contains("GT0059"),
+        "expected GT0059, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("is missing associated item: `type Item`"),
+        "diagnostic must name the omitted item: {stderr}"
+    );
+    assert!(
+        stderr.contains("add `type Item = ...`"),
+        "help must name the fix: {stderr}"
+    );
+}

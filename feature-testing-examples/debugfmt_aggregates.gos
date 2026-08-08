@@ -1,0 +1,71 @@
+// `{:?}` of an aggregate whose elements or payload are themselves
+// aggregates. Each shape here renders through a runtime formatter that
+// calls the element type's derived `fmt`, so a build that cannot lower one
+// of them fails outright rather than diverging.
+
+#[derive(Debug)]
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+#[derive(Debug)]
+struct Item {
+    name: String,
+    qty: i64,
+}
+
+#[derive(Debug)]
+struct Pair(i64, i64)
+
+#[derive(Debug)]
+enum Shape {
+    Circle(f64),
+    Rect { w: i64, h: i64 },
+}
+
+#[derive(Debug)]
+enum List {
+    Cons(i64, Box<List>),
+    Nil,
+}
+
+fn main() {
+    // Vec of chars.
+    println!("{:?}", #['a', 'b', 'c'])
+    let empty: Vec<char> = #[]
+    println!("{:?}", empty)
+    let fixed: [char; 3] = ['x', 'y', 'z']
+    println!("{:?}", fixed)
+
+    // Vec of structs, including one carrying a String field.
+    println!("{:?}", #[Point { x: 1, y: 2 }, Point { x: 3, y: 4 }])
+    println!("{:?}", #[Item { name: "a", qty: 1 }, Item { name: "bb", qty: 2 }])
+    println!("{:?}", #[Pair(1, 2), Pair(3, 4)])
+    let arr: [Point; 2] = [Point { x: 5, y: 6 }, Point { x: 7, y: 8 }]
+    println!("{:?}", arr)
+
+    // Vec of enums: an element is a single word, not a slot buffer.
+    println!("{:?}", #[Shape::Circle(1.5), Shape::Rect { w: 2, h: 3 }])
+    println!("{:?}", #[List::Nil, List::Cons(3, Box::new(List::Nil))])
+
+    // Option / Result with aggregate payloads, both arms.
+    let some_point: Option<Point> = Some(Point { x: 1, y: 2 })
+    let no_point: Option<Point> = None
+    println!("{:?} {:?}", some_point, no_point)
+    let some_shape: Option<Shape> = Some(Shape::Rect { w: 4, h: 5 })
+    println!("{:?}", some_shape)
+
+    let ok_item: Result<Item, String> = Ok(Item { name: "x", qty: 9 })
+    let err_msg: Result<Item, String> = Err("bad")
+    println!("{:?} {:?}", ok_item, err_msg)
+    let err_item: Result<i64, Item> = Err(Item { name: "e", qty: 0 })
+    println!("{:?}", err_item)
+    let ok_shape: Result<Shape, String> = Ok(Shape::Circle(2.5))
+    println!("{:?}", ok_shape)
+
+    // Nested tuples, including a float element.
+    println!("{:?}", ((1, 2.5), "z"))
+    println!("{:?}", (1, (2, (3, 4))))
+    println!("{:?}", (7.0,))
+}

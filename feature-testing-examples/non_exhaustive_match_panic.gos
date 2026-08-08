@@ -1,20 +1,21 @@
-// A `match` that slips past the exhaustiveness checker (nested integer
-// payloads: `Some(2)` matches no arm) now panics cleanly and identically
-// on every tier - the bytecode VM and the compiled backstop both emit
-// GX0005 with the same message and exit 101, instead of the VM returning
-// a zero value and the compiled tier returning garbage. stdout up to the
-// panic is compared; runs with allow_nonzero.
+// A `match` that slips past the exhaustiveness checker (a growable
+// sequence carries no length in its type, so no finite set of slice
+// patterns exhausts it) panics cleanly and identically on every tier -
+// the bytecode VM and the compiled backstop both emit GX0005 with the
+// same message and exit 101, instead of the VM returning a zero value and
+// the compiled tier returning garbage. stdout up to the panic is
+// compared; runs with allow_nonzero.
 
-fn classify(o: Option<i64>) -> i64 {
-    match o {
-        Some(0) => 10,
-        Some(1) => 20,
-        None => 0,
+fn classify(xs: Vec<i64>) -> i64 {
+    match xs {
+        [] => 0,
+        [only] => only,
+        [a, b] => a + b,
     }
 }
 
 fn main() {
     println!("start")
-    println!("{}", classify(Some(2)))
+    println!("{}", classify(#[1, 2, 3]))
     println!("unreached")
 }

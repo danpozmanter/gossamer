@@ -47,6 +47,48 @@ use super::*;
 
 use super::Builder;
 
+/// How the lazy iterator runtime carries one element in its 8-byte slot.
+///
+/// The slot is untyped, so the family decides three things at once: which
+/// register file the element travels in when a helper calls a Gossamer
+/// closure, how the arithmetic terminals read its bits, and what type the
+/// closure's parameter must be for method dispatch inside the body to resolve
+/// against the real receiver.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum LazyElemFamily {
+    /// `i64`, carried by value in an integer register.
+    Word,
+    /// `f64`, carried as its 64-bit pattern and read back in an SSE register.
+    Float,
+    /// A managed pointer word (`String`).
+    Ptr,
+    /// Two `i64` fields on the dedicated pair state `zip` / `enumerate` build.
+    PairWord,
+}
+
+impl LazyElemFamily {
+    /// Suffix of the runtime symbol family that reads this element class.
+    /// `Ptr` shares the word suffix: a managed pointer and an `i64` occupy the
+    /// same register class, so only the closure's parameter type differs.
+    pub(crate) fn word_or_float_suffix(self) -> &'static str {
+        match self {
+            Self::Float => "f64",
+            Self::Word | Self::Ptr | Self::PairWord => "i64",
+        }
+    }
+}
+
+/// Register class a combinator's callback sees for one element or scalar.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ElemAbi {
+    /// An integer register: `i64`, `bool`, `char`, and managed pointer words.
+    Word,
+    /// An SSE register: `f64`.
+    Float,
+    /// The address of storage wider than one slot.
+    Ptr,
+}
+
 /// Outcome of an early method-dispatch guard in `Builder::lower_method_call`.
 enum MethodLowering {
     /// A guard claimed the call; carries the value to return.
@@ -130,10 +172,13 @@ impl<'a> Builder<'a> {
             return Some(dest);
         }
 
+        // A pair element rides the dedicated two-word state that `zip` and
+        // `enumerate` build, which has no borrowed-Vec source, so a pair
+        // sequence keeps the eager surface.
         if method.name == "iter"
             && args.is_empty()
-            && matches!(self.tcx.kind_of(ty), TyKind::Iterator(item)
-                if self.lazy_iter_carries_elem(*item))
+            && let Some(family) = self.lazy_iter_ty_family(ty)
+            && family != LazyElemFamily::PairWord
         {
             let mut receiver_ty = receiver.ty;
             while let TyKind::Ref { inner, .. } = self.tcx.kind_of(receiver_ty) {
@@ -143,13 +188,15 @@ impl<'a> Builder<'a> {
                 self.tcx.kind_of(receiver_ty),
                 TyKind::Vec(_) | TyKind::Slice(_)
             ) {
+                let helper = format!(
+                    "gos_rt_lazy_iter_from_vec_{}",
+                    family.word_or_float_suffix()
+                );
                 let source = self.lower_expr(receiver)?;
                 let dest = self.fresh(ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str(
-                        "gos_rt_lazy_iter_from_vec_i64".to_string(),
-                    )),
+                    callee: Operand::Const(ConstValue::Str(helper)),
                     args: vec![Operand::Copy(Place::local(source))],
                     destination: Place::local(dest),
                     target: Some(next),
@@ -585,32 +632,59 @@ impl<'a> Builder<'a> {
     }
 
     /// `x.downgrade()` / `w.upgrade()` - RC strong<->weak conversions.
-    /// Whether the lazy iterator runtime can carry `elem` in its 8-byte slot.
+    /// The lazy iterator family that carries `elem` in its 8-byte slot, or
+    /// `None` for an element the state cannot address.
     ///
-    /// The state yields one raw slot per element, so an integer is carried by
-    /// value and a `String` by its managed pointer. A float's bits would be
-    /// read back as an integer by the arithmetic terminals, and an aggregate
-    /// spans more than the slot, so both keep the eager sequence surface.
-    ///
-    /// A two-`i64` tuple rides the dedicated pair state that `zip` and
-    /// `enumerate` produce.
-    ///
-    /// Every site that builds or consumes lazy state must agree on this
-    /// predicate: handing a handle from one family to the other reinterprets
-    /// the pointer.
-    pub(crate) fn lazy_iter_carries_elem(&self, elem: Ty) -> bool {
+    /// This is the single place the lazy surface classifies an element type.
+    /// Every producer, adapter, and terminal picks its runtime symbol and its
+    /// closure parameter types from the family this returns, so a handle can
+    /// never be built by one family and read by another: that reinterprets the
+    /// slot, and the runtime's own class tag asserts the same agreement from
+    /// the other side.
+    pub(crate) fn lazy_iter_elem_family(&self, elem: Ty) -> Option<LazyElemFamily> {
         match self.tcx.kind_of(elem) {
-            TyKind::Int(gossamer_types::IntTy::I64) | TyKind::String => true,
-            TyKind::Tuple(fields) => {
-                fields.len() == 2
+            TyKind::Int(gossamer_types::IntTy::I64) => Some(LazyElemFamily::Word),
+            TyKind::String => Some(LazyElemFamily::Ptr),
+            TyKind::Float(gossamer_types::FloatTy::F64) => Some(LazyElemFamily::Float),
+            TyKind::Tuple(fields)
+                if fields.len() == 2
                     && fields.iter().all(|field| {
                         matches!(
                             self.tcx.kind_of(*field),
                             TyKind::Int(gossamer_types::IntTy::I64)
                         )
-                    })
+                    }) =>
+            {
+                Some(LazyElemFamily::PairWord)
             }
-            _ => false,
+            _ => None,
+        }
+    }
+
+    /// Whether the lazy iterator runtime can carry `elem` in its 8-byte slot.
+    pub(crate) fn lazy_iter_carries_elem(&self, elem: Ty) -> bool {
+        self.lazy_iter_elem_family(elem).is_some()
+    }
+
+    /// Whether a sequence of `elem` can be borrowed as lazy state.
+    ///
+    /// The pair state is built only by `zip` and `enumerate`; it has no
+    /// borrowed-sequence source, and a pair sequence stores two words per
+    /// element, which the single-slot borrow cannot address. Such a sequence
+    /// stays on the eager surface, where the element is read at its real width.
+    pub(crate) fn lazy_iter_borrowable_elem(&self, elem: Ty) -> bool {
+        matches!(
+            self.lazy_iter_elem_family(elem),
+            Some(family) if family != LazyElemFamily::PairWord
+        )
+    }
+
+    /// Family of an `Iterator<T>`-typed value, or `None` when `ty` is not
+    /// iterator state the lazy runtime carries.
+    pub(crate) fn lazy_iter_ty_family(&self, ty: Ty) -> Option<LazyElemFamily> {
+        match self.tcx.kind_of(ty) {
+            TyKind::Iterator(elem) => self.lazy_iter_elem_family(*elem),
+            _ => None,
         }
     }
 
@@ -1015,16 +1089,10 @@ impl<'a> Builder<'a> {
             while let TyKind::Ref { inner, .. } = self.tcx.kind_of(recv_ty_for_kind) {
                 recv_ty_for_kind = *inner;
             }
-            let is_hashmap = matches!(self.tcx.kind_of(recv_ty_for_kind), TyKind::HashMap { .. });
-            let is_btmap = self
-                .receiver_local_from_path(receiver)
-                .and_then(|local| self.local_runtime_kind.get(&local).copied())
-                == Some("collections::BTreeMap");
-            if is_hashmap || is_btmap {
+            if matches!(self.tcx.kind_of(recv_ty_for_kind), TyKind::HashMap { .. }) {
                 return MethodLowering::Handled(self.materialize_hashmap_entries(
                     receiver,
                     recv_ty_for_kind,
-                    is_btmap,
                     span,
                 ));
             }
@@ -2219,6 +2287,10 @@ impl<'a> Builder<'a> {
             "message" => Some("gos_rt_error_message"),
             "cause" => Some("gos_rt_error_cause"),
             "is" => Some("gos_rt_error_is"),
+            "chain" => Some("gos_rt_error_chain"),
+            "with_field" => Some("gos_rt_error_with_field"),
+            "field" => Some("gos_rt_error_field"),
+            "fields" => Some("gos_rt_error_fields"),
             // bufio::Scanner methods.
             "scan" => Some("gos_rt_bufio_scanner_scan"),
             "text" => Some("gos_rt_bufio_scanner_text"),
@@ -2317,7 +2389,9 @@ impl<'a> Builder<'a> {
                 // A sequence whose element the lazy state cannot carry keeps
                 // its own handle, so the eager sequence helpers - which read
                 // the element at its real width - consume it directly.
-                TyKind::Vec(elem) | TyKind::Slice(elem) if !self.lazy_iter_carries_elem(*elem) => {
+                TyKind::Vec(elem) | TyKind::Slice(elem)
+                    if !self.lazy_iter_borrowable_elem(*elem) =>
+                {
                     Some("")
                 }
                 _ => Some("gos_rt_arr_iter"),
@@ -2333,6 +2407,11 @@ impl<'a> Builder<'a> {
                 }
                 _ => Some(""),
             },
+            // `s.bytes()` is the UTF-8 byte view of a String receiver, the
+            // same buffer `as_bytes` materialises. Gated on a String
+            // receiver so a user struct with its own `bytes` method falls
+            // through to user dispatch.
+            "bytes" if matches!(&receiver_kind_flat, TyKind::String) => Some("gos_rt_str_as_bytes"),
             "as_bytes" => match &receiver_kind_flat {
                 // String-receiver `.as_bytes()` materialises a real
                 // length-prefixed arena buffer. The previous identity
@@ -2682,6 +2761,10 @@ impl<'a> Builder<'a> {
             (Some("errors::Error"), "message") => Some("gos_rt_error_message"),
             (Some("errors::Error"), "cause") => Some("gos_rt_error_cause"),
             (Some("errors::Error"), "is") => Some("gos_rt_error_is"),
+            (Some("errors::Error"), "chain") => Some("gos_rt_error_chain"),
+            (Some("errors::Error"), "with_field") => Some("gos_rt_error_with_field"),
+            (Some("errors::Error"), "field") => Some("gos_rt_error_field"),
+            (Some("errors::Error"), "fields") => Some("gos_rt_error_fields"),
             (Some("regex::Pattern"), "is_match") => Some("gos_rt_regex_is_match"),
             (Some("regex::Pattern"), "find") => Some("gos_rt_regex_find"),
             (Some("regex::Pattern"), "find_all") => Some("gos_rt_regex_find_all"),
@@ -2748,14 +2831,6 @@ impl<'a> Builder<'a> {
             (Some("collections::VecStack"), "len") => Some("gos_rt_deque_len"),
             (Some("collections::VecStack"), "is_empty") => Some("gos_rt_deque_is_empty"),
             (Some("collections::VecStack"), "clear") => Some("gos_rt_deque_clear"),
-            (Some("collections::BTreeMap"), "insert") => Some("gos_rt_btmap_insert"),
-            (Some("collections::BTreeMap"), "get") => Some("gos_rt_btmap_get"),
-            (Some("collections::BTreeMap"), "get_or") => Some("gos_rt_btmap_get_or"),
-            (Some("collections::BTreeMap"), "contains" | "contains_key") => {
-                Some("gos_rt_btmap_contains")
-            }
-            (Some("collections::BTreeMap"), "len") => Some("gos_rt_btmap_len"),
-            (Some("collections::BTreeMap"), "keys") => Some("gos_rt_btmap_keys"),
             _ => None,
         }
     }
@@ -3217,6 +3292,7 @@ impl<'a> Builder<'a> {
             | "gos_rt_strings_join"
             | "gos_rt_flag_set_usage" => self.tcx.string_ty(),
             "gos_rt_error_is"
+            | "gos_rt_error_is_sentinel"
             | "gos_rt_regex_is_match"
             | "gos_rt_bufio_scanner_scan"
             | "gos_rt_set_insert"
@@ -3230,8 +3306,7 @@ impl<'a> Builder<'a> {
             | "gos_rt_set_remove_i64"
             | "gos_rt_set_is_subset"
             | "gos_rt_set_is_superset"
-            | "gos_rt_set_is_disjoint"
-            | "gos_rt_btmap_contains" => self.tcx.bool_ty(),
+            | "gos_rt_set_is_disjoint" => self.tcx.bool_ty(),
             "gos_rt_set_to_vec" => {
                 let s = self.tcx.string_ty();
                 self.tcx.intern(gossamer_types::TyKind::Vec(s))
@@ -3244,18 +3319,8 @@ impl<'a> Builder<'a> {
             "gos_rt_http_response_status"
             | "gos_rt_vec_capacity"
             | "gos_rt_set_len"
-            | "gos_rt_set_clear"
-            | "gos_rt_btmap_len"
-            | "gos_rt_btmap_get_or" => self.tcx.int_ty(gossamer_types::IntTy::I64),
-            "gos_rt_btmap_get" => {
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let substs = gossamer_types::Substs::from_types([i]);
-                self.tcx.intern(gossamer_types::TyKind::Adt {
-                    def: gossamer_resolve::DefId::local(u32::MAX - 1),
-                    substs,
-                })
-            }
-            "gos_rt_btmap_insert" | "gos_rt_flag_set_short" => self.tcx.unit(),
+            | "gos_rt_set_clear" => self.tcx.int_ty(gossamer_types::IntTy::I64),
+            "gos_rt_flag_set_short" => self.tcx.unit(),
             "gos_rt_deque_push_back" | "gos_rt_deque_push_front" | "gos_rt_deque_clear" => {
                 self.tcx.unit()
             }
@@ -3343,6 +3408,17 @@ impl<'a> Builder<'a> {
             }
             "gos_rt_flag_set_parse" => self.result_vec_string_error_ty(),
             "gos_rt_error_cause" => self.option_adt_ty(),
+            "gos_rt_error_chain" => {
+                let e = self.tcx.dyn_error_ty();
+                self.tcx.intern(gossamer_types::TyKind::Vec(e))
+            }
+            "gos_rt_error_with_field" => self.tcx.dyn_error_ty(),
+            "gos_rt_error_field" => self.option_string_adt_ty(),
+            "gos_rt_error_fields" => {
+                let s = self.tcx.string_ty();
+                let pair = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![s, s]));
+                self.tcx.intern(gossamer_types::TyKind::Vec(pair))
+            }
             "gos_rt_arr_iter_next" => {
                 // Recover element type from the iterator local's MIR
                 // type (pinned to the original Vec<T> by `gos_rt_arr_iter`
@@ -3388,7 +3464,7 @@ impl<'a> Builder<'a> {
                 }
             }
             "gos_rt_sync_map_get" => self.option_string_adt_ty(),
-            "gos_rt_sync_map_keys" | "gos_rt_btmap_keys" => {
+            "gos_rt_sync_map_keys" => {
                 let s = self.tcx.string_ty();
                 self.tcx.intern(gossamer_types::TyKind::Vec(s))
             }
@@ -3707,6 +3783,10 @@ impl<'a> Builder<'a> {
             (Some("errors::Error"), "message") => Some("gos_rt_error_message"),
             (Some("errors::Error"), "cause") => Some("gos_rt_error_cause"),
             (Some("errors::Error"), "is") => Some("gos_rt_error_is"),
+            (Some("errors::Error"), "chain") => Some("gos_rt_error_chain"),
+            (Some("errors::Error"), "with_field") => Some("gos_rt_error_with_field"),
+            (Some("errors::Error"), "field") => Some("gos_rt_error_field"),
+            (Some("errors::Error"), "fields") => Some("gos_rt_error_fields"),
             (Some("regex::Pattern"), "is_match") => Some("gos_rt_regex_is_match"),
             (Some("regex::Pattern"), "find") => Some("gos_rt_regex_find"),
             (Some("regex::Pattern"), "find_all") => Some("gos_rt_regex_find_all"),
@@ -3767,14 +3847,6 @@ impl<'a> Builder<'a> {
             (Some("collections::VecStack"), "len") => Some("gos_rt_deque_len"),
             (Some("collections::VecStack"), "is_empty") => Some("gos_rt_deque_is_empty"),
             (Some("collections::VecStack"), "clear") => Some("gos_rt_deque_clear"),
-            (Some("collections::BTreeMap"), "insert") => Some("gos_rt_btmap_insert"),
-            (Some("collections::BTreeMap"), "get") => Some("gos_rt_btmap_get"),
-            (Some("collections::BTreeMap"), "get_or") => Some("gos_rt_btmap_get_or"),
-            (Some("collections::BTreeMap"), "contains" | "contains_key") => {
-                Some("gos_rt_btmap_contains")
-            }
-            (Some("collections::BTreeMap"), "len") => Some("gos_rt_btmap_len"),
-            (Some("collections::BTreeMap"), "keys") => Some("gos_rt_btmap_keys"),
             _ => None,
         }
     }
@@ -5283,6 +5355,7 @@ impl<'a> Builder<'a> {
             "get" if args_len == 1 && is_seq => Some("gos_rt_vec_get_opt"),
             "rev" if is_seq => Some("gos_rt_vec_reversed"),
             "take" if args_len == 1 && is_seq => Some("gos_rt_vec_take"),
+            "skip" if args_len == 1 && is_seq => Some("gos_rt_vec_skip"),
             "step_by" if args_len == 1 && is_seq => Some("gos_rt_vec_step_by"),
             "join" if args_len == 1 && is_seq => self.vec_join_symbol(ty),
             "contains" if is_seq => Some(if elem_str(self) {

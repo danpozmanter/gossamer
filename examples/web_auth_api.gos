@@ -38,8 +38,8 @@ fn get_order(r: http::Request) -> http::Response {
 
 fn serve() {
     let r = router::Router::new()
-        |> _.post("/login", login)
-        |> _.get("/orders/{id}", get_order)
+        |> $.post("/login", login)
+        |> $.get("/orders/{id}", get_order)
     if let Err(e) = http::serve("127.0.0.1:23892", r) {
         eprintln!("serve failed: {e}")
     }

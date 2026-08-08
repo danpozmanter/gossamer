@@ -20,7 +20,7 @@ pub enum CacheClass {
     Runners,
     /// Downloaded package source trees.
     Packages,
-    /// Legacy build-graph artifacts.
+    /// Artifacts left behind by the retired build-graph cache.
     Build,
 }
 
@@ -116,31 +116,50 @@ fn env_u64(name: &str) -> Option<u64> {
 /// producers rather than inventing another root.
 #[must_use]
 pub fn paths(cwd: &Path) -> Vec<(CacheClass, PathBuf)> {
-    let frontend = crate::frontend_cache::cache_dir();
-    let shared = frontend
-        .parent()
-        .map_or_else(|| frontend.clone(), Path::to_path_buf);
+    let shared = crate::frontend_cache::user_cache_root();
     let binding_root = if let Some(root) = std::env::var_os("GOSSAMER_CACHE") {
         PathBuf::from(root).join("gossamer")
     } else {
         shared.clone()
     };
-    let mut out = vec![
-        (CacheClass::Frontend, frontend),
+    let mut out: Vec<(CacheClass, PathBuf)> =
+        vec![(CacheClass::Frontend, crate::frontend_cache::cache_dir())];
+    // `GOSSAMER_CACHE_DIR` names the one directory the frontend cache uses, so
+    // an override is reported alone. Without it the cache resolves to the
+    // project when one is in scope, so both conventional locations are listed
+    // too; duplicates collapse below.
+    if std::env::var_os("GOSSAMER_CACHE_DIR").is_none() {
+        out.push((CacheClass::Frontend, shared.join("frontend")));
+        out.push((
+            CacheClass::Frontend,
+            cwd.join(".gos-cache").join("frontend"),
+        ));
+    }
+    out.extend([
         (CacheClass::Ir, shared.join("ir-cache")),
         (CacheClass::Runners, binding_root.join("runners")),
         (CacheClass::Ir, cwd.join(".gos-cache").join("ir-cache")),
-    ];
+    ]);
     if let Some(root) = gossamer_pkg::default_cache_root() {
         out.push((CacheClass::Packages, root));
     }
-    out.push((
-        CacheClass::Build,
-        crate::build::BuildCache::user_default()
-            .root()
-            .to_path_buf(),
-    ));
+    out.push((CacheClass::Build, legacy_build_cache_root()));
+    let mut seen: Vec<PathBuf> = Vec::with_capacity(out.len());
+    out.retain(|(_, path)| {
+        if seen.contains(path) {
+            return false;
+        }
+        seen.push(path.clone());
+        true
+    });
     out
+}
+
+/// Directory the retired build-graph cache wrote to. Still reported and
+/// cleaned so an upgrade does not strand gigabytes in a user's home.
+fn legacy_build_cache_root() -> PathBuf {
+    let home = std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from);
+    home.join(".gossamer").join("build")
 }
 
 /// Reports every known cache root. Missing roots are represented as zeroes.

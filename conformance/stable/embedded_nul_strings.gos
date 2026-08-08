@@ -1,0 +1,40 @@
+// Strings carrying an embedded NUL byte. Gossamer strings are length-prefixed,
+// so a NUL is an ordinary content byte: length, byte iteration, comparison,
+// searching, splitting, slicing, and formatting must all count it instead of
+// treating it as the terminator a C string would.
+
+fn main() {
+    let s = "ab\0cd"
+    println!("len={}", s.len())
+
+    let mut nuls = 0
+    let mut sum = 0
+    for b in s.bytes() {
+        if b == 0 {
+            nuls += 1
+        }
+        sum += b as i64
+    }
+    println!("nuls={nuls} sum={sum}")
+
+    println!("chars={}", s.chars().count())
+    println!("eq_self={}", s == "ab\0cd")
+    println!("eq_prefix={}", s == "ab")
+    println!("contains={}", s.contains("\0c"))
+    println!("starts={}", s.starts_with("ab\0"))
+    println!("find={}", s.find("cd").unwrap_or(-1))
+
+    let parts = "a\0b\0c".split("\0")
+    println!("parts={} mid={}", parts.len(), parts[1].len())
+
+    println!("slice_len={}", s.substring(1, 4).len())
+    println!("upper_len={}", s.to_uppercase().len())
+    println!("fmt_len={}", format!("[{s}]").len())
+
+    let held = #["x\0y", "\0z"]
+    let mut total = 0
+    for item in held {
+        total += item.len()
+    }
+    println!("held={total}")
+}

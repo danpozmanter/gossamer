@@ -1,0 +1,13 @@
+len=5
+nuls=1 sum=394
+chars=5
+eq_self=true
+eq_prefix=false
+contains=true
+starts=true
+find=3
+parts=3 mid=1
+slice_len=3
+upper_len=5
+fmt_len=7
+held=5

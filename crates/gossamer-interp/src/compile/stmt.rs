@@ -205,6 +205,7 @@ impl<'tcx> FnBuilder<'tcx> {
                         }
                         self.record_uint_display_init(init, typed.reg);
                         self.bind_local(&name.name, typed);
+                        self.install_capture_cell(&name.name, typed, init.ty);
                     } else {
                         // Declared-only - default to Value; an
                         // assignment before read will overwrite.
@@ -398,6 +399,11 @@ impl<'tcx> FnBuilder<'tcx> {
                         && src_tr.kind == RegKind::I64
                         && self.try_fold_i64_move(rhs_start, src_tr.reg, target.reg)
                     {
+                        return Ok(());
+                    }
+                    if let Some(cell) = self.capture_cell_for_local(target) {
+                        let src_v = self.as_value(src_tr);
+                        self.rebind_capture_cell(target.reg, cell, src_v);
                         return Ok(());
                     }
                     self.emit_move_into(target, src_tr);

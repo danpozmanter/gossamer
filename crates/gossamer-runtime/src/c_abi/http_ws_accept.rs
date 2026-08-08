@@ -7,8 +7,6 @@
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
-
 use super::*;
 
 // ---------------------------------------------------------------
@@ -118,7 +116,7 @@ pub unsafe extern "C" fn gos_rt_ws_accept(req: *const GosHttpRequest) -> i128 {
         let token = if token_ptr.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(token_ptr).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(token_ptr) }
         };
 
         let headers: Vec<(String, String)> = vec![

@@ -16,7 +16,6 @@
 #![allow(clippy::wildcard_imports)]
 
 use std::collections::HashMap;
-use std::ffi::CStr;
 use std::io::{Read, Write};
 use std::os::raw::c_char;
 use std::sync::Arc;
@@ -113,7 +112,7 @@ fn temp_prefix(prefix: *const c_char, operation: &str) -> Result<String, i128> {
     if prefix.is_null() {
         return Err(fs_err(&format!("{operation}: null prefix")));
     }
-    let prefix = unsafe { CStr::from_ptr(prefix).to_string_lossy().into_owned() };
+    let prefix = unsafe { crate::c_abi::gos_str_arg_string(prefix) };
     if prefix.contains(['/', '\\', '\0']) || matches!(prefix.as_str(), "." | "..") {
         return Err(fs_err(
             "temporary-resource prefix must be a single path component",
@@ -149,7 +148,7 @@ pub unsafe extern "C" fn gos_rt_fs_read_to_string(path: *const c_char) -> *mut c
         if path.is_null() {
             return alloc_cstring(b"");
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         match crate::sched_global::run_blocking("fs-read-string", move || {
             std::fs::read_to_string(p)
         }) {
@@ -173,7 +172,7 @@ pub unsafe extern "C" fn gos_rt_fs_read_to_string_result(path: *const c_char) ->
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         let context = p.clone();
         match crate::sched_global::run_blocking("fs-read-string", move || {
             std::fs::read_to_string(p)
@@ -199,8 +198,8 @@ pub unsafe extern "C" fn gos_rt_fs_write(path: *const c_char, contents: *const c
         if path.is_null() || contents.is_null() {
             return 0;
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
-        let c = unsafe { CStr::from_ptr(contents).to_bytes().to_vec() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
+        let c = unsafe { crate::c_abi::gos_str_arg_bytes(contents) }.to_vec();
         i64::from(
             crate::sched_global::run_blocking("fs-write", move || std::fs::write(p, c))
                 .is_ok_and(|result| result.is_ok()),
@@ -214,7 +213,7 @@ pub unsafe extern "C" fn gos_rt_fs_create_dir_all(path: *const c_char) -> i64 {
         if path.is_null() {
             return 0;
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         i64::from(
             crate::sched_global::run_blocking("fs-mkdir-all", move || std::fs::create_dir_all(p))
                 .is_ok_and(|result| result.is_ok()),
@@ -232,7 +231,7 @@ pub unsafe extern "C" fn gos_rt_os_remove_file(path: *const c_char) -> i64 {
         if path.is_null() {
             return 0;
         }
-        let p = unsafe { CStr::from_ptr(path).to_str() }.unwrap_or("");
+        let p = unsafe { crate::c_abi::gos_str_arg_text(path) };
         i64::from(
             crate::sched_global::run_blocking("fs-remove-file", move || std::fs::remove_file(p))
                 .is_ok_and(|result| result.is_ok()),
@@ -262,7 +261,7 @@ pub unsafe extern "C" fn gos_rt_fs_file_open(path: *const c_char) -> i128 {
         if path.is_null() {
             return fs_err("File::open: null path");
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         let context = p.clone();
         match crate::sched_global::run_blocking("fs-open", move || std::fs::File::open(p)) {
             Ok(Ok(file)) => unsafe { gos_rt_result_new(0, insert_file(file)) },
@@ -279,7 +278,7 @@ pub unsafe extern "C" fn gos_rt_fs_file_create(path: *const c_char) -> i128 {
         if path.is_null() {
             return fs_err("File::create: null path");
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         let context = p.clone();
         match crate::sched_global::run_blocking("fs-create", move || std::fs::File::create(p)) {
             Ok(Ok(file)) => unsafe { gos_rt_result_new(0, insert_file(file)) },
@@ -381,7 +380,7 @@ pub unsafe extern "C" fn gos_rt_fs_open_options_open(h: i64, path: *const c_char
         let Some(opts) = open_options_clone(h) else {
             return fs_err("OpenOptions::open: stale handle");
         };
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         let open = apply_open_options(&opts.lock());
         let context = p.clone();
         match crate::sched_global::run_blocking("fs-open-options", move || open.open(p)) {
@@ -507,8 +506,8 @@ pub unsafe extern "C" fn gos_rt_os_write_file_result(
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
-        let c = unsafe { CStr::from_ptr(contents).to_bytes().to_vec() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
+        let c = unsafe { crate::c_abi::gos_str_arg_bytes(contents) }.to_vec();
         let context = p.clone();
         match crate::sched_global::run_blocking("fs-write-file", move || std::fs::write(p, c)) {
             Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
@@ -539,7 +538,7 @@ pub unsafe extern "C" fn gos_rt_os_write_file_bytes_result(
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         let v = unsafe { &*contents };
         // Width-aware payload extraction: an i64-stride Vec carrying
         // u8 values needs the low byte of each slot, not a flat
@@ -593,7 +592,7 @@ pub unsafe extern "C" fn gos_rt_fs_read_bytes_result(path: *const c_char) -> i12
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         let context = p.clone();
         match crate::sched_global::run_blocking("fs-read-bytes", move || std::fs::read(p)) {
             Ok(Ok(bytes)) => {
@@ -635,7 +634,7 @@ pub unsafe extern "C" fn gos_rt_os_mkdir_all_result(path: *const c_char) -> i128
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         let context = p.clone();
         match crate::sched_global::run_blocking("fs-mkdir-all", move || std::fs::create_dir_all(p))
         {
@@ -660,7 +659,7 @@ pub unsafe extern "C" fn gos_rt_os_remove_dir_all_result(path: *const c_char) ->
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         let context = p.clone();
         match crate::sched_global::run_blocking("fs-remove-dir-all", move || {
             std::fs::remove_dir_all(p)
@@ -689,7 +688,7 @@ pub unsafe extern "C" fn gos_rt_fs_create_dir(path: *const c_char) -> i128 {
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         let context = p.clone();
         match crate::sched_global::run_blocking("fs-create-dir", move || std::fs::create_dir(p)) {
             Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
@@ -717,7 +716,7 @@ pub unsafe extern "C" fn gos_rt_fs_remove_dir(path: *const c_char) -> i128 {
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         let context = p.clone();
         match crate::sched_global::run_blocking("fs-remove-dir", move || std::fs::remove_dir(p)) {
             Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
@@ -741,7 +740,7 @@ pub unsafe extern "C" fn gos_rt_os_remove_file_result(path: *const c_char) -> i1
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
         let context = p.clone();
         match crate::sched_global::run_blocking("fs-remove-file", move || std::fs::remove_file(p)) {
             Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
@@ -765,8 +764,8 @@ pub unsafe extern "C" fn gos_rt_fs_rename(from: *const c_char, to: *const c_char
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
-        let f = unsafe { CStr::from_ptr(from).to_string_lossy().into_owned() };
-        let t = unsafe { CStr::from_ptr(to).to_string_lossy().into_owned() };
+        let f = unsafe { crate::c_abi::gos_str_arg_string(from) };
+        let t = unsafe { crate::c_abi::gos_str_arg_string(to) };
         let context = f.clone();
         match crate::sched_global::run_blocking("fs-rename", move || std::fs::rename(f, t)) {
             Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
@@ -788,7 +787,7 @@ pub unsafe extern "C" fn gos_rt_env_set_current_dir(path: *const c_char) -> i128
         let p = if path.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(path) }
         };
         let context = p.clone();
         match crate::sched_global::run_blocking("env-set-current-dir", move || {
@@ -824,12 +823,12 @@ pub unsafe extern "C" fn gos_rt_path_join(a: *const c_char, b: *const c_char) ->
         let a = if a.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(a).to_str() }.unwrap_or("")
+            unsafe { crate::c_abi::gos_str_arg_text(a) }
         };
         let b = if b.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(b).to_str() }.unwrap_or("")
+            unsafe { crate::c_abi::gos_str_arg_text(b) }
         };
         alloc_cstring(path_join(a, b).as_bytes())
     })
@@ -844,7 +843,7 @@ pub unsafe extern "C" fn gos_rt_path_base(p: *const c_char) -> *mut c_char {
         let s = if p.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+            unsafe { crate::c_abi::gos_str_arg_text(p) }
         };
         let basename: &str = match s.rfind('/') {
             None => s,
@@ -862,7 +861,7 @@ pub unsafe extern "C" fn gos_rt_path_dir(p: *const c_char) -> *mut c_char {
         let s = if p.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+            unsafe { crate::c_abi::gos_str_arg_text(p) }
         };
         let dirname: &str = match s.rfind('/') {
             None => ".",
@@ -885,7 +884,7 @@ pub unsafe extern "C" fn gos_rt_path_split(p: *const c_char) -> *mut i64 {
         let s = if p.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+            unsafe { crate::c_abi::gos_str_arg_text(p) }
         };
         let (dir, file): (&str, &str) = match s.rfind('/') {
             None => ("", s),
@@ -912,7 +911,7 @@ pub unsafe extern "C" fn gos_rt_path_components(p: *const c_char) -> *mut GosVec
         let s = if p.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+            unsafe { crate::c_abi::gos_str_arg_text(p) }
         };
         alloc_plain_str_vec(&path_components(s))
     })
@@ -925,7 +924,7 @@ pub unsafe extern "C" fn gos_rt_path_prefixes(p: *const c_char) -> *mut GosVec {
         let s = if p.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+            unsafe { crate::c_abi::gos_str_arg_text(p) }
         };
         alloc_plain_str_vec(&path_prefixes(s))
     })
@@ -939,7 +938,7 @@ pub unsafe extern "C" fn gos_rt_path_unique_prefixes(p: *const c_char) -> *mut G
         let s = if p.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+            unsafe { crate::c_abi::gos_str_arg_text(p) }
         };
         alloc_plain_str_vec(&path_unique_prefixes(s))
     })
@@ -955,7 +954,7 @@ pub unsafe extern "C" fn gos_rt_path_ext(p: *const c_char) -> i128 {
         let s = if p.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+            unsafe { crate::c_abi::gos_str_arg_text(p) }
         };
         let basename: &str = match s.rfind('/') {
             None => s,
@@ -983,7 +982,7 @@ pub unsafe extern "C" fn gos_rt_path_parent(p: *const c_char) -> i128 {
         let s = if p.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+            unsafe { crate::c_abi::gos_str_arg_text(p) }
         };
         let trimmed = s.trim_end_matches('/');
         match trimmed.rfind('/') {
@@ -1008,7 +1007,7 @@ pub unsafe extern "C" fn gos_rt_path_stem(p: *const c_char) -> i128 {
         let s = if p.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+            unsafe { crate::c_abi::gos_str_arg_text(p) }
         };
         let basename = match s.rfind('/') {
             None => s,
@@ -1034,7 +1033,7 @@ pub unsafe extern "C" fn gos_rt_path_file_name(p: *const c_char) -> i128 {
         let s = if p.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+            unsafe { crate::c_abi::gos_str_arg_text(p) }
         };
         let basename = match s.rfind('/') {
             None => s,
@@ -1058,7 +1057,7 @@ pub unsafe extern "C" fn gos_rt_path_clean(p: *const c_char) -> *mut c_char {
         let path = if p.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+            unsafe { crate::c_abi::gos_str_arg_text(p) }
         };
         alloc_cstring(path_clean(path).as_bytes())
     })
@@ -1071,7 +1070,7 @@ pub unsafe extern "C" fn gos_rt_path_is_absolute(p: *const c_char) -> i32 {
         let path = if p.is_null() {
             ""
         } else {
-            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+            unsafe { crate::c_abi::gos_str_arg_text(p) }
         };
         i32::from(path.starts_with('/'))
     })
@@ -1084,12 +1083,12 @@ pub unsafe extern "C" fn gos_rt_path_has_prefix(p: *const c_char, prefix: *const
         let path = if p.is_null() {
             String::new()
         } else {
-            path_clean(unsafe { CStr::from_ptr(p).to_str() }.unwrap_or(""))
+            path_clean(unsafe { crate::c_abi::gos_str_arg_text(p) })
         };
         let prefix = if prefix.is_null() {
             String::new()
         } else {
-            path_clean(unsafe { CStr::from_ptr(prefix).to_str() }.unwrap_or(""))
+            path_clean(unsafe { crate::c_abi::gos_str_arg_text(prefix) })
         };
         if path == prefix {
             return 1;
@@ -1113,12 +1112,12 @@ pub unsafe extern "C" fn gos_rt_fs_copy(src: *const c_char, dst: *const c_char) 
         let src = if src.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(src).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(src) }
         };
         let dst = if dst.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(dst).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(dst) }
         };
         let context = format!("{src} -> {dst}");
         match crate::sched_global::run_blocking("fs-copy", move || std::fs::copy(src, dst)) {
@@ -1141,7 +1140,7 @@ pub unsafe extern "C" fn gos_rt_fs_canonicalize(path: *const c_char) -> i128 {
         let p = if path.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(path) }
         };
         let context = p.clone();
         match crate::sched_global::run_blocking("fs-canonicalize", move || std::fs::canonicalize(p))
@@ -1198,7 +1197,7 @@ pub unsafe extern "C" fn gos_rt_bufio_read_to_string(path: *const c_char) -> i12
         let p = if path.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(path) }
         };
         match crate::sched_global::run_blocking("bufio-read-string", move || {
             std::fs::read_to_string(p)
@@ -1217,7 +1216,7 @@ pub unsafe extern "C" fn gos_rt_bufio_read_lines_of(path: *const c_char) -> i128
         let p = if path.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
+            unsafe { crate::c_abi::gos_str_arg_string(path) }
         };
         match crate::sched_global::run_blocking("bufio-read-lines", move || {
             std::fs::read_to_string(p)
@@ -1241,7 +1240,7 @@ pub unsafe extern "C" fn gos_rt_net_resolve(host: *const c_char) -> i128 {
         let h = if host.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(host).to_str().unwrap_or("") }.to_string()
+            unsafe { crate::c_abi::gos_str_arg_text(host) }.to_string()
         };
         let needle = if h.contains(':') { h } else { format!("{h}:0") };
         match crate::sched_global::run_blocking("net-resolve", move || {
@@ -1406,4 +1405,201 @@ pub extern "C" fn gos_rt_max_f64(a: f64, b: f64) -> f64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_clamp_f64(x: f64, lo: f64, hi: f64) -> f64 {
     x.clamp(lo, hi)
+}
+
+// ---------------------------------------------------------------
+// path::matches / path::glob - Go `filepath.Match` / `filepath.Glob`
+// semantics. The matcher is byte-oriented and single-segment: `*`
+// and `?` never cross a `/`. `glob` walks the filesystem one pattern
+// segment at a time, with `**` meaning "this directory and every
+// descendant directory". Results are sorted so every tier reports
+// the same order. Mirrors `gossamer_std::path::{matches, glob}`.
+// ---------------------------------------------------------------
+
+/// Single-segment shell-glob match over raw bytes.
+fn path_glob_matches(pat: &[u8], name: &[u8]) -> bool {
+    let mut pi = 0;
+    let mut ni = 0;
+    let mut star_pat: Option<usize> = None;
+    let mut star_name: usize = 0;
+    while ni < name.len() {
+        if pi < pat.len() {
+            match pat[pi] {
+                b'*' => {
+                    star_pat = Some(pi);
+                    star_name = ni;
+                    pi += 1;
+                    continue;
+                }
+                b'?' => {
+                    if name[ni] == b'/' {
+                        return false;
+                    }
+                    pi += 1;
+                    ni += 1;
+                    continue;
+                }
+                b'[' => {
+                    let close = match pat[pi + 1..].iter().position(|&b| b == b']') {
+                        Some(p) => pi + 1 + p,
+                        None => return false,
+                    };
+                    let class = &pat[pi + 1..close];
+                    if class.contains(&name[ni]) {
+                        pi = close + 1;
+                        ni += 1;
+                        continue;
+                    }
+                }
+                lit if lit == name[ni] => {
+                    pi += 1;
+                    ni += 1;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        if let Some(sp) = star_pat
+            && name[star_name] != b'/'
+        {
+            pi = sp + 1;
+            star_name += 1;
+            ni = star_name;
+            continue;
+        }
+        return false;
+    }
+    while pi < pat.len() && pat[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pat.len()
+}
+
+/// `\` is a path separator on Windows only; elsewhere it is an
+/// ordinary filename byte and must stay literal.
+fn path_glob_normalise(pattern: &str) -> String {
+    #[cfg(windows)]
+    {
+        pattern.replace('\\', "/")
+    }
+    #[cfg(not(windows))]
+    {
+        pattern.to_string()
+    }
+}
+
+/// Starting directory built from the literal segments preceding the
+/// first glob metacharacter, so drive letters and UNC shares resolve
+/// through `std::path` rather than a synthetic root walk.
+fn path_glob_base(prefix_segments: &[&str]) -> std::path::PathBuf {
+    if prefix_segments.is_empty() {
+        return std::path::PathBuf::from(".");
+    }
+    let joined = prefix_segments.join("/");
+    if joined.is_empty() {
+        return std::path::PathBuf::from("/");
+    }
+    #[cfg(windows)]
+    {
+        let bytes = joined.as_bytes();
+        if bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+            return std::path::PathBuf::from(format!("{joined}/"));
+        }
+    }
+    std::path::PathBuf::from(joined)
+}
+
+fn path_glob_expand(pattern: &str) -> std::io::Result<Vec<String>> {
+    if pattern.is_empty() {
+        return Ok(Vec::new());
+    }
+    let normalised = path_glob_normalise(pattern);
+    let segments: Vec<&str> = normalised.split('/').collect();
+    let split_idx = segments
+        .iter()
+        .position(|s| s.contains('*') || s.contains('?') || s.contains('['))
+        .unwrap_or(segments.len());
+    let base = path_glob_base(&segments[..split_idx]);
+    let glob_segments: Vec<&str> = segments[split_idx..]
+        .iter()
+        .filter(|s| !s.is_empty())
+        .copied()
+        .collect();
+    if glob_segments.is_empty() {
+        return Ok(match base.to_str() {
+            Some(s) if base.exists() => vec![s.to_string()],
+            _ => Vec::new(),
+        });
+    }
+    let mut frontier: Vec<std::path::PathBuf> = vec![base];
+    for seg in &glob_segments {
+        let mut next: Vec<std::path::PathBuf> = Vec::new();
+        for current in &frontier {
+            if *seg == "**" {
+                let mut bfs: Vec<std::path::PathBuf> = vec![current.clone()];
+                while let Some(p) = bfs.pop() {
+                    next.push(p.clone());
+                    for entry in std::fs::read_dir(&p)? {
+                        let path = entry?.path();
+                        let metadata = std::fs::symlink_metadata(&path)?;
+                        if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                            bfs.push(path);
+                        }
+                    }
+                }
+                continue;
+            }
+            for entry in std::fs::read_dir(current)? {
+                let path = entry?.path();
+                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+                if path_glob_matches(seg.as_bytes(), name.as_bytes()) {
+                    next.push(path);
+                }
+            }
+        }
+        frontier = next;
+    }
+    let mut out: Vec<String> = frontier
+        .into_iter()
+        .filter_map(|p| p.to_str().map(str::to_string))
+        .collect();
+    out.sort();
+    Ok(out)
+}
+
+/// `path::matches(pattern, name) -> bool` - Go `filepath.Match`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_path_matches(pattern: *const c_char, name: *const c_char) -> i64 {
+    ffi_entry!(0, {
+        let pat = if pattern.is_null() {
+            ""
+        } else {
+            unsafe { crate::c_abi::gos_str_arg_text(pattern) }
+        };
+        let n = if name.is_null() {
+            ""
+        } else {
+            unsafe { crate::c_abi::gos_str_arg_text(name) }
+        };
+        i64::from(path_glob_matches(pat.as_bytes(), n.as_bytes()))
+    })
+}
+
+/// `path::glob(pattern) -> Result<Vec<String>, errors::Error>` - sorted
+/// matching paths.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_path_glob(pattern: *const c_char) -> i128 {
+    ffi_entry!(unsafe { gos_rt_result_new(1, 0) }, {
+        let pat = if pattern.is_null() {
+            ""
+        } else {
+            unsafe { crate::c_abi::gos_str_arg_text(pattern) }
+        };
+        match path_glob_expand(pat) {
+            Ok(paths) => ok_str_vec(&paths),
+            Err(e) => err_io(&e),
+        }
+    })
 }

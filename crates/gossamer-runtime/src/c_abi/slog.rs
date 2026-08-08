@@ -15,7 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::fmt::Write as _;
 use std::os::raw::c_char;
 
@@ -37,11 +36,7 @@ use super::GosVec;
 unsafe fn vec_str_at(vec: &GosVec, i: usize) -> &str {
     let p = unsafe { vec.ptr.add(i * (vec.elem_bytes as usize)) };
     let elem_ptr = unsafe { (p as *const i64).read_unaligned() } as *const c_char;
-    if elem_ptr.is_null() {
-        ""
-    } else {
-        unsafe { CStr::from_ptr(elem_ptr).to_str().unwrap_or("") }
-    }
+    unsafe { crate::c_abi::gos_str_arg_text(elem_ptr) }
 }
 
 /// JSON-escape a string the same way the VM's `json_escape_str` does.
@@ -70,7 +65,7 @@ unsafe fn slog_emit(level: &str, msg: *const c_char, fields: *const GosVec) {
     let m = if msg.is_null() {
         String::new()
     } else {
-        unsafe { CStr::from_ptr(msg).to_string_lossy().into_owned() }
+        unsafe { crate::c_abi::gos_str_arg_string(msg) }
     };
     let mut line = String::with_capacity(64 + m.len());
     line.push('{');
