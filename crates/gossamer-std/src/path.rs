@@ -91,27 +91,47 @@ impl From<&str> for Path {
 /// absorbing a leading `/` in `segment`.
 #[must_use]
 pub fn join(base: &str, segment: &str) -> String {
-    if segment.starts_with('/') {
+    if segment.starts_with(is_separator) {
         return segment.to_string();
     }
     if base.is_empty() {
         return segment.to_string();
     }
-    let mut out = base.trim_end_matches('/').to_string();
+    let mut out = base.trim_end_matches(is_separator).to_string();
     out.push('/');
-    out.push_str(segment.trim_start_matches('/'));
+    out.push_str(segment.trim_start_matches(is_separator));
     out
+}
+
+/// `true` when `c` separates path components on `windows` hosts. Windows
+/// accepts both forms and its APIs hand back `\\`, so parsing splits on
+/// either there; on every other platform `\\` is an ordinary filename byte and
+/// stays literal.
+const fn is_separator_on(c: char, windows: bool) -> bool {
+    c == '/' || (windows && c == '\\')
+}
+
+/// [`is_separator_on`] for the host this build targets.
+const fn is_separator(c: char) -> bool {
+    is_separator_on(c, cfg!(windows))
+}
+
+/// Splits `path` into a `(directory, file)` pair using `windows` separator
+/// rules. Exposed separately from [`split`] so the Windows grammar is
+/// exercised from any host.
+fn split_on(path: &str, windows: bool) -> (String, String) {
+    match path.rfind(|c| is_separator_on(c, windows)) {
+        None => (String::new(), path.to_string()),
+        Some(0) => ("/".to_string(), path[1..].to_string()),
+        Some(idx) => (path[..idx].to_string(), path[idx + 1..].to_string()),
+    }
 }
 
 /// Splits `path` into a `(directory, file)` pair. The directory never
 /// carries a trailing separator unless the path is `/`.
 #[must_use]
 pub fn split(path: &str) -> (String, String) {
-    match path.rfind('/') {
-        None => (String::new(), path.to_string()),
-        Some(0) => ("/".to_string(), path[1..].to_string()),
-        Some(idx) => (path[..idx].to_string(), path[idx + 1..].to_string()),
-    }
+    split_on(path, cfg!(windows))
 }
 
 /// Returns Rust-like lexical path components.
@@ -121,13 +141,13 @@ pub fn split(path: &str) -> (String, String) {
 /// normalizing across parent directories.
 #[must_use]
 pub fn components(path: &str) -> Vec<String> {
-    let absolute = path.starts_with('/');
+    let absolute = path.starts_with(is_separator);
     let mut out = Vec::new();
     if absolute {
         out.push("/".to_string());
     }
     let mut saw_normal = absolute;
-    for segment in path.split('/') {
+    for segment in path.split(is_separator) {
         match segment {
             "" => {}
             "." if !saw_normal && !absolute => {
@@ -152,7 +172,7 @@ pub fn components(path: &str) -> Vec<String> {
 /// rebuilding each prefix in source code.
 #[must_use]
 pub fn prefixes(path: &str) -> Vec<String> {
-    let absolute = path.starts_with('/');
+    let absolute = path.starts_with(is_separator);
     let mut out = Vec::new();
     let mut prefix = String::with_capacity(path.len());
     if absolute {
@@ -160,7 +180,7 @@ pub fn prefixes(path: &str) -> Vec<String> {
         out.push(prefix.clone());
     }
     let mut saw_normal = absolute;
-    for segment in path.split('/') {
+    for segment in path.split(is_separator) {
         match segment {
             "" => {}
             "." if !saw_normal && !absolute => {
@@ -201,14 +221,14 @@ pub fn unique_prefixes(text: &str) -> Vec<String> {
 }
 
 fn extend_prefixes(path: &str, out: &mut Vec<String>) {
-    let absolute = path.starts_with('/');
+    let absolute = path.starts_with(is_separator);
     let mut prefix = String::with_capacity(path.len());
     if absolute {
         prefix.push('/');
         out.push(prefix.clone());
     }
     let mut saw_normal = absolute;
-    for segment in path.split('/') {
+    for segment in path.split(is_separator) {
         match segment {
             "" => {}
             "." if !saw_normal && !absolute => {
@@ -263,9 +283,9 @@ pub fn clean(path: &str) -> String {
     if path.is_empty() {
         return ".".to_string();
     }
-    let absolute = path.starts_with('/');
+    let absolute = path.starts_with(is_separator);
     let mut parts: Vec<&str> = Vec::new();
-    for segment in path.split('/') {
+    for segment in path.split(is_separator) {
         match segment {
             "" | "." => {}
             ".." => {
@@ -289,7 +309,7 @@ pub fn clean(path: &str) -> String {
 /// Returns `true` when `path` starts with `/`.
 #[must_use]
 pub fn is_absolute(path: &str) -> bool {
-    path.starts_with('/')
+    path.starts_with(is_separator)
 }
 
 /// Returns the parent directory of `path`, or `None` when `path`
@@ -298,8 +318,8 @@ pub fn is_absolute(path: &str) -> bool {
 /// is ignored, so `parent("dir/")` is the same as `parent("dir")`.
 #[must_use]
 pub fn parent(path: &str) -> Option<String> {
-    let trimmed = path.trim_end_matches('/');
-    match trimmed.rfind('/') {
+    let trimmed = path.trim_end_matches(is_separator);
+    match trimmed.rfind(is_separator) {
         None => None,
         Some(0) => Some("/".to_string()),
         Some(idx) => Some(trimmed[..idx].to_string()),
@@ -1037,5 +1057,35 @@ mod glob_walk_tests {
     fn build_glob_base_drive_letter_with_subpath() {
         let base = super::build_glob_base(&["C:", "Users", "foo"]);
         assert_eq!(base, std::path::PathBuf::from("C:/Users/foo"));
+    }
+}
+
+#[cfg(test)]
+mod separator_grammar_tests {
+    use super::{is_separator_on, split_on};
+
+    #[test]
+    fn windows_paths_split_on_either_separator() {
+        assert_eq!(
+            split_on("C:\\tmp\\gos-glob-1\\alpha.gos", true),
+            ("C:\\tmp\\gos-glob-1".to_string(), "alpha.gos".to_string())
+        );
+        // A path that mixes both forms - what an OS call joined with `/`
+        // hands back - splits at the last component either way.
+        assert_eq!(
+            split_on("C:\\tmp/gos-glob-1\\alpha.gos", true),
+            ("C:\\tmp/gos-glob-1".to_string(), "alpha.gos".to_string())
+        );
+    }
+
+    #[test]
+    fn backslash_is_an_ordinary_byte_off_windows() {
+        assert_eq!(
+            split_on("/tmp/odd\\name.gos", false),
+            ("/tmp".to_string(), "odd\\name.gos".to_string())
+        );
+        assert!(!is_separator_on('\\', false));
+        assert!(is_separator_on('\\', true));
+        assert!(is_separator_on('/', false));
     }
 }

@@ -169,6 +169,15 @@
   nested enum payload such as `Some(Some(v))` instead of rejecting its body.
 - Treat an already-absent cache directory as cleaned by `gos clean`, which
   failed when a concurrent build removed one first.
+- Split paths at either separator on Windows, where the OS hands back `\`:
+  `path::file_name`, `parent`, `split`, `components`, and `is_absolute` read a
+  whole `C:\dir\file.gos` as one component, so `path::glob` results could not
+  be reduced to their basenames.
+- Produce a byte-identical binary from `gos build --reproducible` on Windows.
+  The PE header carries a wall-clock timestamp, so every link differed; the
+  reproducible link now derives that field from the image contents.
+- Resolve the retired build-cache root from `USERPROFILE` on Windows when
+  `HOME` is unset, instead of sweeping the current directory.
 
 ## 0.44.1 - Iterator elements, Doc fixes.
 

@@ -116,6 +116,27 @@ fn windows_link_optimisation_flags(opts: LinkOptions) -> &'static [&'static str]
     }
 }
 
+/// Extra mingw `cc` flags for `--reproducible`. GNU ld stamps a PE with the
+/// current time exactly as lld-link does; `--no-insert-timestamp` is its
+/// spelling of the same guarantee. PE targets only - ELF and Mach-O links
+/// reject the option and need no equivalent.
+fn mingw_reproducible_link_flags(reproducible: bool) -> &'static [&'static str] {
+    if reproducible {
+        &["-Wl,--no-insert-timestamp"]
+    } else {
+        &[]
+    }
+}
+
+/// Extra lld-link flags for `--reproducible`. A PE header carries a
+/// wall-clock timestamp, so two links of identical objects differ byte for
+/// byte; `/Brepro` derives that field from the image contents instead. ELF
+/// and Mach-O carry no such field, which is why only the COFF path needs it.
+#[cfg(any(windows, test))]
+fn windows_reproducible_link_flags(reproducible: bool) -> &'static [&'static str] {
+    if reproducible { &["/Brepro"] } else { &[] }
+}
+
 /// Compile-time path to the musl runtime archive, or `None` when
 /// the rustup `x86_64-unknown-linux-musl` target wasn't installed
 /// at cli build time. Populated by `gossamer-cli/build.rs`.
@@ -1374,6 +1395,9 @@ fn link_posix(
         for lib in ["ws2_32", "bcrypt", "advapi32", "userenv", "ntdll"] {
             cmd.arg(format!("-l{lib}"));
         }
+        cmd.args(mingw_reproducible_link_flags(
+            gossamer_codegen_llvm::reproducible_enabled(),
+        ));
     }
     if !extra_archives.is_empty() {
         // The rust-bindings staticlib pulls in `gossamer-runtime`
@@ -1633,6 +1657,9 @@ fn link_windows_msvc(
     // Do not depend on lld-link's changing defaults. These are the COFF
     // equivalents of the release dead-strip path used on POSIX targets.
     cmd.args(windows_link_optimisation_flags(opts));
+    cmd.args(windows_reproducible_link_flags(
+        gossamer_codegen_llvm::reproducible_enabled(),
+    ));
     let mut out_arg = std::ffi::OsString::from("/OUT:");
     out_arg.push(out_path);
     cmd.arg(out_arg);
@@ -1975,5 +2002,16 @@ mod tests {
             super::windows_link_optimisation_flags(release),
             ["/OPT:REF", "/OPT:ICF", "/INCREMENTAL:NO"]
         );
+    }
+
+    #[test]
+    fn a_reproducible_windows_link_replaces_the_pe_timestamp() {
+        assert_eq!(super::windows_reproducible_link_flags(true), ["/Brepro"]);
+        assert!(super::windows_reproducible_link_flags(false).is_empty());
+        assert_eq!(
+            super::mingw_reproducible_link_flags(true),
+            ["-Wl,--no-insert-timestamp"]
+        );
+        assert!(super::mingw_reproducible_link_flags(false).is_empty());
     }
 }

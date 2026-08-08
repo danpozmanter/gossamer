@@ -837,6 +837,25 @@ pub unsafe extern "C" fn gos_rt_path_join(a: *const c_char, b: *const c_char) ->
 /// Final path component helper for `path::file_name`.
 /// Inlined here so the runtime
 /// crate stays free of a dep on `gossamer-std`.
+/// `true` when `c` separates path components on `windows` hosts. Windows
+/// accepts both forms and its APIs hand back `\\`, so parsing splits on
+/// either there; elsewhere `\\` is an ordinary filename byte and stays
+/// literal. Mirrors `gossamer_std::path::is_separator_on`.
+pub(crate) const fn path_is_separator_on(c: char, windows: bool) -> bool {
+    c == '/' || (windows && c == '\\')
+}
+
+/// [`path_is_separator_on`] for the host this build targets.
+pub(crate) const fn path_is_separator(c: char) -> bool {
+    path_is_separator_on(c, cfg!(windows))
+}
+
+/// Index of the last separator in `path` under `windows` rules. Exposed
+/// separately so the Windows grammar is exercised from any host.
+pub(crate) fn path_last_separator_on(path: &str, windows: bool) -> Option<usize> {
+    path.rfind(|c| path_is_separator_on(c, windows))
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_path_base(p: *const c_char) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
@@ -845,7 +864,7 @@ pub unsafe extern "C" fn gos_rt_path_base(p: *const c_char) -> *mut c_char {
         } else {
             unsafe { crate::c_abi::gos_str_arg_text(p) }
         };
-        let basename: &str = match s.rfind('/') {
+        let basename: &str = match path_last_separator_on(s, cfg!(windows)) {
             None => s,
             Some(idx) => &s[idx + 1..],
         };
@@ -863,7 +882,7 @@ pub unsafe extern "C" fn gos_rt_path_dir(p: *const c_char) -> *mut c_char {
         } else {
             unsafe { crate::c_abi::gos_str_arg_text(p) }
         };
-        let dirname: &str = match s.rfind('/') {
+        let dirname: &str = match path_last_separator_on(s, cfg!(windows)) {
             None => ".",
             Some(0) => "/",
             Some(idx) => &s[..idx],
@@ -886,7 +905,7 @@ pub unsafe extern "C" fn gos_rt_path_split(p: *const c_char) -> *mut i64 {
         } else {
             unsafe { crate::c_abi::gos_str_arg_text(p) }
         };
-        let (dir, file): (&str, &str) = match s.rfind('/') {
+        let (dir, file): (&str, &str) = match path_last_separator_on(s, cfg!(windows)) {
             None => ("", s),
             Some(0) => ("/", &s[1..]),
             Some(idx) => (&s[..idx], &s[idx + 1..]),
@@ -956,7 +975,7 @@ pub unsafe extern "C" fn gos_rt_path_ext(p: *const c_char) -> i128 {
         } else {
             unsafe { crate::c_abi::gos_str_arg_text(p) }
         };
-        let basename: &str = match s.rfind('/') {
+        let basename: &str = match path_last_separator_on(s, cfg!(windows)) {
             None => s,
             Some(idx) => &s[idx + 1..],
         };
@@ -984,8 +1003,8 @@ pub unsafe extern "C" fn gos_rt_path_parent(p: *const c_char) -> i128 {
         } else {
             unsafe { crate::c_abi::gos_str_arg_text(p) }
         };
-        let trimmed = s.trim_end_matches('/');
-        match trimmed.rfind('/') {
+        let trimmed = s.trim_end_matches(path_is_separator);
+        match path_last_separator_on(trimmed, cfg!(windows)) {
             None => unsafe { gos_rt_result_new(1, 0) },
             Some(0) => {
                 let cstr = alloc_cstring(b"/") as i64;
@@ -1009,7 +1028,7 @@ pub unsafe extern "C" fn gos_rt_path_stem(p: *const c_char) -> i128 {
         } else {
             unsafe { crate::c_abi::gos_str_arg_text(p) }
         };
-        let basename = match s.rfind('/') {
+        let basename = match path_last_separator_on(s, cfg!(windows)) {
             None => s,
             Some(idx) => &s[idx + 1..],
         };
@@ -1035,7 +1054,7 @@ pub unsafe extern "C" fn gos_rt_path_file_name(p: *const c_char) -> i128 {
         } else {
             unsafe { crate::c_abi::gos_str_arg_text(p) }
         };
-        let basename = match s.rfind('/') {
+        let basename = match path_last_separator_on(s, cfg!(windows)) {
             None => s,
             Some(idx) => &s[idx + 1..],
         };
@@ -1072,7 +1091,7 @@ pub unsafe extern "C" fn gos_rt_path_is_absolute(p: *const c_char) -> i32 {
         } else {
             unsafe { crate::c_abi::gos_str_arg_text(p) }
         };
-        i32::from(path.starts_with('/'))
+        i32::from(path.starts_with(path_is_separator))
     })
 }
 
@@ -1261,26 +1280,26 @@ pub unsafe extern "C" fn gos_rt_net_resolve(host: *const c_char) -> i128 {
 /// of the host separator so the compiled tier matches the VM on every
 /// platform.
 fn path_join(base: &str, segment: &str) -> String {
-    if segment.starts_with('/') {
+    if segment.starts_with(path_is_separator) {
         return segment.to_string();
     }
     if base.is_empty() {
         return segment.to_string();
     }
-    let mut out = base.trim_end_matches('/').to_string();
+    let mut out = base.trim_end_matches(path_is_separator).to_string();
     out.push('/');
-    out.push_str(segment.trim_start_matches('/'));
+    out.push_str(segment.trim_start_matches(path_is_separator));
     out
 }
 
 fn path_components(path: &str) -> Vec<String> {
-    let absolute = path.starts_with('/');
+    let absolute = path.starts_with(path_is_separator);
     let mut out = Vec::new();
     if absolute {
         out.push("/".to_string());
     }
     let mut saw_normal = absolute;
-    for segment in path.split('/') {
+    for segment in path.split(path_is_separator) {
         match segment {
             "" => {}
             "." if !saw_normal && !absolute => {
@@ -1314,14 +1333,14 @@ fn path_unique_prefixes(text: &str) -> Vec<String> {
 }
 
 fn extend_path_prefixes(path: &str, out: &mut Vec<String>) {
-    let absolute = path.starts_with('/');
+    let absolute = path.starts_with(path_is_separator);
     let mut prefix = String::with_capacity(path.len());
     if absolute {
         prefix.push('/');
         out.push(prefix.clone());
     }
     let mut saw_normal = absolute;
-    for segment in path.split('/') {
+    for segment in path.split(path_is_separator) {
         match segment {
             "" => {}
             "." if !saw_normal && !absolute => {
@@ -1350,9 +1369,9 @@ fn path_clean(path: &str) -> String {
     if path.is_empty() {
         return ".".to_string();
     }
-    let absolute = path.starts_with('/');
+    let absolute = path.starts_with(path_is_separator);
     let mut parts: Vec<&str> = Vec::new();
-    for segment in path.split('/') {
+    for segment in path.split(path_is_separator) {
         match segment {
             "" | "." => {}
             ".." => {
@@ -1602,4 +1621,26 @@ pub unsafe extern "C" fn gos_rt_path_glob(pattern: *const c_char) -> i128 {
             Err(e) => err_io(&e),
         }
     })
+}
+
+#[cfg(test)]
+mod path_separator_tests {
+    use super::{path_is_separator_on, path_last_separator_on};
+
+    #[test]
+    fn windows_paths_end_at_either_separator() {
+        let mixed = "C:\\tmp/gos-glob-1\\alpha.gos";
+        let idx = path_last_separator_on(mixed, true).expect("separator present");
+        assert_eq!(&mixed[idx + 1..], "alpha.gos");
+        assert_eq!(&mixed[..idx], "C:\\tmp/gos-glob-1");
+    }
+
+    #[test]
+    fn backslash_is_an_ordinary_byte_off_windows() {
+        let unix = "/tmp/odd\\name.gos";
+        let idx = path_last_separator_on(unix, false).expect("separator present");
+        assert_eq!(&unix[idx + 1..], "odd\\name.gos");
+        assert!(!path_is_separator_on('\\', false));
+        assert!(path_is_separator_on('\\', true));
+    }
 }

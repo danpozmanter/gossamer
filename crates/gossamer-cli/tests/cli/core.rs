@@ -333,7 +333,15 @@ fn cache_clear_removes_every_known_cache_class() {
     let runners = binding.join("gossamer").join("runners");
     let packages = root.join("packages");
     let home = root.join("home");
-    let user_cache = home.join(".cache").join("gossamer");
+    // The shared cache root follows the platform convention:
+    // `%LOCALAPPDATA%\gossamer` on Windows, `$HOME/.cache/gossamer` elsewhere.
+    // Point whichever one this platform reads at the sandbox.
+    let local_app_data = root.join("localappdata");
+    let user_cache = if cfg!(windows) {
+        local_app_data.join("gossamer")
+    } else {
+        home.join(".cache").join("gossamer")
+    };
     let shared_ir = user_cache.join("ir-cache");
     let build = home.join(".gossamer").join("build");
     let project = root.join("project");
@@ -368,6 +376,7 @@ fn cache_clear_removes_every_known_cache_class() {
         .env("GOSSAMER_CACHE", &binding)
         .env("GOS_CACHE_DIR", &packages)
         .env("HOME", &home)
+        .env("LOCALAPPDATA", &local_app_data)
         .env_remove("XDG_CACHE_HOME")
         .output()
         .expect("spawn cache --clear");

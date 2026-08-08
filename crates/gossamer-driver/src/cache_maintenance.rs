@@ -158,7 +158,11 @@ pub fn paths(cwd: &Path) -> Vec<(CacheClass, PathBuf)> {
 /// Directory the retired build-graph cache wrote to. Still reported and
 /// cleaned so an upgrade does not strand gigabytes in a user's home.
 fn legacy_build_cache_root() -> PathBuf {
-    let home = std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from);
+    // Windows names the home directory `USERPROFILE`; without the fallback the
+    // root resolves to `.`, and the sweep would walk the current project.
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map_or_else(|| PathBuf::from("."), PathBuf::from);
     home.join(".gossamer").join("build")
 }
 
