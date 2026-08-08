@@ -346,6 +346,58 @@ fn formatting_a_range_reports_the_iterator_remedy() {
 }
 
 #[test]
+fn formatting_a_runtime_handle_names_the_handle() {
+    let checked = run("use std::sync\nfn main() { println!(\"{}\", sync::Map::new()) }\n");
+    let diagnostic = checked
+        .diagnostics
+        .iter()
+        .find(|diagnostic| matches!(diagnostic.error, TypeError::ValueNotDisplayable { .. }))
+        .expect("handle formatting diagnostic")
+        .to_diagnostic();
+    assert_eq!(diagnostic.code.as_str(), "GT0062");
+    assert!(
+        diagnostic
+            .helps
+            .iter()
+            .any(|help| help.contains("sync::Map")),
+        "{diagnostic:?}"
+    );
+}
+
+#[test]
+fn formatting_a_function_value_is_rejected() {
+    let checked = run("fn f(x: i64) -> i64 { x }\nfn main() { println!(\"{}\", f) }\n");
+    assert!(
+        checked.diagnostics.iter().any(|diagnostic| matches!(
+            &diagnostic.error,
+            TypeError::ValueNotDisplayable { class, .. }
+                if *class == gossamer_types::NotDisplayableClass::Callable
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn a_qualified_container_annotation_resolves_to_the_container() {
+    let checked = run(
+        "use std::collections\nfn f(d: collections::Deque<i64>) -> i64 { d.len() }\nfn main() { let _ = f(collections::Deque::new()) }\n",
+    );
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+    let checked = run(
+        "use std::collections\nfn f(d: collections::Deque<i64>) -> i64 { d.len() }\nfn main() { let _ = f(\"nope\") }\n",
+    );
+    assert!(
+        checked.diagnostics.iter().any(|diagnostic| matches!(
+            &diagnostic.error,
+            TypeError::TypeMismatch { expected, .. } if expected.starts_with("Deque")
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
 fn let_annotation_forces_concrete_type() {
     let checked = run("fn main() { let x: i32 = 1i32 }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);

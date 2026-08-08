@@ -30,6 +30,32 @@ impl fmt::Display for TypeDiagnostic {
     }
 }
 
+/// What kind of value was formatted, for [`TypeError::ValueNotDisplayable`].
+/// Each class gets its own help line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotDisplayableClass {
+    /// A runtime-owned handle: a pointer whose bits differ run to run.
+    Handle,
+    /// A function, method, or closure value.
+    Callable,
+    /// A channel endpoint or join handle.
+    Concurrency,
+}
+
+fn not_displayable_message(ty: &str, class: NotDisplayableClass) -> String {
+    match class {
+        NotDisplayableClass::Handle => {
+            format!("`{ty}` is a runtime handle and has no display representation")
+        }
+        NotDisplayableClass::Callable => {
+            format!("a {ty} has no display representation and cannot be formatted")
+        }
+        NotDisplayableClass::Concurrency => {
+            format!("`{ty}` is runtime state and has no display representation")
+        }
+    }
+}
+
 /// Every failure mode the type checker can report.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum TypeError {
@@ -475,6 +501,17 @@ pub enum TypeError {
     /// being consumed by a terminal.
     #[error("a lazy iterator cannot be formatted before it is collected or consumed")]
     IteratorStateFormatted,
+    /// A value with no textual representation - a runtime handle, a
+    /// callable, or a concurrency endpoint - was passed to a format
+    /// macro.
+    #[error("{}", not_displayable_message(ty, *class))]
+    ValueNotDisplayable {
+        /// Type as the checker knows it, e.g. `sync::Map`, or the word
+        /// for a callable that has no useful type to name.
+        ty: String,
+        /// What the value is, used to pick the help text.
+        class: NotDisplayableClass,
+    },
     /// A lazy iterator state was used after an adapter or terminal consumed it.
     #[error("iterator `{name}` was already consumed by `{operation}`")]
     IteratorStateConsumed {
@@ -736,6 +773,7 @@ impl TypeError {
             Self::Int128Unsupported { .. } => "int128-unsupported",
             Self::StdFnValueUnsupported { .. } => "std-fn-value-unsupported",
             Self::IteratorStateFormatted => "iterator-state-formatted",
+            Self::ValueNotDisplayable { .. } => "value-not-displayable",
             Self::IteratorStateConsumed { .. } => "iterator-state-consumed",
             Self::JsonNotSerializable { .. } => "json-not-serializable",
             Self::CallArityMismatch { .. } => "call-arity-mismatch",
@@ -810,6 +848,7 @@ impl TypeError {
             Self::Int128Unsupported { .. } => "GT0014",
             Self::StdFnValueUnsupported { .. } => "GT0015",
             Self::IteratorStateFormatted => "GT0041",
+            Self::ValueNotDisplayable { .. } => "GT0062",
             Self::IteratorStateConsumed { .. } => "GT0042",
             Self::JsonNotSerializable { .. } => "GT0016",
             Self::TraitBoundNotSatisfied { .. } => "GT0017",
@@ -1321,6 +1360,9 @@ impl TypeDiagnostic {
                         .to_string(),
                 );
             }
+            TypeError::ValueNotDisplayable { ty, class } => {
+                out = value_not_displayable_diagnostic(out, ty, *class);
+            }
             TypeError::IteratorStateConsumed { name, operation } => {
                 out = out
                     .with_note(format!("`{operation}` takes ownership of `{name}`"))
@@ -1687,6 +1729,34 @@ fn std_fn_value_diagnostic(
          (errors::new, strings::to_uppercase/.../trim, strconv::parse_i64/...) can be \
          passed directly",
     )
+}
+
+fn value_not_displayable_diagnostic(
+    out: gossamer_diagnostics::Diagnostic,
+    ty: &str,
+    class: NotDisplayableClass,
+) -> gossamer_diagnostics::Diagnostic {
+    match class {
+        NotDisplayableClass::Handle => out
+            .with_help(format!(
+                "print an accessor of the `{ty}` instead - the value itself is a \
+                 runtime-owned handle"
+            ))
+            .with_note(
+                "a handle carries no fields and no text form: its address differs on \
+                 every run, so formatting it could never be reproducible",
+            ),
+        NotDisplayableClass::Callable => out
+            .with_help(format!(
+                "call the {ty} and format its result, or format a name you choose for it"
+            ))
+            .with_note("a callable is a code address, not data"),
+        NotDisplayableClass::Concurrency => out
+            .with_help(format!(
+                "format the values that pass through the `{ty}`, not the endpoint itself"
+            ))
+            .with_note("a channel endpoint or join handle is runtime state, not data"),
+    }
 }
 
 #[cfg(test)]

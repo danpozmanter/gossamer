@@ -2718,18 +2718,13 @@ impl fmt::Display for Value {
                     return out.write_str(inner.name.as_str());
                 }
                 if is_set_struct_name(inner.name.as_str()) {
-                    let values =
-                        crate::stdlib_builtins::set::set_snapshot(self).unwrap_or_default();
-                    write!(
-                        out,
-                        "{} {{{}}}",
-                        inner.name,
-                        values.iter().map(repr_value).collect::<Vec<_>>().join(", ")
-                    )?;
-                    return Ok(());
+                    return out.write_str(&repr_set(self, inner.name.as_str()));
                 }
                 if is_deque_struct_name(inner.name.as_str()) {
                     return out.write_str(&repr_deque(self, inner.name.as_str()));
+                }
+                if is_heap_struct_name(inner.name.as_str()) {
+                    return out.write_str(&repr_binary_heap(self, inner.name.as_str()));
                 }
                 // `errors::Error` prints Go-style as its colon-joined
                 // cause chain ("outer: mid: root") so `format!("{}", e)`
@@ -2839,12 +2834,7 @@ fn repr_value(value: &Value) -> String {
             inner.name.as_str().to_string()
         }
         Value::Struct(inner) if is_set_struct_name(inner.name.as_str()) => {
-            let values = crate::stdlib_builtins::set::set_snapshot(value).unwrap_or_default();
-            format!(
-                "{} {{{}}}",
-                inner.name,
-                values.iter().map(repr_value).collect::<Vec<_>>().join(", ")
-            )
+            repr_set(value, inner.name.as_str())
         }
         Value::Struct(inner) if is_deque_struct_name(inner.name.as_str()) => {
             repr_deque(value, inner.name.as_str())
@@ -2890,6 +2880,21 @@ fn repr_value(value: &Value) -> String {
         Value::NativeEnum(owner) => repr_value(&native_enum_to_variant(owner)),
         _ => value.to_string(),
     }
+}
+
+/// Renders `owner {a, b}` over the set's elements. Elements print in
+/// their Display form, matching `gos_rt_set_format_*` and the way a
+/// sequence of the same elements prints.
+fn repr_set(value: &Value, owner: &str) -> String {
+    let values = crate::stdlib_builtins::set::set_snapshot(value).unwrap_or_default();
+    format!(
+        "{owner} {{{}}}",
+        values
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 fn repr_deque(value: &Value, owner: &str) -> String {

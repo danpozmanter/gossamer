@@ -15,6 +15,8 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
+use std::ffi::c_char;
+
 use super::*;
 
 // ---------------------------------------------------------------
@@ -331,6 +333,42 @@ pub unsafe extern "C" fn gos_rt_bheap_peek_i64(v: *const GosVec) -> i128 {
             return super::vec::pack_result(1, 0);
         }
         super::vec::pack_result(0, unsafe { *vec.ptr.cast::<i64>() })
+    })
+}
+
+/// Renders `owner [a, b, c]` over the heap array's own order. Both tiers
+/// run the same sift routines, so that order is the same sequence of
+/// pushes and pops on either.
+unsafe fn bheap_format(v: *const GosVec, owner: &str) -> *mut c_char {
+    let mut out = String::from(owner);
+    out.push_str(" [");
+    if !v.is_null() {
+        let vec = unsafe { &*v };
+        let buf = vec.ptr.cast::<i64>();
+        for i in 0..vec.len.max(0) as usize {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&crate::builtins::format_int(unsafe { *buf.add(i) }));
+        }
+    }
+    out.push(']');
+    crate::c_abi::string::alloc_cstring(out.as_bytes())
+}
+
+/// Format a `MaxHeap` for `{}` / `{:?}`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bheap_max_format(v: *const GosVec) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        unsafe { bheap_format(v, "MaxHeap") }
+    })
+}
+
+/// Format a `MinHeap` for `{}` / `{:?}`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bheap_min_format(v: *const GosVec) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        unsafe { bheap_format(v, "MinHeap") }
     })
 }
 

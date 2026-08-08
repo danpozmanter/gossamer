@@ -581,6 +581,7 @@ const SPECS: &[Spec] = &[
     // variant / nested / or-pattern) and const generic array length.
     spec("feature-testing-examples/let_destructure_struct.gos"),
     spec("feature-testing-examples/const_generic_array_len.gos"),
+    spec("feature-testing-examples/container_display.gos"),
     spec("feature-testing-examples/container_reassign_loop.gos"),
     // Closure capturing an inline aggregate reads every field, and the heap
     // box survives an escaping closure.

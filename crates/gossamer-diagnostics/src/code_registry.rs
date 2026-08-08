@@ -909,6 +909,14 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      the concrete type or give the trait a default.",
     ),
     (
+        "GT0062",
+        "A value with no textual form was passed to a format macro: a\n\
+                     runtime handle (`sync::Map`, `http::Client`, a middleware\n\
+                     `Handler`), a function or closure, or a channel endpoint.\n\
+                     Format an accessor, a call result, or the values that pass\n\
+                     through the endpoint instead.",
+    ),
+    (
         "GX0001",
         "An operation received a value of an incompatible type. The\n\
                      diagnostic names the type that was required and the type\n\

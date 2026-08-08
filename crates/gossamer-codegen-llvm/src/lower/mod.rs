@@ -306,6 +306,10 @@ pub(super) enum ConcatKind {
     /// `HashSet<T>` / `BTreeSet<T>` with String elements. The bool is true
     /// for `BTreeSet`, which only changes the display prefix.
     SetString(bool),
+    /// A container handle - `Deque` / `Queue` / `Stack` / `MaxHeap` /
+    /// `MinHeap` - rendered by the named runtime shim, which owns the one
+    /// text form every tier prints.
+    HandleFormat(&'static str),
     /// `{:?}` of an `Option<T>`, rendered via the runtime's option debug
     /// helper with the payload's rendering plan.
     Option(DebugPayload),

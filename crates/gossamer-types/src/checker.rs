@@ -151,6 +151,129 @@ const VEC_STACK_DEF_LOCAL: u32 = u32::MAX - 32;
 const RESULT_DEF_LOCAL: u32 = u32::MAX;
 const OPTION_DEF_LOCAL: u32 = u32::MAX - 1;
 
+/// Sentinel-offset band reserved for opaque runtime handles that carry
+/// nothing but their i64 slot: no field layout, no text form. The band is
+/// contiguous so both the checker's display gate and the MIR's
+/// representation rule recognise the whole family by range.
+const PURE_HANDLE_LO_OFFSET: u32 = 34;
+const PURE_HANDLE_HI_OFFSET: u32 = 48;
+
+/// One constructor of a runtime handle: the module path it is written
+/// under, and the associated function's name.
+type HandleCtor = (&'static [&'static str], &'static str);
+
+/// One runtime handle: its sentinel offset, the name diagnostics print,
+/// and the constructors that produce it.
+type HandleRow = (u32, &'static str, &'static [HandleCtor]);
+
+/// `(sentinel offset, display name)` for each opaque runtime handle, and
+/// the constructor paths that produce one. A handle's identity lives in
+/// the type so a format macro can name it and refuse it; its method
+/// surface is still resolved by the tier lowerings, not here.
+const PURE_HANDLES: &[HandleRow] = &[
+    (34, "sync::Map", &[(&["sync", "Map"], "new")]),
+    (35, "sync::RwLock", &[(&["sync", "RwLock"], "new")]),
+    (36, "metrics::Counter", &[(&["metrics", "Counter"], "new")]),
+    (37, "metrics::Gauge", &[(&["metrics", "Gauge"], "new")]),
+    (
+        38,
+        "metrics::Histogram",
+        &[(&["metrics", "Histogram"], "new")],
+    ),
+    (
+        39,
+        "metrics::Registry",
+        &[(&["metrics", "Registry"], "new")],
+    ),
+    (40, "trace::Tracer", &[(&["trace", "Tracer"], "new")]),
+    (
+        41,
+        "http::Router",
+        &[
+            (&["router", "Router"], "new"),
+            (&["http", "router", "Router"], "new"),
+        ],
+    ),
+    (
+        42,
+        "rand::Rng",
+        &[
+            (&["rand", "Rng"], "new"),
+            (&["math", "rand", "Rng"], "new"),
+            (&["rand", "Rng"], "seeded"),
+            (&["math", "rand", "Rng"], "seeded"),
+        ],
+    ),
+    (43, "bufio::Scanner", &[(&["bufio", "Scanner"], "new")]),
+    (
+        44,
+        "fs::File",
+        &[(&["fs", "File"], "open"), (&["fs", "File"], "create")],
+    ),
+    (45, "fs::OpenOptions", &[(&["fs", "OpenOptions"], "new")]),
+    (
+        46,
+        "http::FileServer",
+        &[
+            (&["static_files", "FileServer"], "new"),
+            (&["http", "static_files", "FileServer"], "new"),
+        ],
+    ),
+    (
+        47,
+        "http::Proxy",
+        &[
+            (&["proxy", "Proxy"], "new"),
+            (&["http", "proxy", "Proxy"], "new"),
+        ],
+    ),
+    // The composed-middleware handler closes the band; it is produced by
+    // the `middleware::*` wrappers rather than by a named constructor.
+    (PURE_HANDLE_HI_OFFSET, "http::Handler", &[]),
+];
+
+/// One constructor of a pre-band handle: its module path and name,
+/// followed by the sentinel offset and display name it lands on.
+type LegacyHandleCtor = (&'static [&'static str], &'static str, u32, &'static str);
+
+/// Constructors for the handle sentinels that predate the pure-handle
+/// band. Their offsets are fixed by the annotation paths that already
+/// resolve to them, so a constructor lands on the same type a written
+/// `fn f() -> http::Response` does.
+const LEGACY_HANDLE_CTORS: &[LegacyHandleCtor] = &[
+    (
+        &["context", "Context"],
+        "background",
+        11,
+        "context::Context",
+    ),
+    (
+        &["context", "Context"],
+        "with_cancel",
+        11,
+        "context::Context",
+    ),
+    (
+        &["context", "Context"],
+        "with_timeout",
+        11,
+        "context::Context",
+    ),
+    (&["validate", "Errors"], "new", 9, "validate::Errors"),
+    (
+        &["validate", "FieldError"],
+        "new",
+        10,
+        "validate::FieldError",
+    ),
+    (&["flag", "Set"], "new", 21, "flag::Set"),
+    (&["http", "Client"], "new", 22, "http::Client"),
+    (&["http", "Client"], "builder", 23, "http::ClientBuilder"),
+    (&["http", "Response"], "text", 5, "http::Response"),
+    (&["http", "Response"], "json", 5, "http::Response"),
+    (&["http", "Response"], "stream", 5, "http::Response"),
+];
+
 /// Eager sequence combinators callable in method form on a `Vec`.
 const SEQUENCE_COMBINATOR_METHODS: &[&str] = &[
     "map",
@@ -5789,6 +5912,61 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
+    /// Names the value class when `ty` has no textual form, so a format
+    /// macro over it is refused here rather than rendering a pointer whose
+    /// bits differ on every run.
+    fn not_displayable(&mut self, ty: Ty) -> Option<(String, crate::NotDisplayableClass)> {
+        use crate::NotDisplayableClass as Class;
+        let peeled = self.peel_refs(ty);
+        match self.tcx.kind(peeled)? {
+            TyKind::Adt { def, .. } if is_opaque_handle_def(def.local) => Some((
+                self.tcx
+                    .def_name(*def)
+                    .map_or_else(|| crate::render_ty(self.tcx, peeled), ToString::to_string),
+                Class::Handle,
+            )),
+            TyKind::FnDef { .. } | TyKind::FnPtr(_) => {
+                Some(("function".to_string(), Class::Callable))
+            }
+            TyKind::FnTrait(_) | TyKind::Closure { .. } => {
+                Some(("closure".to_string(), Class::Callable))
+            }
+            TyKind::Sender(_) | TyKind::Receiver(_) | TyKind::JoinHandle(_) => {
+                Some((crate::render_ty(self.tcx, peeled), Class::Concurrency))
+            }
+            _ => None,
+        }
+    }
+
+    /// Handle type a stdlib constructor or middleware wrapper yields.
+    ///
+    /// Every wrapping `middleware::<name>(inner, ..)` composes the same
+    /// handler handle, whatever shape the inner handler has: the catalogue
+    /// spells that slot `T` (any handler) or `http::Handler`, while the
+    /// sibling helpers returning `bool` / `String` keep their catalogue
+    /// types.
+    fn handle_call_ret_ty(&mut self, module: &[&str], last: &str) -> Option<Ty> {
+        if let Some((offset, handle)) = stdlib_handle_ctor(module, last) {
+            return Some(self.stdlib_handle_ty(offset, handle));
+        }
+        let is_middleware = matches!(
+            module,
+            ["middleware"] | ["http", "middleware"] | ["std", "http", "middleware"]
+        );
+        if is_middleware
+            && crate::stdlib_signatures::function_shape_for_path(module, last)
+                .is_some_and(|shape| matches!(shape.return_ty.trim(), "T" | "http::Handler"))
+        {
+            return Some(self.http_handler_ty());
+        }
+        None
+    }
+
+    /// The handle every `middleware::*` wrapper composes and returns.
+    fn http_handler_ty(&mut self) -> Ty {
+        self.stdlib_handle_ty(PURE_HANDLE_HI_OFFSET, "http::Handler")
+    }
+
     fn http_response_ty(&mut self) -> Ty {
         self.stdlib_handle_ty(5, "http::Response")
     }
@@ -6009,15 +6187,8 @@ impl<'a> TypeChecker<'a> {
                 _ => None,
             };
         }
-        if matches!(module, ["flag", "Set"] | ["std", "flag", "Set"]) && last == "new" {
-            return Some(self.flag_set_ty());
-        }
-        if matches!(module, ["http", "Client"] | ["std", "http", "Client"]) {
-            return match last {
-                "new" => Some(self.http_client_ty()),
-                "builder" => Some(self.http_client_builder_ty()),
-                _ => None,
-            };
+        if let Some(ty) = self.handle_call_ret_ty(module, last) {
+            return Some(ty);
         }
         if let Some(ty) = self.collection_call_ret_ty(module, last, args, arg_tys, expected) {
             return Some(ty);
@@ -6145,6 +6316,10 @@ impl<'a> TypeChecker<'a> {
                         Some(TyKind::Iterator(_) | TyKind::Range(_))
                     ) {
                         self.emit(TypeError::IteratorStateFormatted, span);
+                        return Some(self.tcx.error_ty());
+                    }
+                    if let Some((ty, class)) = self.not_displayable(resolved) {
+                        self.emit(TypeError::ValueNotDisplayable { ty, class }, span);
                         return Some(self.tcx.error_ty());
                     }
                 }
@@ -12252,6 +12427,13 @@ impl<'a> TypeChecker<'a> {
                 Resolution::Import { .. } | Resolution::Err | Resolution::Local(_) => {}
             }
         }
+        // A built-in type constructor may be written bare (`Deque<i64>`)
+        // or under the module that exports it
+        // (`std::collections::Deque<i64>`). Both spellings name the same
+        // type, so the qualified one reduces to its last segment before
+        // the table below keys on it. A user type reached by a qualified
+        // path resolved above, so nothing here can capture one.
+        let head_name = builtin_type_head(path).unwrap_or(head_name);
         // Fallback for built-in generic enums the resolver doesn't
         // hand out a DefId for (`Result<T, E>`, `Option<T>`). Without
         // this, an annotation like `let r: Result<i64, String> = ...`
@@ -15060,6 +15242,60 @@ fn builtin_trait_methods(name: &str) -> Option<&'static [&'static str]> {
 ///
 /// Mirrors the annotation path so `fs::DirInfo` means the same type whether
 /// it is written in source or read out of a signature row.
+/// Last segment of a module-qualified type path (`collections::Deque`),
+/// or `None` for a bare name or a path whose leading segments are not
+/// plain module names. Module segments are lowercase and carry no
+/// generic arguments; a type segment is the one that may.
+fn builtin_type_head(path: &TypePath) -> Option<&str> {
+    let (last, modules) = path.segments.split_last()?;
+    if modules.is_empty()
+        || !modules.iter().all(|seg| {
+            seg.generics.is_empty() && seg.name.name.chars().next().is_some_and(char::is_lowercase)
+        })
+    {
+        return None;
+    }
+    Some(last.name.name.as_str())
+}
+
+/// `(sentinel offset, name)` of the runtime handle the stdlib constructor
+/// `module::last` produces, if it produces one.
+fn stdlib_handle_ctor(module: &[&str], last: &str) -> Option<(u32, &'static str)> {
+    let module = module.strip_prefix(&["std"]).unwrap_or(module);
+    PURE_HANDLES
+        .iter()
+        .find(|(_, _, ctors)| {
+            ctors
+                .iter()
+                .any(|(path, name)| *name == last && *path == module)
+        })
+        .map(|(offset, name, _)| (*offset, *name))
+        .or_else(|| {
+            LEGACY_HANDLE_CTORS
+                .iter()
+                .find(|(path, name, _, _)| *name == last && *path == module)
+                .map(|(_, _, offset, name)| (*offset, *name))
+        })
+}
+
+/// Sentinel offsets of the stdlib types that are runtime-owned handles:
+/// a pointer the runtime hands back, with no text form. The pure-handle
+/// band is covered by range; these are the older sentinels that predate
+/// it, including the field-bearing blobs (`fs::DirInfo`,
+/// `process::Output`, `http::Response`) whose fields are read through
+/// accessors rather than rendered.
+const OPAQUE_HANDLE_OFFSETS: &[u32] = &[
+    2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 15, 16, 17, 21, 22, 23, 24, 25, 26, 27,
+];
+
+/// True when `def` names a runtime handle rather than a value with a
+/// representation of its own.
+fn is_opaque_handle_def(local: u32) -> bool {
+    let offset = u32::MAX - local;
+    (PURE_HANDLE_LO_OFFSET..=PURE_HANDLE_HI_OFFSET).contains(&offset)
+        || OPAQUE_HANDLE_OFFSETS.contains(&offset)
+}
+
 fn stdlib_handle_def_offset(tail: &str) -> Option<u32> {
     Some(match tail {
         "DirInfo" => 2,

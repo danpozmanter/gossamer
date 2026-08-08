@@ -60,6 +60,12 @@ pub(crate) fn render_ty(tcx: &TyCtxt, ty: Ty) -> String {
         }
         // Inline-able user enums share the same 2-word by-value `i128` shape.
         Some(TyKind::Adt { .. }) if tcx.is_inline_enum_ty(ty) => "i128".to_string(),
+        // A runtime container or opaque handle occupies one i64 slot: the
+        // MIR produces it from its constructor as an `i64` and hands it
+        // back to every accessor as one. The annotated type and the
+        // constructed value must render alike, or a parameter slot and its
+        // argument disagree at the call boundary.
+        Some(TyKind::Adt { def, .. }) if is_bare_handle_def(def.local) => "i64".to_string(),
         Some(TyKind::String) => "ptr".to_string(),
         // A reference to a 2-word by-value enum (`&Option` / `&Result` /
         // `&InlineEnum`) carries the i128 value itself - the reference is
@@ -101,6 +107,18 @@ pub(crate) fn param_llvm_ty(tcx: &TyCtxt, ty: Ty) -> String {
     } else {
         rendered
     }
+}
+
+/// True when a sentinel `DefId` names a runtime value the MIR carries in
+/// a single i64 slot: the collection handles (`HashSet` `u32::MAX - 7`,
+/// `BTreeSet` `- 18`, `Deque` `- 19`, `MaxHeap` `- 28`, `MinHeap` `- 30`,
+/// `Queue` `- 31`, `Stack` `- 32`) and the opaque stdlib handles in the
+/// `- 48 ..= - 34` band. The field-bearing sentinel blobs (`fs::DirInfo`,
+/// `process::Output`, `http::Response`) are excluded: their fields are
+/// read through a pointer.
+fn is_bare_handle_def(def_local: u32) -> bool {
+    let offset = u32::MAX - def_local;
+    matches!(offset, 7 | 18 | 19 | 28 | 30 | 31 | 32) || (34..=48).contains(&offset)
 }
 
 /// True when `ty` lowers to the 2-word by-value enum representation:
@@ -364,6 +382,11 @@ pub(crate) fn is_aggregate(tcx: &TyCtxt, ty: Ty) -> bool {
         // Treat them as scalar `ptr`s so the caller stores the
         // returned pointer directly into the local slot.
         if def.local == u32::MAX || def.local == u32::MAX - 1 || tcx.is_inline_enum_ty(ty) {
+            return false;
+        }
+        // A runtime container or opaque handle is one i64 slot holding the
+        // handle itself, so it moves by value like a scalar.
+        if is_bare_handle_def(def.local) {
             return false;
         }
     }

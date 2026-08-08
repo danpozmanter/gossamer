@@ -204,6 +204,13 @@ pub(super) enum PrintKind {
     /// A scalar-keyed, scalar/string-valued `HashMap` - rendered via
     /// `gos_rt_map_format`.
     Map,
+    /// A container handle - `Deque` / `Queue` / `Stack` / `MaxHeap` /
+    /// `MinHeap` - rendered by the named runtime shim, which owns the one
+    /// text form every tier prints.
+    HandleFormat(&'static str),
+    /// A `HashSet` / `BTreeSet` handle rendered by the named runtime shim;
+    /// the flag selects the ordered display prefix.
+    SetFormat(&'static str, i32),
     /// `{:?}` of an `Option<T>` with a scalar / String payload, rendered via
     /// `gos_rt_debug_option`. The `u8` is the payload formatter kind.
     Option(u8),
@@ -377,6 +384,107 @@ pub(super) fn operand_cl_type(
     }
 }
 
+/// Runtime format shim for a container handle's sentinel `DefId`:
+/// `Deque` (`u32::MAX - 19`), `MaxHeap` (`- 28`), `MinHeap` (`- 30`),
+/// `Queue` (`- 31`), `Stack` (`- 32`).
+fn container_format_symbol(def_local: u32) -> Option<&'static str> {
+    Some(match u32::MAX - def_local {
+        19 => "gos_rt_deque_format",
+        28 => "gos_rt_bheap_max_format",
+        30 => "gos_rt_bheap_min_format",
+        31 => "gos_rt_queue_format",
+        32 => "gos_rt_stack_format",
+        _ => return None,
+    })
+}
+
+/// Print plan for a container the MIR types as a bare `i64` handle,
+/// recovered from the constructor that produced `local`. A set's element
+/// kind comes from the constructor or from the inserts against it, the
+/// same evidence the LLVM planner reads.
+fn container_handle_print_kind(body: &Body, local: Local) -> Option<PrintKind> {
+    let mut set_ordered = None;
+    let mut set_symbol = None;
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            if let StatementKind::Assign { place, rvalue } = &stmt.kind
+                && place.local == local
+                && place.projection.is_empty()
+                && let Rvalue::Use(Operand::Copy(src)) = rvalue
+                && src.projection.is_empty()
+                && let Some(kind) = container_handle_print_kind(body, src.local)
+            {
+                return Some(kind);
+            }
+        }
+        let Terminator::Call {
+            callee,
+            args,
+            destination,
+            ..
+        } = &block.terminator
+        else {
+            continue;
+        };
+        let Operand::Const(ConstValue::Str(name)) = callee else {
+            continue;
+        };
+        if destination.local == local && destination.projection.is_empty() {
+            if let Some(sym) = container_ctor_format_symbol(name) {
+                return Some(PrintKind::HandleFormat(sym));
+            }
+            match name.as_str() {
+                "gos_rt_set_new" => set_ordered = Some(0),
+                "gos_rt_btree_set_new" => set_ordered = Some(1),
+                "gos_rt_set_from_vec_i64" => {
+                    set_ordered = Some(0);
+                    set_symbol = Some("gos_rt_set_format_i64");
+                }
+                "gos_rt_set_from_vec_str" => {
+                    set_ordered = Some(0);
+                    set_symbol = Some("gos_rt_set_format_string");
+                }
+                "gos_rt_btree_set_from_vec_i64" => {
+                    set_ordered = Some(1);
+                    set_symbol = Some("gos_rt_set_format_i64");
+                }
+                "gos_rt_btree_set_from_vec_str" => {
+                    set_ordered = Some(1);
+                    set_symbol = Some("gos_rt_set_format_string");
+                }
+                _ => {}
+            }
+        }
+        let receives_local = args.first().is_some_and(|arg| {
+            matches!(arg, Operand::Copy(place) if place.local == local && place.projection.is_empty())
+        });
+        if receives_local {
+            match name.as_str() {
+                "gos_rt_set_insert_i64" => set_symbol = Some("gos_rt_set_format_i64"),
+                "gos_rt_set_insert" => set_symbol = Some("gos_rt_set_format_string"),
+                _ => {}
+            }
+        }
+    }
+    let ordered = set_ordered?;
+    Some(PrintKind::SetFormat(
+        set_symbol.unwrap_or("gos_rt_set_format_string"),
+        ordered,
+    ))
+}
+
+/// Runtime format shim for a container handle a local was constructed by.
+fn container_ctor_format_symbol(ctor: &str) -> Option<&'static str> {
+    Some(match ctor {
+        "gos_rt_deque_new" | "gos_rt_deque_from_vec_i64" => "gos_rt_deque_format",
+        "gos_rt_queue_new" | "gos_rt_queue_from_vec_i64" => "gos_rt_queue_format",
+        "gos_rt_stack_new" | "gos_rt_stack_from_vec_i64" => "gos_rt_stack_format",
+        "gos_rt_bheap_max_new_i64" | "gos_rt_bheap_max_from_vec_i64" => "gos_rt_bheap_max_format",
+        "gos_rt_bheap_min_new_i64" | "gos_rt_bheap_min_from_vec_i64" => "gos_rt_bheap_min_format",
+        _ => return None,
+    })
+}
+
 pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -> PrintKind {
     match operand {
         Operand::Const(ConstValue::Str(_)) => PrintKind::StrPtr,
@@ -387,10 +495,26 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
         Operand::Const(ConstValue::Unit) => PrintKind::Int,
         Operand::Copy(place) => {
             let ty = resolve_place_ty(tcx, body, place);
+            // A container renders through its own runtime shim whether the
+            // local carries the container's type or the bare i64 handle the
+            // constructor returned.
+            if let TyKind::Adt { def, .. } = tcx.kind_of(ty)
+                && let Some(sym) = container_format_symbol(def.local)
+            {
+                return PrintKind::HandleFormat(sym);
+            }
             match tcx.kind_of(ty) {
                 TyKind::Bool => PrintKind::Bool,
                 TyKind::Char => PrintKind::Char,
                 TyKind::Int(int_ty) => {
+                    // A runtime container the MIR types as its bare i64
+                    // handle renders through the container's own shim,
+                    // not as the pointer value.
+                    if place.projection.is_empty()
+                        && let Some(kind) = container_handle_print_kind(body, place.local)
+                    {
+                        return kind;
+                    }
                     // Every ≤64-bit int lives as a signed i64 at
                     // runtime and prints signed - the VM renders
                     // `0u64 - 1` as `-1`. The one exception the VM
@@ -532,6 +656,20 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                             (Some(ok), Some(err)) => PrintKind::Result(ok, err),
                             _ => PrintKind::Unsupported("struct or enum"),
                         }
+                    }
+                }
+                TyKind::Adt { def, substs }
+                    if def.local == u32::MAX - 7 || def.local == u32::MAX - 18 =>
+                {
+                    let ordered = i32::from(def.local == u32::MAX - 18);
+                    match substs.types().first().map(|elem| tcx.kind_of(*elem)) {
+                        Some(TyKind::Int(_)) => {
+                            PrintKind::SetFormat("gos_rt_set_format_i64", ordered)
+                        }
+                        Some(TyKind::String) => {
+                            PrintKind::SetFormat("gos_rt_set_format_string", ordered)
+                        }
+                        _ => PrintKind::Unsupported("set"),
                     }
                 }
                 TyKind::Adt { .. } => PrintKind::Unsupported("struct or enum"),

@@ -904,6 +904,14 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_tuple_cmp" => (&[ptr_ty, ptr_ty, types::I64, ptr_ty], Some(types::I64)),
         "gos_rt_vec_eq" => (&[ptr_ty, ptr_ty, types::I8], Some(types::I8)),
         "gos_rt_map_format" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_set_format_i64" | "gos_rt_set_format_string" => {
+            (&[ptr_ty, types::I32], Some(ptr_ty))
+        }
+        "gos_rt_deque_format"
+        | "gos_rt_queue_format"
+        | "gos_rt_stack_format"
+        | "gos_rt_bheap_max_format"
+        | "gos_rt_bheap_min_format" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_chan_recv_option" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_chan_try_recv_option" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_result_new" => (&[types::I64, types::I64], Some(types::I128)),

@@ -653,6 +653,10 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
             }
+            ConcatKind::HandleFormat(sym) => {
+                declare_rt(&mut self.runtime_refs, sym);
+                writeln!(self.out, "  {dest} = call ptr @{sym}(ptr {value})").unwrap();
+            }
             ConcatKind::SetI64(is_btree) => {
                 declare_rt(&mut self.runtime_refs, "gos_rt_set_format_i64");
                 let ordered = i32::from(is_btree);
@@ -748,7 +752,7 @@ impl<'a> Lowerer<'a> {
     ) -> Result<String, BuildError> {
         match kind {
             ConcatKind::Tuple => self.emit_tuple_format(arg, value),
-            ConcatKind::SetI64(_) | ConcatKind::SetString(_) => {
+            ConcatKind::SetI64(_) | ConcatKind::SetString(_) | ConcatKind::HandleFormat(_) => {
                 let ptr = self.coerce_llvm_value(value, &self.operand_llvm_ty(arg), "ptr");
                 Ok(self.emit_aggregate_format(kind, &ptr))
             }

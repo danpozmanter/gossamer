@@ -4,6 +4,8 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
+use std::ffi::c_char;
+
 use super::*;
 
 // ---------------------------------------------------------------
@@ -174,6 +176,48 @@ pub unsafe extern "C" fn gos_rt_deque_clear(d: *mut GosDeque) {
         }
         unsafe { &mut *d }.inner.clear();
     });
+}
+
+/// Renders `owner [a, b, c]` over the deque's front-to-back order, the
+/// one text form every tier prints for these containers.
+unsafe fn deque_format(d: *const GosDeque, owner: &str) -> *mut c_char {
+    let mut out = String::from(owner);
+    out.push_str(" [");
+    if !d.is_null() {
+        let deque = unsafe { &*d };
+        for (index, value) in deque.inner.iter().enumerate() {
+            if index > 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&crate::builtins::format_int(*value));
+        }
+    }
+    out.push(']');
+    crate::c_abi::string::alloc_cstring(out.as_bytes())
+}
+
+/// Format a `Deque` for `{}` / `{:?}`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_deque_format(d: *const GosDeque) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        unsafe { deque_format(d, "Deque") }
+    })
+}
+
+/// Format a `Queue` for `{}` / `{:?}`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_queue_format(d: *const GosDeque) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        unsafe { deque_format(d, "Queue") }
+    })
+}
+
+/// Format a `Stack` for `{}` / `{:?}`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_stack_format(d: *const GosDeque) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        unsafe { deque_format(d, "Stack") }
+    })
 }
 
 /// Release the deque heap allocation.

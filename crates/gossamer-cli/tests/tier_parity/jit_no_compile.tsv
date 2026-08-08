@@ -81,6 +81,7 @@ feature-testing-examples/comptime_inline_for.gos	bytecode-only local
 feature-testing-examples/comptime_params_validate.gos	admission gate
 feature-testing-examples/comptime_reflection.gos	bytecode-only local
 feature-testing-examples/concurrent_atomic.gos	cross-goroutine
+feature-testing-examples/container_display.gos	bytecode-only local
 feature-testing-examples/context_cancel.gos	no hot body
 feature-testing-examples/cross_module_struct_fields.gos	bytecode-only local
 feature-testing-examples/crypto_aead.gos	no hot body

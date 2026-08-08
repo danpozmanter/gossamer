@@ -552,6 +552,14 @@ impl<'a> Lowerer<'a> {
             Operand::Const(ConstValue::Unit) => ConcatKind::Int,
             Operand::Copy(p) => {
                 let ty = self.unwrap_ref(self.place_leaf_ty(p));
+                // A container renders through its own runtime shim whether
+                // the local carries the container's type or the bare i64
+                // handle the constructor returned.
+                if let Some(TyKind::Adt { def, .. }) = self.tcx.kind(ty)
+                    && let Some(sym) = container_format_symbol(def.local)
+                {
+                    return ConcatKind::HandleFormat(sym);
+                }
                 match self.tcx.kind(ty) {
                     Some(TyKind::Bool) => ConcatKind::Bool,
                     Some(TyKind::Char) => ConcatKind::Char,
@@ -781,6 +789,9 @@ impl<'a> Lowerer<'a> {
                 && let Operand::Const(ConstValue::Str(name)) = callee
             {
                 if destination.local == local && destination.projection.is_empty() {
+                    if let Some(sym) = container_ctor_format_symbol(name.as_str()) {
+                        return Some(ConcatKind::HandleFormat(sym));
+                    }
                     match name.as_str() {
                         "gos_rt_btree_set_new" => {
                             saw_set_ctor = true;
@@ -1354,6 +1365,36 @@ impl<'a> Lowerer<'a> {
 // the registry return type via this one decision so they cannot drift apart.
 pub(crate) fn needs_win64_fat_ret(is_windows: bool, registry_ret: Option<&str>) -> bool {
     is_windows && registry_ret == Some("i128")
+}
+
+/// Runtime format shim for a container handle's sentinel `DefId`:
+/// `Deque` (`u32::MAX - 19`), `MaxHeap` (`- 28`), `MinHeap` (`- 30`),
+/// `Queue` (`- 31`), `Stack` (`- 32`). These containers hold their
+/// elements in the runtime, so one shim per container renders the text
+/// every tier prints.
+pub(crate) fn container_format_symbol(def_local: u32) -> Option<&'static str> {
+    Some(match u32::MAX - def_local {
+        19 => "gos_rt_deque_format",
+        28 => "gos_rt_bheap_max_format",
+        30 => "gos_rt_bheap_min_format",
+        31 => "gos_rt_queue_format",
+        32 => "gos_rt_stack_format",
+        _ => return None,
+    })
+}
+
+/// Runtime format shim for a container handle a local was constructed
+/// by, for the locals the MIR types as a bare `i64` handle rather than
+/// the container's sentinel ADT.
+pub(crate) fn container_ctor_format_symbol(ctor: &str) -> Option<&'static str> {
+    Some(match ctor {
+        "gos_rt_deque_new" | "gos_rt_deque_from_vec_i64" => "gos_rt_deque_format",
+        "gos_rt_queue_new" | "gos_rt_queue_from_vec_i64" => "gos_rt_queue_format",
+        "gos_rt_stack_new" | "gos_rt_stack_from_vec_i64" => "gos_rt_stack_format",
+        "gos_rt_bheap_max_new_i64" | "gos_rt_bheap_max_from_vec_i64" => "gos_rt_bheap_max_format",
+        "gos_rt_bheap_min_new_i64" | "gos_rt_bheap_min_from_vec_i64" => "gos_rt_bheap_min_format",
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

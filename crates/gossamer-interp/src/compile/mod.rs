@@ -344,6 +344,7 @@ pub fn compile_fn(
         tcx,
         &consume::closure_captured_locals(&decl.params, &body.block),
     );
+    let mut pending_cells: Vec<(String, Reg, gossamer_types::Ty)> = Vec::new();
     for (idx, param) in decl.params.iter().enumerate() {
         let reg = builder.alloc_reg();
         if matches!(tcx.kind(param.ty), Some(TyKind::Int(_))) {
@@ -390,12 +391,20 @@ pub fn compile_fn(
             }
         }
         if let HirPatKind::Binding { name, .. } = &param.pattern.kind {
-            let typed = TypedReg {
-                reg,
-                kind: RegKind::Value,
-            };
-            builder.install_capture_cell(&name.name, typed, param.ty);
+            pending_cells.push((name.name.clone(), reg, param.ty));
         }
+    }
+    // Capture cells claim registers of their own, so they are installed
+    // only once every parameter holds its register: the VM fills the
+    // leading `arity` registers with the incoming arguments, and a cell
+    // allocated between two parameters would take the slot the later one
+    // is called with.
+    for (name, reg, ty) in pending_cells {
+        let typed = TypedReg {
+            reg,
+            kind: RegKind::Value,
+        };
+        builder.install_capture_cell(&name, typed, ty);
     }
     let result = builder.compile_block(&body.block)?;
     if matches!(result, BlockResult::ValueIn(_)) {

@@ -38,7 +38,7 @@ pub use checker::{
     typecheck_source_file_with_lazy_iterators,
 };
 pub use context::TyCtxt;
-pub use error::{TypeDiagnostic, TypeError};
+pub use error::{NotDisplayableClass, TypeDiagnostic, TypeError};
 pub use exhaustiveness::{ExhaustivenessDiagnostic, ExhaustivenessError, check_exhaustiveness};
 pub use infer::{InferCtxt, UnifyError};
 pub use printer::{render_public_ty, render_ty};

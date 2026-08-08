@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.45.1 - Handles, containers, and captured parameters
+
+- Reject formatting a value that has no text form. A runtime handle
+  (`http::Client`, `sync::Map`, `bytes::Builder`, `flag::Set`, `io::Stream`,
+  `context::Context`, `metrics::Counter`, `trace::Tracer`, `rand::Rng`,
+  `http::Router`, `http::Response`, `validate::Errors`, a middleware
+  `Handler`), a function or closure value, and a channel endpoint or join
+  handle now report `GT0062` at check time. A native build printed a handle's
+  raw address - a different number on every run of the same binary - while the
+  VM printed a reflective dump of its private fields, and formatting a callable
+  or an endpoint reached the backend as an "internal lowering bug". Each handle
+  carries a named type so the diagnostic names what was formatted and what to
+  print instead.
+- Print `Deque`, `Queue`, `Stack`, `MaxHeap`, and `MinHeap` the same way on
+  every tier. Compiled tiers printed the container's address, or refused the
+  build when the container was bound to a name, and the VM rendered a heap as
+  an internal registry id. All three now render through one runtime shim per
+  container: `Deque [0, 1, 2]`, `MaxHeap [9, 3, 5]`.
+- Render `Set` and `BTreeSet` under the Cranelift JIT, which printed the set's
+  address. String elements print in their Display form on every tier, matching
+  how a sequence of the same elements prints.
+- Resolve a module-qualified built-in type name: `collections::Deque<i64>` in a
+  parameter or return position resolved to nothing, because a built-in name was
+  only recognised as the first segment of a path. A container-typed parameter
+  was therefore untyped, and the compiled tiers passed the handle in a slot the
+  callee read as a pointer, so `fn size(q: collections::Queue<i64>)` returned
+  garbage. Containers and handles now occupy one i64 slot in every position.
+- Fix a closure that captures a `Vec` or slice parameter. The capture's storage
+  claimed a register inside the parameter block, so every parameter declared
+  after the captured one received the wrong argument, or none at all: a
+  function whose closure captured a sequence parameter computed a wrong result,
+  or printed `<void>`, on the bytecode VM while the compiled tiers were
+  correct.
+
 ## 0.45.0 - Pipe placeholder, sound generics, wired stdlib
 
 - Ship associated types and associated constants. A trait declares `type Item`

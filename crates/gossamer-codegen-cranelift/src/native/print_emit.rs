@@ -390,6 +390,16 @@ pub(super) fn emit_per_arg_print(
                 let fref = module.declare_func_in_func(print_str, builder.func);
                 builder.ins().call(fref, &[s]);
             }
+            PrintKind::HandleFormat(symbol) => {
+                let s = emit_handle_format_value(module, builder, value, symbol, intrinsics)?;
+                let fref = module.declare_func_in_func(print_str, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
+            PrintKind::SetFormat(symbol, ordered) => {
+                let s = emit_set_format_value(module, builder, value, symbol, ordered, intrinsics)?;
+                let fref = module.declare_func_in_func(print_str, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
             PrintKind::Option(payload_kind) => {
                 let s = emit_debug_option_value(module, builder, value, payload_kind, intrinsics)?;
                 let fref = module.declare_func_in_func(print_str, builder.func);
@@ -561,6 +571,39 @@ pub(super) fn emit_map_format_value(
     let f = intrinsics.extern_fn_by_name(module, "gos_rt_map_format")?;
     let fref = module.declare_func_in_func(f, builder.func);
     let call = builder.ins().call(fref, &[value]);
+    Ok(builder.inst_results(call)[0])
+}
+
+/// Emits `<sym>(handle)` for a container handle - `Deque` / `Queue` /
+/// `Stack` / `MaxHeap` / `MinHeap` - and returns the rendered string
+/// pointer.
+pub(super) fn emit_handle_format_value(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    value: ir::Value,
+    symbol: &'static str,
+    intrinsics: &mut IntrinsicContext,
+) -> Result<ir::Value> {
+    let f = intrinsics.extern_fn_by_name(module, symbol)?;
+    let fref = module.declare_func_in_func(f, builder.func);
+    let call = builder.ins().call(fref, &[value]);
+    Ok(builder.inst_results(call)[0])
+}
+
+/// Emits `<sym>(set, ordered)` for a `HashSet` / `BTreeSet` handle and
+/// returns the rendered string pointer.
+pub(super) fn emit_set_format_value(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    value: ir::Value,
+    symbol: &'static str,
+    ordered: i32,
+    intrinsics: &mut IntrinsicContext,
+) -> Result<ir::Value> {
+    let f = intrinsics.extern_fn_by_name(module, symbol)?;
+    let fref = module.declare_func_in_func(f, builder.func);
+    let ordered_v = builder.ins().iconst(types::I32, i64::from(ordered));
+    let call = builder.ins().call(fref, &[value, ordered_v]);
     Ok(builder.inst_results(call)[0])
 }
 
@@ -779,6 +822,18 @@ pub(super) fn emit_args_to_concat_string(
             }
             PrintKind::Map => {
                 let s = emit_map_format_value(module, builder, value, intrinsics)?;
+                let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
+            PrintKind::HandleFormat(symbol) => {
+                let s = emit_handle_format_value(module, builder, value, symbol, intrinsics)?;
+                let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
+            PrintKind::SetFormat(symbol, ordered) => {
+                let s = emit_set_format_value(module, builder, value, symbol, ordered, intrinsics)?;
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);
                 builder.ins().call(fref, &[s]);

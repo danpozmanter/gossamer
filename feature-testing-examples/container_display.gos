@@ -1,0 +1,58 @@
+// Container handles render through one runtime shim per container, so
+// `{}` and `{:?}` print the same text on the VM, the JIT, and a native
+// build. The handles the MIR keeps in a bare i64 slot are recognised
+// from their constructor, so an inline `Deque::new()` and a bound one
+// render alike.
+
+use std::collections
+
+fn render(d: collections::Deque<i64>) -> String {
+    format!("{}", d)
+}
+
+fn build_and_render(n: i64) -> String {
+    let mut d = collections::Deque::new()
+    d.push_back(n)
+    let mut s = #{}
+    s.insert(n)
+    format!("{} {}", d, s)
+}
+
+fn main() {
+    let mut d = collections::Deque::new()
+    d.push_back(1)
+    d.push_back(2)
+    d.push_front(0)
+    println!("{} {:?}", d, d)
+
+    let q = collections::Queue::from([3, 4, 5])
+    println!("{} {:?}", q, q)
+
+    let st = collections::Stack::from([6, 7])
+    println!("{} {:?}", st, st)
+
+    let mut mx = collections::MaxHeap::new()
+    mx.push(3)
+    mx.push(9)
+    mx.push(5)
+    println!("{} {:?}", mx, mx)
+
+    let mn = collections::MinHeap::from([9, 2, 7])
+    println!("{} {:?}", mn, mn)
+
+    let ints = #{2, 1}
+    let words = #{"b", "a"}
+    println!("{} {}", ints, words)
+
+    println!("{}", collections::Deque::new())
+    println!("{}", collections::Queue::from([8]))
+    println!("{}", render(d))
+
+    let mut i = 0
+    let mut last = ""
+    while i < 300 {
+        last = build_and_render(i)
+        i += 1
+    }
+    println!("{}", last)
+}

@@ -117,6 +117,7 @@ impl<'tcx> FnBuilder<'tcx> {
         // Declared parameters follow, mirroring `compile_fn`'s param
         // binding: the `&mut Vec<T>` write-back protocol and the
         // typed-storage fast-path tracking both carry over.
+        let mut pending_cells: Vec<(String, Reg, gossamer_types::Ty)> = Vec::new();
         for param in params {
             let reg = b.alloc_reg();
             b.bind_param(&param.pattern, reg)?;
@@ -138,12 +139,20 @@ impl<'tcx> FnBuilder<'tcx> {
                 }
             }
             if let HirPatKind::Binding { name, .. } = &param.pattern.kind {
-                let typed = TypedReg {
-                    reg,
-                    kind: RegKind::Value,
-                };
-                b.install_capture_cell(&name.name, typed, param.ty);
+                pending_cells.push((name.name.clone(), reg, param.ty));
             }
+        }
+        // A cell claims a register of its own, so cells are installed
+        // only once every declared parameter holds its register: the VM
+        // fills the leading `captures ++ args` registers, and a cell
+        // allocated between two parameters would take the slot the later
+        // one is called with.
+        for (name, reg, ty) in pending_cells {
+            let typed = TypedReg {
+                reg,
+                kind: RegKind::Value,
+            };
+            b.install_capture_cell(&name, typed, ty);
         }
         // Upvalues bind after the declared parameters so the arity
         // prefix keeps its `captures ++ args` register layout. A cell

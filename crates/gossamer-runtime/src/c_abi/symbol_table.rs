@@ -184,6 +184,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_bheap_clear as *const u8,
         ),
         (
+            "gos_rt_bheap_max_format",
+            crate::c_abi::gos_rt_bheap_max_format as *const u8,
+        ),
+        (
+            "gos_rt_bheap_min_format",
+            crate::c_abi::gos_rt_bheap_min_format as *const u8,
+        ),
+        (
             "gos_rt_bheap_max_new_i64",
             crate::c_abi::gos_rt_bheap_max_new_i64 as *const u8,
         ),
@@ -390,6 +398,18 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_deque_len",
             crate::c_abi::deque::gos_rt_deque_len as *const u8,
+        ),
+        (
+            "gos_rt_deque_format",
+            crate::c_abi::deque::gos_rt_deque_format as *const u8,
+        ),
+        (
+            "gos_rt_queue_format",
+            crate::c_abi::deque::gos_rt_queue_format as *const u8,
+        ),
+        (
+            "gos_rt_stack_format",
+            crate::c_abi::deque::gos_rt_stack_format as *const u8,
         ),
         (
             "gos_rt_deque_new",
