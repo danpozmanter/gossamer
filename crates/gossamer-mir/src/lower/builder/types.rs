@@ -64,6 +64,7 @@ impl<'a> Builder<'a> {
         fn_inputs: &'a HashMap<gossamer_resolve::DefId, Vec<Ty>>,
         consts: &'a HashMap<gossamer_resolve::DefId, ConstValue>,
         mut_statics: &'a HashMap<gossamer_resolve::DefId, crate::ir::StaticRef>,
+        const_inits: &'a HashMap<gossamer_resolve::DefId, HirExpr>,
         region_unsafe: &'a std::collections::HashSet<gossamer_resolve::DefId>,
     ) -> Self {
         Self {
@@ -85,6 +86,7 @@ impl<'a> Builder<'a> {
             fn_inputs,
             consts,
             mut_statics,
+            const_inits,
             region_unsafe,
             local_struct: HashMap::new(),
             slot_ref_locals: std::collections::HashSet::new(),

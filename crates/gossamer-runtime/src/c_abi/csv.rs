@@ -109,8 +109,8 @@ pub unsafe extern "C" fn gos_rt_csv_read(input: *const c_char) -> i128 {
             let quote_count = line.chars().filter(|&c| c == '"').count();
             if quote_count % 2 != 0 {
                 let msg = format!("csv: unterminated quoted field in: {line}");
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 return unsafe { gos_rt_result_new(1, err as i64) };
             }
             rows.push(parse_line(line));

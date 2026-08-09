@@ -352,9 +352,8 @@ pub unsafe extern "C" fn gos_rt_io_pipe() -> *mut i64 {
 pub unsafe extern "C" fn gos_rt_io_copy_n(dst: i64, src: i64, n: i64) -> i128 {
     ffi_entry!(unsafe { gos_rt_result_new(1, 0) }, {
         if n < 0 {
-            let cs = std::ffi::CString::new("io::copy_n: negative byte count")
-                .expect("static is NUL-free");
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring(b"io::copy_n: negative byte count");
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         unsafe { gos_rt_result_new(0, copy_n(dst, src, n)) }

@@ -103,8 +103,8 @@ fn dispatch(env_addr: usize, fn_addr: usize, req: H3Request) -> H3Response {
 /// the bind-failure value `gos_rt_http3_serve` hands back to the
 /// caller's `Result<(), http::Error>` match.
 fn http3_serve_err_result(msg: &str) -> i128 {
-    let cs = std::ffi::CString::new(msg).unwrap_or_default();
-    let err = unsafe { super::errors::gos_rt_error_new(cs.as_ptr()) };
+    let cs = super::string::alloc_cstring(msg.as_bytes());
+    let err = unsafe { super::errors::gos_rt_error_new(cs) };
     super::vec::pack_result(1, err as i64)
 }
 

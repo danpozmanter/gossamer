@@ -262,8 +262,8 @@ pub unsafe extern "C" fn gos_rt_strconv_format_bool(b: i32) -> *mut c_char {
 
 /// Packs an `Err(errors::Error)` result carrying `msg`.
 unsafe fn strconv_err(msg: &str) -> i128 {
-    let cs = std::ffi::CString::new(msg).unwrap_or_default();
-    let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+    let cs = alloc_cstring(msg.as_bytes());
+    let err = unsafe { gos_rt_error_new(cs) };
     unsafe { gos_rt_result_new(1, err as i64) }
 }
 

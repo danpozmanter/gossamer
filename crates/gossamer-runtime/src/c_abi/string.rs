@@ -928,8 +928,8 @@ pub unsafe extern "C" fn gos_rt_string_from_utf8(bytes: *const GosVec) -> i128 {
             Ok(_) => unsafe { gos_rt_result_new(0, alloc_cstring_from_slices(&[&out]) as i64) },
             Err(e) => {
                 let msg = format!("String::from_utf8: {e}");
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
         }
@@ -1984,8 +1984,8 @@ pub unsafe extern "C" fn gos_rt_str_slice(s: *const c_char, start: i64, end: i64
             };
             let msg =
                 format!("slice: range [{start}, {end}) out of bounds for length {display_len}");
-            let cs = std::ffi::CString::new(msg).unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring(msg.as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let bytes: &[u8] = if s.is_null() {
@@ -2305,8 +2305,8 @@ pub unsafe extern "C" fn gos_rt_parse_i64(s: *const c_char, ok_out: *mut i32) ->
 pub unsafe extern "C" fn gos_rt_parse_i64_result(s: *const c_char) -> i128 {
     ffi_entry!(0i128, {
         if s.is_null() {
-            let cs = std::ffi::CString::new("parse: null input").unwrap();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring(b"parse: null input");
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let text = unsafe { gos_str_arg_text(s) }.trim();
@@ -2317,8 +2317,8 @@ pub unsafe extern "C" fn gos_rt_parse_i64_result(s: *const c_char) -> i128 {
                 "unexpected byte 0x{:x} at 1:1",
                 text.as_bytes().first().copied().unwrap_or(0)
             );
-            let cs = std::ffi::CString::new(msg).unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring(msg.as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             unsafe { gos_rt_result_new(1, err as i64) }
         }
     })

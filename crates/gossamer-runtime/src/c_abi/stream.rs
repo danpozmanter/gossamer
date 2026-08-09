@@ -15,7 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CString;
 use std::io::{BufRead, Read};
 use std::os::raw::c_char;
 
@@ -119,9 +118,8 @@ pub unsafe extern "C" fn gos_rt_io_read_all(reader: *const GosStream) -> i128 {
 }
 
 fn read_all_error(message: String) -> i128 {
-    let msg = CString::new(format!("io::ReadAll: {message}"))
-        .unwrap_or_else(|_| c"io::ReadAll failed".to_owned());
-    let err = unsafe { gos_rt_error_new(msg.as_ptr()) };
+    let msg = alloc_cstring(format!("io::ReadAll: {message}").as_bytes());
+    let err = unsafe { gos_rt_error_new(msg) };
     unsafe { gos_rt_result_new(1, err as i64) }
 }
 
@@ -307,8 +305,8 @@ pub unsafe extern "C" fn gos_rt_stream_flush(stream: *const GosStream) {
 }
 
 fn stream_read_line_err(message: &str) -> i128 {
-    let msg = CString::new(message).unwrap_or_else(|_| c"read_line failed".to_owned());
-    let err = unsafe { gos_rt_error_new(msg.as_ptr()) };
+    let msg = alloc_cstring(message.as_bytes());
+    let err = unsafe { gos_rt_error_new(msg) };
     gos_rt_result_new(1, err as i64)
 }
 

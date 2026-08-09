@@ -40,9 +40,8 @@ fn header_lookup(req: &GosHttpRequest, name: &str) -> Option<String> {
 /// Packs an `Err(errors::Error)` Result with the given message,
 /// matching the interp tier's handshake error strings.
 fn handshake_err(msg: &str) -> i128 {
-    let cs = std::ffi::CString::new(msg)
-        .unwrap_or_else(|_| std::ffi::CString::new("handshake error").expect("static is NUL-free"));
-    let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+    let cs = alloc_cstring(msg.as_bytes());
+    let err = unsafe { gos_rt_error_new(cs) };
     crate::c_abi::vec::pack_result(1, err as i64)
 }
 

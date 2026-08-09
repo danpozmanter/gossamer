@@ -742,8 +742,8 @@ pub unsafe extern "C" fn gos_rt_vec_swap_safe(v: *mut GosVec, i: i64, j: i64) ->
         let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
         if v.is_null() || i < 0 || i >= len || j < 0 || j >= len {
             let msg = format!("swap: indices {i} and {j} out of bounds for length {len}");
-            let cs = std::ffi::CString::new(msg).unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring(msg.as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         unsafe { gos_rt_vec_swap_i64(v, i, j) };
@@ -1122,8 +1122,8 @@ pub unsafe extern "C" fn gos_rt_vec_slice_result(v: *const GosVec, start: i64, e
         let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
         if start < 0 || end < 0 || start > end || end > len {
             let msg = format!("slice: range [{start}, {end}) out of bounds for length {len}");
-            let cs = std::ffi::CString::new(msg).unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring(msg.as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let out = unsafe { gos_rt_vec_slice(v, start, end) };
@@ -1150,8 +1150,8 @@ pub unsafe extern "C" fn gos_rt_intarr_slice_result(
     ffi_entry!(0i128, {
         if p.is_null() || start < 0 || end < 0 || start > end || end > len {
             let msg = format!("slice: range [{start}, {end}) out of bounds for length {len}");
-            let cs = std::ffi::CString::new(msg).unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring(msg.as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let count = end - start;
@@ -1188,8 +1188,8 @@ pub unsafe extern "C" fn gos_rt_bytearr_slice_result(
     ffi_entry!(0i128, {
         if p.is_null() || start < 0 || end < 0 || start > end || end > len {
             let msg = format!("slice: range [{start}, {end}) out of bounds for length {len}");
-            let cs = std::ffi::CString::new(msg).unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring(msg.as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let count = end - start;
@@ -1217,8 +1217,8 @@ pub unsafe extern "C" fn gos_rt_packed_bytearr_slice_result(
     ffi_entry!(0i128, {
         if p.is_null() || start < 0 || end < 0 || start > end || end > len {
             let msg = format!("slice: range [{start}, {end}) out of bounds for length {len}");
-            let cs = std::ffi::CString::new(msg).unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring(msg.as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let count = end - start;
@@ -1248,8 +1248,8 @@ pub unsafe extern "C" fn gos_rt_floatarr_slice_result(
     ffi_entry!(0i128, {
         if p.is_null() || start < 0 || end < 0 || start > end || end > len {
             let msg = format!("slice: range [{start}, {end}) out of bounds for length {len}");
-            let cs = std::ffi::CString::new(msg).unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring(msg.as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let count = end - start;
@@ -1274,8 +1274,8 @@ pub unsafe extern "C" fn gos_rt_vec_insert_safe(v: *mut GosVec, idx: i64, value:
         let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
         if idx < 0 || idx > len {
             let msg = format!("insert: index {idx} out of bounds for length {len}");
-            let cs = std::ffi::CString::new(msg).unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring(msg.as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         unsafe { gos_rt_vec_insert_at(v, idx, value) };
@@ -1291,8 +1291,11 @@ pub unsafe extern "C" fn gos_rt_vec_insert_at(v: *mut GosVec, idx: i64, value: i
         let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
         if v.is_null() || idx < 0 || idx > len {
             let msg = format!("insert: index {idx} out of bounds for length {len}");
-            let cs = std::ffi::CString::new(msg).unwrap_or_default();
-            unsafe { gos_rt_panic(cs.as_ptr()) };
+            // `gos_rt_panic` reads the length header a Gossamer string carries
+            // ahead of its pointer, so the message is allocated through the
+            // runtime's own allocator rather than as a bare `CString`.
+            let cs = alloc_cstring(msg.as_bytes());
+            unsafe { gos_rt_panic(cs) };
             return;
         }
         // Grow by one (handling region/global reallocation) with the new
@@ -1318,8 +1321,8 @@ pub unsafe extern "C" fn gos_rt_vec_remove_safe(v: *mut GosVec, idx: i64) -> i12
         let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
         if v.is_null() || idx < 0 || idx >= len {
             let msg = format!("remove: index {idx} out of bounds for length {len}");
-            let cs = std::ffi::CString::new(msg).unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring(msg.as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let vec = unsafe { &mut *v };
@@ -1349,8 +1352,11 @@ pub unsafe extern "C" fn gos_rt_vec_remove_at(v: *mut GosVec, idx: i64) -> i64 {
         let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
         if v.is_null() || idx < 0 || idx >= len {
             let msg = format!("remove: index {idx} out of bounds for length {len}");
-            let cs = std::ffi::CString::new(msg).unwrap_or_default();
-            unsafe { gos_rt_panic(cs.as_ptr()) };
+            // `gos_rt_panic` reads the length header a Gossamer string carries
+            // ahead of its pointer, so the message is allocated through the
+            // runtime's own allocator rather than as a bare `CString`.
+            let cs = alloc_cstring(msg.as_bytes());
+            unsafe { gos_rt_panic(cs) };
             return 0;
         }
         let vec = unsafe { &mut *v };

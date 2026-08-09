@@ -115,6 +115,72 @@ fn main() {
 }
 
 #[test]
+fn const_vec_string_contains_reads_the_real_vector_across_tiers() {
+    // A top-level `const` whose initializer is heap-typed (`Vec<String>`
+    // here) has no `ConstValue` representation, so `consts.get(def)` found
+    // nothing and every reference fell through to the `FnRef` fallback -
+    // treating the const like a named function and handing its bogus
+    // pointer to `gos_rt_vec_contains_str` as the receiver. `contains`
+    // silently returned `false` for a value that was present, only in the
+    // compiled tiers (the VM resolves globals through a separate path).
+    // Fix: a path resolving to such a const now re-lowers its declaration
+    // expression at the reference site instead of falling to `FnRef`.
+    let src = r#"
+const GOOS: Vec<String> = Vec::from(["linux", "darwin"])
+
+fn is_goos(s: &String) -> bool {
+    GOOS.contains(s)
+}
+
+fn check() -> bool {
+    let v = Vec::from(["bandwidth", "linux"])
+    let last = &v[v.len() - 1]
+    let found = is_goos(last)
+    let mut sum = 0
+    for i in 0..v.len() {
+        sum = sum + i
+    }
+    found
+}
+
+fn main() {
+    println!("detected: {}", check())
+}
+"#;
+    let expected = "detected: true\n";
+    let dir = fresh_dir("const_vec_string_contains");
+    let path = write_source(&dir, "const_vec_string_contains", src);
+
+    let vm = run_vm(&path);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, expected);
+
+    // `check` statically contains a loop, so the in-process JIT eagerly
+    // promotes it on its first call without needing `GOS_JIT_ONLY`.
+    let jit = Command::new(gos_bin())
+        .arg("run")
+        .arg(&path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn jit run");
+    let jit = run_with_timeout(jit);
+    assert_eq!(jit.2, Some(0), "jit stderr: {}", jit.1);
+    assert_eq!(jit.0, expected);
+
+    for release in [false, true] {
+        let scratch = dir.join(if release { "release" } else { "debug" });
+        fs::create_dir_all(&scratch).unwrap();
+        let bin = build_native_with_flag(&path, &scratch, release).expect("native build");
+        let native = run_native(&bin);
+        assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+        assert_eq!(native.0, expected);
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn explicit_wrapping_integer_methods_match_across_tiers() {
     let src = r"
 fn main() {

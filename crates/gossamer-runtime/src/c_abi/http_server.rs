@@ -210,8 +210,8 @@ const RESPONSE_503_BYTES: &[u8] =
 /// `gos_rt_http2_bind_and_run_h2c` hand back to the caller's
 /// `Result<(), http::Error>` match.
 fn http_serve_err_result(msg: &str) -> i128 {
-    let cs = std::ffi::CString::new(msg).unwrap_or_default();
-    let err = unsafe { super::errors::gos_rt_error_new(cs.as_ptr()) };
+    let cs = alloc_cstring(msg.as_bytes());
+    let err = unsafe { super::errors::gos_rt_error_new(cs) };
     super::vec::pack_result(1, err as i64)
 }
 

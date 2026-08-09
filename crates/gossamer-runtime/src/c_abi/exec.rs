@@ -47,15 +47,14 @@ pub unsafe extern "C" fn gos_rt_exec_pipeline_run(commands: *mut GosVec) -> i128
         let stages = match unsafe { gather_command_lines(commands) } {
             Ok(s) => s,
             Err(msg) => {
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 return unsafe { gos_rt_result_new(1, err as i64) };
             }
         };
         if stages.is_empty() {
-            let cs =
-                std::ffi::CString::new("exec::pipeline_run: empty pipeline").unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring(b"exec::pipeline_run: empty pipeline");
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         match crate::sched_global::run_blocking("exec-pipeline", move || run_pipeline(stages)) {
@@ -66,8 +65,8 @@ pub unsafe extern "C" fn gos_rt_exec_pipeline_run(commands: *mut GosVec) -> i128
                 unsafe { gos_rt_result_new(0, blob as i64) }
             }
             Ok(Err(msg)) | Err(msg) => {
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
         }
@@ -547,8 +546,8 @@ fn argv_strings(args: *mut GosVec) -> Vec<String> {
 }
 
 fn err_result(msg: String) -> i128 {
-    let cs = std::ffi::CString::new(msg).unwrap_or_default();
-    let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+    let cs = alloc_cstring(msg.as_bytes());
+    let err = unsafe { gos_rt_error_new(cs) };
     unsafe { gos_rt_result_new(1, err as i64) }
 }
 

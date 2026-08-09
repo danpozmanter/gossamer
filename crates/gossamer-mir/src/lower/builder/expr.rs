@@ -731,6 +731,20 @@ impl<'a> Builder<'a> {
             );
             return Some(local);
         }
+        // A `const` / immutable `static` whose initializer is heap-typed
+        // (`Vec`, `Map`, `Set`, an aggregate) has no `ConstValue`
+        // representation, so it never reaches `self.consts` below. Re-lower
+        // its declaration expression at this reference site - the same
+        // "instantiated afresh per use" semantics a scalar const gets via
+        // `Operand::Const` - instead of falling through to the `FnRef` arm,
+        // which misreads the heap value as a function pointer and hands
+        // native/JIT code a bogus data pointer.
+        if let Some(def) = def
+            && self.consts.get(&def).is_none()
+            && let Some(init) = self.const_inits.get(&def).cloned()
+        {
+            return self.lower_expr(&init);
+        }
         // When the typechecker leaves a path-expr's type as `Var(_)`
         // - common for paths that resolve to `const` / `static`
         // items because the const-value pass runs after typeck -

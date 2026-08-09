@@ -392,8 +392,8 @@ pub unsafe extern "C" fn gos_rt_os_cwd() -> i128 {
             }
             Err(e) => {
                 let msg = format!("cwd: {e}");
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
         }
@@ -616,13 +616,13 @@ pub unsafe extern "C" fn gos_rt_fs_list_dir(path: *const c_char) -> i128 {
             Ok(Ok(entries)) => dir_infos_result(entries),
             Ok(Err(e)) => {
                 let msg = format!("list_dir: {e}");
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
             Err(e) => {
-                let cs = std::ffi::CString::new(e).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(e.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
         }
@@ -667,8 +667,8 @@ pub unsafe extern "C" fn gos_rt_fs_walk_dir(path: *const c_char, env: *const u8)
             Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
             Ok(Err(payload)) => unsafe { gos_rt_result_new(1, payload) },
             Err(e) => {
-                let cs = std::ffi::CString::new(format!("{e}")).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(format!("{e}").as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
         }
@@ -753,8 +753,8 @@ pub unsafe extern "C" fn gos_rt_os_file_size(path: *const c_char) -> i64 {
 pub unsafe extern "C" fn gos_rt_fs_metadata(path: *const c_char) -> i128 {
     ffi_entry!(0i128, {
         if path.is_null() {
-            let cs = std::ffi::CString::new("fs::metadata: null path").unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring("fs::metadata: null path".as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
@@ -765,8 +765,8 @@ pub unsafe extern "C" fn gos_rt_fs_metadata(path: *const c_char) -> i128 {
             }
             Err(e) => {
                 let msg = format!("fs::metadata({p}): {e}");
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
         }
@@ -783,8 +783,8 @@ pub unsafe extern "C" fn gos_rt_fs_metadata(path: *const c_char) -> i128 {
 pub unsafe extern "C" fn gos_rt_fs_metadata_raw(path: *const c_char) -> i128 {
     ffi_entry!(0i128, {
         if path.is_null() {
-            let cs = std::ffi::CString::new("fs::metadata: null path").unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring("fs::metadata: null path".as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
@@ -797,9 +797,8 @@ pub unsafe extern "C" fn gos_rt_fs_metadata_raw(path: *const c_char) -> i128 {
                     .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
                 let blob = crate::c_abi::gos_rt_gc_alloc(48) as *mut i64;
                 if blob.is_null() {
-                    let cs =
-                        std::ffi::CString::new("fs::metadata: alloc failed").unwrap_or_default();
-                    let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                    let cs = alloc_cstring("fs::metadata: alloc failed".as_bytes());
+                    let err = unsafe { gos_rt_error_new(cs) };
                     return unsafe { gos_rt_result_new(1, err as i64) };
                 }
                 unsafe {
@@ -814,8 +813,8 @@ pub unsafe extern "C" fn gos_rt_fs_metadata_raw(path: *const c_char) -> i128 {
             }
             Err(e) => {
                 let msg = format!("fs::metadata({p}): {e}");
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
         }
@@ -846,8 +845,8 @@ pub unsafe extern "C" fn gos_rt_fs_metadata_raw(path: *const c_char) -> i128 {
 pub unsafe extern "C" fn gos_rt_exec_run(prog: *const c_char, args: *mut GosVec) -> i128 {
     ffi_entry!(0i128, {
         let prog_str = if prog.is_null() {
-            let cs = std::ffi::CString::new("exec::run: program is null").unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring("exec::run: program is null".as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         } else {
             unsafe { crate::c_abi::gos_str_arg_string(prog) }
@@ -898,14 +897,14 @@ pub unsafe extern "C" fn gos_rt_exec_run(prog: *const c_char, args: *mut GosVec)
             }
             Ok(Err(e)) => {
                 let msg = format!("exec::run({display_prog}): {e}");
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
             Err(e) => {
                 let msg = format!("exec::run({display_prog}): {e}");
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
         }

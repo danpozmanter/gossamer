@@ -888,9 +888,8 @@ pub unsafe extern "C" fn gos_rt_static_serve_file(path: *const c_char) -> i128 {
                 )
             }
             Err(e) => {
-                let cs = std::ffi::CString::new(format!("{e}"))
-                    .unwrap_or_else(|_| std::ffi::CString::new("read error").expect("NUL-free"));
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(format!("{e}").as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 crate::c_abi::vec::pack_result(1, err as i64)
             }
         }

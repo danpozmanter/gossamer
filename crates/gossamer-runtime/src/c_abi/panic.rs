@@ -216,10 +216,11 @@ pub unsafe extern "C" fn gos_rt_panic_oob(what: *const c_char, idx: i64, len: i6
         unsafe { crate::c_abi::gos_str_arg_string(what) }
     };
     let msg = format!("{label} out of bounds: the len is {len} but the index is {idx}");
-    let cmsg = std::ffi::CString::new(msg).unwrap_or_else(|_| {
-        std::ffi::CString::new("array index out of bounds").unwrap_or_default()
-    });
-    unsafe { gos_rt_panic(cmsg.as_ptr()) };
+    // `gos_rt_panic` reads the length header a Gossamer string carries
+    // ahead of its pointer, so the message is allocated through the
+    // runtime's own allocator rather than as a bare `CString`.
+    let cmsg = alloc_cstring(msg.as_bytes());
+    unsafe { gos_rt_panic(cmsg) };
     // `gos_rt_panic` calls `std::process::abort`, so this is
     // unreachable. The explicit `abort` keeps the `-> !` return
     // type honest if `gos_rt_panic` is ever changed to unwind.

@@ -1338,12 +1338,15 @@ pub(crate) fn alloc_vec_buffer(bytes: usize) -> *mut u8 {
 #[inline]
 fn checked_buffer_bytes(count: usize, elem_bytes: usize) -> usize {
     count.checked_mul(elem_bytes).unwrap_or_else(|| {
-        let cs = std::ffi::CString::new("capacity overflow").unwrap_or_default();
+        // `gos_rt_panic` reads the length header a Gossamer string carries
+        // ahead of its pointer, so the message is allocated through the
+        // runtime's own allocator rather than as a bare `CString`.
+        let cs = super::string::alloc_cstring(b"capacity overflow");
         // SAFETY: `cs` is a valid NUL-terminated C string for the call's
         // duration; `gos_rt_panic` reads it and does not retain the pointer.
         // It exits the process (main goroutine) or unwinds (spawned
         // goroutine); this arm never returns.
-        unsafe { gos_rt_panic(cs.as_ptr()) };
+        unsafe { gos_rt_panic(cs) };
         0
     })
 }
@@ -2230,8 +2233,11 @@ pub extern "C" fn gos_rt_debug_result_fmt(
 pub unsafe extern "C" fn gos_rt_result_unwrap(r: i128) -> i64 {
     ffi_entry!(-1, {
         if result_disc_of(r) != 0 {
-            let cs = std::ffi::CString::new("called `Result::unwrap()` on an `Err` value").unwrap();
-            unsafe { gos_rt_panic(cs.as_ptr()) };
+            // `gos_rt_panic` reads the length header a Gossamer string carries
+            // ahead of its pointer, so the message is allocated through the
+            // runtime's own allocator rather than as a bare `CString`.
+            let cs = super::string::alloc_cstring(b"called `Result::unwrap()` on an `Err` value");
+            unsafe { gos_rt_panic(cs) };
             return 0;
         }
         result_payload_of(r)

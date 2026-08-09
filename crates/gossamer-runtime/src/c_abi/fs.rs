@@ -98,8 +98,8 @@ fn apply_open_options(opts: &GosOpenOptions) -> std::fs::OpenOptions {
 }
 
 fn fs_err(msg: &str) -> i128 {
-    let cs = std::ffi::CString::new(msg).unwrap_or_default();
-    let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+    let cs = alloc_cstring(msg.as_bytes());
+    let err = unsafe { gos_rt_error_new(cs) };
     unsafe { gos_rt_result_new(1, err as i64) }
 }
 
@@ -168,8 +168,8 @@ pub unsafe extern "C" fn gos_rt_fs_read_to_string(path: *const c_char) -> *mut c
 pub unsafe extern "C" fn gos_rt_fs_read_to_string_result(path: *const c_char) -> i128 {
     ffi_entry!(0i128, {
         if path.is_null() {
-            let cs = std::ffi::CString::new("read_to_string: null path").unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring("read_to_string: null path".as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
@@ -183,8 +183,8 @@ pub unsafe extern "C" fn gos_rt_fs_read_to_string_result(path: *const c_char) ->
             }
             Ok(Err(e)) => {
                 let msg = classify_io_error(&e, &context);
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
             Err(e) => fs_err(&e),
@@ -502,8 +502,8 @@ pub unsafe extern "C" fn gos_rt_os_write_file_result(
 ) -> i128 {
     ffi_entry!(0i128, {
         if path.is_null() || contents.is_null() {
-            let cs = std::ffi::CString::new("write_file: null arg").unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring("write_file: null arg".as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
@@ -513,8 +513,8 @@ pub unsafe extern "C" fn gos_rt_os_write_file_result(
             Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
             Ok(Err(e)) => {
                 let msg = classify_io_error(&e, &context);
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
             Err(e) => fs_err(&e),
@@ -534,8 +534,8 @@ pub unsafe extern "C" fn gos_rt_os_write_file_bytes_result(
 ) -> i128 {
     ffi_entry!(0i128, {
         if path.is_null() || contents.is_null() {
-            let cs = std::ffi::CString::new("write_file: null arg").unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring("write_file: null arg".as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
@@ -569,8 +569,8 @@ pub unsafe extern "C" fn gos_rt_os_write_file_bytes_result(
             Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
             Ok(Err(e)) => {
                 let msg = classify_io_error(&e, &context);
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
             Err(e) => fs_err(&e),
@@ -588,8 +588,8 @@ pub unsafe extern "C" fn gos_rt_os_write_file_bytes_result(
 pub unsafe extern "C" fn gos_rt_fs_read_bytes_result(path: *const c_char) -> i128 {
     ffi_entry!(0i128, {
         if path.is_null() {
-            let cs = std::ffi::CString::new("read_file: null path").unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring("read_file: null path".as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
@@ -615,8 +615,8 @@ pub unsafe extern "C" fn gos_rt_fs_read_bytes_result(path: *const c_char) -> i12
             }
             Ok(Err(e)) => {
                 let msg = classify_io_error(&e, &context);
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
             Err(e) => fs_err(&e),
@@ -630,8 +630,8 @@ pub unsafe extern "C" fn gos_rt_fs_read_bytes_result(path: *const c_char) -> i12
 pub unsafe extern "C" fn gos_rt_os_mkdir_all_result(path: *const c_char) -> i128 {
     ffi_entry!(0i128, {
         if path.is_null() {
-            let cs = std::ffi::CString::new("mkdir_all: null path").unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring("mkdir_all: null path".as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
@@ -641,8 +641,8 @@ pub unsafe extern "C" fn gos_rt_os_mkdir_all_result(path: *const c_char) -> i128
             Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
             Ok(Err(e)) => {
                 let msg = classify_io_error(&e, &context);
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
             Err(e) => fs_err(&e),
@@ -655,8 +655,8 @@ pub unsafe extern "C" fn gos_rt_os_mkdir_all_result(path: *const c_char) -> i128
 pub unsafe extern "C" fn gos_rt_os_remove_dir_all_result(path: *const c_char) -> i128 {
     ffi_entry!(0i128, {
         if path.is_null() {
-            let cs = std::ffi::CString::new("remove_all: null path").unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring("remove_all: null path".as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
@@ -667,8 +667,8 @@ pub unsafe extern "C" fn gos_rt_os_remove_dir_all_result(path: *const c_char) ->
             Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
             Ok(Err(e)) => {
                 let msg = classify_io_error(&e, &context);
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
             Err(e) => fs_err(&e),
@@ -684,8 +684,8 @@ pub unsafe extern "C" fn gos_rt_os_remove_dir_all_result(path: *const c_char) ->
 pub unsafe extern "C" fn gos_rt_fs_create_dir(path: *const c_char) -> i128 {
     ffi_entry!(0i128, {
         if path.is_null() {
-            let cs = std::ffi::CString::new("create_dir: null path").unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring("create_dir: null path".as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
@@ -694,8 +694,8 @@ pub unsafe extern "C" fn gos_rt_fs_create_dir(path: *const c_char) -> i128 {
             Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
             Ok(Err(e)) => {
                 let msg = classify_io_error(&e, &context);
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
             Err(e) => fs_err(&e),
@@ -712,8 +712,8 @@ pub unsafe extern "C" fn gos_rt_fs_create_dir(path: *const c_char) -> i128 {
 pub unsafe extern "C" fn gos_rt_fs_remove_dir(path: *const c_char) -> i128 {
     ffi_entry!(0i128, {
         if path.is_null() {
-            let cs = std::ffi::CString::new("remove_dir: null path").unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring("remove_dir: null path".as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
@@ -722,8 +722,8 @@ pub unsafe extern "C" fn gos_rt_fs_remove_dir(path: *const c_char) -> i128 {
             Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
             Ok(Err(e)) => {
                 let msg = classify_io_error(&e, &context);
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
             Err(e) => fs_err(&e),
@@ -736,8 +736,8 @@ pub unsafe extern "C" fn gos_rt_fs_remove_dir(path: *const c_char) -> i128 {
 pub unsafe extern "C" fn gos_rt_os_remove_file_result(path: *const c_char) -> i128 {
     ffi_entry!(0i128, {
         if path.is_null() {
-            let cs = std::ffi::CString::new("remove_file: null path").unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring("remove_file: null path".as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
@@ -746,8 +746,8 @@ pub unsafe extern "C" fn gos_rt_os_remove_file_result(path: *const c_char) -> i1
             Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
             Ok(Err(e)) => {
                 let msg = classify_io_error(&e, &context);
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
             Err(e) => fs_err(&e),
@@ -760,8 +760,8 @@ pub unsafe extern "C" fn gos_rt_os_remove_file_result(path: *const c_char) -> i1
 pub unsafe extern "C" fn gos_rt_fs_rename(from: *const c_char, to: *const c_char) -> i128 {
     ffi_entry!(0i128, {
         if from.is_null() || to.is_null() {
-            let cs = std::ffi::CString::new("rename: null path").unwrap_or_default();
-            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            let cs = alloc_cstring("rename: null path".as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let f = unsafe { crate::c_abi::gos_str_arg_string(from) };
@@ -771,8 +771,8 @@ pub unsafe extern "C" fn gos_rt_fs_rename(from: *const c_char, to: *const c_char
             Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
             Ok(Err(e)) => {
                 let msg = classify_io_error(&e, &context);
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
             Err(e) => fs_err(&e),
@@ -796,8 +796,8 @@ pub unsafe extern "C" fn gos_rt_env_set_current_dir(path: *const c_char) -> i128
             Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
             Ok(Err(e)) => {
                 let msg = classify_io_error(&e, &context);
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
             Err(e) => fs_err(&e),
@@ -1143,8 +1143,8 @@ pub unsafe extern "C" fn gos_rt_fs_copy(src: *const c_char, dst: *const c_char) 
             Ok(Ok(n)) => unsafe { gos_rt_result_new(0, i64::try_from(n).unwrap_or(i64::MAX)) },
             Ok(Err(e)) => {
                 let msg = classify_io_error(&e, &context);
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
             Err(e) => fs_err(&e),
@@ -1171,8 +1171,8 @@ pub unsafe extern "C" fn gos_rt_fs_canonicalize(path: *const c_char) -> i128 {
             }
             Ok(Err(e)) => {
                 let msg = classify_io_error(&e, &context);
-                let cs = std::ffi::CString::new(msg).unwrap_or_default();
-                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                let cs = alloc_cstring(msg.as_bytes());
+                let err = unsafe { gos_rt_error_new(cs) };
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
             Err(e) => fs_err(&e),
@@ -1204,8 +1204,8 @@ fn alloc_plain_str_vec(parts: &[String]) -> *mut GosVec {
 }
 
 fn err_io(e: &std::io::Error) -> i128 {
-    let cs = std::ffi::CString::new(format!("{e}")).unwrap_or_default();
-    let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+    let cs = alloc_cstring(format!("{e}").as_bytes());
+    let err = unsafe { gos_rt_error_new(cs) };
     unsafe { gos_rt_result_new(1, err as i64) }
 }
 

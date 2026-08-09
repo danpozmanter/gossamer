@@ -69,10 +69,8 @@ fn cstr_to_str<'a>(s: *const c_char) -> &'a str {
 }
 
 fn err_result(msg: &str) -> i128 {
-    let cs = std::ffi::CString::new(msg).unwrap_or_default();
-    // SAFETY: `cs` is a valid null-terminated c-string for the
-    // duration of the `gos_rt_error_new` call.
-    let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+    let cs = alloc_cstring(msg.as_bytes());
+    let err = unsafe { gos_rt_error_new(cs) };
     unsafe { super::vec::gos_rt_result_new(1, err as i64) }
 }
 

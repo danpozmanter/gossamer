@@ -49,8 +49,8 @@ fn str_vec(items: &[String]) -> *mut GosVec {
 }
 
 fn err(msg: &str) -> i128 {
-    let cs = std::ffi::CString::new(msg).unwrap_or_default();
-    let e = unsafe { super::errors::gos_rt_error_new(cs.as_ptr()) };
+    let cs = alloc_cstring(msg.as_bytes());
+    let e = unsafe { super::errors::gos_rt_error_new(cs) };
     unsafe { gos_rt_result_new(1, e as i64) }
 }
 

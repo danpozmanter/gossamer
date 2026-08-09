@@ -179,10 +179,9 @@ fn nibble_char(n: u8) -> char {
     }
 }
 
-fn crypto_err(msg: &str, fallback: &str) -> i128 {
-    let cs = std::ffi::CString::new(msg)
-        .unwrap_or_else(|_| std::ffi::CString::new(fallback).expect("static"));
-    let err = unsafe { super::errors::gos_rt_error_new(cs.as_ptr()) };
+fn crypto_err(msg: &str) -> i128 {
+    let cs = super::string::alloc_cstring(msg.as_bytes());
+    let err = unsafe { super::errors::gos_rt_error_new(cs) };
     super::vec::gos_rt_result_new(1, err as i64)
 }
 
@@ -190,10 +189,7 @@ fn crypto_err(msg: &str, fallback: &str) -> i128 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_crypto_rand_bytes(n: i64) -> i128 {
     if n < 0 {
-        return crypto_err(
-            "crypto::rand::bytes: count must be non-negative",
-            "crypto::rand error",
-        );
+        return crypto_err("crypto::rand::bytes: count must be non-negative");
     }
     let len = n;
     let v = unsafe { super::vec::gos_rt_vec_with_capacity(1, len) };
@@ -208,7 +204,7 @@ pub unsafe extern "C" fn gos_rt_crypto_rand_bytes(n: i64) -> i128 {
     if !vref.ptr.is_null() {
         let slice = unsafe { std::slice::from_raw_parts_mut(vref.ptr.as_ptr(), len as usize) };
         if getrandom::fill(slice).is_err() {
-            return crypto_err("crypto::rand: rng failure", "crypto::rand error");
+            return crypto_err("crypto::rand: rng failure");
         }
     }
     vref.len = len;
@@ -218,7 +214,7 @@ pub unsafe extern "C" fn gos_rt_crypto_rand_bytes(n: i64) -> i128 {
 /// Packs an `Err(errors::Error)` for the `crypto::password` Result-
 /// returning shims.
 fn password_err(msg: &str) -> i128 {
-    crypto_err(msg, "crypto::password error")
+    crypto_err(msg)
 }
 
 /// `crypto::password::hash(plaintext) -> Result<String, errors::Error>` -

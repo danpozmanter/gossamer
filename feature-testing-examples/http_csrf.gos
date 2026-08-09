@@ -42,6 +42,17 @@ fn main() {
         Err(_) => println!("wrongkey: err"),
     }
 
+    // A key under the minimum HMAC strength is rejected before any HMAC
+    // work runs, exercising the plain-message error-construction path
+    // (rather than the token-parsing path above). Print the message text,
+    // not just the outcome, so the fixture also proves the message itself
+    // renders correctly across tiers.
+    let weak: Vec<u8> = Vec::from([1, 2, 3, 4])
+    match http::csrf::verify_token(token, token, weak) {
+        Ok(_) => println!("weakkey: ok"),
+        Err(e) => println!("weakkey: err {}", e),
+    }
+
     // Two independently issued tokens carry different nonces, so the
     // cookie-vs-supplied nonce compare rejects them.
     let a = match http::csrf::issue_token(key) {

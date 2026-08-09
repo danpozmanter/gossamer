@@ -75,6 +75,12 @@ pub(crate) struct Builder<'a> {
     /// keyed by `DefId`. A path reading one lowers to a [`Rvalue::StaticLoad`]
     /// and an assignment writing one to a [`StatementKind::StaticStore`].
     pub(crate) mut_statics: &'a HashMap<gossamer_resolve::DefId, crate::ir::StaticRef>,
+    /// Declaration initializer for every top-level `const` / non-`mut`
+    /// `static` item, keyed by `DefId`. A path resolving to one of these
+    /// with no `consts` entry (a heap-typed initializer, which
+    /// [`ConstValue`] cannot represent) re-lowers this expression at the
+    /// reference site instead of falling through to the function-value path.
+    pub(crate) const_inits: &'a HashMap<gossamer_resolve::DefId, HirExpr>,
     /// Free functions that may let a value escape (spawn / channel / static
     /// write / param-stash). A loop calling any of these is never
     /// auto-regioned. See `collect_region_unsafe_fns`.

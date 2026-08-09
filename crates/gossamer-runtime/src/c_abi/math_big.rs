@@ -22,9 +22,8 @@ use super::string::alloc_cstring;
 use super::vec::gos_rt_result_new;
 
 fn err_result(msg: &str) -> i128 {
-    let cs = std::ffi::CString::new(msg).unwrap_or_default();
-    // SAFETY: `cs` is a valid null-terminated c-string for the call.
-    let err = unsafe { super::errors::gos_rt_error_new(cs.as_ptr()) };
+    let cs = alloc_cstring(msg.as_bytes());
+    let err = unsafe { super::errors::gos_rt_error_new(cs) };
     unsafe { gos_rt_result_new(1, err as i64) }
 }
 

@@ -59,6 +59,31 @@ pub(crate) fn collect_const_values(
     out
 }
 
+/// Declaration initializer for every top-level `const` / non-`mut` `static`
+/// item, keyed by `DefId`. A heap-typed initializer (`Vec`, `Map`, `Set`, an
+/// aggregate) has no [`ConstValue`] representation, so [`collect_const_values`]
+/// never folds it and a reference to the item finds no entry in `consts`.
+/// [`Builder::lower_path`] falls back to re-lowering the stored expression
+/// here at each reference site (matching how a scalar const is re-materialised
+/// as a literal at every use) instead of misreading the item as a function
+/// reference. A `static mut` item is excluded: its reads must observe the
+/// live shared cell (`mut_statics`), not a fresh copy of the declaration.
+pub(crate) fn collect_const_init_exprs(
+    program: &HirProgram,
+) -> HashMap<gossamer_resolve::DefId, HirExpr> {
+    let mut out = HashMap::new();
+    for item in &program.items {
+        let Some(def) = item.def else { continue };
+        let init = match &item.kind {
+            HirItemKind::Const(decl) => &decl.value,
+            HirItemKind::Static(decl) if !decl.mutable => &decl.value,
+            _ => continue,
+        };
+        out.insert(def, init.clone());
+    }
+    out
+}
+
 fn collect_item_const_values(
     item: &HirItem,
     out: &mut HashMap<gossamer_resolve::DefId, ConstValue>,
@@ -927,6 +952,7 @@ pub(crate) fn collect_item(
     fn_inputs: &HashMap<gossamer_resolve::DefId, Vec<Ty>>,
     consts: &HashMap<gossamer_resolve::DefId, ConstValue>,
     mut_statics: &HashMap<gossamer_resolve::DefId, crate::ir::StaticRef>,
+    const_inits: &HashMap<gossamer_resolve::DefId, HirExpr>,
     region_unsafe: &std::collections::HashSet<gossamer_resolve::DefId>,
     out: &mut Vec<Body>,
 ) {
@@ -966,6 +992,7 @@ pub(crate) fn collect_item(
                 fn_inputs,
                 consts,
                 mut_statics,
+                const_inits,
                 region_unsafe,
             ) {
                 out.push(body);
@@ -1002,6 +1029,7 @@ pub(crate) fn collect_item(
                     fn_inputs,
                     consts,
                     mut_statics,
+                    const_inits,
                     region_unsafe,
                 ) {
                     out.push(body);
@@ -1030,6 +1058,7 @@ pub(crate) fn collect_item(
                         fn_inputs,
                         consts,
                         mut_statics,
+                        const_inits,
                         region_unsafe,
                     ) {
                         out.push(body);
@@ -1061,6 +1090,7 @@ pub(crate) fn lower_fn(
     fn_inputs: &HashMap<gossamer_resolve::DefId, Vec<Ty>>,
     consts: &HashMap<gossamer_resolve::DefId, ConstValue>,
     mut_statics: &HashMap<gossamer_resolve::DefId, crate::ir::StaticRef>,
+    const_inits: &HashMap<gossamer_resolve::DefId, HirExpr>,
     region_unsafe: &std::collections::HashSet<gossamer_resolve::DefId>,
 ) -> Option<Body> {
     let body = decl.body.as_ref()?;
@@ -1079,6 +1109,7 @@ pub(crate) fn lower_fn(
         fn_inputs,
         consts,
         mut_statics,
+        const_inits,
         region_unsafe,
     );
     // A const generic array return (`-> [T; N]`) is carried as a runtime

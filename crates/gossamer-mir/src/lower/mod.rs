@@ -176,6 +176,7 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
     for def in mut_statics.keys() {
         consts.remove(def);
     }
+    let const_inits = collect_const_init_exprs(program);
     // Conservative escape summary driving automatic arena regions.
     let region_unsafe = collect_region_unsafe_fns(program, tcx);
     let mut bodies = Vec::new();
@@ -194,6 +195,7 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
             &fn_inputs,
             &consts,
             &mut_statics,
+            &const_inits,
             &region_unsafe,
             &mut bodies,
         );
