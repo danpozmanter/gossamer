@@ -3586,7 +3586,13 @@ impl<'tcx> FnBuilder<'tcx> {
             && matches!(owner.name.as_str(), "Map" | "Set" | "BTreeSet")
             && matches!(
                 method.name.as_str(),
-                "insert" | "remove" | "clear" | "inc" | "inc_at" | "inc_batch" | "or_insert"
+                "insert"
+                    | "remove"
+                    | "clear"
+                    | "inc"
+                    | "inc_at"
+                    | "inc_batch"
+                    | "or_insert"
                     | "pop"
             )
             && let Some((receiver, method_args)) = args.split_first()

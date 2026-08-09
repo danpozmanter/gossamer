@@ -433,6 +433,17 @@ fn container_handle_print_kind(body: &Body, local: Local) -> Option<PrintKind> {
             if let Some(sym) = container_ctor_format_symbol(name) {
                 return Some(PrintKind::HandleFormat(sym));
             }
+            // `let` binds a `Set`/`BTreeSet` through a defensive
+            // `gos_rt_set_clone` (neither type carries its own refcount), so
+            // the element kind lives on the cloned source handle, not on
+            // this call's own operands.
+            if name.as_str() == "gos_rt_set_clone"
+                && let Some(Operand::Copy(src)) = args.first()
+                && src.projection.is_empty()
+                && let Some(kind) = container_handle_print_kind(body, src.local)
+            {
+                return Some(kind);
+            }
             match name.as_str() {
                 "gos_rt_set_new" => set_ordered = Some(0),
                 "gos_rt_btree_set_new" => set_ordered = Some(1),

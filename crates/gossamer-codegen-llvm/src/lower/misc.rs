@@ -792,6 +792,17 @@ impl<'a> Lowerer<'a> {
                     if let Some(sym) = container_ctor_format_symbol(name.as_str()) {
                         return Some(ConcatKind::HandleFormat(sym));
                     }
+                    // `let` binds a `Set`/`BTreeSet` through a defensive
+                    // `gos_rt_set_clone` (neither type carries its own
+                    // refcount), so the element kind lives on the cloned
+                    // source handle, not on this call's own operands.
+                    if name.as_str() == "gos_rt_set_clone"
+                        && let Some(Operand::Copy(src)) = args.first()
+                        && src.projection.is_empty()
+                        && let Some(kind) = self.set_handle_print_kind(src.local, depth + 1)
+                    {
+                        return Some(kind);
+                    }
                     match name.as_str() {
                         "gos_rt_btree_set_new" => {
                             saw_set_ctor = true;
