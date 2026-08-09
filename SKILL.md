@@ -137,9 +137,14 @@ Write clear, low-complexity, concise code.
   `let map = {"one": 1}`. `Map::from` accepts array pairs, while
   map literals construct `Map` values directly. `#{a, b}` constructs
   a `Set`, or a `BTreeSet` when an expected `BTreeSet<T>` type is present.
-- **Byte reads**: `s[i]` is the byte as `i64`; compare with byte
-  literals (`s[i] >= b'0'`), render with `s[i] as char`. Prefer this
-  over per-byte `substring`.
+- **Two String index spaces.** `s.len()`, `s[i]`, and bare iteration
+  count Unicode scalars, so `s[i]` is a `char` (compare with `'0'`,
+  widen with `s[i] as i64`). `s.byte_len()`, `s.substring(a, b)`,
+  `s.byte_at(i)`, `s.as_bytes()`, and `s.bytes()` are byte offsets.
+  `s.byte_at(i)` is the byte as `i64` - compare with byte literals
+  (`s.byte_at(i) >= b'0'`), render with `as char`; prefer it over a
+  per-step `substring`. Do not mix the two: `s[i]` is not the byte at
+  byte offset `i` for any non-ASCII string.
 - **Format captures walk field paths**: `println!("{name}:
   {a.balance} {t.0} {o.inner.hits} {a.balance:>8} {f.0:.2}")`.
 - **Range binds looser than arithmetic, tighter than `|>`**:

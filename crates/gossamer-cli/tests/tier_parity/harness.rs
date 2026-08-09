@@ -304,9 +304,15 @@ const SPECS: &[Spec] = &[
     // Wrap<T>`), including a chained field read of the operator result
     // (`(a + b).v`) with an `f64` payload. Bit-identical across tiers.
     spec("feature-testing-examples/operator_overload_enum_generic.gos"),
-    // Byte literals compare against the integer byte index without a cast
-    // (`s[i] == b'>'`); a byte literal is an `Int` value on every tier.
+    // Byte literals compare against the integer byte view without a cast
+    // (`s.as_bytes()[i] == b'>'`); a byte literal is an `Int` value on
+    // every tier.
     spec("feature-testing-examples/byte_literal_compare.gos"),
+    // The two String index spaces stay distinct: `len`/`[]`/iteration count
+    // Unicode scalars (`s[i]` is a `char`), while `byte_len`/`substring`/
+    // `byte_at`/`as_bytes` take byte offsets and `byte_at` yields the byte
+    // as an `i64`. Bit-identical across tiers.
+    spec("feature-testing-examples/string_char_index_scan.gos"),
     // Move-on-last-use: draining a uniquely-owned consumable scrutinee in a
     // guard-free `match` must be suppressed for an arm whose refutable
     // sub-pattern (a literal) can fail after a field is emptied and fall

@@ -218,10 +218,13 @@ pub fn lint_explanation(id: &str) -> Option<&'static str> {
             (byte-packed for `bool` / `u8` elements)."
         }
         "substring_byte_scan" => {
-            "`s.substring(i, i + 1)` allocates a one-byte String per step of\n\
-            a scan. `s[i]` reads the byte directly as an `i64`: compare with\n\
-            byte literals (`s[i] >= b'0'`), do arithmetic on it\n\
-            (`s[i] - b'0'`), and render with `s[i] as char`."
+            "`s.substring(i, i + 1)` allocates a String per step of a scan.\n\
+            `substring` takes byte offsets, so `s.byte_at(i)` reads the same\n\
+            position directly as an `i64`: compare with byte literals\n\
+            (`s.byte_at(i) >= b'0'`), do arithmetic on it\n\
+            (`s.byte_at(i) - b'0'`), and render with `s.byte_at(i) as char`.\n\
+            `s[i]` is not that byte: indexing counts Unicode scalars, so it\n\
+            yields the `char` at character index `i`."
         }
         _ => return None,
     })

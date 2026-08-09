@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.45.2 - String index spaces
+
+- Correct the `substring_byte_scan` (`GL0052`) suggestion. It offered `s[i]` as
+  the byte behind `s.substring(i, i + 1)`, so following the lint produced
+  `GT0001` on `s[i] >= b'0'`; `s[i]` is the `char` at a character index, while
+  `substring` takes byte offsets. The lint, its `explain` text, and the
+  `GL0052` catalogue entry - which described an unrelated lint about string
+  search methods - now name `s.byte_at(i)`, which reads the same byte offset as
+  an `i64` and preserves the scan's behavior on non-ASCII input.
+- Document the two String index spaces in the skill card. `len`, `[]`, and bare
+  iteration count Unicode scalars; `byte_len`, `substring`, `byte_at`,
+  `as_bytes`, and `bytes` take byte offsets. The card previously described
+  `s[i]` as the byte as an `i64`, which no tier accepts.
+
 ## 0.45.1 - Handles, containers, and captured parameters
 
 - Reject formatting a value that has no text form. A runtime handle

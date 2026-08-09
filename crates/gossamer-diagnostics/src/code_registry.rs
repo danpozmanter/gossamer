@@ -270,9 +270,10 @@ pub const REGISTRY: &[(&str, &str)] = &[
     ),
     (
         "GL0052",
-        "A loop scans a string one byte at a time to find a substring. Use\n\
-            the string search methods so UTF-8 boundaries and optimized search\n\
-            behavior are handled consistently.",
+        "A scan calls `s.substring(i, i + 1)`, allocating a String per step.\n\
+            `substring` takes byte offsets, so `s.byte_at(i)` reads the same\n\
+            position directly as an `i64`. Note that `s[i]` is not that byte:\n\
+            indexing counts Unicode scalars and yields a `char`.",
     ),
     (
         "GM0001",

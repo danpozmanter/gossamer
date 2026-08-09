@@ -3,9 +3,9 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0052]: A loop scans a string one byte at a time to find a substring. Use - here
+error[GL0052]: A scan calls `s.substring(i, i + 1)`, allocating a String per step. - here
 --- framed ---
-error[GL0052]: A loop scans a string one byte at a time to find a substring. Use
+error[GL0052]: A scan calls `s.substring(i, i + 1)`, allocating a String per step.
   --> snap.gos:2:5
      2 |     let x = 1
        |     ^^^^^

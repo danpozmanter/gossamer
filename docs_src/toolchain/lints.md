@@ -324,8 +324,11 @@ literal every iteration is the repeat literal spelled long:
 
 ## `substring_byte_scan`
 
-`s.substring(i, i + 1)` allocates a one-byte String per step of
-a scan. `s[i]` reads the byte directly as an `i64`: compare with
-byte literals (`s[i] >= b'0'`), do arithmetic on it
-(`s[i] - b'0'`), and render with `s[i] as char`.
+`s.substring(i, i + 1)` allocates a String per step of a scan.
+`substring` takes byte offsets, so `s.byte_at(i)` reads the same
+position directly as an `i64`: compare with byte literals
+(`s.byte_at(i) >= b'0'`), do arithmetic on it
+(`s.byte_at(i) - b'0'`), and render with `s.byte_at(i) as char`.
+`s[i]` is not that byte: indexing counts Unicode scalars, so it
+yields the `char` at character index `i`.
 

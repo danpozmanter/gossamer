@@ -2203,9 +2203,8 @@ fn lint_fill_loop(sf: &SourceFile) -> Vec<Finding> {
     out
 }
 
-/// A `s.substring(i, i + 1)` single-byte read: indexing (`s[i]`, and
-/// `s[i] as char` for rendering) scans without allocating a String
-/// per byte.
+/// A `s.substring(i, i + 1)` single-byte read: `s.byte_at(i)` reads the
+/// same byte offset as an `i64` without allocating a String per step.
 fn lint_substring_byte_scan(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
@@ -2243,7 +2242,8 @@ fn lint_substring_byte_scan(sf: &SourceFile) -> Vec<Finding> {
                     expr.span,
                     "single-byte substring in a scan".to_string(),
                     Some(
-                        "read the byte directly: `s[i]` (compare with `b'x'`, render with `s[i] as char`)"
+                        "read the byte directly: `s.byte_at(i)` (compare with `b'x'`, \
+                         render with `s.byte_at(i) as char`)"
                             .to_string(),
                     ),
                 ));
