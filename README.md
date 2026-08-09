@@ -12,6 +12,11 @@
 
 * Performant (Solid Execution Speed, Efficient Resource Usage)
 
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for details on Github Issues, 
+PRs, and our LLM policy.
+
 ## Motivations
 
 Why build Gossamer? Why use it?
@@ -147,7 +152,6 @@ is to use the dedicated ones.
 - Project style guide: [`GUIDELINES.md`](GUIDELINES.md)
 - AI skill card: [`SKILL.md`](SKILL.md) - drop this file into a model's context to teach it how to write idiomatic Gossamer (also embedded in `gos skill-prompt`).
 - Editor integrations: [`danpozmanter/gossamer-editor-support`](https://github.com/danpozmanter/gossamer-editor-support) (VSCode, Vim, Neovim, Helix, Emacs, Sublime, Zed, plus a tree-sitter grammar)
-- Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
 Source files use the `.gos` extension.
 

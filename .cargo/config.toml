@@ -7,27 +7,3 @@ xtask = "run --package xtask --"
 # DNS/timeout blip; widen the window with its canonical spurious-error knob.
 [net]
 retry = 10
-
-# Static relocation model for the shipped binaries. A position-independent
-# executable carries its pointer constants as load-time relocations: the
-# dynamic linker writes every one of them at startup, turning ~1.9 MB of
-# `.data.rel.ro` into private dirty pages before `main` runs. Fixing the load
-# address moves those constants into read-only, file-backed pages and drops
-# resident memory by roughly 3 MB on every `gos` process, with no effect on
-# execution speed.
-#
-# These are `[target.*]` entries, so they reach only units built for the
-# target - never the host build scripts and proc macros, which have to stay
-# position-independent. Cargo only draws that line when the build names its
-# target, so the triples listed here are exactly the ones the release
-# workflow builds with an explicit `--target`. The bare host triple is left
-# out on purpose: a plain `cargo build` would apply these to proc macros too
-# and fail to compile them.
-[target.x86_64-unknown-linux-musl]
-rustflags = ["-C", "relocation-model=static"]
-
-[target.aarch64-unknown-linux-gnu]
-rustflags = ["-C", "relocation-model=static"]
-
-[target.aarch64-unknown-linux-musl]
-rustflags = ["-C", "relocation-model=static"]

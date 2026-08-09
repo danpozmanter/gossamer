@@ -69,7 +69,19 @@ jobs:
       # C deps (mimalloc, ring, zstd); `musl-tools`' musl-gcc supplies the
       # sysroot. No zig or cross toolchain is needed for the native
       # x86_64 target - zig is only used for the aarch64 cross-musl case.
+      # A position-independent executable carries its pointer constants as
+      # load-time relocations, so the dynamic linker writes ~1.9 MB of them
+      # into private dirty pages before `main` runs. Fixing the load address
+      # moves those into read-only, file-backed pages and starts every `gos`
+      # process about 3 MB lower, at identical execution speed. This lives
+      # here rather than in `.cargo/config.toml` because it must never reach
+      # the host build scripts and proc macros - cargo only draws that line
+      # when the build names its target, which every build below does, and a
+      # `[target.<triple>]` entry would also apply to a runner whose host IS
+      # that triple (the aarch64 test matrix).
       - name: Build static musl binary
+        env:
+          RUSTFLAGS: -C relocation-model=static
         run: |
           rustup target add x86_64-unknown-linux-musl
           sudo apt-get update
@@ -167,8 +179,19 @@ jobs:
         with:
           tool: cargo-zigbuild
 
+      # A position-independent executable carries its pointer constants as
+      # load-time relocations, so the dynamic linker writes ~1.9 MB of them
+      # into private dirty pages before `main` runs. Fixing the load address
+      # moves those into read-only, file-backed pages and starts every `gos`
+      # process about 3 MB lower, at identical execution speed. This lives
+      # here rather than in `.cargo/config.toml` because it must never reach
+      # the host build scripts and proc macros - cargo only draws that line
+      # when the build names its target, which every build below does, and a
+      # `[target.<triple>]` entry would also apply to a runner whose host IS
+      # that triple (the aarch64 test matrix).
       - name: Build
         env:
+          RUSTFLAGS: -C relocation-model=static
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
         run: |
