@@ -134,6 +134,7 @@ const fn spec(path: &'static str) -> Spec {
 const SPECS: &[Spec] = &[
     // --- examples/ ---
     spec("examples/binary_search.gos"),
+    spec("examples/map_hashable_keys.gos"),
     spec("examples/bubble_sort.gos"),
     spec("examples/caesar_cipher.gos"),
     spec("examples/defer_cleanup.gos"),
@@ -394,6 +395,14 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/tuple_struct_serde.gos"),
     // Phase 1 BTreeMap: String keys, i64 values, key-sorted iteration.
     spec("feature-testing-examples/btreemap_i64_keys.gos"),
+    // Every hashable key shape - tuple, String-bearing tuple, struct, enum
+    // (unit and payload), fixed array - keys by value on every tier, and
+    // `keys()` rebuilds the aggregate the program wrote.
+    spec("feature-testing-examples/hashable_map_keys.gos"),
+    // A type's identity is the module declaring it, so two modules may each
+    // declare `Point` and `Tag` without their constructors, `{:?}`, `==`,
+    // map keying, or serde symbols colliding.
+    spec("feature-testing-examples/module_scoped_type_names.gos"),
     // VecDeque both-ends ops: push/pop/peek front and back.
     spec("feature-testing-examples/vecdeque_full.gos"),
     // A generic function's call result keeps its instantiated concrete type

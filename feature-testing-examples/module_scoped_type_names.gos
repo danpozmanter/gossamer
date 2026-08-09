@@ -1,0 +1,46 @@
+// A type's identity is the module that declares it, so two modules may each
+// declare `Point` and `Tag`. Construction, field access, `{:?}`, `==`, map
+// keying, and serde all reach the right one on every tier, and a rendered
+// value shows the name as declared.
+
+use std::encoding::json
+use a::Point
+use b::Point as Label
+
+mod a {
+    pub struct Point { x: i64, y: i64 }
+    pub struct Pair(i64, i64)
+    pub enum Tag { One, Two(i64) }
+    pub fn make() -> Point { Point { x: 1, y: 2 } }
+}
+
+mod b {
+    pub struct Point { name: String }
+    pub enum Tag { Red, Blue }
+    pub fn make() -> Point { Point { name: "b" } }
+}
+
+fn main() {
+    let p = a::make()
+    let q = b::make()
+    println!("{} {} {}", p.x, p.y, q.name)
+    println!("{:?} {:?}", p, q)
+    println!("eq {} {}", p == Point { x: 1, y: 2 }, q == Label { name: "b" })
+
+    let pair = a::Pair(3, 4)
+    println!("pair {} {}", pair.0, pair.1)
+
+    println!("{:?} {:?}", a::Tag::Two(7), b::Tag::Red)
+    println!("{:?} {:?}", a::Tag::One, b::Tag::Blue)
+    println!("tag eq {} {}", a::Tag::Two(7) == a::Tag::Two(7), b::Tag::Red == b::Tag::Blue)
+
+    let mut seen: Map<a::Point, i64> = Map::new()
+    seen.insert(a::Point { x: 1, y: 2 }, 9)
+    println!("keyed {}", seen.get(a::Point { x: 1, y: 2 }).unwrap_or(-1))
+
+    let encoded = to_json::<a::Point>(p).unwrap_or("ERR")
+    let other = to_json::<b::Point>(q).unwrap_or("ERR")
+    println!("{} {}", encoded, other)
+    let back = from_json::<a::Point>(&encoded).unwrap_or(a::Point { x: 0, y: 0 })
+    println!("roundtrip {} {}", back.x, back.y)
+}

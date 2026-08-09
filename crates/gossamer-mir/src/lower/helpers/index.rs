@@ -118,10 +118,24 @@ impl EnumIndex {
     pub(crate) fn lookup(&self, segments: &[Ident]) -> Option<(String, usize)> {
         match segments {
             [single] => self.variant_index.get(&single.name).cloned(),
-            [.., enum_seg, variant_seg] => {
-                let variants = self.by_enum.get(&enum_seg.name)?;
+            [leading @ .., enum_seg, variant_seg] => {
+                // An enum's identity carries the modules containing it, so a
+                // written `a::Tag::Two` names the enum `a::Tag`. Prefer that
+                // key, then the bare spelling for a root-level enum reached
+                // through some other path.
+                let qualified: String = leading
+                    .iter()
+                    .map(|segment| segment.name.as_str())
+                    .filter(|segment| !matches!(*segment, "crate" | "self" | "super" | "root"))
+                    .chain(std::iter::once(enum_seg.name.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("::");
+                let (enum_name, variants) = match self.by_enum.get(&qualified) {
+                    Some(variants) => (qualified, variants),
+                    None => (enum_seg.name.clone(), self.by_enum.get(&enum_seg.name)?),
+                };
                 let idx = variants.iter().position(|v| v == &variant_seg.name)?;
-                Some((enum_seg.name.clone(), idx))
+                Some((enum_name, idx))
             }
             [] => None,
         }

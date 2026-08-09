@@ -222,6 +222,78 @@ fn cross_file_project_bundles_sibling_modules() {
 }
 
 #[test]
+fn directory_modules_nest_and_carry_types() {
+    // `src/<dir>/<dir>/mod.gos` is two module levels below the entry, so
+    // every module the layout declares has to be nameable from the entry
+    // for `deep::nest::*` to resolve. The struct pins the second half:
+    // its structural `eq` is synthesized against the type's declaring
+    // module, and `==` must work on both tiers.
+    let dir = write_project(
+        "nested-dir-modules",
+        "example.com/nested",
+        &[
+            (
+                "src/main.gos",
+                "fn main() {\n    println!(\"{}\", deep::depth())\n    \
+                 println!(\"{}\", deep::nest::nested())\n    \
+                 let a = deep::nest::Nested { n: 5 }\n    \
+                 let b = deep::nest::Nested { n: 5 }\n    \
+                 println!(\"{} {}\", a.n, a == b)\n}\n",
+            ),
+            (
+                "src/deep/mod.gos",
+                "pub fn depth() -> i64 { self::nest::nested() - 41 }\n",
+            ),
+            (
+                "src/deep/nest/mod.gos",
+                "pub struct Nested { n: i64 }\npub fn nested() -> i64 { 42 }\n",
+            ),
+        ],
+    );
+    let expected = "1\n42\n5 true\n";
+    let vm = project_run_vm(&dir);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, expected, "vm stdout");
+    let native = project_build_run(&dir, "nested");
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(native.0, expected, "native stdout");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn module_relative_paths_reach_child_and_sibling_modules() {
+    // A path written inside a module is anchored at that module:
+    // `self::child::item` and a bare `child::item` both name the child,
+    // and `super::sibling::item` crosses to a sibling. All three have to
+    // reach the same def the entry names as `mod::child::item`.
+    let dir = write_project(
+        "module-relative-paths",
+        "example.com/relpaths",
+        &[
+            (
+                "src/main.gos",
+                "fn main() { println!(\"{}\", outer::all()) }\n",
+            ),
+            (
+                "src/outer/mod.gos",
+                "pub mod child {\n    pub fn value() -> i64 { 7 }\n}\n\
+                 pub fn all() -> i64 {\n    self::child::value() + child::value() \
+                 + super::other::value()\n}\n",
+            ),
+            ("src/other.gos", "pub fn value() -> i64 { 1 }\n"),
+        ],
+    );
+    let expected = "15\n";
+    let vm = project_run_vm(&dir);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, expected, "vm stdout");
+    let native = project_build_run(&dir, "relpaths");
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(native.0, expected, "native stdout");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn cross_file_chained_sibling_module_calls() {
     // Three sibling modules where each call cascades into the next:
     // main → a::foo → b::bar → util::helper. Pins both the qualified-
@@ -1558,12 +1630,12 @@ fn cross_file_from_json_nested_struct_on_vm() {
 
 #[test]
 fn gos_test_discovers_tests_in_cross_referencing_files() {
-    // A `#[test]` lives in a file whose top-level code names a sibling
-    // module's item by bare name, so the file does not typecheck in
-    // isolation - only against the bundled whole-package source. Test
-    // discovery must parse for `#[test]` names rather than fully checking
-    // each file alone, and execution bundles siblings the same way
-    // `gos` / `gos build` do, so the test resolves and runs.
+    // A `#[test]` lives in a file whose top-level code imports a sibling
+    // module's item, so the file does not typecheck in isolation - only
+    // against the bundled whole-package source. Test discovery must parse
+    // for `#[test]` names rather than fully checking each file alone, and
+    // execution bundles siblings the same way `gos` / `gos build` do, so
+    // the import resolves and the test runs.
     let dir = write_project(
         "gos-test-discovery",
         "example.com/testdisc",
@@ -1571,7 +1643,8 @@ fn gos_test_discovers_tests_in_cross_referencing_files() {
             ("src/helper.gos", "pub fn base() -> i64 { 40 }\n"),
             (
                 "src/main.gos",
-                "fn total() -> i64 { base() + 2 }\n\
+                "use helper::base\n\
+                 fn total() -> i64 { base() + 2 }\n\
                  fn main() { println!(\"{}\", total()) }\n\
                  #[cfg(test)]\n\
                  mod main_tests {\n\

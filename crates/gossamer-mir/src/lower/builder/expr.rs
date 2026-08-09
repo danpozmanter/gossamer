@@ -632,13 +632,20 @@ impl<'a> Builder<'a> {
         // Otherwise emit the variant index directly as i64.
         if let Some((enum_name, idx)) = self.enums.lookup(segments) {
             if self.enums.has_any_payload(segments) {
-                return self.lower_user_enum_ctor(
+                let result = self.lower_user_enum_ctor(
                     &enum_name,
                     u32::try_from(idx).unwrap_or(0),
                     &[],
                     ty,
                     span,
                 );
+                // A unit variant of a payload-bearing enum is a tagged null,
+                // which carries no type of its own; record the enum so `{:?}`
+                // and `==` reach the derived methods.
+                if let Some(local) = result {
+                    self.local_struct.insert(local, enum_name);
+                }
+                return result;
             }
             let int_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
             let local = self.push_local(int_ty, None, false);
@@ -647,6 +654,10 @@ impl<'a> Builder<'a> {
                 Rvalue::Use(Operand::Const(ConstValue::Int(idx as i128))),
                 span,
             );
+            // The value is a bare index, so record which enum it belongs to;
+            // `{:?}` and `==` recover the type from this tag to reach the
+            // derived methods.
+            self.local_struct.insert(local, enum_name);
             return Some(local);
         }
         // `json::Value::Null` (path expression, no parens) is a unit

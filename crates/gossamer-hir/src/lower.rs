@@ -62,6 +62,13 @@ pub fn lower_source_file_with_edition(
         &mut module_fn_paths,
     );
     collect_nested_item_paths(resolutions, source, &mut module_fn_paths);
+    let mut module_type_names = std::collections::HashMap::new();
+    collect_module_type_names(
+        resolutions,
+        &source.items,
+        &mut Vec::new(),
+        &mut module_type_names,
+    );
     let mut lowerer = Lowerer {
         resolutions,
         table,
@@ -74,6 +81,7 @@ pub fn lower_source_file_with_edition(
         struct_fields: collect_struct_fields(&source.items),
         unit_structs: collect_unit_structs(&source.items),
         module_fn_paths,
+        module_type_names,
         promoted_items: Vec::new(),
     };
     let mut items = Vec::new();
@@ -200,6 +208,50 @@ fn collect_module_fn_paths(
 /// Collects the field count of every tuple struct and tuple-variant
 /// constructor (by bare name), descending into inline modules. Drives
 /// `..`-rest expansion in tuple-variant patterns.
+/// Records the qualified identity (`a::Point`) of every struct and enum
+/// declared inside an inline module, mirroring what the type checker
+/// registers as the type's name.
+/// The name an item is identified by below HIR: bare at the unit root,
+/// prefixed by its containing modules otherwise.
+fn qualified_item_name(module_path: &[String], name: &str) -> String {
+    if module_path.is_empty() {
+        return name.to_string();
+    }
+    format!("{}::{name}", module_path.join("::"))
+}
+
+fn collect_module_type_names(
+    resolutions: &Resolutions,
+    items: &[AstItem],
+    module_path: &mut Vec<String>,
+    out: &mut std::collections::HashMap<gossamer_resolve::DefId, String>,
+) {
+    for item in items {
+        if !gossamer_resolve::item_is_active(&item.attrs) {
+            continue;
+        }
+        let named = match &item.kind {
+            AstItemKind::Struct(decl) => Some(&decl.name.name),
+            AstItemKind::Enum(decl) => Some(&decl.name.name),
+            AstItemKind::Mod(decl) => {
+                if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                    module_path.push(decl.name.name.clone());
+                    collect_module_type_names(resolutions, inner, module_path, out);
+                    module_path.pop();
+                }
+                None
+            }
+            _ => None,
+        };
+        if let Some(name) = named
+            && !module_path.is_empty()
+            && let Some(def) = resolutions.definition_of(item.id)
+        {
+            out.insert(def, format!("{}::{name}", module_path.join("::")));
+        }
+    }
+}
+
 fn collect_ctor_arities(items: &[AstItem]) -> std::collections::HashMap<String, usize> {
     let mut map = std::collections::HashMap::new();
     collect_ctor_arities_into(items, &mut map);
@@ -379,6 +431,8 @@ struct Lowerer<'a> {
     /// to expand a single-segment imported name to its qualified
     /// path when it targets a `[rust-bindings]` item.
     import_targets: std::collections::HashMap<NodeId, Vec<(String, Vec<Ident>)>>,
+    /// Qualified identity of each struct / enum declared inside a module.
+    module_type_names: std::collections::HashMap<gossamer_resolve::DefId, String>,
     /// Field count of every tuple struct and tuple-variant constructor,
     /// keyed by its bare name. Lets a `..` rest in a tuple-variant pattern
     /// (`E::C(..)`) expand to the right number of wildcards, so it matches a
@@ -432,8 +486,21 @@ impl Lowerer<'_> {
                 mutable: matches!(decl.mutability, Mutability::Mutable),
                 value: self.lower_expr(&decl.value),
             }),
-            AstItemKind::Struct(decl) => HirItemKind::Adt(self.lower_struct(decl)),
-            AstItemKind::Enum(decl) => HirItemKind::Adt(self.lower_enum(decl)),
+            // An ADT declared inside a module carries its qualified name as
+            // its identity, matching what the type checker registers. Every
+            // name-keyed table below here - the MIR struct/variant tables,
+            // `{:?}` dispatch, the native constructor registry - reads that
+            // name, so two modules may declare the same one.
+            AstItemKind::Struct(decl) => {
+                let mut adt = self.lower_struct(decl);
+                adt.name = Ident::new(qualified_item_name(module_path, &adt.name.name));
+                HirItemKind::Adt(adt)
+            }
+            AstItemKind::Enum(decl) => {
+                let mut adt = self.lower_enum(decl);
+                adt.name = Ident::new(qualified_item_name(module_path, &adt.name.name));
+                HirItemKind::Adt(adt)
+            }
             AstItemKind::Impl(decl) => HirItemKind::Impl(self.lower_impl(decl, item.span)),
             AstItemKind::Trait(decl) => HirItemKind::Trait(self.lower_trait(decl, item.span)),
             AstItemKind::TypeAlias(_) | AstItemKind::Mod(_) | AstItemKind::AttrItem(_) => {
@@ -666,8 +733,31 @@ impl Lowerer<'_> {
 
     fn lower_impl(&mut self, decl: &ImplDecl, span: Span) -> HirImpl {
         let self_ty = self.ty_of(decl.self_ty.id);
+        // An impl block's self type identifies the type it extends, so it
+        // carries the same qualified identity the declaration registered -
+        // otherwise two modules' `impl Point` would emit one symbol each
+        // under the same name.
         let self_name = match &decl.self_ty.kind {
-            gossamer_ast::TypeKind::Path(path) => path.segments.last().map(|seg| seg.name.clone()),
+            gossamer_ast::TypeKind::Path(path) => self
+                .resolutions
+                .get(decl.self_ty.id)
+                .and_then(|resolution| match resolution {
+                    Resolution::Def { def, .. } => self.module_type_names.get(&def).cloned(),
+                    _ => None,
+                })
+                .map(Ident::new)
+                .or_else(|| {
+                    // The written path is already the qualified spelling for
+                    // an `impl a::Point`; keep every segment so the methods
+                    // register under the type's identity.
+                    let segments: Vec<&str> = path
+                        .segments
+                        .iter()
+                        .map(|seg| seg.name.name.as_str())
+                        .filter(|seg| !matches!(*seg, "crate" | "self" | "super" | "root"))
+                        .collect();
+                    (!segments.is_empty()).then(|| Ident::new(segments.join("::")))
+                }),
             _ => None,
         };
         let trait_name = decl
@@ -1785,18 +1875,17 @@ impl Lowerer<'_> {
             return None;
         }
         let called_name = path.segments.last()?.name.name.as_str();
-        if self.tcx.def_name(def) != Some(called_name) {
+        // A type's registered name carries the modules that contain it, so
+        // compare the written leaf against the identity's leaf.
+        let identity = self.tcx.def_name(def)?.to_string();
+        if identity.rsplit("::").next() != Some(called_name) {
             return None;
         }
         let field_count = self.tcx.struct_field_tys(def)?.len();
         if field_count != args.len() {
             return None;
         }
-        let name = path
-            .segments
-            .last()
-            .map(|seg| seg.name.name.clone())
-            .unwrap_or_default();
+        let name = identity;
         let error_ty = self.error_ty();
         let string_ty = self.error_ty();
         let mut struct_args = Vec::with_capacity(1 + args.len() * 2);
@@ -1904,6 +1993,28 @@ impl Lowerer<'_> {
             && let Some(promoted_name) = promoted.last()
         {
             name.clone_from(&promoted_name.name);
+        }
+        // A type declared in a module is identified by its qualified name,
+        // matching what the type checker registers, so two modules may
+        // declare the same name without their constructors, `{:?}` dispatch,
+        // or native registry entries colliding.
+        if let Some(Resolution::Def { def, .. }) = self.resolutions.get(node)
+            && let Some(identity) = self.module_type_names.get(&def)
+        {
+            name.clone_from(identity);
+        }
+        // A literal may name its type through an import (`use a::Point`,
+        // `use a::Point as P`); the import's target path is that identity.
+        if let Some(Resolution::Import { use_id }) = self.resolutions.get(node)
+            && let Some(entries) = self.import_targets.get(&use_id)
+            && let Some((_, full)) = entries.iter().find(|(bound, _)| *bound == name)
+        {
+            name = full
+                .iter()
+                .map(|segment| segment.name.as_str())
+                .filter(|segment| !matches!(*segment, "crate" | "self" | "super" | "root"))
+                .collect::<Vec<_>>()
+                .join("::");
         }
         let error_ty = self.error_ty();
         let string_ty = self.error_ty();

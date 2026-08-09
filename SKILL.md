@@ -74,11 +74,14 @@ fn main() {
 
 Write clear, low-complexity, concise code.
 
-- **Import every standard library module you use.** Qualified access
-  does not implicitly import a module: write `use std::{env, fs}` before
-  `env::args()` or `fs::read(...)`. Primitive and core collection types,
-  variants, macros, and the documented prelude remain available without
-  imports.
+- **Import everything you name.** A module's items are never in scope on
+  their own - reach them through a path or a `use`. For the standard
+  library write `use std::{env, fs}` before `env::args()` or
+  `fs::read(...)`; for a sibling file write `use util::add` (or spell
+  `util::add(..)` in full). The file layout declares the module, the
+  import brings its names in. A bare name some module declares reports
+  GR0011 with the exact `use` line to add. Primitive and core collection
+  types, variants, macros, and the documented prelude need no import.
 - **Default to immutable.** `let` first; `let mut` only for a binding
   that genuinely changes, kept near a single update site. `if` /
   `match` / `loop ... break v` are expressions - bind their result.
@@ -98,6 +101,11 @@ Write clear, low-complexity, concise code.
   Indexed reads and writes outside `[0, len)` panic on every tier. Vec
   `insert` accepts `0..=len` and returns `Result<(), errors::Error>`;
   `remove` accepts `0..len` and returns `Result<T, errors::Error>`.
+- **Any hashable value is a `Map` / `Set` key** - integers, `bool`,
+  `char`, `String`, tuples, fixed arrays, structs, and enums (unit or
+  payload), nested freely. Keys compare by value, so an equal key built
+  at a different allocation finds the same slot, and `keys()` hands back
+  the aggregate you wrote.
 - **`m.inc(k)` / `m.inc(k, by)`** for counters; `m.or_insert(k,
   default)` for get-or-fill (`m.or_insert(k, d).method(args)` writes
   the mutation back into the stored value). `arr.swap(i, j)`.
@@ -227,7 +235,13 @@ let n = 3 |> double |> add(10) |> clamp(0, 100)
 - **Imports**: `use std::{iter, os, strings}`, alias via `{Map as
   Scores}`; always spell the full path (`std::encoding::json`, not
   `std::json`) - paths validate against the std manifest (GR0005).
-  Cross-module: `super::item`, `crate::path::item`, `self::child::item`.
+  Local modules import the same way: `use util::{add, Widget}`,
+  `use deep::nest::Nested`, `use crate::util::Widget`. A path written
+  inside a module is anchored at that module, so `self::child::item`,
+  a bare `child::item`, and `super::sibling::item` all resolve; a
+  `mod name;` with no file behind it is GR0010. A type belongs to the
+  module that declares it, so two modules may each declare a `Point`
+  and both stay distinct.
 - **Entry file may omit `fn main`**: top-level statements become the
   implicit main (only the entry file; `?` there makes it return
   `Result<(), errors::Error>`; exit code via `process::exit(n)`).
@@ -381,9 +395,7 @@ are callable as methods/free functions and materialize results.
   element type to yield). `%i Tuple` documents it and
   `%e <binding>` lists a tuple's elements. Tuple structs are the named
   variant and are fully usable.
-- `std::collections`: `Vec`, `Map` (struct/tuple keys by value;
-  aggregate-key maps use `iter()` rather than `keys()` until typed key
-  snapshots are available;
+- `std::collections`: `Vec`, `Map` (any hashable key by value;
   `iter()` yields `[(K, V)]`, `keys`, `values`, `Map::pop`),
   `Set` / `BTreeSet` (`#{...}` literals and full set algebra), `BTreeMap` (sorted; `String` or `i64`
   keys), `Deque`, `Queue`, `Stack`. A separate i64-only `queue`/`stack`/`deque`/

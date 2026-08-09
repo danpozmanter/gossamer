@@ -530,6 +530,21 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      `Shape::Circle` rather than `Circle`.",
     ),
     (
+        "GR0010",
+        "A `mod name;` declaration whose module source was never supplied.\n\
+                     Out-of-line modules are filled in from the project layout\n\
+                     (`name.gos` or `name/mod.gos` beside the entry), so this\n\
+                     names a file the build did not find - or a file outside any\n\
+                     project, where the layout is not read at all.",
+    ),
+    (
+        "GR0011",
+        "A bare name that some module in this unit declares but which is not\n\
+                     in this scope. A module's items are reached through a path\n\
+                     (`util::add`) or an import (`use util::add`); the file layout\n\
+                     declares the module, and the import brings its names in.",
+    ),
+    (
         "GT0001",
         "The type checker could not reconcile two types it expected to\n\
                      match. The primary label shows the location of the mismatch;\n\

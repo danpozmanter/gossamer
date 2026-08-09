@@ -750,6 +750,7 @@ impl<'a> Lowerer<'a> {
             | RawIntrinsic::RcAllocTagged
             | RawIntrinsic::RcAllocReuse
             | RawIntrinsic::EnumStructEq
+            | RawIntrinsic::MapEnumKey
             | RawIntrinsic::FnAddr
             | RawIntrinsic::WeakOptPayload
             | RawIntrinsic::JitUnsupportedUserIterator => {

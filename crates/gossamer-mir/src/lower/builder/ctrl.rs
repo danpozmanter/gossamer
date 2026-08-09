@@ -3085,6 +3085,17 @@ impl<'a> Builder<'a> {
                                 let elem = if name.name.as_str() == "keys" {
                                     match self.hash_map_key_kind(recv_ty) {
                                         Some(MapKeyKind::String) => self.tcx.string_ty(),
+                                        // An aggregate key snapshot stores each
+                                        // key as inline flat slots, so the
+                                        // binding takes the key type itself -
+                                        // reading it as a scalar word would
+                                        // address a fraction of the element.
+                                        Some(MapKeyKind::Other) => {
+                                            self.hash_map_kv_tys(recv_ty).map_or_else(
+                                                || self.tcx.int_ty(gossamer_types::IntTy::I64),
+                                                |(k, _)| k,
+                                            )
+                                        }
                                         _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
                                     }
                                 } else {

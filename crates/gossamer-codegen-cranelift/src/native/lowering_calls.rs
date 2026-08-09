@@ -528,6 +528,18 @@ pub(super) fn lower_generic_rt_call(
         }
         "gos_rt_map_insert_str_str_opt" => (&[ptr_ty, ptr_ty, ptr_ty], Some(types::I128)),
         "gos_rt_map_insert_skey_opt" => (&[ptr_ty, ptr_ty, ptr_ty, types::I64], Some(types::I128)),
+        "gos_rt_map_get_or_skey" | "gos_rt_map_or_insert_skey" | "gos_rt_map_inc_skey" => {
+            (&[ptr_ty, ptr_ty, ptr_ty, types::I64], Some(types::I64))
+        }
+        "gos_rt_map_get_or_ekey" | "gos_rt_map_or_insert_ekey" | "gos_rt_map_inc_ekey" => {
+            (&[ptr_ty, ptr_ty, ptr_ty, types::I64], Some(types::I64))
+        }
+        "gos_rt_map_insert_ekey_opt" => (&[ptr_ty, ptr_ty, ptr_ty, types::I64], Some(types::I128)),
+        "gos_rt_map_get_ekey_opt" | "gos_rt_map_pop_ekey" => {
+            (&[ptr_ty, ptr_ty, ptr_ty], Some(types::I128))
+        }
+        "gos_rt_map_contains_ekey" => (&[ptr_ty, ptr_ty, ptr_ty], Some(types::I8)),
+        "gos_rt_map_keys_ekey" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_min_i64" => (&[types::I64, types::I64], Some(types::I64)),
         "gos_rt_max_i64" => (&[types::I64, types::I64], Some(types::I64)),
         "gos_rt_clamp_i64" => (&[types::I64, types::I64, types::I64], Some(types::I64)),

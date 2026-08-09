@@ -1022,13 +1022,6 @@ impl TypeDiagnostic {
                         .with_note(
                             "`set` is the `json::Value` field-update helper, not a map method",
                         )
-                } else if name == "keys for aggregate Map keys" && ty.starts_with("Map") {
-                    out.with_help(
-                        "iterate the map with `for (key, value) in map.iter()` instead",
-                    )
-                    .with_note(
-                        "`Map::keys()` is unavailable for struct, tuple, and array key types until aggregate key snapshots preserve their layout",
-                    )
                 } else {
                     unresolved_method_diagnostic(out, ty, name, available)
                 };

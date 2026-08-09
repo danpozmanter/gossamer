@@ -63,8 +63,8 @@ fn parse_error_emits_gp_diagnostic() {
 #[test]
 fn a_project_sibling_module_resolves_in_the_editor() {
     // `gos check` / `gos run` bundle an entry with its sibling modules;
-    // the editor analysed the open file alone, so a cross-module name
-    // read as unresolved there and nowhere else.
+    // the editor analysed the open file alone, so an imported cross-module
+    // name read as unresolved there and nowhere else.
     let dir = std::env::temp_dir().join(format!("gos-lsp-bundle-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create project dir");
@@ -73,10 +73,13 @@ fn a_project_sibling_module_resolves_in_the_editor() {
         "[project]\nid = \"example.com/bundle\"\nversion = \"0.1.0\"\n",
     )
     .expect("write manifest");
-    std::fs::write(dir.join("options.gos"), "enum Colorize { Always, Never }\n")
-        .expect("write sibling");
+    std::fs::write(
+        dir.join("options.gos"),
+        "pub enum Colorize { Always, Never }\n",
+    )
+    .expect("write sibling");
     let entry = dir.join("main.gos");
-    let source = "fn paint(color: Colorize) -> i64 {\n    match color {\n        Colorize::Always => 1,\n        Colorize::Never => 0,\n    }\n}\nfn main() { println!(\"{}\", paint(Colorize::Always)) }\n";
+    let source = "use options::Colorize\nfn paint(color: Colorize) -> i64 {\n    match color {\n        Colorize::Always => 1,\n        Colorize::Never => 0,\n    }\n}\nfn main() { println!(\"{}\", paint(Colorize::Always)) }\n";
     std::fs::write(&entry, source).expect("write entry");
 
     let uri = format!("file://{}", entry.display());
@@ -96,8 +99,8 @@ fn a_project_sibling_module_resolves_in_the_editor() {
 
 #[test]
 fn a_name_defined_in_no_module_is_still_unresolved() {
-    // Bundling must widen what resolves, never suppress a real error: a
-    // name no sibling defines stays unresolved in the editor.
+    // Bundling must widen what an import can reach, never suppress a real
+    // error: a name no sibling defines stays unresolved in the editor.
     let dir = std::env::temp_dir().join(format!("gos-lsp-undef-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create project dir");
@@ -106,11 +109,13 @@ fn a_name_defined_in_no_module_is_still_unresolved() {
         "[project]\nid = \"example.com/undef\"\nversion = \"0.1.0\"\n",
     )
     .expect("write manifest");
-    std::fs::write(dir.join("options.gos"), "enum Colorize { Always, Never }\n")
-        .expect("write sibling");
+    std::fs::write(
+        dir.join("options.gos"),
+        "pub enum Colorize { Always, Never }\n",
+    )
+    .expect("write sibling");
     let entry = dir.join("main.gos");
-    let source =
-        "fn paint(color: Colorize) -> i64 { 1 }\nfn ghost(x: NotDefinedAnywhere) -> i64 { 2 }\n";
+    let source = "use options::Colorize\nfn paint(color: Colorize) -> i64 { 1 }\nfn ghost(x: NotDefinedAnywhere) -> i64 { 2 }\n";
     std::fs::write(&entry, source).expect("write entry");
 
     let uri = format!("file://{}", entry.display());

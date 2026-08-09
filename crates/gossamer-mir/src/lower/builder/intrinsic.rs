@@ -598,6 +598,91 @@ impl<'a> Builder<'a> {
     /// routed to the content-hashing `skey` runtime so two equal-but-distinct
     /// allocations key the same slot (matching the VM). Returns `None` for any
     /// other key shape, leaving the normal pointer-keyed path to run.
+    /// `m.insert/get/…` on a `HashMap` keyed by a user enum, routed to the
+    /// `ekey` runtime so a key hashes by discriminant and payload rather than
+    /// by node address - two equal-valued nodes then share a slot, matching
+    /// the VM. Returns `None` for any other key shape.
+    fn try_lower_enum_key_map_op(
+        &mut self,
+        receiver: &HirExpr,
+        op: &str,
+        args: &[HirExpr],
+        span: Span,
+        recv_ty: gossamer_types::Ty,
+    ) -> Option<Local> {
+        let (key_ty, val_ty) = self.hash_map_kv_tys(recv_ty)?;
+        if self.struct_name_of(key_ty).is_some() {
+            return None;
+        }
+        let desc_sym = self.ensure_enum_eq_desc(key_ty)?;
+        let recv_local = self.lower_expr(receiver)?;
+        let key_local = self.lower_expr(args.first()?)?;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let (name, dest_ty, extra) = match op {
+            "insert" if args.len() == 2 => {
+                let val_local = self.lower_expr(&args[1])?;
+                (
+                    "gos_rt_map_insert_ekey_opt",
+                    self.option_payload_adt_ty(val_ty),
+                    Some(Operand::Copy(Place::local(val_local))),
+                )
+            }
+            "get" if args.len() == 1 => (
+                "gos_rt_map_get_ekey_opt",
+                self.option_payload_adt_ty(val_ty),
+                None,
+            ),
+            "pop" | "remove" if args.len() == 1 => (
+                "gos_rt_map_pop_ekey",
+                self.option_payload_adt_ty(val_ty),
+                None,
+            ),
+            "contains_key" | "contains" if args.len() == 1 => {
+                ("gos_rt_map_contains_ekey", self.tcx.bool_ty(), None)
+            }
+            "get_or" if args.len() == 2 => {
+                let default_local = self.lower_expr(&args[1])?;
+                (
+                    "gos_rt_map_get_or_ekey",
+                    val_ty,
+                    Some(Operand::Copy(Place::local(default_local))),
+                )
+            }
+            "or_insert" if args.len() == 2 => {
+                let default_local = self.lower_expr(&args[1])?;
+                (
+                    "gos_rt_map_or_insert_ekey",
+                    val_ty,
+                    Some(Operand::Copy(Place::local(default_local))),
+                )
+            }
+            "inc" if args.len() <= 2 => {
+                let by = match args.get(1) {
+                    Some(expr) => Operand::Copy(Place::local(self.lower_expr(expr)?)),
+                    None => Operand::Const(ConstValue::Int(1)),
+                };
+                ("gos_rt_map_inc_ekey", i64_ty, Some(by))
+            }
+            _ => return None,
+        };
+        let mut call_args = vec![
+            Operand::Copy(Place::local(recv_local)),
+            Operand::Copy(Place::local(key_local)),
+            Operand::Const(ConstValue::Str(desc_sym)),
+        ];
+        call_args.extend(extra);
+        let dest = self.fresh(dest_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name.to_string())),
+            args: call_args,
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
     pub(crate) fn try_lower_struct_key_map_op(
         &mut self,
         receiver: &HirExpr,
@@ -609,8 +694,14 @@ impl<'a> Builder<'a> {
             .receiver_local_from_path(receiver)
             .map_or(receiver.ty, |l| self.locals[l.0 as usize].ty);
         let (key_ty, val_ty) = self.hash_map_kv_tys(recv_ty)?;
-        // Only aggregate keys (struct / tuple) content-hash; bare scalar and
-        // `String` keys keep their dedicated `_i64` / `_str` fast paths.
+        // An enum key varies its layout per variant, so it content-hashes
+        // through its structural descriptor rather than a flat slot list.
+        if let Some(local) = self.try_lower_enum_key_map_op(receiver, op, args, span, recv_ty) {
+            return Some(local);
+        }
+        // Only aggregate keys (struct / tuple / array) content-hash; bare
+        // scalar and `String` keys keep their dedicated `_i64` / `_str` fast
+        // paths.
         if !self.is_aggregate_key(key_ty) {
             return None;
         }
@@ -632,13 +723,42 @@ impl<'a> Builder<'a> {
                 self.option_payload_adt_ty(val_ty),
                 None,
             ),
-            "pop" if args.len() == 1 => (
+            // `remove` and `pop` are the same contract on a map - take the
+            // slot out and hand back what it held.
+            "pop" | "remove" if args.len() == 1 => (
                 "gos_rt_map_pop_skey",
                 self.option_payload_adt_ty(val_ty),
                 None,
             ),
             "contains_key" | "contains" if args.len() == 1 => {
                 ("gos_rt_map_contains_skey", self.tcx.bool_ty(), None)
+            }
+            "get_or" if args.len() == 2 => {
+                let default_local = self.lower_expr(&args[1])?;
+                (
+                    "gos_rt_map_get_or_skey",
+                    val_ty,
+                    Some(Operand::Copy(Place::local(default_local))),
+                )
+            }
+            "or_insert" if args.len() == 2 => {
+                let default_local = self.lower_expr(&args[1])?;
+                (
+                    "gos_rt_map_or_insert_skey",
+                    val_ty,
+                    Some(Operand::Copy(Place::local(default_local))),
+                )
+            }
+            "inc" if args.len() <= 2 => {
+                let by = match args.get(1) {
+                    Some(expr) => Operand::Copy(Place::local(self.lower_expr(expr)?)),
+                    None => Operand::Const(ConstValue::Int(1)),
+                };
+                (
+                    "gos_rt_map_inc_skey",
+                    self.tcx.int_ty(gossamer_types::IntTy::I64),
+                    Some(by),
+                )
             }
             _ => return None,
         };

@@ -98,23 +98,28 @@ src/
 A sibling `src/<name>.gos` is the module `name`. A subdirectory is a
 module when it carries a `mod.gos` root (`src/<dir>/mod.gos` is the
 module `dir`), and it may nest its own sibling files and
-subdirectories, recursively. Each `.gos` file is its own module;
-declare `pub` on anything you want visible to other modules or to
-dependent packages.
+subdirectories, recursively, to any depth. Each `.gos` file is its own
+module; declare `pub` on anything you want visible to other modules or
+to dependent packages.
 
-The entry (or library root) declares the top-level modules with
-`mod NAME;`:
+The layout declares the modules, so the entry needs no `mod NAME;` line.
+A module's items are not in scope on their own: name them through a path
+or bring them in with `use`.
 
 ```gossamer
 // src/main.gos
-mod widget
-mod sub
+use widget::greet
 
 fn main() {
-    println!("{}", widget::greet(&"world"))
+    println!("{}", greet(&"world"))
     println!("{}", sub::ping())
 }
 ```
+
+Writing a bare `greet(..)` without the import reports `GR0011`, which
+names the declaring module and the exact `use` line to add. A type
+belongs to the module that declares it, so two modules may each declare
+a `Config` without the two colliding.
 
 ```gossamer
 // src/widget.gos

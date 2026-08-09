@@ -1331,13 +1331,21 @@ impl<'a> Builder<'a> {
                 }
             }
         }
-        // `m.insert/get/contains` on a HashMap keyed by a flat struct or
-        // tuple: hash the key's content bytes (the VM value-keys; the compiled
-        // tier would otherwise use the key's pointer and miss on a distinct
-        // allocation of an equal value).
+        // Map operations on a HashMap keyed by a flat aggregate: hash the
+        // key's content bytes (the VM value-keys; the compiled tier would
+        // otherwise use the key's pointer and miss on a distinct allocation
+        // of an equal value).
         if matches!(
             method.name.as_str(),
-            "insert" | "get" | "contains_key" | "contains"
+            "insert"
+                | "get"
+                | "contains_key"
+                | "contains"
+                | "pop"
+                | "remove"
+                | "get_or"
+                | "or_insert"
+                | "inc"
         ) && let Some(local) =
             self.try_lower_struct_key_map_op(receiver, method.name.as_str(), args, span)
         {

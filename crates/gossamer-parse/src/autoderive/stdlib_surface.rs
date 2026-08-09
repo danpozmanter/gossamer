@@ -657,8 +657,10 @@ pub fn rewrite_serde_generic_calls(sf: &mut SourceFile) {
     use gossamer_ast::expr::{Expr, ExprKind};
     use gossamer_ast::visitor::walk_expr_mut;
 
-    struct Rewriter;
-    impl VisitorMut for Rewriter {
+    struct Rewriter<'a> {
+        symbols: &'a std::collections::HashMap<String, String>,
+    }
+    impl VisitorMut for Rewriter<'_> {
         fn visit_expr(&mut self, expr: &mut Expr) {
             // Rewrite inner expressions first so nested serde calls
             // (e.g. an argument that is itself `to_json::<U>(x)`) are
@@ -707,15 +709,104 @@ pub fn rewrite_serde_generic_calls(sf: &mut SourceFile) {
             let TypeKind::Path(tp) = &ty.kind else {
                 return;
             };
-            let Some(type_seg) = tp.segments.last() else {
+            let written: Vec<&str> = tp
+                .segments
+                .iter()
+                .map(|segment| segment.name.name.as_str())
+                .filter(|segment| !matches!(*segment, "crate" | "self" | "super" | "root"))
+                .collect();
+            let Some(bare) = written.last().copied() else {
                 return;
             };
-            let mangled = serde_fn(seg.name.name.as_str(), type_seg.name.name.as_str());
-            seg.name.name = mangled;
+            // Prefer the spelling as written; fall back to the leaf name,
+            // which is unambiguous when only one module declares it.
+            let symbol = self
+                .symbols
+                .get(&written.join("::"))
+                .or_else(|| self.symbols.get(bare))
+                .map_or_else(|| bare.to_string(), Clone::clone);
+            seg.name.name = serde_fn(seg.name.name.as_str(), &symbol);
             seg.generics.clear();
         }
     }
-    Rewriter.visit_source_file(sf);
+    // How each type a turbofish can name maps to the symbol its synthesized
+    // free functions carry: the qualified spelling the user wrote
+    // (`a::Point`), the bare name when exactly one module declares it, and
+    // any name a `use` brought into scope.
+    let symbols = serde_symbol_index(sf);
+    Rewriter { symbols: &symbols }.visit_source_file(sf);
+}
+
+/// Maps every spelling a turbofish may use for a user type onto the symbol
+/// its synthesized serde functions carry. A bare name maps only when a
+/// single module declares it; an ambiguous one is left out so the written
+/// path (or an import) decides.
+fn serde_symbol_index(sf: &SourceFile) -> std::collections::HashMap<String, String> {
+    use std::collections::HashMap;
+
+    let mut by_bare: HashMap<&str, Vec<String>> = HashMap::new();
+    let mut out: HashMap<String, String> = HashMap::new();
+    for (module, item) in flatten_items_with_modules(&sf.items) {
+        let name = match &item.kind {
+            ItemKind::Struct(decl) => &decl.name.name,
+            ItemKind::Enum(decl) => &decl.name.name,
+            _ => continue,
+        };
+        let ty = TyId::new(&module, name);
+        out.insert(ty.path.clone(), ty.symbol.clone());
+        by_bare.entry(name).or_default().push(ty.symbol);
+    }
+    for (bare, symbols) in by_bare {
+        if let [only] = symbols.as_slice() {
+            out.insert(bare.to_string(), only.clone());
+        }
+    }
+    // A `use a::Point` (or `use a::{Point as P}`) makes the imported name
+    // stand for that module's type at every turbofish in this file.
+    for decl in &sf.uses {
+        for (bound, target) in imported_type_paths(decl) {
+            if let Some(symbol) = out.get(&target) {
+                out.insert(bound, symbol.clone());
+            }
+        }
+    }
+    out
+}
+
+/// `(bound name, `::`-joined target path)` for each name a `use` brings in.
+fn imported_type_paths(decl: &gossamer_ast::UseDecl) -> Vec<(String, String)> {
+    let gossamer_ast::UseTarget::Module(path) = &decl.target else {
+        return Vec::new();
+    };
+    let base: Vec<&str> = path
+        .segments
+        .iter()
+        .map(|segment| segment.name.as_str())
+        .filter(|segment| !matches!(*segment, "crate" | "self" | "super" | "root"))
+        .collect();
+    let Some(entries) = &decl.list else {
+        let bound = decl
+            .alias
+            .as_ref()
+            .map(|a| a.name.clone())
+            .or_else(|| base.last().map(|s| (*s).to_string()));
+        return bound
+            .map(|bound| vec![(bound, base.join("::"))])
+            .unwrap_or_default();
+    };
+    entries
+        .iter()
+        .map(|entry| {
+            let mut full = base.clone();
+            full.extend(entry.prefix.iter().map(|s| s.name.as_str()));
+            full.push(entry.name.name.as_str());
+            let bound = entry
+                .alias
+                .as_ref()
+                .map_or_else(|| entry.name.name.clone(), |a| a.name.clone());
+            (bound, full.join("::"))
+        })
+        .collect()
 }
 
 /// Adds `use std::json` and `use std::errors` to the parsed source

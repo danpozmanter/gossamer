@@ -85,10 +85,18 @@ impl<'tcx> FnBuilder<'tcx> {
         if !self.layouts.contains_key(def) {
             return None;
         }
+        // The synthesized `eq` registers under the type's identity, which
+        // carries the modules containing it, so two modules may each declare
+        // the name.
+        if let Some(registered) = self.tcx.def_name(*def)
+            && !registered.is_empty()
+            && !registered.starts_with("adt#")
+        {
+            return Some(registered.to_string());
+        }
         let rendered = gossamer_types::printer::render_ty(self.tcx, ty);
         let bare = rendered.rsplit("::").next().unwrap_or(&rendered);
-        // The synthesized `eq` registers under the struct's bare source
-        // name, so drop any generic-argument suffix (`Wrap<i64>` → `Wrap`).
+        // Drop any generic-argument suffix (`Wrap<i64>` -> `Wrap`).
         let bare = bare.split('<').next().unwrap_or(bare);
         if bare.is_empty() || bare.starts_with("adt#") {
             return None;

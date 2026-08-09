@@ -509,6 +509,13 @@ impl<'a> Lowerer<'a> {
                 | "gos_enum_disc"
                 | "gos_enum_set_disc"
                 | "gos_rt_enum_struct_eq"
+                | "gos_rt_map_insert_ekey_opt"
+                | "gos_rt_map_get_ekey_opt"
+                | "gos_rt_map_contains_ekey"
+                | "gos_rt_map_pop_ekey"
+                | "gos_rt_map_get_or_ekey"
+                | "gos_rt_map_or_insert_ekey"
+                | "gos_rt_map_inc_ekey"
         ) {
             self.lower_raw_intrinsic(&name, args, destination, target)?;
             return Ok(());
@@ -1793,6 +1800,58 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
                 let coerced = self.coerce_llvm_value(&tmp, "i64", &dest_ty);
+                self.store_value_to_place(destination, &dest_ty, &coerced);
+            }
+            // The enum-keyed map helpers all take `(map, key_node,
+            // desc_symbol, [word])`. The third argument names the same
+            // module-global structural descriptor blob `gos_rt_enum_struct_eq`
+            // walks, so it lowers as that global's address rather than as a
+            // string constant.
+            "gos_rt_map_insert_ekey_opt"
+            | "gos_rt_map_get_ekey_opt"
+            | "gos_rt_map_contains_ekey"
+            | "gos_rt_map_pop_ekey"
+            | "gos_rt_map_get_or_ekey"
+            | "gos_rt_map_or_insert_ekey"
+            | "gos_rt_map_inc_ekey" => {
+                let (ret_ty, has_word) = match name {
+                    "gos_rt_map_insert_ekey_opt" => ("i128", true),
+                    "gos_rt_map_get_ekey_opt" | "gos_rt_map_pop_ekey" => ("i128", false),
+                    "gos_rt_map_contains_ekey" => ("i8", false),
+                    _ => ("i64", true),
+                };
+                let map = self.lower_raw_ptr_arg(&args[0])?;
+                let key = self.lower_raw_ptr_arg(&args[1])?;
+                let desc_ptr = match args.get(2) {
+                    Some(Operand::Const(ConstValue::Str(sym))) if !sym.is_empty() => {
+                        format!("@\"{sym}\"")
+                    }
+                    _ => "null".to_string(),
+                };
+                let word = if has_word {
+                    match args.get(3) {
+                        Some(operand) => {
+                            let v = self.lower_operand(operand)?;
+                            let t = self.operand_llvm_ty(operand);
+                            Some(self.coerce_llvm_value(&v, &t, "i64"))
+                        }
+                        None => Some("0".to_string()),
+                    }
+                } else {
+                    None
+                };
+                declare_rt(&mut self.runtime_refs, name);
+                let tail = match &word {
+                    Some(w) => format!(", i64 {w}"),
+                    None => String::new(),
+                };
+                let tmp = self.fresh();
+                writeln!(
+                    self.out,
+                    "  {tmp} = call {ret_ty} @{name}(ptr {map}, ptr {key}, ptr {desc_ptr}{tail})"
+                )
+                .unwrap();
+                let coerced = self.coerce_llvm_value(&tmp, ret_ty, &dest_ty);
                 self.store_value_to_place(destination, &dest_ty, &coerced);
             }
             "gos_rc_alloc" | "gos_rc_alloc_tagged" => {

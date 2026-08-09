@@ -2955,6 +2955,16 @@ fn repr_struct(name: &str, fields: &[(&'static str, Value)]) -> String {
 }
 
 fn source_facing_nested_item_name(name: &str) -> &str {
+    // A user type's identity carries the modules containing it, so two
+    // modules may declare the same name; a rendered value shows the name as
+    // declared. A stdlib type whose own name is a path (`errors::Error`,
+    // `bytes::Builder`) keeps every segment - its prefix names a stdlib
+    // module, which no user module path does.
+    let name = match name.split_once("::") {
+        Some((head, _)) if gossamer_resolve::STDLIB_MODULES.contains(&head) => name,
+        Some(_) => name.rsplit("::").next().unwrap_or(name),
+        None => name,
+    };
     let Some(rest) = name.strip_prefix("__gos_nested_") else {
         return name;
     };

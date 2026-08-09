@@ -279,28 +279,24 @@ fn build_runtime_into(
     // override is `GOSSAMERFLAGS`, which the cli forwards as
     // `RUSTFLAGS` to the inner cargo invocation. We deliberately
     // do NOT honour the outer `RUSTFLAGS` even as a fallback.
+    // `CARGO_ENCODED_RUSTFLAGS` is the form cargo actually sets and it wins
+    // over `RUSTFLAGS`, so both have to go for the inner build to be
+    // isolated.
     for var in [
         "CARGO_PRIMARY_PACKAGE",
         "CARGO_PKG_NAME",
         "RUSTC_WRAPPER",
         "RUSTFLAGS",
+        "CARGO_ENCODED_RUSTFLAGS",
     ] {
         cmd.env_remove(var);
     }
-    // Function-level sections so the user-binary linker's
-    // `--gc-sections` (static-musl path) can prune unused
-    // `gos_rt_*` helpers. Without these the runtime archive is a
-    // single big `.text` blob - pulling any symbol pulls every
-    // symbol. Promoting each Rust function/static to its own ELF
-    // section lets gc-sections drop the unreferenced ones at user-
-    // binary link time. Only matters in release; debug builds skip
-    // these flags so the inner cargo cache stays warm for `gos
-    // run`. Users can extend the flag set via `GOSSAMERFLAGS`.
+    // Per-function ELF sections (so the user binary's `--gc-sections` can
+    // prune unused `gos_rt_*` helpers) are what rustc already emits by
+    // default on the targets this builds for; there is no stable `-C`
+    // spelling to request them, so the inner build takes only the
+    // user-facing `GOSSAMERFLAGS` override.
     let mut flags: Vec<String> = Vec::new();
-    if profile == "release" {
-        flags.push("-Cfunction-sections=yes".to_string());
-        flags.push("-Cdata-sections=yes".to_string());
-    }
     if let Ok(extra) = env::var("GOSSAMERFLAGS") {
         if !extra.trim().is_empty() {
             flags.push(extra);

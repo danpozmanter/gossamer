@@ -284,3 +284,60 @@ fn renamed_container_names_report_their_replacement() {
         );
     }
 }
+
+#[test]
+fn out_of_line_mod_without_a_body_is_rejected() {
+    // The bundler blanks `mod name;` when it inlines the module from the
+    // project layout, so one that reaches the resolver names a module
+    // nothing supplies - rejecting it here keeps the failure at check
+    // time instead of an unbound name at run time.
+    let source = "mod helper;\nfn main() { helper::hi() }\n";
+    let sf = parse(source);
+    let (_resolutions, diags) = resolve_source_file(&sf);
+    assert!(
+        diags.iter().any(
+            |d| matches!(&d.error, ResolveError::MissingModuleSource { name } if name == "helper")
+        ),
+        "expected a missing-module-source diagnostic, got: {diags:?}"
+    );
+}
+
+#[test]
+fn module_relative_paths_resolve_against_the_enclosing_module() {
+    // `self::child::item`, a bare `child::item`, and `super::sibling::item`
+    // all name items registered under their path from the unit root.
+    let source = concat!(
+        "mod outer {\n",
+        "    pub mod child { pub fn value() -> i64 { 1 } }\n",
+        "    pub fn all() -> i64 {\n",
+        "        self::child::value() + child::value() + super::other::value()\n",
+        "    }\n",
+        "}\n",
+        "mod other { pub fn value() -> i64 { 2 } }\n",
+        "fn main() { println!(\"{}\", outer::all()) }\n",
+    );
+    let sf = parse(source);
+    let (_resolutions, diags) = resolve_source_file(&sf);
+    assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+}
+
+#[test]
+fn a_private_module_on_the_path_is_named_by_the_diagnostic() {
+    // The blocked name is `pub`; the private `nest` module is the only
+    // place a `pub` would unblock it, so it is what the report names.
+    let source = concat!(
+        "mod deep {\n",
+        "    mod nest { pub fn nested() -> i64 { 1 } }\n",
+        "}\n",
+        "fn main() { println!(\"{}\", deep::nest::nested()) }\n",
+    );
+    let sf = parse(source);
+    let (_resolutions, diags) = resolve_source_file(&sf);
+    assert!(
+        diags.iter().any(|d| matches!(
+            &d.error,
+            ResolveError::PrivateItem { name, kind, .. } if name == "nest" && *kind == "module"
+        )),
+        "expected the private module to be named, got: {diags:?}"
+    );
+}

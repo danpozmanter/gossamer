@@ -239,12 +239,20 @@ impl<'a> Builder<'a> {
         let mut cur = ty;
         loop {
             match self.tcx.kind_of(cur) {
-                TyKind::Adt { .. } => {
+                TyKind::Adt { def, .. } => {
+                    // A user type's registered name is its identity, which
+                    // carries the modules containing it; impl methods hang
+                    // off that same name.
+                    if let Some(registered) = self.tcx.def_name(*def)
+                        && !registered.starts_with("adt#")
+                    {
+                        return Some(registered.to_string());
+                    }
                     let rendered = gossamer_types::printer::render_ty(self.tcx, cur);
                     let bare = rendered.rsplit("::").next().unwrap_or(&rendered);
-                    // Impl methods register under the type's bare source
-                    // name, so a generic instantiation drops its argument
-                    // suffix (`Wrap<f64>` -> `Wrap`).
+                    // Impl methods register under the type's source name, so
+                    // a generic instantiation drops its argument suffix
+                    // (`Wrap<f64>` -> `Wrap`).
                     let bare = bare.split('<').next().unwrap_or(bare);
                     // `adt#N` is the debug placeholder for an Adt whose name the
                     // tcx never registered (user enums). Reject it so the caller
@@ -417,7 +425,7 @@ impl<'a> Builder<'a> {
         loop {
             match self.tcx.kind_of(cur) {
                 TyKind::Ref { inner, .. } => cur = *inner,
-                TyKind::Tuple(_) => return true,
+                TyKind::Tuple(_) | TyKind::Array { .. } => return true,
                 TyKind::Adt { .. } => return self.struct_name_of(cur).is_some(),
                 _ => return false,
             }
@@ -454,6 +462,16 @@ impl<'a> Builder<'a> {
             TyKind::Tuple(elems) => {
                 let elems = elems.clone();
                 !elems.is_empty() && elems.iter().all(|e| self.append_key_descriptor(*e, out))
+            }
+            // A fixed array is N inline copies of its element, so its slots
+            // are the element's descriptor repeated. A const-generic length
+            // is concrete by the time codegen runs.
+            TyKind::Array { elem, len } => {
+                let elem = *elem;
+                let gossamer_types::ArrayLen::Concrete(len) = *len else {
+                    return false;
+                };
+                len > 0 && (0..len).all(|_| self.append_key_descriptor(elem, out))
             }
             TyKind::Adt { def, substs } => {
                 if self.struct_name_of(ty).is_none() {

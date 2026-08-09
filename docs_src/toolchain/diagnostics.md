@@ -55,6 +55,10 @@ version. This page is auto-generated from the catalogue in
 | [`GR0005`](#gr0005) | Resolve | unknown module path |
 | [`GR0006`](#gr0006) | Resolve | removed stdlib item |
 | [`GR0007`](#gr0007) | Resolve | unknown stdlib item |
+| [`GR0008`](#gr0008) | Resolve | private item |
+| [`GR0009`](#gr0009) | Resolve | ambiguous variant |
+| [`GR0010`](#gr0010) | Resolve | missing module source |
+| [`GR0011`](#gr0011) | Resolve | name not imported |
 | [`GT0001`](#gt0001) | Types | type mismatch |
 | [`GT0002`](#gt0002) | Types | unresolved method |
 | [`GT0003`](#gt0003) | Types | unresolved operator |
@@ -321,6 +325,30 @@ A container spelling that a canonical name replaced. Each container has exactly 
 **Resolve** - unknown stdlib item
 
 The `use` names a module that exists but an item that module does not export. Check the item spelling; `gos doc std::<module>` lists every name a module exports.
+
+## `GR0008` <a id="gr0008"></a>
+
+**Resolve** - private item
+
+An item declared without `pub` is visible only inside the module that declares it and that module's descendants. Write `pub` on the declaration to let other modules name it. When a module along the path is the private one, that module is what the report names.
+
+## `GR0009` <a id="gr0009"></a>
+
+**Resolve** - ambiguous variant
+
+A bare enum-variant name that two or more enums declare. Variant dispatch identifies a variant by name, so write the enum out - `Shape::Circle` rather than `Circle`.
+
+## `GR0010` <a id="gr0010"></a>
+
+**Resolve** - missing module source
+
+A `mod name;` declaration whose module source was never supplied. Out-of-line modules are filled in from the project layout (`name.gos` or `name/mod.gos` beside the entry), so this names a file the build did not find - or a file outside any project, where the layout is not read at all.
+
+## `GR0011` <a id="gr0011"></a>
+
+**Resolve** - name not imported
+
+A bare name that some module in this unit declares but which is not in this scope. A module's items are reached through a path (`util::add`) or an import (`use util::add`); the file layout declares the module, and the import brings its names in.
 
 ## `GT0001` <a id="gt0001"></a>
 

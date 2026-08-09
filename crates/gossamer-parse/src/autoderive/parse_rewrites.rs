@@ -306,17 +306,7 @@ pub fn parse_with_autoderive(source: &str, file: FileId) -> (SourceFile, Vec<Par
 /// flows through a serde call - and deduplicated to one diagnostic per struct,
 /// pointing at the first offending field.
 fn serde_unsupported_field_diags(sf: &SourceFile) -> Vec<ParseDiagnostic> {
-    let struct_names: HashSet<String> = flatten_items(&sf.items)
-        .into_iter()
-        .filter_map(|item| match &item.kind {
-            ItemKind::Struct(decl)
-                if matches!(&decl.body, StructBody::Named(_) | StructBody::Tuple(_)) =>
-            {
-                Some(decl.name.name.clone())
-            }
-            _ => None,
-        })
-        .collect();
+    let struct_names: HashMap<String, TyId> = struct_identities(&sf.items);
     let decls: HashMap<&str, &StructDecl> = flatten_items(&sf.items)
         .into_iter()
         .filter_map(|item| match &item.kind {

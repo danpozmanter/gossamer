@@ -165,7 +165,30 @@ enum MapStorage {
         entries: FxHashMap<Box<[u8]>, i64>,
         desc: Box<[u8]>,
     },
+    /// Enum keys: the key is the canonical encoding of the enum node's
+    /// discriminant and payload (so two equal-valued nodes at distinct
+    /// allocations share a slot, matching the VM). An enum's layout varies
+    /// per variant, so instead of rebuilding a key from its bytes the entry
+    /// keeps the representative node the map retained, which a snapshot hands
+    /// back as the value the program wrote.
+    EkeyVal {
+        entries: FxHashMap<Box<[u8]>, EnumEntry>,
+    },
 }
+
+/// One entry of an enum-keyed map: the stored value word and the retained
+/// key node the map hands back from `keys()` / `iter()`.
+struct EnumEntry {
+    value: i64,
+    key_node: *mut u8,
+}
+
+// SAFETY: `key_node` is an RC-managed node the map owns a share of for as
+// long as the entry lives; the map's own lock serialises every access to it,
+// exactly as it does for the string and blob pointers the other storage
+// variants hold.
+unsafe impl Send for EnumEntry {}
+unsafe impl Sync for EnumEntry {}
 
 struct I64BytesStorage {
     entries: FxHashMap<i64, u64>,
@@ -1531,7 +1554,19 @@ pub unsafe extern "C" fn gos_rt_map_clear(m: *mut GosMap) {
                         unsafe { release_owned_value(map, v) };
                     }
                 }
+                MapStorage::EkeyVal { entries } => {
+                    for entry in entries.values() {
+                        unsafe { release_owned_value(map, entry.value) };
+                    }
+                }
                 _ => {}
+            }
+        }
+        // An enum-keyed map owns a share of every key node it stored,
+        // independently of whether its values are owned.
+        if let MapStorage::EkeyVal { entries } = &*storage {
+            for entry in entries.values() {
+                unsafe { crate::c_abi::rc::gos_rt_rc_release(entry.key_node) };
             }
         }
         *storage = MapStorage::Empty;
@@ -2006,6 +2041,7 @@ pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
             MapStorage::I64Str(inner) => inner.len(),
             MapStorage::Bytes(inner) => inner.len(),
             MapStorage::SkeyVal { entries, .. } => entries.len(),
+            MapStorage::EkeyVal { entries } => entries.len(),
         };
         crate::c_abi::ledger::map_format(entries);
         let mut out = String::from("{");
@@ -2095,7 +2131,10 @@ pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
                     push_entry(&mut out, &mut first, &key, &value);
                 }
             }
-            MapStorage::Empty | MapStorage::Bytes(_) | MapStorage::SkeyVal { .. } => {}
+            MapStorage::Empty
+            | MapStorage::Bytes(_)
+            | MapStorage::SkeyVal { .. }
+            | MapStorage::EkeyVal { .. } => {}
         }
         out.push('}');
         alloc_cstring(out.as_bytes())
@@ -2281,9 +2320,24 @@ pub unsafe extern "C" fn gos_rt_map_free(m: *mut GosMap) {
                         unsafe { release_owned_value(&boxed, v) };
                     }
                 }
+                MapStorage::EkeyVal { entries } => {
+                    for entry in entries.values() {
+                        unsafe { release_owned_value(&boxed, entry.value) };
+                    }
+                }
                 _ => {}
             }
             drop(storage);
+        }
+        // An enum-keyed map owns a share of every key node it stored,
+        // independently of whether its values are owned.
+        {
+            let storage = boxed.storage.lock();
+            if let MapStorage::EkeyVal { entries } = &*storage {
+                for entry in entries.values() {
+                    unsafe { crate::c_abi::rc::gos_rt_rc_release(entry.key_node) };
+                }
+            }
         }
         drop(boxed);
     });
@@ -2835,6 +2889,10 @@ pub unsafe extern "C" fn gos_rt_map_keys_vec(m: *const GosMap) -> *mut GosVec {
                 drop(storage);
                 unsafe { gos_rt_map_keys_skey(m) }
             }
+            MapStorage::EkeyVal { .. } => {
+                drop(storage);
+                unsafe { gos_rt_map_keys_ekey(m) }
+            }
             MapStorage::Empty => unsafe { gos_rt_vec_new(8) },
         }
     })
@@ -2902,7 +2960,7 @@ pub unsafe extern "C" fn gos_rt_map_values_vec(m: *const GosMap) -> *mut GosVec 
             // Struct/tuple-keyed maps store i64 values just like `I64I64`;
             // route them through the i64 snapshot so `m.values()` / `for v in
             // m.values()` see the real values instead of an empty Vec.
-            MapStorage::SkeyVal { .. } => {
+            MapStorage::SkeyVal { .. } | MapStorage::EkeyVal { .. } => {
                 drop(storage);
                 unsafe { gos_rt_map_values_i64(m) }
             }
@@ -3111,6 +3169,363 @@ pub unsafe extern "C" fn gos_rt_map_insert_skey_opt(
     let previous = unsafe { gos_rt_map_get_skey_opt(m, key, desc) };
     unsafe { gos_rt_map_insert_skey(m, key, desc, val) };
     previous
+}
+
+/// The value stored under an aggregate key, or `default` when the slot is
+/// absent. Read-only: an absent key stays absent.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_get_or_skey(
+    m: *const GosMap,
+    key: *const u8,
+    desc: *const c_char,
+    default: i64,
+) -> i64 {
+    ffi_entry!(default, {
+        unsafe { skey_lookup(m, key, desc) }.unwrap_or(default)
+    })
+}
+
+/// The value stored under an aggregate key, inserting `default` first when
+/// the slot is absent, so the caller always sees a value that is in the map.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_or_insert_skey(
+    m: *mut GosMap,
+    key: *const u8,
+    desc: *const c_char,
+    default: i64,
+) -> i64 {
+    ffi_entry!(default, {
+        if let Some(found) = unsafe { skey_lookup(m, key, desc) } {
+            return found;
+        }
+        unsafe { gos_rt_map_insert_skey(m, key, desc, default) };
+        default
+    })
+}
+
+/// Adds `by` to the counter stored under an aggregate key, treating an absent
+/// slot as zero, and returns the new total.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_inc_skey(
+    m: *mut GosMap,
+    key: *const u8,
+    desc: *const c_char,
+    by: i64,
+) -> i64 {
+    ffi_entry!(0, {
+        let next = unsafe { skey_lookup(m, key, desc) }
+            .unwrap_or(0)
+            .wrapping_add(by);
+        unsafe { gos_rt_map_insert_skey(m, key, desc, next) };
+        next
+    })
+}
+
+/// Canonical bytes of an enum node: its discriminant followed by each payload
+/// field in declaration order, recursing into nested nodes of the same enum.
+/// Two equal-valued nodes at distinct allocations encode identically, which is
+/// what makes an enum key hash by value the way the VM does.
+///
+/// `desc` is the same blob [`gos_rt_enum_struct_eq`] walks: `[num_variants]`
+/// then, per variant, `[num_fields, kind_0, ..]`. Returns `None` for a shape
+/// the walk cannot encode, which leaves the caller on pointer identity.
+unsafe fn enum_canonical_bytes(node: *mut u8, desc: *const i64) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(16);
+    unsafe { append_enum_canonical(node, desc, &mut out) }.then_some(out)
+}
+
+unsafe fn append_enum_canonical(node: *mut u8, desc: *const i64, out: &mut Vec<u8>) -> bool {
+    let raw = node as usize;
+    let base = crate::c_abi::rc::untag_rc(node);
+    if desc.is_null() {
+        return false;
+    }
+    if base.is_null() {
+        // A null node is its own encoding, distinct from every real variant.
+        out.extend_from_slice(&u64::MAX.to_le_bytes());
+        return true;
+    }
+    // Discriminant: a small heap enum tags it into the pointer's low bits
+    // (`base | (disc << 1)`); a larger one keeps it in the RcHeader byte at
+    // payload-3. Mirrors `gos_rt_enum_struct_eq`.
+    let tag = raw & 7;
+    let disc = if tag != 0 {
+        (tag >> 1) as u8
+    } else {
+        unsafe { *base.sub(3) }
+    };
+    let num_variants = unsafe { *desc };
+    if i64::from(disc) >= num_variants {
+        return false;
+    }
+    out.push(disc);
+    let mut idx = 1usize;
+    for _ in 0..disc {
+        let nf = unsafe { *desc.add(idx) }.max(0);
+        idx += 1 + nf as usize;
+    }
+    let nf = unsafe { *desc.add(idx) }.max(0);
+    idx += 1;
+    for f in 0..nf {
+        let kind = unsafe { *desc.add(idx + f as usize) };
+        let word = unsafe { *(base as *const i64).add(f as usize) };
+        match kind {
+            // A `String` field folds by content, like the `'S'` slot of an
+            // aggregate key.
+            2 => {
+                let sptr: *const c_char = std::ptr::with_exposed_provenance(word as usize);
+                if sptr.is_null() {
+                    out.extend_from_slice(&0u64.to_le_bytes());
+                } else {
+                    let bytes = unsafe { crate::c_abi::gos_str_arg_bytes(sptr) };
+                    out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+                    out.extend_from_slice(bytes);
+                }
+            }
+            3 => {
+                if !unsafe { append_enum_canonical(word as *mut u8, desc, out) } {
+                    return false;
+                }
+            }
+            // `Vec`-shaped payloads carry no fixed slot count; they stay on
+            // pointer identity rather than encoding a partial key.
+            4 | 5 => return false,
+            _ => out.extend_from_slice(&word.to_le_bytes()),
+        }
+    }
+    true
+}
+
+/// Runs `f` with the enum-key entry table, installing it when the map is
+/// still empty. Returns `None` when the map holds some other storage shape.
+unsafe fn with_ekey_entries<R>(
+    m: *mut GosMap,
+    install: bool,
+    f: impl FnOnce(&mut FxHashMap<Box<[u8]>, EnumEntry>, &mut i64) -> R,
+) -> Option<R> {
+    if m.is_null() {
+        return None;
+    }
+    let map = unsafe { &mut *m };
+    let mut storage = map.storage.lock();
+    if install && matches!(*storage, MapStorage::Empty) {
+        *storage = MapStorage::EkeyVal {
+            entries: FxHashMap::default(),
+        };
+    }
+    let MapStorage::EkeyVal { entries } = &mut *storage else {
+        return None;
+    };
+    let mut len = map.len_cache;
+    let out = f(entries, &mut len);
+    map.len_cache = len;
+    Some(out)
+}
+
+/// Inserts under an enum key, retaining the node so the map can hand the same
+/// value back from a snapshot. Returns the previous value word, if the key was
+/// already present.
+unsafe fn ekey_insert(m: *mut GosMap, key: *mut u8, desc: *const i64, val: i64) -> Option<i64> {
+    let bytes = unsafe { enum_canonical_bytes(key, desc) }?;
+    unsafe {
+        with_ekey_entries(m, true, |entries, len| {
+            unsafe { crate::c_abi::rc::gos_rt_rc_retain(key) };
+            let replaced = entries.insert(
+                bytes.into_boxed_slice(),
+                EnumEntry {
+                    value: val,
+                    key_node: key,
+                },
+            );
+            // The replaced entry's own share of its key node is done.
+            if let Some(prev) = &replaced {
+                unsafe { crate::c_abi::rc::gos_rt_rc_release(prev.key_node) };
+            } else {
+                *len += 1;
+            }
+            replaced.map(|prev| prev.value)
+        })
+        .flatten()
+    }
+}
+
+/// The value word stored under an enum key, or `None` when absent.
+unsafe fn ekey_lookup(m: *const GosMap, key: *mut u8, desc: *const i64) -> Option<i64> {
+    let bytes = unsafe { enum_canonical_bytes(key, desc) }?;
+    if m.is_null() {
+        return None;
+    }
+    let map = unsafe { &*m };
+    let storage = map.storage.lock();
+    let MapStorage::EkeyVal { entries } = &*storage else {
+        return None;
+    };
+    entries.get(bytes.as_slice()).map(|e| e.value)
+}
+
+/// `m.insert(k, v)` for an enum-keyed map, returning `Option<V>` in the
+/// `gos_rt_result_new` layout (0 = Some, 1 = None).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_insert_ekey_opt(
+    m: *mut GosMap,
+    key: *mut u8,
+    desc: *const i64,
+    val: i64,
+) -> i128 {
+    ffi_entry!(unsafe { gos_rt_result_new(1, 0) }, {
+        match unsafe { ekey_insert(m, key, desc, val) } {
+            Some(prev) => unsafe { gos_rt_result_new(0, prev) },
+            None => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
+/// `m.get(k) -> Option<V>` for an enum-keyed map.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_get_ekey_opt(
+    m: *const GosMap,
+    key: *mut u8,
+    desc: *const i64,
+) -> i128 {
+    ffi_entry!(unsafe { gos_rt_result_new(1, 0) }, {
+        match unsafe { ekey_lookup(m, key, desc) } {
+            Some(v) => unsafe { gos_rt_result_new(0, v) },
+            None => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
+/// `m.contains_key(k)` for an enum-keyed map.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_contains_ekey(
+    m: *const GosMap,
+    key: *mut u8,
+    desc: *const i64,
+) -> bool {
+    ffi_entry!(false, { unsafe { ekey_lookup(m, key, desc) }.is_some() })
+}
+
+/// `m.pop(k)` / `m.remove(k)` for an enum-keyed map, returning `Option<V>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_pop_ekey(
+    m: *mut GosMap,
+    key: *mut u8,
+    desc: *const i64,
+) -> i128 {
+    ffi_entry!(unsafe { gos_rt_result_new(1, 0) }, {
+        let none = unsafe { gos_rt_result_new(1, 0) };
+        let Some(bytes) = (unsafe { enum_canonical_bytes(key, desc) }) else {
+            return none;
+        };
+        let popped = unsafe {
+            with_ekey_entries(m, false, |entries, len| {
+                entries.remove(bytes.as_slice()).inspect(|entry| {
+                    *len = len.saturating_sub(1);
+                    unsafe { crate::c_abi::rc::gos_rt_rc_release(entry.key_node) };
+                })
+            })
+        };
+        match popped.flatten() {
+            Some(entry) => unsafe { gos_rt_result_new(0, entry.value) },
+            None => none,
+        }
+    })
+}
+
+/// `m.get_or(k, default)` for an enum-keyed map.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_get_or_ekey(
+    m: *const GosMap,
+    key: *mut u8,
+    desc: *const i64,
+    default: i64,
+) -> i64 {
+    ffi_entry!(default, {
+        unsafe { ekey_lookup(m, key, desc) }.unwrap_or(default)
+    })
+}
+
+/// `m.or_insert(k, default)` for an enum-keyed map.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_or_insert_ekey(
+    m: *mut GosMap,
+    key: *mut u8,
+    desc: *const i64,
+    default: i64,
+) -> i64 {
+    ffi_entry!(default, {
+        if let Some(found) = unsafe { ekey_lookup(m, key, desc) } {
+            return found;
+        }
+        unsafe { ekey_insert(m, key, desc, default) };
+        default
+    })
+}
+
+/// `m.inc(k, by)` for an enum-keyed map; an absent slot counts as zero.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_inc_ekey(
+    m: *mut GosMap,
+    key: *mut u8,
+    desc: *const i64,
+    by: i64,
+) -> i64 {
+    ffi_entry!(0, {
+        let next = unsafe { ekey_lookup(m, key, desc) }
+            .unwrap_or(0)
+            .wrapping_add(by);
+        unsafe { ekey_insert(m, key, desc, next) };
+        next
+    })
+}
+
+/// Snapshots an enum-keyed map's keys as a `GosVec` of node pointers, in
+/// canonical-key order so `keys()`, `values()`, and `iter()` agree.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_keys_ekey(m: *const GosMap) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        if m.is_null() {
+            return unsafe { gos_rt_vec_new(8) };
+        }
+        let map = unsafe { &*m };
+        let storage = map.storage.lock();
+        let MapStorage::EkeyVal { entries } = &*storage else {
+            return unsafe { gos_rt_vec_new(8) };
+        };
+        let mut rows: Vec<(&[u8], *mut u8)> = entries
+            .iter()
+            .map(|(k, e)| (&**k, e.key_node))
+            .collect::<Vec<_>>();
+        rows.sort_by(|a, b| a.0.cmp(b.0));
+        let out = unsafe {
+            crate::c_abi::vec::gos_rt_vec_with_capacity_typed(
+                8,
+                rows.len() as i64,
+                vec_elem_kind::RC_ENUM,
+            )
+        };
+        for (_, node) in rows {
+            // The snapshot hands out its own share of each node.
+            unsafe { crate::c_abi::rc::gos_rt_rc_retain(node) };
+            let word = node as i64;
+            unsafe { gos_rt_vec_push(out, std::ptr::addr_of!(word).cast::<u8>()) };
+        }
+        out
+    })
+}
+
+/// The raw value word stored under an aggregate key, or `None` when absent.
+unsafe fn skey_lookup(m: *const GosMap, key: *const u8, desc: *const c_char) -> Option<i64> {
+    let k = unsafe { build_skey(key, desc) }?;
+    if m.is_null() {
+        return None;
+    }
+    let map = unsafe { &*m };
+    let storage = map.storage.lock();
+    match &*storage {
+        MapStorage::SkeyVal { entries, .. } => entries.get(k.as_slice()).copied(),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

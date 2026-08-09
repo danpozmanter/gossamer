@@ -2207,21 +2207,14 @@ fn real_method_on_user_struct_is_accepted() {
 }
 
 #[test]
-fn hashmap_keys_with_aggregate_key_is_rejected_before_lowering() {
-    // Native maps hash aggregate keys as flat bytes and cannot reconstruct a
-    // `Vec<K>` snapshot. This used to pass checking and return Unit-shaped
-    // values in the compiled runtime.
+fn hashmap_keys_with_aggregate_key_yields_the_key_type() {
+    // An aggregate key snapshots back as the value the program wrote, so
+    // `keys()` types as `Vec<K>` for a struct key just as it does for a
+    // scalar one.
     let d = diagnostics_for(
         "use std::collections::Map\nstruct Point { x: i64, y: i64 }\nfn main() { let m: Map<Point, i64> = Map::new()\n let _ = m.keys()\n }\n",
     );
-    assert!(
-        d.iter().any(|diagnostic| matches!(
-            &diagnostic.error,
-            TypeError::UnresolvedMethod { name, .. }
-                if name == "keys for aggregate Map keys"
-        )),
-        "expected aggregate Map keys rejection, got {d:?}"
-    );
+    assert!(!has_code(&d, "GT0002"), "{d:?}");
 }
 
 #[test]

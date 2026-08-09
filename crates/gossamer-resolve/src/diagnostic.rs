@@ -121,6 +121,21 @@ pub enum ResolveError {
         /// Enums that declare a variant of this name, in source order.
         enums: Vec<String>,
     },
+    /// A bare name that resolves nowhere in scope but names an item some
+    /// module in this unit declares.
+    #[error("`{name}` is not in scope; module `{module}` declares it")]
+    NotImported {
+        /// Name as written.
+        name: String,
+        /// `::`-joined path of the module that declares it.
+        module: String,
+    },
+    /// A `mod name;` declaration with no source behind it.
+    #[error("no source file for module `{name}`")]
+    MissingModuleSource {
+        /// Module name as declared.
+        name: String,
+    },
 }
 
 impl ResolveError {
@@ -137,6 +152,8 @@ impl ResolveError {
             Self::RemovedStdItem { .. } => "removed-std-item",
             Self::PrivateItem { .. } => "private-item",
             Self::AmbiguousVariant { .. } => "ambiguous-variant",
+            Self::NotImported { .. } => "not-imported",
+            Self::MissingModuleSource { .. } => "missing-module-source",
         }
     }
 
@@ -153,6 +170,7 @@ impl ResolveError {
             | Self::WrongNamespace { name, .. }
             | Self::DuplicateItem { name }
             | Self::AmbiguousVariant { name, .. }
+            | Self::MissingModuleSource { name }
             | Self::DuplicateImport { name } => name,
             Self::UnknownModulePath { path } | Self::RemovedStdItem { path, .. } => path,
             Self::PrivateItem { name, module, .. } => {
@@ -161,7 +179,7 @@ impl ResolveError {
                     .chain(module.split("::"))
                     .any(gossamer_ast::common::is_error_name);
             }
-            Self::UnknownStdItem { name, module } => {
+            Self::UnknownStdItem { name, module } | Self::NotImported { name, module } => {
                 return name
                     .split("::")
                     .chain(module.split("::"))
@@ -186,6 +204,8 @@ impl ResolveError {
             Self::UnknownStdItem { .. } => "GR0007",
             Self::PrivateItem { .. } => "GR0008",
             Self::AmbiguousVariant { .. } => "GR0009",
+            Self::MissingModuleSource { .. } => "GR0010",
+            Self::NotImported { .. } => "GR0011",
         }
     }
 }
@@ -306,6 +326,21 @@ impl ResolveDiagnostic {
             ResolveError::PrivateItem { name, module, kind } => out.with_help(format!(
                 "`{name}` is declared without `pub`, so only `{module}` and its child \
                  modules can name it; write `pub` on the {kind} to reach it from here"
+            )),
+            ResolveError::NotImported { name, module } => out
+                .with_suggestion(Suggestion::replacement(
+                    location,
+                    format!("did you mean `{module}::{name}`?"),
+                    format!("{module}::{name}"),
+                ))
+                .with_help(format!(
+                    "a module's items are reached through a path or an import; add \
+                     `use {module}::{name}` to name it directly"
+                )),
+            ResolveError::MissingModuleSource { name } => out.with_help(format!(
+                "`mod {name};` names a module whose source the build never supplied; \
+                 add `{name}.gos` (or `{name}/mod.gos`) beside the entry inside a \
+                 project, or write the body inline as `mod {name} {{ ... }}`"
             )),
             ResolveError::AmbiguousVariant { name, enums } => out.with_help(format!(
                 "{} declare a variant named `{name}`; write the enum, as in `{}::{name}`",

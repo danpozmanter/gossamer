@@ -140,8 +140,8 @@ struct BundledModule {
 
 /// Auto-bundles a multi-file package into the entry source so the
 /// resolver sees one inline module tree. Every sibling `*.gos` file in
-/// the entry's directory becomes `mod <stem> { ... }`, and every
-/// subdirectory holding a `mod.gos` becomes `mod <dir> { ... }` whose
+/// the entry's directory becomes `pub mod <stem> { ... }`, and every
+/// subdirectory holding a `mod.gos` becomes `pub mod <dir> { ... }` whose
 /// body is that `mod.gos` plus its own files and subdirectories,
 /// recursively. The entry file itself, `_`-prefixed scratch files, and
 /// `*_test.gos` files are skipped. A `mod NAME;` declaration for a
@@ -255,13 +255,19 @@ fn assemble_dir_module(dir: &Path) -> String {
     body
 }
 
-/// Appends `mod <name> { <body> }` (with a provenance comment) to `out`.
+/// Appends `pub mod <name> { <body> }` (with a provenance comment) to
+/// `out`. The on-disk layout is the module's only declaration site, so
+/// there is nowhere for a package author to write `pub`; emitting the
+/// declaration as public keeps every module in the tree nameable from
+/// the entry at any nesting depth, which is the layout's contract.
+/// Item visibility is untouched - a module's own items still need `pub`
+/// to be reachable from outside it.
 fn append_inline_module(out: &mut String, module: &BundledModule) {
     out.push('\n');
     out.push_str("// auto-bundled module: ");
     out.push_str(module.origin.to_string_lossy().as_ref());
     out.push('\n');
-    out.push_str("mod ");
+    out.push_str("pub mod ");
     out.push_str(&module.name);
     out.push_str(" {\n");
     out.push_str(&module.body);
@@ -371,16 +377,21 @@ mod bundle_tests {
         let bundled = bundle_sibling_modules(&entry, fs::read_to_string(&entry).unwrap());
         // Flat sibling -> top-level module.
         assert!(
-            bundled.contains("mod helper {"),
+            bundled.contains("pub mod helper {"),
             "no helper module:\n{bundled}"
         );
         assert!(bundled.contains("pub fn h"), "no helper body:\n{bundled}");
         // Subdirectory with mod.gos -> module, recursively including its
         // own subdirectory module.
-        assert!(bundled.contains("mod sub {"), "no sub module:\n{bundled}");
-        assert!(bundled.contains("pub fn ping"), "no sub body:\n{bundled}");
         assert!(
-            bundled.contains("mod deep {"),
+            bundled.contains("pub mod sub {"),
+            "no sub module:\n{bundled}"
+        );
+        assert!(bundled.contains("pub fn ping"), "no sub body:\n{bundled}");
+        // A module nested two levels deep must be public too, or the
+        // entry cannot name `sub::deep::depth`.
+        assert!(
+            bundled.contains("pub mod deep {"),
             "no nested deep module:\n{bundled}"
         );
         assert!(bundled.contains("pub fn depth"), "no deep body:\n{bundled}");

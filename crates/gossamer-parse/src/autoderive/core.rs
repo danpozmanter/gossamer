@@ -41,7 +41,7 @@ enum FieldKind {
     /// `[T]` / `Vec<T>` of any supported kind.
     Vec(Box<FieldKind>),
     /// Nested user struct, referenced by source-level name.
-    Struct(String),
+    Struct(TyId),
     /// `Option<T>` - JSON `null` for `None`, else the inner value. A missing
     /// object key also decodes to `None`.
     Option(Box<FieldKind>),
@@ -55,9 +55,9 @@ enum FieldKind {
 }
 
 impl FieldKind {
-    fn from_type(ty: &gossamer_ast::Type, structs: &HashSet<String>) -> Option<Self> {
+    fn from_type(ty: &gossamer_ast::Type, structs: &HashMap<String, TyId>) -> Option<Self> {
         // A generic argument that must itself be a supported field kind.
-        let arg_kind = |g: &GenericArg, structs: &HashSet<String>| -> Option<Self> {
+        let arg_kind = |g: &GenericArg, structs: &HashMap<String, TyId>| -> Option<Self> {
             let GenericArg::Type(inner) = g else {
                 return None;
             };
@@ -92,8 +92,7 @@ impl FieldKind {
                         "f32" => Some(Self::F64),
                         "bool" => Some(Self::Bool),
                         "String" => Some(Self::String),
-                        other if structs.contains(other) => Some(Self::Struct(other.to_string())),
-                        _ => None,
+                        other => structs.get(other).cloned().map(Self::Struct),
                     };
                 }
                 match name {
@@ -142,7 +141,7 @@ impl FieldKind {
             Self::Bool => "false".to_string(),
             Self::String => "\"\"".to_string(),
             Self::Vec(_) => "Vec::from([])".to_string(),
-            Self::Struct(name) => format!("{name}::default()"),
+            Self::Struct(ty) => format!("{}::default()", ty.path),
             Self::Option(_) => "None".to_string(),
             Self::Tuple(elems) => format!(
                 "({})",
@@ -167,7 +166,7 @@ impl FieldKind {
             Self::Bool => "bool".to_string(),
             Self::String => "String".to_string(),
             Self::Vec(inner) => format!("Vec<{}>", inner.type_spelling()),
-            Self::Struct(name) => name.clone(),
+            Self::Struct(ty) => ty.path.clone(),
             Self::Option(inner) => format!("Option<{}>", inner.type_spelling()),
             Self::Tuple(elems) => format!(
                 "({})",
@@ -192,7 +191,7 @@ impl FieldKind {
             }
             Self::String => format!("format!(\"\\\"{{}}\\\"\", &{expr})"),
             Self::Vec(inner) => render_vec_to_json(expr, inner),
-            Self::Struct(name) => format!("{}({expr})?", to_json_fn(name)),
+            Self::Struct(ty) => format!("{}({expr})?", to_json_fn(&ty.symbol)),
             Self::Option(inner) => {
                 let some_render = inner.render_to_json("__inner");
                 format!(
@@ -227,9 +226,9 @@ impl FieldKind {
                 "match json::as_str({value_expr}) {{ Some(__v) => __v, None => return Err(errors::new(\"{path}: expected string\")) }}"
             ),
             Self::Vec(inner) => extract_vec_strict(value_expr, inner, path),
-            Self::Struct(name) => format!(
+            Self::Struct(ty) => format!(
                 "match {}(&json::render({value_expr})) {{ Ok(__v) => __v, Err(__e) => return Err(errors::wrap(__e, \"{path}\")) }}",
-                from_json_fn(name)
+                from_json_fn(&ty.symbol)
             ),
             Self::Option(inner) => {
                 let some_extract = inner.extract_strict(value_expr, path);
@@ -261,6 +260,86 @@ fn to_json_fn(ty: &str) -> String {
 }
 fn from_json_fn(ty: &str) -> String {
     serde_fn("from_json", ty)
+}
+
+/// How a synthesized body names one user type: `path` is what the emitted
+/// source writes (`a::Point` for a type inside `mod a`), and `symbol` is the
+/// per-type suffix its free functions carry. Folding the module into the
+/// symbol is what lets two modules each declare a `Point`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TyId {
+    pub(crate) path: String,
+    pub(crate) symbol: String,
+    /// The name as declared. Constructors and patterns resolve against the
+    /// declaring item, so they spell this rather than the module path.
+    pub(crate) bare: String,
+}
+
+impl TyId {
+    /// Builds the identity of `name` as declared in `module` (`::`-joined,
+    /// empty at the unit root).
+    pub(crate) fn new(module: &str, name: &str) -> Self {
+        if module.is_empty() {
+            return Self {
+                path: name.to_string(),
+                symbol: name.to_string(),
+                bare: name.to_string(),
+            };
+        }
+        Self {
+            path: format!("{module}::{name}"),
+            symbol: format!("{}__{name}", module.replace("::", "__")),
+            bare: name.to_string(),
+        }
+    }
+}
+
+/// Every named / tuple struct in the tree, indexed by its declared name and
+/// carrying the identity its synthesized functions use. A name two modules
+/// share resolves to the first declaration, matching how the resolver and
+/// type checker break the same tie.
+pub(crate) fn struct_identities(items: &[Item]) -> HashMap<String, TyId> {
+    let mut out: HashMap<String, TyId> = HashMap::new();
+    for (module, item) in flatten_items_with_modules(items) {
+        let ItemKind::Struct(decl) = &item.kind else {
+            continue;
+        };
+        if !matches!(&decl.body, StructBody::Named(_) | StructBody::Tuple(_)) {
+            continue;
+        }
+        out.entry(decl.name.name.clone())
+            .or_insert_with(|| TyId::new(&module, &decl.name.name));
+    }
+    out
+}
+
+/// Every item in the tree paired with the `::`-joined path of the module
+/// that declares it (empty at the unit root).
+pub(crate) fn flatten_items_with_modules(items: &[Item]) -> Vec<(String, &Item)> {
+    let mut out = Vec::new();
+    collect_flat_items_with_modules(items, &mut String::new(), &mut out);
+    out
+}
+
+fn collect_flat_items_with_modules<'a>(
+    items: &'a [Item],
+    module: &mut String,
+    out: &mut Vec<(String, &'a Item)>,
+) {
+    for item in items {
+        out.push((module.clone(), item));
+        if let ItemKind::Mod(decl) = &item.kind
+            && let ModBody::Inline(inner) = &decl.body
+        {
+            let restore = module.len();
+            if !module.is_empty() {
+                module.push_str("::");
+            }
+            module.push_str(&decl.name.name);
+            collect_flat_items_with_modules(inner, module, out);
+            module.truncate(restore);
+        }
+    }
 }
 
 fn render_vec_to_json(expr: &str, inner: &FieldKind) -> String {

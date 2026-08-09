@@ -515,6 +515,10 @@ pub enum RawIntrinsic {
     RcAllocReuse,
     /// `gos_rt_enum_struct_eq(a, b, desc)`.
     EnumStructEq,
+    /// `gos_rt_map_*_ekey(map, key_node, desc, [word])` - an enum-keyed map
+    /// operation whose third argument names a descriptor blob rather than
+    /// being an ordinary value.
+    MapEnumKey,
     /// `gos_fn_addr(name)`.
     FnAddr,
     /// `gos_rt_weak_opt_payload(option_carrier)`.
@@ -609,6 +613,13 @@ impl RawIntrinsic {
             "gos_rc_alloc_tagged" => Self::RcAllocTagged,
             "gos_rc_alloc_reuse" => Self::RcAllocReuse,
             "gos_rt_enum_struct_eq" => Self::EnumStructEq,
+            "gos_rt_map_insert_ekey_opt"
+            | "gos_rt_map_get_ekey_opt"
+            | "gos_rt_map_contains_ekey"
+            | "gos_rt_map_pop_ekey"
+            | "gos_rt_map_get_or_ekey"
+            | "gos_rt_map_or_insert_ekey"
+            | "gos_rt_map_inc_ekey" => Self::MapEnumKey,
             "gos_fn_addr" => Self::FnAddr,
             "gos_rt_weak_opt_payload" => Self::WeakOptPayload,
             "gos_jit_unsupported_user_iterator" => Self::JitUnsupportedUserIterator,
@@ -641,6 +652,7 @@ impl RawIntrinsic {
                 RawIntrinsicArity::Exact(2)
             }
             Self::Store | Self::RcAllocReuse | Self::EnumStructEq => RawIntrinsicArity::Exact(3),
+            Self::MapEnumKey => RawIntrinsicArity::Range { min: 3, max: 4 },
             Self::EnumDiscTag
             | Self::EnumUntag
             | Self::EnumDisc

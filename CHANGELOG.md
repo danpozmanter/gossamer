@@ -1,6 +1,66 @@
 # Changelog
 
+## 0.46.0 - Explicit imports, hashable map keys, Memory optimizations
+
+- Require an import to name a module's items. A sibling file's `pub fn add`
+  is reached as `util::add` or after `use util::add`; a bare `add` no longer
+  resolves through a flat unit-wide namespace. `GR0011` names the declaring
+  module and the exact `use` line to add.
+- Key a `Map` or `Set` by any hashable value on every tier: integers, `bool`,
+  `char`, `String`, tuples, fixed arrays, structs, and enums - unit variants
+  and payload variants alike - nested freely. Keys compare by content, so an
+  equal key built at a different allocation finds the same slot.
+- Return the key a program wrote from `keys()` on an aggregate-keyed map.
+  `Map::keys()` was rejected outright for struct, tuple, and array keys, and
+  `for k in m.keys()` read a multi-word key as a single scalar and faulted.
+- Support `remove`, `pop`, `get_or`, `or_insert`, and `inc` on an
+  aggregate-keyed map in compiled builds. Only `insert` / `get` /
+  `contains_key` were routed, so `remove` silently missed and `inc` failed to
+  link.
+- Key an enum-keyed map by discriminant and payload rather than by node
+  address, so `m.get(Slot::Taken(3))` finds the entry a distinct but equal
+  node inserted.
+- Let two modules declare the same type name. A type's identity below the
+  resolver is now the module that declares it, so `a::Point` and `b::Point`
+  keep their own fields, `{:?}`, `==`, map keying, serde symbols, and impl
+  methods; a rendered value still shows the name as declared.
+- Name a struct literal's type by its declaration, not by the alias it was
+  reached through. `use a::Point as P; P { .. }` rendered as `P { .. }` and
+  failed to link in a native build.
+- Keep the enum behind a unit variant's value. `{:?}` and `==` on a bare
+  variant of a payload-bearing enum lost the type and printed the raw
+  discriminant in compiled builds.
+- Isolate the runtime staticlib build from the outer `RUSTFLAGS`. The build
+  script dropped `RUSTFLAGS` but not `CARGO_ENCODED_RUSTFLAGS`, which cargo
+  actually sets, so workspace codegen flags leaked in and could fail the
+  inner build. Dropping the leak surfaced two `-C` flags rustc has never
+  accepted, which the leak had been masking; they are gone.
+- Link the released binaries at a fixed load address. A position-independent
+  `gos` wrote ~1.9 MB of relocations into private dirty pages before `main`
+  ran; resident memory now starts about 3 MB lower - 9.8 MB to 6.4 MB for
+  `gos --version`, 15.4 MB to 12.6 MB for a bytecode-VM run, 14.3 MB to
+  11.1 MB under the JIT - at identical execution speed.
+
 ## 0.45.2 - String index spaces
+
+- Make directory modules reachable at any depth. The bundler declared each
+  module the project layout implies without `pub`, so anything under
+  `src/<dir>/<dir>/` was private to its parent with nowhere to write the `pub`
+  that would open it; `deep::nest::item` was unreachable from the entry.
+- Anchor module-relative paths at the module that writes them. `self::child::f`,
+  a bare `child::f`, and `super::sibling::f` had their prefixes stripped and
+  were looked up from the unit root, so a module could not call into its own
+  child - `gos check` passed and the call failed at run time with `GX0002`.
+- Resolve a struct declared inside a nested module. Its synthesized structural
+  `eq` / `cmp` are spliced at the unit root, and the visibility check rejected
+  them against the type's module, failing the build for a program that never
+  named the type.
+- Name the private module, not the item, when a module on the path is what
+  blocks a reference. `GR0008` told the user to write `pub` on a function that
+  already had it.
+- Reject `mod name;` with no module source behind it (`GR0010`). Outside a
+  project the layout is never read, so the declaration bound nothing and the
+  call failed at run time with `GX0002`.
 
 - Correct the `substring_byte_scan` (`GL0052`) suggestion. It offered `s[i]` as
   the byte behind `s.substring(i, i + 1)`, so following the lint produced

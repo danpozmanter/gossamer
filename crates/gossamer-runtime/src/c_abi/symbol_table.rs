@@ -2612,6 +2612,50 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_map_pop_skey as *const u8,
         ),
         (
+            "gos_rt_map_get_or_skey",
+            crate::c_abi::gos_rt_map_get_or_skey as *const u8,
+        ),
+        (
+            "gos_rt_map_or_insert_skey",
+            crate::c_abi::gos_rt_map_or_insert_skey as *const u8,
+        ),
+        (
+            "gos_rt_map_inc_skey",
+            crate::c_abi::gos_rt_map_inc_skey as *const u8,
+        ),
+        (
+            "gos_rt_map_insert_ekey_opt",
+            crate::c_abi::gos_rt_map_insert_ekey_opt as *const u8,
+        ),
+        (
+            "gos_rt_map_get_ekey_opt",
+            crate::c_abi::gos_rt_map_get_ekey_opt as *const u8,
+        ),
+        (
+            "gos_rt_map_contains_ekey",
+            crate::c_abi::gos_rt_map_contains_ekey as *const u8,
+        ),
+        (
+            "gos_rt_map_pop_ekey",
+            crate::c_abi::gos_rt_map_pop_ekey as *const u8,
+        ),
+        (
+            "gos_rt_map_get_or_ekey",
+            crate::c_abi::gos_rt_map_get_or_ekey as *const u8,
+        ),
+        (
+            "gos_rt_map_or_insert_ekey",
+            crate::c_abi::gos_rt_map_or_insert_ekey as *const u8,
+        ),
+        (
+            "gos_rt_map_inc_ekey",
+            crate::c_abi::gos_rt_map_inc_ekey as *const u8,
+        ),
+        (
+            "gos_rt_map_keys_ekey",
+            crate::c_abi::gos_rt_map_keys_ekey as *const u8,
+        ),
+        (
             "gos_rt_map_insert_i64_str",
             crate::c_abi::gos_rt_map_insert_i64_str as *const u8,
         ),

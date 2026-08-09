@@ -431,7 +431,10 @@ unresolved-name error. Prelude types, variants, macros, and functions listed
 on the [Prelude page](prelude.md) remain available without imports.
 
 A project's module tree is file-based: `src/foo.gos` becomes
-`mod foo`, `src/bar/mod.gos` becomes `mod bar`.
+`mod foo`, `src/bar/mod.gos` becomes `mod bar`, nesting to any depth.
+Local modules import exactly like the standard library - `use foo::item`,
+or spell `foo::item` in full. A bare name that some module declares but
+which is not in scope reports `GR0011` with the `use` line that fixes it.
 
 ## Numeric literals
 

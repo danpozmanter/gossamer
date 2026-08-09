@@ -14,6 +14,18 @@
 
 use std::collections::{HashMap, HashSet};
 
+/// A type's identity below the resolver: the name it is declared under,
+/// prefixed by the modules that contain it. Two modules may declare the same
+/// name, so the bare spelling is not unique - everything keyed by "the type's
+/// name" (the type tables, `{:?}` dispatch, the native constructor registry)
+/// keys on this instead.
+fn qualified_type_name(module_path: &[String], name: &str) -> String {
+    if module_path.is_empty() {
+        return name.to_string();
+    }
+    format!("{}::{name}", module_path.join("::"))
+}
+
 use gossamer_ast::{
     ArrayExpr, BinaryOp, Block, ClosureParam, Expr, ExprKind, FieldPattern, FnDecl, FnParam,
     GenericArg as AstGenericArg, ImplDecl, ImplItem, Item, ItemKind, Literal, MatchArm, NodeId,
@@ -2228,6 +2240,13 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn collect_signatures(&mut self, items: &[Item]) {
+        self.collect_signatures_in(items, &mut Vec::new());
+    }
+
+    /// Registers every signature in `items`, tracking the module path so a
+    /// type's identity is the name it can be reached by rather than the bare
+    /// name two modules may share.
+    fn collect_signatures_in(&mut self, items: &[Item], module_path: &mut Vec<String>) {
         // First pass: index every trait name + its methods + supertraits,
         // and every user struct / enum name, so subsequent passes can
         // validate `<T: Bound>` bounds, reject name-global method
@@ -2252,12 +2271,12 @@ impl<'a> TypeChecker<'a> {
                 ItemKind::Struct(decl) => {
                     self.validate_derives(&item.attrs, item.span);
                     self.validate_declared_bounds(&decl.generics, &decl.where_clause, item.span);
-                    self.register_struct(item.id, decl);
+                    self.register_struct(item.id, decl, module_path);
                 }
                 ItemKind::Enum(decl) => {
                     self.validate_derives(&item.attrs, item.span);
                     self.validate_declared_bounds(&decl.generics, &decl.where_clause, item.span);
-                    self.register_enum(item.id, decl, item.span);
+                    self.register_enum(item.id, decl, item.span, module_path);
                 }
                 ItemKind::Const(decl) => self.register_const(item.id, &decl.ty),
                 ItemKind::Static(decl) => {
@@ -2270,7 +2289,9 @@ impl<'a> TypeChecker<'a> {
                 }
                 ItemKind::Mod(decl) => {
                     if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
-                        self.collect_signatures(inner);
+                        module_path.push(decl.name.name.clone());
+                        self.collect_signatures_in(inner, module_path);
+                        module_path.pop();
                     }
                 }
                 _ => {}
@@ -2280,6 +2301,21 @@ impl<'a> TypeChecker<'a> {
         // matched to the declaration its self type names regardless of the
         // order the two appear in.
         self.collect_impl_obligations(items);
+    }
+
+    /// Indexes one struct / enum under both the identity it is reached by
+    /// (`a::Point`) and its declared name. The bare key is first-declaration
+    /// wins, so a second module declaring the name never displaces the first -
+    /// a reference that means the second one is written or imported through
+    /// its module and resolves on the qualified key.
+    fn register_adt_name(&mut self, item_id: NodeId, name: &str, module_path: &[String]) {
+        self.user_type_decls.insert(name.to_string());
+        let identity = qualified_type_name(module_path, name);
+        self.user_type_decls.insert(identity.clone());
+        if let Some(def) = self.resolutions.definition_of(item_id) {
+            self.adt_def_by_name.insert(identity, def);
+            self.adt_def_by_name.entry(name.to_string()).or_insert(def);
+        }
     }
 
     /// Attaches each `impl` block's generic bounds to the type it targets
@@ -2310,6 +2346,12 @@ impl<'a> TypeChecker<'a> {
     /// name (to tell a real user Adt receiver from a synthesized
     /// sentinel one). Idempotent - re-calling adds to the existing sets.
     fn collect_trait_names(&mut self, items: &[Item]) {
+        self.collect_trait_names_in(items, &mut Vec::new());
+    }
+
+    /// As [`Self::collect_trait_names`], tracking the module path so a type
+    /// registers under the identity it is reached by.
+    fn collect_trait_names_in(&mut self, items: &[Item], module_path: &mut Vec<String>) {
         for item in items {
             match &item.kind {
                 ItemKind::Trait(decl) => {
@@ -2360,20 +2402,16 @@ impl<'a> TypeChecker<'a> {
                     }
                 }
                 ItemKind::Struct(decl) => {
-                    self.user_type_decls.insert(decl.name.name.clone());
-                    if let Some(def) = self.resolutions.definition_of(item.id) {
-                        self.adt_def_by_name.insert(decl.name.name.clone(), def);
-                    }
+                    self.register_adt_name(item.id, &decl.name.name, module_path);
                 }
                 ItemKind::Enum(decl) => {
-                    self.user_type_decls.insert(decl.name.name.clone());
-                    if let Some(def) = self.resolutions.definition_of(item.id) {
-                        self.adt_def_by_name.insert(decl.name.name.clone(), def);
-                    }
+                    self.register_adt_name(item.id, &decl.name.name, module_path);
                 }
                 ItemKind::Mod(decl) => {
                     if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
-                        self.collect_trait_names(inner);
+                        module_path.push(decl.name.name.clone());
+                        self.collect_trait_names_in(inner, module_path);
+                        module_path.pop();
                     }
                 }
                 _ => {}
@@ -2425,10 +2463,20 @@ impl<'a> TypeChecker<'a> {
     /// Registers an enum's `DefId -> name` so `render_ty` / `adt_dispatch_name`
     /// recover "Shape" instead of the "adt#N" placeholder - needed for `==` /
     /// `{:?}` dispatch on enum values whose type resolves to the Adt.
-    fn register_enum(&mut self, item_id: NodeId, decl: &gossamer_ast::EnumDecl, span: Span) {
+    fn register_enum(
+        &mut self,
+        item_id: NodeId,
+        decl: &gossamer_ast::EnumDecl,
+        span: Span,
+        module_path: &[String],
+    ) {
+        let identity = qualified_type_name(module_path, &decl.name.name);
         if let Some(def) = self.resolutions.definition_of(item_id) {
-            self.tcx.register_def_name(def, decl.name.name.as_str());
-            self.user_type_defs.insert(decl.name.name.clone(), def);
+            self.tcx.register_def_name(def, identity.as_str());
+            self.user_type_defs.insert(identity.clone(), def);
+            self.user_type_defs
+                .entry(decl.name.name.clone())
+                .or_insert(def);
             self.record_adt_param_bounds(def, &decl.generics, &decl.where_clause);
             self.tcx.register_enum_variant_names(
                 def,
@@ -2459,24 +2507,29 @@ impl<'a> TypeChecker<'a> {
                     def,
                     substs: crate::Substs::from_types(std::iter::empty()),
                 });
-                self.enum_tys.insert(decl.name.name.clone(), adt);
-                self.tcx
-                    .register_enum_ty_by_name(decl.name.name.as_str(), adt);
+                // The identity is authoritative; the bare alias is
+                // first-declaration wins so a second module declaring the
+                // name never displaces the first.
+                self.enum_tys.insert(identity.clone(), adt);
+                self.enum_tys.entry(decl.name.name.clone()).or_insert(adt);
+                self.tcx.register_enum_ty_by_name(identity.as_str(), adt);
             }
         }
-        let variant_names = self
-            .enum_variants
-            .entry(decl.name.name.clone())
-            .or_default();
-        for variant in &decl.variants {
-            variant_names.insert(variant.name.name.clone());
+        for key in [identity.clone(), decl.name.name.clone()] {
+            let variant_names = self.enum_variants.entry(key).or_default();
+            for variant in &decl.variants {
+                variant_names.insert(variant.name.name.clone());
+            }
         }
         for variant in &decl.variants {
             match &variant.body {
                 StructBody::Tuple(fields) => {
                     let tys: Vec<Ty> = fields.iter().map(|f| self.type_from_ast(&f.ty)).collect();
                     self.enum_variant_payloads
-                        .insert((decl.name.name.clone(), variant.name.name.clone()), tys);
+                        .insert((identity.clone(), variant.name.name.clone()), tys.clone());
+                    self.enum_variant_payloads
+                        .entry((decl.name.name.clone(), variant.name.name.clone()))
+                        .or_insert(tys);
                 }
                 StructBody::Named(fields) => {
                     let tys: Vec<(String, Ty)> = fields
@@ -2484,7 +2537,10 @@ impl<'a> TypeChecker<'a> {
                         .map(|f| (f.name.name.clone(), self.type_from_ast(&f.ty)))
                         .collect();
                     self.enum_variant_named_payloads
-                        .insert((decl.name.name.clone(), variant.name.name.clone()), tys);
+                        .insert((identity.clone(), variant.name.name.clone()), tys.clone());
+                    self.enum_variant_named_payloads
+                        .entry((decl.name.name.clone(), variant.name.name.clone()))
+                        .or_insert(tys);
                 }
                 StructBody::Unit => {}
             }
@@ -2557,13 +2613,22 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn register_struct(&mut self, item_id: NodeId, decl: &gossamer_ast::StructDecl) {
+    fn register_struct(
+        &mut self,
+        item_id: NodeId,
+        decl: &gossamer_ast::StructDecl,
+        module_path: &[String],
+    ) {
         let Some(def) = self.resolutions.definition_of(item_id) else {
             return;
         };
-        let name = decl.name.name.as_str();
+        let identity = qualified_type_name(module_path, &decl.name.name);
+        let name = identity.as_str();
         self.tcx.register_def_name(def, name);
-        self.user_type_defs.insert(decl.name.name.clone(), def);
+        self.user_type_defs.insert(identity.clone(), def);
+        self.user_type_defs
+            .entry(decl.name.name.clone())
+            .or_insert(def);
         self.record_adt_param_bounds(def, &decl.generics, &decl.where_clause);
         // Build the generic-parameter scope so `Pair<A, B> { fst:
         // A, snd: B }` field-type references resolve to the right
@@ -5109,7 +5174,10 @@ impl<'a> TypeChecker<'a> {
             return None;
         }
         let called_name = path.segments.last()?.name.name.as_str();
-        if self.tcx.def_name(def) != Some(called_name) {
+        // A type's registered name carries the modules containing it, so
+        // compare the written leaf against the identity's leaf.
+        let identity = self.tcx.def_name(def)?;
+        if identity.rsplit("::").next() != Some(called_name) {
             return None;
         }
         let fields = self.struct_fields.get(&def)?.clone();
@@ -5152,7 +5220,9 @@ impl<'a> TypeChecker<'a> {
             return None;
         }
         let called_name = path.segments.last()?.name.name.as_str();
-        if self.tcx.def_name(def) != Some(called_name) {
+        // A type's registered name carries the modules containing it, so
+        // compare the written leaf against the identity's leaf.
+        if self.tcx.def_name(def)?.rsplit("::").next() != Some(called_name) {
             return None;
         }
         let arity = self.struct_generic_arity.get(&def).copied().unwrap_or(0);
@@ -8558,22 +8628,7 @@ impl<'a> TypeChecker<'a> {
                 Some(self.tcx.intern(TyKind::Vec(pair)))
             }
             "keys" => {
-                // Native maps store aggregate keys as canonical flat bytes.
-                // That representation deliberately does not retain enough
-                // layout information to rebuild a `Vec<K>` snapshot, and the
-                // old runtime fallback silently returned `Unit` values. Reject
-                // this surface in the shared checker until the key layout is
-                // threaded through all tiers.
                 let key = self.peel_refs(key);
-                if matches!(
-                    self.tcx.kind_of(key),
-                    TyKind::Adt { .. } | TyKind::Tuple(_) | TyKind::Array { .. }
-                ) {
-                    let ty = self.render_public_ty(resolved);
-                    let error = self.unresolved_method(ty, "keys for aggregate Map keys", resolved);
-                    self.emit(error, span);
-                    return Some(self.tcx.error_ty());
-                }
                 Some(self.tcx.intern(TyKind::Vec(key)))
             }
             "values" => Some(self.tcx.intern(TyKind::Vec(value))),

@@ -78,6 +78,16 @@ fn is_compiler_generated(name: &str) -> bool {
     name.starts_with("__")
 }
 
+/// True for an item the autoderive pass spliced in, marked
+/// `#[gos_synthesized]`. Such an item belongs to the type it completes
+/// rather than to the module the splice landed in, so it names that type
+/// regardless of where the user declared it.
+fn is_synthesized_item(attrs: &gossamer_ast::Attrs) -> bool {
+    attrs.outer.iter().any(|attr| {
+        attr.path.segments.len() == 1 && attr.path.segments[0].name.name == "gos_synthesized"
+    })
+}
+
 struct Resolver {
     resolutions: Resolutions,
     diagnostics: Vec<ResolveDiagnostic>,
@@ -118,6 +128,13 @@ struct Resolver {
     /// Depth of enclosing compiler-synthesized items. Visibility is a
     /// property of source the user wrote, so checks pause inside them.
     synthesized_depth: usize,
+    /// Every module-scoped item, under its bare name, for the autoderive
+    /// bodies the pass splices at the unit root. Those bodies name the
+    /// user's types without a module path and have no source position for a
+    /// `use`, so they resolve against this index; source the user wrote
+    /// never consults it and reaches a module's items through a path or an
+    /// import.
+    synthesized_scope: std::collections::HashMap<String, Binding>,
     /// Enum-variant names this unit declares more than once, mapped to
     /// the enums that declare them. A bare reference to one of these is
     /// ambiguous and must be written with its enum.
@@ -141,6 +158,7 @@ impl Resolver {
             module_visibility: std::collections::HashMap::new(),
             current_module: Vec::new(),
             synthesized_depth: 0,
+            synthesized_scope: std::collections::HashMap::new(),
             ambiguous_variants: std::collections::HashMap::new(),
         }
     }
@@ -439,21 +457,45 @@ impl Resolver {
     /// to carry that hint, so a bare `HashSet<i64>` in a signature reported
     /// only that the name was missing.
     fn emit_unresolved_or_rename(&mut self, name: &str, span: Span) {
-        match crate::stdlib_exports::canonical_collection_name(name) {
-            Some(replacement) => self.emit(
+        if let Some(replacement) = crate::stdlib_exports::canonical_collection_name(name) {
+            self.emit(
                 ResolveError::RemovedStdItem {
                     path: name.to_string(),
                     replacement: replacement.to_string(),
                 },
                 span,
-            ),
-            None => self.emit(
-                ResolveError::UnresolvedName {
+            );
+            return;
+        }
+        // A name some module declares is reachable - it just is not in this
+        // scope. Naming the module turns the failure into the one-line
+        // import that fixes it.
+        if let Some(module) = self.declaring_module_of(name) {
+            self.emit(
+                ResolveError::NotImported {
                     name: name.to_string(),
+                    module,
                 },
                 span,
-            ),
+            );
+            return;
         }
+        self.emit(
+            ResolveError::UnresolvedName {
+                name: name.to_string(),
+            },
+            span,
+        );
+    }
+
+    /// `::`-joined path of the module declaring `name`, when some module in
+    /// this unit declares it as `pub`.
+    fn declaring_module_of(&self, name: &str) -> Option<String> {
+        let Resolution::Def { def, .. } = self.synthesized_scope.get(name)?.resolution else {
+            return None;
+        };
+        let home = self.item_homes.get(&def)?;
+        (!home.module.is_empty() && home.visibility.is_public()).then(|| home.module.join("::"))
     }
 
     fn define_import(&mut self, name: &str, use_id: NodeId, span: Span, target: &str) {
@@ -597,28 +639,50 @@ impl Resolver {
                     vis,
                 );
             }
-            ItemKind::Mod(decl) => {
-                self.register_item(
-                    item.id,
-                    &decl.name,
-                    DefKind::Mod,
-                    item.span,
-                    module_path,
-                    vis,
-                );
-                module_path.push(decl.name.name.clone());
-                self.module_visibility.insert(module_path.join("::"), vis);
-                if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
-                    self.module_scopes
-                        .insert(item.id, crate::scope::Scope::default());
-                    self.collect_mod_stack.push(item.id);
-                    self.collect_items_in(inner, module_path);
-                    self.collect_mod_stack.pop();
-                }
-                module_path.pop();
-            }
+            ItemKind::Mod(decl) => self.collect_mod(item, decl, module_path, vis),
             ItemKind::Impl(_) | ItemKind::AttrItem(_) => {}
         }
+    }
+
+    /// Registers a module declaration and collects the items of its
+    /// inline body.
+    fn collect_mod(
+        &mut self,
+        item: &Item,
+        decl: &gossamer_ast::ModDecl,
+        module_path: &mut Vec<String>,
+        vis: Visibility,
+    ) {
+        self.register_item(
+            item.id,
+            &decl.name,
+            DefKind::Mod,
+            item.span,
+            module_path,
+            vis,
+        );
+        module_path.push(decl.name.name.clone());
+        self.module_visibility.insert(module_path.join("::"), vis);
+        match &decl.body {
+            gossamer_ast::ModBody::Inline(inner) => {
+                self.module_scopes
+                    .insert(item.id, crate::scope::Scope::default());
+                self.collect_mod_stack.push(item.id);
+                self.collect_items_in(inner, module_path);
+                self.collect_mod_stack.pop();
+            }
+            // The bundler fills an out-of-line `mod name;` from the
+            // project layout and blanks the declaration, so one that
+            // survives to here names a module with no source behind it -
+            // nothing would bind at run time.
+            gossamer_ast::ModBody::External => self.emit(
+                ResolveError::MissingModuleSource {
+                    name: decl.name.name.clone(),
+                },
+                item.span,
+            ),
+        }
+        module_path.pop();
     }
 
     /// Registers an enum's variants in the value namespace. Variants
@@ -758,30 +822,29 @@ impl Resolver {
         }
         // The flat root registration keeps the historical bare-name
         // visibility (a top-level caller may reference a module item
-        // unqualified when only one module defines it). For FUNCTIONS
-        // a cross-module duplicate is fine - call sites rewrite to the
-        // qualified spelling. Every other kind stays a hard error: the
-        // downstream struct/enum/const machinery is still keyed by
-        // bare name, so a silent first-wins would misbind.
-        let module = self.scopes.module_mut();
-        let mut root_inserted = false;
-        if kind.is_type_ns() {
-            root_inserted |= module.insert_type(&name.name, binding);
-        }
-        if kind.is_value_ns() {
-            root_inserted |= module.insert_value(&name.name, binding);
-        }
-        if !root_inserted
-            && module_scope_ok
-            && !matches!(kind, DefKind::Fn)
-            && (kind.is_type_ns() || kind.is_value_ns())
-        {
-            self.emit(
-                ResolveError::DuplicateItem {
-                    name: name.name.clone(),
-                },
-                span,
-            );
+        // unqualified when only one module defines it) only for items the
+        // autoderive pass splices at the unit root: those synthesized bodies
+        // name the user's types bare from outside the module that declares
+        // them, and there is no source position for a `use`. Everything a
+        // user writes reaches a module's items through a path or an import.
+        let _ = module_scope_ok;
+        if is_compiler_generated(&name.name) {
+            let module = self.scopes.module_mut();
+            if kind.is_type_ns() {
+                let _ = module.insert_type(&name.name, binding);
+            }
+            if kind.is_value_ns() {
+                let _ = module.insert_value(&name.name, binding);
+            }
+        } else {
+            // An enum's runtime representation is chosen per enum (tagged
+            // niche vs heap node) from tables still keyed by bare variant
+            // name, so two modules declaring the same enum name can build a
+            // value under one representation and match it under the other.
+            // Structs carry no such choice and may share a name freely.
+            self.synthesized_scope
+                .entry(name.name.clone())
+                .or_insert(binding);
         }
         // Also register `mod1::mod2::name` so cross-module callers
         // resolve directly to this def. Failure to insert here is a
@@ -833,12 +896,28 @@ impl Resolver {
         if self.is_reachable(home) {
             return;
         }
-        let error = ResolveError::PrivateItem {
-            name: home.name.clone(),
-            module: home.module.join("::"),
-            kind: home.kind.as_str(),
+        // A `pub` item behind a private module is blocked by the module,
+        // and that module is the one place a `pub` can unblock it.
+        let error = match self.first_unnameable_module(&home.module) {
+            Some(depth) => ResolveError::PrivateItem {
+                name: home.module[depth - 1].clone(),
+                module: home.module[..depth - 1].join("::"),
+                kind: "module",
+            },
+            None => ResolveError::PrivateItem {
+                name: home.name.clone(),
+                module: home.module.join("::"),
+                kind: home.kind.as_str(),
+            },
         };
         self.emit(error, span);
+    }
+
+    /// Depth (1-based) of the outermost module along `path` that cannot
+    /// be named from the module being resolved, or `None` when the whole
+    /// path is nameable and the item's own visibility is what blocks it.
+    fn first_unnameable_module(&self, path: &[String]) -> Option<usize> {
+        (1..=path.len()).find(|&depth| !self.module_depth_is_nameable(path, depth))
     }
 
     /// An item is reachable when the module resolving it is the
@@ -855,24 +934,29 @@ impl Resolver {
     /// module enclosing the current one - a private `mod` is nameable
     /// throughout the module that declares it - or is itself `pub`.
     fn module_is_nameable(&self, path: &[String]) -> bool {
-        (1..=path.len()).all(|depth| {
-            if self.current_module.starts_with(&path[..depth - 1]) {
-                return true;
-            }
-            self.module_visibility
-                .get(&path[..depth].join("::"))
-                .copied()
-                .is_none_or(Visibility::is_public)
-        })
+        (1..=path.len()).all(|depth| self.module_depth_is_nameable(path, depth))
+    }
+
+    /// True when the module `path[..depth]` can be named from the module
+    /// currently being resolved.
+    fn module_depth_is_nameable(&self, path: &[String], depth: usize) -> bool {
+        if self.current_module.starts_with(&path[..depth - 1]) {
+            return true;
+        }
+        self.module_visibility
+            .get(&path[..depth].join("::"))
+            .copied()
+            .is_none_or(Visibility::is_public)
     }
 
     fn resolve_item(&mut self, item: &Item) {
-        let synthesized = match &item.kind {
-            ItemKind::Fn(decl) => is_compiler_generated(&decl.name.name),
-            ItemKind::Struct(decl) => is_compiler_generated(&decl.name.name),
-            ItemKind::Enum(decl) => is_compiler_generated(&decl.name.name),
-            _ => false,
-        };
+        let synthesized = is_synthesized_item(&item.attrs)
+            || match &item.kind {
+                ItemKind::Fn(decl) => is_compiler_generated(&decl.name.name),
+                ItemKind::Struct(decl) => is_compiler_generated(&decl.name.name),
+                ItemKind::Enum(decl) => is_compiler_generated(&decl.name.name),
+                _ => false,
+            };
         if synthesized {
             self.synthesized_depth += 1;
         }
@@ -1157,22 +1241,20 @@ impl Resolver {
         let Some(head) = path.segments.first() else {
             return;
         };
-        // A sibling-module-qualified user type (`util::Rec`) registers under
-        // its joined `mod::Type` key in the type namespace. Strip leading
-        // module-relative prefixes so `super::util::Rec` resolves the same
-        // flattened key as `util::Rec`, mirroring `resolve_struct_literal`.
-        let effective: Vec<&str> = path
-            .segments
+        // A module-qualified user type (`util::Rec`) registers under its
+        // joined `mod::Type` key in the type namespace. Re-anchor the
+        // written path against the module being resolved so
+        // `super::util::Rec`, `self::util::Rec`, and a bare
+        // `util::Rec` all reach the same key, mirroring
+        // `resolve_struct_literal`.
+        let written: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
+        let effective: Vec<&str> = written
             .iter()
-            .map(|s| s.name.name.as_str())
-            .skip_while(|s| matches!(*s, "super" | "crate" | "self"))
+            .copied()
+            .skip_while(|s| matches!(*s, "super" | "crate" | "self" | "root"))
             .collect();
         if effective.len() > 1 {
-            if let Some(resolution) = self
-                .scopes
-                .lookup_type(&effective.join("::"))
-                .map(|b| b.resolution)
-            {
+            if let Some(resolution) = self.lookup_qualified_type(&written) {
                 if let Some(span) = span {
                     self.check_visibility(resolution, span);
                 }
@@ -1191,7 +1273,9 @@ impl Resolver {
         } else {
             self.scopes
                 .lookup_type(name)
-                .map_or(Resolution::Err, |binding| binding.resolution)
+                .map(|binding| binding.resolution)
+                .or_else(|| self.synthesized_lookup(name))
+                .unwrap_or(Resolution::Err)
         };
         if let Some(span) = span {
             if matches!(resolution, Resolution::Err) && !is_self_type(name) {
@@ -1202,6 +1286,13 @@ impl Resolver {
         if let Some(anchor) = anchor {
             self.resolutions.insert(anchor, resolution);
         }
+        for segment in &path.segments {
+            self.resolve_generic_args(&segment.generics);
+        }
+    }
+
+    /// Resolves the generic arguments on every segment of `path`.
+    fn resolve_path_generic_args(&mut self, path: &PathExpr) {
         for segment in &path.segments {
             self.resolve_generic_args(&segment.generics);
         }
@@ -1381,17 +1472,16 @@ impl Resolver {
         };
         // `super::name` / `crate::name` / `self::name` inside an inline
         // child module (`mod tests {}`, an auto-bundled sibling, etc.)
-        // refer to an enclosing scope. The auto-bundle flattens a
-        // package into top-level inline modules whose items the resolver
-        // registers under their qualified path, so dropping the leading
-        // navigation prefix lets the regular qualified / flat lookup
-        // find them - `crate::helper::shout` resolves the same top-level
-        // `helper` module as `super::helper::shout` does from depth 1.
-        let effective: Vec<&str> = path
-            .segments
+        // navigate from the module being resolved. Items register under
+        // their path from the unit root, so the written path is
+        // re-anchored by `qualified_candidates` before lookup;
+        // `effective` is the prefix-free spelling used for reporting and
+        // for the stdlib / dependency-alias checks below.
+        let written: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
+        let effective: Vec<&str> = written
             .iter()
-            .map(|s| s.name.name.as_str())
-            .skip_while(|s| matches!(*s, "super" | "crate" | "self"))
+            .copied()
+            .skip_while(|s| matches!(*s, "super" | "crate" | "self" | "root"))
             .collect();
         // Try the fully-qualified `mod1::mod2::name` form first so
         // sibling-module call sites (`other::greet`) resolve directly
@@ -1407,23 +1497,19 @@ impl Resolver {
             // `HashSet::new()` names the pre-rename container: report the
             // rename rather than an opaque missing path.
             if let Some(head_name) = effective.first()
-                && self.lookup_value_or_type(&joined).is_none()
+                && self.lookup_qualified_value_or_type(&written).is_none()
                 && self.scopes.lookup_type(head_name).is_none()
                 && crate::stdlib_exports::canonical_collection_name(head_name).is_some()
             {
                 self.emit_unresolved_or_rename(head_name, span);
                 self.resolutions.insert(anchor, Resolution::Err);
-                for segment in &path.segments {
-                    self.resolve_generic_args(&segment.generics);
-                }
+                self.resolve_path_generic_args(path);
                 return;
             }
-            if let Some(resolution) = self.lookup_value_or_type(&joined) {
+            if let Some(resolution) = self.lookup_qualified_value_or_type(&written) {
                 self.check_visibility(resolution, span);
                 self.resolutions.insert(anchor, resolution);
-                for segment in &path.segments {
-                    self.resolve_generic_args(&segment.generics);
-                }
+                self.resolve_path_generic_args(path);
                 return;
             }
             // A path headed by a `use "id" as alias` dependency
@@ -1440,16 +1526,12 @@ impl Resolver {
                 }
                 if let Some(resolution) = self.lookup_value_or_type(&rejoined) {
                     self.resolutions.insert(anchor, resolution);
-                    for segment in &path.segments {
-                        self.resolve_generic_args(&segment.generics);
-                    }
+                    self.resolve_path_generic_args(path);
                     return;
                 }
                 self.emit(ResolveError::UnresolvedName { name: joined }, span);
                 self.resolutions.insert(anchor, Resolution::Err);
-                for segment in &path.segments {
-                    self.resolve_generic_args(&segment.generics);
-                }
+                self.resolve_path_generic_args(path);
                 return;
             }
             // Root-cause stdlib-member validation. The resolver is
@@ -1500,9 +1582,7 @@ impl Resolver {
             if stdlib_phantom {
                 self.emit(ResolveError::UnresolvedName { name: joined }, span);
                 self.resolutions.insert(anchor, Resolution::Err);
-                for segment in &path.segments {
-                    self.resolve_generic_args(&segment.generics);
-                }
+                self.resolve_path_generic_args(path);
                 return;
             }
         }
@@ -1522,23 +1602,18 @@ impl Resolver {
         } else {
             self.lookup_value_or_type(lookup_name)
         };
-        let resolution = resolution.unwrap_or_else(|| {
-            self.emit(
-                ResolveError::UnresolvedName {
-                    name: lookup_name.to_string(),
-                },
-                span,
-            );
-            Resolution::Err
-        });
+        let resolution = resolution
+            .or_else(|| self.synthesized_lookup(lookup_name))
+            .unwrap_or_else(|| {
+                self.emit_unresolved_or_rename(lookup_name, span);
+                Resolution::Err
+            });
         self.check_visibility(resolution, span);
         if effective.len() == 1 {
             self.reject_ambiguous_variant(resolution, lookup_name, span);
         }
         self.resolutions.insert(anchor, resolution);
-        for segment in &path.segments {
-            self.resolve_generic_args(&segment.generics);
-        }
+        self.resolve_path_generic_args(path);
     }
 
     /// Rejects a bare reference to an enum-variant name that more than
@@ -1596,42 +1671,34 @@ impl Resolver {
         let Some(head) = path.segments.first() else {
             return;
         };
-        // Strip leading module-relative prefixes (`super`/`crate`/`self`)
-        // so a struct literal written inside an inline child module
-        // (`super::P { .. }` in a `#[cfg(test)] mod tests {}`) resolves
-        // the parent module's type, the same way `resolve_value_path`
-        // resolves a `super::foo()` call. The head of the stripped path
-        // is the type name (`super::P` -> `P`, `Shape::Rect` -> `Shape`).
-        let effective: Vec<&str> = path
-            .segments
+        // A struct literal written inside an inline child module
+        // (`super::P { .. }` in a `#[cfg(test)] mod tests {}`) names a
+        // type through the module tree, the same way
+        // `resolve_value_path` resolves a `super::foo()` call. The head
+        // of the prefix-free path is the type name (`super::P` -> `P`,
+        // `Shape::Rect` -> `Shape`).
+        let written: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
+        let effective: Vec<&str> = written
             .iter()
-            .map(|s| s.name.name.as_str())
-            .skip_while(|s| matches!(*s, "super" | "crate" | "self"))
+            .copied()
+            .skip_while(|s| matches!(*s, "super" | "crate" | "self" | "root"))
             .collect();
         let lookup_name = effective
             .first()
             .copied()
             .unwrap_or(head.name.name.as_str());
-        // A sibling-module-qualified type (`other::Widget { .. }`)
-        // registers under its joined name; prefer that, then fall back
-        // to the bare head (covers enum struct-variant literals like
+        // A module-qualified type (`other::Widget { .. }`) registers
+        // under its joined name; prefer that, then fall back to the bare
+        // head (covers enum struct-variant literals like
         // `Shape::Rect { .. }`, whose head is the enum type).
         let joined = (effective.len() > 1)
-            .then(|| {
-                self.scopes
-                    .lookup_type(&effective.join("::"))
-                    .map(|b| b.resolution)
-            })
+            .then(|| self.lookup_qualified_type(&written))
             .flatten();
         let resolution = joined
             .or_else(|| self.scopes.lookup_type(lookup_name).map(|b| b.resolution))
+            .or_else(|| self.synthesized_lookup(lookup_name))
             .unwrap_or_else(|| {
-                self.emit(
-                    ResolveError::UnresolvedName {
-                        name: lookup_name.to_string(),
-                    },
-                    span,
-                );
+                self.emit_unresolved_or_rename(lookup_name, span);
                 Resolution::Err
             });
         self.check_visibility(resolution, span);
@@ -1639,6 +1706,68 @@ impl Resolver {
         for segment in &path.segments {
             self.resolve_generic_args(&segment.generics);
         }
+    }
+
+    /// Fully-qualified keys to try for `segments`, most specific first.
+    /// Items register under their path from the unit root, so a path
+    /// written inside a module has to be re-anchored before lookup: a
+    /// leading `self` / `super` chain navigates from the module being
+    /// resolved, `crate` / `root` anchors at the unit root, and an
+    /// unprefixed path is tried relative to the current module before
+    /// the root-level key.
+    fn qualified_candidates(&self, segments: &[&str]) -> Vec<String> {
+        let mut supers = 0usize;
+        let mut rooted = false;
+        let mut rest = segments;
+        while let Some((head, tail)) = rest.split_first() {
+            match *head {
+                "self" => {}
+                "super" => supers += 1,
+                "crate" | "root" => rooted = true,
+                _ => break,
+            }
+            rest = tail;
+        }
+        if rest.is_empty() {
+            return Vec::new();
+        }
+        let absolute = rest.join("::");
+        if rooted {
+            return vec![absolute];
+        }
+        let depth = self.current_module.len().saturating_sub(supers);
+        let mut out = Vec::new();
+        if depth > 0 {
+            out.push(format!(
+                "{}::{absolute}",
+                self.current_module[..depth].join("::")
+            ));
+        }
+        out.push(absolute);
+        out
+    }
+
+    /// Bare-name lookup for a body the autoderive pass spliced at the unit
+    /// root: those bodies name module-scoped types without a path. Returns
+    /// `None` in source the user wrote.
+    fn synthesized_lookup(&self, name: &str) -> Option<Resolution> {
+        (self.synthesized_depth > 0)
+            .then(|| self.synthesized_scope.get(name).map(|b| b.resolution))
+            .flatten()
+    }
+
+    /// First of [`Self::qualified_candidates`] that names a binding.
+    fn lookup_qualified_value_or_type(&self, segments: &[&str]) -> Option<Resolution> {
+        self.qualified_candidates(segments)
+            .iter()
+            .find_map(|key| self.lookup_value_or_type(key))
+    }
+
+    /// First of [`Self::qualified_candidates`] that names a type.
+    fn lookup_qualified_type(&self, segments: &[&str]) -> Option<Resolution> {
+        self.qualified_candidates(segments)
+            .iter()
+            .find_map(|key| self.scopes.lookup_type(key).map(|b| b.resolution))
     }
 
     fn lookup_value_or_type(&self, name: &str) -> Option<Resolution> {

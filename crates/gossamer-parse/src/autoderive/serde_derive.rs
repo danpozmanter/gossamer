@@ -7,25 +7,16 @@ pub fn synthesize_serde_impls(parsed: &SourceFile) -> String {
     out.push_str("// Synthesized by `gossamer-parse::autoderive`.\n");
     out.push('\n');
 
-    let struct_names: HashSet<String> = flatten_items(&parsed.items)
-        .into_iter()
-        .filter_map(|item| match &item.kind {
-            ItemKind::Struct(decl)
-                if matches!(&decl.body, StructBody::Named(_) | StructBody::Tuple(_)) =>
-            {
-                Some(decl.name.name.clone())
-            }
-            _ => None,
-        })
-        .collect();
+    let struct_names: HashMap<String, TyId> = struct_identities(&parsed.items);
 
-    for item in flatten_items(&parsed.items) {
+    for (module, item) in flatten_items_with_modules(&parsed.items) {
         let ItemKind::Struct(decl) = &item.kind else {
             continue;
         };
         if !decl.generics.params.is_empty() {
             continue;
         }
+        let ty = TyId::new(&module, &decl.name.name);
         match &decl.body {
             StructBody::Named(fields) => {
                 let typed: Option<Vec<(String, FieldKind)>> = fields
@@ -35,7 +26,7 @@ pub fn synthesize_serde_impls(parsed: &SourceFile) -> String {
                     })
                     .collect();
                 if let Some(typed) = typed {
-                    emit_impl(&mut out, decl, &typed);
+                    emit_impl(&mut out, &ty, &typed);
                 }
             }
             StructBody::Tuple(fields) => {
@@ -44,7 +35,7 @@ pub fn synthesize_serde_impls(parsed: &SourceFile) -> String {
                     .map(|f| FieldKind::from_type(&f.ty, &struct_names))
                     .collect();
                 if let Some(typed) = typed {
-                    emit_tuple_impl(&mut out, decl, &typed);
+                    emit_tuple_impl(&mut out, &ty, &typed);
                 }
             }
             StructBody::Unit => {}
@@ -57,21 +48,21 @@ pub fn synthesize_serde_impls(parsed: &SourceFile) -> String {
 /// by position (`{"0":v0,"1":v1}`), reusing the `to_json`-backed toml/yaml
 /// wrappers. Positional access `value.N` and the `Name(..)` constructor are
 /// rewritten through the tuple-struct machinery.
-fn emit_tuple_impl(out: &mut String, decl: &StructDecl, fields: &[FieldKind]) {
-    let name = &decl.name.name;
-    emit_tuple_to_json(out, name, fields);
-    emit_tuple_from_json(out, name, fields);
-    emit_to_toml(out, name);
-    emit_from_toml(out, name);
-    emit_to_yaml(out, name);
-    emit_from_yaml(out, name);
+fn emit_tuple_impl(out: &mut String, ty: &TyId, fields: &[FieldKind]) {
+    emit_tuple_to_json(out, ty, fields);
+    emit_tuple_from_json(out, ty, fields);
+    emit_to_toml(out, ty);
+    emit_from_toml(out, ty);
+    emit_to_yaml(out, ty);
+    emit_from_yaml(out, ty);
 }
 
-fn emit_tuple_to_json(out: &mut String, name: &str, fields: &[FieldKind]) {
+fn emit_tuple_to_json(out: &mut String, ty: &TyId, fields: &[FieldKind]) {
+    let name = ty.path.as_str();
     out.push_str("// Render a tuple struct as a position-keyed JSON object. Auto-derived.\n");
     out.push_str(&format!(
         "pub fn {}(value: {name}) -> Result<String, errors::Error> {{\n",
-        to_json_fn(name)
+        to_json_fn(&ty.symbol)
     ));
     out.push_str("    let mut out = \"\"\n    out += \"{\"\n");
     for (i, kind) in fields.iter().enumerate() {
@@ -85,11 +76,12 @@ fn emit_tuple_to_json(out: &mut String, name: &str, fields: &[FieldKind]) {
     out.push_str("    out += \"}\"\n    Ok(out)\n}\n\n");
 }
 
-fn emit_tuple_from_json(out: &mut String, name: &str, fields: &[FieldKind]) {
+fn emit_tuple_from_json(out: &mut String, ty: &TyId, fields: &[FieldKind]) {
+    let name = ty.path.as_str();
     out.push_str("// Parse a position-keyed JSON object into a tuple struct. Auto-derived.\n");
     out.push_str(&format!(
         "pub fn {}(text: &String) -> Result<{name}, errors::Error> {{\n",
-        from_json_fn(name)
+        from_json_fn(&ty.symbol)
     ));
     out.push_str("    let v = json::parse(text)?\n");
     for (i, kind) in fields.iter().enumerate() {
@@ -105,26 +97,30 @@ fn emit_tuple_from_json(out: &mut String, name: &str, fields: &[FieldKind]) {
         ));
     }
     let args: Vec<String> = (0..fields.len()).map(|i| format!("__f{i}")).collect();
-    out.push_str(&format!("    Ok({name}({}))\n}}\n\n", args.join(", ")));
+    out.push_str(&format!(
+        "    Ok({}({}))\n}}\n\n",
+        ty.bare,
+        args.join(", ")
+    ));
 }
 
-fn emit_impl(out: &mut String, decl: &StructDecl, fields: &[(String, FieldKind)]) {
-    let name = &decl.name.name;
-    emit_to_json(out, name, fields);
-    emit_from_json(out, name, fields);
-    emit_to_toml(out, name);
-    emit_from_toml(out, name);
-    emit_to_yaml(out, name);
-    emit_from_yaml(out, name);
+fn emit_impl(out: &mut String, ty: &TyId, fields: &[(String, FieldKind)]) {
+    emit_to_json(out, ty, fields);
+    emit_from_json(out, ty, fields);
+    emit_to_toml(out, ty);
+    emit_from_toml(out, ty);
+    emit_to_yaml(out, ty);
+    emit_from_yaml(out, ty);
 }
 
-fn emit_to_json(out: &mut String, name: &str, fields: &[(String, FieldKind)]) {
+fn emit_to_json(out: &mut String, ty: &TyId, fields: &[(String, FieldKind)]) {
+    let name = ty.path.as_str();
     out.push_str(
         "// Render a value as a JSON object. Auto-derived; reached via `to_json::<T>(value)`.\n",
     );
     out.push_str(&format!(
         "pub fn {}(value: {name}) -> Result<String, errors::Error> {{\n",
-        to_json_fn(name)
+        to_json_fn(&ty.symbol)
     ));
     out.push_str("    let mut out = \"\"\n");
     out.push_str("    out += \"{\"\n");
@@ -141,61 +137,66 @@ fn emit_to_json(out: &mut String, name: &str, fields: &[(String, FieldKind)]) {
     out.push_str("}\n\n");
 }
 
-fn emit_to_toml(out: &mut String, name: &str) {
+fn emit_to_toml(out: &mut String, ty: &TyId) {
+    let name = ty.path.as_str();
     out.push_str("// Render a value as TOML. Auto-derived; reached via `to_toml::<T>(value)`.\n");
     out.push_str(&format!(
         "pub fn {}(value: {name}) -> Result<String, errors::Error> {{\n",
-        serde_fn("to_toml", name)
+        serde_fn("to_toml", &ty.symbol)
     ));
-    out.push_str(&format!("    let j = {}(value)?\n", to_json_fn(name)));
+    out.push_str(&format!("    let j = {}(value)?\n", to_json_fn(&ty.symbol)));
     out.push_str("    toml::from_json(&j)\n");
     out.push_str("}\n\n");
 }
 
-fn emit_from_toml(out: &mut String, name: &str) {
+fn emit_from_toml(out: &mut String, ty: &TyId) {
+    let name = ty.path.as_str();
     out.push_str(
         "// Parse TOML text into a value. Auto-derived; reached via `from_toml::<T>(text)`.\n",
     );
     out.push_str(&format!(
         "pub fn {}(text: &String) -> Result<{name}, errors::Error> {{\n",
-        serde_fn("from_toml", name)
+        serde_fn("from_toml", &ty.symbol)
     ));
     out.push_str("    let j = toml::to_json(text)?\n");
-    out.push_str(&format!("    {}(&j)\n", from_json_fn(name)));
+    out.push_str(&format!("    {}(&j)\n", from_json_fn(&ty.symbol)));
     out.push_str("}\n\n");
 }
 
-fn emit_to_yaml(out: &mut String, name: &str) {
+fn emit_to_yaml(out: &mut String, ty: &TyId) {
+    let name = ty.path.as_str();
     out.push_str("// Render a value as YAML. Auto-derived; reached via `to_yaml::<T>(value)`.\n");
     out.push_str(&format!(
         "pub fn {}(value: {name}) -> Result<String, errors::Error> {{\n",
-        serde_fn("to_yaml", name)
+        serde_fn("to_yaml", &ty.symbol)
     ));
-    out.push_str(&format!("    let j = {}(value)?\n", to_json_fn(name)));
+    out.push_str(&format!("    let j = {}(value)?\n", to_json_fn(&ty.symbol)));
     out.push_str("    yaml::from_json(&j)\n");
     out.push_str("}\n\n");
 }
 
-fn emit_from_yaml(out: &mut String, name: &str) {
+fn emit_from_yaml(out: &mut String, ty: &TyId) {
+    let name = ty.path.as_str();
     out.push_str(
         "// Parse YAML text into a value. Auto-derived; reached via `from_yaml::<T>(text)`.\n",
     );
     out.push_str(&format!(
         "pub fn {}(text: &String) -> Result<{name}, errors::Error> {{\n",
-        serde_fn("from_yaml", name)
+        serde_fn("from_yaml", &ty.symbol)
     ));
     out.push_str("    let j = yaml::to_json(text)?\n");
-    out.push_str(&format!("    {}(&j)\n", from_json_fn(name)));
+    out.push_str(&format!("    {}(&j)\n", from_json_fn(&ty.symbol)));
     out.push_str("}\n\n");
 }
 
-fn emit_from_json(out: &mut String, name: &str, fields: &[(String, FieldKind)]) {
+fn emit_from_json(out: &mut String, ty: &TyId, fields: &[(String, FieldKind)]) {
+    let name = ty.path.as_str();
     out.push_str(
         "// Parse a JSON object into a value. Auto-derived; reached via `from_json::<T>(text)`.\n// Returns `Err` when a required field is missing or a field's value\n// type does not match the declaration; the error names the field.\n",
     );
     out.push_str(&format!(
         "pub fn {}(text: &String) -> Result<{name}, errors::Error> {{\n",
-        from_json_fn(name)
+        from_json_fn(&ty.symbol)
     ));
     out.push_str("    let v = json::parse(text)?\n");
     for (fname, kind) in fields {
@@ -434,17 +435,7 @@ fn types_with_user_method(parsed: &SourceFile, method: &str) -> HashSet<String> 
     reason = "linear orchestration: collect names, fields, formattable + comparable sets, then emit"
 )]
 pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
-    let struct_names: HashSet<String> = flatten_items(&parsed.items)
-        .into_iter()
-        .filter_map(|item| match &item.kind {
-            ItemKind::Struct(decl)
-                if matches!(&decl.body, StructBody::Named(_) | StructBody::Tuple(_)) =>
-            {
-                Some(decl.name.name.clone())
-            }
-            _ => None,
-        })
-        .collect();
+    let struct_names: HashMap<String, TyId> = struct_identities(&parsed.items);
     let user_fmt = types_with_user_fmt(parsed);
     let user_eq = types_with_user_method(parsed, "eq");
     let user_cmp = types_with_user_method(parsed, "cmp");
@@ -553,7 +544,7 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
     }
 
     let mut out = String::new();
-    for item in flatten_items(&parsed.items) {
+    for (module, item) in flatten_items_with_modules(&parsed.items) {
         let mut derives = derive_list(&item.attrs);
         // Synthesize a structural `fmt` for every formattable struct / enum that
         // lacks one, so `{}` / `{:?}` lowers on the compiled tiers exactly as it
@@ -599,15 +590,25 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
         match &item.kind {
             ItemKind::Struct(decl) => match &decl.body {
                 StructBody::Named(fields) => {
-                    emit_struct_derive_impl(&mut out, decl, fields, &derives, &struct_names);
+                    let ty = TyId::new(&module, &decl.name.name);
+                    emit_struct_derive_impl(&mut out, decl, &ty, fields, &derives, &struct_names);
                 }
                 StructBody::Tuple(fields) => {
-                    emit_tuple_struct_derive_impl(&mut out, decl, fields, &derives, &struct_names);
+                    let ty = TyId::new(&module, &decl.name.name);
+                    emit_tuple_struct_derive_impl(
+                        &mut out,
+                        decl,
+                        &ty,
+                        fields,
+                        &derives,
+                        &struct_names,
+                    );
                 }
                 StructBody::Unit => {}
             },
             ItemKind::Enum(decl) if decl.generics.params.is_empty() => {
-                emit_enum_derive_impl(&mut out, decl, &derives);
+                let ty = TyId::new(&module, &decl.name.name);
+                emit_enum_derive_impl(&mut out, decl, &ty, &derives);
             }
             _ => {}
         }
@@ -629,12 +630,19 @@ fn variant_fields(v: &EnumVariant) -> impl Iterator<Item = &gossamer_ast::Type> 
 /// The match pattern and the value-reconstruction for one enum variant,
 /// binding each payload field to `{prefix}{i}` - e.g. for `V(a, b)` with prefix
 /// `__s`: `("E::V(__s0, __s1)", "E::V(__s0, __s1)", ["__s0", "__s1"])`.
-fn variant_shape(enum_name: &str, v: &EnumVariant, prefix: &str) -> (String, String, Vec<String>) {
+/// `(match pattern, construction expression, bindings)` for one variant.
+///
+/// A pattern names the type through the module path so it resolves from the
+/// unit root where these bodies are spliced; a construction spells the type
+/// as declared, which is the name every tier's constructor dispatch carries.
+fn variant_shape(ty: &TyId, v: &EnumVariant, prefix: &str) -> (String, String, Vec<String>) {
     let vn = &v.name.name;
+    let enum_name = ty.path.as_str();
+    let ctor_name = ty.bare.as_str();
     match &v.body {
         StructBody::Unit => (
             format!("{enum_name}::{vn}"),
-            format!("{enum_name}::{vn}"),
+            format!("{ctor_name}::{vn}"),
             Vec::new(),
         ),
         StructBody::Tuple(fields) => {
@@ -642,7 +650,7 @@ fn variant_shape(enum_name: &str, v: &EnumVariant, prefix: &str) -> (String, Str
             let joined = binds.join(", ");
             (
                 format!("{enum_name}::{vn}({joined})"),
-                format!("{enum_name}::{vn}({joined})"),
+                format!("{ctor_name}::{vn}({joined})"),
                 binds,
             )
         }
@@ -655,7 +663,7 @@ fn variant_shape(enum_name: &str, v: &EnumVariant, prefix: &str) -> (String, Str
                 .collect();
             (
                 format!("{enum_name}::{vn} {{ {} }}", pat.join(", ")),
-                format!("{enum_name}::{vn} {{ {} }}", pat.join(", ")),
+                format!("{ctor_name}::{vn} {{ {} }}", pat.join(", ")),
                 binds,
             )
         }
@@ -666,8 +674,8 @@ fn variant_shape(enum_name: &str, v: &EnumVariant, prefix: &str) -> (String, Str
     clippy::too_many_lines,
     reason = "one block per derived trait (clone/eq/cmp/debug/default); splitting scatters the emit"
 )]
-fn emit_enum_derive_impl(out: &mut String, decl: &EnumDecl, derives: &[String]) {
-    let name = &decl.name.name;
+fn emit_enum_derive_impl(out: &mut String, decl: &EnumDecl, ty: &TyId, derives: &[String]) {
+    let name = ty.path.as_str();
     let has = |t: &str| derives.iter().any(|d| d == t);
     let want_clone = has("Clone");
     let want_eq = has("PartialEq") || has("Eq");
@@ -678,14 +686,14 @@ fn emit_enum_derive_impl(out: &mut String, decl: &EnumDecl, derives: &[String]) 
         return;
     }
     out.push_str(&format!(
-        "// Auto-derived from #[derive(...)] for {name}.\nimpl {name} {{\n"
+        "// Auto-derived from #[derive(...)] for {name}.\n#[gos_synthesized]\nimpl {name} {{\n"
     ));
     if want_clone {
         out.push_str(&format!(
             "    fn clone(&self) -> {name} {{\n        match self {{\n"
         ));
         for v in &decl.variants {
-            let (pat, recon, _) = variant_shape(name, v, "__c");
+            let (pat, recon, _) = variant_shape(ty, v, "__c");
             out.push_str(&format!("            {pat} => {recon},\n"));
         }
         out.push_str("        }\n    }\n");
@@ -698,8 +706,8 @@ fn emit_enum_derive_impl(out: &mut String, decl: &EnumDecl, derives: &[String]) 
             "    fn eq(&self, other: &{name}) -> bool {{\n        match self {{\n"
         ));
         for v in &decl.variants {
-            let (lpat, _, lbinds) = variant_shape(name, v, "__a");
-            let (rpat, _, rbinds) = variant_shape(name, v, "__b");
+            let (lpat, _, lbinds) = variant_shape(ty, v, "__a");
+            let (rpat, _, rbinds) = variant_shape(ty, v, "__b");
             let cond = if lbinds.is_empty() {
                 "true".to_string()
             } else {
@@ -740,8 +748,8 @@ fn emit_enum_derive_impl(out: &mut String, decl: &EnumDecl, derives: &[String]) 
         out.push_str("        if __rs < __ro { return -1 }\n        if __rs > __ro { return 1 }\n");
         out.push_str("        match self {\n");
         for v in &decl.variants {
-            let (lpat, _, lbinds) = variant_shape(name, v, "__a");
-            let (rpat, _, rbinds) = variant_shape(name, v, "__b");
+            let (lpat, _, lbinds) = variant_shape(ty, v, "__a");
+            let (rpat, _, rbinds) = variant_shape(ty, v, "__b");
             if lbinds.is_empty() {
                 out.push_str(&format!("            {lpat} => 0,\n"));
             } else {
@@ -762,7 +770,7 @@ fn emit_enum_derive_impl(out: &mut String, decl: &EnumDecl, derives: &[String]) 
     if want_debug {
         out.push_str("    fn fmt(&self) -> String {\n        match self {\n");
         for v in &decl.variants {
-            let (pat, _, binds) = variant_shape(name, v, "__d");
+            let (pat, _, binds) = variant_shape(ty, v, "__d");
             let vn = &v.name.name;
             let arm = match &v.body {
                 StructBody::Unit => format!("\"{vn}\""),
@@ -853,7 +861,7 @@ fn emit_named_struct_fmt_impl(
 
 /// `("<T, U>", "Name<T, U>")` for a generic struct, or `("", "Name")` for a
 /// non-generic one. Lifetime / const params are skipped (rare in derives).
-fn struct_generics(decl: &StructDecl) -> (String, String) {
+fn struct_generics(decl: &StructDecl, qualified: &str) -> (String, String) {
     let names: Vec<&str> = decl
         .generics
         .params
@@ -864,10 +872,10 @@ fn struct_generics(decl: &StructDecl) -> (String, String) {
         })
         .collect();
     if names.is_empty() {
-        (String::new(), decl.name.name.clone())
+        (String::new(), qualified.to_string())
     } else {
         let args = format!("<{}>", names.join(", "));
-        (args.clone(), format!("{}{args}", decl.name.name))
+        (args.clone(), format!("{qualified}{args}"))
     }
 }
 
@@ -882,11 +890,15 @@ fn struct_generics(decl: &StructDecl) -> (String, String) {
 fn emit_tuple_struct_derive_impl(
     out: &mut String,
     decl: &StructDecl,
+    ty: &TyId,
     fields: &[gossamer_ast::TupleField],
     derives: &[String],
-    structs: &HashSet<String>,
+    structs: &HashMap<String, TyId>,
 ) {
-    let name = &decl.name.name;
+    let name = ty.path.as_str();
+    // `{:?}` renders the type the user declared, not the path used to
+    // reach it from the unit root.
+    let bare = decl.name.name.as_str();
     let has = |t: &str| derives.iter().any(|d| d == t);
     let want_clone = has("Clone");
     let want_eq = has("PartialEq") || has("Eq");
@@ -896,15 +908,15 @@ fn emit_tuple_struct_derive_impl(
     if !(want_clone || want_eq || want_cmp || want_default || want_debug) {
         return;
     }
-    let (gen_decl, self_ty) = struct_generics(decl);
+    let (gen_decl, self_ty) = struct_generics(decl, name);
     let n = fields.len();
     out.push_str(&format!(
-        "// Auto-derived from #[derive(...)] for {name}.\nimpl{gen_decl} {self_ty} {{\n"
+        "// Auto-derived from #[derive(...)] for {name}.\n#[gos_synthesized]\nimpl{gen_decl} {self_ty} {{\n"
     ));
     if want_clone {
         let init: Vec<String> = (0..n).map(|i| format!("self.{i}")).collect();
         out.push_str(&format!(
-            "    fn clone(&self) -> {self_ty} {{ {name}({}) }}\n",
+            "    fn clone(&self) -> {self_ty} {{ {bare}({}) }}\n",
             init.join(", ")
         ));
     }
@@ -938,7 +950,7 @@ fn emit_tuple_struct_derive_impl(
         if let Some(typed) = typed {
             let init: Vec<String> = typed.iter().map(FieldKind::default_literal).collect();
             out.push_str(&format!(
-                "    fn default() -> {self_ty} {{ {name}({}) }}\n",
+                "    fn default() -> {self_ty} {{ {bare}({}) }}\n",
                 init.join(", ")
             ));
         }
@@ -957,7 +969,7 @@ fn emit_tuple_struct_derive_impl(
             })
             .collect();
         out.push_str(&format!(
-            "    fn fmt(&self) -> String {{ format!(\"{name}({})\", {}) }}\n",
+            "    fn fmt(&self) -> String {{ format!(\"{bare}({})\", {}) }}\n",
             placeholders.join(", "),
             argvals.join(", ")
         ));
@@ -968,11 +980,12 @@ fn emit_tuple_struct_derive_impl(
 fn emit_struct_derive_impl(
     out: &mut String,
     decl: &StructDecl,
+    ty: &TyId,
     fields: &[gossamer_ast::StructField],
     derives: &[String],
-    structs: &HashSet<String>,
+    structs: &HashMap<String, TyId>,
 ) {
-    let name = &decl.name.name;
+    let name = ty.path.as_str();
     let has = |t: &str| derives.iter().any(|d| d == t);
     let want_clone = has("Clone");
     let want_eq = has("PartialEq") || has("Eq");
@@ -984,10 +997,10 @@ fn emit_struct_derive_impl(
     }
     // `(gen_decl, self_ty)` = ("<T>", "Pair<T>") for a generic struct, else
     // ("", "Pair"). Named structs reconstruct with braced literals.
-    let (gen_decl, self_ty) = struct_generics(decl);
+    let (gen_decl, self_ty) = struct_generics(decl, name);
     let field_names: Vec<&str> = fields.iter().map(|f| f.name.name.as_str()).collect();
     out.push_str(&format!(
-        "// Auto-derived from #[derive(...)] for {name}.\nimpl{gen_decl} {self_ty} {{\n"
+        "// Auto-derived from #[derive(...)] for {name}.\n#[gos_synthesized]\nimpl{gen_decl} {self_ty} {{\n"
     ));
     if want_clone {
         // Reconstruct with a field-by-field copy. In the GC model a value
@@ -1060,7 +1073,7 @@ fn emit_struct_derive_impl(
         }
     }
     if want_debug {
-        emit_named_struct_fmt_impl(out, name, &field_names, fields);
+        emit_named_struct_fmt_impl(out, &decl.name.name, &field_names, fields);
     }
     out.push_str("}\n\n");
 }

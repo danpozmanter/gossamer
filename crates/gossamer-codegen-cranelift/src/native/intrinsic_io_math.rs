@@ -939,6 +939,72 @@ pub(super) fn lower_intrinsic_call_io_math(
             );
             Ok(true)
         }
+        // The enum-keyed map helpers take `(map, key_node, desc_symbol,
+        // [word])`. The third argument names the module-global structural
+        // descriptor blob, so it lowers as that global's address rather than
+        // as a string constant.
+        "gos_rt_map_insert_ekey_opt"
+        | "gos_rt_map_get_ekey_opt"
+        | "gos_rt_map_contains_ekey"
+        | "gos_rt_map_pop_ekey"
+        | "gos_rt_map_get_or_ekey"
+        | "gos_rt_map_or_insert_ekey"
+        | "gos_rt_map_inc_ekey" => {
+            let (static_name, ret_ty, has_word): (&'static str, _, _) = match name {
+                "gos_rt_map_insert_ekey_opt" => ("gos_rt_map_insert_ekey_opt", types::I128, true),
+                "gos_rt_map_get_ekey_opt" => ("gos_rt_map_get_ekey_opt", types::I128, false),
+                "gos_rt_map_pop_ekey" => ("gos_rt_map_pop_ekey", types::I128, false),
+                "gos_rt_map_contains_ekey" => ("gos_rt_map_contains_ekey", types::I8, false),
+                "gos_rt_map_get_or_ekey" => ("gos_rt_map_get_or_ekey", types::I64, true),
+                "gos_rt_map_or_insert_ekey" => ("gos_rt_map_or_insert_ekey", types::I64, true),
+                _ => ("gos_rt_map_inc_ekey", types::I64, true),
+            };
+            let mut call_args = Vec::with_capacity(4);
+            for index in 0..2 {
+                let v = match args.get(index) {
+                    Some(arg) => {
+                        lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                    }
+                    None => builder.ins().iconst(ptr_ty, 0),
+                };
+                call_args.push(coerce_arg_to(builder, v, ptr_ty).unwrap_or(v));
+            }
+            let desc_val = match args.get(2) {
+                Some(Operand::Const(ConstValue::Str(sym))) if !sym.is_empty() => {
+                    let Some(blob) = tcx.rc_meta(sym) else {
+                        bail!("native codegen: {static_name} references unknown meta `{sym}`");
+                    };
+                    let data_id = intrinsics.intern_rc_meta(module, sym, blob)?;
+                    let gv = module.declare_data_in_func(data_id, builder.func);
+                    builder.ins().symbol_value(ptr_ty, gv)
+                }
+                _ => builder.ins().iconst(ptr_ty, 0),
+            };
+            call_args.push(desc_val);
+            let mut sig_params = vec![ptr_ty, ptr_ty, ptr_ty];
+            if has_word {
+                let w = match args.get(3) {
+                    Some(arg) => {
+                        lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                    }
+                    None => builder.ins().iconst(types::I64, 0),
+                };
+                call_args.push(coerce_arg_to(builder, w, types::I64).unwrap_or(w));
+                sig_params.push(types::I64);
+            }
+            let f = intrinsics.extern_fn(module, static_name, &sig_params, &[ret_ty])?;
+            let fref = module.declare_func_in_func(f, builder.func);
+            let call = builder.ins().call(fref, &call_args);
+            let result = builder.inst_results(call)[0];
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                result,
+            );
+            Ok(true)
+        }
         "gos_rt_vec_set_slot_children" => {
             // Tags an `AGGR_OWNED` vec with its element slot-children layout so
             // the runtime retains each pushed slot's children and deep-frees
