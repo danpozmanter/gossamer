@@ -1049,6 +1049,7 @@ impl<'a> Builder<'a> {
                             | TyKind::Adt { .. }
                             | TyKind::Tuple(_)
                             | TyKind::Array { .. }
+                            | TyKind::HashMap { .. }
                     )
                 });
                 let caller_visible_place = matches!(
@@ -1060,13 +1061,14 @@ impl<'a> Builder<'a> {
                 );
                 if owned_clone_parameter
                     && caller_visible_place
-                    && matches!(
+                    && (matches!(
                         self.tcx.kind_of(source_ty),
                         TyKind::Vec(_)
                             | TyKind::Adt { .. }
                             | TyKind::Tuple(_)
                             | TyKind::Array { .. }
-                    )
+                            | TyKind::HashMap { .. }
+                    ) || self.set_clone_symbol_for_local(local).is_some())
                 {
                     let cloned = self.fresh(source_ty);
                     self.emit_owned_clone_binding(local, cloned, span);

@@ -190,6 +190,7 @@ struct EnumEntry {
 unsafe impl Send for EnumEntry {}
 unsafe impl Sync for EnumEntry {}
 
+#[derive(Clone)]
 struct I64BytesStorage {
     entries: FxHashMap<i64, u64>,
     data: Vec<u8>,
@@ -283,6 +284,7 @@ impl I64BytesStorage {
     }
 }
 
+#[derive(Clone)]
 struct StrBytesStorage {
     entries: FxHashMap<Box<[u8]>, u64>,
     data: Vec<u8>,
@@ -2214,14 +2216,117 @@ unsafe fn release_owned_value(m: &GosMap, word: i64) {
 }
 
 unsafe fn retain_owned_value(m: &GosMap, word: i64) {
+    unsafe { retain_owned_value_tag(map_value_owner(m), word) };
+}
+
+/// Same as [`retain_owned_value`], keyed directly by a `value_owner` tag
+/// instead of a live `GosMap` - used while building a cloned map's storage,
+/// before a `GosMap` wrapping it exists to read the tag from.
+unsafe fn retain_owned_value_tag(owner: u8, word: i64) {
     if word == 0 {
         return;
     }
-    match map_value_owner(m) {
+    match owner {
         MAP_VALUE_RC => unsafe { retain_blob_value(word) },
         MAP_VALUE_VEC => unsafe { crate::c_abi::gos_rt_vec_retain(word as usize as *mut GosVec) },
         _ => {}
     }
+}
+
+/// Deep-clones `storage`'s entries into a fresh `MapStorage` of the same
+/// shape, retaining any RC-managed value or key node the clone now shares
+/// with the source (a byte-blob deep copy for everything else). Mirrors
+/// [`gos_rt_map_mark_shared`]'s per-variant walk, but builds a new table
+/// instead of flipping the source's atomics.
+fn clone_map_storage(storage: &MapStorage, value_owner: u8) -> MapStorage {
+    match storage {
+        MapStorage::Empty => MapStorage::Empty,
+        MapStorage::I64I64(m) => {
+            let cloned = m.clone();
+            if value_owner != MAP_VALUE_NONE {
+                for &v in cloned.values() {
+                    unsafe { retain_owned_value_tag(value_owner, v) };
+                }
+            }
+            MapStorage::I64I64(cloned)
+        }
+        MapStorage::StrI64(m) => {
+            let cloned = m.clone();
+            if value_owner != MAP_VALUE_NONE {
+                for &v in cloned.values() {
+                    unsafe { retain_owned_value_tag(value_owner, v) };
+                }
+            }
+            MapStorage::StrI64(cloned)
+        }
+        MapStorage::SkeyVal { entries, desc } => {
+            let cloned = entries.clone();
+            if value_owner != MAP_VALUE_NONE {
+                for &v in cloned.values() {
+                    unsafe { retain_owned_value_tag(value_owner, v) };
+                }
+            }
+            MapStorage::SkeyVal {
+                entries: cloned,
+                desc: desc.clone(),
+            }
+        }
+        MapStorage::StrStr(m) => MapStorage::StrStr(m.clone()),
+        MapStorage::StrBytes(s) => MapStorage::StrBytes(s.clone()),
+        MapStorage::I64Bytes(s) => MapStorage::I64Bytes(s.clone()),
+        MapStorage::I64Str(m) => MapStorage::I64Str(m.clone()),
+        MapStorage::Bytes(m) => MapStorage::Bytes(m.clone()),
+        MapStorage::EkeyVal { entries } => {
+            let cloned: FxHashMap<Box<[u8]>, EnumEntry> = entries
+                .iter()
+                .map(|(k, e)| {
+                    if !e.key_node.is_null() {
+                        unsafe { crate::c_abi::rc::gos_rt_rc_retain(e.key_node) };
+                    }
+                    (
+                        k.clone(),
+                        EnumEntry {
+                            value: e.value,
+                            key_node: e.key_node,
+                        },
+                    )
+                })
+                .collect();
+            MapStorage::EkeyVal { entries: cloned }
+        }
+    }
+}
+
+/// `xs.clone()` for a `Map` / `Set` receiver, and the primitive a `let`
+/// binding or by-value call argument uses to give the binding an
+/// independent table instead of aliasing the source. Allocates a fresh
+/// `GosMap` with a deep copy of every entry, retaining any RC-managed
+/// value or key node the copy now shares with the source.
+///
+/// `GosMap` carries no refcount of its own (unlike `GosVec` / strings,
+/// which have an atomic strong count in their header) - every `HashMap` /
+/// `Set` binding owns its table uniquely, so a plain pointer copy at a
+/// `let` binding either double-frees the table once both bindings' drop
+/// points run, or - if the drop pass elides one as a mere alias - leaves
+/// both bindings mutating the same live table.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_clone(src: *const GosMap) -> *mut GosMap {
+    ffi_entry!(std::ptr::null_mut(), {
+        if src.is_null() {
+            return unsafe { gos_rt_map_new(8, 8) };
+        }
+        let source = unsafe { &*src };
+        let owner = map_value_owner(source);
+        let guard = source.storage.lock();
+        let cloned_storage = clone_map_storage(&guard, owner);
+        drop(guard);
+        crate::c_abi::ledger::map_inc();
+        Box::into_raw(Box::new(GosMap {
+            len_cache: source.len_cache,
+            storage: BiasedLock::new(cloned_storage),
+            value_owner: AtomicU8::new(owner),
+        }))
+    })
 }
 
 /// Marks `m` shared across goroutines so every subsequent operation
@@ -2719,7 +2824,7 @@ fn empty_cstring() -> *mut c_char {
 /// fresh `GosVec` of flat element slots, in key-byte order so `keys()`,
 /// `values()`, and `iter()` agree across tiers.
 ///
-/// Each stored key is the encoding [`build_skey_for_set`] produced under the
+/// Each stored key is the encoding `build_skey_for_set` produced under the
 /// map's own slot descriptor, so decoding it slot by slot rebuilds exactly the
 /// aggregate the program inserted: a scalar slot is copied back verbatim and a
 /// string slot is reallocated as a c-string the snapshot owns.

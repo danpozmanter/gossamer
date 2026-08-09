@@ -3625,6 +3625,53 @@ impl<'tcx> FnBuilder<'tcx> {
                     self.emit(Op::BuildStrIntMap { dst_v: dst });
                     return Ok(dst);
                 }
+                // `{1: 0, 2: 5}` (an int-keyed, int-valued map literal)
+                // desugars to `Map::from([(1, 0), (2, 5)])`, an
+                // explicit-entry-list array argument rather than the
+                // empty/unit form above. Without this arm the call fell
+                // through to the generic `Map::from` builtin, which builds
+                // a boxed `Value::Map` - but `is_int_map_ty(result_ty)`
+                // still reports this binding as the typed shape, so a later
+                // `.insert()` / `.len()` / `.contains_key()` / `.get_or()`
+                // emits the dedicated `IntMap*` op, which requires
+                // `Value::IntMap` and errors "receiver lost typed
+                // invariant" against the mismatched boxed map. Build the
+                // typed map directly and unroll the (compile-time-known)
+                // entry count into individual typed inserts instead, the
+                // same representation `Map::new()` + `.insert()` produces.
+                if args.len() == 1
+                    && matches!(
+                        segs.as_slice(),
+                        ["Map" | "BTreeMap", "from"] | ["collections", "Map" | "BTreeMap", "from"]
+                    )
+                    && let HirExprKind::Array(gossamer_hir::HirArrayExpr::List(entries)) =
+                        &args[0].kind
+                    && entries.iter().all(
+                        |entry| matches!(&entry.kind, HirExprKind::Tuple(pair) if pair.len() == 2),
+                    )
+                {
+                    if self.is_int_map_ty(result_ty) {
+                        let dst = self.alloc_reg();
+                        self.emit(Op::BuildIntMap { dst_v: dst });
+                        for entry in entries {
+                            let HirExprKind::Tuple(pair) = &entry.kind else {
+                                unreachable!("filtered to 2-element tuples above")
+                            };
+                            let key_tr = self.compile_expr_ex(&pair[0])?;
+                            let key_i = self.as_i64(key_tr);
+                            let val_tr = self.compile_expr_ex(&pair[1])?;
+                            let value_i = self.as_i64(val_tr);
+                            let insert_dst = self.alloc_reg();
+                            self.emit(Op::IntMapInsert {
+                                dst_v: insert_dst,
+                                map_reg: dst,
+                                key_i,
+                                value_i,
+                            });
+                        }
+                        return Ok(dst);
+                    }
+                }
             }
         }
         if Self::callee_is_concat(callee)
@@ -3833,6 +3880,17 @@ impl<'tcx> FnBuilder<'tcx> {
                 .is_some_and(|tr| tr.kind == RegKind::Value && tr.reg == *arg_reg);
             if consume {
                 self.emit(Op::MoveConsume {
+                    dst: slot,
+                    src: *arg_reg,
+                });
+            } else if is_path_expr(&args[i])
+                && (self.expr_is_map(&args[i]) || self.expr_is_hashset(&args[i]))
+            {
+                // A `Map` / `Set` local passed by value must reach the callee
+                // as an independent value, not an `Arc<Mutex<_>>` alias the
+                // callee could mutate out from under the caller - see
+                // `Op::CloneMapLike`.
+                self.emit(Op::CloneMapLike {
                     dst: slot,
                     src: *arg_reg,
                 });

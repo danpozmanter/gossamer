@@ -184,6 +184,22 @@ impl<'tcx> FnBuilder<'tcx> {
                                 reg: dst,
                                 kind: RegKind::Value,
                             }
+                        } else if is_path_expr(init)
+                            && (self.expr_is_map(init) || self.expr_is_hashset(init))
+                        {
+                            // `Map` / `Set` entries live behind `Arc<Mutex<_>>`,
+                            // so the plain register copy `bind_to_fresh` uses for
+                            // every other aliased binding would share the same
+                            // backing table between `y` and `x` in `let y = x` -
+                            // unlike `Vec`, whose `Arc<Vec<Value>>` has no
+                            // interior mutability and gets independent storage
+                            // for free from the next mutating op's `Arc::make_mut`.
+                            let dst = self.alloc_reg();
+                            self.emit(Op::CloneMapLike { dst, src: tr.reg });
+                            TypedReg {
+                                reg: dst,
+                                kind: RegKind::Value,
+                            }
                         } else if is_path_expr(init) {
                             self.bind_to_fresh(tr)
                         } else {

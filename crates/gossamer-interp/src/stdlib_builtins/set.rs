@@ -199,6 +199,38 @@ pub(crate) fn set_handle_named(name: &'static str, id: i64) -> Value {
     )
 }
 
+/// Deep-clones a `Set` / `BTreeSet` handle: mints a fresh registry id,
+/// copies the source id's entries into it, and returns a handle to the
+/// copy. A `Value::Struct` handle clone (`.clone()`, `Op::Move`) only
+/// copies the `__set` id, so the clone and the source alias the same
+/// `SET_REGISTRY` slot - inserting through one is visible through the
+/// other. `Op::CloneMapLike` calls this for a `let` / by-value-argument
+/// binding so a `Set` gets the same independent-copy semantics `Map`
+/// gets from cloning its `Arc<Mutex<DenseMap>>` contents. Returns `value`
+/// unchanged if it isn't a recognised set handle.
+pub(crate) fn set_deep_clone(value: &Value) -> Value {
+    let Value::Struct(inner) = value else {
+        return value.clone();
+    };
+    if !matches!(inner.name.as_str(), "Set" | "BTreeSet") {
+        return value.clone();
+    }
+    let Some(id) = set_id_of(value) else {
+        return value.clone();
+    };
+    let new_id = next_set_handle();
+    let entries = SET_REGISTRY.with(|r| r.borrow().get(&id).cloned().unwrap_or_default());
+    SET_REGISTRY.with(|r| {
+        r.borrow_mut().insert(new_id, entries);
+    });
+    let name: &'static str = if inner.name.as_str() == "BTreeSet" {
+        "BTreeSet"
+    } else {
+        "Set"
+    };
+    set_handle_named(name, new_id)
+}
+
 pub(crate) fn set_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
         if matches!(inner.name.as_str(), "Set" | "BTreeSet") {

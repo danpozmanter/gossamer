@@ -209,10 +209,60 @@ impl<'a> Builder<'a> {
         matches!(self.tcx.kind_of(ty), gossamer_types::TyKind::Vec(_))
     }
 
+    /// Runtime clone symbol for a `Map`/`BTreeMap` (`gos_rt_map_clone`) or
+    /// `Set`/`BTreeSet` (`gos_rt_set_clone`) type, or `None` for anything
+    /// else. Neither `GosMap` nor `GosSet` carries a refcount of its own
+    /// (unlike `GosVec` / strings), so a plain pointer copy at a `let`
+    /// binding or by-value argument either double-frees the table once both
+    /// bindings' drop points run, or leaves both bindings mutating the same
+    /// live table - the same hazard `is_vec_like_ty` closes for `Vec`.
+    fn map_or_set_clone_symbol(&self, ty: gossamer_types::Ty) -> Option<&'static str> {
+        const HASH_SET_DEF_LOCAL: u32 = u32::MAX - 7;
+        const BTREE_SET_DEF_LOCAL: u32 = u32::MAX - 18;
+        match self.tcx.kind_of(ty) {
+            gossamer_types::TyKind::HashMap { .. } => Some("gos_rt_map_clone"),
+            gossamer_types::TyKind::Adt { def, .. }
+                if matches!(def.local, HASH_SET_DEF_LOCAL | BTREE_SET_DEF_LOCAL) =>
+            {
+                Some("gos_rt_set_clone")
+            }
+            _ => None,
+        }
+    }
+
+    /// Same as [`Self::map_or_set_clone_symbol`], but for a local whose MIR
+    /// type has already been normalized to `i64` - the canonical
+    /// representation every `Set`/`BTreeSet`-producing constructor gives its
+    /// destination local (`lower_collections_free`, `lower_set_from_array`,
+    /// `lower_set_from_sequence`), tracking the real element/ownership shape
+    /// only through the `local_runtime_kind` side table so method dispatch
+    /// still resolves. A path expression reading that local inherits the
+    /// same `i64` type, so [`Self::map_or_set_clone_symbol`]'s `Ty`-based
+    /// check can never see a `Set` there - this checks the tag instead.
+    pub(crate) fn set_clone_symbol_for_local(&self, local: Local) -> Option<&'static str> {
+        match self.local_runtime_kind.get(&local) {
+            Some(&("collections::HashSet" | "collections::BTreeSet")) => Some("gos_rt_set_clone"),
+            _ => None,
+        }
+    }
+
     pub(crate) fn emit_vec_clone_binding(&mut self, value: Local, binding: Local, span: Span) {
+        self.emit_clone_call_binding(value, binding, span, "gos_rt_vec_clone");
+    }
+
+    /// Emits `binding = <symbol>(value)` and continues in the fallthrough
+    /// block. Shared by [`Self::emit_vec_clone_binding`] and the `Map` /
+    /// `Set` clone path in [`Self::emit_owned_clone_binding`].
+    fn emit_clone_call_binding(
+        &mut self,
+        value: Local,
+        binding: Local,
+        span: Span,
+        symbol: &'static str,
+    ) {
         let next = self.new_block(span);
         self.terminate(Terminator::Call {
-            callee: Operand::Const(ConstValue::Str("gos_rt_vec_clone".to_string())),
+            callee: Operand::Const(ConstValue::Str(symbol.to_string())),
             args: vec![Operand::Copy(Place::local(value))],
             destination: Place::local(binding),
             target: Some(next),
@@ -231,6 +281,22 @@ impl<'a> Builder<'a> {
         let ty = self.locals[binding.0 as usize].ty;
         if matches!(self.tcx.kind_of(ty), TyKind::Vec(_)) {
             self.emit_vec_clone_binding(value, binding, span);
+            return;
+        }
+        if let Some(symbol) = self
+            .map_or_set_clone_symbol(ty)
+            .or_else(|| self.set_clone_symbol_for_local(value))
+        {
+            self.emit_clone_call_binding(value, binding, span, symbol);
+            // A `Set`/`BTreeSet` local's MIR type is the opaque-pointer
+            // `i64` every constructor gives it (see
+            // `Self::set_clone_symbol_for_local`), not the checker's `Adt`
+            // sentinel - `{:?}` / method dispatch on the clone recover its
+            // real shape only through this tag, which a fresh destination
+            // local does not otherwise inherit from its source.
+            if let Some(rk) = self.local_runtime_kind.get(&value).copied() {
+                self.local_runtime_kind.insert(binding, rk);
+            }
             return;
         }
 
@@ -628,7 +694,9 @@ impl<'a> Builder<'a> {
                                     gossamer_types::TyKind::Adt { .. }
                                         | gossamer_types::TyKind::Tuple(_)
                                         | gossamer_types::TyKind::Array { .. }
+                                        | gossamer_types::TyKind::HashMap { .. }
                                 )
+                                || self.set_clone_symbol_for_local(value).is_some()
                             {
                                 self.emit_owned_clone_binding(value, local, stmt.span);
                             } else {

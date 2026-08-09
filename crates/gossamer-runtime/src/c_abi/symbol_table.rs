@@ -2491,6 +2491,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_map_clear as *const u8,
         ),
         (
+            "gos_rt_map_clone",
+            crate::c_abi::gos_rt_map_clone as *const u8,
+        ),
+        (
             "gos_rt_map_contains_key_i64",
             crate::c_abi::gos_rt_map_contains_key_i64 as *const u8,
         ),
@@ -4150,6 +4154,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_set_clear",
             crate::c_abi::gos_rt_set_clear as *const u8,
+        ),
+        (
+            "gos_rt_set_clone",
+            crate::c_abi::gos_rt_set_clone as *const u8,
         ),
         (
             "gos_rt_set_contains",

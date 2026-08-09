@@ -26,6 +26,7 @@ use std::os::raw::c_char;
 // the common case in `examples/data_structures.gos`.
 // ---------------------------------------------------------------
 
+#[derive(Clone)]
 pub struct GosSet {
     inner: std::collections::HashSet<String>,
     /// Aggregate elements are keyed by their canonical slot bytes and retain
@@ -46,6 +47,27 @@ pub unsafe extern "C" fn gos_rt_set_new() -> *mut GosSet {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_btree_set_new() -> *mut GosSet {
     unsafe { gos_rt_set_new() }
+}
+
+/// `xs.clone()` for a `Set` / `BTreeSet` receiver, and the primitive a
+/// `let` binding or by-value call argument uses to give the binding an
+/// independent table instead of aliasing the source. Every element `GosSet`
+/// stores is owned content (a `String`, or a struct's canonical slot bytes)
+/// rather than an RC pointer, so a structural `Clone` deep-copies the whole
+/// table with no child retain pass needed - unlike `gos_rt_map_clone`.
+///
+/// `GosSet` carries no refcount of its own (unlike `GosVec` / strings) - a
+/// plain pointer copy at a `let` binding either double-frees the table once
+/// both bindings' drop points run, or leaves both bindings mutating the
+/// same live table.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_clone(src: *const GosSet) -> *mut GosSet {
+    ffi_entry!(std::ptr::null_mut(), {
+        if src.is_null() {
+            return unsafe { gos_rt_set_new() };
+        }
+        Box::into_raw(Box::new(unsafe { &*src }.clone()))
+    })
 }
 
 /// Builds a set from a `GosVec` of scalar slots. `Set::from(values)` where

@@ -1575,6 +1575,23 @@ pub enum Op {
         /// Source register, emptied to `Value::Void`.
         src: Reg,
     },
+    /// `dst = src.deep_clone()` for a `Map` / `IntMap` / `StrIntMap`
+    /// value - emitted in place of [`Op::Move`] at a `let` binding or
+    /// by-value call argument whose source is a bare path to a `Map` or
+    /// `Set` local. Those variants hold their entries behind
+    /// `Arc<Mutex<_>>`, so a plain [`Op::Move`] (an `Arc` clone) would
+    /// alias the same backing table between the binding and its source -
+    /// unlike `Vec`, whose `Arc<Vec<Value>>` has no interior mutability
+    /// and gets independent storage for free from `Arc::make_mut` at the
+    /// next mutating op. Any other `Value` kind reaching this op behaves
+    /// like `Op::Move` (a cheap `Arc`/scalar clone), so a conservative
+    /// compile-time gate is safe even if it over-applies.
+    CloneMapLike {
+        /// Destination register.
+        dst: Reg,
+        /// Source register, left unchanged.
+        src: Reg,
+    },
     /// Like [`Op::VariantField`] but drains the payload out of a
     /// uniquely-owned scrutinee. When `Arc::get_mut` on the `src`
     /// `Value::Variant` succeeds the field is moved into `dst`

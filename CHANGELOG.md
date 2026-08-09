@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.46.0 - Explicit imports, hashable map keys, Memory optimizations
+## 0.46.0 - y
 
 - Require an import to name a module's items. A sibling file's `pub fn add`
   is reached as `util::add` or after `use util::add`; a bare `add` no longer
@@ -36,10 +36,8 @@
   inner build. Dropping the leak surfaced two `-C` flags rustc has never
   accepted, which the leak had been masking; they are gone.
 - Link the released binaries at a fixed load address. A position-independent
-  `gos` wrote ~1.9 MB of relocations into private dirty pages before `main`
-  ran; resident memory now starts about 3 MB lower - 9.8 MB to 6.4 MB for
-  `gos --version`, 15.4 MB to 12.6 MB for a bytecode-VM run, 14.3 MB to
-  11.1 MB under the JIT - at identical execution speed.
+  `gos` wrote  relocations into private dirty pages before `main`
+  ran; resident memory now starts about lower - at identical execution speed.
 
 ## 0.45.2 - String index spaces
 

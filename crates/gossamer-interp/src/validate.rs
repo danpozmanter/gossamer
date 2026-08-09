@@ -417,7 +417,7 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, src)?;
                 check_pool(op_idx, u32::from(name_idx), globals_len, PoolKind::Globals)?;
             }
-            Op::Move { dst, src } | Op::Deref { dst, src } => {
+            Op::Move { dst, src } | Op::Deref { dst, src } | Op::CloneMapLike { dst, src } => {
                 check_v(op_idx, dst)?;
                 check_v(op_idx, src)?;
             }
@@ -1878,6 +1878,7 @@ pub(crate) fn register_effects(
         | Op::Not { dst, .. }
         | Op::Deref { dst, .. }
         | Op::Move { dst, .. }
+        | Op::CloneMapLike { dst, .. }
         | Op::Eq { dst, .. }
         | Op::Ne { dst, .. }
         | Op::Lt { dst, .. }
@@ -1988,6 +1989,7 @@ pub(crate) fn register_effects(
         // sentinel. Typed register files have no such semantic zero value.
         Op::StoreStatic { src, .. } => effect.v_reads.push(src),
         Op::Move { src, .. }
+        | Op::CloneMapLike { src, .. }
         | Op::Deref { src, .. }
         | Op::Neg { operand: src, .. }
         | Op::Not { operand: src, .. }

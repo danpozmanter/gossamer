@@ -21,6 +21,24 @@ fn poll_vm_backedge(countdown: &mut u16) {
     }
 }
 
+/// Deep-clones a `Map` / `IntMap` / `StrIntMap` / `Set` / `BTreeSet` value
+/// into a fresh, independent backing table; any other value clones like
+/// `Value::clone` (a cheap `Arc`/scalar copy). Shared by [`Op::CloneMapLike`]
+/// (a `let` binding or by-value call argument) and [`Op::BuildArrayRepeat`]
+/// (`#[map_value; n]`) - both need `n` independent slots, not `n` aliases of
+/// the same `Arc<Mutex<_>>` / `SET_REGISTRY` entry.
+fn map_like_deep_clone(v: &Value) -> Value {
+    match v {
+        Value::Map(m) => Value::Map(Arc::new(parking_lot::Mutex::new(m.lock().clone()))),
+        Value::IntMap(m) => Value::IntMap(Arc::new(parking_lot::Mutex::new(m.lock().clone()))),
+        Value::StrIntMap(m) => {
+            Value::StrIntMap(Arc::new(parking_lot::Mutex::new(m.lock().clone())))
+        }
+        Value::Struct(_) => crate::stdlib_builtins::set::set_deep_clone(v),
+        other => other.clone(),
+    }
+}
+
 fn incompatible_type_error(value: &Value, peer: Option<&Value>, expected: &str) -> RuntimeError {
     let message = match peer {
         Some(peer) => format!(
@@ -447,6 +465,9 @@ impl Vm {
                 }
                 Op::Move { dst, src } => {
                     registers[dst as usize] = registers[src as usize].clone();
+                }
+                Op::CloneMapLike { dst, src } => {
+                    registers[dst as usize] = map_like_deep_clone(&registers[src as usize]);
                 }
                 Op::MoveConsume { dst, src } => {
                     // Hand the value over instead of cloning: the source
@@ -3890,7 +3911,14 @@ impl Vm {
                     registers[dst as usize] = match &registers[value as usize] {
                         Value::Int(elem) => Value::IntArray(Arc::new(vec![*elem; n])),
                         Value::Float(elem) => Value::FloatVec(Arc::new(vec![*elem; n])),
-                        elem => Value::Array(Arc::new(vec![elem.clone(); n])),
+                        // `vec![elem.clone(); n]` calls `Clone::clone` on one
+                        // shared value, which for a `Map`/`Set` element is an
+                        // `Arc`/handle-id copy - every repeated slot would
+                        // alias the same backing table. Deep-clone each slot
+                        // independently instead, same as `Op::CloneMapLike`.
+                        elem => Value::Array(Arc::new(
+                            (0..n).map(|_| map_like_deep_clone(elem)).collect(),
+                        )),
                     };
                 }
                 Op::BuildRange {
