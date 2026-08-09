@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.46.0 - y
+## 0.46.0 - Explicit imports, hashable map keys, Memory optimizations
 
 - Require an import to name a module's items. A sibling file's `pub fn add`
   is reached as `util::add` or after `use util::add`; a bare `add` no longer

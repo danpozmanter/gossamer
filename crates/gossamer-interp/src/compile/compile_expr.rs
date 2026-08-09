@@ -3571,6 +3571,28 @@ impl<'tcx> FnBuilder<'tcx> {
         {
             return self.compile_method_call(peel_ref_wrappers_expr(receiver), method, method_args);
         }
+        // Qualified `Map` / `Set` mutators carry the same implicit
+        // mutable-receiver contract as their method-call form (enforced by
+        // the type checker's `check_mutating_qualified_call`), so route
+        // them through the method compiler too. Left to the generic
+        // by-value argument path below, the receiver would go through
+        // `Op::CloneMapLike` - the independent-copy semantics an ordinary
+        // function parameter needs - and every mutation would land on a
+        // throwaway clone instead of the caller's binding.
+        if let HirExprKind::Path { segments, .. } = &callee.kind
+            && segments.len() >= 2
+            && let Some(method) = segments.last()
+            && let Some(owner) = segments.get(segments.len() - 2)
+            && matches!(owner.name.as_str(), "Map" | "Set" | "BTreeSet")
+            && matches!(
+                method.name.as_str(),
+                "insert" | "remove" | "clear" | "inc" | "inc_at" | "inc_batch" | "or_insert"
+                    | "pop"
+            )
+            && let Some((receiver, method_args)) = args.split_first()
+        {
+            return self.compile_method_call(peel_ref_wrappers_expr(receiver), method, method_args);
+        }
         // A payload-less enum constructor is already represented by its
         // immutable global sentinel. Its HIR callee has the enum value type,
         // unlike a zero-argument function returning that enum, whose callee
