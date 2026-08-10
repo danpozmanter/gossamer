@@ -1429,16 +1429,9 @@ impl BumpState {
     };
 }
 
-/// Max recycled standard-size slabs kept per thread. Auto-regions on a
-/// fine-grained loop (millions of tiny iterations) push/pop a region every
-/// iteration; recycling the backing slab through this pool turns each
-/// `arena_push` into a bump-pointer reset instead of a 1 MiB `mmap`.
-///
-/// Slabs held here stay committed, so the cap is what a thread keeps resident
-/// after its peak region use. Region nesting is shallow, so a few warm slabs
-/// absorb the push/pop churn; beyond that `arena_retire` decommits and returns
-/// the slab to the process-wide free list, which reuses it without an `mmap`.
-const FREE_SLAB_CAP: usize = 4;
+/// Hard ceiling on recycled standard-size slabs kept per thread, whatever the
+/// measured demand. Bounds what a thread that spikes once keeps resident.
+const FREE_SLAB_CEILING: usize = 64;
 
 thread_local! {
     /// Stack of suspended regions on this thread (the innermost region's live
@@ -1446,9 +1439,19 @@ thread_local! {
     static REGIONS: std::cell::RefCell<Vec<RegionSlabs>> =
         const { std::cell::RefCell::new(Vec::new()) };
     /// Pool of freed standard-size (`REGION_SLAB_BYTES`) slabs, reused by the
-    /// next `arena_push` instead of re-`mmap`ing. Bounded by `FREE_SLAB_CAP`.
+    /// next `arena_push` instead of re-`mmap`ing. Bounded by `SLAB_RETAIN`.
     static FREE_SLABS: std::cell::RefCell<Vec<*mut u8>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// Widest single region this thread has closed, in standard-size slabs,
+    /// clamped to `FREE_SLAB_CEILING`. Auto-regions on a fine-grained loop
+    /// reopen a region of about the width the last one reached, so retaining
+    /// that many slabs is what turns the next `arena_push` into a bump-pointer
+    /// reset. Retaining fewer decommits slabs the next push immediately faults
+    /// back in; retaining a fixed number more holds committed pages a thread
+    /// whose regions are narrow never uses. The pool holds only slabs the
+    /// thread had already committed at its own peak, so honouring the measured
+    /// width never pushes resident memory past that peak.
+    static SLAB_RETAIN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Nesting depth of active regions. `> 0` ⇒ a region is open; checked once
     /// per allocation (a `Cell` read) to route to the region bump.
     static REGION_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -1693,13 +1696,23 @@ pub extern "C" fn gos_rt_arena_pop() {
             let _guard = rc_live_mutation_guard();
             RC_LIVE.fetch_sub(region.objs + pending_objs, Ordering::Relaxed);
         }
+        let width = region
+            .slabs
+            .iter()
+            .filter(|(_, size)| *size == REGION_SLAB_BYTES)
+            .count();
+        let retain = SLAB_RETAIN.with(|r| {
+            let widened = r.get().max(width).min(FREE_SLAB_CEILING);
+            r.set(widened);
+            widened
+        });
         for (base, size) in region.slabs {
-            // Recycle standard-size slabs into the thread-local pool (up to the
-            // cap) so the next region reuses them without an mmap.
+            // Recycle standard-size slabs into the thread-local pool so the
+            // next region of this width reuses them without an mmap.
             if size == REGION_SLAB_BYTES {
                 let kept = FREE_SLABS.with(|p| {
                     let mut pool = p.borrow_mut();
-                    if pool.len() < FREE_SLAB_CAP {
+                    if pool.len() < retain {
                         pool.push(base);
                         true
                     } else {

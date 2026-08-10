@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.46.2 - Arena slab retention
+
+- Keep as many arena slabs warm as a thread's widest region actually used.
+  A fixed four-slab cache decommitted the rest at every region close and
+  faulted them back in at the next open, so a region-heavy program paid five
+  times the page faults and three times the system time for memory it
+  immediately reused. Retention now follows the measured width, bounded by a
+  ceiling, and a thread whose regions stay narrow holds fewer slabs than the
+  fixed cache did.
+- Allocate goroutine ids from one counter. The diagnostic registry and the
+  scheduler each handed out ids into the same process-wide table, so a
+  finishing goroutine could remove a live goroutine's entry from a stack dump.
+
 ## 0.46.1 - String accumulation, compiled maps, scheduler overhead
 
 - Stop freeing a string that `+=` is still building. The append helpers take

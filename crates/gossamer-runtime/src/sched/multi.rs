@@ -278,7 +278,6 @@ struct Shared {
     /// is present, immediately re-ejects the task to the
     /// injector. Closes the wake-before-park race window.
     pre_unpark: Mutex<std::collections::HashSet<Gid>>,
-    next_gid: AtomicU64,
     /// Live (spawned but not yet finished) goroutine count. The
     /// scheduler refuses new spawns above `max_live`.
     live_goroutines: AtomicUsize,
@@ -372,7 +371,6 @@ impl MultiScheduler {
             workers: Mutex::new(Vec::new()),
             parked: Mutex::new(HashMap::new()),
             pre_unpark: Mutex::new(std::collections::HashSet::new()),
-            next_gid: AtomicU64::new(0),
             live_goroutines: AtomicUsize::new(0),
             max_live: AtomicUsize::new(default_max_live()),
             stats: AtomicStats::default(),
@@ -403,8 +401,11 @@ impl MultiScheduler {
             self.inner.live_goroutines.fetch_sub(1, Ordering::AcqRel);
             return None;
         }
-        let raw = self.inner.next_gid.fetch_add(1, Ordering::Relaxed);
-        let gid = Gid(u32::try_from(raw & 0xFFFF_FFFF).unwrap_or(u32::MAX));
+        // Ids come from the diagnostic registry's own counter so every entry
+        // in that process-wide table has exactly one allocator. A second
+        // sequence handing out ids into the same table would let one
+        // goroutine's completion unregister another's live entry.
+        let gid = Gid(crate::sigquit::next_id());
         crate::sigquit::register(gid.as_u32(), std::any::type_name::<T>());
         self.trace_event("spawn", gid, None);
         // Wrap the task with a `GidStamped` adapter so the worker
