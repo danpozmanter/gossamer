@@ -40,7 +40,7 @@ use anyhow::{Result, anyhow};
 
 use crate::loaders::profile_rss_stage;
 use crate::paths::{
-    default_unit_name, platform_exe_name, read_entry_source, resolve_entry_arg, resolve_output_path,
+    default_unit_name, platform_exe_name, read_entry_unit, resolve_entry_arg, resolve_output_path,
 };
 use gossamer_pkg::Edition;
 
@@ -265,7 +265,8 @@ fn run(file: &PathBuf, request: &BuildRequest<'_>) -> Result<()> {
     let target_is_windows = cross_target.is_none() && cfg!(windows);
     let out_path = output_path(file, &unit_name, release, out_dir, target_is_windows)?;
     let phase_started = Instant::now();
-    let source = read_entry_source(file)?;
+    let unit = read_entry_unit(file)?;
+    let source = unit.source;
     build_timings.bundle = phase_started.elapsed();
     let phase_started = Instant::now();
     let build_key = build_artifact_key(file, &source, edition, cross_target, opts, &out_path);
@@ -288,7 +289,13 @@ fn run(file: &PathBuf, request: &BuildRequest<'_>) -> Result<()> {
     let _ = fs::remove_file(&stamp_path);
 
     let phase_started = Instant::now();
-    let (sf, resolutions, table, tcx) = validate_source(file, source, edition, &mut build_timings)?;
+    let (sf, resolutions, table, tcx) = validate_source(
+        file,
+        source,
+        edition,
+        &mut build_timings,
+        (unit.entry.as_path(), unit.origins.as_slice()),
+    )?;
     build_timings.frontend = phase_started.elapsed();
     profile_rss_stage("build_frontend_released");
     let checked = gossamer_driver::CheckedFrontend {
@@ -599,6 +606,7 @@ fn validate_source(
     source: String,
     edition: Edition,
     timings: &mut BuildTimings,
+    origins: (&Path, &[gossamer_pkg::bundle::BundledSpan]),
 ) -> Result<(
     gossamer_ast::SourceFile,
     gossamer_resolve::Resolutions,
@@ -620,6 +628,7 @@ fn validate_source(
     timings.comptime = phase_started.elapsed();
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), augmented);
+    crate::paths::register_unit_origins(&mut map, file_id, origins.0, origins.1);
     let render_opts = gossamer_diagnostics::RenderOptions {
         colour: crate::paths::stderr_supports_colour(),
     };

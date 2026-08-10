@@ -902,15 +902,23 @@ impl<'a> Builder<'a> {
             HirExprKind::Path { def: Some(def), .. } => self.fn_inputs.get(def).cloned(),
             _ => None,
         };
-        // `__concat` / `__debug` carry every `println!` / `format!` argument.
-        // A struct argument with a derived `Type::fmt` is rendered to a String
-        // first so the compiled tiers can format it (they cannot print an
-        // aggregate).
-        let callee_is_concat = matches!(
+        // `__concat` / `__debug` carry every `println!` / `format!` argument,
+        // and the bare print builtins take their values directly. A struct
+        // argument with a derived `Type::fmt` is rendered to a String first so
+        // the compiled tiers can format it (they cannot print an aggregate).
+        // A program may declare its own `print` / `println`, which takes its
+        // argument as written; only the prelude builtins (no user `def`
+        // behind the name) render their arguments.
+        let callee_renders_aggregates = matches!(
             &callee.kind,
-            HirExprKind::Path { segments, .. }
+            HirExprKind::Path { segments, def, .. }
                 if segments.len() == 1
-                    && matches!(segments[0].name.as_str(), "__concat" | "__debug")
+                    && (matches!(segments[0].name.as_str(), "__concat" | "__debug")
+                        || (def.is_none()
+                            && matches!(
+                                segments[0].name.as_str(),
+                                "println" | "print" | "eprintln" | "eprint"
+                            )))
         );
         let mut arg_operands = Vec::with_capacity(args.len());
         // `&mut <bare-local>` arguments of a writeback type (scalar / String)
@@ -1080,7 +1088,7 @@ impl<'a> Builder<'a> {
             // Debug routing: render a struct/enum `__concat` argument through
             // its derived `Type::fmt` (a String), so a `println!("{:?}", s)`
             // compiles on Cranelift / LLVM instead of bailing on an aggregate.
-            let local = if callee_is_concat {
+            let local = if callee_renders_aggregates {
                 let arg_ty = self.locals[local.0 as usize].ty;
                 match self
                     .adt_dispatch_name(arg_ty)

@@ -12,8 +12,8 @@ use anyhow::{Result, anyhow};
 
 use crate::loaders::print_timings;
 use crate::paths::{
-    collect_lint_targets, default_test_root, friendly_io_error, read_entry_source,
-    resolve_project_entry, stderr_supports_colour,
+    collect_lint_targets, default_test_root, friendly_io_error, resolve_project_entry,
+    stderr_supports_colour,
 };
 
 /// `gos check` dispatcher: routes between single-file and
@@ -86,7 +86,8 @@ pub(crate) fn run(
     timings: bool,
     message_format: crate::cli::MessageFormat,
 ) -> Result<()> {
-    let user_source = read_entry_source(file)?;
+    let unit = crate::paths::read_entry_unit(file)?;
+    let user_source = unit.source;
     // Augment with the synthesized serde free functions (`__gos_serde_*`)
     // so `to_json::<T>(..)` / `from_json::<T>(..)` resolve, exactly as
     // `gos` / `gos build` do before reaching the source map.
@@ -97,6 +98,7 @@ pub(crate) fn run(
     let source = crate::comptime_fold::fold_comptime(source, &file.to_string_lossy())?;
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
+    crate::paths::register_unit_origins(&mut map, file_id, &unit.entry, &unit.origins);
     let render_opts = gossamer_diagnostics::RenderOptions {
         colour: stderr_supports_colour(),
     };

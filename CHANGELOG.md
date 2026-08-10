@@ -1,7 +1,39 @@
 # Changelog
 
-## 0.46.2 - Arena slab retention
+## 0.46.2 - Arena slab retention, library impls, method visibility
 
+- Reach the methods of a type declared inside a module. The type registered
+  under its module-qualified identity while its `impl` keyed methods by the
+  bare name, so a library's own `pub` method calling a private helper was
+  reported as missing, and a trait implemented for such a type failed a
+  `T: Trait` bound.
+- Run an associated function's body instead of packing its arguments. On the
+  interpreter and JIT, a two-argument call on a two-integer struct compiled as
+  a positional construction, so `Point::new(a, b)` produced a struct built from
+  the arguments and never entered the function. Native builds ran the body, so
+  the tiers disagreed on the result.
+- Bind a bare `Type::assoc()` written inside a module. The body is keyed by its
+  module-qualified name, so the call reported an unbound name at run time and
+  failed the native build.
+- Reach a dependency's associated functions through `use "id" as alias`. Only
+  free functions resolved through an alias; `alias::Type::assoc()` was rejected
+  as an unresolved name.
+- Type a call written as `module::Type::assoc(..)`, so a method call on its
+  result is checked. Only the unqualified two-segment spelling was recognised,
+  which left the value untyped and every use of it unchecked until run time.
+- Print a struct or enum through the bare print builtins on every tier.
+  `println(value)` rendered on the interpreter but failed the native build;
+  only the `println!("{}", value)` form routed an aggregate through the
+  formatting its type derives.
+- Report a diagnostic against the file that declares the code. Path
+  dependencies and sibling modules are assembled into the entry file and every
+  span resolved to that file, so an error inside a library pointed at a line
+  the entry file did not have.
+- Enforce `pub` on a method. Visibility was dropped when an `impl` item was
+  parsed, so a method without `pub` was callable from anywhere its type could
+  be named, including another project. A method now follows the rule a free
+  function already did: the declaring module and its descendants reach it, so a
+  `pub` wrapper still calls the private helpers beside it.
 - Keep as many arena slabs warm as a thread's widest region actually used.
   A fixed four-slab cache decommitted the rest at every region close and
   faulted them back in at the next open, so a region-heavy program paid five

@@ -16,6 +16,49 @@ use std::path::{Path, PathBuf};
 
 use crate::{DependencySpec, InlineDependency, Manifest};
 
+/// A byte range of an assembled unit and the file its bytes were read
+/// from. Bodies are inlined verbatim - `neutralize_external_mod_decls`
+/// blanks a declaration in place rather than resizing it - so a position
+/// `p` inside `start..end` sits at `origin_start + (p - start)` in
+/// `origin`, which is what maps a diagnostic back to the file the user
+/// wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BundledSpan {
+    /// First byte of the region in the bundled text.
+    pub start: u32,
+    /// One past the last byte of the region in the bundled text.
+    pub end: u32,
+    /// File the region's bytes were read from.
+    pub origin: PathBuf,
+    /// Byte offset of `start` within `origin`.
+    pub origin_start: u32,
+}
+
+/// Returns `spans` with every range moved `by` bytes further into the
+/// text they are being embedded in.
+fn shift_spans(spans: Vec<BundledSpan>, by: usize) -> Vec<BundledSpan> {
+    let by = u32::try_from(by).unwrap_or(u32::MAX);
+    spans
+        .into_iter()
+        .map(|span| BundledSpan {
+            start: span.start.saturating_add(by),
+            end: span.end.saturating_add(by),
+            origin: span.origin,
+            origin_start: span.origin_start,
+        })
+        .collect()
+}
+
+/// The whole of `text` attributed to `origin`.
+fn whole_file_span(origin: &Path, text: &str) -> BundledSpan {
+    BundledSpan {
+        start: 0,
+        end: u32::try_from(text.len()).unwrap_or(u32::MAX),
+        origin: origin.to_path_buf(),
+        origin_start: 0,
+    }
+}
+
 /// Inlines every `path = "..."` dependency of the entry's project as
 /// a top-level `mod <dep-module-name> { <dep source> }`. Transitive
 /// path dependencies hoist to top-level modules too (deduplicated by
@@ -31,7 +74,19 @@ pub fn bundle_path_dependencies(
     source: String,
     visited: &mut Vec<PathBuf>,
 ) -> String {
+    bundle_path_dependencies_traced(entry, source, visited).0
+}
+
+/// As [`bundle_path_dependencies`], also reporting which file each region
+/// of the result came from.
+#[must_use]
+pub fn bundle_path_dependencies_traced(
+    entry: &Path,
+    source: String,
+    visited: &mut Vec<PathBuf>,
+) -> (String, Vec<BundledSpan>) {
     let mut out = source;
+    let mut spans = Vec::new();
     let mut worklist: Vec<(PathBuf, PathBuf)> = Vec::new();
     collect_path_deps(entry, visited, &mut worklist);
     let mut i = 0;
@@ -44,18 +99,21 @@ pub fn bundle_path_dependencies(
         let Ok(dep_source) = fs::read_to_string(&dep_entry) else {
             continue;
         };
-        let dep_bundled = bundle_sibling_modules(&dep_entry, dep_source);
+        let (dep_bundled, dep_spans) = bundle_sibling_modules_traced(&dep_entry, dep_source);
         collect_path_deps(&dep_entry, visited, &mut worklist);
         let mod_name = gossamer_resolve::project_dep_module_name(&dep_id);
-        out.push_str(&format!(
-            "\n// auto-bundled dependency: {} ({})\nmod {} {{\n{}\n}}\n",
+        let header = format!(
+            "\n// auto-bundled dependency: {} ({})\nmod {} {{\n",
             dep_id,
             dep_root.display(),
-            mod_name,
-            dep_bundled
-        ));
+            mod_name
+        );
+        out.push_str(&header);
+        spans.extend(shift_spans(dep_spans, out.len()));
+        out.push_str(&dep_bundled);
+        out.push_str("\n}\n");
     }
-    out
+    (out, spans)
 }
 
 /// Appends the (root, entry) of each not-yet-visited path dependency
@@ -136,6 +194,8 @@ struct BundledModule {
     name: String,
     body: String,
     origin: PathBuf,
+    /// Provenance of `body`, relative to its own first byte.
+    spans: Vec<BundledSpan>,
 }
 
 /// Auto-bundles a multi-file package into the entry source so the
@@ -154,8 +214,18 @@ struct BundledModule {
 /// reaches a sibling module via `super::sibling::item`.
 #[must_use]
 pub fn bundle_sibling_modules(entry: &Path, source: String) -> String {
+    bundle_sibling_modules_traced(entry, source).0
+}
+
+/// As [`bundle_sibling_modules`], also reporting which file each region
+/// of the result came from. The entry's own region is reported too, so a
+/// nested unit (a path dependency's own package) stays attributable once
+/// it is embedded in a larger one.
+#[must_use]
+pub fn bundle_sibling_modules_traced(entry: &Path, source: String) -> (String, Vec<BundledSpan>) {
     let Some(dir) = entry.parent() else {
-        return source;
+        let span = whole_file_span(entry, &source);
+        return (source, vec![span]);
     };
     // Auto-bundle only fires inside an actual project - i.e. when a
     // `project.toml` lives next to the entry's directory or one
@@ -163,19 +233,22 @@ pub fn bundle_sibling_modules(entry: &Path, source: String) -> String {
     // single-file `gos run /tmp/foo.gos` invocations must NOT pick
     // up unrelated `.gos` files sitting in the same directory.
     if !is_inside_project(dir) {
-        return source;
+        let span = whole_file_span(entry, &source);
+        return (source, vec![span]);
     }
     let entry_stem = entry.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     let modules = collect_package_modules(dir, Some(entry_stem));
     if modules.is_empty() {
-        return source;
+        let span = whole_file_span(entry, &source);
+        return (source, vec![span]);
     }
     let names: Vec<&str> = modules.iter().map(|m| m.name.as_str()).collect();
     let mut bundled = neutralize_external_mod_decls(&source, &names);
+    let mut spans = vec![whole_file_span(entry, &bundled)];
     for module in &modules {
-        append_inline_module(&mut bundled, module);
+        spans.extend(append_inline_module(&mut bundled, module));
     }
-    bundled
+    (bundled, spans)
 }
 
 /// Collects the modules declared by the contents of `dir`: each
@@ -210,10 +283,12 @@ fn collect_package_modules(dir: &Path, skip_stem: Option<&str>) -> Vec<BundledMo
             let Ok(body) = fs::read_to_string(&path) else {
                 continue;
             };
+            let spans = vec![whole_file_span(&path, &body)];
             modules.push(BundledModule {
                 name: stem.to_string(),
                 body,
                 origin: path,
+                spans,
             });
         } else if path.is_dir() {
             // A subdirectory is a module only when it carries a
@@ -230,10 +305,12 @@ fn collect_package_modules(dir: &Path, skip_stem: Option<&str>) -> Vec<BundledMo
             if dir_name.starts_with('_') || !is_valid_module_ident(dir_name) {
                 continue;
             }
+            let (body, spans) = assemble_dir_module(&path);
             modules.push(BundledModule {
                 name: dir_name.to_string(),
-                body: assemble_dir_module(&path),
+                body,
                 origin: mod_gos,
+                spans,
             });
         }
     }
@@ -244,15 +321,17 @@ fn collect_package_modules(dir: &Path, skip_stem: Option<&str>) -> Vec<BundledMo
 /// Builds the body of a directory module: its `mod.gos` contents with
 /// any `mod NAME;` for a child neutralized, followed by each child file
 /// and subdirectory inlined as a nested module.
-fn assemble_dir_module(dir: &Path) -> String {
-    let root = fs::read_to_string(dir.join("mod.gos")).unwrap_or_default();
+fn assemble_dir_module(dir: &Path) -> (String, Vec<BundledSpan>) {
+    let mod_gos = dir.join("mod.gos");
+    let root = fs::read_to_string(&mod_gos).unwrap_or_default();
     let children = collect_package_modules(dir, None);
     let names: Vec<&str> = children.iter().map(|m| m.name.as_str()).collect();
     let mut body = neutralize_external_mod_decls(&root, &names);
+    let mut spans = vec![whole_file_span(&mod_gos, &body)];
     for child in &children {
-        append_inline_module(&mut body, child);
+        spans.extend(append_inline_module(&mut body, child));
     }
-    body
+    (body, spans)
 }
 
 /// Appends `pub mod <name> { <body> }` (with a provenance comment) to
@@ -262,7 +341,8 @@ fn assemble_dir_module(dir: &Path) -> String {
 /// the entry at any nesting depth, which is the layout's contract.
 /// Item visibility is untouched - a module's own items still need `pub`
 /// to be reachable from outside it.
-fn append_inline_module(out: &mut String, module: &BundledModule) {
+/// Returns the module's provenance, rebased onto `out`.
+fn append_inline_module(out: &mut String, module: &BundledModule) -> Vec<BundledSpan> {
     out.push('\n');
     out.push_str("// auto-bundled module: ");
     out.push_str(module.origin.to_string_lossy().as_ref());
@@ -270,8 +350,10 @@ fn append_inline_module(out: &mut String, module: &BundledModule) {
     out.push_str("pub mod ");
     out.push_str(&module.name);
     out.push_str(" {\n");
+    let spans = shift_spans(module.spans.clone(), out.len());
     out.push_str(&module.body);
     out.push_str("\n}\n");
+    spans
 }
 
 /// Comments out any line that exactly matches `mod NAME;` for one
@@ -341,9 +423,19 @@ fn is_valid_module_ident(name: &str) -> bool {
 /// its unsaved buffer while the rest of the unit is read from disk.
 #[must_use]
 pub fn bundle_entry_source(entry: &Path, source: String) -> String {
-    let bundled = bundle_sibling_modules(entry, source);
+    bundle_entry_source_traced(entry, source).0
+}
+
+/// As [`bundle_entry_source`], also reporting which file each region of
+/// the assembled unit came from, so a diagnostic raised against the unit
+/// can be reported against the file the user actually wrote.
+#[must_use]
+pub fn bundle_entry_source_traced(entry: &Path, source: String) -> (String, Vec<BundledSpan>) {
+    let (bundled, mut spans) = bundle_sibling_modules_traced(entry, source);
     let mut visited = Vec::new();
-    bundle_path_dependencies(entry, bundled, &mut visited)
+    let (bundled, dep_spans) = bundle_path_dependencies_traced(entry, bundled, &mut visited);
+    spans.extend(dep_spans);
+    (bundled, spans)
 }
 
 #[cfg(test)]
@@ -423,6 +515,75 @@ mod bundle_tests {
             "loose file wrongly bundled:\n{bundled}"
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Every byte of an assembled unit must be attributable to the file
+    /// it was read from, so a diagnostic raised anywhere in the unit is
+    /// reported against a file the user can open.
+    #[test]
+    fn traced_spans_map_dependency_and_sibling_bytes_back_to_their_files() {
+        let root = std::env::temp_dir().join(format!("gos-trace-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("app").join("src")).unwrap();
+        fs::create_dir_all(root.join("lib").join("src")).unwrap();
+        fs::write(
+            root.join("app").join("project.toml"),
+            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\n\"example.com/lib\" = { path = \"../lib\" }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("lib").join("project.toml"),
+            "[project]\nid = \"example.com/lib\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        let entry = root.join("app").join("src").join("main.gos");
+        let entry_source = "fn main() { }\n".to_string();
+        fs::write(&entry, &entry_source).unwrap();
+        let helper = root.join("app").join("src").join("helper.gos");
+        fs::write(&helper, "pub fn h() { }\n").unwrap();
+        let lib_entry = root.join("lib").join("src").join("lib.gos");
+        fs::write(&lib_entry, "pub fn marker_fn() { }\n").unwrap();
+
+        let (bundled, spans) = bundle_entry_source_traced(&entry, entry_source);
+
+        // A position inside the dependency's body resolves to the
+        // dependency's own file, at the same offset it sits there.
+        let needle = "marker_fn";
+        let at = u32::try_from(bundled.find(needle).expect("dependency body inlined")).unwrap();
+        let span = spans
+            .iter()
+            .rev()
+            .find(|s| at >= s.start && at < s.end)
+            .expect("dependency bytes are attributed");
+        assert_eq!(span.origin, lib_entry, "wrong origin file for {needle}");
+        let local = (span.origin_start + (at - span.start)) as usize;
+        let origin_text = fs::read_to_string(&span.origin).unwrap();
+        assert!(
+            origin_text[local..].starts_with(needle),
+            "offset {local} in {} is not `{needle}`",
+            span.origin.display()
+        );
+
+        // The same holds for an auto-bundled sibling module.
+        let at = u32::try_from(bundled.find("pub fn h").expect("sibling body inlined")).unwrap();
+        let span = spans
+            .iter()
+            .rev()
+            .find(|s| at >= s.start && at < s.end)
+            .expect("sibling bytes are attributed");
+        assert_eq!(span.origin, helper, "wrong origin file for the sibling");
+
+        // The entry's own bytes stay pointed at the entry.
+        let at = u32::try_from(bundled.find("fn main").expect("entry retained")).unwrap();
+        let span = spans
+            .iter()
+            .rev()
+            .find(|s| at >= s.start && at < s.end)
+            .expect("entry bytes are attributed");
+        assert_eq!(span.origin, entry, "entry bytes must stay on the entry");
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

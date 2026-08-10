@@ -166,6 +166,7 @@ pub(crate) fn fn_item_with_ret(name: &str, body: Expr, ret: Option<Type>) -> Ite
     let decl = FnDecl {
         is_unsafe: false,
         is_comptime: false,
+        visibility: gossamer_ast::Visibility::Inherited,
         name: Ident::new(name),
         generics: Generics::default(),
         params: Vec::<FnParam>::new(),

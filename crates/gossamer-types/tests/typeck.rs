@@ -3750,3 +3750,55 @@ fn assoc_item_is_reachable_through_a_supertrait() {
          fn top<T: Ext>(x: &T) -> i64 { T::MAX }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
+
+/// A type declared inside a module registers under its module-qualified
+/// identity, so an `impl` block on it has to record its methods under
+/// that same identity - otherwise every call on a receiver of that type
+/// reports the method as missing.
+#[test]
+fn a_module_local_types_methods_resolve_on_its_own_receivers() {
+    let checked = run("mod lib {\n\
+             pub struct Point { pub x: i64, pub y: i64 }\n\
+             impl Point {\n\
+                 pub fn new(x: i64, y: i64) -> Self { Point { x: x, y: y } }\n\
+                 pub fn public_dist(self) -> i64 { self.internal_dist() }\n\
+                 fn internal_dist(self) -> i64 { self.x + self.y }\n\
+             }\n\
+         }\n\
+         fn main() { let p = lib::Point::new(1, 2)\n    let _ = p.public_dist() }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+/// A trait implemented for a module-local type satisfies a `T: Trait`
+/// bound, which requires the impl to be recorded against the receiver's
+/// module-qualified identity.
+#[test]
+fn a_trait_impl_on_a_module_local_type_satisfies_a_bound() {
+    let checked = run("trait Speak { fn speak(&self) -> i64 }\n\
+         mod animals {\n\
+             pub struct Dog { pub n: i64 }\n\
+             impl super::Speak for Dog { fn speak(&self) -> i64 { self.n } }\n\
+         }\n\
+         fn announce<T: Speak>(x: &T) -> i64 { x.speak() }\n\
+         fn main() { let d = animals::Dog { n: 1 }\n    let _ = announce(&d) }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+}
+
+/// A method a module-local type genuinely does not have is still
+/// rejected - qualifying the owner keys must not blanket-accept.
+#[test]
+fn an_unknown_method_on_a_module_local_type_is_still_rejected() {
+    let checked = run("mod lib {\n\
+             pub struct Point { pub x: i64 }\n\
+             impl Point { pub fn get(self) -> i64 { self.x } }\n\
+         }\n\
+         fn main() { let p = lib::Point { x: 1 }\n    let _ = p.nope() }\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::UnresolvedMethod { name, .. } if name == "nope"
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}

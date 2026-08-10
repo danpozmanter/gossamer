@@ -62,6 +62,8 @@ pub fn lower_source_file_with_edition(
         &mut module_fn_paths,
     );
     collect_nested_item_paths(resolutions, source, &mut module_fn_paths);
+    let mut module_impl_fns = std::collections::HashSet::new();
+    collect_module_impl_fns(&source.items, &mut Vec::new(), &mut module_impl_fns);
     let mut module_type_names = std::collections::HashMap::new();
     collect_module_type_names(
         resolutions,
@@ -81,7 +83,9 @@ pub fn lower_source_file_with_edition(
         struct_fields: collect_struct_fields(&source.items),
         unit_structs: collect_unit_structs(&source.items),
         module_fn_paths,
+        module_impl_fns,
         module_type_names,
+        current_module: Vec::new(),
         promoted_items: Vec::new(),
     };
     let mut items = Vec::new();
@@ -175,6 +179,50 @@ fn lower_items(
 /// so name-keyed dispatch on every tier agrees with the qualified
 /// definition symbol - two modules may then define the same function
 /// name without colliding.
+/// Collects the qualified name (`lib::P::new`) of every associated
+/// function declared by an `impl` inside an inline module. Below HIR
+/// these bodies are keyed by that spelling, so a bare `P::new` written
+/// inside the module has to be respelled to reach them.
+fn collect_module_impl_fns(
+    items: &[AstItem],
+    module_path: &mut Vec<String>,
+    out: &mut std::collections::HashSet<String>,
+) {
+    for item in items {
+        if !gossamer_resolve::item_is_active(&item.attrs) {
+            continue;
+        }
+        match &item.kind {
+            AstItemKind::Mod(decl) => {
+                if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                    module_path.push(decl.name.name.clone());
+                    collect_module_impl_fns(inner, module_path, out);
+                    module_path.pop();
+                }
+            }
+            AstItemKind::Impl(decl) if !module_path.is_empty() => {
+                let gossamer_ast::TypeKind::Path(tp) = &decl.self_ty.kind else {
+                    continue;
+                };
+                let Some(owner) = tp.segments.last() else {
+                    continue;
+                };
+                for impl_item in &decl.items {
+                    if let gossamer_ast::ImplItem::Fn(fn_decl) = impl_item {
+                        out.insert(format!(
+                            "{}::{}::{}",
+                            module_path.join("::"),
+                            owner.name.name,
+                            fn_decl.name.name
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fn collect_module_fn_paths(
     resolutions: &Resolutions,
     items: &[AstItem],
@@ -448,6 +496,12 @@ struct Lowerer<'a> {
     /// bare in-module call names the module's own item, not whichever
     /// same-named sibling registered a flat global last.
     module_fn_paths: std::collections::HashMap<gossamer_resolve::DefId, Vec<Ident>>,
+    /// Qualified names of every inline-module `impl`'s associated
+    /// functions, for respelling a bare `Type::assoc` written inside
+    /// the module that declares it.
+    module_impl_fns: std::collections::HashSet<String>,
+    /// Module whose items are currently being lowered.
+    current_module: Vec<String>,
     promoted_items: Vec<HirItem>,
 }
 
@@ -472,6 +526,7 @@ impl Lowerer<'_> {
     }
 
     fn lower_item(&mut self, item: &AstItem, module_path: &[String]) -> Option<HirItem> {
+        self.current_module = module_path.to_vec();
         let def = self.resolutions.definition_of(item.id);
         let kind = match &item.kind {
             AstItemKind::Fn(decl) => HirItemKind::Fn(self.lower_fn(decl, item.span)),
@@ -2309,6 +2364,55 @@ impl Lowerer<'_> {
             } else if gossamer_resolve::lookup_external_item(&qualified).is_some() {
                 segments = full.clone();
             }
+        }
+        // The resolver has already used a leading `crate` / `self` /
+        // `super` / `root` to pick the target, and nothing below HIR keys
+        // on those spellings, so drop them before any name-keyed
+        // dispatch sees the path.
+        // Only a leading qualifier on a multi-segment path routes; a
+        // lone `self` is the receiver binding, not a route.
+        let qualified_spelling = segments.len() > 1
+            && matches!(
+                segments[0].name.as_str(),
+                "crate" | "self" | "super" | "root"
+            );
+        if qualified_spelling {
+            while segments.len() > 1
+                && matches!(
+                    segments[0].name.as_str(),
+                    "crate" | "self" | "super" | "root"
+                )
+            {
+                segments.remove(0);
+            }
+        }
+        // A bare `Type::assoc` written inside a module names that
+        // module's own impl, whose body is keyed by the qualified
+        // spelling. Walk outward so an inner module's item wins over a
+        // same-named one further out, matching name resolution. A path
+        // that named its own route is left alone.
+        if !qualified_spelling && segments.len() == 2 && !self.current_module.is_empty() {
+            let tail = format!("{}::{}", segments[0].name, segments[1].name);
+            for depth in (1..=self.current_module.len()).rev() {
+                let prefix = self.current_module[..depth].join("::");
+                let qualified = format!("{prefix}::{tail}");
+                if self.module_impl_fns.contains(&qualified) {
+                    segments = self.current_module[..depth]
+                        .iter()
+                        .map(Ident::new)
+                        .chain(segments.iter().cloned())
+                        .collect();
+                    break;
+                }
+            }
+        }
+        // A path headed by a `use "id" as alias` binding names items
+        // registered under the dependency module's real name, so the
+        // head is respelled before any name-keyed dispatch sees it.
+        if segments.len() > 1
+            && let Some(real) = self.resolutions.project_alias(&segments[0].name)
+        {
+            segments[0].name = real.to_string();
         }
         // For a multi-segment path whose head only resolves to a
         // module (no qualified-name registration), the resolver

@@ -19,7 +19,7 @@ mod token;
 
 pub use diagnostic::LexError;
 pub use lexer::{Lexer, tokenize};
-pub use source_map::SourceMap;
+pub use source_map::{OriginSpan, SourceMap};
 pub use span::{FileId, LineCol, Span};
 pub use symbol::{Symbol, SymbolInterner, reset_interner};
 pub use token::{Keyword, Punct, Token, TokenKind};

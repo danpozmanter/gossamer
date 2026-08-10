@@ -91,6 +91,7 @@ pub struct Resolutions {
     entries: HashMap<NodeId, Resolution>,
     bindings: HashMap<NodeId, DefId>,
     definitions: HashMap<DefId, DefKind>,
+    project_aliases: HashMap<String, String>,
 }
 
 impl Resolutions {
@@ -103,6 +104,20 @@ impl Resolutions {
     /// Records that `path_node` resolves to `resolution`.
     pub fn insert(&mut self, path_node: NodeId, resolution: Resolution) {
         self.entries.insert(path_node, resolution);
+    }
+
+    /// Records that `use "id" as alias` binds `alias` to the inlined
+    /// dependency module named `module`.
+    pub fn insert_project_alias(&mut self, alias: String, module: String) {
+        self.project_aliases.insert(alias, module);
+    }
+
+    /// The inlined dependency module `alias` was bound to, if any. A
+    /// path headed by the alias names items registered under the
+    /// module's real name, so name-keyed dispatch has to spell it.
+    #[must_use]
+    pub fn project_alias(&self, alias: &str) -> Option<&str> {
+        self.project_aliases.get(alias).map(String::as_str)
     }
 
     /// Looks up the resolution for a path node. Returns `None` if the

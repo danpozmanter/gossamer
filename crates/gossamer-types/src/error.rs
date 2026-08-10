@@ -120,6 +120,17 @@ pub enum TypeError {
         /// Empty when the checker has no surface list for the receiver.
         available: Vec<String>,
     },
+    /// A method reached from outside the module its `impl` was written
+    /// in, without `pub`.
+    #[error("method `{name}` on `{ty}` is private to module `{module}`")]
+    PrivateMethod {
+        /// Receiver type.
+        ty: String,
+        /// Method name.
+        name: String,
+        /// Module the `impl` was written in.
+        module: String,
+    },
     /// A binary or unary operator could not be resolved for the given
     /// operand types.
     #[error("cannot apply `{op}` to `{lhs}` and `{rhs}`")]
@@ -729,6 +740,7 @@ impl TypeError {
             Self::OptionValueMismatch { .. } => "option-value-mismatch",
             Self::ArgumentTypeMismatch { .. } => "argument-type-mismatch",
             Self::UnresolvedMethod { .. } => "unresolved-method",
+            Self::PrivateMethod { .. } => "private-method",
             Self::UnresolvedOp { .. } => "unresolved-op",
             Self::UnresolvedOpImpl { .. } => "unresolved-op-impl",
             Self::NonExhaustiveMatch { .. } => "non-exhaustive-match",
@@ -849,6 +861,7 @@ impl TypeError {
             Self::StdFnValueUnsupported { .. } => "GT0015",
             Self::IteratorStateFormatted => "GT0041",
             Self::ValueNotDisplayable { .. } => "GT0062",
+            Self::PrivateMethod { .. } => "GT0063",
             Self::IteratorStateConsumed { .. } => "GT0042",
             Self::JsonNotSerializable { .. } => "GT0016",
             Self::TraitBoundNotSatisfied { .. } => "GT0017",
@@ -1025,6 +1038,12 @@ impl TypeDiagnostic {
                 } else {
                     unresolved_method_diagnostic(out, ty, name, available)
                 };
+            }
+            TypeError::PrivateMethod { ty, name, module } => {
+                out = out.with_help(format!(
+                    "`{name}` is declared without `pub`, so only `{module}` can call it; \
+                     write `pub` on the method, or reach it through a `pub` method of `{ty}`"
+                ));
             }
             TypeError::UnresolvedOp { op, lhs, rhs } => {
                 out = out.with_note(format!(

@@ -55,19 +55,19 @@ impl Parser<'_> {
         } else {
             Visibility::Inherited
         };
-        let kind = self.parse_item_kind();
+        let kind = self.parse_item_kind(visibility);
         let end_span = self.last_span();
         let span = self.join(start_span, end_span);
         let id = self.alloc_id();
         Item::new(id, span, attrs, visibility, kind)
     }
 
-    fn parse_item_kind(&mut self) -> ItemKind {
+    fn parse_item_kind(&mut self, visibility: Visibility) -> ItemKind {
         if self.at_keyword(Keyword::Fn)
             || self.at_keyword(Keyword::Unsafe)
             || self.at_keyword(Keyword::Comptime)
         {
-            return ItemKind::Fn(self.parse_fn_decl());
+            return ItemKind::Fn(self.parse_fn_decl(visibility));
         }
         if self.at_keyword(Keyword::Struct) {
             return ItemKind::Struct(self.parse_struct_decl());
@@ -255,7 +255,7 @@ impl Parser<'_> {
         output.trim_end().to_string()
     }
 
-    fn parse_fn_decl(&mut self) -> FnDecl {
+    fn parse_fn_decl(&mut self, visibility: Visibility) -> FnDecl {
         let is_comptime = self.eat_keyword(Keyword::Comptime);
         let is_unsafe = self.eat_keyword(Keyword::Unsafe);
         self.expect_keyword(Keyword::Fn, "to start function declaration");
@@ -285,6 +285,7 @@ impl Parser<'_> {
         FnDecl {
             is_unsafe,
             is_comptime,
+            visibility,
             name,
             generics,
             params,
@@ -623,7 +624,7 @@ impl Parser<'_> {
                 continue;
             }
             drop(attrs);
-            items.push(TraitItem::Fn(self.parse_fn_decl()));
+            items.push(TraitItem::Fn(self.parse_fn_decl(Visibility::Public)));
         }
         self.expect_punct(Punct::RBrace, "to close trait body");
         TraitDecl {
@@ -677,7 +678,11 @@ impl Parser<'_> {
 
     fn parse_impl_item(&mut self) -> ImplItem {
         let attrs = self.parse_attrs();
-        let _visibility = self.eat_keyword(Keyword::Pub);
+        let visibility = if self.eat_keyword(Keyword::Pub) {
+            Visibility::Public
+        } else {
+            Visibility::Inherited
+        };
         if self.eat_keyword(Keyword::Type) {
             let name = self.parse_ident_required("associated type name");
             self.expect_punct(Punct::Eq, "after the associated type name");
@@ -699,7 +704,7 @@ impl Parser<'_> {
                 value,
             };
         }
-        ImplItem::Fn(self.parse_fn_decl())
+        ImplItem::Fn(self.parse_fn_decl(visibility))
     }
 
     fn parse_type_alias_decl(&mut self) -> TypeAliasDecl {

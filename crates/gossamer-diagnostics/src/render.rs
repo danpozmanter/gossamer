@@ -212,14 +212,19 @@ fn render_label(
     header_title: &str,
     colour: bool,
 ) {
-    let (path, line, column) = resolve(map, label.location.file, label.location.span);
+    let (origin, _, line_col) = resolve_in_origin(map, label.location.file, label.location.span);
+    let (path, line, column) = (
+        map.file_name(origin).to_string(),
+        line_col.line,
+        line_col.column,
+    );
     let prefix = if label.primary { "-->" } else { "::>" };
     let cyan = if colour { CYAN } else { "" };
     let red = if colour { RED } else { "" };
     let dim = if colour { DIM } else { "" };
     let reset = if colour { RESET } else { "" };
     let _ = writeln!(out, "  {cyan}{prefix}{reset} {path}:{line}:{column}");
-    if let Some(source_line) = source_line_of(map, label.location.file, line) {
+    if let Some(source_line) = source_line_of(map, origin, line) {
         let gutter = format!("{line:>4}");
         let _ = writeln!(out, "  {dim}{gutter} |{reset} {source_line}");
         let padding = " ".repeat(column.saturating_sub(1) as usize);
@@ -257,10 +262,25 @@ fn source_line_of(map: &SourceMap, file: FileId, line: u32) -> Option<String> {
         .map(std::string::ToString::to_string)
 }
 
+/// Location a span points at, reported against the file the bytes were
+/// read from rather than the assembled compilation unit they were
+/// checked in.
 fn resolve(map: &SourceMap, file: FileId, span: gossamer_lex::Span) -> (String, u32, u32) {
-    let name = map.file_name(file).to_string();
-    let line_col = map.line_col(file, span.start);
-    (name, line_col.line, line_col.column)
+    let (origin, _, line_col) = resolve_in_origin(map, file, span);
+    (
+        map.file_name(origin).to_string(),
+        line_col.line,
+        line_col.column,
+    )
+}
+
+fn resolve_in_origin(
+    map: &SourceMap,
+    file: FileId,
+    span: gossamer_lex::Span,
+) -> (FileId, u32, gossamer_lex::LineCol) {
+    let (origin, offset) = map.origin_of(file, span.start);
+    (origin, offset, map.line_col(origin, offset))
 }
 
 const RESET: &str = "\x1b[0m";

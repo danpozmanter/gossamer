@@ -17,9 +17,7 @@ use gossamer_std::exec;
 use gossamer_std::fs::{Event, Watcher};
 use gossamer_std::signal::{self, Notifier, sigs};
 
-use crate::paths::{
-    project_edition_for_entry, read_entry_source, resolve_entry_arg, stderr_supports_colour,
-};
+use crate::paths::{project_edition_for_entry, resolve_entry_arg, stderr_supports_colour};
 
 const MAX_BATCH: Duration = Duration::from_secs(2);
 
@@ -147,11 +145,13 @@ fn validate(entry: &Path, locked: bool, status: &Status) -> Result<()> {
         crate::cmd::pkg::enforce_lockfile_if_requested(true)?;
     }
     let source_path = entry.to_path_buf();
-    let user_source = read_entry_source(&source_path)?;
+    let unit = crate::paths::read_entry_unit(&source_path)?;
+    let user_source = unit.source;
     let source = gossamer_parse::autoderive::augment_source(&user_source);
     let source = crate::comptime_fold::fold_comptime(source, &entry.to_string_lossy())?;
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(entry.to_string_lossy().into_owned(), source.clone());
+    crate::paths::register_unit_origins(&mut map, file_id, &unit.entry, &unit.origins);
     let outcome = gossamer_driver::check_frontend_with_edition(
         &source,
         file_id,

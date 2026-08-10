@@ -434,6 +434,35 @@ fn make(a: i64, b: i64) -> Pair { Pair(a, b) }
         );
     }
 
+    /// `Point::new(a, b)` and `Point(a, b)` both carry the struct's
+    /// `DefId`, but only the second is a construction. The associated
+    /// function must be called, so its body decides the field values.
+    #[test]
+    fn an_associated_function_is_called_not_treated_as_a_constructor() {
+        let source = r"
+struct Point { x: i64, y: i64 }
+impl Point { fn new(a: i64, b: i64) -> Point { Point { x: a * 10, y: b * 10 } } }
+fn build(a: i64, b: i64) -> Point { Point::new(a, b) }
+";
+        let (chunk, _) = compile_named(source, "build");
+        assert!(
+            !chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::Struct2I64 { .. })),
+            "an associated function must not be packed into a struct: {:?}",
+            chunk.instrs
+        );
+        assert!(
+            chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::Call { .. } | Op::CallGlobal { .. })),
+            "the associated function's body must still be called: {:?}",
+            chunk.instrs
+        );
+    }
+
     #[test]
     fn nullary_enum_constructor_skips_generic_call() {
         let source = r"

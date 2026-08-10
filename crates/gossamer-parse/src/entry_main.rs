@@ -84,6 +84,7 @@ pub fn synthesize_entry_main(sf: &mut SourceFile) -> Vec<ParseDiagnostic> {
     let decl = FnDecl {
         is_unsafe: false,
         is_comptime: false,
+        visibility: gossamer_ast::Visibility::Public,
         name: Ident::new("main"),
         generics: Generics::default(),
         params: Vec::new(),

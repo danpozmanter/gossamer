@@ -305,6 +305,7 @@ mod tests {
         let fn_decl = FnDecl {
             is_unsafe: false,
             is_comptime: false,
+            visibility: crate::Visibility::Inherited,
             name: Ident::new("main"),
             generics: Generics::default(),
             params: Vec::<FnParam>::new(),

@@ -221,6 +221,11 @@ pub struct FnDecl {
     /// fold pass and replaced with its result literal.
     #[serde(default)]
     pub is_comptime: bool,
+    /// Declared visibility. For an `impl` item this is the only record
+    /// of its `pub`; a free function repeats its [`Item::visibility`]
+    /// here so both shapes answer the question the same way.
+    #[serde(default)]
+    pub visibility: Visibility,
     /// Function name.
     pub name: Ident,
     /// Generic parameters.

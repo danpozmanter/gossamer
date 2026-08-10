@@ -12,7 +12,7 @@ use anyhow::{Result, anyhow};
 use gossamer_pkg::Edition;
 
 use crate::loaders::{load_and_check_with_edition, profile_rss_stage};
-use crate::paths::{read_entry_source, resolve_entry_arg};
+use crate::paths::resolve_entry_arg;
 
 /// Runs a source file through the bytecode VM.
 pub(crate) fn dispatch(path: Option<PathBuf>, main_thread: bool, args: &[String]) -> Result<()> {
@@ -40,14 +40,20 @@ fn run(file: &Path, main_thread: bool, forwarded: &[String]) -> Result<()> {
 fn run_on_vm(file: &Path, forwarded: &[String]) -> Result<()> {
     let edition = crate::paths::project_edition_for_entry(file);
     let file_label = file.to_string_lossy();
-    let user_source = read_entry_source(file)?;
-    run_source_on_vm(&user_source, &file_label, forwarded, edition)
+    let unit = crate::paths::read_entry_unit(file)?;
+    run_source_on_vm(
+        &unit.source,
+        &file_label,
+        forwarded,
+        edition,
+        Some((unit.entry.as_path(), unit.origins.as_slice())),
+    )
 }
 
 /// Executes inline source passed through `gos -e` or `gos --eval`.
 pub(crate) fn command(source: String) -> Result<()> {
     let edition = crate::paths::project_edition();
-    crate::cmd::with_vm_stack(move || run_source_on_vm(&source, "<command>", &[], edition))
+    crate::cmd::with_vm_stack(move || run_source_on_vm(&source, "<command>", &[], edition, None))
 }
 
 fn run_source_on_vm(
@@ -55,6 +61,7 @@ fn run_source_on_vm(
     file_label: &str,
     forwarded: &[String],
     edition: Edition,
+    origins: Option<(&Path, &[gossamer_pkg::bundle::BundledSpan])>,
 ) -> Result<()> {
     let lazy_iterators = edition == Edition::E2027;
     // Compile-time codegen pass: synthesize `from_json` / `to_json`
@@ -68,6 +75,9 @@ fn run_source_on_vm(
     profile_rss_stage("source_prepared");
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file_label, source);
+    if let Some((entry, spans)) = origins {
+        crate::paths::register_unit_origins(&mut map, file_id, entry, spans);
+    }
     // Static checks always run first. A program with parse / resolve /
     // type errors has no business reaching the VM - execution would
     // either crash or produce unsound output.

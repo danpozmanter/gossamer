@@ -201,6 +201,8 @@ impl Resolver {
                     let module = self.scopes.module_mut();
                     module.insert_type(&du.alias, binding);
                     module.insert_value(&du.alias, binding);
+                    self.resolutions
+                        .insert_project_alias(du.alias.clone(), du.module_name.clone());
                     self.project_alias_modules.insert(du.alias, du.module_name);
                 }
                 None => self.define_import(&du.alias, du.use_id, du.span, &du.module_name),
@@ -1519,12 +1521,27 @@ impl Resolver {
             // fails to resolve is a phantom - reject it here instead
             // of a runtime GX0002 / native undefined symbol.
             if let Some(real) = self.project_alias_modules.get(effective[0]).cloned() {
-                let mut rejoined = real;
+                let mut rejoined = real.clone();
                 for seg in &effective[1..] {
                     rejoined.push_str("::");
                     rejoined.push_str(seg);
                 }
                 if let Some(resolution) = self.lookup_value_or_type(&rejoined) {
+                    self.resolutions.insert(anchor, resolution);
+                    self.resolve_path_generic_args(path);
+                    return;
+                }
+                // An item reached through a type (`alias::Point::new`)
+                // stays opaque-by-head, exactly as the unaliased
+                // spelling does: a module binding does not carry its
+                // types' associated surfaces, so absence there says
+                // nothing about whether the item exists. Bind the head
+                // to the real module and leave the rest to the
+                // type-directed passes.
+                if effective[1..].iter().any(|seg| !starts_lowercase(seg))
+                    && let Some(binding) = self.scopes.lookup_type(&real)
+                {
+                    let resolution = binding.resolution;
                     self.resolutions.insert(anchor, resolution);
                     self.resolve_path_generic_args(path);
                     return;

@@ -76,3 +76,73 @@ fn main() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The bare print builtins take their values directly rather than
+/// through `__concat`, so their aggregate arguments need the same
+/// derived-`fmt` routing the macro form gets. Without it the VM prints
+/// the value and the native build refuses to lower it.
+#[test]
+fn bare_println_of_an_aggregate_matches_the_vm_on_the_native_tier() {
+    let dir = env::temp_dir().join(format!("gos-agg-bare-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("bare.gos");
+    std::fs::write(
+        &source,
+        r"
+struct P { x: i64, y: i64 }
+enum E { A, B(i64) }
+
+fn main() {
+    let p = P { x: 1, y: 2 }
+    println(p)
+    println(E::B(5))
+}
+",
+    )
+    .unwrap();
+
+    let vm = Command::new(gos_bin())
+        .arg("run")
+        .arg(&source)
+        .output()
+        .expect("spawn gos run");
+    assert!(
+        vm.status.success(),
+        "vm run failed: {}",
+        String::from_utf8_lossy(&vm.stderr)
+    );
+    let vm_out = String::from_utf8_lossy(&vm.stdout).to_string();
+    assert!(
+        vm_out.contains("P { x: 1, y: 2 }") && vm_out.contains("B(5)"),
+        "unexpected vm output: {vm_out:?}"
+    );
+
+    let build = Command::new(gos_bin())
+        .arg("build")
+        .arg(&source)
+        .output()
+        .expect("spawn gos build");
+    assert!(
+        build.status.success(),
+        "native build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let bin = dir
+        .join("target")
+        .join("debug")
+        .join(format!("bare{}", std::env::consts::EXE_SUFFIX));
+    let native = Command::new(&bin).output().expect("run bare");
+    assert!(
+        native.status.success(),
+        "native binary exited non-zero: {}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&native.stdout),
+        vm_out,
+        "native output must match the vm"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

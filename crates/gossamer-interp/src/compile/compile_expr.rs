@@ -4031,6 +4031,23 @@ impl<'tcx> FnBuilder<'tcx> {
         Ok(Some(dst))
     }
 
+    /// `true` when `callee` spells the struct's own positional constructor
+    /// (`Pair(a, b)`), rather than an associated function reached through
+    /// the type (`Pair::new(a, b)`). Both carry the struct's `DefId`, and
+    /// only the constructor spelling may be turned into a direct field
+    /// packing - consuming the other shape would drop the callee's body.
+    fn path_spells_struct_ctor(&self, callee: &HirExpr) -> bool {
+        let HirExprKind::Path { segments, def, .. } = &callee.kind else {
+            return false;
+        };
+        let (Some(def), Some(last)) = (def.as_ref(), segments.last()) else {
+            return false;
+        };
+        self.tcx
+            .def_name(*def)
+            .is_some_and(|name| name.rsplit("::").next() == Some(last.name.as_str()))
+    }
+
     /// Recognises the HIR lowering of `Pair(a, b)` / a two-field positional
     /// struct constructor and keeps both scalar operands in the integer
     /// register file. The generic `__struct` builtin remains the fallback for
@@ -4042,6 +4059,7 @@ impl<'tcx> FnBuilder<'tcx> {
         result_ty: Ty,
     ) -> RuntimeResult<Option<Reg>> {
         if let HirExprKind::Path { def: Some(def), .. } = &callee.kind
+            && self.path_spells_struct_ctor(callee)
             && args.len() == 2
             && args
                 .iter()
@@ -4112,6 +4130,7 @@ impl<'tcx> FnBuilder<'tcx> {
             return Ok(Some(dst));
         }
         if let HirExprKind::Path { def: Some(def), .. } = &callee.kind
+            && self.path_spells_struct_ctor(callee)
             && let Some(field_tys) = self.tcx.struct_field_tys(*def)
             && field_tys.len() == 2
             && field_tys

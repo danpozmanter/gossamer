@@ -787,6 +787,14 @@ struct TypeChecker<'a> {
     /// that own it. Lets [`Self::maybe_reject_unknown_adt_method`] reject
     /// `b.label()` when `label` belongs to a different type than `b`.
     user_method_owners: HashMap<String, std::collections::HashSet<String>>,
+    /// For each `(owner identity, method)`, the module the `impl` was
+    /// written in and whether the method is `pub`. A method without
+    /// `pub` is nameable only from that module, matching the resolver's
+    /// rule for a free function.
+    method_homes: HashMap<(String, String), (Vec<String>, bool)>,
+    /// Module path of the item currently being checked, so a call site
+    /// can be tested against a method's declaring module.
+    current_module: Vec<String>,
     /// Method names declared directly on each trait, keyed by trait name.
     /// Used with [`Self::trait_supertraits`] to detect a method reached
     /// only through a bound's supertrait (P0-5).
@@ -894,6 +902,8 @@ impl<'a> TypeChecker<'a> {
             import_targets: HashMap::new(),
             user_type_decls: std::collections::HashSet::new(),
             user_method_owners: HashMap::new(),
+            method_homes: HashMap::new(),
+            current_module: Vec::new(),
             trait_own_methods: HashMap::new(),
             trait_required_methods: HashMap::new(),
             trait_supertraits: HashMap::new(),
@@ -2262,7 +2272,7 @@ impl<'a> TypeChecker<'a> {
                 ItemKind::Fn(decl) => self.register_fn_sig(item.id, decl, item.span),
                 ItemKind::Impl(decl) => {
                     self.validate_declared_bounds(&decl.generics, &decl.where_clause, item.span);
-                    self.collect_impl_signatures(decl);
+                    self.collect_impl_signatures(decl, module_path);
                 }
                 ItemKind::Trait(decl) => {
                     self.validate_declared_bounds(&decl.generics, &decl.where_clause, item.span);
@@ -2741,42 +2751,85 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn collect_impl_signatures(&mut self, decl: &ImplDecl) {
-        // Self-type name for receiver-keyed method return types.
+    /// The names an `impl` block's methods register under: the identity
+    /// its self type is reached by (`lib::Point`) first, then the bare
+    /// spelling. A resolved receiver carries the identity
+    /// [`Self::register_struct`] recorded, so an impl inside `mod lib`
+    /// that keyed only the bare name would be invisible to every
+    /// receiver-typed lookup; the bare key stays for the sites that key
+    /// on a written `Type::method` path instead.
+    fn impl_owner_keys(
+        &self,
+        self_ty: &gossamer_ast::Type,
+        module_path: &[String],
+    ) -> Option<Vec<String>> {
+        let gossamer_ast::ty::TypeKind::Path(tp) = &self_ty.kind else {
+            return None;
+        };
+        let segments: Vec<&str> = tp.segments.iter().map(|s| s.name.name.as_str()).collect();
+        let bare = (*segments.last()?).to_string();
+        // A path written with its module (`impl lib::Point`) already
+        // spells the identity; a bare one names a type the enclosing
+        // module declares, or an imported one that keeps its own name.
+        let candidates = if segments.len() > 1 {
+            [segments.join("::"), qualified_type_name(module_path, &bare)]
+        } else {
+            [qualified_type_name(module_path, &bare), bare.clone()]
+        };
+        let identity = candidates
+            .into_iter()
+            .find(|candidate| self.user_type_decls.contains(candidate))
+            .unwrap_or_else(|| bare.clone());
+        if identity == bare {
+            return Some(vec![bare]);
+        }
+        Some(vec![identity, bare])
+    }
+
+    fn collect_impl_signatures(&mut self, decl: &ImplDecl, module_path: &[String]) {
+        // Self-type names for receiver-keyed method return types.
         // Generic impls are skipped: their returns may mention
         // `Param` slots that a bare lookup cannot substitute.
-        let self_name = if decl.generics.params.is_empty() {
-            match &decl.self_ty.kind {
-                gossamer_ast::ty::TypeKind::Path(tp) => {
-                    tp.segments.last().map(|s| s.name.name.clone())
-                }
-                _ => None,
-            }
+        let owner_keys = self.impl_owner_keys(&decl.self_ty, module_path);
+        let self_names = if decl.generics.params.is_empty() {
+            owner_keys.clone()
         } else {
             None
         };
-        // The owner type name for method-ownership tracking is recorded
+        // The owner type names for method-ownership tracking are recorded
         // even for generic impls (`impl<T> Stack<T>`), so a method call
         // on a generic user type is not falsely flagged as belonging to
         // a different type.
-        let owner_name = match &decl.self_ty.kind {
-            gossamer_ast::ty::TypeKind::Path(tp) => tp.segments.last().map(|s| s.name.name.clone()),
-            _ => None,
-        };
-        if let Some(owner) = &owner_name {
-            self.collect_impl_method_owners_and_mutability(decl, owner);
+        let owner_names = owner_keys;
+        if let Some(owners) = &owner_names {
+            for owner in owners {
+                self.collect_impl_method_owners_and_mutability(decl, owner);
+            }
+            // A trait impl's methods are reachable wherever the trait is:
+            // the trait declares the surface, the impl only supplies it.
+            let via_trait = decl.trait_ref.is_some();
+            for item in &decl.items {
+                if let ImplItem::Fn(fn_decl) = item {
+                    let is_pub = via_trait || fn_decl.visibility.is_public();
+                    for owner in owners {
+                        self.method_homes.insert(
+                            (owner.clone(), fn_decl.name.name.clone()),
+                            (module_path.to_vec(), is_pub),
+                        );
+                    }
+                }
+            }
         }
         // Record `impl Trait for Type` so a `T: Trait` bound can be verified
         // against the concrete argument type at a generic call site.
         if let Some(trait_ref) = &decl.trait_ref
             && let Some(trait_seg) = trait_ref.path.segments.last()
-            && let gossamer_ast::ty::TypeKind::Path(self_tp) = &decl.self_ty.kind
-            && let Some(self_seg) = self_tp.segments.last()
+            && let Some(owners) = &owner_names
         {
             self.trait_impl_types
                 .entry(trait_seg.name.name.clone())
                 .or_default()
-                .insert(self_seg.name.name.clone());
+                .extend(owners.iter().cloned());
         }
         // `Self` in a signature names the type being implemented, and
         // signatures are collected before any impl body is checked, so the
@@ -2797,7 +2850,7 @@ impl<'a> TypeChecker<'a> {
                 let _ = id;
                 self.register_fn_sig_anonymous(fn_decl);
                 self.register_method_arg_sig(fn_decl);
-                if let Some(name) = &self_name
+                if let Some(names) = &self_names
                     && fn_decl.generics.params.is_empty()
                 {
                     let params: Vec<Ty> = fn_decl
@@ -2811,15 +2864,17 @@ impl<'a> TypeChecker<'a> {
                         Some(ty) => self.type_from_ast(ty),
                         None => self.tcx.unit(),
                     };
-                    self.method_param_types
-                        .insert((name.clone(), fn_decl.name.name.clone()), params);
-                    self.method_ret_types
-                        .insert((name.clone(), fn_decl.name.name.clone(), arity), ret);
-                    self.method_arities
-                        .insert((name.clone(), fn_decl.name.name.clone()), arity);
+                    for name in names {
+                        self.method_param_types
+                            .insert((name.clone(), fn_decl.name.name.clone()), params.clone());
+                        self.method_ret_types
+                            .insert((name.clone(), fn_decl.name.name.clone(), arity), ret);
+                        self.method_arities
+                            .insert((name.clone(), fn_decl.name.name.clone()), arity);
+                    }
                 } else if !decl.generics.params.is_empty()
                     && fn_decl.generics.params.is_empty()
-                    && let Some(name) = &owner_name
+                    && let Some(names) = &owner_names
                 {
                     // Generic-impl methods (`impl<T> Add for Wrap<T>`):
                     // record the return with rigid `Param` slots, resolved
@@ -2838,12 +2893,14 @@ impl<'a> TypeChecker<'a> {
                         None => self.tcx.unit(),
                     };
                     self.leave_generic_scope(scope);
-                    self.generic_method_param_types
-                        .insert((name.clone(), fn_decl.name.name.clone()), params);
-                    self.generic_method_ret_types
-                        .insert((name.clone(), fn_decl.name.name.clone(), arity), ret);
-                    self.method_arities
-                        .insert((name.clone(), fn_decl.name.name.clone()), arity);
+                    for name in names {
+                        self.generic_method_param_types
+                            .insert((name.clone(), fn_decl.name.name.clone()), params.clone());
+                        self.generic_method_ret_types
+                            .insert((name.clone(), fn_decl.name.name.clone(), arity), ret);
+                        self.method_arities
+                            .insert((name.clone(), fn_decl.name.name.clone()), arity);
+                    }
                 }
             }
         }
@@ -3202,9 +3259,11 @@ impl<'a> TypeChecker<'a> {
             }
             ItemKind::Mod(decl) => {
                 if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                    self.current_module.push(decl.name.name.clone());
                     for nested in inner {
                         self.check_item(nested);
                     }
+                    self.current_module.pop();
                 }
             }
             ItemKind::AttrItem(_) => {}
@@ -4910,14 +4969,20 @@ impl<'a> TypeChecker<'a> {
             .iter()
             .map(|seg| seg.name.name.as_str())
             .collect();
-        let [type_name, fn_name] = segments.as_slice() else {
+        let [owner @ .., fn_name] = segments.as_slice() else {
             return None;
         };
-        if !self.user_type_decls.contains(*type_name) {
+        if owner.is_empty() {
             return None;
         }
+        // A type reached through its module (`lib::Point::new`) is keyed
+        // by the identity it registers under, so try the written path
+        // before the bare name two modules could share.
+        let type_name = [owner.join("::"), (*owner.last()?).to_string()]
+            .into_iter()
+            .find(|candidate| self.user_type_decls.contains(candidate))?;
         self.method_ret_types
-            .get(&((*type_name).to_string(), (*fn_name).to_string(), args.len()))
+            .get(&(type_name, (*fn_name).to_string(), args.len()))
             .copied()
     }
 
@@ -7321,6 +7386,7 @@ impl<'a> TypeChecker<'a> {
             return self.tcx.error_ty();
         }
         self.check_mutating_method_receiver(receiver, receiver_ty, method);
+        self.reject_private_method_call(receiver_ty, method, receiver.span);
         if let Some(ty) = self.check_param_receiver_method(receiver_ty, method, args, receiver.span)
         {
             return ty;
@@ -9167,6 +9233,44 @@ impl<'a> TypeChecker<'a> {
             let error = self.unresolved_method(name, method, resolved);
             self.emit(error, span);
         }
+    }
+
+    /// As [`Self::reject_private_method`], resolving the receiver's own
+    /// identity first. Runs for every method call, including the ones a
+    /// later pass resolves a return type for.
+    fn reject_private_method_call(&mut self, receiver_ty: Ty, method: &str, span: Span) {
+        let mut peeled = self.infer.resolve(self.tcx, receiver_ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(peeled) {
+            peeled = self.infer.resolve(self.tcx, *inner);
+        }
+        let Some(TyKind::Adt { def, .. }) = self.tcx.kind(peeled) else {
+            return;
+        };
+        let Some(name) = self.tcx.def_name(*def).map(str::to_string) else {
+            return;
+        };
+        self.reject_private_method(&name, method, span);
+    }
+
+    /// Rejects a call to a method declared without `pub` from outside the
+    /// module its `impl` was written in. This is the rule the resolver
+    /// applies to a free function: the declaring module and its
+    /// descendants keep access, so a `pub` wrapper always reaches the
+    /// private helpers declared beside it.
+    fn reject_private_method(&mut self, ty: &str, method: &str, span: Span) {
+        let Some((home, is_pub)) = self.method_homes.get(&(ty.to_string(), method.to_string()))
+        else {
+            return;
+        };
+        if *is_pub || self.current_module.starts_with(home.as_slice()) {
+            return;
+        }
+        let error = TypeError::PrivateMethod {
+            ty: ty.to_string(),
+            name: method.to_string(),
+            module: home.join("::"),
+        };
+        self.emit(error, span);
     }
 
     /// The single container-shaped (`Vec` / `Slice` / `Tuple`, ref

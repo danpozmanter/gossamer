@@ -39,13 +39,74 @@ pub(crate) fn read_source(file: &Path) -> Result<String> {
 /// `src/other.gos::greet`) resolve at runtime. See
 /// [`gossamer_pkg::bundle`] for the bundling contract.
 pub(crate) fn read_entry_source(file: &Path) -> Result<String> {
+    Ok(read_entry_unit(file)?.source)
+}
+
+/// An entry's assembled compilation unit, plus the provenance needed to
+/// report a diagnostic against the file its bytes were written in rather
+/// than the assembled unit they were checked in.
+pub(crate) struct EntryUnit {
+    pub(crate) source: String,
+    /// The entry path the unit was assembled from, matching the
+    /// `origin` of every span that came from the entry itself.
+    pub(crate) entry: PathBuf,
+    pub(crate) origins: Vec<gossamer_pkg::bundle::BundledSpan>,
+}
+
+/// As [`read_entry_source`], keeping the assembled unit's provenance.
+pub(crate) fn read_entry_unit(file: &Path) -> Result<EntryUnit> {
     // A bare relative entry (`gos run main.gos`) has an empty
     // `parent()`; the module scan must read the entry's real
     // directory, so anchor the path to the cwd first.
     let resolved =
         std::path::absolute(resolve_gos_source(file)).unwrap_or_else(|_| resolve_gos_source(file));
     let entry = fs::read_to_string(&resolved).map_err(|err| friendly_io_error(err, &resolved))?;
-    Ok(gossamer_pkg::bundle::bundle_entry_source(&resolved, entry))
+    let (source, origins) = gossamer_pkg::bundle::bundle_entry_source_traced(&resolved, entry);
+    Ok(EntryUnit {
+        source,
+        entry: resolved,
+        origins,
+    })
+}
+
+/// Registers every file `unit` was assembled from and records which of
+/// its regions came from which, so a diagnostic raised against the unit
+/// resolves to the file the user wrote. Regions from the entry itself
+/// already carry the right name and stay pointed at `unit`.
+pub(crate) fn register_unit_origins(
+    map: &mut gossamer_lex::SourceMap,
+    unit: gossamer_lex::FileId,
+    entry: &Path,
+    spans: &[gossamer_pkg::bundle::BundledSpan],
+) {
+    if spans.iter().all(|span| span.origin == entry) {
+        return;
+    }
+    let mut ids: Vec<(PathBuf, gossamer_lex::FileId)> = vec![(entry.to_path_buf(), unit)];
+    let mut origins = Vec::with_capacity(spans.len());
+    for span in spans {
+        let known = ids
+            .iter()
+            .find(|(path, _)| *path == span.origin)
+            .map(|(_, id)| *id);
+        let id = if let Some(id) = known {
+            id
+        } else {
+            let Ok(text) = fs::read_to_string(&span.origin) else {
+                continue;
+            };
+            let id = map.add_file(span.origin.to_string_lossy().into_owned(), text);
+            ids.push((span.origin.clone(), id));
+            id
+        };
+        origins.push(gossamer_lex::OriginSpan {
+            start: span.start,
+            end: span.end,
+            origin: id,
+            origin_start: span.origin_start,
+        });
+    }
+    map.set_origins(unit, origins);
 }
 
 /// Renders a `std::io::Error` as a clean diagnostic free of

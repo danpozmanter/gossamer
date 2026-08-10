@@ -1882,3 +1882,274 @@ fn same_fn_name_in_two_sibling_modules_runs() {
     assert_eq!(build.2, Some(0), "native stderr: {}", build.1);
     assert_eq!(build.0.trim(), "3 30 8", "native stdout: {:?}", build.0);
 }
+
+/// A library's own `impl` block reaches its private helpers. The
+/// dependency is inlined as `mod lib { ... }`, so the methods have to be
+/// recorded against the identity a receiver of that type carries.
+#[test]
+fn a_librarys_impl_reaches_its_own_private_method() {
+    let root = fresh_dir("dep-private-method");
+    write_dep_project(
+        &root,
+        "lib",
+        "example.com/lib",
+        "pub struct Point {\n    x: i64\n    y: i64\n}\n\n\
+         impl Point {\n\
+             pub fn new(x: i64, y: i64) -> Self { Point { x: x, y: y } }\n\
+             pub fn public_dist(self) -> i64 { self.internal_dist() }\n\
+             fn internal_dist(self) -> i64 { self.x + self.y }\n\
+         }\n",
+    );
+    let app = write_app_project(
+        &root,
+        "lib = { path = \"../lib\" }\n",
+        "use \"example.com/lib\" as lib\n\n\
+         fn main() {\n\
+             let point = lib::Point::new(1, 2)\n\
+             println!(\"{}\", point.public_dist())\n\
+         }\n",
+    );
+    let run = project_run_vm(&app);
+    assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);
+    assert_eq!(run.0.trim(), "3", "vm stdout: {:?}", run.0);
+    let build = project_build_run(&app, "app");
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(build.2, Some(0), "native stderr: {}", build.1);
+    assert_eq!(build.0.trim(), "3", "native stdout: {:?}", build.0);
+}
+
+/// A diagnostic raised inside a path dependency names the dependency's
+/// own file and its line there, not the consumer's entry file at the
+/// offset the dependency happened to be inlined at.
+#[test]
+fn a_diagnostic_in_a_path_dependency_names_the_dependencys_file() {
+    let root = fresh_dir("dep-diag-origin");
+    write_dep_project(
+        &root,
+        "lib",
+        "example.com/lib",
+        "pub struct Point {\n    x: i64\n}\n\n\
+         impl Point {\n\
+             pub fn get(self) -> i64 { self.nosuchmethod() }\n\
+         }\n",
+    );
+    let app = write_app_project(
+        &root,
+        "lib = { path = \"../lib\" }\n",
+        "use \"example.com/lib\" as lib\n\n\
+         fn main() { println!(\"{}\", lib::Point { x: 1 }.get()) }\n",
+    );
+    let out = project_run_vm(&app);
+    let _ = fs::remove_dir_all(&root);
+    assert_ne!(out.2, Some(0), "expected a failure, stdout: {:?}", out.0);
+    assert!(
+        out.1.contains("lib.gos:6:"),
+        "diagnostic must point at the dependency's own file and line: {}",
+        out.1
+    );
+    assert!(
+        !out.1.contains("main.gos:"),
+        "diagnostic must not be attributed to the consumer's entry: {}",
+        out.1
+    );
+}
+
+/// `use "id" as alias` reaches a dependency's associated functions, not
+/// just its free functions. Items are registered under the inlined
+/// module's real name, so a renaming alias has to be respelled before
+/// name-keyed dispatch.
+#[test]
+fn a_renaming_alias_reaches_a_dependencys_associated_function() {
+    let root = fresh_dir("dep-alias-assoc");
+    write_dep_project(
+        &root,
+        "lib",
+        "example.com/lib",
+        "pub struct Point {\n    x: i64\n    y: i64\n}\n\n\
+         impl Point {\n\
+             pub fn new(x: i64, y: i64) -> Self { Point { x: x, y: y } }\n\
+             pub fn sum(self) -> i64 { self.x + self.y }\n\
+         }\n\n\
+         pub fn answer() -> i64 { 42 }\n",
+    );
+    let app = write_app_project(
+        &root,
+        "lib = { path = \"../lib\" }\n",
+        "use \"example.com/lib\" as mylib\n\n\
+         fn main() {\n\
+             println!(\"{} {}\", mylib::Point::new(1, 2).sum(), mylib::answer())\n\
+         }\n",
+    );
+    let run = project_run_vm(&app);
+    assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);
+    assert_eq!(run.0.trim(), "3 42", "vm stdout: {:?}", run.0);
+    let build = project_build_run(&app, "app");
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(build.2, Some(0), "native stderr: {}", build.1);
+    assert_eq!(build.0.trim(), "3 42", "native stdout: {:?}", build.0);
+}
+
+/// A member the dependency genuinely does not export is still rejected
+/// at check time through an alias.
+#[test]
+fn a_phantom_member_through_an_alias_is_still_rejected() {
+    let root = fresh_dir("dep-alias-phantom");
+    write_dep_project(
+        &root,
+        "lib",
+        "example.com/lib",
+        "pub fn real() -> i64 { 1 }\n",
+    );
+    let app = write_app_project(
+        &root,
+        "lib = { path = \"../lib\" }\n",
+        "use \"example.com/lib\" as mylib\n\n\
+         fn main() { println!(\"{}\", mylib::nosuchfn()) }\n",
+    );
+    let out = project_run_vm(&app);
+    let _ = fs::remove_dir_all(&root);
+    assert_ne!(out.2, Some(0), "expected a failure, stdout: {:?}", out.0);
+    assert!(
+        out.1.contains("GR0001"),
+        "a phantom member must be rejected at check time: {}",
+        out.1
+    );
+}
+
+/// An item without `pub` is private to the module that declares it, so
+/// a consumer reaches the `pub` wrapper but never the helper behind it.
+#[test]
+fn a_dependencys_private_surface_stays_inside_the_dependency() {
+    let root = fresh_dir("dep-private-surface");
+    write_dep_project(
+        &root,
+        "lib",
+        "example.com/lib",
+        "pub struct Point {\n    x: i64\n    y: i64\n}\n\n\
+         impl Point {\n\
+             pub fn new(x: i64, y: i64) -> Self { Point { x: x, y: y } }\n\
+             pub fn public_dist(self) -> i64 { self.internal_dist() }\n\
+             fn internal_dist(self) -> i64 { self.x + self.y }\n\
+         }\n\n\
+         pub fn wrapper() -> i64 { helper() }\n\n\
+         fn helper() -> i64 { 99 }\n",
+    );
+    let reachable = |body: &str| -> (String, String, Option<i32>) {
+        let app = write_app_project(&root, "lib = { path = \"../lib\" }\n", body);
+        project_run_vm(&app)
+    };
+
+    let ok = reachable(
+        "use \"example.com/lib\"\n\n\
+         fn main() {\n\
+             println!(\"{} {}\", lib::wrapper(), lib::Point::new(1, 2).public_dist())\n\
+         }\n",
+    );
+    assert_eq!(
+        ok.2,
+        Some(0),
+        "public surface must stay reachable: {}",
+        ok.1
+    );
+    assert_eq!(ok.0.trim(), "99 3", "stdout: {:?}", ok.0);
+
+    let private_fn =
+        reachable("use \"example.com/lib\"\n\nfn main() { println!(\"{}\", lib::helper()) }\n");
+    assert_ne!(
+        private_fn.2,
+        Some(0),
+        "private fn leaked: {:?}",
+        private_fn.0
+    );
+    assert!(
+        private_fn.1.contains("GR0008"),
+        "expected a visibility error: {}",
+        private_fn.1
+    );
+
+    let private_method = reachable(
+        "use \"example.com/lib\"\n\n\
+         fn main() { println!(\"{}\", lib::Point::new(1, 2).internal_dist()) }\n",
+    );
+    assert_ne!(
+        private_method.2,
+        Some(0),
+        "private method leaked: {:?}",
+        private_method.0
+    );
+    assert!(
+        private_method.1.contains("GT0063"),
+        "expected a visibility error: {}",
+        private_method.1
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// A nested module reaches the private items of the module that
+/// contains it, which is what the documented `#[cfg(test)]` block does.
+#[test]
+fn a_nested_module_reaches_its_parents_private_items() {
+    let dir = write_project(
+        "inline-mod-private",
+        "example.com/inline",
+        &[(
+            "main.gos",
+            "struct P { x: i64 }\n\
+             impl P {\n\
+                 pub fn new(x: i64) -> Self { P { x: x } }\n\
+                 fn secret(self) -> i64 { self.x * 3 }\n\
+             }\n\n\
+             fn hidden() -> i64 { 4 }\n\n\
+             mod inner {\n\
+                 pub fn reach() -> i64 { super::P::new(2).secret() + super::hidden() }\n\
+             }\n\n\
+             fn main() { println!(\"{}\", inner::reach()) }\n",
+        )],
+    );
+    let run = project_run_vm(&dir);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);
+    assert_eq!(run.0.trim(), "10", "vm stdout: {:?}", run.0);
+}
+
+/// A descendant module keeps access to its parent's private items, and
+/// the entry - which is not a descendant - does not.
+#[test]
+fn a_descendant_module_reaches_its_parents_private_items() {
+    let dir = write_project(
+        "nested-module-private",
+        "example.com/nested",
+        &[
+            (
+                "src/sub/mod.gos",
+                "fn secret() -> i64 { 7 }\npub fn own() -> i64 { secret() }\n",
+            ),
+            (
+                "src/sub/child.gos",
+                "pub fn peek() -> i64 { super::secret() }\n",
+            ),
+            (
+                "src/main.gos",
+                "fn main() { println!(\"{} {}\", sub::own(), sub::child::peek()) }\n",
+            ),
+        ],
+    );
+    let run = project_run_vm(&dir);
+    assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);
+    assert_eq!(run.0.trim(), "7 7", "vm stdout: {:?}", run.0);
+
+    fs::write(
+        dir.join("src/main.gos"),
+        "fn main() { println!(\"{}\", sub::secret()) }\n",
+    )
+    .unwrap();
+    let outside = project_run_vm(&dir);
+    let _ = fs::remove_dir_all(&dir);
+    assert_ne!(outside.2, Some(0), "private item leaked: {:?}", outside.0);
+    assert!(
+        outside.1.contains("GR0008"),
+        "expected a visibility error: {}",
+        outside.1
+    );
+}
