@@ -3216,13 +3216,10 @@ mod promotion_report_tests {
     }
 
     #[test]
-    fn unsupported_boundary_dependency_rejects_caller() {
+    fn unlowerable_dependency_rejects_caller() {
         let mut tcx = TyCtxt::new();
         let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
-        let map_ty = tcx.intern(TyKind::HashMap {
-            key: i64_ty,
-            value: i64_ty,
-        });
+        let i128_ty = tcx.intern(TyKind::Int(IntTy::I128));
         let mut caller = body("caller", i64_ty, true);
         let span = caller.span;
         caller.blocks[0].terminator = Terminator::Call {
@@ -3237,11 +3234,11 @@ mod promotion_report_tests {
             terminator: Terminator::Goto { target: BlockId(1) },
             span,
         });
-        let bodies = vec![caller, body("unsupported", map_ty, false)];
+        let bodies = vec![caller, body("unsupported", i128_ty, false)];
         let admitted = jit_compile_body_names(&bodies, &tcx, &HashMap::new(), &HashMap::new());
         assert!(
             admitted.is_empty(),
-            "unsupported native dependency should reject its caller too: {admitted:?}"
+            "unlowerable native dependency should reject its caller too: {admitted:?}"
         );
         let entries = jit_entry_body_names(&bodies, &tcx, &HashMap::new(), &HashMap::new());
         assert!(
@@ -3254,10 +3251,7 @@ mod promotion_report_tests {
     fn unsupported_method_dependency_rejects_dynamic_leaf_name_caller() {
         let mut tcx = TyCtxt::new();
         let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
-        let map_ty = tcx.intern(TyKind::HashMap {
-            key: i64_ty,
-            value: i64_ty,
-        });
+        let i128_ty = tcx.intern(TyKind::Int(IntTy::I128));
         let mut caller = body("main", i64_ty, true);
         let span = caller.span;
         caller.blocks[0].terminator = Terminator::Call {
@@ -3272,11 +3266,50 @@ mod promotion_report_tests {
             terminator: Terminator::Goto { target: BlockId(1) },
             span,
         });
-        let bodies = vec![caller, body("Counter::next", map_ty, false)];
+        let bodies = vec![caller, body("Counter::next", i128_ty, false)];
         let admitted = jit_compile_body_names(&bodies, &tcx, &HashMap::new(), &HashMap::new());
         assert!(
             admitted.is_empty(),
             "dynamic method dispatch must retain its unsupported dependency: {admitted:?}"
+        );
+    }
+
+    #[test]
+    fn scalar_map_returning_dependency_uses_native_only_abi() {
+        let mut tcx = TyCtxt::new();
+        let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+        let map_ty = tcx.intern(TyKind::HashMap {
+            key: i64_ty,
+            value: i64_ty,
+        });
+        let mut caller = body("caller", i64_ty, true);
+        let span = caller.span;
+        caller.blocks[0].terminator = Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("build".to_string())),
+            args: Vec::new(),
+            destination: Place::local(Local(0)),
+            target: Some(BlockId(1)),
+        };
+        caller.blocks.push(BasicBlock {
+            id: BlockId(1),
+            stmts: Vec::new(),
+            terminator: Terminator::Goto { target: BlockId(1) },
+            span,
+        });
+
+        let bodies = vec![caller, body("build", map_ty, false)];
+        let admitted = jit_compile_body_names(&bodies, &tcx, &HashMap::new(), &HashMap::new());
+        assert_eq!(
+            admitted,
+            std::collections::HashSet::from(["build".to_string(), "caller".to_string()]),
+            "a map the typed runtime helpers store directly links natively"
+        );
+        // The VM keeps its own map representation, so the dependency stays off
+        // the trampoline while its caller remains a valid entry.
+        let entries = jit_entry_body_names(&bodies, &tcx, &HashMap::new(), &HashMap::new());
+        assert_eq!(
+            entries,
+            std::collections::HashSet::from(["caller".to_string()])
         );
     }
 
