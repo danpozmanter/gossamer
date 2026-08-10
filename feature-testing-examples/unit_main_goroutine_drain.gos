@@ -1,0 +1,34 @@
+// A `main` with no return value must still wait for a goroutine that is
+// running when it falls off the end, so that goroutine's output reaches the
+// user. The exit handler performing the drain has to be reached from every
+// tier's entry shim, not only the ones whose `main` produces a value.
+//
+// Ordering is deterministic by construction: `main` completes a channel round
+// trip and returns well before the fire-and-forget goroutine's sleep elapses,
+// so its line is always last and only appears at all if the drain ran.
+use std::sync::channel
+use std::time
+
+fn announce_late() {
+    time::sleep(time::Duration::from_millis(250))
+    println!("late goroutine observed")
+}
+
+fn produce(tx: Sender<i64>) {
+    tx.send(20)
+    tx.send(22)
+    tx.close()
+}
+
+fn main() {
+    go announce_late()
+
+    let (tx, rx) = channel()
+    go produce(tx)
+    let mut total = 0
+    while let Some(v) = rx.recv() {
+        total += v
+    }
+    println!("channel total {}", total)
+    println!("main returning")
+}

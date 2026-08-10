@@ -196,8 +196,9 @@ pub struct OsPoller {
     /// timeout to expire.
     interrupt: std::sync::Arc<mio::Waker>,
     /// Map registered `PollSource` -> `(mio::Token, Gid)` so
-    /// `deregister` can find the entry to remove.
-    by_source: HashMap<(PollSource, Interest), Gid>,
+    /// `deregister` can find the entry to remove without scanning
+    /// [`Self::by_token`], which a busy server walks once per completed read.
+    by_source: HashMap<(PollSource, Interest), (Option<mio::Token>, Gid)>,
     /// Pending readiness events accumulated between `poll` and
     /// `drain` calls.
     pending: Vec<Readiness>,
@@ -300,7 +301,8 @@ impl OsPoller {
             Err(e) => return Err(e),
         };
         let _ = registered;
-        self.by_source.insert((source, interest), gid);
+        self.by_source
+            .insert((source, interest), (Some(token), gid));
         self.by_token.insert(token, (source, interest, gid));
         Ok(source)
     }
@@ -312,14 +314,8 @@ impl OsPoller {
         source: PollSource,
         interest: Interest,
     ) -> io::Result<()> {
-        self.by_source.remove(&(source, interest));
-        // Find and forget the matching token entry.
-        let token_to_remove: Option<mio::Token> = self
-            .by_token
-            .iter()
-            .find_map(|(t, (s, i, _))| (s == &source && i == &interest).then_some(*t));
-        if let Some(t) = token_to_remove {
-            self.by_token.remove(&t);
+        if let Some((Some(token), _)) = self.by_source.remove(&(source, interest)) {
+            self.by_token.remove(&token);
         }
         self.poll.registry().deregister(io)
     }
@@ -393,7 +389,7 @@ impl Poller for OsPoller {
         // is `register_io`. Recording in `by_source` is enough to
         // satisfy the trait contract for code paths that only use
         // synthetic sources (e.g. timers via `add_timer`).
-        self.by_source.insert((source, interest), gid);
+        self.by_source.insert((source, interest), (None, gid));
     }
 
     fn deregister(&mut self, source: PollSource, interest: Interest) {

@@ -976,6 +976,106 @@ pub(super) fn lower_intrinsic_call_collections(
             );
             Ok(true)
         }
+        // `Map::from([...])` and the `{k: v}` literal that desugars to it. The
+        // array of key/value tuples is materialised in a stack slot, so the
+        // map is built by walking that slot and inserting each pair - the same
+        // shape the LLVM tier emits, keeping a map literal off the bytecode
+        // fallback in an otherwise promotable body.
+        "Map::from"
+        | "collections::Map::from"
+        | "std::collections::Map::from"
+        | "HashMap::from"
+        | "collections::HashMap::from"
+        | "std::collections::HashMap::from"
+        | "BTreeMap::from"
+        | "collections::BTreeMap::from"
+        | "std::collections::BTreeMap::from"
+            if args.len() == 1 =>
+        {
+            let arg = &args[0];
+            let Operand::Copy(arg_place) = arg else {
+                bail!("Map::from expects a materialised array place");
+            };
+            let arr_ty = {
+                let mut t = resolve_place_ty(tcx, body, arg_place);
+                while let TyKind::Ref { inner, .. } = tcx.kind_of(t) {
+                    t = *inner;
+                }
+                t
+            };
+            let TyKind::Array { elem, len } = tcx.kind_of(arr_ty).clone() else {
+                bail!("Map::from expects an array argument");
+            };
+            let TyKind::Tuple(fields) = tcx.kind_of(elem).clone() else {
+                bail!("Map::from expects tuple array elements");
+            };
+            let [key_ty, val_ty] = fields.as_slice() else {
+                bail!("Map::from expects key/value tuple elements");
+            };
+            // 0 = i64-shaped storage, 1 = String storage. Anything else has no
+            // typed insert helper, so the body stays on bytecode.
+            let storage_kind = |ty: Ty| match tcx.kind_of(ty) {
+                TyKind::Int(_) | TyKind::Bool | TyKind::Char => Some(0i64),
+                TyKind::String => Some(1i64),
+                _ => None,
+            };
+            let (Some(key_kind), Some(val_kind)) = (storage_kind(*key_ty), storage_kind(*val_ty))
+            else {
+                bail!("Map::from supports i64-shaped and String keys and values");
+            };
+            let count = i64::try_from(len.to_usize()).unwrap_or(i64::MAX);
+            let new_fn = intrinsics.extern_fn(
+                module,
+                "gos_rt_map_new_with_capacity_typed",
+                &[types::I32, types::I32, types::I64],
+                &[ptr_ty],
+            )?;
+            let fref = module.declare_func_in_func(new_fn, builder.func);
+            let k = builder.ins().iconst(types::I32, key_kind);
+            let v = builder.ins().iconst(types::I32, val_kind);
+            let cap = builder.ins().iconst(types::I64, count);
+            let call = builder.ins().call(fref, &[k, v, cap]);
+            let map_ptr = builder.inst_results(call)[0];
+
+            let base =
+                lower_place_address(module, builder, locals, body, tcx, arg_place, intrinsics)?;
+            let stride = i64::from(type_slot_count(tcx, elem).max(1));
+            let value_offset = i64::from(type_slot_count(tcx, *key_ty).max(1));
+            let helper = match (key_kind, val_kind) {
+                (0, 0) => "gos_rt_map_insert_i64_i64",
+                (0, 1) => "gos_rt_map_insert_i64_str",
+                (1, 0) => "gos_rt_map_insert_str_i64",
+                _ => "gos_rt_map_insert_str_str",
+            };
+            let key_cl = if key_kind == 0 { types::I64 } else { ptr_ty };
+            let val_cl = if val_kind == 0 { types::I64 } else { ptr_ty };
+            let ins_fn = intrinsics.extern_fn(module, helper, &[ptr_ty, key_cl, val_cl], &[])?;
+            let ins_ref = module.declare_func_in_func(ins_fn, builder.func);
+            for index in 0..len.to_usize() {
+                let elem_slot = i64::try_from(index)
+                    .unwrap_or(i64::MAX)
+                    .saturating_mul(stride);
+                let key_off = i32::try_from(elem_slot.saturating_mul(8)).unwrap_or(i32::MAX);
+                let val_off =
+                    i32::try_from(elem_slot.saturating_add(value_offset).saturating_mul(8))
+                        .unwrap_or(i32::MAX);
+                let key_val = builder
+                    .ins()
+                    .load(key_cl, MemFlagsData::trusted(), base, key_off);
+                let val_val = builder
+                    .ins()
+                    .load(val_cl, MemFlagsData::trusted(), base, val_off);
+                let _ = builder.ins().call(ins_ref, &[map_ptr, key_val, val_val]);
+            }
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                map_ptr,
+            );
+            Ok(true)
+        }
         "Map::with_capacity"
         | "collections::Map::with_capacity"
         | "std::collections::Map::with_capacity"

@@ -95,6 +95,13 @@ fn build_native_vec_f64(value: &Value) -> Option<i64> {
     // SAFETY: `gos_rt_vec_new_typed` returns an owned header or null;
     // `gos_rt_vec_push` copies 8 bytes from the float's bit pattern.
     unsafe {
+        // Same one-copy path as the integer case: a `FloatVec` is a packed
+        // `Vec<f64>`, whose in-memory form is the native element layout.
+        if let Value::FloatVec(arc) = value {
+            let len = i64::try_from(arc.len()).ok()?;
+            let v = rt::gos_rt_vec_from_packed_arr(8, arc.as_ptr().cast::<u8>(), len);
+            return (!v.is_null()).then_some(v as i64);
+        }
         let v = rt::gos_rt_vec_new_typed(8, rt::vec::vec_elem_kind::PRIMITIVE);
         if v.is_null() {
             return None;
@@ -219,15 +226,17 @@ fn build_native_vec_vec_i64(elems: &[Value]) -> Option<i64> {
 /// call - see `invoke_prepared_native`). Returns the pointer as `i64`.
 fn build_native_u8vec(value: &Value) -> Option<i64> {
     let bytes = crate::builtins::u8vec_snapshot_bytes(value)?;
-    // SAFETY: `gos_rt_heap_u8_new` returns an owned `*mut GosU8Vec` of
-    // `len` zeroed bytes or null; `set` writes one in-bounds byte.
+    // SAFETY: `gos_rt_heap_u8_new` returns an owned `*mut GosU8Vec` whose
+    // `data` is a live buffer of exactly `len` bytes, so the whole snapshot
+    // is one copy into it rather than a runtime call per byte.
     unsafe {
         let v = rt::gos_rt_heap_u8_new(bytes.len() as i64);
         if v.is_null() {
             return None;
         }
-        for (i, &b) in bytes.iter().enumerate() {
-            rt::gos_rt_heap_u8_set(v, i as i64, i64::from(b));
+        let header = &*v;
+        if !bytes.is_empty() && !header.data.is_null() {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), header.data, bytes.len());
         }
         Some(v as i64)
     }
@@ -240,12 +249,18 @@ fn read_native_u8vec(ptr: i64) -> Vec<u8> {
         return Vec::new();
     }
     let v = ptr as *const rt::GosU8Vec;
-    // SAFETY: `v` is a live `GosU8Vec` the trampoline built; `len`/`get`
-    // read initialised in-bounds bytes.
-    let len = unsafe { rt::gos_rt_heap_u8_len(v) }.max(0);
-    let bytes: Vec<u8> = (0..len)
-        .map(|i| unsafe { rt::gos_rt_heap_u8_get(v, i) } as u8)
-        .collect();
+    // SAFETY: `v` is a live `GosU8Vec` the trampoline built, so `data`
+    // addresses exactly `len` initialised bytes and the whole buffer comes
+    // back as one copy instead of a runtime call per byte.
+    let bytes = unsafe {
+        let header = &*v;
+        let len = usize::try_from(header.len.max(0)).unwrap_or(0);
+        if len == 0 || header.data.is_null() {
+            Vec::new()
+        } else {
+            std::slice::from_raw_parts(header.data, len).to_vec()
+        }
+    };
     rt::ledger::benchmark_boundary_copy(bytes.len());
     bytes
 }
@@ -257,32 +272,34 @@ fn build_native_vec_i64(value: &Value) -> Option<i64> {
     // null; `gos_rt_vec_push_i64` copies each value into the buffer. We
     // own the result until `free_native` reclaims it.
     unsafe {
+        // A packed integer vector is already the element layout the native
+        // side expects, so it crosses as one copy rather than a call per
+        // element - the boundary cost of a large argument is then a `memcpy`,
+        // not a loop over the runtime ABI.
+        if let Value::IntArray(arc) = value {
+            let len = i64::try_from(arc.len()).ok()?;
+            let v = rt::gos_rt_vec_from_packed_arr(8, arc.as_ptr().cast::<u8>(), len);
+            return (!v.is_null()).then_some(v as i64);
+        }
         let v = rt::gos_rt_vec_new_typed(8, rt::vec::vec_elem_kind::PRIMITIVE);
         if v.is_null() {
             return None;
         }
-        match value {
-            Value::IntArray(arc) => {
-                for &n in arc.iter() {
-                    rt::gos_rt_vec_push_i64(v, n);
+        // Only a boxed element sequence remains: its elements need
+        // conversion, not copying, so they still cross one at a time.
+        let Value::Array(arc) = value else {
+            rt::gos_rt_vec_free(v);
+            return None;
+        };
+        for elem in arc.iter() {
+            match elem {
+                Value::Int(n) => rt::gos_rt_vec_push_i64(v, *n),
+                Value::Bool(b) => rt::gos_rt_vec_push_i64(v, i64::from(*b)),
+                Value::Char(c) => rt::gos_rt_vec_push_i64(v, *c as i64),
+                _ => {
+                    rt::gos_rt_vec_free(v);
+                    return None;
                 }
-            }
-            Value::Array(arc) => {
-                for elem in arc.iter() {
-                    match elem {
-                        Value::Int(n) => rt::gos_rt_vec_push_i64(v, *n),
-                        Value::Bool(b) => rt::gos_rt_vec_push_i64(v, i64::from(*b)),
-                        Value::Char(c) => rt::gos_rt_vec_push_i64(v, *c as i64),
-                        _ => {
-                            rt::gos_rt_vec_free(v);
-                            return None;
-                        }
-                    }
-                }
-            }
-            _ => {
-                rt::gos_rt_vec_free(v);
-                return None;
             }
         }
         Some(v as i64)

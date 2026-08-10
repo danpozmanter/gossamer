@@ -873,8 +873,7 @@ impl Vm {
         // cannot starve unrelated hot loops for the rest of the process.
         let selected =
             jit_backend::jit_compile_body_names(&bodies, &tcx, shape_defs, struct_shape_defs);
-        let entry_names =
-            jit_backend::jit_entry_body_names(&bodies, &tcx, shape_defs, struct_shape_defs);
+        let entry_names = jit_backend::jit_entry_body_names_with_admitted(&bodies, &selected);
         bodies.retain(|body| selected.contains(body.name.as_str()));
         if bodies.is_empty() {
             self.jit.write().compiled = JitCompileState::Failed;

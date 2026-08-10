@@ -16,11 +16,12 @@
 #![allow(clippy::wildcard_imports)]
 
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
-use std::collections::HashSet;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
+
+use rustc_hash::FxHashSet;
 
 use super::*;
 
@@ -59,31 +60,47 @@ const STRING_LEGACY_HEADER_BYTES: usize = 13;
 const STRING_BODY_OFFSET: usize = STRING_OWNER_BYTES + STRING_LEGACY_HEADER_BYTES;
 const STRING_BODY_TAG: usize = STRING_BODY_OFFSET & 7;
 static NEXT_STRING_GENERATION: AtomicU64 = AtomicU64::new(1);
-static HEAP_STRING_BODIES: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
+/// Number of independent registry shards. A string body's address selects its
+/// shard, so allocation and release on different goroutines contend only when
+/// two live bodies hash to the same shard.
+const STRING_REGISTRY_SHARDS: usize = 64;
+static HEAP_STRING_BODIES: OnceLock<Box<[Mutex<FxHashSet<usize>>]>> = OnceLock::new();
 
 const _: () = assert!(STRING_OWNER_BYTES == 16);
 const _: () = assert!(STRING_BODY_TAG == 5);
+const _: () = assert!(STRING_REGISTRY_SHARDS.is_power_of_two());
 
-fn heap_string_bodies() -> &'static Mutex<HashSet<usize>> {
-    HEAP_STRING_BODIES.get_or_init(|| Mutex::new(HashSet::new()))
+fn heap_string_shard(s: *const c_char) -> &'static Mutex<FxHashSet<usize>> {
+    let shards = HEAP_STRING_BODIES.get_or_init(|| {
+        (0..STRING_REGISTRY_SHARDS)
+            .map(|_| Mutex::new(FxHashSet::default()))
+            .collect()
+    });
+    // Body addresses share a fixed low-bit shape, so the selector mixes the
+    // allocation-varying high bits rather than reading the address directly.
+    // The mix is done at a fixed 64-bit width so a 32-bit target selects
+    // shards the same way instead of truncating the multiplier.
+    let mixed = ((s as usize as u64) >> 3).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    let index = (mixed >> (u64::BITS - STRING_REGISTRY_SHARDS.trailing_zeros())) as usize;
+    &shards[index]
 }
 
 fn register_heap_string_body(s: *const c_char) {
-    heap_string_bodies()
+    heap_string_shard(s)
         .lock()
         .expect("heap string registry poisoned")
         .insert(s as usize);
 }
 
 fn unregister_heap_string_body(s: *const c_char) {
-    heap_string_bodies()
+    heap_string_shard(s)
         .lock()
         .expect("heap string registry poisoned")
         .remove(&(s as usize));
 }
 
 fn is_registered_heap_string_body(s: *const c_char) -> bool {
-    heap_string_bodies()
+    heap_string_shard(s)
         .lock()
         .expect("heap string registry poisoned")
         .contains(&(s as usize))
@@ -235,6 +252,9 @@ unsafe fn typed_str_char_len(s: *const c_char) -> usize {
     if let Some(cap) = unsafe { typed_str_cap(s) } {
         let footer = unsafe { s.cast::<u8>().add(cap + 1).cast::<u32>() };
         let char_len = unsafe { footer.read_unaligned() };
+        if char_len == STR_INDEX_ASCII {
+            return unsafe { typed_str_bytes(s) }.len();
+        }
         return if char_len == u32::MAX {
             0
         } else {
@@ -248,7 +268,12 @@ unsafe fn typed_str_char_len(s: *const c_char) -> usize {
 unsafe fn typed_str_char_boundary(s: *const c_char, index: usize) -> Option<usize> {
     if let Some(cap) = unsafe { typed_str_cap(s) } {
         let footer = unsafe { s.cast::<u8>().add(cap + 1).cast::<u32>() };
-        let char_len = unsafe { footer.read_unaligned() } as usize;
+        let raw_char_len = unsafe { footer.read_unaligned() };
+        if raw_char_len == STR_INDEX_ASCII {
+            let len = unsafe { typed_str_bytes(s) }.len();
+            return (index <= len).then_some(index);
+        }
+        let char_len = raw_char_len as usize;
         if char_len == u32::MAX as usize {
             return None;
         }
@@ -290,9 +315,15 @@ unsafe fn typed_str_next_char_boundary(s: *const c_char, mut index: usize) -> Op
 }
 
 /// Tests the private builder tag on a compiler-typed string.
+///
+/// SAFETY: `s` comes from a slot the compiler typed as `String`, so it carries
+/// the owner prefix every runtime string allocator writes. Region- and
+/// static-backed strings fail the heap-destructor filter and route to the
+/// copying path, exactly as the registry-backed probe does.
 #[inline]
 unsafe fn is_typed_builder(s: *const c_char) -> bool {
-    managed_string_owner(s).is_some() && unsafe { *s.cast::<u8>().sub(1) == STR_BUILDER_TAG }
+    unsafe { typed_managed_string_owner(s) }.is_some()
+        && unsafe { *s.cast::<u8>().sub(1) == STR_BUILDER_TAG }
 }
 
 /// Tag for growable strings allocated by `alloc_growable`.
@@ -324,6 +355,12 @@ const STR_STATIC_TAG: u8 = 0xA8;
 /// freed wholesale at `arena_pop`, so `gos_rt_str_free` skips them.
 const STR_REGION_TAG: u8 = 0xAA;
 const STR_INDEX_STRIDE: usize = 32;
+/// Character-count sentinel meaning "every byte is one character", i.e. the
+/// content is ASCII. A character index then equals its byte offset, so the
+/// per-block offsets are the identity and are neither written nor read. This
+/// keeps the common case off the O(len) `char_indices` walk that building the
+/// index otherwise costs on every allocation and every append.
+const STR_INDEX_ASCII: u32 = u32::MAX - 1;
 
 #[inline]
 const fn str_index_slots(cap: usize) -> usize {
@@ -338,6 +375,12 @@ const fn str_index_bytes(cap: usize) -> usize {
 unsafe fn rebuild_str_index(s: *mut c_char, len: usize, cap: usize) {
     let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) };
     let footer = unsafe { s.cast::<u8>().add(cap + 1).cast::<u32>() };
+    // `is_ascii` is a vectorised scan, where the walk below branches and
+    // stores per character.
+    if bytes.is_ascii() {
+        unsafe { footer.write_unaligned(STR_INDEX_ASCII) };
+        return;
+    }
     let Ok(text) = std::str::from_utf8(bytes) else {
         unsafe { footer.write_unaligned(u32::MAX) };
         return;
@@ -364,6 +407,15 @@ unsafe fn extend_str_index(s: *mut c_char, old_len: usize, added: &[u8], cap: us
     let footer = unsafe { s.cast::<u8>().add(cap + 1).cast::<u32>() };
     let old_chars = unsafe { footer.read_unaligned() };
     if old_chars == u32::MAX {
+        unsafe { rebuild_str_index(s, old_len + added.len(), cap) };
+        return;
+    }
+    if old_chars == STR_INDEX_ASCII {
+        // Appending ASCII to ASCII keeps the identity index; anything else
+        // needs real offsets for the whole content.
+        if added.is_ascii() {
+            return;
+        }
         unsafe { rebuild_str_index(s, old_len + added.len(), cap) };
         return;
     }
@@ -1254,9 +1306,9 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
         }
 
         // Fast path: a is a known live heap builder - try in-place append.
-        // Region/static pointers intentionally take the copying path: their
-        // ABI has no registration callback, so probing a prefix would make a
-        // foreign pointer unsafe to pass here.
+        // Region- and static-backed pointers carry a non-heap destructor and
+        // take the copying path below, which keeps their compiler-owned
+        // storage immutable.
         if unsafe { is_typed_builder(a) } {
             let hdr = unsafe { a.cast::<u8>().sub(13) };
             let rc = u32::from_le_bytes(unsafe { [*hdr, *hdr.add(1), *hdr.add(2), *hdr.add(3)] });
@@ -1400,7 +1452,10 @@ pub(crate) unsafe fn str_builder_write_reserved(acc: *mut c_char, offset: usize,
             *cap_header.add(2),
             *cap_header.add(3),
         ]) as usize;
-        rebuild_str_index(acc, new_len, cap);
+        // `offset` is the builder's current length, so the index extends from
+        // the fragment alone. Rescanning the whole buffer per fragment would
+        // make a serializer quadratic in document size.
+        extend_str_index(acc, offset, bytes, cap);
     }
 }
 

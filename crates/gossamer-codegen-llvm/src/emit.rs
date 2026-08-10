@@ -862,8 +862,11 @@ fn render_chunk_module(chunk_indices: &[usize], ctx: &ModuleCtx<'_>) -> Result<S
         writeln!(out, "  call void @gos_rt_set_args(i32 %argc, ptr %argv)").unwrap();
         if ret_is_unit {
             writeln!(out, "  call void @\"gos_main\"()").unwrap();
-            writeln!(out, "  call void @gos_rt_flush_stdout()").unwrap();
-            writeln!(out, "  ret i32 0").unwrap();
+            // Routed through the same exit handler as a value-returning main so
+            // goroutines still running when `main` falls off the end are
+            // drained, and their output reaches the user, on every tier.
+            writeln!(out, "  %code = call i32 @gos_rt_main_exit_code(i64 0)").unwrap();
+            writeln!(out, "  ret i32 %code").unwrap();
         } else if ret_is_result {
             writeln!(out, "  %r = call i128 @\"gos_main\"()").unwrap();
             writeln!(out, "  %disc = trunc i128 %r to i64").unwrap();

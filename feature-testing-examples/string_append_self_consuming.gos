@@ -1,0 +1,69 @@
+// A string accumulator built with `+=` must reuse its own buffer. The append
+// helpers take ownership of the accumulator and hand it back, so the drop
+// pass must neither retain the result nor release the destination: releasing
+// it frees the very buffer the call returned, and every later append then
+// reads a freed header and copies instead of extending. That made building a
+// string quadratic, and it was silent - the output stayed correct.
+//
+// Each accumulator below goes through a different append helper, which is the
+// axis the defect fell down: only some of them were recognised as
+// self-consuming.
+
+fn literal_appends(n: i64) -> i64 {
+    let mut s = ""
+    let mut i = 0
+    while i < n {
+        s += "abcd"
+        i += 1
+    }
+    s.len()
+}
+
+fn interpolated_appends(n: i64) -> i64 {
+    let mut s = ""
+    let mut i = 0
+    while i < n {
+        s += format!("{}-", i % 10)
+        i += 1
+    }
+    s.len()
+}
+
+fn value_appends(n: i64) -> i64 {
+    let mut s = ""
+    let piece = "xy"
+    let mut i = 0
+    while i < n {
+        s += piece
+        i += 1
+    }
+    s.len()
+}
+
+fn char_appends(n: i64) -> i64 {
+    let mut s = ""
+    let mut i = 0
+    while i < n {
+        s.push('q')
+        i += 1
+    }
+    s.len()
+}
+
+fn unicode_appends(n: i64) -> i64 {
+    let mut s = "é"
+    let mut i = 0
+    while i < n {
+        s += "é"
+        i += 1
+    }
+    s.len() * 1000 + s.byte_len()
+}
+
+fn main() {
+    println!("literal {}", literal_appends(4000))
+    println!("interpolated {}", interpolated_appends(4000))
+    println!("value {}", value_appends(4000))
+    println!("char {}", char_appends(4000))
+    println!("unicode {}", unicode_appends(500))
+}

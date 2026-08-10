@@ -247,15 +247,31 @@ impl Goroutine {
     ///
     /// # Panics
     ///
-    /// Panics if `corosensei` cannot allocate the coroutine stack
-    /// (typically `mmap` failure on a near-OOM host).
+    /// Panics if the coroutine stack cannot be allocated. Callers that can
+    /// report the failure instead of aborting the process should use
+    /// [`Self::try_new`]: a host at its mapping limit fails here for every
+    /// subsequent goroutine, and a panic gives the scheduler nothing to say
+    /// about why.
     #[must_use]
     pub fn new(main: Box<dyn FnOnce() + Send + 'static>) -> Self {
+        Self::try_new(main).expect("alloc goroutine stack")
+    }
+
+    /// Constructs a new goroutine, returning the mapping error instead of
+    /// panicking when its stack cannot be allocated.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying `mmap` failure - typically `ENOMEM` from an
+    /// exhausted address space or from the per-process mapping limit
+    /// (`vm.max_map_count`), which a stack's guard page makes a program hit at
+    /// roughly half that many live goroutines.
+    pub fn try_new(main: Box<dyn FnOnce() + Send + 'static>) -> std::io::Result<Self> {
         let yielder_slot: Arc<AtomicPtr<()>> = Arc::new(AtomicPtr::new(std::ptr::null_mut()));
         let yielder_slot_clone = Arc::clone(&yielder_slot);
         let stack_origin_slot: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
         let stack_origin_slot_clone = Arc::clone(&stack_origin_slot);
-        let stack = DefaultStack::new(stack_size()).expect("alloc goroutine stack");
+        let stack = DefaultStack::new(stack_size())?;
         let coro = Coroutine::with_stack(stack, move |yielder: &Yielder<(), ()>, ()| {
             // The yielder is a stack value with an address that is
             // stable for the lifetime of the coroutine. Two writes
@@ -298,11 +314,11 @@ impl Goroutine {
                 GOROUTINE_PANICKED.store(true, Ordering::Release);
             }
         });
-        Self {
+        Ok(Self {
             coro,
             yielder_slot,
             stack_origin_slot,
-        }
+        })
     }
 
     /// Returns the yielder pointer for this goroutine, or null if

@@ -115,6 +115,32 @@ type AggFieldPaths = Vec<(Vec<u32>, FieldRcKind)>;
 /// Shared with the struct-literal `..base` retain (`expr_field.rs`) so retain
 /// and release recurse in lockstep and a nested shared field is freed exactly
 /// once.
+/// True for the string-accumulator helpers that take ownership of their first
+/// argument and return the accumulator to store back.
+///
+/// Each of these frees or reuses the old buffer itself and hands back the
+/// current one, so `s = f(s, ..)` is a move, not a fresh value beside a live
+/// old one. Two consequences, and both must hold for every name here: the
+/// result must not be retained (an extra count forces the copy-on-write path,
+/// making an append loop quadratic), and the destination must not be released
+/// (the callee already owns the old buffer, so the release lands on the buffer
+/// the call just returned - a use-after-free that then corrupts the owner
+/// prefix a later append reads).
+///
+/// The two rules above are applied at different points in this pass, and this
+/// predicate is what keeps them describing the same set of calls.
+fn is_self_consuming_append(name: &str) -> bool {
+    matches!(
+        name,
+        "gos_rt_str_concat_drop_a"
+            | "gos_rt_str_append_i64"
+            | "gos_rt_str_append_f64"
+            | "gos_rt_str_append_bytes"
+            | "gos_rt_str_push_char"
+            | "gos_rt_str_push_byte"
+    )
+}
+
 pub(crate) fn aggregate_rc_field_paths(tcx: &TyCtxt, ty: Ty) -> AggFieldPaths {
     fn recursable(tcx: &TyCtxt, ty: Ty) -> bool {
         use gossamer_types::TyKind;
@@ -341,13 +367,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             destination,
             target: Some(succ),
         } = &block.terminator
-            && matches!(callee, Operand::Const(ConstValue::Str(n))
-                if n == "gos_rt_str_concat_drop_a"
-                    || n == "gos_rt_str_append_i64"
-                    || n == "gos_rt_str_append_f64"
-                    || n == "gos_rt_str_append_bytes"
-                    || n == "gos_rt_str_push_char"
-                    || n == "gos_rt_str_push_byte")
+            && matches!(callee, Operand::Const(ConstValue::Str(n)) if is_self_consuming_append(n))
             && destination.projection.is_empty()
             && let Some(Operand::Copy(arg0)) = args.first()
         {
@@ -1749,10 +1769,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             && destination.projection.is_empty()
             && releasable_set.contains(&destination.local.0)
         {
-            let self_consuming = matches!(callee, Operand::Const(ConstValue::Str(n))
-                if n == "gos_rt_str_concat_drop_a"
-                    || n == "gos_rt_str_append_i64"
-                    || n == "gos_rt_str_append_f64")
+            let self_consuming = matches!(callee, Operand::Const(ConstValue::Str(n)) if is_self_consuming_append(n))
                 && matches!(args.first(), Some(Operand::Copy(p)) if p.projection.is_empty() && p.local == destination.local);
             if !self_consuming {
                 gaps[bi][len].push((false, destination.local));

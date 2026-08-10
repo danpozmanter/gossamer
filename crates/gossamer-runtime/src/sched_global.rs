@@ -556,12 +556,16 @@ where
 }
 
 /// Spawns `task` on the M:N pool. Returns `None` when the
-/// scheduler's live-goroutine cap would be exceeded; the caller
-/// should surface the refusal to user code instead of silently
-/// overcommitting kernel resources.
+/// scheduler's live-goroutine cap would be exceeded, or when the host
+/// refuses the goroutine's stack mapping; the caller should surface the
+/// refusal to user code instead of silently overcommitting kernel
+/// resources.
 #[must_use]
 pub fn try_spawn(task: Box<dyn FnOnce() + Send + 'static>) -> Option<Gid> {
-    let coro = gossamer_coro::Goroutine::new(task);
+    // A stack costs two mappings, so a process reaches `vm.max_map_count`
+    // before it reaches any limit the scheduler tracks. Refusing here keeps
+    // that a reportable condition rather than an abort mid-spawn.
+    let coro = gossamer_coro::Goroutine::try_new(task).ok()?;
     scheduler().try_spawn(GoroutineTask {
         coro,
         arena: crate::c_abi::rc::ArenaState::empty(),

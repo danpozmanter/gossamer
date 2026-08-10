@@ -1082,8 +1082,13 @@ impl Vm {
                             // no enum match.
                             call_fn(&buf[..total])?
                         } else if let Some(g) = cached {
-                            // Cached non-builtin (closure / JIT).
-                            let v: Vec<Value> = buf[..total].to_vec();
+                            // Cached non-builtin (closure / JIT). The buffer
+                            // dies here, so the callee takes the values
+                            // outright rather than sharing them.
+                            let mut v = self.pool.borrow_mut().take_args(total);
+                            for slot in buf.iter_mut().take(total) {
+                                v.push(std::mem::replace(slot, Value::Void));
+                            }
                             apply_or_suspend_bytecode!(dst, g, v)
                         } else {
                             // Miss: full resolution + cache fill.
@@ -1107,7 +1112,10 @@ impl Vm {
                                     (builtin_inner.call)(&buf[..total])?
                                 }
                                 Some(g) => {
-                                    let v: Vec<Value> = buf[..total].to_vec();
+                                    let mut v = self.pool.borrow_mut().take_args(total);
+                                    for slot in buf.iter_mut().take(total) {
+                                        v.push(std::mem::replace(slot, Value::Void));
+                                    }
                                     apply_or_suspend_bytecode!(dst, g, v)
                                 }
                                 None => {
@@ -1123,7 +1131,7 @@ impl Vm {
                                 &registers[receiver as usize],
                             )
                         };
-                        let mut call_args: Vec<Value> = Vec::with_capacity(total);
+                        let mut call_args = self.pool.borrow_mut().take_args(total);
                         call_args.push(recv);
                         for i in 0..argc_usz {
                             // 0.7.0 flag::Cell auto-deref at the
@@ -1132,7 +1140,9 @@ impl Vm {
                             call_args.push(auto_deref_cell(&raw).unwrap_or(raw));
                         }
                         if let Some(call_fn) = cached_builtin {
-                            call_fn(&call_args)?
+                            let out = call_fn(&call_args)?;
+                            self.pool.borrow_mut().give_args(call_args);
+                            out
                         } else if let Some(g) = cached {
                             apply_or_suspend_bytecode!(dst, g, call_args)
                         } else {

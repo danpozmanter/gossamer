@@ -1761,14 +1761,59 @@ pub(crate) fn intern_type_name(name: &str) -> &'static str {
     leaked
 }
 
+/// Smallest table size that triggers a sweep for dead entries, and the floor
+/// the watermark returns to.
+const TYPE_TAG_SWEEP_MIN: usize = 64;
+/// Table size at which the next sweep runs. Held under the `TYPE_TAGS` lock.
+static TYPE_TAG_SWEEP_AT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(TYPE_TAG_SWEEP_MIN);
+
+/// Resolves the wrapper names every optional- or fallible-returning builtin
+/// constructs, without reaching the shared table. Each slot holds a strong
+/// share of the same allocation the table hands out, so tag identity - which
+/// aggregate dispatch compares by pointer - is unchanged.
+fn cached_prelude_tag(name: &str) -> Option<TypeTag> {
+    static SOME: OnceLock<TypeTag> = OnceLock::new();
+    static NONE: OnceLock<TypeTag> = OnceLock::new();
+    static OK: OnceLock<TypeTag> = OnceLock::new();
+    static ERR: OnceLock<TypeTag> = OnceLock::new();
+    let slot = match name {
+        "Some" => &SOME,
+        "None" => &NONE,
+        "Ok" => &OK,
+        "Err" => &ERR,
+        _ => return None,
+    };
+    Some(slot.get_or_init(|| intern_type_tag_uncached(name)).clone())
+}
+
 /// Returns a compact identity for a type / variant name, allocating the name
 /// text at most once through [`intern_type_name`].
 #[must_use]
 pub(crate) fn intern_type_tag(name: &str) -> TypeTag {
+    if let Some(tag) = cached_prelude_tag(name) {
+        return tag;
+    }
+    intern_type_tag_uncached(name)
+}
+
+fn intern_type_tag_uncached(name: &str) -> TypeTag {
+    use std::sync::atomic::Ordering;
     let mut tags = TYPE_TAGS.lock();
-    tags.retain(|_, weak| weak.strong_count() != 0);
     if let Some(existing) = tags.get(name).and_then(std::sync::Weak::upgrade) {
         return TypeTag(existing);
+    }
+    // A tag whose last share dropped leaves a dead entry behind. Reclaiming
+    // the whole table on every intern costs one atomic load per distinct name
+    // per construction, so the sweep runs only once the table has grown past
+    // its size at the previous sweep. Re-interning a dead name reclaims that
+    // entry directly through the insert below.
+    if tags.len() >= TYPE_TAG_SWEEP_AT.load(Ordering::Relaxed) {
+        tags.retain(|_, weak| weak.strong_count() != 0);
+        TYPE_TAG_SWEEP_AT.store(
+            tags.len().saturating_mul(2).max(TYPE_TAG_SWEEP_MIN),
+            Ordering::Relaxed,
+        );
     }
     let owned: Arc<str> = Arc::from(name);
     tags.insert(name.to_owned(), Arc::downgrade(&owned));
@@ -4271,7 +4316,12 @@ mod native_consume_tests {
         let weak = Arc::downgrade(&tag.0);
         drop(tag);
         assert!(weak.upgrade().is_none());
-        let _ = intern_type_tag("SessionOwnedTypeTagSweep");
+        // The sweep is amortized against table growth, so intern enough
+        // distinct names to cross the watermark and prove the dead entry is
+        // reclaimed rather than accumulating.
+        for i in 0..(super::TYPE_TAG_SWEEP_MIN * 2 + 2) {
+            let _ = intern_type_tag(&format!("SessionOwnedTypeTagSweep{i}"));
+        }
         assert!(
             !super::TYPE_TAGS.lock().contains_key(name),
             "compatibility lookup retained a dead type tag"

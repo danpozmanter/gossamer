@@ -651,7 +651,11 @@ thread_local! {
 #[derive(Default)]
 struct RootBuffer {
     items: Vec<*mut u8>,
-    positions: std::collections::HashMap<usize, usize>,
+    /// Keyed by object address, so the hash is over a pointer the allocator
+    /// already spread out. A live-DAG workload can hold this at the
+    /// `COLLECT_THRESHOLD_MAX` bound, where the per-entry cost of a
+    /// SipHash table is what the buffer's footprint is made of.
+    positions: rustc_hash::FxHashMap<usize, usize>,
 }
 
 impl RootBuffer {
@@ -1429,7 +1433,12 @@ impl BumpState {
 /// fine-grained loop (millions of tiny iterations) push/pop a region every
 /// iteration; recycling the backing slab through this pool turns each
 /// `arena_push` into a bump-pointer reset instead of a 1 MiB `mmap`.
-const FREE_SLAB_CAP: usize = 64;
+///
+/// Slabs held here stay committed, so the cap is what a thread keeps resident
+/// after its peak region use. Region nesting is shallow, so a few warm slabs
+/// absorb the push/pop churn; beyond that `arena_retire` decommits and returns
+/// the slab to the process-wide free list, which reuses it without an `mmap`.
+const FREE_SLAB_CAP: usize = 4;
 
 thread_local! {
     /// Stack of suspended regions on this thread (the innermost region's live
@@ -1936,10 +1945,9 @@ pub unsafe extern "C" fn gos_rt_rc_retain(payload: *mut u8) {
         return;
     }
     crate::c_abi::ledger::benchmark_arc_retain();
-    if unsafe { crate::c_abi::string::is_gos_string(payload.cast()) } {
-        unsafe { crate::c_abi::string::gos_rt_str_retain(payload.cast()) };
-        return;
-    }
+    // No string check here: a string body is odd-addressed and was routed
+    // above, and `untag_rc` leaves every surviving pointer 8-aligned, which
+    // the string carrier's low-bit shape can never match.
     let h = unsafe { header_ptr(payload) };
     // `inc_strong` reads `strong` atomically and dispatches: region /
     // immortal objects are no-ops; escaped (shared) objects bump the

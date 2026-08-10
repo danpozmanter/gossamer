@@ -22,7 +22,6 @@ examples/concurrency.gos	bytecode-only local
 examples/containers_ordered_demo.gos	no hot body
 examples/containers_seq_demo.gos	no hot body
 examples/containers_setmap_demo.gos	no hot body
-examples/data_structures.gos	bytecode-only local
 examples/environment.gos	callable local
 examples/errors.gos	callable local
 examples/factorial.gos	callable local
@@ -101,9 +100,7 @@ feature-testing-examples/derive_struct_variant.gos	no hot body
 feature-testing-examples/derive_traits.gos	bytecode-only local
 feature-testing-examples/doc_test_vs_unit_test_drift.gos	admission gate
 feature-testing-examples/duration_methods.gos	no hot body
-feature-testing-examples/early_break_materializers.gos	bytecode-only local
 feature-testing-examples/elemty_aggregate_elements.gos	bytecode-only local
-feature-testing-examples/elemty_btreemap_shapes.gos	bytecode-only local
 feature-testing-examples/elemty_float_eager.gos	no hot body
 feature-testing-examples/elemty_float_terminals.gos	no hot body
 feature-testing-examples/elemty_narrow_element_stride.gos	bytecode-only local
@@ -144,7 +141,6 @@ feature-testing-examples/goroutine_panic_join.gos	bytecode-only local
 feature-testing-examples/goroutine_set_handle.gos	bytecode-only local
 feature-testing-examples/goroutine_shared_map.gos	bytecode-only local
 feature-testing-examples/hashable_map_keys.gos	bytecode-only local
-feature-testing-examples/hashmap_counter_race.gos	bytecode-only local
 feature-testing-examples/hashmap_field_through_result.gos	bytecode-only local
 feature-testing-examples/hashmap_get_some_field.gos	bytecode-only local
 feature-testing-examples/hashmap_ref_param_iter.gos	bytecode-only local
@@ -181,14 +177,11 @@ feature-testing-examples/let_destructure_struct.gos	bytecode-only local
 feature-testing-examples/literal_forms.gos	no hot body
 feature-testing-examples/map_entry_and_format_paths.gos	bytecode-only local
 feature-testing-examples/map_inc_at_oob.gos	no hot body
-feature-testing-examples/map_iter_destructure.gos	bytecode-only local
 feature-testing-examples/map_iter_wildcard_destructure.gos	bytecode-only local
-feature-testing-examples/map_iteration_order.gos	bytecode-only local
 feature-testing-examples/method_dispatch_collision.gos	bytecode-only local
 feature-testing-examples/method_dispatch_collisions.gos	no hot body
 feature-testing-examples/method_name_collision.gos	bytecode-only local
 feature-testing-examples/metrics_observability.gos	no hot body
-feature-testing-examples/misc_class_a.gos	bytecode-only local
 feature-testing-examples/module_qualified_enum_ctor.gos	admission gate
 feature-testing-examples/module_same_fn_names.gos	no hot body
 feature-testing-examples/module_scoped_type_names.gos	bytecode-only local
@@ -323,7 +316,6 @@ feature-testing-examples/structural_comparison.gos	callable local
 feature-testing-examples/sync_extra.gos	callable local
 feature-testing-examples/sync_map_demo.gos	no hot body
 feature-testing-examples/sync_rwlock.gos	no hot body
-feature-testing-examples/temporary_method_dispatch.gos	bytecode-only local
 feature-testing-examples/temporary_wrap.gos	no hot body
 feature-testing-examples/time_civil.gos	no hot body
 feature-testing-examples/time_param_dispatch.gos	no hot body
@@ -336,7 +328,6 @@ feature-testing-examples/trait_bounds.gos	bytecode-only local
 feature-testing-examples/trait_object_dispatch.gos	bytecode-only local
 feature-testing-examples/try_err_conversion.gos	bytecode-only local
 feature-testing-examples/try_option_propagation.gos	admission gate
-feature-testing-examples/tuple_destructuring_loop.gos	bytecode-only local
 feature-testing-examples/tuple_match_patterns.gos	no hot body
 feature-testing-examples/tuple_struct_serde.gos	bytecode-only local
 feature-testing-examples/tuple_structs.gos	bytecode-only local
@@ -346,6 +337,7 @@ feature-testing-examples/typing_match_exhaustiveness.gos	admission gate
 feature-testing-examples/typing_multi_bound.gos	bytecode-only local
 feature-testing-examples/u64_unsigned.gos	no hot body
 feature-testing-examples/unicode_full.gos	no hot body
+feature-testing-examples/unit_main_goroutine_drain.gos	cross-goroutine
 feature-testing-examples/usize_compare.gos	no hot body
 feature-testing-examples/validate_errors.gos	no hot body
 feature-testing-examples/validate_errors_return.gos	bytecode-only local
@@ -360,7 +352,6 @@ feature-testing-examples/weak_into_strong_cycle.gos	bytecode-only local
 feature-testing-examples/weak_refs.gos	bytecode-only local
 feature-testing-examples/weak_upgrade_ownership.gos	bytecode-only local
 feature-testing-examples/weak_value_referent.gos	bytecode-only local
-feature-testing-examples/winb2_btreemap_keys.gos	bytecode-only local
 feature-testing-examples/winb2_hashset_i64.gos	no hot body
 feature-testing-examples/winb2_json_int_precision.gos	no hot body
 feature-testing-examples/winb2_map_contains.gos	no hot body

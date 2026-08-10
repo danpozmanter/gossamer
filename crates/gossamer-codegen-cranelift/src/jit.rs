@@ -566,6 +566,21 @@ pub fn jit_entry_body_names(
     struct_shapes: &HashMap<u32, u32>,
 ) -> std::collections::HashSet<String> {
     let admitted = jit_compile_body_names(bodies, tcx, enum_shapes, struct_shapes);
+    jit_entry_body_names_with_admitted(bodies, &admitted)
+}
+
+/// [`jit_entry_body_names`] for a caller that already computed the admitted
+/// set. The admission analysis walks the whole call graph, so a tier-up that
+/// needs both sets derives it once and passes it here.
+#[allow(
+    clippy::implicit_hasher,
+    reason = "single interp caller passes the set jit_compile_body_names returns"
+)]
+#[must_use]
+pub fn jit_entry_body_names_with_admitted(
+    bodies: &[Body],
+    admitted: &std::collections::HashSet<String>,
+) -> std::collections::HashSet<String> {
     let all_names: std::collections::HashSet<&str> =
         bodies.iter().map(|body| body.name.as_str()).collect();
     let def_to_name: HashMap<u32, &str> = bodies
@@ -1469,6 +1484,21 @@ fn jit_local_ty_needs_bytecode(tcx: &TyCtxt, ty: Ty) -> bool {
     jit_local_ty_needs_bytecode_inner(tcx, ty, &mut std::collections::HashSet::new())
 }
 
+/// True when a map key or value of this type is stored directly by the typed
+/// `gos_rt_map_*` entry points, so a native body owns the entry outright.
+/// Anything else - a struct, an enum, a nested container - is stored as an
+/// owned blob or an RC child whose lifetime the VM manages per entry.
+fn jit_map_component_ok(tcx: &TyCtxt, ty: Ty) -> bool {
+    let mut ty = ty;
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+        ty = *inner;
+    }
+    matches!(
+        tcx.kind_of(ty),
+        TyKind::Int(_) | TyKind::Bool | TyKind::Char | TyKind::String
+    )
+}
+
 fn jit_local_ty_needs_bytecode_inner(
     tcx: &TyCtxt,
     ty: Ty,
@@ -1535,11 +1565,24 @@ fn jit_local_ty_needs_bytecode_inner(
             });
             struct_unsafe || enum_unsafe
         }
+        // A map local is the runtime `GosMap` pointer the compiled tiers
+        // already use, and every operation on it lowers to the same
+        // `gos_rt_map_*` call the AOT backend emits, so a body that builds and
+        // consumes a map internally needs no conversion. A map in a parameter
+        // or return position is a different question - the VM holds its own
+        // representation there - and `ty_to_kind` declines those separately.
+        //
+        // Only the storage shapes the typed map helpers understand qualify. A
+        // map whose value is a struct or carries heap children needs the
+        // per-entry ownership the VM applies when it hands a value back, which
+        // the native entry points do not reproduce.
+        TyKind::HashMap { key, value } => {
+            !jit_map_component_ok(tcx, *key) || !jit_map_component_ok(tcx, *value)
+        }
         // Options, other tagged standard-library carriers, and opaque handles
         // still need the bytecode path. Ordinary user aggregates are safe as
         // internal native locals and are checked recursively above.
         TyKind::Adt { .. }
-        | TyKind::HashMap { .. }
         | TyKind::Iterator(_)
         | TyKind::Range(_)
         | TyKind::Sender(_)

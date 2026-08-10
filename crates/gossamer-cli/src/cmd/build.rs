@@ -1414,21 +1414,24 @@ fn link_posix(
             cmd.arg("-Wl,--allow-multiple-definition");
         }
     }
-    if opts.want_strip() {
-        // Drop DWARF debug sections + dead code but KEEP the symbol
-        // table. Compiled-tier panic traces and SIGQUIT dumps unwind
-        // the real machine stack and symbolicate through `.symtab`;
-        // `--strip-all` would erase function names. macOS keeps global
-        // symbols (gos functions are global) via the post-link
-        // `strip -x`. `-dead_strip` is atom-based: it removes
-        // unreachable code AND data atoms, so every local rodata atom
-        // the codegen relies on must carry `N_NO_DEAD_STRIP` (see
-        // `IntrinsicContext::intern_string`).
-        if lt.os == TargetOs::MacOs {
-            cmd.arg("-Wl,-dead_strip");
-        } else {
-            cmd.arg("-Wl,--strip-debug").arg("-Wl,--gc-sections");
-        }
+    // Dead-code removal is independent of debug info: dropping unreachable
+    // sections leaves the DWARF describing the reachable ones intact, so a
+    // `-g` binary is stripped of the unused runtime surface too.
+    // `-dead_strip` is atom-based: it removes unreachable code AND data
+    // atoms, so every local rodata atom the codegen relies on must carry
+    // `N_NO_DEAD_STRIP` (see `IntrinsicContext::intern_string`).
+    if lt.os == TargetOs::MacOs {
+        cmd.arg("-Wl,-dead_strip");
+    } else {
+        cmd.arg("-Wl,--gc-sections");
+    }
+    if opts.want_strip() && lt.os != TargetOs::MacOs {
+        // Drop DWARF debug sections but KEEP the symbol table.
+        // Compiled-tier panic traces and SIGQUIT dumps unwind the real
+        // machine stack and symbolicate through `.symtab`; `--strip-all`
+        // would erase function names. macOS keeps global symbols (gos
+        // functions are global) via the post-link `strip -x`.
+        cmd.arg("-Wl,--strip-debug");
     }
     trace_link_command(&cmd);
     match cmd.status() {

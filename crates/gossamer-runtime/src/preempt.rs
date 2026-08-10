@@ -140,12 +140,27 @@ pub fn request_yield_self() {
 #[inline]
 pub fn should_yield() -> bool {
     let global = GLOBAL_PHASE.load(Ordering::Acquire);
-    let local_phase = LOCAL_PHASE.with(|p| p.load(Ordering::Relaxed));
-    if global != local_phase {
-        LOCAL_PHASE.with(|p| p.store(global, Ordering::Release));
+    if LOCAL_PHASE.with(|p| {
+        if p.load(Ordering::Relaxed) == global {
+            return false;
+        }
+        p.store(global, Ordering::Release);
+        true
+    }) {
         return true;
     }
-    LOCAL_YIELD.with(|f| f.swap(false, Ordering::Acquire))
+    // The steady state is "nothing pending", so the flag is read before it is
+    // cleared: a read-modify-write on every loop back-edge is a locked
+    // operation even against thread-local memory. A set that lands after this
+    // load is observed at the next safepoint, which is already how a polled
+    // request reaches a running goroutine.
+    LOCAL_YIELD.with(|f| {
+        if f.load(Ordering::Relaxed) {
+            f.swap(false, Ordering::Acquire)
+        } else {
+            false
+        }
+    })
 }
 
 /// Total cooperative yields recorded - for tests / diagnostics.

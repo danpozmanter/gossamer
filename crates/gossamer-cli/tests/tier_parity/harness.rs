@@ -150,6 +150,9 @@ const SPECS: &[Spec] = &[
         ],
         ..spec("examples/cli_args.gos")
     },
+    spec("feature-testing-examples/unit_main_goroutine_drain.gos"),
+    spec("feature-testing-examples/jit_map_local_promotion.gos"),
+    spec("feature-testing-examples/string_append_self_consuming.gos"),
     spec("examples/concurrency.gos"),
     spec("examples/containers_ordered_demo.gos"),
     spec("examples/containers_seq_demo.gos"),

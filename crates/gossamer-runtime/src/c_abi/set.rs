@@ -16,31 +16,33 @@
 #![allow(clippy::wildcard_imports)]
 
 use crate::c_abi::GosVec;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::os::raw::c_char;
 
 // ---------------------------------------------------------------
-// Sets - `HashSet<String>` (the most common shape) backed by
-// `std::collections::HashSet<String>`. Stored on the heap; the
-// pointer is the value seen by user code. Element type is
-// erased at the FFI: only String keys are wired today, matching
-// the common case in `examples/data_structures.gos`.
+// Sets - one heap table per element family, with the pointer to the
+// table being the value user code sees. Each family stores its
+// elements in their own representation: text keys as `String`,
+// integer keys as `i64`, and struct/tuple keys by their canonical
+// slot bytes.
 // ---------------------------------------------------------------
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct GosSet {
-    inner: std::collections::HashSet<String>,
+    inner: FxHashSet<String>,
+    /// Integer elements keep their numeric representation: a decimal-text
+    /// encoding would cost a formatting pass and an allocation per membership
+    /// test, and store roughly twice the bytes per live element.
+    i64_inner: FxHashSet<i64>,
     /// Aggregate elements are keyed by their canonical slot bytes and retain
     /// an owned copy of those slots for `iter()` / set algebra.
-    struct_inner: rustc_hash::FxHashMap<Box<[u8]>, Box<[u8]>>,
+    struct_inner: FxHashMap<Box<[u8]>, Box<[u8]>>,
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_new() -> *mut GosSet {
     ffi_entry!(std::ptr::null_mut(), {
-        Box::into_raw(Box::new(GosSet {
-            inner: std::collections::HashSet::new(),
-            struct_inner: rustc_hash::FxHashMap::default(),
-        }))
+        Box::into_raw(Box::new(GosSet::default()))
     })
 }
 
@@ -87,7 +89,7 @@ pub unsafe extern "C" fn gos_rt_set_from_vec_i64(v: *const GosVec) -> *mut GosSe
         let ptr = vec.ptr.cast::<i64>();
         let out = unsafe { &mut *set };
         for i in 0..vec.len.max(0) as usize {
-            out.inner.insert(unsafe { *ptr.add(i) }.to_string());
+            out.i64_inner.insert(unsafe { *ptr.add(i) });
         }
         set
     })
@@ -176,12 +178,9 @@ pub unsafe extern "C" fn gos_rt_set_remove(s: *mut GosSet, key: *const c_char) -
     })
 }
 
-// `HashSet<i64>` reuses the String-backed set: each i64 key is stored
-// as its canonical decimal string. The mapping i64 -> decimal text is
-// injective, so set membership semantics are preserved exactly. The
-// MIR dispatch routes i64-element sets here and routes `to_vec` to the
-// i64 reader that parses the keys back, so iteration order matches the
-// VM's numeric sort.
+// `HashSet<i64>` keeps its own numeric table. The MIR dispatch routes
+// i64-element sets to these entry points and routes `to_vec` to the i64
+// reader, which sorts numerically to match the VM's `MapKey::Int` ordering.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_insert_i64(s: *mut GosSet, key: i64) -> i64 {
     ffi_entry!(-1, {
@@ -189,7 +188,7 @@ pub unsafe extern "C" fn gos_rt_set_insert_i64(s: *mut GosSet, key: i64) -> i64 
             return 0;
         }
         let s = unsafe { &mut *s };
-        i64::from(s.inner.insert(key.to_string()))
+        i64::from(s.i64_inner.insert(key))
     })
 }
 
@@ -200,7 +199,7 @@ pub unsafe extern "C" fn gos_rt_set_contains_i64(s: *const GosSet, key: i64) -> 
             return 0;
         }
         let s = unsafe { &*s };
-        i64::from(s.inner.contains(&key.to_string()))
+        i64::from(s.i64_inner.contains(&key))
     })
 }
 
@@ -211,7 +210,7 @@ pub unsafe extern "C" fn gos_rt_set_remove_i64(s: *mut GosSet, key: i64) -> i64 
             return 0;
         }
         let s = unsafe { &mut *s };
-        i64::from(s.inner.remove(&key.to_string()))
+        i64::from(s.i64_inner.remove(&key))
     })
 }
 
@@ -222,7 +221,7 @@ pub unsafe extern "C" fn gos_rt_set_len(s: *const GosSet) -> i64 {
             return 0;
         }
         let s = unsafe { &*s };
-        (s.inner.len() + s.struct_inner.len()) as i64
+        (s.inner.len() + s.i64_inner.len() + s.struct_inner.len()) as i64
     })
 }
 
@@ -237,11 +236,7 @@ pub unsafe extern "C" fn gos_rt_set_format_i64(s: *const GosSet, ordered: i32) -
         out.push_str(" {");
         if !s.is_null() {
             let set = unsafe { &*s };
-            let mut keys: Vec<i64> = set
-                .inner
-                .iter()
-                .filter_map(|key| key.parse::<i64>().ok())
-                .collect();
+            let mut keys: Vec<i64> = set.i64_inner.iter().copied().collect();
             keys.sort_unstable();
             for (index, key) in keys.iter().enumerate() {
                 if index > 0 {
@@ -301,8 +296,7 @@ pub unsafe extern "C" fn gos_rt_set_to_vec(s: *const GosSet) -> *mut crate::c_ab
 }
 
 /// Snapshots an i64 set's keys into a fresh `Vec<i64>`, sorted
-/// numerically to match the VM's `MapKey::Int` ordering. The keys are
-/// stored as decimal text (see `gos_rt_set_insert_i64`) and parsed back.
+/// numerically to match the VM's `MapKey::Int` ordering.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_to_vec_i64(s: *const GosSet) -> *mut crate::c_abi::vec::GosVec {
     ffi_entry!(std::ptr::null_mut(), {
@@ -313,11 +307,7 @@ pub unsafe extern "C" fn gos_rt_set_to_vec_i64(s: *const GosSet) -> *mut crate::
             return out;
         }
         let s = unsafe { &*s };
-        let mut keys: Vec<i64> = s
-            .inner
-            .iter()
-            .filter_map(|k| k.parse::<i64>().ok())
-            .collect();
+        let mut keys: Vec<i64> = s.i64_inner.iter().copied().collect();
         keys.sort_unstable();
         for k in keys {
             unsafe { crate::c_abi::vec::gos_rt_vec_push_i64(out, k) };
@@ -338,8 +328,8 @@ pub unsafe extern "C" fn gos_rt_set_intersection_to_vec(
         let out = unsafe {
             crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::STRING)
         };
-        let (a, b) = unsafe { set_pair(a, b) };
-        let mut keys: Vec<&str> = a.intersection(b).map(String::as_str).collect();
+        let (a, b) = unsafe { set_refs(a, b) };
+        let mut keys: Vec<&str> = a.inner.intersection(&b.inner).map(String::as_str).collect();
         keys.sort_unstable();
         for key in keys {
             let cstr = crate::c_abi::string::alloc_cstring(key.as_bytes());
@@ -360,11 +350,8 @@ pub unsafe extern "C" fn gos_rt_set_intersection_to_vec_i64(
         let out = unsafe {
             crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::PRIMITIVE)
         };
-        let (a, b) = unsafe { set_pair(a, b) };
-        let mut keys: Vec<i64> = a
-            .intersection(b)
-            .filter_map(|key| key.parse::<i64>().ok())
-            .collect();
+        let (a, b) = unsafe { set_refs(a, b) };
+        let mut keys: Vec<i64> = a.i64_inner.intersection(&b.i64_inner).copied().collect();
         keys.sort_unstable();
         for key in keys {
             unsafe { crate::c_abi::vec::gos_rt_vec_push_i64(out, key) };
@@ -377,7 +364,10 @@ pub unsafe extern "C" fn gos_rt_set_intersection_to_vec_i64(
 pub unsafe extern "C" fn gos_rt_set_clear(s: *mut GosSet) -> *mut GosSet {
     ffi_entry!(s, {
         if !s.is_null() {
-            unsafe { (*s).inner.clear() };
+            let s = unsafe { &mut *s };
+            s.inner.clear();
+            s.i64_inner.clear();
+            s.struct_inner.clear();
         }
         s
     })
@@ -385,34 +375,80 @@ pub unsafe extern "C" fn gos_rt_set_clear(s: *mut GosSet) -> *mut GosSet {
 
 /// Borrows the two operand sets, or returns empty borrows for null
 /// pointers so the algebra shims never deref a null handle.
-unsafe fn set_pair<'a>(
-    a: *const GosSet,
-    b: *const GosSet,
-) -> (
-    &'a std::collections::HashSet<String>,
-    &'a std::collections::HashSet<String>,
-) {
-    static EMPTY: std::sync::OnceLock<std::collections::HashSet<String>> =
-        std::sync::OnceLock::new();
-    let empty = EMPTY.get_or_init(std::collections::HashSet::new);
-    let a = if a.is_null() {
-        empty
-    } else {
-        unsafe { &(*a).inner }
-    };
-    let b = if b.is_null() {
-        empty
-    } else {
-        unsafe { &(*b).inner }
-    };
+unsafe fn set_refs<'a>(a: *const GosSet, b: *const GosSet) -> (&'a GosSet, &'a GosSet) {
+    static EMPTY: std::sync::OnceLock<GosSet> = std::sync::OnceLock::new();
+    let empty = EMPTY.get_or_init(GosSet::default);
+    let a = if a.is_null() { empty } else { unsafe { &*a } };
+    let b = if b.is_null() { empty } else { unsafe { &*b } };
     (a, b)
 }
 
-unsafe fn set_from(inner: std::collections::HashSet<String>) -> *mut GosSet {
+/// Combines two sets element-family by element-family. Each family is
+/// independent, so a set only ever populates one of them and the other
+/// combinations reduce to empty tables.
+unsafe fn set_combine(
+    a: *const GosSet,
+    b: *const GosSet,
+    text: impl Fn(&FxHashSet<String>, &FxHashSet<String>) -> FxHashSet<String>,
+    ints: impl Fn(&FxHashSet<i64>, &FxHashSet<i64>) -> FxHashSet<i64>,
+    aggregates: impl Fn(
+        &FxHashMap<Box<[u8]>, Box<[u8]>>,
+        &FxHashMap<Box<[u8]>, Box<[u8]>>,
+    ) -> FxHashMap<Box<[u8]>, Box<[u8]>>,
+) -> *mut GosSet {
+    let (a, b) = unsafe { set_refs(a, b) };
     Box::into_raw(Box::new(GosSet {
-        inner,
-        struct_inner: rustc_hash::FxHashMap::default(),
+        inner: text(&a.inner, &b.inner),
+        i64_inner: ints(&a.i64_inner, &b.i64_inner),
+        struct_inner: aggregates(&a.struct_inner, &b.struct_inner),
     }))
+}
+
+/// True when `pred` holds for every element family of the two operands.
+unsafe fn set_relation(
+    a: *const GosSet,
+    b: *const GosSet,
+    text: impl Fn(&FxHashSet<String>, &FxHashSet<String>) -> bool,
+    ints: impl Fn(&FxHashSet<i64>, &FxHashSet<i64>) -> bool,
+    aggregates: impl Fn(&FxHashMap<Box<[u8]>, Box<[u8]>>, &FxHashMap<Box<[u8]>, Box<[u8]>>) -> bool,
+) -> i64 {
+    let (a, b) = unsafe { set_refs(a, b) };
+    i64::from(
+        text(&a.inner, &b.inner)
+            && ints(&a.i64_inner, &b.i64_inner)
+            && aggregates(&a.struct_inner, &b.struct_inner),
+    )
+}
+
+fn aggregate_union(
+    a: &FxHashMap<Box<[u8]>, Box<[u8]>>,
+    b: &FxHashMap<Box<[u8]>, Box<[u8]>>,
+) -> FxHashMap<Box<[u8]>, Box<[u8]>> {
+    let mut out = a.clone();
+    for (key, slots) in b {
+        out.entry(key.clone()).or_insert_with(|| slots.clone());
+    }
+    out
+}
+
+fn aggregate_intersection(
+    a: &FxHashMap<Box<[u8]>, Box<[u8]>>,
+    b: &FxHashMap<Box<[u8]>, Box<[u8]>>,
+) -> FxHashMap<Box<[u8]>, Box<[u8]>> {
+    a.iter()
+        .filter(|(key, _)| b.contains_key(key.as_ref()))
+        .map(|(key, slots)| (key.clone(), slots.clone()))
+        .collect()
+}
+
+fn aggregate_difference(
+    a: &FxHashMap<Box<[u8]>, Box<[u8]>>,
+    b: &FxHashMap<Box<[u8]>, Box<[u8]>>,
+) -> FxHashMap<Box<[u8]>, Box<[u8]>> {
+    a.iter()
+        .filter(|(key, _)| !b.contains_key(key.as_ref()))
+        .map(|(key, slots)| (key.clone(), slots.clone()))
+        .collect()
 }
 
 /// Inserts a struct or tuple by value. `desc` is the same slot descriptor as
@@ -549,8 +585,15 @@ pub unsafe extern "C" fn gos_rt_set_intersection_to_vec_skey(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_union(a: *const GosSet, b: *const GosSet) -> *mut GosSet {
     ffi_entry!(std::ptr::null_mut(), {
-        let (a, b) = unsafe { set_pair(a, b) };
-        unsafe { set_from(a.union(b).cloned().collect()) }
+        unsafe {
+            set_combine(
+                a,
+                b,
+                |x, y| x.union(y).cloned().collect(),
+                |x, y| x.union(y).copied().collect(),
+                aggregate_union,
+            )
+        }
     })
 }
 
@@ -560,8 +603,15 @@ pub unsafe extern "C" fn gos_rt_set_intersection(
     b: *const GosSet,
 ) -> *mut GosSet {
     ffi_entry!(std::ptr::null_mut(), {
-        let (a, b) = unsafe { set_pair(a, b) };
-        unsafe { set_from(a.intersection(b).cloned().collect()) }
+        unsafe {
+            set_combine(
+                a,
+                b,
+                |x, y| x.intersection(y).cloned().collect(),
+                |x, y| x.intersection(y).copied().collect(),
+                aggregate_intersection,
+            )
+        }
     })
 }
 
@@ -571,28 +621,30 @@ pub unsafe extern "C" fn gos_rt_set_intersection_skey(
     b: *const GosSet,
 ) -> *mut GosSet {
     ffi_entry!(std::ptr::null_mut(), {
-        let mut out = GosSet {
-            inner: std::collections::HashSet::new(),
-            struct_inner: rustc_hash::FxHashMap::default(),
-        };
-        if a.is_null() || b.is_null() {
-            return Box::into_raw(Box::new(out));
+        unsafe {
+            set_combine(
+                a,
+                b,
+                |x, y| x.intersection(y).cloned().collect(),
+                |x, y| x.intersection(y).copied().collect(),
+                aggregate_intersection,
+            )
         }
-        let (a, b) = unsafe { (&*a, &*b) };
-        for (key, slots) in &a.struct_inner {
-            if b.struct_inner.contains_key(key) {
-                out.struct_inner.insert(key.clone(), slots.clone());
-            }
-        }
-        Box::into_raw(Box::new(out))
     })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_difference(a: *const GosSet, b: *const GosSet) -> *mut GosSet {
     ffi_entry!(std::ptr::null_mut(), {
-        let (a, b) = unsafe { set_pair(a, b) };
-        unsafe { set_from(a.difference(b).cloned().collect()) }
+        unsafe {
+            set_combine(
+                a,
+                b,
+                |x, y| x.difference(y).cloned().collect(),
+                |x, y| x.difference(y).copied().collect(),
+                aggregate_difference,
+            )
+        }
     })
 }
 
@@ -602,31 +654,59 @@ pub unsafe extern "C" fn gos_rt_set_symmetric_difference(
     b: *const GosSet,
 ) -> *mut GosSet {
     ffi_entry!(std::ptr::null_mut(), {
-        let (a, b) = unsafe { set_pair(a, b) };
-        unsafe { set_from(a.symmetric_difference(b).cloned().collect()) }
+        unsafe {
+            set_combine(
+                a,
+                b,
+                |x, y| x.symmetric_difference(y).cloned().collect(),
+                |x, y| x.symmetric_difference(y).copied().collect(),
+                |x, y| {
+                    let mut out = aggregate_difference(x, y);
+                    out.extend(aggregate_difference(y, x));
+                    out
+                },
+            )
+        }
     })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_is_subset(a: *const GosSet, b: *const GosSet) -> i64 {
     ffi_entry!(-1, {
-        let (a, b) = unsafe { set_pair(a, b) };
-        i64::from(a.is_subset(b))
+        unsafe {
+            set_relation(a, b, FxHashSet::is_subset, FxHashSet::is_subset, |x, y| {
+                x.keys().all(|key| y.contains_key(key.as_ref()))
+            })
+        }
     })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_is_superset(a: *const GosSet, b: *const GosSet) -> i64 {
     ffi_entry!(-1, {
-        let (a, b) = unsafe { set_pair(a, b) };
-        i64::from(a.is_superset(b))
+        unsafe {
+            set_relation(
+                a,
+                b,
+                FxHashSet::is_superset,
+                FxHashSet::is_superset,
+                |x, y| y.keys().all(|key| x.contains_key(key.as_ref())),
+            )
+        }
     })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_is_disjoint(a: *const GosSet, b: *const GosSet) -> i64 {
     ffi_entry!(-1, {
-        let (a, b) = unsafe { set_pair(a, b) };
-        i64::from(a.is_disjoint(b))
+        unsafe {
+            set_relation(
+                a,
+                b,
+                FxHashSet::is_disjoint,
+                FxHashSet::is_disjoint,
+                |x, y| !x.keys().any(|key| y.contains_key(key.as_ref())),
+            )
+        }
     })
 }

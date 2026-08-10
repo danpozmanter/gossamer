@@ -1,0 +1,51 @@
+// A body that builds and consumes a map internally is JIT-promotable: the map
+// local is the same runtime handle the compiled tiers use, so no conversion
+// crosses the VM boundary. Covers both the `Map::new` and the map-literal
+// (`Map::from`) construction paths, integer and String keys, and the read-back
+// surface, so a regression that declines these bodies or mislowers an entry
+// shows up as a wrong total rather than as a silent tier change.
+
+fn counter_i64(n: i64) -> i64 {
+    let mut m = Map::new()
+    let mut i = 0
+    while i < n {
+        m.inc(i % 13, 1)
+        i += 1
+    }
+    let mut total = 0
+    for (k, v) in m.iter() {
+        total += k * v
+    }
+    total
+}
+
+fn counter_str(n: i64) -> i64 {
+    let mut m = {"seed": 7}
+    let mut i = 0
+    while i < n {
+        m.inc("hits", 2)
+        i += 1
+    }
+    m.get_or("hits", 0) * 10 + m.get_or("seed", 0)
+}
+
+fn lookup_surface() -> i64 {
+    let mut m = Map::new()
+    m.insert(1, 100)
+    m.insert(2, 200)
+    m.insert(3, 300)
+    let removed = m.remove(2)
+    let mut sum = 0
+    if m.contains_key(1) {
+        sum += m.get_or(1, 0)
+    }
+    sum += m.get_or(3, 0)
+    sum += m.len()
+    sum + if removed.is_some() { 1 } else { 0 }
+}
+
+fn main() {
+    println!("i64 {}", counter_i64(5000))
+    println!("str {}", counter_str(4000))
+    println!("surface {}", lookup_surface())
+}

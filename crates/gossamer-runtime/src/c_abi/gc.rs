@@ -98,7 +98,13 @@ pub extern "C" fn gos_rt_gc_alloc(size: u64) -> *mut u8 {
             );
             std::process::abort();
         }
-        crate::c_abi::ledger::aggr_inc();
+        // A region-routed block is reclaimed wholesale at `arena_pop`, so it is
+        // not tracked in the per-block aggregate ledger. This is the single
+        // accounting site for aggregate allocation; wrappers must not add
+        // their own increment.
+        if !unsafe { crate::c_abi::rc::in_region_arena(ptr) } {
+            crate::c_abi::ledger::aggr_inc();
+        }
         ptr
     })
 }
@@ -110,18 +116,16 @@ pub extern "C" fn gos_rt_gc_alloc(size: u64) -> *mut u8 {
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn gos_rt_aggr_alloc(size: u64) -> *mut u8 {
-    static ANCHOR: AtomicUsize = AtomicUsize::new(0);
-    ANCHOR.fetch_add(1, Ordering::SeqCst);
-    std::sync::atomic::compiler_fence(Ordering::SeqCst);
-    ffi_entry!(std::ptr::null_mut(), {
-        let p = gos_rt_gc_alloc(size);
-        // A region-routed block is reclaimed wholesale at `arena_pop`, so it is
-        // not tracked in the per-block aggregate ledger.
-        if !p.is_null() && !unsafe { crate::c_abi::rc::in_region_arena(p) } {
-            crate::c_abi::ledger::aggr_inc();
-        }
-        p
-    })
+    // Only the MSVC link line enables `/OPT:ICF`, so the body-distinguishing
+    // side effect is confined to that target; elsewhere `#[used]` below is
+    // what keeps the symbol, and the atomic would cost every allocation.
+    #[cfg(target_env = "msvc")]
+    {
+        static ANCHOR: AtomicUsize = AtomicUsize::new(0);
+        ANCHOR.fetch_add(1, Ordering::SeqCst);
+        std::sync::atomic::compiler_fence(Ordering::SeqCst);
+    }
+    gos_rt_gc_alloc(size)
 }
 
 // `#[used]` pins the distinct symbol so `--gc-sections` cannot strip

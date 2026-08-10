@@ -206,6 +206,11 @@ pub(crate) fn build_native_isa(
     flag_builder
         .set("unwind_info", "false")
         .map_err(|e| anyhow!("flag unwind_info: {e}"))?;
+    // Cranelift's IR verifier stays on (its default) in every profile. A
+    // lowering defect it catches is reported as a failed body, which drops
+    // that body to the bytecode VM; with the verifier off the same defect
+    // reaches the CPU as miscompiled code. Tier-up latency is worth that
+    // trade, so the verifier is not a tuning knob here.
     // Permit `i128` arguments / returns in the x64 ABI: the by-value two-word
     // `Result` / `Option` representation (and the `gos_rt_result_*` runtime
     // helpers) cross function boundaries as `i128`, which the bare x64 backend
@@ -769,46 +774,78 @@ pub(crate) fn lower_program_full(
     // parallel path; the in-process JIT uses `Serial` to avoid faulting
     // rayon workers for a handful of short-lived hot bodies.
     let dump_clif = std::env::var("GOS_DUMP_CLIF").is_ok();
-    let lower_one = |body: &Body,
+    // The lowering context is threaded in rather than captured so the serial
+    // path can share what is safe to share: `OfflineModule` is read-only
+    // during lowering (every mutating `Module` method is unreachable - the
+    // declarations are pre-made above) and the builder arena is reusable.
+    let lower_one = |offline: &mut OfflineModule,
+                     intrinsics: &mut IntrinsicContext,
+                     fb_ctx: &mut FunctionBuilderContext,
+                     body: &Body,
                      bct: &Vec<Option<ir::Type>>|
      -> Result<(FuncId, String, Function)> {
         let id = function_ids_by_name
             .get(&body.name)
             .copied()
             .ok_or_else(|| anyhow!("function id missing: {}", body.name))?;
-        let mut offline_clone = offline.clone();
-        let mut local_intrinsics = intrinsics.clone();
-        local_intrinsics.body_cl_types.clone_from(bct);
-        let signature = build_signature_from_types(&offline_clone, body, tcx, bct);
+        intrinsics.body_cl_types.clone_from(bct);
+        let signature = build_signature_from_types(offline, body, tcx, bct);
         let mut func = Function::with_name_signature(UserFuncName::user(0, id.as_u32()), signature);
-        let mut fb_ctx = FunctionBuilderContext::new();
         lower_body(
-            &mut offline_clone,
+            offline,
             &mut func,
-            &mut fb_ctx,
+            fb_ctx,
             body,
             tcx,
             &function_ids_by_def,
             &function_ids_by_name,
-            &mut local_intrinsics,
+            intrinsics,
             &capture_summary,
         )
         .map_err(|e| e.context(FailedBody(body.name.clone())))?;
         Ok((id, body.name.clone(), func))
     };
     let ir_pairs: Vec<(FuncId, String, Function)> = match mode {
+        // Each worker needs its own context, so the clone is per body here.
         LoweringMode::Parallel => bodies
             .par_iter()
             .zip(body_type_vecs.par_iter())
             .filter(|(body, _)| body_should_be_defined(&body.name))
-            .map(|(body, bct)| lower_one(body, bct))
+            .map(|(body, bct)| {
+                lower_one(
+                    &mut offline.clone(),
+                    &mut intrinsics.clone(),
+                    &mut FunctionBuilderContext::new(),
+                    body,
+                    bct,
+                )
+            })
             .collect::<Result<Vec<_>>>()?,
-        LoweringMode::Serial => bodies
-            .iter()
-            .zip(body_type_vecs.iter())
-            .filter(|(body, _)| body_should_be_defined(&body.name))
-            .map(|(body, bct)| lower_one(body, bct))
-            .collect::<Result<Vec<_>>>()?,
+        LoweringMode::Serial => {
+            // `OfflineModule` is read-only during lowering, so one copy serves
+            // every body, and the builder arena is designed to be reused. The
+            // intrinsic context is NOT reusable: its per-function maps
+            // (`elem_cl_ty`, `elem_slots`, `local_slots`, the stack-slot sets)
+            // are reset by taking a fresh copy of the pristine context, so
+            // sharing one across bodies would carry a body's aggregate strides
+            // into the next and lower it against the wrong layout.
+            let mut serial_offline = offline.clone();
+            let mut fb_ctx = FunctionBuilderContext::new();
+            bodies
+                .iter()
+                .zip(body_type_vecs.iter())
+                .filter(|(body, _)| body_should_be_defined(&body.name))
+                .map(|(body, bct)| {
+                    lower_one(
+                        &mut serial_offline,
+                        &mut intrinsics.clone(),
+                        &mut fb_ctx,
+                        body,
+                        bct,
+                    )
+                })
+                .collect::<Result<Vec<_>>>()?
+        }
     };
 
     // N9-E: Emit each compiled function into the real ObjectModule

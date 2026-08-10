@@ -87,6 +87,10 @@ struct Registry {
 }
 
 static REGISTRY: OnceLock<Registry> = OnceLock::new();
+/// Set the first time any goroutine records a shadow-stack frame. Until then
+/// the scheduler's per-step goroutine binding has no frames to migrate and
+/// skips the registry entirely.
+static FRAMES_RECORDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn registry() -> &'static Registry {
     REGISTRY.get_or_init(Registry::default)
@@ -149,6 +153,13 @@ pub fn set_active_gid(gid: u32) {
     if old == gid {
         return;
     }
+    if !FRAMES_RECORDED.load(Ordering::Relaxed) {
+        // No shadow-stack frame exists process-wide, so there is nothing to
+        // check in or out and the registry lock stays off the per-step path.
+        // The compiled tier never pushes frames, so this is its steady state.
+        ACTIVE_GID.with(|cell| cell.set(gid));
+        return;
+    }
     if old != u32::MAX {
         let frames = LOCAL_FRAMES.with(|f| std::mem::take(&mut *f.borrow_mut()));
         let mut g = registry().infos.lock();
@@ -194,6 +205,7 @@ pub fn stack_push(function: impl Into<String>, file: impl Into<String>, line: u3
         file: file.into(),
         line,
     };
+    FRAMES_RECORDED.store(true, Ordering::Relaxed);
     LOCAL_FRAMES.with(|f| f.borrow_mut().push(frame));
 }
 

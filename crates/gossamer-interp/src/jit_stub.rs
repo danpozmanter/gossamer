@@ -165,6 +165,15 @@ pub fn jit_entry_body_names(
     std::collections::HashSet::new()
 }
 
+/// wasm exposes no native entry candidates.
+#[must_use]
+pub fn jit_entry_body_names_with_admitted(
+    _bodies: &[gossamer_mir::Body],
+    _admitted: &std::collections::HashSet<String>,
+) -> std::collections::HashSet<String> {
+    std::collections::HashSet::new()
+}
+
 /// wasm reports every body as unavailable for native promotion.
 #[must_use]
 pub fn jit_promotion_report(

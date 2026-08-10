@@ -1205,6 +1205,12 @@ impl<T: Task> Task for GidStamped<T> {
         crate::sigquit::set_active_gid(u32::MAX);
         crate::sched_global::clear_current_gid();
         crate::race::set_current_gid(0);
+        if matches!(result, Step::Done) {
+            // The registry entry exists to describe a live goroutine; a
+            // finished one is never dumped again, and retaining it would grow
+            // the table for the lifetime of the process.
+            crate::sigquit::unregister(self.gid.as_u32());
+        }
         result
     }
 }

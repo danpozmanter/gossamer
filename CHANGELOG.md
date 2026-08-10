@@ -1,5 +1,68 @@
 # Changelog
 
+## 0.46.1 - String accumulation, compiled maps, scheduler overhead
+
+- Stop freeing a string that `+=` is still building. The append helpers take
+  ownership of the accumulator and hand it back, but only some of them were
+  treated that way, so `s += "text"` released the buffer the call had just
+  returned and every later append read freed memory. Building a string in a
+  loop was quadratic as a result: four million appends now take less time than
+  eighty thousand did.
+- Refuse a goroutine the host cannot give a stack, instead of aborting. A
+  stack costs two mappings, so a process reaches `vm.max_map_count` at roughly
+  32 thousand live goroutines; that now surfaces as a declined spawn.
+- Poll for preemption without a write. The check runs on every loop back-edge
+  and performed an atomic read-modify-write even when nothing was pending.
+- Remove a registered I/O source in constant time. Each completed read scanned
+  the poller's whole token table to find the entry to drop.
+- Compile a function that builds a map. Holding a `Map` local kept a function
+  on the interpreter however hot it became; one that keys and values by
+  integers, `bool`, `char`, or `String` now compiles, running a map-building
+  loop about 2.4 times faster.
+- Compile a map literal. `{"k": v}` had no native lowering, so a function
+  using one fell back to the interpreter even when it was otherwise eligible.
+- Drop an unreachable check from every reference-count retain. The path tested
+  whether an already-untagged pointer was a string, which its address shape
+  rules out.
+- Copy a packed sequence across the compile boundary in one move. An integer
+  vector, a float vector, and a byte buffer were handed to compiled code one
+  element at a time.
+- Index an ASCII string without building an index. Every allocation and every
+  append that grew a string walked its contents to record character offsets,
+  which for ASCII are the byte offsets; building a string is about 2.8 times
+  faster. Text outside ASCII keeps the full index.
+- Stop serializing string work across goroutines. Appending to a string took a
+  process-global lock to identify the accumulator, and allocating or releasing
+  any heap string took the same lock, so concurrent string building on
+  different goroutines contended on one mutex. The append path now reads the
+  accumulator's own type tag, and the registry behind the remaining raw-pointer
+  entry points is sharded by address.
+- Serialize JSON in linear time. Each fragment written to the document rebuilt
+  the accumulator's character index from the first byte, so encoding cost grew
+  with the square of the output size.
+- Store an integer `Set` as integers. `Set<i64>` and `BTreeSet<i64>` kept every
+  element as decimal text, so each insert, lookup, and removal formatted a
+  string and allocated, and a live element cost roughly twice the memory.
+- Drain goroutines when `main` returns nothing. A native build of a program
+  whose `main` has no return value exited without waiting for goroutines still
+  running, losing their output; the bytecode VM and the JIT both waited.
+- Remove dead code from a build that keeps debug info. `--gc-sections` was tied
+  to symbol stripping, so `gos build -g` linked the entire runtime surface
+  including the unused HTTP, TLS, and compression stacks.
+- Release a goroutine's diagnostic record when it finishes. Every spawned
+  goroutine left an entry in the stack-dump registry for the life of the
+  process, and the lookups that registry serves slowed as it grew.
+- Skip the goroutine bookkeeping a compiled program never uses. Binding a
+  goroutine to a worker took a process-global lock twice per scheduling step to
+  migrate call frames that only the interpreter records.
+- Count an aggregate allocation once. Allocating through the aggregate entry
+  point incremented the live-object ledger twice, and every such allocation
+  paid an atomic read-modify-write that only the MSVC link path needs.
+- Reduce interpreter and runtime memory: the type-tag table no longer rescans
+  itself on every optional or fallible value a builtin constructs, method calls
+  reuse pooled argument storage, the cycle collector's root buffer uses a
+  pointer-appropriate hash, and a thread caches 4 arena slabs instead of 64.
+
 ## 0.46.0 - Explicit imports, hashable map keys, Memory optimizations
 
 - Require an import to name a module's items. A sibling file's `pub fn add`
