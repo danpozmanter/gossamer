@@ -12,7 +12,7 @@
 //! editing.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::{DependencySpec, InlineDependency, Manifest};
 
@@ -118,6 +118,11 @@ pub fn bundle_path_dependencies_traced(
 
 /// Appends the (root, entry) of each not-yet-visited path dependency
 /// of `entry`'s project to `worklist`.
+///
+/// `visited` holds canonical roots, so two spellings of one directory
+/// are the same dependency. The root handed to `worklist` keeps the
+/// spelling the manifest used, which is the form that reaches the user
+/// in diagnostics and bundle comments.
 pub fn collect_path_deps(
     entry: &Path,
     visited: &mut Vec<PathBuf>,
@@ -144,17 +149,39 @@ pub fn collect_path_deps(
         let Some(rel) = dependency_path(spec) else {
             continue;
         };
-        let Ok(dep_root) = manifest_dir.join(rel).canonicalize() else {
+        let spelled = manifest_dir.join(rel);
+        let Ok(identity) = spelled.canonicalize() else {
             continue;
         };
-        if visited.contains(&dep_root) {
+        if visited.contains(&identity) {
             continue;
         }
-        visited.push(dep_root.clone());
+        visited.push(identity);
+        let dep_root = lexically_normalized(&spelled);
         if let Some((_, dep_entry)) = path_dep_entry(&dep_root) {
             worklist.push((dep_root, dep_entry));
         }
     }
+}
+
+/// Resolves `.` and `..` in `path` without consulting the filesystem,
+/// so a dependency's files are reported under the path its manifest
+/// spelled rather than the platform's canonical alias for it.
+fn lexically_normalized(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match out.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                }
+                _ => out.push(component),
+            },
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// The `path` field of a dependency spec, when it is a local-path
@@ -584,6 +611,57 @@ mod bundle_tests {
         assert_eq!(span.origin, entry, "entry bytes must stay on the entry");
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A path the user can reach only through a symlink is the path a
+    /// diagnostic must name, so the origin of a dependency's bytes keeps
+    /// the spelling the manifest used rather than the resolved target.
+    #[cfg(unix)]
+    #[test]
+    fn dependency_origins_keep_the_spelling_the_manifest_used() {
+        let base = std::env::temp_dir().join(format!("gos-symlink-{}", std::process::id()));
+        let real = base.join("real");
+        let linked = base.join("linked");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(real.join("app").join("src")).unwrap();
+        fs::create_dir_all(real.join("lib").join("src")).unwrap();
+        std::os::unix::fs::symlink(&real, &linked).unwrap();
+        fs::write(
+            real.join("app").join("project.toml"),
+            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\n\"example.com/lib\" = { path = \"../lib\" }\n",
+        )
+        .unwrap();
+        fs::write(
+            real.join("lib").join("project.toml"),
+            "[project]\nid = \"example.com/lib\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::write(
+            real.join("lib").join("src").join("lib.gos"),
+            "pub fn marker_fn() { }\n",
+        )
+        .unwrap();
+        let entry = linked.join("app").join("src").join("main.gos");
+        let entry_source = "fn main() { }\n".to_string();
+        fs::write(&entry, &entry_source).unwrap();
+
+        let (bundled, spans) =
+            bundle_path_dependencies_traced(&entry, entry_source, &mut Vec::new());
+        let at =
+            u32::try_from(bundled.find("marker_fn").expect("dependency body inlined")).unwrap();
+        let span = spans
+            .iter()
+            .rev()
+            .find(|s| at >= s.start && at < s.end)
+            .expect("dependency bytes are attributed");
+        assert_eq!(
+            span.origin,
+            linked.join("lib").join("src").join("lib.gos"),
+            "dependency origin must stay on the path the manifest reaches it by"
+        );
+
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]

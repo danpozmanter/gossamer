@@ -80,7 +80,7 @@ impl<'a> Builder<'a> {
                 // Eligibility rejects all early exits, so this is defensive
                 // only; keeping the pop here preserves the region stack if a
                 // future lowering rule gains another diverging expression.
-                self.end_loop_region(lexical_region, block.span);
+                self.end_auto_region(lexical_region, block.span);
                 return None;
             }
         }
@@ -128,7 +128,7 @@ impl<'a> Builder<'a> {
             self.emit_defer_frame(&frame);
         }
         self.pop_scope();
-        self.end_loop_region(lexical_region, block.span);
+        self.end_auto_region(lexical_region, block.span);
         if self.current.is_none() { None } else { result }
     }
 

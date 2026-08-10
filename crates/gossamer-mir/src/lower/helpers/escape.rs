@@ -537,6 +537,13 @@ impl<'a> LoopEligibility<'a> {
                     if let Some(e) = init {
                         self.expr(e, false);
                     }
+                    // A lifted closure's prologue binds each captured value
+                    // through an env load. The binding names a value the
+                    // enclosing scope owns, so it stays out of `in_body` and
+                    // is judged by the same rule as any other outer name.
+                    if init.as_ref().is_some_and(gossamer_hir::is_capture_env_load) {
+                        continue;
+                    }
                     let mut names = Vec::new();
                     pat_binding_names(pattern, &mut names);
                     self.in_body.extend(names);
@@ -604,6 +611,11 @@ impl<'a> LoopEligibility<'a> {
             HirExprKind::Loop { .. } | HirExprKind::While { .. } => {
                 self.reject(RegionReject::NestedLoop);
             }
+            // Projecting a captured value out of the closure environment is a
+            // load: it allocates nothing and cannot retain a region pointer.
+            // The value it yields is an outer one, which `check_arg` judges
+            // wherever the body goes on to use it.
+            HirExprKind::Call { .. } if gossamer_hir::is_capture_env_load(e) => {}
             HirExprKind::Call { callee, args } => {
                 if self.is_alloc_ty(e.ty) {
                     self.allocates = true;

@@ -1524,6 +1524,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1603,6 +1605,34 @@
 
 
     Diagnostics style
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../design/incremental/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Incremental front end
 
 
 
@@ -2156,7 +2186,7 @@
 </tr>
 <tr>
 <td><a href="http_middleware/"><code>std::http::middleware</code></a></td>
-<td>Composable middleware: logger, recoverer, request_id, cors, basic_auth, compress_gzip.</td>
+<td>Composable middleware: request_id, cors, security_headers, hsts, cache_control, etag, rate_limit, body_limit, timeout, compress_gzip, logger, recoverer, basic_auth, bearer_auth, safe_defaults.</td>
 </tr>
 <tr>
 <td><a href="http_multipart/"><code>std::http::multipart</code></a></td>
@@ -2313,6 +2343,10 @@
 <tr>
 <td><a href="slog/"><code>std::slog</code></a></td>
 <td>Structured, levelled logging.</td>
+</tr>
+<tr>
+<td><a href="sort/"><code>std::sort</code></a></td>
+<td>Explicit stable ordering and sorted-sequence search, the deliberate counterpart to Vec's unstable inherent <code>sort</code>.</td>
 </tr>
 <tr>
 <td><a href="strconv/"><code>std::strconv</code></a></td>

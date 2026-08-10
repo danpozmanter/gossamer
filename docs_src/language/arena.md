@@ -52,6 +52,20 @@ for _ in 0..iterations {
 }
 ```
 
+A sequence combinator's closure body runs once per element, so it is
+analyzed and regioned on the same terms. The two ways to spell one
+iteration perform the same:
+
+```gossamer
+// Same bulk-free as the loop above.
+let total = (0..iterations).map(|_| check(&build_tree(depth))).sum()
+```
+
+A closure qualifies only when the value it hands back cannot point into
+the region - a scalar result is fine, a returned tree keeps the ordinary
+reference-counted path - and a captured value counts as an outer one, so
+passing a captured collection into a call disqualifies the body.
+
 This is **sound by construction**. The analysis over-approximates
 escapes: if it cannot prove a body's allocations stay local - the body
 calls a method, stores a value into an outer binding, breaks/returns,
@@ -64,16 +78,18 @@ worst case is a *missed speedup*, not a dangling pointer.
 ### Seeing the decision
 
 When an allocation-heavy loop runs slower than expected, set
-`GOS_ARENA_TRACE=1` at build time. Every loop prints whether it was
-auto-regioned, and if an allocating loop was not, why:
+`GOS_ARENA_TRACE=1` at build time. Every loop and closure body prints
+whether it was auto-regioned, and if an allocating one was not, why:
 
 ```text
 [arena] file 0 bytes 992..993: auto-regioned (iteration heap bulk-freed)
 [arena] file 0 bytes 806..1087: NOT regioned - allocates each iteration on the
   slow per-node RC path: body contains a nested loop. Wrap the body in `arena { }`.
+[arena] file 0 bytes 1418..1437: closure body auto-regioned (per-call heap
+  bulk-freed)
 ```
 
-The reason names the exact rule that disqualified the loop (a method
+The reason names the exact rule that disqualified the body (a method
 call, an escaping value, a nested loop, an early exit, an unvetted
 callee), so you know whether to restructure the loop or reach for an
 explicit `arena { }` - which always works, because you are then making

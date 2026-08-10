@@ -90,6 +90,20 @@ pub struct HirFn {
     pub is_comptime: bool,
     /// `true` when the first parameter is a `self` receiver.
     pub has_self: bool,
+    /// Where the declaration came from.
+    pub origin: FnOrigin,
+}
+
+/// Whether a function was written as a `fn` item or synthesized from a
+/// closure by the lift pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FnOrigin {
+    /// Declared as a `fn` item in source.
+    Declared,
+    /// Synthesized by the closure lift. Such a body runs once per element
+    /// when a sequence combinator drives it, so it is a candidate for an
+    /// invocation-scoped automatic region.
+    LiftedClosure,
 }
 
 /// Lowered parameter.

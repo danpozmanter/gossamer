@@ -208,7 +208,7 @@ impl<'a> Builder<'a> {
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
         self.pop_scope();
-        self.end_loop_region(regioned, span);
+        self.end_auto_region(regioned, span);
         self.terminate(Terminator::Goto { target: step_block });
 
         self.set_current(step_block);
@@ -437,7 +437,7 @@ impl<'a> Builder<'a> {
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
         self.pop_scope();
-        self.end_loop_region(regioned, span);
+        self.end_auto_region(regioned, span);
         self.terminate(Terminator::Goto { target: step_block });
 
         self.set_current(step_block);
@@ -828,7 +828,7 @@ impl<'a> Builder<'a> {
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
         self.pop_scope();
-        self.end_loop_region(regioned, span);
+        self.end_auto_region(regioned, span);
         self.terminate(Terminator::Goto { target: step_block });
 
         self.set_current(step_block);
@@ -983,7 +983,7 @@ impl<'a> Builder<'a> {
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
         self.pop_scope();
-        self.end_loop_region(regioned, span);
+        self.end_auto_region(regioned, span);
         self.terminate(Terminator::Goto { target: step_block });
 
         self.set_current(step_block);
@@ -1167,7 +1167,7 @@ impl<'a> Builder<'a> {
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
         self.pop_scope();
-        self.end_loop_region(regioned, span);
+        self.end_auto_region(regioned, span);
         self.terminate(Terminator::Goto { target: step_block });
 
         self.set_current(step_block);
@@ -1276,7 +1276,7 @@ impl<'a> Builder<'a> {
             let _ = self.lower_expr(body);
             self.loop_stack.pop();
             self.pop_scope();
-            self.end_loop_region(regioned, span);
+            self.end_auto_region(regioned, span);
             self.terminate(Terminator::Goto { target: next });
             self.set_current(next);
         }
@@ -1370,7 +1370,7 @@ impl<'a> Builder<'a> {
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
         self.pop_scope();
-        self.end_loop_region(regioned, span);
+        self.end_auto_region(regioned, span);
         self.terminate(Terminator::Goto { target: step_block });
 
         self.set_current(step_block);

@@ -1518,6 +1518,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1597,6 +1599,34 @@
 
 
     Diagnostics style
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../design/incremental/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Incremental front end
 
 
 
@@ -1968,11 +1998,15 @@ trait's methods on a parameter receiver:</p>
 <li>Every instantiation is monomorphised and the trait-method call lowers
   to the concrete impl symbol (<code>Square::name</code>), giving static dispatch
   that is bit-identical across the VM, Cranelift, and LLVM tiers.</li>
+<li>A bound may pin an associated type with an equality constraint
+  (<code>T: Holder&lt;Item = i64&gt;</code>), and <code>T::Item</code> / <code>T::MAX</code> project the bound
+  trait's associated type / constant - see
+  <a href="../trait/#associated-types">trait</a>.</li>
 </ul>
-<p>Supported today: single-bound type parameters with struct arguments and
-inherent static dispatch. Not yet part of static dispatch: <code>dyn Trait</code>,
-operator traits, associated-type projection in bounds, blanket impls, and
-supertrait method inheritance through a bound.</p>
+<p>Supported today: type parameters with one or more bounds (<code>T: A + B</code>),
+written in the parameter list or a <code>where</code> clause, with struct arguments
+and inherent static dispatch. Not yet part of static dispatch: <code>dyn Trait</code>,
+blanket impls, and supertrait method inheritance through a bound.</p>
 <h2 id="generic-struct-types">Generic struct types<a class="headerlink" href="#generic-struct-types" title="Permanent link">&para;</a></h2>
 <p>A struct may hold its type parameter by value, and methods on it use the
 <code>impl&lt;T&gt;</code> form (each receiver type specialises the method, so <code>-&gt; T</code>

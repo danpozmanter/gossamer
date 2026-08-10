@@ -1522,6 +1522,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1601,6 +1603,34 @@
 
 
     Diagnostics style
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../design/incremental/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Incremental front end
 
 
 
@@ -2381,11 +2411,14 @@ card:</p>
 <h2 id="4-idioms">4. Idioms<a class="headerlink" href="#4-idioms" title="Permanent link">&para;</a></h2>
 <p>Write clear, low-complexity, concise code.</p>
 <ul>
-<li><strong>Import every standard library module you use.</strong> Qualified access
-  does not implicitly import a module: write <code>use std::{env, fs}</code> before
-  <code>env::args()</code> or <code>fs::read(...)</code>. Primitive and core collection types,
-  variants, macros, and the documented prelude remain available without
-  imports.</li>
+<li><strong>Import everything you name.</strong> A module's items are never in scope on
+  their own - reach them through a path or a <code>use</code>. For the standard
+  library write <code>use std::{env, fs}</code> before <code>env::args()</code> or
+  <code>fs::read(...)</code>; for a sibling file write <code>use util::add</code> (or spell
+  <code>util::add(..)</code> in full). The file layout declares the module, the
+  import brings its names in. A bare name some module declares reports
+  GR0011 with the exact <code>use</code> line to add. Primitive and core collection
+  types, variants, macros, and the documented prelude need no import.</li>
 <li><strong>Default to immutable.</strong> <code>let</code> first; <code>let mut</code> only for a binding
   that genuinely changes, kept near a single update site. <code>if</code> /
   <code>match</code> / <code>loop ... break v</code> are expressions - bind their result.</li>
@@ -2405,6 +2438,11 @@ card:</p>
   Indexed reads and writes outside <code>[0, len)</code> panic on every tier. Vec
   <code>insert</code> accepts <code>0..=len</code> and returns <code>Result&lt;(), errors::Error&gt;</code>;
   <code>remove</code> accepts <code>0..len</code> and returns <code>Result&lt;T, errors::Error&gt;</code>.</li>
+<li><strong>Any hashable value is a <code>Map</code> / <code>Set</code> key</strong> - integers, <code>bool</code>,
+  <code>char</code>, <code>String</code>, tuples, fixed arrays, structs, and enums (unit or
+  payload), nested freely. Keys compare by value, so an equal key built
+  at a different allocation finds the same slot, and <code>keys()</code> hands back
+  the aggregate you wrote.</li>
 <li><strong><code>m.inc(k)</code> / <code>m.inc(k, by)</code></strong> for counters; <code>m.or_insert(k,
   default)</code> for get-or-fill (<code>m.or_insert(k, d).method(args)</code> writes
   the mutation back into the stored value). <code>arr.swap(i, j)</code>.</li>
@@ -2444,9 +2482,14 @@ card:</p>
   <code>let map = {"one": 1}</code>. <code>Map::from</code> accepts array pairs, while
   map literals construct <code>Map</code> values directly. <code>#{a, b}</code> constructs
   a <code>Set</code>, or a <code>BTreeSet</code> when an expected <code>BTreeSet&lt;T&gt;</code> type is present.</li>
-<li><strong>Byte reads</strong>: <code>s[i]</code> is the byte as <code>i64</code>; compare with byte
-  literals (<code>s[i] &gt;= b'0'</code>), render with <code>s[i] as char</code>. Prefer this
-  over per-byte <code>substring</code>.</li>
+<li><strong>Two String index spaces.</strong> <code>s.len()</code>, <code>s[i]</code>, and bare iteration
+  count Unicode scalars, so <code>s[i]</code> is a <code>char</code> (compare with <code>'0'</code>,
+  widen with <code>s[i] as i64</code>). <code>s.byte_len()</code>, <code>s.substring(a, b)</code>,
+  <code>s.byte_at(i)</code>, <code>s.as_bytes()</code>, and <code>s.bytes()</code> are byte offsets.
+  <code>s.byte_at(i)</code> is the byte as <code>i64</code> - compare with byte literals
+  (<code>s.byte_at(i) &gt;= b'0'</code>), render with <code>as char</code>; prefer it over a
+  per-step <code>substring</code>. Do not mix the two: <code>s[i]</code> is not the byte at
+  byte offset <code>i</code> for any non-ASCII string.</li>
 <li><strong>Format captures walk field paths</strong>: <code>println!("{name}:
   {a.balance} {t.0} {o.inner.hits} {a.balance:&gt;8} {f.0:.2}")</code>.</li>
 <li><strong>Range binds looser than arithmetic, tighter than <code>|&gt;</code></strong>:
@@ -2496,9 +2539,10 @@ Left-associative, very low precedence.</p>
 <ul>
 <li><code>x |&gt; f</code> is <code>f(x)</code>; <code>x |&gt; f(a, b)</code> puts <code>x</code> in the LAST slot:
   <code>f(a, b, x)</code>; same for <code>x |&gt; recv.m(a)</code>.</li>
-<li><code>_</code> makes the piped value the RECEIVER: <code>x |&gt; _.m(a)</code> is <code>x.m(a)</code>;
-  bare <code>s |&gt; _.trim |&gt; _.to_uppercase</code> chains nullary methods; <code>_.0</code>,
-  <code>_[i]</code>, and bare <code>_</code> (identity) work.</li>
+<li><code>$</code> makes the piped value the RECEIVER: <code>x |&gt; $.m(a)</code> is <code>x.m(a)</code>;
+  bare <code>s |&gt; $.trim |&gt; $.to_uppercase</code> chains nullary methods; <code>$.0</code>,
+  <code>$[i]</code>, and bare <code>$</code> (identity) work. One direct <code>$</code> also selects an
+  argument slot: <code>x |&gt; f($, k)</code> is <code>f(x, k)</code>.</li>
 <li>Closure steps thread the value into the last slot too.</li>
 </ul>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">double</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">add</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">100</span><span class="p">)</span>
@@ -2525,15 +2569,31 @@ Left-associative, very low precedence.</p>
 <li><strong>Imports</strong>: <code>use std::{iter, os, strings}</code>, alias via <code>{Map as
   Scores}</code>; always spell the full path (<code>std::encoding::json</code>, not
   <code>std::json</code>) - paths validate against the std manifest (GR0005).
-  Cross-module: <code>super::item</code>, <code>crate::path::item</code>, <code>self::child::item</code>.</li>
+  Local modules import the same way: <code>use util::{add, Widget}</code>,
+  <code>use deep::nest::Nested</code>, <code>use crate::util::Widget</code>. A path written
+  inside a module is anchored at that module, so <code>self::child::item</code>,
+  a bare <code>child::item</code>, and <code>super::sibling::item</code> all resolve; a
+  <code>mod name;</code> with no file behind it is GR0010. A type belongs to the
+  module that declares it, so two modules may each declare a <code>Point</code>
+  and both stay distinct.</li>
 <li><strong>Entry file may omit <code>fn main</code></strong>: top-level statements become the
   implicit main (only the entry file; <code>?</code> there makes it return
   <code>Result&lt;(), errors::Error&gt;</code>; exit code via <code>process::exit(n)</code>).</li>
 <li><strong>Generics</strong>: <code>fn f&lt;T: Trait&gt;(x: &amp;T)</code> monomorphises per call site
-  on every tier (single bound, struct-typed params; no <code>dyn Trait</code>).
+  on every tier (one or more bounds <code>T: A + B</code>, in the parameter list or a
+  <code>where</code> clause; struct-typed params; no <code>dyn Trait</code>).
   Generic structs <code>struct Wrapper&lt;T&gt;</code> + <code>impl&lt;T&gt;</code> work. Const-generic
   array length <code>fn sum&lt;const N: usize&gt;(xs: [i64; N])</code> is inferred
   from the argument (not usable as a bare value or repeat count).</li>
+<li><strong>Associated items</strong>: a trait declares <code>type Item</code> (optional default)
+  and <code>const MAX: i64</code> (optional default); each impl supplies one
+  concrete <code>type Item = T</code> / <code>const MAX: i64 = 10</code>. Project with
+  <code>Self::Item</code>, <code>T::Item</code>, <code>Type::MAX</code>, <code>T::MAX</code>. Pin an ambiguous
+  projection with an equality constraint: <code>T: Iterator&lt;Item = i64&gt;</code>.
+  Resolution order: equality constraint, the concrete base's impl,
+  the trait default, the trait's single implementor - several impls with
+  no constraint is GT0061, an impl missing a required item is GT0059.
+  No generic associated types, none on <code>dyn</code>.</li>
 <li><strong>References</strong>: <code>&amp;x</code> is shared and <code>&amp;mut x</code> writes through to the same
   source place; both are aliases, never copies. There are no lifetimes or
   non-lexical borrow analysis. A lightweight lexical check rejects a second
@@ -2654,9 +2714,7 @@ are callable as methods/free functions and materialize results.</p>
   element type to yield). <code>%i Tuple</code> documents it and
   <code>%e &lt;binding&gt;</code> lists a tuple's elements. Tuple structs are the named
   variant and are fully usable.</li>
-<li><code>std::collections</code>: <code>Vec</code>, <code>Map</code> (struct/tuple keys by value;
-  aggregate-key maps use <code>iter()</code> rather than <code>keys()</code> until typed key
-  snapshots are available;
+<li><code>std::collections</code>: <code>Vec</code>, <code>Map</code> (any hashable key by value;
   <code>iter()</code> yields <code>[(K, V)]</code>, <code>keys</code>, <code>values</code>, <code>Map::pop</code>),
   <code>Set</code> / <code>BTreeSet</code> (<code>#{...}</code> literals and full set algebra), <code>BTreeMap</code> (sorted; <code>String</code> or <code>i64</code>
   keys), <code>Deque</code>, <code>Queue</code>, <code>Stack</code>. A separate i64-only <code>queue</code>/<code>stack</code>/<code>deque</code>/
@@ -2683,7 +2741,7 @@ test</code> also compiles and runs fenced code in doc comments.</p>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="k">mod</span> <span class="nn">arith_tests</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">testing</span>
 <a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="cp">#[test]</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">add_adds</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">testing</span>::<span class="n">check_eq</span><span class="p">(</span><span class="o">&amp;</span><span class="k">super</span>::<span class="n">add</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">),</span><span class="w"> </span><span class="o">&amp;</span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;2+3&quot;</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">add_adds</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="n">_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">testing</span>::<span class="n">check_eq</span><span class="p">(</span><span class="o">&amp;</span><span class="k">super</span>::<span class="n">add</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">),</span><span class="w"> </span><span class="o">&amp;</span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;2+3&quot;</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
 <a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="p">}</span>
 </code></pre></div>
 <h2 id="12-stdlib-map">12. Stdlib map<a class="headerlink" href="#12-stdlib-map" title="Permanent link">&para;</a></h2>
@@ -2742,8 +2800,8 @@ test</code> also compiles and runs fenced code in doc comments.</p>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">http</span>::<span class="n">router</span>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
 <a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">r</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">router</span>::<span class="n">Router</span>::<span class="n">new</span><span class="p">()</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">_</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;/&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">handler_fn</span><span class="p">)</span>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">_</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;/ping&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">|</span><span class="n">_r</span><span class="o">|</span><span class="w"> </span><span class="nb">Ok</span><span class="p">(</span><span class="n">http</span>::<span class="n">Response</span>::<span class="n">text</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ok&quot;</span><span class="p">)))</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="cp">$</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;/&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">handler_fn</span><span class="p">)</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="cp">$</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;/ping&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">|</span><span class="n">_r</span><span class="o">|</span><span class="w"> </span><span class="nb">Ok</span><span class="p">(</span><span class="n">http</span>::<span class="n">Response</span>::<span class="n">text</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ok&quot;</span><span class="p">)))</span>
 <a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="n">http</span>::<span class="n">serve</span><span class="p">(</span><span class="s">&quot;0.0.0.0:8080&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
 <h2 id="13-project-layout">13. Project layout<a class="headerlink" href="#13-project-layout" title="Permanent link">&para;</a></h2>

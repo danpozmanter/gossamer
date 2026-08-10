@@ -2,6 +2,16 @@
 
 ## 0.46.2 - Arena slab retention, library impls, method visibility
 
+- Bulk-free a sequence combinator's per-element allocations. A closure body
+  driven by `map` / `filter` / `sum` and their siblings now takes the same
+  automatic arena region a loop body does when the value it returns cannot
+  point into that region, so `xs.map(|x| build_and_discard(x))` runs as fast
+  as the `for` loop spelling the same iteration instead of paying a per-node
+  reference-count teardown.
+- Report a path dependency's files under the path its manifest spelled. Origins
+  came back resolved through symlinks and, on Windows, in verbatim `\\?\` form,
+  so a diagnostic raised inside a dependency named a file the user had not
+  written.
 - Reach the methods of a type declared inside a module. The type registered
   under its module-qualified identity while its `impl` keyed methods by the
   bare name, so a library's own `pub` method calling a private helper was

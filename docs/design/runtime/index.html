@@ -1524,6 +1524,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
 
 
@@ -1603,6 +1605,34 @@
 
 
     Diagnostics style
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../incremental/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Incremental front end
 
 
 
@@ -2313,9 +2343,9 @@ worker M sees <code>Step::Yield</code> plus a pending-park flag and moves
 the task into <code>MultiScheduler::parked</code> keyed by gid. The wakeup
 source (poller readiness, channel send, mutex unlock, blocking-pool
 worker, ...) calls <code>MultiScheduler::unpark(gid)</code> which pushes the
-task back onto the injector. Any free worker picks it up and
-resumes the coroutine - possibly on a different OS thread than the
-one it suspended on.</p>
+task back onto its home worker's inbox. A stackful coroutine cannot
+migrate between OS threads while suspended, so a goroutine resumes on
+the worker it first landed on.</p>
 <p>A blocked goroutine costs only the few KiB of stack its shallow
 frame actually touched - not an OS thread, and not the 1 MiB
 reservation. Thousands of concurrent goroutines stay in the tens of

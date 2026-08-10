@@ -1615,6 +1615,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1694,6 +1696,34 @@
 
 
     Diagnostics style
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../design/incremental/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Incremental front end
 
 
 
@@ -2085,7 +2115,7 @@ evidence visible.</p>
 <tr>
 <td><code>std::io</code></td>
 <td>experimental</td>
-<td style="text-align: right;">10</td>
+<td style="text-align: right;">21</td>
 <td>module-only</td>
 <td>module-only</td>
 <td>module-only</td>
@@ -2247,7 +2277,7 @@ evidence visible.</p>
 <tr>
 <td><code>std::path</code></td>
 <td>shipped</td>
-<td style="text-align: right;">13</td>
+<td style="text-align: right;">15</td>
 <td>module-only</td>
 <td>module-only</td>
 <td>module-only</td>
@@ -2643,7 +2673,7 @@ evidence visible.</p>
 <tr>
 <td><code>std::http::middleware</code></td>
 <td>experimental</td>
-<td style="text-align: right;">7</td>
+<td style="text-align: right;">27</td>
 <td>none</td>
 <td>none</td>
 <td>none</td>
@@ -2936,6 +2966,15 @@ evidence visible.</p>
 <td>none</td>
 <td>none</td>
 <td>No module-level evidence record.</td>
+</tr>
+<tr>
+<td><code>std::sort</code></td>
+<td>experimental</td>
+<td style="text-align: right;">3</td>
+<td>module-only</td>
+<td>module-only</td>
+<td>module-only</td>
+<td>sort, sort_stable, binary_search.</td>
 </tr>
 <tr>
 <td><code>std::http::cookie</code></td>
@@ -4976,7 +5015,19 @@ the canonical item path.</p>
 <td>not item-audited</td>
 </tr>
 <tr>
+<td><code>std::http::middleware::CacheControl</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
 <td><code>std::http::middleware::Chain</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::http::middleware::CorsConfig</code></td>
 <td>Type</td>
 <td>experimental</td>
 <td>not item-audited</td>
@@ -4988,7 +5039,37 @@ the canonical item path.</p>
 <td>not item-audited</td>
 </tr>
 <tr>
+<td><code>std::http::middleware::HstsConfig</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::http::middleware::RateLimit</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::http::middleware::SecurityHeaders</code></td>
+<td>Type</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
 <td><code>std::http::middleware::accepts_gzip</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::http::middleware::basic_auth</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::http::middleware::bearer_auth</code></td>
 <td>Function</td>
 <td>experimental</td>
 <td>not item-audited</td>
@@ -5000,7 +5081,49 @@ the canonical item path.</p>
 <td>not item-audited</td>
 </tr>
 <tr>
+<td><code>std::http::middleware::body_limit</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::http::middleware::cache_control</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::http::middleware::compress_gzip</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::http::middleware::cors</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
 <td><code>std::http::middleware::decode_basic_auth</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::http::middleware::etag</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::http::middleware::hsts</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::http::middleware::logger</code></td>
 <td>Function</td>
 <td>experimental</td>
 <td>not item-audited</td>
@@ -5012,7 +5135,43 @@ the canonical item path.</p>
 <td>not item-audited</td>
 </tr>
 <tr>
+<td><code>std::http::middleware::rate_limit</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::http::middleware::recoverer</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::http::middleware::request_id</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::http::middleware::safe_defaults</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::http::middleware::security_headers</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
 <td><code>std::http::middleware::tag</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::http::middleware::timeout</code></td>
 <td>Function</td>
 <td>experimental</td>
 <td>not item-audited</td>
@@ -5504,6 +5663,54 @@ the canonical item path.</p>
 <td>not item-audited</td>
 </tr>
 <tr>
+<td><code>std::io::buffer_writer</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::io::close_writer</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::io::contents</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::io::copy_n</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::io::drain</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::io::limit_reader</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::io::multi_reader</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::io::pipe</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
 <td><code>std::io::stderr</code></td>
 <td>Function</td>
 <td>experimental</td>
@@ -5517,6 +5724,24 @@ the canonical item path.</p>
 </tr>
 <tr>
 <td><code>std::io::stdout</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::io::string_reader</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::io::tee_reader</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::io::write</code></td>
 <td>Function</td>
 <td>experimental</td>
 <td>not item-audited</td>
@@ -7004,6 +7229,12 @@ the canonical item path.</p>
 <td>not item-audited</td>
 </tr>
 <tr>
+<td><code>std::path::glob</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
 <td><code>std::path::is_absolute</code></td>
 <td>Function</td>
 <td>experimental</td>
@@ -7011,6 +7242,12 @@ the canonical item path.</p>
 </tr>
 <tr>
 <td><code>std::path::join</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::path::matches</code></td>
 <td>Function</td>
 <td>experimental</td>
 <td>not item-audited</td>
@@ -7329,6 +7566,24 @@ the canonical item path.</p>
 </tr>
 <tr>
 <td><code>std::slog::warn</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::sort::binary_search</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::sort::partition_point</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td>not item-audited</td>
+</tr>
+<tr>
+<td><code>std::sort::sort_stable</code></td>
 <td>Function</td>
 <td>experimental</td>
 <td>not item-audited</td>

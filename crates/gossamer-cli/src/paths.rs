@@ -299,11 +299,8 @@ pub(crate) fn local_path_dependency_roots(entry: &Path) -> Vec<PathBuf> {
     let mut visited = Vec::new();
     let mut worklist = Vec::new();
     gossamer_pkg::bundle::collect_path_deps(entry, &mut visited, &mut worklist);
-    while let Some((root, dep_entry)) = worklist.pop() {
+    while let Some((_, dep_entry)) = worklist.pop() {
         gossamer_pkg::bundle::collect_path_deps(&dep_entry, &mut visited, &mut worklist);
-        if !visited.contains(&root) {
-            visited.push(root);
-        }
     }
     visited
 }

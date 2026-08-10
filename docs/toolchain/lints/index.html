@@ -2132,6 +2132,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -2211,6 +2213,34 @@
 
 
     Diagnostics style
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../design/incremental/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Incremental front end
 
 
 
@@ -3519,10 +3549,13 @@ literal every iteration is the repeat literal spelled long:
 <code>let xs = [value; n]</code> builds the identical vec in one expression
 (byte-packed for <code>bool</code> / <code>u8</code> elements).</p>
 <h2 id="substring_byte_scan"><code>substring_byte_scan</code><a class="headerlink" href="#substring_byte_scan" title="Permanent link">&para;</a></h2>
-<p><code>s.substring(i, i + 1)</code> allocates a one-byte String per step of
-a scan. <code>s[i]</code> reads the byte directly as an <code>i64</code>: compare with
-byte literals (<code>s[i] &gt;= b'0'</code>), do arithmetic on it
-(<code>s[i] - b'0'</code>), and render with <code>s[i] as char</code>.</p>
+<p><code>s.substring(i, i + 1)</code> allocates a String per step of a scan.
+<code>substring</code> takes byte offsets, so <code>s.byte_at(i)</code> reads the same
+position directly as an <code>i64</code>: compare with byte literals
+(<code>s.byte_at(i) &gt;= b'0'</code>), do arithmetic on it
+(<code>s.byte_at(i) - b'0'</code>), and render with <code>s.byte_at(i) as char</code>.
+<code>s[i]</code> is not that byte: indexing counts Unicode scalars, so it
+yields the <code>char</code> at character index <code>i</code>.</p>
 
 
 

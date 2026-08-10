@@ -1780,6 +1780,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1859,6 +1861,34 @@
 
 
     Diagnostics style
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../design/incremental/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Incremental front end
 
 
 
@@ -2809,7 +2839,17 @@ The literal spelling of each container is in
 <tr>
 <td><code>m.iter()</code></td>
 <td><code>Vec&lt;(K, V)&gt;</code></td>
-<td><code>keys()</code> / <code>values()</code> return <code>Vec&lt;K&gt;</code> / <code>Vec&lt;V&gt;</code>.</td>
+<td>Pairs in key order. A struct, tuple, or array key is rebuilt from the map's own key layout, so a bound key sees the value that was inserted.</td>
+</tr>
+<tr>
+<td><code>m.values()</code></td>
+<td><code>Vec&lt;V&gt;</code></td>
+<td>Values in key order, for every key type.</td>
+</tr>
+<tr>
+<td><code>m.keys()</code></td>
+<td><code>Vec&lt;K&gt;</code></td>
+<td>Scalar and <code>String</code> keys only. A struct, tuple, or array key is rejected at check time; use <code>for (key, value) in m.iter()</code>.</td>
 </tr>
 <tr>
 <td><code>m.is_empty()</code> / <code>m.clear()</code></td>
@@ -2877,12 +2917,12 @@ iteration.</p>
 </tr>
 <tr>
 <td><code>m.iter()</code></td>
-<td><code>Vec&lt;(String, i64)&gt;</code></td>
-<td>Yields pairs in ascending key order.</td>
+<td><code>Vec&lt;(K, V)&gt;</code></td>
+<td>Yields pairs in ascending key order, for every key and value pairing.</td>
 </tr>
 <tr>
 <td><code>m.keys()</code> / <code>m.values()</code></td>
-<td><code>Vec&lt;String&gt;</code> / <code>Vec&lt;i64&gt;</code></td>
+<td><code>Vec&lt;K&gt;</code> / <code>Vec&lt;V&gt;</code></td>
 <td>Snapshots keys or values in key order.</td>
 </tr>
 </tbody>

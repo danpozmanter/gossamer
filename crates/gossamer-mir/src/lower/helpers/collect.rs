@@ -1218,6 +1218,13 @@ pub(crate) fn lower_fn(
             builder.bind_aggregate_let_pattern(local, pattern, span);
         }
     }
+    // A lifted closure body runs once per element under a sequence
+    // combinator, so it owns a region on the same terms a loop body does.
+    // The return value is read into RETURN before the pop, and eligibility
+    // admits only a Copy tail, so nothing handed back points into the
+    // popped region.
+    let regioned = matches!(decl.origin, gossamer_hir::FnOrigin::LiftedClosure)
+        && builder.begin_closure_body_region(&body.block, span);
     let result_local = builder.lower_block(&body.block);
     if let Some(result) = result_local {
         if builder.current.is_some() {
@@ -1230,6 +1237,7 @@ pub(crate) fn lower_fn(
             );
         }
     }
+    builder.end_auto_region(regioned, span);
     builder.terminate(Terminator::Return);
     Some(Body {
         name: decl.name.name.clone(),

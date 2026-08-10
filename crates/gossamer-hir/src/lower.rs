@@ -16,7 +16,7 @@ use gossamer_types::{Ty, TyCtxt, TypeTable};
 
 use crate::ids::{HirId, HirIdGenerator};
 use crate::tree::{
-    HirAdt, HirAdtKind, HirArrayExpr, HirBinaryOp, HirBlock, HirBody, HirConst, HirExpr,
+    FnOrigin, HirAdt, HirAdtKind, HirArrayExpr, HirBinaryOp, HirBlock, HirBody, HirConst, HirExpr,
     HirExprKind, HirFieldPat, HirFn, HirImpl, HirItem, HirItemKind, HirLiteral, HirMatchArm,
     HirParam, HirPat, HirPatKind, HirProgram, HirStatic, HirStmt, HirStmtKind, HirTrait,
     HirUnaryOp,
@@ -673,6 +673,7 @@ impl Lowerer<'_> {
             is_unsafe: decl.is_unsafe,
             is_comptime: decl.is_comptime,
             has_self,
+            origin: FnOrigin::Declared,
         }
     }
 

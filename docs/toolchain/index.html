@@ -1709,6 +1709,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1788,6 +1790,34 @@
 
 
     Diagnostics style
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../design/incremental/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Incremental front end
 
 
 
@@ -2257,7 +2287,7 @@ the implementation by a rev.</p>
 </tr>
 <tr>
 <td><code>gos check [--timings] FILE</code></td>
-<td>Parse + resolve + typecheck + exhaustiveness. With <code>--timings</code>, prints per-stage wall-clock times. Parse output is cached by source hash - re-invocations on an unchanged file reuse the parsed AST. Set <code>GOSSAMER_CACHE_TRACE=1</code> to log cache hits.</td>
+<td>Parse + resolve + typecheck + exhaustiveness. With <code>--timings</code>, prints per-stage wall-clock times. The whole result is cached, so a re-invocation over unchanged inputs skips every front-end stage (<a href="../design/incremental/">incremental front end</a>). Set <code>GOSSAMER_CACHE_TRACE=1</code> to log cache hits, <code>GOS_NO_CACHE=1</code> to disable the cache.</td>
 </tr>
 <tr>
 <td><code>gos run FILE</code></td>

@@ -18,8 +18,8 @@ use gossamer_lex::Span;
 
 use crate::ids::HirIdGenerator;
 use crate::tree::{
-    HirArrayExpr, HirBlock, HirBody, HirExpr, HirExprKind, HirFn, HirItem, HirItemKind, HirParam,
-    HirPat, HirPatKind, HirProgram, HirStmt, HirStmtKind,
+    FnOrigin, HirArrayExpr, HirBlock, HirBody, HirExpr, HirExprKind, HirFn, HirItem, HirItemKind,
+    HirParam, HirPat, HirPatKind, HirProgram, HirStmt, HirStmtKind,
 };
 
 /// Parameter name of the environment pointer a capturing closure's lifted
@@ -651,6 +651,7 @@ impl Lifter {
             is_unsafe: false,
             is_comptime: false,
             has_self: false,
+            origin: FnOrigin::LiftedClosure,
         };
         self.lifted.push(HirItem {
             id: self.ids.next(),
@@ -747,6 +748,7 @@ impl Lifter {
             is_unsafe: false,
             is_comptime: false,
             has_self: false,
+            origin: FnOrigin::LiftedClosure,
         };
         self.lifted.push(HirItem {
             id: self.ids.next(),

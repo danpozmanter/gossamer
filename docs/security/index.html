@@ -1522,6 +1522,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1601,6 +1603,34 @@
 
 
     Diagnostics style
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../design/incremental/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Incremental front end
 
 
 
@@ -2131,7 +2161,8 @@ know:</p>
 </ul>
 <p>Open caveats:</p>
 <ul>
-<li>HTTP/2 + WebSockets are deferred to v1.x.</li>
+<li>HTTP/2 negotiates over ALPN and WebSockets serve over <code>ws://</code>; <code>wss://</code>
+  client connections are not yet supported.</li>
 <li>Per-line coverage instrumentation (Phase 2 follow-up) -
   the <code>--coverage</code> output today is at the test-file
   granularity.</li>

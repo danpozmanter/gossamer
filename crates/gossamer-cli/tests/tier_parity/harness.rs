@@ -712,6 +712,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/auto_regions.gos"),
     spec("feature-testing-examples/auto_regions_for.gos"),
     spec("feature-testing-examples/auto_regions_map_iter.gos"),
+    spec("feature-testing-examples/auto_regions_closure_body.gos"),
     spec("feature-testing-examples/bool_vec_byte_stride.gos"),
     spec("feature-testing-examples/tuple_extract_region.gos"),
     spec("feature-testing-examples/defer_unwind_order.gos"),

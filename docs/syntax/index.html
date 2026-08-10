@@ -1778,6 +1778,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1857,6 +1859,34 @@
 
 
     Diagnostics style
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../design/incremental/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Incremental front end
 
 
 
@@ -2514,12 +2544,13 @@ parentheses needed:</p>
 <a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="c1">// Equivalent nested form:</span>
 <a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="kd">let</span><span class="w"> </span><span class="n">same</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span><span class="w"> </span><span class="n">add</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="n">double</span><span class="p">(</span><span class="mi">3</span><span class="p">)))</span>
 </code></pre></div>
-<p>Use one direct <code>_</code> argument when the value belongs in a different
-position: <code>text |&gt; strings::slice(_, 1, 3)</code> becomes
-<code>strings::slice(text, 1, 3)</code>. A trailing <code>_</code> is accepted but is only
-an explicit spelling of the default data-last rule. <code>_</code> can also be
-the receiver in forms such as <code>text |&gt; _.trim</code>; it may not be used
-more than once in one pipe step.</p>
+<p>Use one direct <code>$</code> argument when the value belongs in a different
+position: <code>text |&gt; strings::slice($, 1, 3)</code> becomes
+<code>strings::slice(text, 1, 3)</code>. A trailing <code>$</code> is accepted but is only
+an explicit spelling of the default data-last rule. <code>$</code> can also be
+the receiver in forms such as <code>text |&gt; $.trim</code>; it may not be used
+more than once in one pipe step. <code>$</code> is punctuation rather than an
+identifier, so it never collides with a name in scope.</p>
 <h2 id="pattern-matching">Pattern matching<a class="headerlink" href="#pattern-matching" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>_</code> - wildcard.</li>
@@ -2739,7 +2770,10 @@ module's final path segment, or the requested alias, into the file:</p>
 unresolved-name error. Prelude types, variants, macros, and functions listed
 on the <a href="../prelude/">Prelude page</a> remain available without imports.</p>
 <p>A project's module tree is file-based: <code>src/foo.gos</code> becomes
-<code>mod foo</code>, <code>src/bar/mod.gos</code> becomes <code>mod bar</code>.</p>
+<code>mod foo</code>, <code>src/bar/mod.gos</code> becomes <code>mod bar</code>, nesting to any depth.
+Local modules import exactly like the standard library - <code>use foo::item</code>,
+or spell <code>foo::item</code> in full. A bare name that some module declares but
+which is not in scope reports <code>GR0011</code> with the <code>use</code> line that fixes it.</p>
 <h2 id="numeric-literals">Numeric literals<a class="headerlink" href="#numeric-literals" title="Permanent link">&para;</a></h2>
 <p>Write bare literals by default. Inference picks the type from the
 binding, the call site, or the return type; suffixes are reserved

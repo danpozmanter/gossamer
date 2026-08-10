@@ -1518,6 +1518,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1597,6 +1599,34 @@
 
 
     Diagnostics style
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../design/incremental/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Incremental front end
 
 
 
@@ -1893,6 +1923,28 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
 
         <li class="md-nav__item">
+  <a href="#associated-types" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Associated types
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#associated-constants" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Associated constants
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#operator-overloading" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -1949,6 +2001,64 @@ methods (<code>fn report&lt;T: Shape&gt;(s: &amp;T)</code>) - see <a href="../ge
 <a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span><span class="p">}</span>
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="p">}</span>
 </code></pre></div>
+<h2 id="associated-types">Associated types<a class="headerlink" href="#associated-types" title="Permanent link">&para;</a></h2>
+<p>A trait declares <code>type Item</code> and each <code>impl</code> supplies one concrete type
+for it. <code>Self::Item</code> and <code>T::Item</code> name that type in signatures and
+bodies; the projection resolves before lowering, so every tier sees the
+concrete type.</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">trait</span><span class="w"> </span><span class="n">Holder</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span><span class="k">type</span> <span class="nc">Item</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">get</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nc">Self</span>::<span class="n">Item</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="p">}</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="k">struct</span> <span class="nc">Label</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">text</span>: <span class="nb">String</span> <span class="p">}</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="k">impl</span><span class="w"> </span><span class="n">Holder</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">Label</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">    </span><span class="k">type</span> <span class="nc">Item</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">String</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">get</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nc">Self</span>::<span class="n">Item</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">text</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="p">}</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="k">fn</span> <span class="nf">shout</span><span class="o">&lt;</span><span class="n">T</span>: <span class="nc">Holder</span><span class="o">&gt;</span><span class="p">(</span><span class="n">holder</span>: <span class="kp">&amp;</span><span class="nc">T</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nc">T</span>::<span class="n">Item</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">holder</span><span class="p">.</span><span class="n">get</span><span class="p">()</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p>A trait may give the associated type a default (<code>type Count = i64</code>),
+which an impl inherits unless it restates it.</p>
+<p>When several impls supply different types, pin the projection with an
+equality constraint on the bound:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">fn</span> <span class="nf">sum_of</span><span class="o">&lt;</span><span class="n">T</span>: <span class="nc">Source</span><span class="o">&lt;</span><span class="n">Item</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kt">i64</span><span class="o">&gt;&gt;</span><span class="p">(</span><span class="n">source</span>: <span class="kp">&amp;</span><span class="nc">T</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nc">T</span>::<span class="n">Item</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">source</span><span class="p">.</span><span class="n">take</span><span class="p">()</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p>Resolution order is: the equality constraint, the impl named by a
+concrete base (<code>Label::Item</code>, or <code>Self::Item</code> inside an impl), the
+trait's default, then the trait's single implementor. A supertrait's
+associated items are reachable through the subtrait that inherits them.
+An impl that omits a required associated item is rejected (<code>GT0059</code>), a
+projection of an undeclared item is rejected (<code>GT0060</code>), and an ambiguous
+projection is rejected with the constraint to write (<code>GT0061</code>).</p>
+<p>Out of scope: generic associated types (<code>type Item&lt;T&gt;</code>), associated types
+on <code>dyn Trait</code> (Gossamer has no trait objects), and inferring a
+projection across several candidate impls without a constraint.</p>
+<h2 id="associated-constants">Associated constants<a class="headerlink" href="#associated-constants" title="Permanent link">&para;</a></h2>
+<p>A trait declares <code>const MAX: i64</code>, optionally with a default; each impl
+supplies a value. Read one as <code>Type::MAX</code>, <code>Self::MAX</code>, or <code>T::MAX</code>
+through a bound.</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">trait</span><span class="w"> </span><span class="n">Bounded</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">MAX</span>: <span class="kt">i64</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="nc">const</span><span class="w"> </span><span class="n">STEP</span>: <span class="kt">i64</span> <span class="o">=</span><span class="w"> </span><span class="mi">5</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">width</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="p">}</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="k">struct</span> <span class="nc">Gauge</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">span</span>: <span class="kt">i64</span> <span class="p">}</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="k">impl</span><span class="w"> </span><span class="n">Bounded</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">Gauge</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">MAX</span>: <span class="kt">i64</span> <span class="o">=</span><span class="w"> </span><span class="mi">100</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">width</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">span</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="bp">Self</span>::<span class="n">MAX</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="p">}</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="k">fn</span> <span class="nf">headroom</span><span class="o">&lt;</span><span class="n">T</span>: <span class="nc">Bounded</span><span class="o">&gt;</span><span class="p">(</span><span class="n">gauge</span>: <span class="kp">&amp;</span><span class="nc">T</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span><span class="w"> </span><span class="n">T</span>::<span class="n">MAX</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">gauge</span><span class="p">.</span><span class="n">width</span><span class="p">()</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">T</span>::<span class="n">STEP</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p>Each associated constant compiles to an ordinary constant, so its value
+folds identically on the bytecode VM, the JIT, and the LLVM AOT tier.
+<code>T::MAX</code> follows the same resolution order as a type projection: the
+trait's default, else the trait's single implementor.</p>
 <h2 id="operator-overloading">Operator overloading<a class="headerlink" href="#operator-overloading" title="Permanent link">&para;</a></h2>
 <p>Implementing the matching trait makes an operator dispatch to its method
 on a user struct, enum, or generic struct - on every tier (bytecode VM,
@@ -1996,10 +2106,10 @@ a dot product (<code>Mul -&gt; f64</code>) types correctly. Compound assignment
 </tr>
 </tbody>
 </table>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">struct</span> <span class="nc">V2</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="kt">f64</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>: <span class="kt">f64</span> <span class="p">}</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="k">impl</span><span class="w"> </span><span class="n">Add</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">V2</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">fn</span> <span class="nf">add</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">o</span>: <span class="nc">V2</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nc">V2</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">V2</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="nc">self</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>: <span class="nc">self</span><span class="p">.</span><span class="n">y</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">y</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="k">impl</span><span class="w"> </span><span class="n">Mul</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">V2</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">fn</span> <span class="nf">mul</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">o</span>: <span class="nc">V2</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">f64</span> <span class="p">{</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">y</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">y</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">struct</span> <span class="nc">V2</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="kt">f64</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>: <span class="kt">f64</span> <span class="p">}</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">impl</span><span class="w"> </span><span class="n">Add</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">V2</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">fn</span> <span class="nf">add</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">o</span>: <span class="nc">V2</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nc">V2</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">V2</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="nc">self</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>: <span class="nc">self</span><span class="p">.</span><span class="n">y</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">y</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="k">impl</span><span class="w"> </span><span class="n">Mul</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">V2</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">fn</span> <span class="nf">mul</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">o</span>: <span class="nc">V2</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">f64</span> <span class="p">{</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">y</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">y</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
 <p>Applying an arithmetic operator to an ADT with no matching impl is a
 compile error (<code>GT0003</code>). These are real impls, not derives - the operator
@@ -2009,14 +2119,14 @@ traits are <strong>not</strong> <code>#[derive]</code>-able.</p>
 powers <code>B::try_from(x)</code> and <code>x.try_into() -&gt; Result&lt;B, E&gt;</code>. The <code>into</code> /
 <code>try_into</code> target is inferred from the use site (<code>let B</code>, a <code>B</code> parameter
 or return):</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">struct</span> <span class="nc">Celsius</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">t</span>: <span class="kt">i64</span> <span class="p">}</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="k">struct</span> <span class="nc">Fahrenheit</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">t</span>: <span class="kt">i64</span> <span class="p">}</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="k">impl</span><span class="w"> </span><span class="n">Fahrenheit</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">from</span><span class="p">(</span><span class="n">c</span>: <span class="nc">Celsius</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nc">Fahrenheit</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">Fahrenheit</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">t</span>: <span class="nc">c</span><span class="p">.</span><span class="n">t</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">9</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">32</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">}</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="kd">let</span><span class="w"> </span><span class="n">f</span>: <span class="nc">Fahrenheit</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Celsius</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">t</span>: <span class="mi">100</span><span class="w"> </span><span class="p">}.</span><span class="n">into</span><span class="p">()</span><span class="w">   </span><span class="c1">// 212, via Fahrenheit::from</span>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">struct</span> <span class="nc">Celsius</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">t</span>: <span class="kt">i64</span> <span class="p">}</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="k">struct</span> <span class="nc">Fahrenheit</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">t</span>: <span class="kt">i64</span> <span class="p">}</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="k">impl</span><span class="w"> </span><span class="n">Fahrenheit</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">from</span><span class="p">(</span><span class="n">c</span>: <span class="nc">Celsius</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nc">Fahrenheit</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">Fahrenheit</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">t</span>: <span class="nc">c</span><span class="p">.</span><span class="n">t</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">9</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">32</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="p">}</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="kd">let</span><span class="w"> </span><span class="n">f</span>: <span class="nc">Fahrenheit</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Celsius</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">t</span>: <span class="mi">100</span><span class="w"> </span><span class="p">}.</span><span class="n">into</span><span class="p">()</span><span class="w">   </span><span class="c1">// 212, via Fahrenheit::from</span>
 </code></pre></div>
 <p><code>?</code> also auto-converts a propagated <code>Err</code> through <code>errors::Error::from</code>,
 so a <code>Result&lt;_, String&gt;</code> flows into a <code>Result&lt;_, errors::Error&gt;</code> function

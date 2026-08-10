@@ -1,0 +1,82 @@
+// Auto-regions over a sequence combinator's closure body: the compiler wraps
+// an eligible `xs.map(|x| build-and-discard)` body in an arena region, exactly
+// as it already does for the `for x in xs { build; consume }` that spells the
+// same iteration. This fixture locks correctness for BOTH the regioned shape
+// and the not-regioned ones (the closure hands a heap value back, or captures
+// a heap value it passes on), so the escape analysis cannot silently regress
+// in either direction: over-region an escaping value -> UAF / wrong output;
+// under-region -> still correct, just slower. Each case is compared against
+// the loop form that must agree with it.
+// Run with `GOS_ARENA_TRACE=1` to see the eligible bodies report
+// `closure body auto-regioned`.
+// Output must stay bit-identical across VM / Cranelift / LLVM.
+
+enum Tree { Leaf, Node(Box<Tree>, Box<Tree>) }
+
+fn make(d: i64) -> Tree {
+    if d == 0 {
+        Tree::Leaf
+    } else {
+        Tree::Node(Box::new(make(d - 1)), Box::new(make(d - 1)))
+    }
+}
+
+fn count(t: &Tree) -> i64 {
+    match t {
+        Tree::Leaf => 1,
+        Tree::Node(l, r) => 1 + count(l) + count(r),
+    }
+}
+
+fn graft(t: &Tree, d: i64) -> Tree {
+    Tree::Node(Box::new(make(d)), Box::new(make(count(t) % 3)))
+}
+
+fn main() {
+    // ELIGIBLE: each call builds a tree from a Copy element and discards it.
+    // Only the i64 result leaves the closure -> regioned. The loop form spells
+    // the same iteration and must produce the same total.
+    let combinator = (1..9).map(|d| count(&make(d))).sum()
+    let mut loop_form = 0
+    for d in 1..9 {
+        loop_form += count(&make(d))
+    }
+    println!("{} {} {}", combinator, loop_form, combinator == loop_form)
+
+    // ELIGIBLE with a captured Copy value and a read of an outer sequence: the
+    // body allocates only what it discards, so reading through `base` and
+    // `scale` cannot carry a region pointer out.
+    let scale = 3
+    let base = #[10, 20, 30]
+    let mixed = (0..3).map(|i| base[i] + count(&make(i + 2)) * scale).sum()
+    let mut mixed_loop = 0
+    for i in 0..3 {
+        mixed_loop += base[i] + count(&make(i + 2)) * scale
+    }
+    println!("{} {} {}", mixed, mixed_loop, mixed == mixed_loop)
+
+    // NOT ELIGIBLE: the tree itself is handed back, so the body must keep the
+    // ordinary reference-counted path - the trees have to survive the call to
+    // be counted afterward.
+    let kept = (1..5).map(|d| make(d)).collect()
+    let mut kept_total = 0
+    for t in kept {
+        kept_total += count(t)
+    }
+    println!("{}", kept_total)
+
+    // NOT ELIGIBLE: the body allocates, but it passes a captured non-Copy
+    // value into the call - the callee could stash it somewhere that outlives
+    // the region, so the body keeps the reference-counted path.
+    let held = make(4)
+    let borrowed = (1..4).map(|d| count(&graft(&held, d))).sum()
+    let mut borrowed_loop = 0
+    for d in 1..4 {
+        borrowed_loop += count(&graft(&held, d))
+    }
+    println!("{} {} {}", borrowed, borrowed_loop, borrowed == borrowed_loop)
+
+    // Nested: a regioned closure body driving a second combinator.
+    let nested = (1..4).map(|d| (1..d + 2).map(|e| count(&make(e))).sum()).sum()
+    println!("{}", nested)
+}

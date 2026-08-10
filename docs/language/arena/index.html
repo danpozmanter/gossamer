@@ -1643,6 +1643,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1722,6 +1724,34 @@
 
 
     Diagnostics style
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../design/incremental/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Incremental front end
 
 
 
@@ -2151,6 +2181,16 @@ build-and-discard code gets the bulk-free path with no source change:</p>
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="n">total</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">check</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tree</span><span class="p">)</span><span class="w">          </span><span class="c1">// freed wholesale at the iteration end</span>
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="p">}</span>
 </code></pre></div>
+<p>A sequence combinator's closure body runs once per element, so it is
+analyzed and regioned on the same terms. The two ways to spell one
+iteration perform the same:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1">// Same bulk-free as the loop above.</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">total</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="mi">0</span><span class="o">..</span><span class="n">iterations</span><span class="p">).</span><span class="n">map</span><span class="p">(</span><span class="o">|</span><span class="n">_</span><span class="o">|</span><span class="w"> </span><span class="n">check</span><span class="p">(</span><span class="o">&amp;</span><span class="n">build_tree</span><span class="p">(</span><span class="n">depth</span><span class="p">))).</span><span class="n">sum</span><span class="p">()</span>
+</code></pre></div>
+<p>A closure qualifies only when the value it hands back cannot point into
+the region - a scalar result is fine, a returned tree keeps the ordinary
+reference-counted path - and a captured value counts as an outer one, so
+passing a captured collection into a call disqualifies the body.</p>
 <p>This is <strong>sound by construction</strong>. The analysis over-approximates
 escapes: if it cannot prove a body's allocations stay local - the body
 calls a method, stores a value into an outer binding, breaks/returns,
@@ -2161,13 +2201,15 @@ changes a result. The trade-off is the reverse of the manual block: the
 worst case is a <em>missed speedup</em>, not a dangling pointer.</p>
 <h3 id="seeing-the-decision">Seeing the decision<a class="headerlink" href="#seeing-the-decision" title="Permanent link">&para;</a></h3>
 <p>When an allocation-heavy loop runs slower than expected, set
-<code>GOS_ARENA_TRACE=1</code> at build time. Every loop prints whether it was
-auto-regioned, and if an allocating loop was not, why:</p>
-<div class="language-text highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>[arena] file 0 bytes 992..993: auto-regioned (iteration heap bulk-freed)
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>[arena] file 0 bytes 806..1087: NOT regioned - allocates each iteration on the
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  slow per-node RC path: body contains a nested loop. Wrap the body in `arena { }`.
+<code>GOS_ARENA_TRACE=1</code> at build time. Every loop and closure body prints
+whether it was auto-regioned, and if an allocating one was not, why:</p>
+<div class="language-text highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>[arena] file 0 bytes 992..993: auto-regioned (iteration heap bulk-freed)
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>[arena] file 0 bytes 806..1087: NOT regioned - allocates each iteration on the
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  slow per-node RC path: body contains a nested loop. Wrap the body in `arena { }`.
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>[arena] file 0 bytes 1418..1437: closure body auto-regioned (per-call heap
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>  bulk-freed)
 </code></pre></div>
-<p>The reason names the exact rule that disqualified the loop (a method
+<p>The reason names the exact rule that disqualified the body (a method
 call, an escaping value, a nested loop, an early exit, an unvetted
 callee), so you know whether to restructure the loop or reach for an
 explicit <code>arena { }</code> - which always works, because you are then making
@@ -2196,12 +2238,12 @@ by over-approximation: it may ask you to restructure a sound program,
 but it never lets an escaping one compile. Run <code>gos explain GM0003</code>
 for the details.</p>
 <p>Compute summaries inside, keep survivors outside:</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">best</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">arena</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">g</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">build_graph</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="n">best</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">score</span><span class="p">(</span><span class="o">&amp;</span><span class="n">g</span><span class="p">)</span><span class="w">      </span><span class="c1">// scalar out: fine</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="p">}</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="c1">// `g` is gone; `best` survives.</span>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">best</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">arena</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">g</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">build_graph</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="n">best</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">score</span><span class="p">(</span><span class="o">&amp;</span><span class="n">g</span><span class="p">)</span><span class="w">      </span><span class="c1">// scalar out: fine</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="p">}</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="c1">// `g` is gone; `best` survives.</span>
 </code></pre></div>
 <p>Edge cases, pinned: <code>Weak</code> references to arena values upgrade to
 <code>None</code>; unit-variant singletons (<code>Tree::Nil</code>) are process-immortal and

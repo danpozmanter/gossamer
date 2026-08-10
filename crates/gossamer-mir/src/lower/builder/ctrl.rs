@@ -2355,7 +2355,7 @@ impl<'a> Builder<'a> {
         self.loop_stack.pop();
         // Eligibility guarantees no early exit, so `current` is the body's
         // fall-through; the pop lands before the back-edge.
-        self.end_loop_region(regioned, span);
+        self.end_auto_region(regioned, span);
         self.terminate(Terminator::Goto { target: header });
 
         self.set_current(exit);
@@ -2410,7 +2410,7 @@ impl<'a> Builder<'a> {
     /// `_array`, `_vec`, `_enumerate`) call this where `lower_while` inlines
     /// the same logic, so idiomatic `for x in 0..n { build; consume }` gets
     /// the same iteration-scoped bulk-free as the `while` form. Pair with
-    /// `end_loop_region` on the body's fall-through. Eligibility rejects any
+    /// `end_auto_region` on the body's fall-through. Eligibility rejects any
     /// `break` / `continue` / `return`, so the only body exit is that
     /// fall-through, where the pop is emitted.
     pub(crate) fn begin_loop_region(&mut self, body: &HirExpr, span: Span) -> bool {
@@ -2444,9 +2444,52 @@ impl<'a> Builder<'a> {
         regioned
     }
 
-    /// Closes a region opened by `begin_loop_region`, emitting `arena_pop` on
-    /// the body's fall-through block before the loop's back-edge.
-    pub(crate) fn end_loop_region(&mut self, regioned: bool, span: Span) {
+    /// Opens an arena region around a lifted closure's whole body, returning
+    /// whether it was regioned. A sequence combinator invokes such a body once
+    /// per element, so its allocations have the same lifetime as a loop body's
+    /// and `for x in xs { .. }` and `xs.map(|x| ..)` get the same bulk-free.
+    /// Eligibility rejects a non-Copy tail, so the value handed back to the
+    /// caller can never point into the popped region. Pair with
+    /// `end_auto_region` on the body's fall-through.
+    pub(crate) fn begin_closure_body_region(
+        &mut self,
+        block: &gossamer_hir::HirBlock,
+        span: Span,
+    ) -> bool {
+        use crate::lower::helpers::{LoopEligibility, RegionDecision};
+        let decision =
+            LoopEligibility::new(&*self.tcx, self.region_unsafe).decide_lexical_block(block);
+        if std::env::var_os("GOS_ARENA_TRACE").is_some() {
+            match decision {
+                RegionDecision::Region => eprintln!(
+                    "[arena] file {} bytes {}..{}: closure body auto-regioned (per-call heap bulk-freed)",
+                    span.file.as_u32(),
+                    span.start,
+                    span.end
+                ),
+                RegionDecision::Reject(r) => eprintln!(
+                    "[arena] file {} bytes {}..{}: closure body NOT regioned - allocates on each call on the slow per-node RC path: {}. Wrap the body in `arena {{ }}` to bulk-free it.",
+                    span.file.as_u32(),
+                    span.start,
+                    span.end,
+                    r.reason()
+                ),
+                RegionDecision::NoAlloc => {}
+            }
+        }
+        let regioned = matches!(decision, RegionDecision::Region);
+        if regioned {
+            self.emit_region_call("gos_rt_arena_push", span);
+            self.region_depth += 1;
+            self.deferred_auto_region_collections.push(false);
+        }
+        regioned
+    }
+
+    /// Closes a region opened by `begin_loop_region` or
+    /// `begin_closure_body_region`, emitting `arena_pop` on the fall-through
+    /// block before the loop's back-edge or the body's return.
+    pub(crate) fn end_auto_region(&mut self, regioned: bool, span: Span) {
         if regioned {
             self.region_depth = self.region_depth.saturating_sub(1);
             let collect_after_pop = self
@@ -2516,7 +2559,7 @@ impl<'a> Builder<'a> {
         });
         let _ = self.lower_expr(body);
         let ctx = self.loop_stack.pop().expect("loop stack underflow");
-        self.end_loop_region(regioned, span);
+        self.end_auto_region(regioned, span);
         self.terminate(Terminator::Goto { target: header });
         self.set_current(exit);
         if ctx.break_used {

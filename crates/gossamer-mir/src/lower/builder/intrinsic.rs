@@ -3702,7 +3702,7 @@ impl<'a> Builder<'a> {
         let regioned = self.begin_loop_region(for_loop.body, span);
         let _ = self.lower_expr(for_loop.body);
         self.pop_scope();
-        self.end_loop_region(regioned, span);
+        self.end_auto_region(regioned, span);
         self.terminate(Terminator::Goto { target: step_block });
 
         self.set_current(step_block);
@@ -3867,7 +3867,7 @@ impl<'a> Builder<'a> {
         let regioned = self.begin_loop_region(for_loop.body, span);
         let _ = self.lower_expr(for_loop.body);
         self.pop_scope();
-        self.end_loop_region(regioned, span);
+        self.end_auto_region(regioned, span);
         self.terminate(Terminator::Goto { target: step_block });
 
         self.set_current(step_block);
@@ -4025,7 +4025,7 @@ impl<'a> Builder<'a> {
         let regioned = self.begin_loop_region(for_loop.body, span);
         let _ = self.lower_expr(for_loop.body);
         self.pop_scope();
-        self.end_loop_region(regioned, span);
+        self.end_auto_region(regioned, span);
         self.terminate(Terminator::Goto { target: step_block });
 
         self.set_current(step_block);

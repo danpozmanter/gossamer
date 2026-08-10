@@ -1674,6 +1674,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1753,6 +1755,34 @@
 
 
     Diagnostics style
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../design/incremental/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Incremental front end
 
 
 
@@ -2279,9 +2309,8 @@ described in the <a href="../design/memory_model/">concurrency memory model</a>.
   balanced retain/release pairs; a liveness pass releases owned values
   at their <em>last use</em> rather than at function exit, so a large
   structure does not pin memory while unrelated code runs.</li>
-<li><strong>Cycle collector.</strong> Reference cycles (<code>a.next = Some(b);
-  b.next = Some(a)</code>) are reclaimed by a Bacon-Rajan style cycle
-  collector that runs on demand (<code>runtime::collect_cycles()</code>) and from
+<li><strong>Cycle collector.</strong> Reference cycles are reclaimed by a Bacon-Rajan
+  style collector that runs on demand (<code>runtime::collect_cycles()</code>) and from
   allocation pressure (a fixed candidate-count threshold, not a
   wall-clock timer, so collection is a deterministic function of
   allocation events). Acyclic data never pays for it. Because Gossamer
@@ -2290,14 +2319,15 @@ described in the <a href="../design/memory_model/">concurrency memory model</a>.
   cross-tier reproducibility.</li>
 <li><strong>Weak references.</strong> <code>Weak&lt;T&gt;</code> observes a value without keeping it
   alive; <code>w.upgrade()</code> returns <code>Option&lt;T&gt;</code> and answers <code>None</code> once the
-  referent has been reclaimed. One cross-tier caveat: a <code>Weak</code> that
-  points at a member of a <em>strong</em> cycle (an unusual shape - weak
-  references normally <em>break</em> cycles, in which case there is no strong
-  cycle and every tier agrees) observes that member as live on the
-  interpreter (<code>gos</code>, whose collector is a no-op and leaks the cycle)
-  but as <code>None</code> on the compiled tiers once the collector has run. Do not
-  branch on <code>upgrade()</code> of a known strong-cycle member if you need
-  identical behavior under <code>gos</code> and <code>gos build</code>.</li>
+  referent has been reclaimed. <code>x.downgrade()</code> pins the referent it
+  observes in the frame that took the weak, so the referent stays
+  strongly reachable for the whole of that scope and is reclaimed when
+  the scope ends, whatever the collector is doing. That makes
+  <code>upgrade()</code> a function of scope, never of collection timing:
+  a <code>Weak</code> aimed at a member of a cyclic shape answers the same on
+  <code>gos</code>, the JIT, and <code>gos build</code>, before or after
+  <code>runtime::collect_cycles()</code>. <code>feature-testing-examples/weak_into_strong_cycle.gos</code>
+  pins the guarantee across all three tiers.</li>
 <li><strong>Compact representation.</strong> A heap enum node carries an 8-byte
   runtime header. Enums with at most 4 variants store their
   discriminant in pointer tag bits, so a two-pointer tree node costs
@@ -2364,10 +2394,13 @@ unchecked escape hatch; there the contract is yours to uphold.)</p>
 together</em> - build, traverse, summarize, exit. If a value must survive,
 let the block compute a scalar/string summary, or build the surviving
 value before (outside) the arena.</p>
-<p>Two deliberate edge-case rules: <code>Weak</code> references to arena values
-upgrade to <code>None</code> (the referent is not individually tracked), and a
-panic that unwinds out of a goroutine mid-arena abandons the arena's
-slabs to the goroutine's teardown rather than corrupting them.</p>
+<p>Two deliberate edge-case rules. A <code>Weak</code> taken inside a block keeps
+upgrading to <code>Some</code> for the rest of that block - the referent is not
+individually tracked, and the escape check (<code>GM0003</code>) rejects any
+program that could still hold the weak after the closing brace, so no
+tier ever reads a reclaimed slab through one. And a panic that unwinds
+out of a goroutine mid-arena abandons the arena's slabs to the
+goroutine's teardown rather than corrupting them.</p>
 <p><code>runtime::arena_push()</code> / <code>runtime::arena_pop()</code> remain available as
 the low-level primitive when block structure does not fit; the block
 form is the idiom because it cannot be left unbalanced.</p>
