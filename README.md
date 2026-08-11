@@ -72,18 +72,6 @@ My goal is for Gossamer to replace Go, Python, F#/C#, Kotlin/Java, and
 | Keyword arguments                               |    ✓     |      |     |  ✓  |    ✓   |   ✓    |    ✓   |
 | Default argument values                         |    ✓     |      |     |  ✓  |    ✓   |   ✓    |    ✓   |
 
-Gossamer's automatic memory management uses deterministic reference counting
-and has no tracing collector. The compiled runtime can collect thread-local
-cycles on demand; cross-goroutine cycles must be broken with `Weak<T>`, and the
-bytecode VM currently treats `runtime::collect_cycles()` as a no-op. Cycle
-collection is Experimental and is not a cross-tier compatibility promise.
-
-Plus `arena { }` blocks, inspired by Zig: everything allocated inside
-the block is bump-allocated and freed wholesale when the block exits -
-pointer-bump allocation, O(slabs) reclamation, and headerless 16-byte
-nodes for small enums. See the
-[memory model](https://danpozmanter.github.io/gossamer/memory/) chapter.
-
 **Not Transpiled**
 
 Gossamer compiles directly to native, it does not transpile to Rust or Go.
@@ -101,6 +89,17 @@ Gossamer is built to extend simply via (synchronous) Rust.
 ## Features unique to Gossamer
 
 Or at least - not a carbon copy by intent!
+
+**Tier Parity Across Interpreted/Compiled**
+
+Bit-identical semantics across VM / JIT / AOT treated as a release gate.
+
+The code you run in the REPL, as a script, as a debug binary, and as an
+optimized release binary behaves the same as an explicit language goal.
+
+**Memory: Automatic, Deterministic, with Checked Regions**
+Gossamer's automatic memory management uses deterministic reference counting,
+and features checked regions. No lifetime ceremony.
 
 **Commas or Newlines**
 
