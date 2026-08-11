@@ -16,6 +16,17 @@ fn resolver_manifest_item_table_matches_manifest() {
     manifest.dedup();
 
     let table: Vec<&str> = gossamer_resolve::STDLIB_MANIFEST_ITEMS.to_vec();
+    // The lookups below are binary searches, so an unsorted table makes
+    // every entry past the first inversion unreachable and reports it as
+    // missing. Name the inversion instead of the entries it hides.
+    let inversion = table.windows(2).find(|pair| pair[1] < pair[0]);
+    assert!(
+        inversion.is_none(),
+        "STDLIB_MANIFEST_ITEMS is not sorted: {:?} precedes {:?}. \
+         Entries are looked up by binary search; insert in sorted position.",
+        inversion.map(|p| p[0]),
+        inversion.map(|p| p[1]),
+    );
     let missing: Vec<&String> = manifest
         .iter()
         .filter(|path| table.binary_search(&path.as_str()).is_err())

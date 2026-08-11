@@ -1521,8 +1521,11 @@ mod tests {
             zsh.contains("src/main.gos`:_gos_source_file_completions"),
             "{zsh}"
         );
+        // Bind on the completion function, not the whole help sentence:
+        // the argument's documentation is prose and rewording it is not a
+        // completion regression.
         assert!(
-            zsh.contains("Path to a `.gos` source file. Optional when using `--emit-stdlib`:_gos_doc_file_completions"),
+            zsh.contains("Optional when using `--emit-stdlib`:_gos_doc_file_completions"),
             "{zsh}"
         );
         assert!(

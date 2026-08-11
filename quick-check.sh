@@ -123,6 +123,18 @@ if [[ $run_audit -eq 1 ]]; then
     fi
 fi
 
+# Consistency gates - the checked-in tables that must track the stdlib
+# manifest and the CLI surface. They run in milliseconds and are the
+# gates most likely to break from an ordinary edit: adding a stdlib
+# module, or rewording an argument's help text. `quick-check.sh`
+# otherwise skips the workspace test suite, which is where these live.
+run_step "cargo test -p gossamer-std --test resolver_manifest_items" \
+    cargo test -p gossamer-std --test resolver_manifest_items
+run_step "cargo test -p gossamer-resolve --lib stdlib_exports" \
+    cargo test -p gossamer-resolve --lib stdlib_exports
+run_step "cargo test -p gossamer-cli --lib cli::tests" \
+    cargo test -p gossamer-cli --lib cli::tests
+
 # Stdlib docs drift gate - verifies docs_src/stdlib/ pages match
 # what `manifest::ALL_MODULES` would emit. Build the binary first
 # so the check uses the freshly built crate.

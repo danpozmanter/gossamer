@@ -35,11 +35,11 @@
   code the VM uses and exits with the fault status the other faults use;
   it still names the faulting address, which only it knows.
 - Aggregate tier-parity evidence per stdlib module, keyed by the module
-  paths a fixture imports, so `gos feature-status` reports what the walk
-  proved. The sidecar recorded only file paths, which no feature row could
-  ever match. Evidence recorded for the release is compiled into the
-  binary, so an installed `gos` with no repository behind it still reports
-  it.
+  paths a fixture imports, so `gos feature-status` can report what the
+  walk proved. The sidecar recorded only fixture paths, which no feature
+  row could ever match, so the column was unpopulated by construction. No
+  evidence ships with the release yet; the column reads `(no test data)`
+  until a walk has run.
 - Answer `gos doc std`, `gos doc std::<module>`, and `gos doc
   std::<module>::<item>` from the stdlib manifest. Three diagnostics
   (`GR0005`, `GR0009`, and the unknown-export help) point at these commands;
@@ -51,6 +51,14 @@
 - Format every shipped `.gos` source canonically and gate it in CI: 254 of
   them disagreed with `gos fmt`, including trait method declarations
   carrying a trailing semicolon.
+- Keep `STDLIB_MANIFEST_ITEMS` sorted, and say so when it is not. The
+  table is looked up by binary search, so one entry out of order made
+  every later entry unreachable and reported it as missing from the
+  manifest.
+- Run the manifest, resolver-table, and CLI-surface consistency tests in
+  `quick-check.sh`. They live in the workspace test suite the script
+  otherwise skips, and they are the gates an ordinary edit - a new stdlib
+  module, a reworded argument help - is most likely to break.
 
 ## 0.47.0 - Visibility, pub(package), deadlock detection, silently dropped fix,
 ## keyword and constant default arg, goroutine scalability/fixes, 
