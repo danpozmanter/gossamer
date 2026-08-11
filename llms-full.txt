@@ -185,7 +185,7 @@ Write clear, low-complexity, concise code.
 - **`let PAT = expr else { ... }`** - the else block must diverge.
 - **Name an argument or default a parameter** when a call reads better
   for it: `fn volume(width: i64, height: i64 = 2)` then `volume(2)`,
-  `volume(width: 2, height: 3)`, or `volume(2, height: 3)`. Positional
+  `volume(width = 2, height = 3)`, or `volume(2, height = 3)`. Positional
   arguments come first, then names, in any order. A default must be a
   literal (optionally negated) and is spliced per call site. Works on
   methods and associated fns; when two types declare one method name with

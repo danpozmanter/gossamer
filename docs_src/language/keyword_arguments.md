@@ -1,4 +1,7 @@
-# Keyword arguments and parameter defaults
+# `lang::keyword_arguments`
+
+Keyword arguments and constant parameter defaults: a call may name any parameter (`volume(depth = 4, width = 2)`), and a parameter may declare a constant default (`fn volume(width: i64, height: i64 = 2)`) that is spliced into every call omitting it. Positional arguments come first, then names. Both are caller-side spellings rewritten into the callee's declared order before type checking, so the calling convention is unchanged. A name on a method call is matched when every type declaring that method name would rewrite the call identically; when they disagree the call is reported (GR0013) rather than guessed.
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 A call may name the parameter each argument fills, and a parameter may
 declare a constant default that callers can leave out.

@@ -1,3 +1,3 @@
 # `lang::async_await`
 
-`async fn` / `.await` - goroutines + channels cover the same shape today.
+`async fn` / `.await` - declined permanently (SPEC 17.5). Goroutines and channels cover the same shape without colored functions.

@@ -1,6 +1,6 @@
 # `lang::opaque_nominal_alias`
 
-`type Name = new Repr` declares a distinct nominal type over an unchanged runtime representation.
+`type Name = new Repr` declares a distinct nominal type over an unchanged runtime representation, erased before lowering so no tier sees one. It inherits equality, ordering, hashing, and formatting - which describe the value both sides share - and nothing else: arithmetic needs the alias's own `impl Add`, and the representation's methods are not in scope. `.into()` converts to and from its own representation; any other pair needs `impl From`.
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 A transparent alias (`type Id = i64`) is another spelling of its target.

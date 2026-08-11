@@ -1,3 +1,3 @@
 # `lang::move_keyword`
 
-`move` closure capture keyword - parses, lowers to the same Fn shape as a non-move closure (the runtime manages ownership).
+`move` closure capture keyword - declined permanently (SPEC 17.5). Capture is automatic and the runtime manages ownership, so `move` would annotate a decision the language does not make.

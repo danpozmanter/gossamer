@@ -1,3 +1,3 @@
 # `lang::lifetimes`
 
-References have implicit lexical lifetimes ending at the closing brace; explicit lifetime annotations are not part of safe Gossamer.
+Explicit lifetime annotations and a borrow checker - declined permanently (SPEC 17.5). References have implicit lexical lifetimes ending at the closing brace, and the lexical `&mut` check is the intended ceiling.

@@ -2161,9 +2161,10 @@ struct ChannelState {
     waiting_receivers: usize,
     waiting_senders: usize,
     select_waiters: Vec<Arc<SelectWaiter>>,
-    /// Whether this channel currently contributes to
-    /// [`crate::vm::goroutine::pending_handoffs`], kept in step with
-    /// [`ChannelState::has_ready_waiter`] so the global count is a plain sum.
+    /// Whether this channel currently contributes to the pending-handoff count
+    /// maintained through [`crate::vm::goroutine::adjust_pending_handoffs`],
+    /// kept in step with [`ChannelState::has_ready_waiter`] so the global count
+    /// is a plain sum.
     counted_ready: bool,
 }
 

@@ -1,7 +1,5 @@
 # `std::env`
 
-Status: experimental
-
 Process environment, command-line arguments, working directory.
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
