@@ -54,21 +54,23 @@ My goal is for Gossamer to replace Go, Python, F#/C#, Kotlin/Java, and
 
 ## Features inspired by multiple languages:
 
-| Feature | Rust | Go | F# | Python | Elixir |
-|---|---|---|---|---|---|
-| Strong static type system | ✓ | ✓ | ✓ |  |  |
-| Algebraic data types / discriminated unions | ✓ |  | ✓ |  | ✓ |
-| Exhaustive pattern matching | ✓ |  | ✓ |  | ✓ |
-| Error handling via `?` with `Result` & `Option` | ✓ |  |  |  |  |
-| No `null` by default | ✓ |  | ✓ |  | ✓ |
-| Immutable by default | ✓ |  | ✓ |  | ✓ |
-| Reference mutability and escape checks | ✓ |  |  |  |  |
-| Automatic memory management |  | ✓ | ✓ | ✓ | ✓ |
-| Lightweight concurrency primitives |  | ✓ | ✓ |  | ✓ |
-| Small portable binaries | ✓ | ✓ |  |  | ✓ |
-| Pipe operator (`\|>`) |  |  | ✓ |  | ✓ |
-| Interpreted / scripting mode |  |  | ✓ | ✓ | ✓ |
-| Interactive REPL |  |  | ✓ | ✓ | ✓ |
+| Feature                                         | Gossamer | Rust |  Go |  F# | Python | Elixir | Kotlin |
+| ----------------------------------------------- | :------: | :--: | :-: | :-: | :----: | :----: | :----: |
+| Strong static type system                       |    ✓     |   ✓  |  ✓  |  ✓  |        |        |    ✓   |
+| Algebraic data types / discriminated unions     |    ✓     |   ✓  |     |  ✓  |        |        |        |
+| Exhaustive pattern matching                     |    ✓     |   ✓  |     |  ✓  |        |    ✓   |    ✓   |
+| Error handling via `?` with `Result` & `Option` |    ✓     |   ✓  |     |     |        |        |        |
+| No `null` by default                            |    ✓     |   ✓  |     |  ✓  |        |    ✓   |    ✓   |
+| Immutable by default                            |    ✓     |   ✓  |     |  ✓  |        |    ✓   |   ✓    |
+| Reference mutability and escape checks          |    ✓     |   ✓  |     |     |        |        |        |
+| Automatic memory management                     |    ✓     |      |  ✓  |  ✓  |    ✓   |    ✓   |    ✓   |
+| Go style concurrency                            |    ✓     |      |  ✓  |     |        |        |        |
+| Small portable binaries                         |    ✓     |   ✓  |  ✓  |     |        |    ✓   |        |
+| Pipe operator (`\|>`)                           |    ✓     |      |     |  ✓  |        |    ✓   |        |
+| Interpreted / scripting mode                    |    ✓     |      |     |  ✓  |    ✓   |    ✓   |    ✓   |
+| Interactive REPL                                |    ✓     |      |     |  ✓  |    ✓   |    ✓   |    ✓   |
+| Keyword arguments                               |    ✓     |      |     |  ✓  |    ✓   |   ✓    |    ✓   |
+| Default argument values                         |    ✓     |      |     |  ✓  |    ✓   |   ✓    |    ✓   |
 
 Gossamer's automatic memory management uses deterministic reference counting
 and has no tracing collector. The compiled runtime can collect thread-local

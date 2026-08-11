@@ -121,15 +121,11 @@ const MATRIX_TARGETS: &[&str] = &[
 pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
     (
         "std::fs",
-        &[
-            "feature-testing-examples/stdlib_fs_portable.gos",
-        ],
+        &["feature-testing-examples/stdlib_fs_portable.gos"],
     ),
     (
         "std::env",
-        &[
-            "feature-testing-examples/stdlib_env_portable.gos",
-        ],
+        &["feature-testing-examples/stdlib_env_portable.gos"],
     ),
 ];
 

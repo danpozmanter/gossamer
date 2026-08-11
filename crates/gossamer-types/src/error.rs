@@ -1278,7 +1278,9 @@ impl TypeDiagnostic {
                         "`{name}` holds at most one value and carries no element type, \
                          so the loop binding is unconstrained and the body never runs"
                     ))
-                    .with_help(format!("take the value first with {taken}, then iterate it"));
+                    .with_help(format!(
+                        "take the value first with {taken}, then iterate it"
+                    ));
             }
             TypeError::TraitBoundNotSatisfied { ty, bound } => {
                 out = out.with_help(format!(

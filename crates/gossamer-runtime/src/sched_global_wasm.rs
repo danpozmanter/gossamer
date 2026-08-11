@@ -122,6 +122,27 @@ pub struct Parker {
     pub reason: ParkReason,
 }
 
+/// Counts a channel becoming able to hand a value over. Kept for surface
+/// parity with the native scheduler; nothing on wasm reads it, because the
+/// state it guards against - a goroutine waiting for one that never runs -
+/// cannot arise where every goroutine runs to completion at its spawn.
+pub fn adjust_pending_handoffs(_ready: bool) {}
+
+/// Counts the caller entering or leaving a channel wait. Inert here for the
+/// same reason as [`adjust_pending_handoffs`].
+pub fn adjust_channel_waiters(_entering: bool) {}
+
+/// Marks the process as a running Gossamer program. Native uses this to keep
+/// deadlock reporting off inside an embedder; the playground is only ever a
+/// program, and reports nothing, so it records nothing.
+pub fn mark_program_entered() {}
+
+/// Reports a deadlock before blocking. Inert on wasm: a channel operation
+/// that cannot complete immediately goes on to [`park`], which diverges with
+/// the documented "blocking not supported" message. That message names the
+/// real limit of this target, so a second report would say less, not more.
+pub fn report_deadlock_if_stuck(_op: &str) {}
+
 /// Suspends the calling goroutine. With no other thread to make
 /// progress, a real block cannot be satisfied, so after running `arm`
 /// (which would register the wakeup source on native) this diverges

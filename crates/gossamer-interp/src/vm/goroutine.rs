@@ -48,11 +48,10 @@ fn spawn_goroutine_thread<F: FnOnce() + Send + 'static>(
 /// thread per CPU up front multiplies that footprint across processes.
 /// `GOSSAMER_VM_GOROUTINE_WORKERS` sets that starting size.
 ///
-/// It then grows on demand up to [`MAX_WORKERS`], because a goroutine
-/// blocked in a channel operation holds its worker until the operation
-/// completes. A pool that only ever had its initial threads would let that
-/// many blocked goroutines starve every goroutine still queued behind them,
-/// including the one whose send or close would release them.
+/// A background watchdog then grows it, up to [`MAX_WORKERS`], but only when
+/// the pool has made zero progress for a full [`STARVATION_CHECK_INTERVAL`]
+/// while saturated - see [`GoroutinePool::start_starvation_watchdog`] for
+/// why growth is reactive rather than triggered by `spawn` itself.
 ///
 /// `outstanding` tracks queued + in-flight tasks so
 /// [`join_outstanding_goroutines`] can wait for completion.
@@ -69,8 +68,14 @@ pub(crate) struct GoroutinePool {
     /// thread entry so a growth decision cannot race a starting worker.
     workers: AtomicUsize,
     /// Workers parked waiting for a task. Read and written under `inner`,
-    /// so a spawn sees an accurate count when deciding whether to grow.
+    /// so the watchdog sees an accurate count when deciding whether to grow.
     idle: AtomicUsize,
+    /// Tasks that have finished, counted monotonically. The watchdog
+    /// compares two snapshots across an interval: unequal means the pool
+    /// is progressing (however slowly) and needs no help; equal, with the
+    /// queue non-empty and no worker idle, means nothing can ever free a
+    /// worker on its own.
+    completions: AtomicU64,
 }
 
 struct PoolInner {
@@ -94,6 +99,7 @@ impl GoroutinePool {
             outstanding: AtomicU64::new(0),
             workers: AtomicUsize::new(0),
             idle: AtomicUsize::new(0),
+            completions: AtomicU64::new(0),
         });
         // wasm32 is single-threaded: there are no worker threads. `go` /
         // `spawn` run the goroutine body to completion immediately (see
@@ -101,8 +107,11 @@ impl GoroutinePool {
         #[cfg(target_arch = "wasm32")]
         let _ = num_workers;
         #[cfg(not(target_arch = "wasm32"))]
-        for _ in 0..num_workers {
-            Self::start_worker(&pool);
+        {
+            for _ in 0..num_workers {
+                Self::start_worker(&pool);
+            }
+            Self::start_starvation_watchdog(&pool);
         }
         pool
     }
@@ -143,6 +152,10 @@ impl GoroutinePool {
                             {
                                 eprintln!("gossamer: goroutine worker panicked");
                             }
+                            // A panic still counts as progress: the worker is
+                            // free again either way, which is all the
+                            // starvation watchdog needs to know.
+                            p.completions.fetch_add(1, Ordering::AcqRel);
                             // `drain()` checks `outstanding` while holding
                             // `inner` and then waits on `drain_cv`.  Update
                             // the predicate under that same mutex: notifying
@@ -172,13 +185,17 @@ impl GoroutinePool {
         }
     }
 
-    /// Enqueues a task on `pool`, waking a parked worker or adding one.
+    /// Enqueues a task on `pool` and wakes a parked worker, if one is
+    /// waiting.
     ///
-    /// A goroutine that blocks in a channel operation keeps its worker for
-    /// the duration, so "every worker busy" does not mean the machine is
-    /// saturated - it routinely means the workers are parked waiting for
-    /// something only a queued goroutine can do. Growing when nothing is
-    /// idle is what keeps that queued goroutine reachable.
+    /// Deliberately does not decide growth: a burst of `go` statements
+    /// arriving faster than the existing workers can drain them looks
+    /// identical, for one instant, to a pool that can never drain them at
+    /// all - "queue longer than idle workers" is true many times a second
+    /// in a healthy worker-pool program and stays true for the life of a
+    /// genuinely stuck one. Only observing the pool *over time*, which
+    /// [`start_starvation_watchdog`](Self::start_starvation_watchdog) does,
+    /// tells those two apart.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn spawn(pool: &Arc<Self>, task: GoroutineTask) {
         let mut inner = pool.inner.lock();
@@ -187,20 +204,7 @@ impl GoroutinePool {
         // concurrent goroutine spawn is about to enqueue work.
         pool.outstanding.fetch_add(1, Ordering::AcqRel);
         inner.queue.push_back(task);
-        let idle = pool.idle.load(Ordering::Relaxed);
-        let queued = inner.queue.len();
-        let workers = pool.workers.load(Ordering::Relaxed);
-        if idle < queued {
-            if workers < MAX_WORKERS {
-                drop(inner);
-                Self::start_worker(pool);
-                return;
-            }
-            drop(inner);
-            warn_worker_ceiling_once();
-            pool.cv.notify_one();
-            return;
-        }
+        drop(inner);
         pool.cv.notify_one();
     }
 
@@ -211,6 +215,59 @@ impl GoroutinePool {
     #[cfg(target_arch = "wasm32")]
     pub(crate) fn spawn(_pool: &Arc<Self>, task: GoroutineTask) {
         task();
+    }
+
+    /// Starts the one background thread that grows `pool`, and only when
+    /// growth is the sole way anything could proceed.
+    ///
+    /// A goroutine blocked in a channel operation keeps its worker for the
+    /// duration, so a fixed-size pool can starve: four workers parked as
+    /// receivers, a fifth goroutine (the only sender that could unblock
+    /// them) stuck in the queue because no worker is ever free to run it.
+    /// Nothing about that state ever changes on its own, which is exactly
+    /// what distinguishes it from an ordinary busy pool - a worker pool
+    /// draining a large backlog also has zero idle workers and a non-empty
+    /// queue at every instant, but it keeps completing tasks throughout.
+    ///
+    /// So growth is judged over an interval, not a snapshot: take two
+    /// [`completions`](GoroutinePool::completions) readings
+    /// [`STARVATION_CHECK_INTERVAL`] apart. Unequal means real progress
+    /// happened somewhere - a healthy pool clears this every cycle, so it is
+    /// never grown for a burst it is already draining. Equal, with the
+    /// queue still non-empty and no worker idle, means nothing has
+    /// completed *at all* in that whole window; only then does one more
+    /// worker get started, and the check repeats, so a program that needs
+    /// several more workers gains them one interval at a time rather than
+    /// all at once.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn start_starvation_watchdog(pool: &Arc<Self>) {
+        let p = Arc::clone(pool);
+        // A daemon thread: nothing joins it, and it exits only when the
+        // process does, the same lifecycle every worker thread already has.
+        let spawned = std::thread::Builder::new()
+            .name("gossamer-pool-watchdog".to_string())
+            .spawn(move || {
+                loop {
+                    let before = p.completions.load(Ordering::Acquire);
+                    std::thread::sleep(STARVATION_CHECK_INTERVAL);
+                    let after = p.completions.load(Ordering::Acquire);
+                    if after != before {
+                        continue;
+                    }
+                    let queued = p.inner.lock().queue.len();
+                    if queued == 0 || p.idle.load(Ordering::Relaxed) > 0 {
+                        continue;
+                    }
+                    if p.workers.load(Ordering::Relaxed) < MAX_WORKERS {
+                        Self::start_worker(&p);
+                    } else {
+                        warn_worker_ceiling_once();
+                    }
+                }
+            });
+        if let Err(e) = spawned {
+            eprintln!("gossamer-pool-watchdog spawn failed: {e}");
+        }
     }
 
     /// Blocks until every queued / in-flight task has finished.
@@ -239,6 +296,17 @@ const DEFAULT_MAX_WORKERS: usize = 4;
 /// rather than memory. Reaching it means the program has more
 /// simultaneously-blocked goroutines than the host can back with threads.
 const MAX_WORKERS: usize = 1024;
+
+/// How long the starvation watchdog waits between progress checks. Short
+/// enough that resolving a genuine deadlock is not a noticeable pause even
+/// stacked several times over (a program needing five workers grows one
+/// interval at a time); generous enough that ordinary scheduler noise on a
+/// loaded machine does not read as zero progress. Not a correctness
+/// deadline - the watchdog runs for as long as the process does, so a
+/// program that is merely slow just waits one more interval before the next
+/// check.
+#[cfg(not(target_arch = "wasm32"))]
+const STARVATION_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(150);
 
 fn default_worker_count() -> usize {
     if let Ok(raw) = std::env::var("GOSSAMER_VM_GOROUTINE_WORKERS")
@@ -429,9 +497,12 @@ mod tests {
         let ran = Arc::new(AtomicBool::new(false));
         GoroutinePool::spawn(&pool, Box::new(|| panic!("intentional worker panic")));
         let ran_after_panic = Arc::clone(&ran);
-        GoroutinePool::spawn(&pool, Box::new(move || {
-            ran_after_panic.store(true, Ordering::Release);
-        }));
+        GoroutinePool::spawn(
+            &pool,
+            Box::new(move || {
+                ran_after_panic.store(true, Ordering::Release);
+            }),
+        );
 
         // Use `drain` itself to observe completion. Polling the atomic can
         // spuriously time out when another test temporarily starves this
@@ -466,10 +537,13 @@ mod tests {
         for _ in 0..128 {
             let (started_tx, started_rx) = mpsc::channel();
             let (release_tx, release_rx) = mpsc::channel();
-            GoroutinePool::spawn(&pool, Box::new(move || {
-                started_tx.send(()).expect("test receiver remains live");
-                release_rx.recv().expect("test release remains live");
-            }));
+            GoroutinePool::spawn(
+                &pool,
+                Box::new(move || {
+                    started_tx.send(()).expect("test receiver remains live");
+                    release_rx.recv().expect("test release remains live");
+                }),
+            );
             started_rx
                 .recv_timeout(Duration::from_secs(1))
                 .expect("worker starts the task");

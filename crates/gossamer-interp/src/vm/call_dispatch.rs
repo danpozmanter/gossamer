@@ -436,44 +436,47 @@ impl Vm {
         let struct_shape_handles = self.struct_shape_handles.borrow().clone();
         let jit_eager_names = Arc::clone(&self.jit_eager_names.borrow());
         let jit_cache_key = self.jit_cache_key.borrow().clone();
-        crate::vm::goroutine::GoroutinePool::spawn(crate::vm::goroutine::pool(), Box::new(move || {
-            thread_local! {
-                static THREAD_VM: std::cell::OnceCell<std::cell::RefCell<Option<Vm>>> =
-                    const { std::cell::OnceCell::new() };
-            }
-            THREAD_VM.with(|cell| {
-                let vm_cell = cell.get_or_init(|| std::cell::RefCell::new(None));
-                let mut slot = vm_cell.borrow_mut();
-                // The cached `Vm` is only valid for the program whose
-                // globals it was built from. A thread can outlive one
-                // program (wasm runs every task on the main thread; an
-                // embedding may load several programs in one process),
-                // so key reuse on the globals `Arc` identity.
-                let reusable = slot
-                    .as_ref()
-                    .is_some_and(|vm| Arc::ptr_eq(&vm.globals, &globals));
-                if !reusable {
-                    // The worker `Vm` shares the parent's loaded globals
-                    // (user fns, consts, statics, ADT ctors) via the
-                    // `Arc`, so every callable a Native builtin resolves
-                    // off-main is already present.
-                    *slot = Some(Vm::with_globals(
-                        globals,
-                        mir_bodies,
-                        tcx_snapshot,
-                        enum_shape_defs,
-                        enum_shape_handles,
-                        struct_shape_defs,
-                        struct_shape_handles,
-                        jit_eager_names,
-                        jit_cache_key,
-                    ));
+        crate::vm::goroutine::GoroutinePool::spawn(
+            crate::vm::goroutine::pool(),
+            Box::new(move || {
+                thread_local! {
+                    static THREAD_VM: std::cell::OnceCell<std::cell::RefCell<Option<Vm>>> =
+                        const { std::cell::OnceCell::new() };
                 }
-                let vm = slot.as_mut().expect("THREAD_VM init");
-                task(vm);
-                vm.reset_after_task();
-            });
-        }));
+                THREAD_VM.with(|cell| {
+                    let vm_cell = cell.get_or_init(|| std::cell::RefCell::new(None));
+                    let mut slot = vm_cell.borrow_mut();
+                    // The cached `Vm` is only valid for the program whose
+                    // globals it was built from. A thread can outlive one
+                    // program (wasm runs every task on the main thread; an
+                    // embedding may load several programs in one process),
+                    // so key reuse on the globals `Arc` identity.
+                    let reusable = slot
+                        .as_ref()
+                        .is_some_and(|vm| Arc::ptr_eq(&vm.globals, &globals));
+                    if !reusable {
+                        // The worker `Vm` shares the parent's loaded globals
+                        // (user fns, consts, statics, ADT ctors) via the
+                        // `Arc`, so every callable a Native builtin resolves
+                        // off-main is already present.
+                        *slot = Some(Vm::with_globals(
+                            globals,
+                            mir_bodies,
+                            tcx_snapshot,
+                            enum_shape_defs,
+                            enum_shape_handles,
+                            struct_shape_defs,
+                            struct_shape_handles,
+                            jit_eager_names,
+                            jit_cache_key,
+                        ));
+                    }
+                    let vm = slot.as_mut().expect("THREAD_VM init");
+                    task(vm);
+                    vm.reset_after_task();
+                });
+            }),
+        );
     }
 
     /// Spawns a goroutine that runs `callee(args)` through the

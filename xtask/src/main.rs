@@ -1560,10 +1560,8 @@ fn render_declared_item_inventory(out: &mut String) {
     writeln!(out, "| Item | Kind | Lifecycle | Evidence |").unwrap();
     writeln!(out, "|------|------|-----------|----------|").unwrap();
     for record in gossamer_std::registry::item_records() {
-        let evidence = gossamer_std::manifest::feature_status::item_evidence(
-            &record.path,
-            record.status,
-        );
+        let evidence =
+            gossamer_std::manifest::feature_status::item_evidence(&record.path, record.status);
         let cited = if evidence.positive_tests.is_empty() {
             "not item-audited".to_string()
         } else {

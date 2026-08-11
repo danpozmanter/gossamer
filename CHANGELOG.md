@@ -127,6 +127,12 @@
   exercise them. `gos feature-status` and the stdlib coverage table now name
   the fixture behind an item instead of reading `not item-audited` for every
   entry regardless of what was run.
+- Add a tour lesson for named arguments and constant parameter defaults, and
+  fix three lessons whose forward-pipe samples still used `_` as the
+  placeholder instead of `$`, which no longer runs.
+- Build the browser playground again. The deadlock-reporting hooks were added
+  to the native scheduler only, so `gossamer-runtime` stopped compiling for
+  wasm32 and the docs site could not be published.
 - Grow the interpreter's goroutine pool on demand. It was fixed at four
   threads, and a goroutine blocked in a channel operation holds its thread, so
   four blocked goroutines starved every goroutine still queued - including the

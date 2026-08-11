@@ -618,10 +618,13 @@ jobs:
           esac
       # The contract this job enforces is per-target. The full Linux
       # cross targets (aarch64-gnu, riscv64-gnu) check the runtime
-      # surface end-to-end. The wasm32 targets check only the truly
-      # platform-agnostic crates - rustls / corosensei / mio aren't
-      # wasm-portable, so runtime / sched / binding / pkg can't be
-      # asked to compile there.
+      # surface end-to-end. The wasm32 targets add `gossamer-runtime`,
+      # which the browser playground compiles through its wasm-specific
+      # scheduler shim; rustls / corosensei / mio are still not
+      # wasm-portable, so sched / binding / pkg cannot be asked to
+      # compile there. Without the runtime here, a change to it that
+      # misses the wasm shim only fails later, in the docs workflow,
+      # which no runtime path triggers.
       - name: cargo check (target-appropriate crate set)
         run: |
           case "${{ matrix.target }}" in
@@ -629,7 +632,7 @@ jobs:
               crates="gossamer-runtime gossamer-abi gossamer-binding gossamer-binding-macros gossamer-pkg gossamer-sched"
               ;;
             wasm32-unknown-unknown|wasm32-wasip1)
-              crates="gossamer-abi gossamer-binding-macros"
+              crates="gossamer-abi gossamer-binding-macros gossamer-runtime"
               ;;
             *)
               echo "unknown target: ${{ matrix.target }}" >&2

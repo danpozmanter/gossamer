@@ -171,6 +171,55 @@ fn main() {
 `,
   },
   {
+    slug: "arguments",
+    title: "Named arguments + defaults",
+    prose: `
+      <p>A parameter may declare a <strong>constant default</strong> -
+      <code>greeting: String = "hello"</code> - and a call that omits it
+      gets that value. Only a literal may be a default, so what a call
+      means never depends on when it runs.</p>
+      <p>An argument may also <strong>name</strong> the parameter it
+      fills, binding with <code>=</code>:
+      <code>greet("world", excited = true)</code> skips over a
+      defaulted parameter in the middle without repeating it.
+      Positional arguments come first; after that, names may appear in
+      any order.</p>
+      <p>Both are spellings at the call site. Between resolution and
+      type checking every call is rewritten into the order its callee
+      declares, so the bytecode VM, the JIT, and a native build all
+      compile the identical positional call - names and defaults cost
+      nothing at run time.</p>`,
+    code: `// A parameter may declare a constant default; a call may omit it.
+fn greet(name: String, greeting: String = "hello", excited: bool = false) -> String {
+    let line = greeting + ", " + &name
+    if excited { line + "!" } else { line }
+}
+
+// Defaults work on methods and associated functions too.
+struct Box { w: i64, h: i64 }
+
+impl Box {
+    fn new(w: i64, h: i64 = 1) -> Box { Box { w: w, h: h } }
+    fn area(&self, scale: i64 = 1) -> i64 { self.w * self.h * scale }
+}
+
+fn main() {
+    println!("{}", greet("world"))
+    println!("{}", greet("world", "hi"))
+
+    // Name an argument with \\\`=\\\` to skip over a default in between.
+    println!("{}", greet("world", excited = true))
+
+    // Names may come in any order once positional arguments are done.
+    println!("{}", greet(greeting = "hey", name = "Gossamer", excited = true))
+
+    let b = Box::new(3)
+    println!("area = {}", b.area())
+    println!("scaled = {}", b.area(scale = 10))
+}
+`,
+  },
+  {
     slug: "pipes",
     title: "Forward pipe |>",
     prose: `
@@ -178,8 +227,8 @@ fn main() {
       left-to-right dataflow. <code>x |> f</code> is <code>f(x)</code>;
       <code>x |> f(a)</code> threads the value into the <strong>last</strong>
       argument, so it reads <code>f(a, x)</code>.</p>
-      <p>The <code>_</code> placeholder instead makes the piped value the
-      receiver: <code>x |> _.trim</code> is <code>x.trim()</code>. And
+      <p>The <code>$</code> placeholder instead makes the piped value the
+      receiver: <code>x |> $.trim</code> is <code>x.trim()</code>. And
       ranges are plain values, so a combinator chain like
       <code>(1..=5).filter(...).sum()</code> needs no pipe at all - pick
       whichever direction reads best.</p>`,
@@ -190,8 +239,8 @@ fn add(a: i64, b: i64) -> i64 { a + b }
 let n = 3 |> double |> add(10)
 println!("3 |> double |> add(10) = {n}")
 
-// \\\`_.method\\\` pipes a value through its own methods - \\\`_\\\` is the receiver.
-let shout = "  hi there  " |> _.trim |> _.to_uppercase
+// \\\`$.method\\\` pipes a value through its own methods - \\\`$\\\` is the receiver.
+let shout = "  hi there  " |> $.trim |> $.to_uppercase
 println!("shout = {shout}")
 
 // Ranges are values and combinators are methods - chain them directly.
@@ -411,8 +460,8 @@ fn index_of_sorted(xs: &[i64], needle: i64) -> Option<i64> {
     prose: `
       <p>Strings are values, not references you juggle. Concatenate with
       <code>+</code>, append with <code>+=</code>, and pipe a string through
-      its own methods with <code>_.method</code> -
-      <code>title |> _.trim |> _.to_title</code>.</p>
+      its own methods with <code>$.method</code> -
+      <code>title |> $.trim |> $.to_title</code>.</p>
       <p>Formatted output follows Rust's <code>{:spec}</code> grammar: width
       and alignment (<code>{:>8}</code>, <code>{:^7}</code>), zero-padding and
       radix (<code>{:08x}</code>), and precision (<code>{:.2}</code>), for
@@ -420,8 +469,8 @@ fn index_of_sorted(xs: &[i64], needle: i64) -> Option<i64> {
     code: `fn main() {
     let title = "  the gossamer tour  "
 
-    // Method chaining through \\\`_.method\\\`; strings are plain values.
-    let clean = title |> _.trim |> _.to_title
+    // Method chaining through \\\`$.method\\\`; strings are plain values.
+    let clean = title |> $.trim |> $.to_title
     println!("[{clean}]")
 
     // \\\`+=\\\` appends; \\\`+\\\` concatenates with no separator.
@@ -1009,9 +1058,9 @@ fn note_json(id: i64) -> Result<String, errors::Error> {
 fn main() -> Result<(), errors::Error> {
     // Routes chain with \`|>\`, one verb method per route.
     let routes = router::Router::new()
-        |> _.get("/health", health)
-        |> _.get("/notes/{id}", get_note)
-        |> _.post("/notes", get_note)
+        |> $.get("/health", health)
+        |> $.get("/notes/{id}", get_note)
+        |> $.post("/notes", get_note)
     println!("router ready")
 
     // On a host this is the whole program:
@@ -1025,7 +1074,7 @@ fn main() -> Result<(), errors::Error> {
     println!("GET /notes/42 -> {} {}", note.status, note.body)
 
     let created = http::Response::json(201, note_json(43)?)
-        |> _.with_header("location", "/notes/43")
+        |> $.with_header("location", "/notes/43")
     println!("POST /notes   -> {} ({} header)", created.status, created.headers.len())
 
     let missing = http::Response::text(404, "no such note")
