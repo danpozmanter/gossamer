@@ -16,8 +16,8 @@
 use std::runtime
 
 struct Node {
-    id: i64,
-    next: Option<Box<Node>>,
+    id: i64
+    next: Option<Box<Node>>
 }
 
 fn probe(w: Weak<Node>) -> i64 {

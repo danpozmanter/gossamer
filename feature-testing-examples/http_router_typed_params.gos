@@ -15,12 +15,12 @@ use std::time
 
 fn show(r: http::Request) -> http::Response {
     let id = match r.path_int("id") {
-        Some(n) => n,
-        None => -1,
+        Some(n) => n
+        None => -1
     }
     let amt = match r.path_float("amt") {
-        Some(f) => f,
-        None => -1.0,
+        Some(f) => f
+        None => -1.0
     }
     http::Response::text(200, format!("id={} amt={} raw={}", id, amt, r.path_value("id")))
 }
@@ -48,12 +48,12 @@ fn main() {
     go serve_router()
     await_ready(&"http://127.0.0.1:23884/p/1/1.0")
     match http::get("http://127.0.0.1:23884/p/42/3.5", Vec::from([])) {
-        Ok(r) => println!("A {}", r.body),
-        Err(e) => println!("A error: {}", e),
+        Ok(r) => println!("A {}", r.body)
+        Err(e) => println!("A error: {}", e)
     }
     match http::get("http://127.0.0.1:23884/p/notnum/x", Vec::from([])) {
-        Ok(r) => println!("B {}", r.body),
-        Err(e) => println!("B error: {}", e),
+        Ok(r) => println!("B {}", r.body)
+        Err(e) => println!("B error: {}", e)
     }
     process::exit(0)
 }

@@ -59,25 +59,25 @@ fn main() {
             for b in v { sum += b as i64 }
             println!("sum={}", sum)
             match v.first() {
-                Some(b) => println!("first={}", b),
-                None => println!("first=none"),
+                Some(b) => println!("first={}", b)
+                None => println!("first=none")
             }
             match v.last() {
-                Some(b) => println!("last={}", b),
-                None => println!("last=none"),
+                Some(b) => println!("last={}", b)
+                None => println!("last=none")
             }
             println!("contains_195={}", v.contains(&195))
             println!("contains_255={}", v.contains(&255))
             println!("count_132={}", v.count_of(&132))
             match v.index_of(&226) {
-                Some(i) => println!("idx_226={}", i),
-                None => println!("idx_226=none"),
+                Some(i) => println!("idx_226={}", i)
+                None => println!("idx_226=none")
             }
             println!("hex={}", encoding::hex::encode(v))
             v[0] = 66
             println!("mutated_v0={} hex2={}", v[0], encoding::hex::encode(v))
         }
-        Err(e) => println!("error: {}", e),
+        Err(e) => println!("error: {}", e)
     }
     process::exit(0)
 }

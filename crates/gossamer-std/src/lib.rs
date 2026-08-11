@@ -152,7 +152,15 @@ pub mod os;
 pub mod os_user;
 pub mod panic;
 pub mod path;
-pub mod pprof;
+/// Profile generators shared with the compiled tiers. The
+/// implementation lives in `gossamer_runtime` so the bytecode VM
+/// and the C-ABI shims render from one set of counters.
+pub mod pprof {
+    pub use gossamer_runtime::pprof::{
+        Frame, ProfileBuffer, Sample, block_profile, execution_trace, goroutine_profile,
+        mutex_profile, route,
+    };
+}
 /// Child processes and process control (Rust `std::process` shape).
 pub mod process;
 pub mod regex;

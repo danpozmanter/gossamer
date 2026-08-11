@@ -69,8 +69,8 @@ mod tests {
         /* `check_ok` keeps the unwrapping path because subsequent
          * assertions inspect `values`. */
         let values = testing::check_ok(
-            super::parse_sequence(&"1, 2, 3, 5"),
-            "parse happy path",
+            super::parse_sequence(&"1, 2, 3, 5")
+            "parse happy path"
         ).expect("parse failed")
         let _ = testing::check_eq(&values.len(), &4, "parsed length matches input")
     }
@@ -82,8 +82,8 @@ mod tests {
             Ok(_) => panic!("expected failure")
             Err(e) => {
                 let _ = testing::check(
-                    e.message().contains("bad number"),
-                    "error surfaces the bad input",
+                    e.message().contains("bad number")
+                    "error surfaces the bad input"
                 ).expect("wrong message")
             }
         }

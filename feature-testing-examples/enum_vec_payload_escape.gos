@@ -6,8 +6,8 @@
 // under the escaped enum nor leaked when the enum dies locally.
 
 pub enum Node {
-    Leaf(i64),
-    Call(Vec<i64>),
+    Leaf(i64)
+    Call(Vec<i64>)
 }
 
 pub fn ident(n: Node) -> Node { n }
@@ -28,17 +28,17 @@ fn direct() -> Node {
 fn main() {
     let out = make()
     match &out {
-        Node::Call(args) => println!("call len = {} sum = {}", args.len(), args.sum()),
-        _ => println!("not a call"),
+        Node::Call(args) => println!("call len = {} sum = {}", args.len(), args.sum())
+        _ => println!("not a call")
     }
     let d = direct()
     match &d {
-        Node::Call(xs) => println!("direct len = {} first = {}", xs.len(), xs[0]),
-        _ => println!("not a call"),
+        Node::Call(xs) => println!("direct len = {} first = {}", xs.len(), xs[0])
+        _ => println!("not a call")
     }
     let leaf = ident(Node::Leaf(9))
     match &leaf {
-        Node::Leaf(v) => println!("leaf = {v}"),
-        _ => println!("not a leaf"),
+        Node::Leaf(v) => println!("leaf = {v}")
+        _ => println!("not a leaf")
     }
 }

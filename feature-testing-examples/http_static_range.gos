@@ -70,40 +70,40 @@ fn main() {
     let single_hdr: Vec<(String, String)> = Vec::from([("Range", "bytes=2-5")])
     match http::request("GET", &url, "", single_hdr) {
         Ok(r) => println!(
-            "single status={} cr={} body={}",
-            r.status,
-            header_of(&r.headers, "content-range"),
-            r.body,
-        ),
-        Err(e) => println!("single error: {}", e),
+            "single status={} cr={} body={}"
+            r.status
+            header_of(&r.headers, "content-range")
+            r.body
+        )
+        Err(e) => println!("single error: {}", e)
     }
 
     // Multi range: bytes 0-2 + 5-7 -> multipart/byteranges.
     let multi_hdr: Vec<(String, String)> = Vec::from([("Range", "bytes=0-2,5-7")])
     match http::request("GET", &url, "", multi_hdr) {
-        Ok(r) => println!("multi status={} ct={}", r.status, r.content_type),
-        Err(e) => println!("multi error: {}", e),
+        Ok(r) => println!("multi status={} ct={}", r.status, r.content_type)
+        Err(e) => println!("multi error: {}", e)
     }
     match http::request("GET", &url, "", Vec::from([("Range", "bytes=0-2,5-7")])) {
-        Ok(r) => println!("multi body=[{}]", r.body),
-        Err(e) => println!("multi body error: {}", e),
+        Ok(r) => println!("multi body=[{}]", r.body)
+        Err(e) => println!("multi body error: {}", e)
     }
 
     // Unsatisfiable range -> 416.
     let bad_hdr: Vec<(String, String)> = Vec::from([("Range", "bytes=100-200")])
     match http::request("GET", &url, "", bad_hdr) {
         Ok(r) => println!(
-            "bad status={} cr={}",
-            r.status,
-            header_of(&r.headers, "content-range"),
-        ),
-        Err(e) => println!("bad error: {}", e),
+            "bad status={} cr={}"
+            r.status
+            header_of(&r.headers, "content-range")
+        )
+        Err(e) => println!("bad error: {}", e)
     }
 
     // No range -> whole file 200.
     match http::get(&url, Vec::from([])) {
-        Ok(r) => println!("whole status={} body={}", r.status, r.body),
-        Err(e) => println!("whole error: {}", e),
+        Ok(r) => println!("whole status={} body={}", r.status, r.body)
+        Err(e) => println!("whole error: {}", e)
     }
 
     let _ = fs::remove_dir_all(root)

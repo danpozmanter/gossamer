@@ -1,5 +1,7 @@
 //! MCP tool table: schemas, listing, and call dispatch.
 
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use gossamer_std::json::{self, Value};
@@ -33,6 +35,15 @@ const TIMEOUT_ARG: Arg = Arg {
     required: false,
 };
 
+const SOURCE_ARG: Arg = Arg {
+    name: "source",
+    ty: "string",
+    description: "Gossamer source text to use instead of `file`. Written to a \
+                  temporary .gos file for the run and removed afterwards, so a \
+                  snippet needs no file of its own.",
+    required: false,
+};
+
 const POSITION_ARGS: &[Arg] = &[
     Arg {
         name: "file",
@@ -61,12 +72,15 @@ const TOOLS: &[Tool] = &[
                       for a Gossamer file or project. `structuredContent.diagnostics` holds \
                       one parsed object per diagnostic (stable schema); an empty array means \
                       no findings.",
-        args: &[Arg {
-            name: "file",
-            ty: "string",
-            description: "A .gos file or directory; defaults to the project's src/.",
-            required: false,
-        }],
+        args: &[
+            Arg {
+                name: "file",
+                ty: "string",
+                description: "A .gos file or directory; defaults to the project's src/.",
+                required: false,
+            },
+            SOURCE_ARG,
+        ],
     },
     Tool {
         name: "explain",
@@ -88,8 +102,9 @@ const TOOLS: &[Tool] = &[
                 name: "file",
                 ty: "string",
                 description: "Entry source file, with any filename extension, or project directory.",
-                required: true,
+                required: false,
             },
+            SOURCE_ARG,
             Arg {
                 name: "args",
                 ty: "array",
@@ -146,8 +161,9 @@ const TOOLS: &[Tool] = &[
                 name: "file",
                 ty: "string",
                 description: "Path to a .gos source file.",
-                required: true,
+                required: false,
             },
+            SOURCE_ARG,
             Arg {
                 name: "check",
                 ty: "boolean",
@@ -158,13 +174,64 @@ const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "doc",
-        description: "Item listing plus doc comments for a Gossamer source file.",
-        args: &[Arg {
-            name: "file",
-            ty: "string",
-            description: "Path to a .gos source file.",
-            required: true,
-        }],
+        description: "Item listing plus doc comments for a Gossamer source file, or the \
+                      standard library: `std` lists every module, `std::strings` a \
+                      module's exports, `std::strings::trim` one item.",
+        args: &[
+            Arg {
+                name: "file",
+                ty: "string",
+                description: "Path to a .gos source file, or a `std`-rooted query.",
+                required: false,
+            },
+            SOURCE_ARG,
+        ],
+    },
+    Tool {
+        name: "lint",
+        description: "Run the built-in lint suite. With fix=true, applies every \
+                      auto-fixable suggestion and writes the file back.",
+        args: &[
+            Arg {
+                name: "path",
+                ty: "string",
+                description: "A .gos file or directory; defaults to the project's src/.",
+                required: false,
+            },
+            SOURCE_ARG,
+            Arg {
+                name: "fix",
+                ty: "boolean",
+                description: "Apply auto-fixable suggestions instead of only reporting.",
+                required: false,
+            },
+            Arg {
+                name: "deny_warnings",
+                ty: "boolean",
+                description: "Promote every lint hit to an error.",
+                required: false,
+            },
+        ],
+    },
+    Tool {
+        name: "feature_status",
+        description: "Lifecycle status (shipped / experimental / planned / declined) and \
+                      recorded tier-parity evidence for every language feature and stdlib \
+                      item. Use it to check whether an API is settled before relying on it.",
+        args: &[
+            Arg {
+                name: "filter",
+                ty: "string",
+                description: "Glob narrowing the entries, e.g. `std::http::*`.",
+                required: false,
+            },
+            Arg {
+                name: "status",
+                ty: "string",
+                description: "Only entries with this lifecycle status.",
+                required: false,
+            },
+        ],
     },
     Tool {
         name: "hover",
@@ -238,6 +305,46 @@ fn tool_value(tool: &Tool) -> Value {
     ])
 }
 
+/// A `.gos` file holding an inline `source` argument for the duration of
+/// one tool call. Removed when the guard drops, so a snippet leaves
+/// nothing behind in the caller's workspace.
+struct SourceFile {
+    path: PathBuf,
+}
+
+impl SourceFile {
+    fn write(source: &str) -> Result<Self, String> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "gos-mcp-{}-{}.gos",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&path, source).map_err(|e| format!("writing inline source: {e}"))?;
+        Ok(Self { path })
+    }
+
+    fn display(&self) -> String {
+        self.path.display().to_string()
+    }
+}
+
+impl Drop for SourceFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Resolves a tool's target: the inline `source` when present, otherwise
+/// the named path argument. The returned guard must outlive the call.
+fn target_of(args: &Value, path_key: &str) -> Result<(Option<String>, Option<SourceFile>), String> {
+    if let Some(source) = field_str(args, "source") {
+        let file = SourceFile::write(source)?;
+        return Ok((Some(file.display()), Some(file)));
+    }
+    Ok((field_str(args, path_key).map(String::from), None))
+}
+
 /// `tools/call` dispatch: returns a complete JSON-RPC response.
 pub(crate) fn call(
     id: Value,
@@ -251,19 +358,21 @@ pub(crate) fn call(
     let args = field(params, "arguments");
     let outcome = match name {
         "check" => check_tool(config, args),
+
         "explain" => match field_str(args, "code") {
             Some(code) => exec_tool(config, vec!["explain".into(), code.into()], args),
             None => Err("`code` is required".to_string()),
         },
-        "execute" => match field_str(args, "file") {
-            Some(file) => {
-                let mut command = vec!["run".to_string(), file.to_string()];
+        "execute" => match target_of(args, "file") {
+            Err(e) => Err(e),
+            Ok((None, _)) => Err("`file` or `source` is required".to_string()),
+            Ok((Some(file), _guard)) => {
+                let mut command = vec!["run".to_string(), file];
                 if let Some(extra) = json::as_array(field(args, "args")) {
                     command.extend(extra.iter().filter_map(json::as_str).map(String::from));
                 }
                 exec_tool(config, command, args)
             }
-            None => Err("`file` is required".to_string()),
         },
         "build" => {
             let mut command = vec!["build".to_string()];
@@ -286,21 +395,51 @@ pub(crate) fn call(
             }
             exec_tool(config, command, args)
         }
-        "fmt" => match field_str(args, "file") {
-            Some(file) => {
+        "fmt" => match target_of(args, "file") {
+            Err(e) => Err(e),
+            Ok((None, _)) => Err("`file` or `source` is required".to_string()),
+            Ok((Some(file), _guard)) => {
                 let mut command = vec!["fmt".to_string()];
                 if json::as_bool(field(args, "check")) == Some(true) {
                     command.push("--check".to_string());
                 }
-                command.push(file.to_string());
+                command.push(file);
                 exec_tool(config, command, args)
             }
-            None => Err("`file` is required".to_string()),
         },
-        "doc" => match field_str(args, "file") {
-            Some(file) => exec_tool(config, vec!["doc".into(), file.into()], args),
-            None => Err("`file` is required".to_string()),
+        "doc" => match target_of(args, "file") {
+            Err(e) => Err(e),
+            Ok((None, _)) => Err("`file` or `source` is required".to_string()),
+            Ok((Some(file), _guard)) => exec_tool(config, vec!["doc".to_string(), file], args),
         },
+        "lint" => match target_of(args, "path") {
+            Err(e) => Err(e),
+            Ok((path, _guard)) => {
+                let mut command = vec!["lint".to_string()];
+                if json::as_bool(field(args, "fix")) == Some(true) {
+                    command.push("--fix".to_string());
+                }
+                if json::as_bool(field(args, "deny_warnings")) == Some(true) {
+                    command.push("--deny-warnings".to_string());
+                }
+                if let Some(path) = path {
+                    command.push(path);
+                }
+                exec_tool(config, command, args)
+            }
+        },
+        "feature_status" => {
+            let mut command = vec!["feature-status".to_string()];
+            if let Some(filter) = field_str(args, "filter") {
+                command.push("--filter".to_string());
+                command.push(filter.to_string());
+            }
+            if let Some(status) = field_str(args, "status") {
+                command.push("--status".to_string());
+                command.push(status.to_string());
+            }
+            exec_tool(config, command, args)
+        }
         "hover" | "definition" | "references" => nav.position_tool(name, args),
         "workspace_symbols" => nav.workspace_symbols(args),
         other => return response_err(id, -32602, &format!("unknown tool: {other}")),
@@ -311,13 +450,13 @@ pub(crate) fn call(
     }
 }
 
-fn check_args(args: &Value) -> Vec<String> {
+fn check_args(target: Option<&str>) -> Vec<String> {
     let mut command = vec![
         "check".to_string(),
         "--message-format".to_string(),
         "json".to_string(),
     ];
-    if let Some(file) = field_str(args, "file") {
+    if let Some(file) = target {
         command.push(file.to_string());
     }
     command
@@ -341,7 +480,12 @@ fn exec_tool(config: &ServerConfig, command: Vec<String>, args: &Value) -> Resul
 /// JSON object per diagnostic; parsing them here hands the caller a
 /// ready array instead of a text blob it would have to re-split.
 fn check_tool(config: &ServerConfig, args: &Value) -> Result<Value, String> {
-    let outcome = exec::run_gos(&config.gos_exe, &check_args(args), timeout_from(args))?;
+    let (target, _guard) = target_of(args, "file")?;
+    let outcome = exec::run_gos(
+        &config.gos_exe,
+        &check_args(target.as_deref()),
+        timeout_from(args),
+    )?;
     let structured = check_report(&outcome);
     let mut result = text_result(&json::to_string(&structured), tool_failed(&outcome));
     if let Value::Object(fields) = &mut result {

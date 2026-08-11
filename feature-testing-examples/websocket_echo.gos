@@ -32,7 +32,7 @@ impl Echo {
                         break
                     }
                 }
-                Err(_) => break,
+                Err(_) => break
             }
         }
     }
@@ -63,7 +63,7 @@ fn main() {
     await_ready()
 
     let ws = match websocket::connect(&URL) {
-        Ok(h) => h,
+        Ok(h) => h
         Err(e) => {
             println!("connect error: {e}")
             process::exit(1)
@@ -81,7 +81,7 @@ fn main() {
                 println!("ws echo: MISMATCH {echo}")
             }
         }
-        Err(e) => println!("recv error: {e}"),
+        Err(e) => println!("recv error: {e}")
     }
     let _ = websocket::close(ws)
     process::exit(0)

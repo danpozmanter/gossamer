@@ -21,7 +21,7 @@ fn main() {
 
     // Create
     match fs::write(path, "line one\nline two\nline three\n".to_string().as_bytes()) {
-        Ok(_) => println!("write ok"),
+        Ok(_) => println!("write ok")
         Err(e) => { println!("write error: {}", e)
             return }
     }
@@ -41,17 +41,17 @@ fn main() {
 
     // Overwrite
     match fs::write(path, "replaced content".to_string().as_bytes()) {
-        Ok(_) => println!("overwrite ok"),
+        Ok(_) => println!("overwrite ok")
         Err(e) => println!("overwrite error: {}", e)
     }
     match fs::read_to_string(path) {
-        Ok(s) => println!("overwritten: {}", s.trim()),
+        Ok(s) => println!("overwritten: {}", s.trim())
         Err(e) => println!("read error: {}", e)
     }
 
     // Remove
     match fs::remove_file(path) {
-        Ok(_) => println!("remove ok"),
+        Ok(_) => println!("remove ok")
         Err(e) => println!("remove error: {}", e)
     }
     println!("exists after remove: {}", fs::exists(path))
@@ -59,12 +59,12 @@ fn main() {
     // Directory creation and removal
     let dir = temp_path("lifecycle_dir")
     match fs::create_dir_all(dir) {
-        Ok(_) => println!("dir created"),
+        Ok(_) => println!("dir created")
         Err(e) => println!("mkdir error: {}", e)
     }
     println!("dir exists: {}", fs::exists(dir))
     match fs::remove_dir_all(dir) {
-        Ok(_) => println!("dir removed"),
+        Ok(_) => println!("dir removed")
         Err(e) => println!("rmdir error: {}", e)
     }
     println!("dir gone: {}", !fs::exists(dir))
@@ -86,9 +86,9 @@ mod tests {
         }
         match fs::read_to_string(path) {
             Ok(s) => { let _ = testing::check_eq(&s.trim().to_string(), &content.to_string(), "roundtrip")
-            },
+            }
             Err(e) => { let _ = testing::check(false, e)
-            },
+            }
         }
         let _ = fs::remove_file(path)
     }
@@ -111,9 +111,9 @@ mod tests {
         let _ = fs::write(path, "second".to_string().as_bytes())
         match fs::read_to_string(path) {
             Ok(s) => { let _ = testing::check_eq(&s, &"second", "overwritten")
-            },
+            }
             Err(e) => { let _ = testing::check(false, e)
-            },
+            }
         }
         let _ = fs::remove_file(path)
     }

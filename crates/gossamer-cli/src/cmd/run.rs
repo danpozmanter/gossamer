@@ -123,7 +123,11 @@ fn run_source_on_vm(
         }
         Err(err) => {
             let trace = crate::cmd::traceback::render_call_stack(&vm.call_stack_frames());
-            if gossamer_interp::is_panic_error(&err) {
+            // A stack overflow is a fault, not a failed command: the
+            // compiled tiers raise it through the same path as a panic and
+            // exit 101, so the VM does too rather than reporting it as a
+            // non-zero command result.
+            if gossamer_interp::is_panic_error(&err) || gossamer_interp::is_stack_overflow(&err) {
                 // A user hook replaces the default report; either way a
                 // main-goroutine panic exits with the pinned code 101
                 // (Rust parity - scripts depend on it).

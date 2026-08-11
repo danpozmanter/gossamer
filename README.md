@@ -71,6 +71,7 @@ My goal is for Gossamer to replace Go, Python, F#/C#, Kotlin/Java, and
 | Interactive REPL                                |    ✓     |      |     |  ✓  |    ✓   |    ✓   |    ✓   |
 | Keyword arguments                               |    ✓     |      |     |  ✓  |    ✓   |   ✓    |    ✓   |
 | Default argument values                         |    ✓     |      |     |  ✓  |    ✓   |   ✓    |    ✓   |
+| Built in MCP server                             |    ✓     |      |  ✓  |     |        |        |        |
 
 **Not Transpiled**
 
@@ -141,6 +142,7 @@ Of course you can still use the other structures - but the recommended course of
 is to use the dedicated ones.
 
 | Collection | Empty | With Data |
+|---|---|---|
 | MaxHeap | MaxHeap::new() | MaxHeap::from([1,2,3]) |
 | MinHeap | MinHeap::new() | MinHeap::from([1,2,3]) |
 | Queue | Queue::new() | Queue::from([1,2,3]) |

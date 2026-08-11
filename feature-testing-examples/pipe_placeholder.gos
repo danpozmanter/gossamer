@@ -14,8 +14,8 @@ use std::iter
 use std::strings
 
 struct Point {
-    x: i64,
-    y: i64,
+    x: i64
+    y: i64
 }
 
 fn label(p: Point) -> String {
@@ -49,8 +49,8 @@ fn main() {
     // macro after it expands to its ordinary call form.
     println!("{}", "world" |> format!("hello, {}", $))
     match "world" |> strings::slice($, 1, 4) {
-        Ok(part) => println!("{}", part),
-        Err(_) => println!("slice failed"),
+        Ok(part) => println!("{}", part)
+        Err(_) => println!("slice failed")
     }
 
     // mixed with data-last iter steps; `_.len()` consumes the iter result
@@ -106,10 +106,10 @@ mod tests {
         match "world" |> strings::slice($, 1, 4) {
             Ok(part) => {
                 let _ = testing::check(part == "orl", "non-trailing placeholder selects first argument")
-            },
+            }
             Err(_) => {
                 let _ = testing::check(false, "slice should succeed")
-            },
+            }
         }
     }
 

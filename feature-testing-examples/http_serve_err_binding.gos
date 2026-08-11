@@ -27,7 +27,7 @@ fn main() {
     println!("about to bind")
     let result = http::serve("definitely-not-an-address", App { })
     match result {
-        Ok(_) => println!("unexpected ok"),
-        Err(e) => println!("Error: {}", e),
+        Ok(_) => println!("unexpected ok")
+        Err(e) => println!("Error: {}", e)
     }
 }

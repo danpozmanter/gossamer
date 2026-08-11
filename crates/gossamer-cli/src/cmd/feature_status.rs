@@ -7,8 +7,10 @@
 //! with the implicit `Experimental` defaults from
 //! `manifest::ALL_MODULES`. The per-tier test status comes from
 //! `target/debug/.feature-status.json`, written by
-//! `gos test --tier-parity --report=status`. Missing file is
-//! reported as `(no test data)`.
+//! `gos test --tier-parity --report=status`, and falls back to the
+//! evidence recorded for the release, which is compiled into the
+//! binary so a copy of `gos` with no repository behind it still
+//! reports what the parity walk proved.
 //!
 //! `--check` enforces the CI gate: every `Stable` item must have a
 //! doc page on disk (`docs_src/stdlib/<slug>.md` or
@@ -168,12 +170,18 @@ fn collect_entries(opts: &FeatureStatusOpts) -> Vec<FeatureStatus> {
 pub fn load_tier_status(path: Option<&Path>) -> Result<BTreeMap<String, TierStatus>> {
     let path = path.map_or_else(default_sidecar_path, Path::to_path_buf);
     if !path.exists() {
-        return Ok(BTreeMap::new());
+        return parse_sidecar(RELEASE_EVIDENCE)
+            .map_err(|e| anyhow!("parsing the recorded release evidence: {e}"));
     }
     let bytes = fs::read(&path)?;
     let text = String::from_utf8_lossy(&bytes).into_owned();
     parse_sidecar(&text).map_err(|e| anyhow!("parsing {}: {e}", path.display()))
 }
+
+/// Tier-parity evidence recorded for this release by
+/// `gos test --tier-parity --report status`. Used when no locally
+/// generated sidecar is present.
+const RELEASE_EVIDENCE: &str = include_str!("../../../../resources/feature-status.json");
 
 /// Renders the sidecar JSON shape produced by the test harness.
 /// Exposed so the test harness can call it directly to keep one

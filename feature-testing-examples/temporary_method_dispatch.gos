@@ -18,8 +18,8 @@ fn main() {
 
     // match / if let directly on the method-call temporary.
     match words.first() {
-        Some(s) => println!("first={}", s),
-        None => println!("none"),
+        Some(s) => println!("first={}", s)
+        None => println!("none")
     }
     if let Some(s) = words.last() {
         println!("last={}", s)
@@ -62,8 +62,8 @@ fn main() {
     table.insert("x", 1)
     table.insert("y", 2)
     match table.pop("x") {
-        Some(v) => println!("popped={}", v),
-        None => println!("popped=none"),
+        Some(v) => println!("popped={}", v)
+        None => println!("popped=none")
     }
     println!("len={}", table.len())
     println!("y={}", table.get("y").unwrap_or(-1))

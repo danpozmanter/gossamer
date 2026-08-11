@@ -30,7 +30,7 @@ fn main() {
 
     // file_name / parent
     for p in paths {
-        println!("file_name({})=[{}] parent=[{}]",
+        println!("file_name({})=[{}] parent=[{}]"
             p, opt(path::file_name(&p)), opt(path::parent(&p)))
     }
 

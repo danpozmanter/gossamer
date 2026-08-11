@@ -7,17 +7,17 @@
 // as text, not its pointer bits.
 
 trait Shape {
-    fn name(&self) -> String;
-    fn area(&self) -> i64;
+    fn name(&self) -> String
+    fn area(&self) -> i64
 }
 
 struct Square {
-    side: i64,
+    side: i64
 }
 
 struct Rect {
-    w: i64,
-    h: i64,
+    w: i64
+    h: i64
 }
 
 impl Shape for Square {

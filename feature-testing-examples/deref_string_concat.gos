@@ -6,7 +6,7 @@ enum Node { Leaf(i64), Branch(Vec<Node>) }
 
 fn ser(v: &Node, out: &mut String) {
     match v {
-        Node::Leaf(n) => *out += format!("{}", n),
+        Node::Leaf(n) => *out += format!("{}", n)
         Node::Branch(kids) => {
             *out += "["
             let mut first = true

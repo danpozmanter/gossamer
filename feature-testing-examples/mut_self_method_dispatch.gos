@@ -33,7 +33,7 @@ fn main() {
     c.bump(c.value) // argument reads the live receiver (15), not 0
     c.double()
     println!(
-        "c.value={} c.hits={} snap.value={} snap.hits={}",
+        "c.value={} c.hits={} snap.value={} snap.hits={}"
         c.value, c.hits, snapshot.value, snapshot.hits
     )
 

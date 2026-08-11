@@ -8,9 +8,9 @@ fn classify(c: i64) -> Token {
 
 fn weight(t: Token) -> i64 {
     match t {
-        Token::Op(_) => 1,
-        Token::Num(n) => n,
-        Token::End => 0,
+        Token::Op(_) => 1
+        Token::Num(n) => n
+        Token::End => 0
     }
 }
 

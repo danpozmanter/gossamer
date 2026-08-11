@@ -37,8 +37,8 @@ impl http::Handler for App {
     fn serve(&self, r: http::Request) -> http::Response {
         let auth = header_of(&r.headers, "authorization")
         let cred = match middleware::decode_basic_auth(auth) {
-            Some((u, p)) => "cred=" + &u + ":" + &p,
-            None => "cred=none",
+            Some((u, p)) => "cred=" + &u + ":" + &p
+            None => "cred=none"
         }
         let up = if websocket::is_websocket_upgrade(r) {
             "up=yes"
@@ -81,14 +81,14 @@ fn main() {
         ("Connection", "Upgrade"),
     ])
     match http::request("GET", &base, "", up_hdr) {
-        Ok(r) => println!("A status={} body={}", r.status, r.body),
-        Err(e) => println!("A error: {}", e),
+        Ok(r) => println!("A status={} body={}", r.status, r.body)
+        Err(e) => println!("A error: {}", e)
     }
 
     // Neither header present: decode degrades to None, upgrade to no.
     match http::get(&base, Vec::from([])) {
-        Ok(r) => println!("B status={} body={}", r.status, r.body),
-        Err(e) => println!("B error: {}", e),
+        Ok(r) => println!("B status={} body={}", r.status, r.body)
+        Err(e) => println!("B error: {}", e)
     }
 
     process::exit(0)

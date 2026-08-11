@@ -42,12 +42,12 @@ fn main() {
     }
 
     match http::request("GET", "http://127.0.0.1:23907/never", "", Vec::from([])) {
-        Ok(r) => println!("unexpected status={}", r.status),
+        Ok(r) => println!("unexpected status={}", r.status)
         Err(e) => {
             let rendered = format!("net: {e}")
             println!(
-                "refused_prefix={} refused_class={}",
-                strings::starts_with(&rendered, "net: http: transport:"),
+                "refused_prefix={} refused_class={}"
+                strings::starts_with(&rendered, "net: http: transport:")
                 strings::contains(&rendered, "onnection refused")
             )
         }

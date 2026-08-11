@@ -24,8 +24,8 @@ fn make(d: i64) -> Tree {
 
 fn count(t: &Tree) -> i64 {
     match t {
-        Tree::Leaf => 1,
-        Tree::Node(l, r) => 1 + count(l) + count(r),
+        Tree::Leaf => 1
+        Tree::Node(l, r) => 1 + count(l) + count(r)
     }
 }
 

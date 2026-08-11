@@ -9,17 +9,17 @@
 use std::errors
 
 struct Comic {
-    month: String,
-    num: i64,
-    link: String,
-    year: String,
-    news: String,
-    title: String,
+    month: String
+    num: i64
+    link: String
+    year: String
+    news: String
+    title: String
 }
 
 fn parse(idx: i64) -> Result<Comic, errors::Error> {
     let body = format!(
-        "{{\"month\":\"5\",\"num\":{},\"link\":\"\",\"year\":\"2006\",\"news\":\"\",\"title\":\"Family Circus\"}}",
+        "{{\"month\":\"5\",\"num\":{},\"link\":\"\",\"year\":\"2006\",\"news\":\"\",\"title\":\"Family Circus\"}}"
         idx
     )
     let c = from_json::<Comic>(&body)?
@@ -28,7 +28,7 @@ fn parse(idx: i64) -> Result<Comic, errors::Error> {
 
 fn parse_inline(idx: i64) -> Result<Comic, errors::Error> {
     let body = format!(
-        "{{\"month\":\"6\",\"num\":{},\"link\":\"l\",\"year\":\"2007\",\"news\":\"n\",\"title\":\"Barrel\"}}",
+        "{{\"month\":\"6\",\"num\":{},\"link\":\"l\",\"year\":\"2007\",\"news\":\"n\",\"title\":\"Barrel\"}}"
         idx
     )
     Ok(from_json::<Comic>(&body)?)
@@ -43,15 +43,15 @@ fn main() {
     let mut i = 0
     while i < 300 {
         match parse(i) {
-            Err(e) => println!("error: {}", e.message()),
+            Err(e) => println!("error: {}", e.message())
             Ok(c) => {
                 total += show(c)
                 total += c.year.len()
             }
         }
         match parse_inline(i) {
-            Err(e) => println!("error: {}", e.message()),
-            Ok(c) => total += show(c),
+            Err(e) => println!("error: {}", e.message())
+            Ok(c) => total += show(c)
         }
         i += 1
     }

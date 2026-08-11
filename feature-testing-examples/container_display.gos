@@ -40,8 +40,8 @@ fn main() {
     let mn = collections::MinHeap::from([9, 2, 7])
     println!("{} {:?}", mn, mn)
 
-    let ints = #{2, 1}
-    let words = #{"b", "a"}
+    let ints = #{ 2, 1 }
+    let words = #{ "b", "a" }
     println!("{} {}", ints, words)
 
     println!("{}", collections::Deque::new())

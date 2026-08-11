@@ -30,12 +30,12 @@ impl Store {
 fn main() {
     let s = Store { base: 100 }
     match s.load(&"abc") {
-        Ok(v) => println!("load ok {}", v),
-        Err(e) => println!("load err {}", e.message()),
+        Ok(v) => println!("load ok {}", v)
+        Err(e) => println!("load err {}", e.message())
     }
     match s.load(&"") {
-        Ok(v) => println!("load ok {}", v),
-        Err(e) => println!("load err {}", e.message()),
+        Ok(v) => println!("load ok {}", v)
+        Err(e) => println!("load err {}", e.message())
     }
     println!("store {}", s.store(5))
     println!("add {}", s.add(3))

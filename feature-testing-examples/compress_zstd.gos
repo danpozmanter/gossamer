@@ -11,18 +11,18 @@ fn main() {
     let plain = "hello zstd world, hello zstd world, hello zstd world"
     match compress::zstd::encode(plain.as_bytes()) {
         Ok(c) => match compress::zstd::decode(c) {
-            Ok(b) => println!("rt ok in={} c={} back={}", plain.len(), c.len(), b.len()),
-            Err(e) => println!("decode err {}", e),
-        },
-        Err(e) => println!("encode err {}", e),
+            Ok(b) => println!("rt ok in={} c={} back={}", plain.len(), c.len(), b.len())
+            Err(e) => println!("decode err {}", e)
+        }
+        Err(e) => println!("encode err {}", e)
     }
     match compress::zstd::encode_level(plain.as_bytes(), 19) {
-        Ok(c) => println!("lvl19 c={}", c.len()),
-        Err(e) => println!("lvl err {}", e),
+        Ok(c) => println!("lvl19 c={}", c.len())
+        Err(e) => println!("lvl err {}", e)
     }
     // Out-of-range level is a clean error on every tier.
     match compress::zstd::encode_level(plain.as_bytes(), 99) {
-        Ok(_) => println!("BUG: level 99 accepted"),
-        Err(_) => println!("lvl99 rejected"),
+        Ok(_) => println!("BUG: level 99 accepted")
+        Err(_) => println!("lvl99 rejected")
     }
 }

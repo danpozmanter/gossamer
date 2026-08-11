@@ -22,7 +22,7 @@ fn main() {
 
     let v = Val::T("vt")
     match v.clone() {
-        Val::T(t) => println!("val: {}", t),
-        _ => println!("val: ?"),
+        Val::T(t) => println!("val: {}", t)
+        _ => println!("val: ?")
     }
 }

@@ -37,11 +37,11 @@ fn main() {
     println!("count={}", parts.len())
     for p in parts {
         println!(
-            "name={} filename={} ctype={} len={} sum={}",
-            p.name,
-            p.filename,
-            p.content_type,
-            p.content.len(),
+            "name={} filename={} ctype={} len={} sum={}"
+            p.name
+            p.filename
+            p.content_type
+            p.content.len()
             byte_sum(&p.content)
         )
     }

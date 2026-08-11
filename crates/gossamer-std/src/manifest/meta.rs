@@ -529,6 +529,38 @@ pub const METRICS: StdModule = StdModule {
     ],
 };
 
+pub const PPROF: StdModule = StdModule {
+    path: "std::pprof",
+    summary: "Runtime profiles in the text format `go tool pprof` reads, plus a Chrome-trace scheduler capture.",
+    items: &[
+        StdItem {
+            name: "goroutine_profile",
+            kind: StdItemKind::Function,
+            doc: "Text profile with one sample per live goroutine and its last-known frame.",
+        },
+        StdItem {
+            name: "mutex_profile",
+            kind: StdItemKind::Function,
+            doc: "Text profile of microseconds parked on synchronization since process start.",
+        },
+        StdItem {
+            name: "block_profile",
+            kind: StdItemKind::Function,
+            doc: "Text profile of microseconds parked on channels, I/O, and timers since process start.",
+        },
+        StdItem {
+            name: "execution_trace",
+            kind: StdItemKind::Function,
+            doc: "Chrome trace JSON of scheduler spawn/park/unpark events; blocks for the given milliseconds.",
+        },
+        StdItem {
+            name: "route",
+            kind: StdItemKind::Function,
+            doc: "Serves a `/debug/pprof/...` path, returning the body to write, or `None` for an unknown path.",
+        },
+    ],
+};
+
 pub const TRACE: StdModule = StdModule {
     path: "std::trace",
     summary: "W3C trace-context-compatible distributed tracing. Identifier types, request-scoped SpanContext, process-level Tracer, and OTLP JSON export.",

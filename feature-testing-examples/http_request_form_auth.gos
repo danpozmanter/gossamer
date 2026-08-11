@@ -26,13 +26,13 @@ impl http::Handler for App {
         let role = r.form_value("role")
         let missing = r.form_value("nope")
         let auth = match r.basic_auth() {
-            Some((u, p)) => "auth=" + &u + ":" + &p,
-            None => "auth=none",
+            Some((u, p)) => "auth=" + &u + ":" + &p
+            None => "auth=none"
         }
         http::Response::text(
-            200,
+            200
             "form_user=" + &user + " form_role=" + &role
-            + " missing=[" + &missing + "] " + &auth,
+            + " missing=[" + &missing + "] " + &auth
         )
     }
 }
@@ -65,13 +65,13 @@ fn main() {
         ("Authorization", "Basic YWRtaW46czNjcmV0"),
     ])
     match http::request("POST", "http://127.0.0.1:23896/x", "user=alice&role=admin", hdr) {
-        Ok(r) => println!("status={} body={}", r.status, r.body),
-        Err(e) => println!("error: {}", e),
+        Ok(r) => println!("status={} body={}", r.status, r.body)
+        Err(e) => println!("error: {}", e)
     }
     // No-auth, no-body request: both conveniences degrade gracefully.
     match http::get("http://127.0.0.1:23896/x", Vec::from([])) {
-        Ok(r) => println!("status={} body={}", r.status, r.body),
-        Err(e) => println!("error: {}", e),
+        Ok(r) => println!("status={} body={}", r.status, r.body)
+        Err(e) => println!("error: {}", e)
     }
     process::exit(0)
 }

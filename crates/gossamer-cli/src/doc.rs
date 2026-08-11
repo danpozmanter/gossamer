@@ -102,6 +102,74 @@ pub(crate) fn cmd_emit_stdlib(out_dir: &Path, check: bool) -> Result<()> {
     }
 }
 
+/// Kind tag rendered next to a stdlib item.
+fn item_kind_tag(kind: gossamer_std::registry::StdItemKind) -> &'static str {
+    use gossamer_std::registry::StdItemKind;
+    match kind {
+        StdItemKind::Function => "fn",
+        StdItemKind::Type => "type",
+        StdItemKind::Trait => "trait",
+        StdItemKind::Macro => "macro",
+        StdItemKind::Const => "const",
+    }
+}
+
+/// True when `arg` names the standard library rather than a file on
+/// disk: bare `std`, or a `std::`-rooted module or item path.
+pub(crate) fn is_stdlib_query(arg: &Path) -> bool {
+    let Some(text) = arg.to_str() else {
+        return false;
+    };
+    (text == "std" || text.starts_with("std::")) && !arg.exists()
+}
+
+/// Prints the stdlib listing `query` names: every module for `std`,
+/// a module's exports for `std::strings`, or one item's
+/// documentation for `std::strings::trim`.
+pub(crate) fn cmd_doc_std(query: &str) -> Result<()> {
+    use gossamer_std::registry;
+
+    if query == "std" {
+        let modules = registry::modules();
+        println!("# Standard library ({} modules)", modules.len());
+        for module in modules {
+            println!("- {} - {}", module.path, module.summary);
+        }
+        println!();
+        println!("`gos doc std::<module>` lists a module's exports.");
+        return Ok(());
+    }
+
+    if let Some(module) = registry::module(query) {
+        println!("# {} - {}", module.path, module.summary);
+        for item in module.items {
+            println!(
+                "- {} {}::{} - {}",
+                item_kind_tag(item.kind),
+                module.path,
+                item.name,
+                item.doc
+            );
+        }
+        return Ok(());
+    }
+
+    if let Some((module, item)) = registry::item(query) {
+        println!(
+            "# {} {}::{}",
+            item_kind_tag(item.kind),
+            module.path,
+            item.name
+        );
+        println!("{}", item.doc);
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "no stdlib module or item named `{query}`; `gos doc std` lists the modules"
+    ))
+}
+
 pub(crate) fn cmd_doc(file: &Path, html_out: Option<&std::path::Path>) -> Result<()> {
     let source = read_source(file)?;
     let mut map = gossamer_lex::SourceMap::new();

@@ -5,28 +5,28 @@
 
 fn classify(s: &String) -> String {
     match s {
-        "GET" => "read",
-        "POST" => "write",
-        _ => "other",
+        "GET" => "read"
+        "POST" => "write"
+        _ => "other"
     }
 }
 
 // Match on an owned String scrutinee.
 fn describe(s: String) -> String {
     match s {
-        "SELECT" => "query",
-        "INSERT" => "write",
-        "DELETE" => "remove",
-        _ => "unknown",
+        "SELECT" => "query"
+        "INSERT" => "write"
+        "DELETE" => "remove"
+        _ => "unknown"
     }
 }
 
 // String literal pattern with a guard.
 fn guarded(s: &String, n: i64) -> String {
     match s {
-        "big" if n > 100 => "big and large",
-        "big" => "big but small",
-        _ => "other",
+        "big" if n > 100 => "big and large"
+        "big" => "big but small"
+        _ => "other"
     }
 }
 
@@ -65,19 +65,19 @@ mod string_match_patterns_tests {
     #[test]
     fn string_pattern_with_guard() {
         let _ = testing::check_eq(
-            &super::guarded(&"big".to_string(), 200),
-            &"big and large",
-            "big+200",
+            &super::guarded(&"big".to_string(), 200)
+            &"big and large"
+            "big+200"
         )
         let _ = testing::check_eq(
-            &super::guarded(&"big".to_string(), 50),
-            &"big but small",
-            "big+50",
+            &super::guarded(&"big".to_string(), 50)
+            &"big but small"
+            "big+50"
         )
         let _ = testing::check_eq(
-            &super::guarded(&"small".to_string(), 200),
-            &"other",
-            "small+200",
+            &super::guarded(&"small".to_string(), 200)
+            &"other"
+            "small+200"
         )
     }
 }

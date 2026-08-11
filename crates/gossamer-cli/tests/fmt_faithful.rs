@@ -155,3 +155,47 @@ fn fmt_refuses_unparseable_input_and_leaves_file_untouched() {
     assert_eq!(after, broken, "fmt modified a file it refused to format");
     let _ = std::fs::remove_file(&fixture);
 }
+
+/// Repository root, two levels above this crate.
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root")
+        .to_path_buf()
+}
+
+/// Every `.gos` source the repository ships as an example is written in
+/// the canonical form, so a reader diffs semantics rather than layout and
+/// `gos fmt` is the one style a generated program is measured against.
+#[test]
+fn shipped_gossamer_sources_are_canonically_formatted() {
+    let root = workspace_root();
+    let mut drift: Vec<String> = Vec::new();
+    for dir in ["examples", "feature-testing-examples"] {
+        let entries = std::fs::read_dir(root.join(dir))
+            .unwrap_or_else(|e| panic!("read {dir}: {e}"))
+            .flatten();
+        for entry in entries {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("gos") {
+                continue;
+            }
+            let out = Command::new(gos_bin())
+                .args(["fmt", "--check"])
+                .arg(&path)
+                .output()
+                .expect("spawn fmt --check");
+            if !out.status.success() {
+                drift.push(format!("{dir}/{}", entry.file_name().to_string_lossy()));
+            }
+        }
+    }
+    drift.sort();
+    assert!(
+        drift.is_empty(),
+        "{} shipped source(s) are not canonically formatted; run `gos fmt` on: {}",
+        drift.len(),
+        drift.join(", ")
+    );
+}

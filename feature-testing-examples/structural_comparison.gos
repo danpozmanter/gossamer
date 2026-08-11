@@ -8,10 +8,10 @@ struct Point { x: i64, y: i64 }
 struct Segment { from: Point, to: Point, label: String }
 
 enum Shape {
-    Dot,
-    Line(i64),
-    Box(i64, i64),
-    Named(i64),
+    Dot
+    Line(i64)
+    Box(i64, i64)
+    Named(i64)
 }
 
 fn main() {
@@ -39,10 +39,10 @@ fn main() {
 
     // `..` rest matches a multi-field tuple variant.
     let kind = match Shape::Box(7, 8) {
-        Shape::Dot => 0,
-        Shape::Line(..) => 1,
-        Shape::Box(..) => 2,
-        Shape::Named(..) => 3,
+        Shape::Dot => 0
+        Shape::Line(..) => 1
+        Shape::Box(..) => 2
+        Shape::Named(..) => 3
     }
     println!("{}", kind)
 

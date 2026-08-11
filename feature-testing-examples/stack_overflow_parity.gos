@@ -1,0 +1,18 @@
+// Recursion that genuinely consumes stack must report `GX0008` and exit
+// 101 on every tier. The two branches keep the optimiser from folding
+// the recursion into a loop: a tail call, or one an accumulator can
+// carry, leaves no stack to overflow and the program simply runs.
+//
+// The report reaches stderr, so stdout stays empty on every tier; the
+// exit status is what has to agree.
+
+fn tree(n: i64) -> i64 {
+    if n <= 0 { return 1 }
+    let a = tree(n + 1)
+    let b = tree(n + 2)
+    a * 3 + b * 5 + n
+}
+
+fn main() {
+    println!("{}", tree(1))
+}

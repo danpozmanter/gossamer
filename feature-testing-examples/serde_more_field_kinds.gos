@@ -7,13 +7,13 @@ use std::collections::Map
 
 struct Inner { n: i64 }
 struct Rec {
-    id: i64,
-    nick: Option<String>,
-    absent: Option<i64>,
-    pair: (i64, String),
-    tags: Vec<String>,
-    inner: Inner,
-    caps: Map<String, i64>,
+    id: i64
+    nick: Option<String>
+    absent: Option<i64>
+    pair: (i64, String)
+    tags: Vec<String>
+    inner: Inner
+    caps: Map<String, i64>
 }
 
 // A turbofish may spell its target through an alias; the codec is the
@@ -34,10 +34,10 @@ fn main() {
     let js = to_json::<Rec>(&r) |> $.unwrap_or("ERR")
     println!("{}", js)
     match from_json::<Rec>(&js) {
-        Ok(r2) => println!("id={} nick={} absent={} p0={} p1={} tag0={} n={} capa={} capb={}",
-            r2.id, r2.nick.unwrap_or("?"), r2.absent.unwrap_or(-1),
-            r2.pair.0, r2.pair.1, r2.tags.first().unwrap_or("?"), r2.inner.n,
-            r2.caps.get(&"a").unwrap_or(-1), r2.caps.get(&"b").unwrap_or(-1)),
-        Err(e) => println!("ERR {}", e),
+        Ok(r2) => println!("id={} nick={} absent={} p0={} p1={} tag0={} n={} capa={} capb={}"
+            r2.id, r2.nick.unwrap_or("?"), r2.absent.unwrap_or(-1)
+            r2.pair.0, r2.pair.1, r2.tags.first().unwrap_or("?"), r2.inner.n
+            r2.caps.get(&"a").unwrap_or(-1), r2.caps.get(&"b").unwrap_or(-1))
+        Err(e) => println!("ERR {}", e)
     }
 }

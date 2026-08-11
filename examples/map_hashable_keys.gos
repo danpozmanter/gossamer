@@ -41,6 +41,6 @@ fn main() {
     println!("span: {}", spans.get([10, 20]).unwrap_or("none"))
 
     // Sets take the same key types.
-    let corners = #{(0, 0), (0, 9), (9, 0), (9, 9)}
+    let corners = #{ (0, 0), (0, 9), (9, 0), (9, 9) }
     println!("corners {} has (9, 9): {}", corners.len(), corners.contains((9, 9)))
 }

@@ -21,7 +21,7 @@ fn main() {
                 println!("quick: code={}", code)
             }
         }
-        Err(e) => println!("quick spawn err: {}", e.message()),
+        Err(e) => println!("quick spawn err: {}", e.message())
     }
 
     let sleep_args: Vec<String> = #["30"].to_vec()
@@ -37,6 +37,6 @@ fn main() {
             let _ = exec::wait_timeout(pid, 2000)
             println!("slow: reaped")
         }
-        Err(e) => println!("slow spawn err: {}", e.message()),
+        Err(e) => println!("slow spawn err: {}", e.message())
     }
 }

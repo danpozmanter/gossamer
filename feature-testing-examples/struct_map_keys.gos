@@ -18,8 +18,8 @@ struct Cell { at: Point, label: String }
 
 fn get_or(m: &Map<Point, i64>, k: &Point) -> i64 {
     match m.get(k) {
-        Some(v) => v,
-        None => -1,
+        Some(v) => v
+        None => -1
     }
 }
 

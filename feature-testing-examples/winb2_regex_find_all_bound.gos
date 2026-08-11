@@ -2,8 +2,8 @@ use std::regex
 
 fn main() {
     let re = match regex::compile("[0-9]+") {
-        Ok(r) => r,
-        Err(_) => return,
+        Ok(r) => r
+        Err(_) => return
     }
     let all = regex::find_all(&re, &"a1b22c333")
     println!("n={}", all.len())

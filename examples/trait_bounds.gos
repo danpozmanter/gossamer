@@ -13,12 +13,12 @@ trait Shape {
 }
 
 struct Square {
-    side: i64,
+    side: i64
 }
 
 struct Rect {
-    width: i64,
-    height: i64,
+    width: i64
+    height: i64
 }
 
 impl Shape for Square {

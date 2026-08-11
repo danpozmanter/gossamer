@@ -27,8 +27,8 @@ fn main() {
 
     // scrypt interactive (log_n=15, r=8, p=1), 32-byte derived key.
     match crypto::kdf::scrypt_interactive(pw, salt) {
-        Ok(key) => println!("scrypt = {}", encoding::hex::encode(key)),
-        Err(e) => println!("scrypt err {}", e),
+        Ok(key) => println!("scrypt = {}", encoding::hex::encode(key))
+        Err(e) => println!("scrypt err {}", e)
     }
 
     // Argon2id hash + verify (random salt -> assert outcomes).
@@ -37,15 +37,15 @@ fn main() {
     match crypto::kdf::argon2id_hash(secret) {
         Ok(phc) => {
             let v = match crypto::kdf::argon2id_verify(secret, phc) {
-                Ok(b) => b,
-                Err(_) => false,
+                Ok(b) => b
+                Err(_) => false
             }
             let w = match crypto::kdf::argon2id_verify(wrong, phc) {
-                Ok(b) => b,
-                Err(_) => false,
+                Ok(b) => b
+                Err(_) => false
             }
             println!("argon2 verify={} wrong={}", v, w)
         }
-        Err(e) => println!("argon2 err {}", e),
+        Err(e) => println!("argon2 err {}", e)
     }
 }

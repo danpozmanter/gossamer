@@ -18,9 +18,9 @@ fn classify(n: i64) -> String {
 }
 
 enum Shape {
-    Circle(f64),
-    Rect(f64, f64),
-    Line,
+    Circle(f64)
+    Rect(f64, f64)
+    Line
 }
 
 fn area(shape: &Shape) -> f64 {

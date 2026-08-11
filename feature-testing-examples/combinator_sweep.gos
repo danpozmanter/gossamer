@@ -25,10 +25,10 @@ fn result_family() {
     let some_ok = ok |> result::ok
     let some_err = bad |> result::err
     println!(
-        "result ok_some {} err_some {} is_ok {} is_err {}",
-        some_ok |> option::is_some,
-        some_err |> option::is_some,
-        ok |> result::is_ok,
+        "result ok_some {} err_some {} is_ok {} is_err {}"
+        some_ok |> option::is_some
+        some_err |> option::is_some
+        ok |> result::is_ok
         bad |> result::is_err
     )
 }
@@ -61,8 +61,8 @@ fn option_family() {
         iter_count += 1
     }
     println!(
-        "option zip {zip_sum} flatten {flat} iter {iter_count} is_some {} is_none {}",
-        a |> option::is_some,
+        "option zip {zip_sum} flatten {flat} iter {iter_count} is_some {} is_none {}"
+        a |> option::is_some
         none |> option::is_none
     )
 }
@@ -95,14 +95,14 @@ fn iter_reductions() {
     let prod = #[2, 3] |> iter::product_by(|x: i64| x + 1)
     let parity_counts = xs |> iter::count_by(|x: i64| x % 2)
     println!(
-        "iter fold {folded} reduce {reduced} sum_by {sq} product_by {prod} count_by {}/{}",
-        parity_counts.get_or(0, 0),
+        "iter fold {folded} reduce {reduced} sum_by {sq} product_by {prod} count_by {}/{}"
+        parity_counts.get_or(0, 0)
         parity_counts.get_or(1, 0)
     )
     [10, 20] |> iter::for_each(|x: i64| println!("iter for_each {x}"))
     println!(
-        "iter any {} all {}",
-        xs |> iter::any(|x: i64| x > 3),
+        "iter any {} all {}"
+        xs |> iter::any(|x: i64| x > 3)
         xs |> iter::all(|x: i64| x > 0)
     )
 }
@@ -128,7 +128,7 @@ fn iter_orderings() {
     let asc = xs |> iter::sort_by(|a: i64, b: i64| a - b)
     let by_key = xs |> iter::sort_by_key(|x: i64| 0 - x)
     println!(
-        "iter sort_by {} {} {} sort_by_key {} {} {}",
+        "iter sort_by {} {} {} sort_by_key {} {} {}"
         asc[0], asc[1], asc[2], by_key[0], by_key[1], by_key[2]
     )
     let lo = xs |> iter::min_by(|a: i64, b: i64| a - b) |> option::unwrap_or(0)

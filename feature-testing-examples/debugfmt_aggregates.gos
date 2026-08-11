@@ -5,14 +5,14 @@
 
 #[derive(Debug)]
 struct Point {
-    x: i64,
-    y: i64,
+    x: i64
+    y: i64
 }
 
 #[derive(Debug)]
 struct Item {
-    name: String,
-    qty: i64,
+    name: String
+    qty: i64
 }
 
 #[derive(Debug)]
@@ -20,14 +20,14 @@ struct Pair(i64, i64)
 
 #[derive(Debug)]
 enum Shape {
-    Circle(f64),
-    Rect { w: i64, h: i64 },
+    Circle(f64)
+    Rect { w: i64, h: i64 }
 }
 
 #[derive(Debug)]
 enum List {
-    Cons(i64, Box<List>),
-    Nil,
+    Cons(i64, Box<List>)
+    Nil
 }
 
 fn main() {

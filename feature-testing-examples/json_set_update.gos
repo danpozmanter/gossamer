@@ -18,11 +18,11 @@ fn main() {
             let replaced = scalars.set("x", 11)
             println!("{}", json::render(&replaced))
         }
-        Err(e) => println!("parse error: {}", e),
+        Err(e) => println!("parse error: {}", e)
     }
 
     match json::parse("3") {
-        Ok(leaf) => println!("{}", json::render(&leaf.set("k", 1))),
-        Err(e) => println!("parse error: {}", e),
+        Ok(leaf) => println!("{}", json::render(&leaf.set("k", 1)))
+        Err(e) => println!("parse error: {}", e)
     }
 }

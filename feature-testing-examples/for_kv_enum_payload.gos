@@ -6,13 +6,13 @@
 // Bit-identical across the VM, Cranelift JIT, and LLVM AOT.
 
 enum Doc {
-    Leaf(i64),
-    Obj(Vec<(String, Doc)>),
+    Leaf(i64)
+    Obj(Vec<(String, Doc)>)
 }
 
 fn total(d: Doc) -> i64 {
     match d {
-        Doc::Leaf(n) => n,
+        Doc::Leaf(n) => n
         Doc::Obj(pairs) => {
             let mut sum = 0
             for (k, v) in pairs {
@@ -26,7 +26,7 @@ fn total(d: Doc) -> i64 {
 
 fn render(d: &Doc, out: &mut String) {
     match d {
-        Doc::Leaf(n) => *out += format!("{}", n),
+        Doc::Leaf(n) => *out += format!("{}", n)
         Doc::Obj(pairs) => {
             *out += "{"
             let mut first = true

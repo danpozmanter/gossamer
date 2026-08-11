@@ -8,14 +8,14 @@
 // value is goroutine-shared). Output must be bit-identical on every tier.
 
 enum L {
-    Cons(i64, Box<L>),
-    Nil,
+    Cons(i64, Box<L>)
+    Nil
 }
 
 fn llen(l: &L) -> i64 {
     match l {
-        L::Cons(_, rest) => 1 + llen(rest),
-        L::Nil => 0,
+        L::Cons(_, rest) => 1 + llen(rest)
+        L::Nil => 0
     }
 }
 
@@ -52,7 +52,7 @@ fn main() {
         total
     })
     match h.join() {
-        Ok(v) => println!("go={}", v),
-        Err(e) => eprintln!("worker failed: {}", e),
+        Ok(v) => println!("go={}", v)
+        Err(e) => eprintln!("worker failed: {}", e)
     }
 }

@@ -6,13 +6,13 @@
 // out into a call argument - every share released exactly once on
 // every tier.
 struct Cfg {
-    key: Vec<u8>,
-    trusted: Vec<String>,
+    key: Vec<u8>
+    trusted: Vec<String>
 }
 
 struct Resp {
-    body: String,
-    headers: Vec<(String, String)>,
+    body: String
+    headers: Vec<(String, String)>
 }
 
 fn config(key: Vec<u8>) -> Cfg {

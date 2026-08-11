@@ -30,20 +30,20 @@ fn main() {
         Ok(ct) => {
             println!("aes ct = {}", encoding::hex::encode(ct))
             match crypto::aead::aes_256_gcm_open(key, nonce, ct, aad) {
-                Ok(back) => println!("aes open = {}", encoding::hex::encode(back)),
-                Err(e) => println!("aes open err {}", e),
+                Ok(back) => println!("aes open = {}", encoding::hex::encode(back))
+                Err(e) => println!("aes open err {}", e)
             }
             let badkey: Vec<u8> = Vec::from([
                 0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
                 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
             ])
             let opened = match crypto::aead::aes_256_gcm_open(badkey, nonce, ct, aad) {
-                Ok(_) => true,
-                Err(_) => false,
+                Ok(_) => true
+                Err(_) => false
             }
             println!("aes wrong-key opens = {}", opened)
         }
-        Err(e) => println!("aes seal err {}", e),
+        Err(e) => println!("aes seal err {}", e)
     }
 
     // --- ChaCha20-Poly1305 ---
@@ -51,11 +51,11 @@ fn main() {
         Ok(ct) => {
             println!("chacha ct = {}", encoding::hex::encode(ct))
             match crypto::aead::chacha20_poly1305_open(key, nonce, ct, aad) {
-                Ok(back) => println!("chacha open = {}", encoding::hex::encode(back)),
-                Err(e) => println!("chacha open err {}", e),
+                Ok(back) => println!("chacha open = {}", encoding::hex::encode(back))
+                Err(e) => println!("chacha open err {}", e)
             }
         }
-        Err(e) => println!("chacha seal err {}", e),
+        Err(e) => println!("chacha seal err {}", e)
     }
 
     // --- Ed25519 (random keypair -> assert round-trip booleans) ---
@@ -66,18 +66,18 @@ fn main() {
             match crypto::ed25519::sign(secret, msg) {
                 Ok(sig) => {
                     let good = match crypto::ed25519::verify(public, msg, sig) {
-                        Ok(_) => true,
-                        Err(_) => false,
+                        Ok(_) => true
+                        Err(_) => false
                     }
                     let bad = match crypto::ed25519::verify(public, tampered, sig) {
-                        Ok(_) => true,
-                        Err(_) => false,
+                        Ok(_) => true
+                        Err(_) => false
                     }
                     println!("ed25519 verify={} tampered={}", good, bad)
                 }
-                Err(e) => println!("ed25519 sign err {}", e),
+                Err(e) => println!("ed25519 sign err {}", e)
             }
         }
-        Err(e) => println!("ed25519 keypair err {}", e),
+        Err(e) => println!("ed25519 keypair err {}", e)
     }
 }

@@ -4,10 +4,10 @@
 
 fn classify(n: i64) -> String {
     match n {
-        x @ 0 => format!("zero ({})", x),
-        x @ 1..=3 => format!("small {}", x),
-        x @ 4..=10 => format!("medium {}", x),
-        x => format!("other {}", x),
+        x @ 0 => format!("zero ({})", x)
+        x @ 1..=3 => format!("small {}", x)
+        x @ 4..=10 => format!("medium {}", x)
+        x => format!("other {}", x)
     }
 }
 

@@ -16,8 +16,8 @@ fn main() {
     let mut inferred = Deque::new()
     inferred.push_back(3)
     match inferred.pop_front() {
-        Some(n) => println!("inferred {}", n),
-        None => println!("inferred none"),
+        Some(n) => println!("inferred {}", n)
+        None => println!("inferred none")
     }
 
     // Numeric element is preserved.

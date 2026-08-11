@@ -18,14 +18,14 @@
 // and LLVM AOT tiers.
 
 enum Expr {
-    EColumn(String),
-    ELiteral(i64),
-    EWild,
+    EColumn(String)
+    ELiteral(i64)
+    EWild
 }
 
 struct Projection {
-    expr: Expr,
-    alias: String,
+    expr: Expr
+    alias: String
 }
 
 fn mk_proj(e: Expr) -> Projection {
@@ -47,9 +47,9 @@ fn describe(ps: &[Projection]) -> i64 {
     let mut score = 0
     for p in ps {
         match &p.expr {
-            Expr::EColumn(name) => { score += name.len() },
-            Expr::ELiteral(n) => { score += *n },
-            Expr::EWild => { score += 1 },
+            Expr::EColumn(name) => { score += name.len() }
+            Expr::ELiteral(n) => { score += *n }
+            Expr::EWild => { score += 1 }
         }
     }
     score

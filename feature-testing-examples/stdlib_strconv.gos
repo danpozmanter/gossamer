@@ -13,7 +13,7 @@ fn main() {
     println!("format_i64_neg={}", strconv::format_i64(-256))
     println!("parse_i64_1000={}", strconv::parse_i64("1000").unwrap())
     println!("bad_parse={}", match strconv::parse_i64("nope") {
-        Ok(_) => -1,
-        Err(_) => 0,
+        Ok(_) => -1
+        Err(_) => 0
     })
 }

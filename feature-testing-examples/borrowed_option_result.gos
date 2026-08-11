@@ -9,16 +9,16 @@ struct Holder { o: Option<i64>, label: Option<String> }
 // fn taking `&Option<T>` and reading the payload by reference.
 fn read_opt(o: &Option<i64>) -> i64 {
     match o {
-        Some(x) => *x,
-        None => -1,
+        Some(x) => *x
+        None => -1
     }
 }
 
 // fn taking `&Result<T, E>`, reading both the Ok and Err payloads.
 fn read_res(r: &Result<i64, i64>) -> i64 {
     match r {
-        Ok(x) => *x + 100,
-        Err(e) => -e,
+        Ok(x) => *x + 100
+        Err(e) => -e
     }
 }
 
@@ -26,8 +26,8 @@ fn read_res(r: &Result<i64, i64>) -> i64 {
 // flowing through the borrow.
 fn read_name(o: &Option<String>) -> String {
     match o {
-        Some(s) => s,
-        None => "none",
+        Some(s) => s
+        None => "none"
     }
 }
 
@@ -51,12 +51,12 @@ fn main() {
 
     // match &opt / match &res inline.
     let m_opt = match &opt {
-        Some(x) => *x,
-        None => -1,
+        Some(x) => *x
+        None => -1
     }
     let m_res = match &res {
-        Ok(x) => *x,
-        Err(e) => -e,
+        Ok(x) => *x
+        Err(e) => -e
     }
     println!("inline opt={} res={}", m_opt, m_res)
 
@@ -66,12 +66,12 @@ fn main() {
     // Struct field of Option matched by reference and returned by value.
     let h = Holder { o: Some(99), label: Some("ada") }
     let field_inline = match &h.o {
-        Some(x) => *x,
-        None => -1,
+        Some(x) => *x
+        None => -1
     }
     let field_returned = match first_field(&h) {
-        Some(x) => *x,
-        None => -1,
+        Some(x) => *x
+        None => -1
     }
     println!("field inline={} returned={}", field_inline, field_returned)
     println!("name {}", read_name(&h.label))
@@ -81,8 +81,8 @@ fn main() {
     let mut sum = 0
     for e in &xs {
         sum += match e {
-            Some(x) => *x,
-            None => 0,
+            Some(x) => *x
+            None => 0
         }
     }
     println!("vec_sum {}", sum)

@@ -10,20 +10,20 @@ fn run() -> Result<(), String> {
     println!("len={}", json::len(v))
 
     match json::as_i64(json::get(v, "n").unwrap()) {
-        Some(n) => println!("n={}", n),
-        None => println!("n=none"),
+        Some(n) => println!("n={}", n)
+        None => println!("n=none")
     }
     match json::as_f64(json::get(v, "f").unwrap()) {
-        Some(f) => println!("f={:.2}", f),
-        None => println!("f=none"),
+        Some(f) => println!("f={:.2}", f)
+        None => println!("f=none")
     }
     match json::as_str(json::get(v, "s").unwrap()) {
-        Some(s) => println!("s={}", s),
-        None => println!("s=none"),
+        Some(s) => println!("s={}", s)
+        None => println!("s=none")
     }
     match json::as_bool(json::get(v, "b").unwrap()) {
-        Some(b) => println!("b={}", b),
-        None => println!("b=none"),
+        Some(b) => println!("b={}", b)
+        None => println!("b=none")
     }
     println!("z_null={}", json::is_null(json::get(v, "z").unwrap()))
 
@@ -42,7 +42,7 @@ fn run() -> Result<(), String> {
 
 fn main() {
     match run() {
-        Ok(_) => println!("done"),
-        Err(e) => println!("error: {}", e),
+        Ok(_) => println!("done")
+        Err(e) => println!("error: {}", e)
     }
 }

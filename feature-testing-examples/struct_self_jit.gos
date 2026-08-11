@@ -8,11 +8,11 @@
 // and LLVM AOT tiers.
 
 struct Cursor {
-    pos: i64,
-    acc: i64,
-    scale: f64,
-    flip: bool,
-    mark: char,
+    pos: i64
+    acc: i64
+    scale: f64
+    flip: bool
+    mark: char
 }
 
 impl Cursor {
@@ -57,12 +57,12 @@ fn main() {
     // mark is untouched, scale grew but stays read as a coarse bucket.
     let big_scale = c.scale > 1.0e40
     println!(
-        "{} {} {} {} {} {}",
-        c.pos,
-        c.snapshot(),
-        c.flip,
-        c.mark,
-        big_scale,
+        "{} {} {} {} {} {}"
+        c.pos
+        c.snapshot()
+        c.flip
+        c.mark
+        big_scale
         c.sum_down(8)
     )
 }

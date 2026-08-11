@@ -2,43 +2,43 @@ use std::strconv
 
 fn show_i64(s: &String) {
     match strconv::parse_i64(s) {
-        Ok(n) => println!("parse_i64({:?}) = Ok({})", s, n),
-        Err(e) => println!("parse_i64({:?}) = Err({})", s, e),
+        Ok(n) => println!("parse_i64({:?}) = Ok({})", s, n)
+        Err(e) => println!("parse_i64({:?}) = Err({})", s, e)
     }
 }
 
 fn show_u64(s: &String) {
     match strconv::parse_u64(s) {
-        Ok(n) => println!("parse_u64({:?}) = Ok({})", s, n),
-        Err(e) => println!("parse_u64({:?}) = Err({})", s, e),
+        Ok(n) => println!("parse_u64({:?}) = Ok({})", s, n)
+        Err(e) => println!("parse_u64({:?}) = Err({})", s, e)
     }
 }
 
 fn show_f64(s: &String) {
     match strconv::parse_f64(s) {
-        Ok(n) => println!("parse_f64({:?}) = Ok({})", s, n),
-        Err(e) => println!("parse_f64({:?}) = Err({})", s, e),
+        Ok(n) => println!("parse_f64({:?}) = Ok({})", s, n)
+        Err(e) => println!("parse_f64({:?}) = Err({})", s, e)
     }
 }
 
 fn show_bool(s: &String) {
     match strconv::parse_bool(s) {
-        Ok(b) => println!("parse_bool({:?}) = Ok({})", s, b),
-        Err(e) => println!("parse_bool({:?}) = Err({})", s, e),
+        Ok(b) => println!("parse_bool({:?}) = Ok({})", s, b)
+        Err(e) => println!("parse_bool({:?}) = Err({})", s, e)
     }
 }
 
 fn show_radix(s: &String, base: i64) {
     match strconv::parse_i64_radix(s, base) {
-        Ok(n) => println!("parse_i64_radix({:?}, {}) = Ok({})", s, base, n),
-        Err(e) => println!("parse_i64_radix({:?}, {}) = Err({})", s, base, e),
+        Ok(n) => println!("parse_i64_radix({:?}, {}) = Ok({})", s, base, n)
+        Err(e) => println!("parse_i64_radix({:?}, {}) = Err({})", s, base, e)
     }
 }
 
 fn show_unquote(s: &String) {
     match strconv::unquote(s) {
-        Ok(out) => println!("unquote({:?}) = Ok({:?})", s, out),
-        Err(e) => println!("unquote({:?}) = Err({})", s, e),
+        Ok(out) => println!("unquote({:?}) = Ok({:?})", s, out)
+        Err(e) => println!("unquote({:?}) = Err({})", s, e)
     }
 }
 

@@ -57,7 +57,7 @@ fn main() {
             println!("server-header: {}", has_server)
             println!("date-header: {}", has_date)
         }
-        Err(e) => println!("get error: {}", e),
+        Err(e) => println!("get error: {}", e)
     }
     process::exit(0)
 }

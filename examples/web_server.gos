@@ -45,7 +45,7 @@ fn echo(request: http::Request) -> Result<http::Response, http::Error> {
     let path = &request.path
     let query = &request.query
     let body = &request.body
-    Ok(http::Response::json(200,
+    Ok(http::Response::json(200
         format!("{{\"method\":\"{method}\",\"path\":\"{path}\",\"query\":\"{query}\",\"body\":\"{body}\"}}")))
 }
 

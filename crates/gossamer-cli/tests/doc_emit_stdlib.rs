@@ -152,6 +152,52 @@ fn emit_stdlib_preserves_handwritten_tail_and_check_ignores_it() {
     cleanup(&dir);
 }
 
+/// The `GR0005` and `GR0009` diagnostics tell the reader to run
+/// `gos doc std` / `gos doc std::<module>`; both must resolve
+/// against the stdlib manifest rather than the filesystem.
+#[test]
+fn doc_std_lists_every_module() {
+    let out = Command::new(gos_bin())
+        .args(["doc", "std"])
+        .output()
+        .expect("spawn gos doc std");
+    assert!(out.status.success(), "gos doc std failed");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("std::strings"), "{text}");
+    assert!(text.contains("std::encoding::json"), "{text}");
+}
+
+#[test]
+fn doc_std_module_lists_its_exports() {
+    let out = Command::new(gos_bin())
+        .args(["doc", "std::strings"])
+        .output()
+        .expect("spawn gos doc std::strings");
+    assert!(out.status.success(), "gos doc std::strings failed");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("std::strings::trim"), "{text}");
+}
+
+#[test]
+fn doc_std_item_prints_its_documentation() {
+    let out = Command::new(gos_bin())
+        .args(["doc", "std::strings::trim"])
+        .output()
+        .expect("spawn gos doc std::strings::trim");
+    assert!(out.status.success(), "gos doc std::strings::trim failed");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("fn std::strings::trim"), "{text}");
+}
+
+#[test]
+fn doc_unknown_stdlib_path_errors() {
+    let out = Command::new(gos_bin())
+        .args(["doc", "std::not_a_module"])
+        .output()
+        .expect("spawn gos doc std::not_a_module");
+    assert!(!out.status.success());
+}
+
 #[test]
 fn doc_without_file_or_emit_stdlib_errors() {
     let out = Command::new(gos_bin())

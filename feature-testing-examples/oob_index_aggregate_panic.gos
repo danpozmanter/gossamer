@@ -6,8 +6,8 @@
 // Registered with allow_nonzero; the matching exit/stdout is the assertion.
 
 struct P {
-    x: i64,
-    y: i64,
+    x: i64
+    y: i64
 }
 
 fn main() {

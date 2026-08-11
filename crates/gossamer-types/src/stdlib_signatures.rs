@@ -2849,6 +2849,31 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         signature: "fn arena_push() -> ()",
     },
     StdFunctionSignature {
+        module_path: "std::pprof",
+        name: "goroutine_profile",
+        signature: "fn goroutine_profile() -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::pprof",
+        name: "mutex_profile",
+        signature: "fn mutex_profile() -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::pprof",
+        name: "block_profile",
+        signature: "fn block_profile() -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::pprof",
+        name: "execution_trace",
+        signature: "fn execution_trace(millis: i64) -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::pprof",
+        name: "route",
+        signature: "fn route(path: String, query: String) -> Option<String>",
+    },
+    StdFunctionSignature {
         module_path: "std::runtime",
         name: "collect_cycles",
         signature: "fn collect_cycles() -> ()",

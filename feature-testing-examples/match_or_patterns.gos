@@ -3,107 +3,107 @@
 // and `..` struct-rest patterns, so all three tiers agree.
 
 enum Rank {
-    Ace,
-    Number(i64),
-    Jack,
-    Queen,
-    King,
+    Ace
+    Number(i64)
+    Jack
+    Queen
+    King
 }
 
 fn card_value(r: &Rank) -> i64 {
     match r {
-        Rank::Ace => 11,
-        Rank::Number(n) => *n,
-        Rank::Jack | Rank::Queen | Rank::King => 10,
+        Rank::Ace => 11
+        Rank::Number(n) => *n
+        Rank::Jack | Rank::Queen | Rank::King => 10
     }
 }
 
 fn classify_int(n: i64) -> String {
     match n {
-        0 | 1 => "tiny",
-        2 | 3 | 5 | 7 => "small-prime",
-        _ if n < 0 => "negative",
-        _ => "other",
+        0 | 1 => "tiny"
+        2 | 3 | 5 | 7 => "small-prime"
+        _ if n < 0 => "negative"
+        _ => "other"
     }
 }
 
 struct Point3 {
-    x: i64,
-    y: i64,
-    z: i64,
+    x: i64
+    y: i64
+    z: i64
 }
 
 fn on_axis(p: &Point3) -> String {
     match p {
-        Point3 { x, y: 0, z: 0 } => format!("x-axis at {}", x),
-        Point3 { x: 0, y, z: 0 } => format!("y-axis at {}", y),
-        Point3 { x: 0, y: 0, z } => format!("z-axis at {}", z),
-        Point3 { x, .. } => format!("off-axis x={}", x),
+        Point3 { x, y: 0, z: 0 } => format!("x-axis at {}", x)
+        Point3 { x: 0, y, z: 0 } => format!("y-axis at {}", y)
+        Point3 { x: 0, y: 0, z } => format!("z-axis at {}", z)
+        Point3 { x, .. } => format!("off-axis x={}", x)
     }
 }
 
 enum Signal {
-    Red(i64),
-    Yellow(i64),
-    Green(i64),
+    Red(i64)
+    Yellow(i64)
+    Green(i64)
 }
 
 // Or-pattern alternatives binding the same name into one shared slot.
 fn intensity(s: &Signal) -> i64 {
     match s {
-        Signal::Red(n) | Signal::Green(n) => *n,
-        Signal::Yellow(n) => *n + 1000,
+        Signal::Red(n) | Signal::Green(n) => *n
+        Signal::Yellow(n) => *n + 1000
     }
 }
 
 // A binding or-pattern fronted by a guard that reads the shared binding.
 fn describe(s: &Signal) -> String {
     match s {
-        Signal::Red(n) | Signal::Green(n) if *n > 0 => format!("lit {}", n),
-        Signal::Red(n) | Signal::Green(n) => format!("dark {}", n),
-        Signal::Yellow(n) => format!("warn {}", n),
+        Signal::Red(n) | Signal::Green(n) if *n > 0 => format!("lit {}", n)
+        Signal::Red(n) | Signal::Green(n) => format!("dark {}", n)
+        Signal::Yellow(n) => format!("warn {}", n)
     }
 }
 
 enum Cell {
-    Filled(Signal),
-    Blank,
+    Filled(Signal)
+    Blank
 }
 
 // Binding or-pattern nested under an enclosing variant pattern.
 fn cell_intensity(c: &Cell) -> i64 {
     match c {
-        Cell::Filled(Signal::Red(n)) | Cell::Filled(Signal::Green(n)) => *n,
-        Cell::Filled(Signal::Yellow(n)) => *n + 1000,
-        Cell::Blank => -1,
+        Cell::Filled(Signal::Red(n)) | Cell::Filled(Signal::Green(n)) => *n
+        Cell::Filled(Signal::Yellow(n)) => *n + 1000
+        Cell::Blank => -1
     }
 }
 
 enum Wrap {
-    A(i64),
-    B(i64),
+    A(i64)
+    B(i64)
 }
 
 // Result-nested binding or-pattern: both wrappers bind the shared name.
 fn collapse_result(r: Result<i64, i64>) -> i64 {
     match r {
-        Ok(x) | Err(x) => x,
+        Ok(x) | Err(x) => x
     }
 }
 
 // Option-nested binding or-pattern over a user enum.
 fn option_wrap(v: Option<Wrap>) -> i64 {
     match v {
-        Some(Wrap::A(x)) | Some(Wrap::B(x)) => x,
-        None => -1,
+        Some(Wrap::A(x)) | Some(Wrap::B(x)) => x
+        None => -1
     }
 }
 
 // Option-of-Result binding or-pattern (the inner Ok/Err share the slot).
 fn option_result(v: Option<Result<i64, i64>>) -> i64 {
     match v {
-        Some(Ok(x)) | Some(Err(x)) => x,
-        None => -1,
+        Some(Ok(x)) | Some(Err(x)) => x
+        None => -1
     }
 }
 
@@ -205,14 +205,14 @@ mod tests {
     #[test]
     fn nested_binding_or_pattern() {
         let _ = testing::check_eq(
-            &super::cell_intensity(&super::Cell::Filled(super::Signal::Green(9))),
-            &9,
-            "nested green binds n",
+            &super::cell_intensity(&super::Cell::Filled(super::Signal::Green(9)))
+            &9
+            "nested green binds n"
         )
         let _ = testing::check_eq(
-            &super::cell_intensity(&super::Cell::Blank),
-            &-1,
-            "blank arm",
+            &super::cell_intensity(&super::Cell::Blank)
+            &-1
+            "blank arm"
         )
     }
 

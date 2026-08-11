@@ -47,12 +47,12 @@ fn main() {
     let _ = churn()
     for v in &binds {
         match v {
-            V::Null => println!("null"),
-            V::B(_) => println!("bool"),
-            V::I(n) => println!("int {}", n),
-            V::F(_) => println!("float"),
-            V::T(s) => println!("text {}", s),
-            V::L(b) => println!("blob {}", b.len()),
+            V::Null => println!("null")
+            V::B(_) => println!("bool")
+            V::I(n) => println!("int {}", n)
+            V::F(_) => println!("float")
+            V::T(s) => println!("text {}", s)
+            V::L(b) => println!("blob {}", b.len())
         }
     }
     println!("done")

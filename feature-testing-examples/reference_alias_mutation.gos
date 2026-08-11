@@ -3,7 +3,7 @@
 // and array-element mutation work consistently across all tiers.
 
 struct Counter {
-    value: i64,
+    value: i64
 }
 
 fn inspect(c: &Counter) -> i64 {

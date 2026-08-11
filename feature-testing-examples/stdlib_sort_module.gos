@@ -12,22 +12,22 @@ fn main() {
 
     let sorted = #[1, 3, 5, 7, 9]
     match sort::binary_search(sorted, 7) {
-        Some(i) => println!("found={}", i),
-        None => println!("found=none"),
+        Some(i) => println!("found={}", i)
+        None => println!("found=none")
     }
     match sort::binary_search(sorted, 4) {
-        Some(i) => println!("found={}", i),
-        None => println!("found=none"),
+        Some(i) => println!("found={}", i)
+        None => println!("found=none")
     }
 
     let names = #["ant", "bee", "cow", "dog"]
     match sort::binary_search(names, "cow") {
-        Some(i) => println!("name={}", i),
-        None => println!("name=none"),
+        Some(i) => println!("name={}", i)
+        None => println!("name=none")
     }
     match sort::binary_search(names, "elk") {
-        Some(i) => println!("name={}", i),
-        None => println!("name=none"),
+        Some(i) => println!("name={}", i)
+        None => println!("name=none")
     }
 
     println!("{}", sort::partition_point(sorted, 6))
@@ -40,8 +40,8 @@ fn main() {
     println!("{}", sort::sort_stable(reals).join(","))
     let ordered = #[1.0, 2.0, 4.0, 8.0]
     match sort::binary_search(ordered, 4.0) {
-        Some(i) => println!("real={}", i),
-        None => println!("real=none"),
+        Some(i) => println!("real={}", i)
+        None => println!("real=none")
     }
     println!("{}", sort::partition_point(ordered, 3.0))
 }

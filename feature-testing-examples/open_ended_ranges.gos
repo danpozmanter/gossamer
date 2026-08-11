@@ -3,28 +3,28 @@
 
 fn classify(n: i64) -> String {
     match n {
-        ..=-1 => "negative",
-        0 => "zero",
-        1.. => "positive",
-        _ => "unreachable",
+        ..=-1 => "negative"
+        0 => "zero"
+        1.. => "positive"
+        _ => "unreachable"
     }
 }
 
 fn band(b: u8) -> i64 {
     match b {
-        ..=63 => 0,
-        64..=191 => 1,
-        192.. => 2,
-        _ => -1,
+        ..=63 => 0
+        64..=191 => 1
+        192.. => 2
+        _ => -1
     }
 }
 
 fn exclusive_open(n: i64) -> String {
     match n {
-        ..0 => "below",
-        0..10 => "single-digit",
-        10.. => "ten-plus",
-        _ => "unreachable",
+        ..0 => "below"
+        0..10 => "single-digit"
+        10.. => "ten-plus"
+        _ => "unreachable"
     }
 }
 

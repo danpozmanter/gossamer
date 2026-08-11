@@ -5,7 +5,7 @@
 // tiers. A goroutine that returns normally delivers `Ok(value)`.
 
 struct Worker {
-    id: i64,
+    id: i64
 }
 
 impl Worker {
@@ -23,8 +23,8 @@ fn main() {
         w.run()
     })
     match good.join() {
-        Ok(v) => println!("ok {}", v),
-        Err(_) => println!("good failed"),
+        Ok(v) => println!("ok {}", v)
+        Err(_) => println!("good failed")
     }
 
     let bad = spawn(|| {
@@ -32,8 +32,8 @@ fn main() {
         w.run()
     })
     match bad.join() {
-        Ok(v) => println!("ok {}", v),
-        Err(_) => println!("caught panic"),
+        Ok(v) => println!("ok {}", v)
+        Err(_) => println!("caught panic")
     }
 
     println!("parent alive")

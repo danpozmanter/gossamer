@@ -64,12 +64,12 @@ fn main() {
     await_ready(&"http://127.0.0.1:23872/x")
     await_ready(&"http://127.0.0.1:23873/hello")
     match http::get("http://127.0.0.1:23872/x", Vec::from([])) {
-        Ok(r) => println!("struct status={} body={}", r.status, r.body),
-        Err(e) => println!("struct error: {}", e),
+        Ok(r) => println!("struct status={} body={}", r.status, r.body)
+        Err(e) => println!("struct error: {}", e)
     }
     match http::get("http://127.0.0.1:23873/hello", Vec::from([])) {
-        Ok(r) => println!("route status={} body={}", r.status, r.body),
-        Err(e) => println!("route error: {}", e),
+        Ok(r) => println!("route status={} body={}", r.status, r.body)
+        Err(e) => println!("route error: {}", e)
     }
     process::exit(0)
 }

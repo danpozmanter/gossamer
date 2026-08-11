@@ -18,7 +18,7 @@ fn main() {
             let _ = exec::wait_timeout(pid, 2000)
             println!("done")
         }
-        Err(e) => println!("err: {}", e.message()),
+        Err(e) => println!("err: {}", e.message())
     }
 
     // kill_group: spawn `sh -c 'sleep 30 & wait'` so the leader pid
@@ -33,6 +33,6 @@ fn main() {
             let _ = exec::wait_timeout(pid, 2000)
             println!("group done")
         }
-        Err(e) => println!("group err: {}", e.message()),
+        Err(e) => println!("group err: {}", e.message())
     }
 }

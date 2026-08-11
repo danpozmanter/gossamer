@@ -10,10 +10,10 @@
 use std::{crypto, fs}
 
 fn verify_private_https_peer(
-    chain_path: String,
-    roots_path: String,
-    crls_path: String,
-    hostname: String,
+    chain_path: String
+    roots_path: String
+    crls_path: String
+    hostname: String
 ) -> Result<(), errors::Error> {
     let chain_pem = fs::read_to_string(chain_path)?
     let roots_pem = fs::read_to_string(roots_path)?
@@ -23,10 +23,10 @@ fn verify_private_https_peer(
 
 fn main() -> Result<(), errors::Error> {
     verify_private_https_peer(
-        "peer-chain.pem",
-        "private-roots.pem",
-        "private-ca.crl.pem",
-        "api.internal.example",
+        "peer-chain.pem"
+        "private-roots.pem"
+        "private-ca.crl.pem"
+        "api.internal.example"
     )?
     println!("private HTTPS peer verified")
     Ok(())

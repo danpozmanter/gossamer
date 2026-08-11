@@ -46,7 +46,7 @@ fn main() {
     tags.insert(Tag { id: 1 })
     tags.insert(Tag { id: 1 })
     tags.insert(Tag { id: 2 })
-    println!("tag len {} has1 {} has3 {}", tags.len(),
+    println!("tag len {} has1 {} has3 {}", tags.len()
         tags.contains(&Tag { id: 1 }), tags.contains(&Tag { id: 3 }))
 
     // Algebra over String sets (cardinality + membership only).
@@ -65,7 +65,7 @@ fn main() {
     let d = a.difference(b)
     println!("diff len {} has_x {} has_y {}", d.len(), d.contains("x"), d.contains("y"))
     let sd = a.symmetric_difference(b)
-    println!("symdiff len {} has_x {} has_w {} has_y {}",
+    println!("symdiff len {} has_x {} has_w {} has_y {}"
         sd.len(), sd.contains("x"), sd.contains("w"), sd.contains("y"))
 
     // Predicates: subset / superset / disjoint, incl empty-set edges.
@@ -76,8 +76,8 @@ fn main() {
     let mut far: Set<String> = Set::new()
     far.insert("p")
     far.insert("q")
-    println!("subset {} superset {} disjoint {}",
+    println!("subset {} superset {} disjoint {}"
         sub.is_subset(a), a.is_superset(sub), a.is_disjoint(far))
-    println!("empty subset {} a-disjoint-empty {}",
+    println!("empty subset {} a-disjoint-empty {}"
         empty.is_subset(a), a.is_disjoint(empty))
 }

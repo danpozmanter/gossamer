@@ -40,16 +40,16 @@ impl http::Handler for Upstream {
             let mut sum = 0
             for b in bytes { sum += b as i64 }
             return Ok(http::Response::text(
-                200,
-                format!("len={} first={} last={} sum={}",
-                    bytes.len(), bytes[0], bytes[bytes.len() - 1], sum),
+                200
+                format!("len={} first={} last={} sum={}"
+                    bytes.len(), bytes[0], bytes[bytes.len() - 1], sum)
             ))
         }
         if path == "/nul" {
             return Ok(http::Response {
-                status: 200,
-                body: [65, 0, 66, 0, 67],
-                content_type: "application/octet-stream",
+                status: 200
+                body: [65, 0, 66, 0, 67]
+                content_type: "application/octet-stream"
             })
         }
         if path == "/hop" {
@@ -73,12 +73,12 @@ impl http::Handler for Proxy {
                     Ok(http::Response::text(up.status, "fwd:" + &up.body)
                         .with_header("x-up", tag))
                 }
-                Err(_) => Ok(http::Response::text(502, "bad upstream")),
+                Err(_) => Ok(http::Response::text(502, "bad upstream"))
             }
         }
         match http::stream(&r.method, "http://127.0.0.1:23908/stream", &r.body, Vec::from([])) {
-            Ok(up) => Ok(http::Response::stream(up.status, up.content_type, up)),
-            Err(_) => Ok(http::Response::text(502, "bad upstream")),
+            Ok(up) => Ok(http::Response::stream(up.status, up.content_type, up))
+            Err(_) => Ok(http::Response::text(502, "bad upstream"))
         }
     }
 }
@@ -123,34 +123,34 @@ fn main() {
     await_ready(&"http://127.0.0.1:23909/fwd")
 
     match http::request_bytes("POST", "http://127.0.0.1:23908/echo-len", Vec::from([1, 0, 2, 255]), Vec::from([])) {
-        Ok(r) => println!("echo status={} body={}", r.status, r.body),
-        Err(e) => println!("echo error: {}", e),
+        Ok(r) => println!("echo status={} body={}", r.status, r.body)
+        Err(e) => println!("echo error: {}", e)
     }
 
     match http::get("http://127.0.0.1:23908/nul", Vec::from([])) {
         Ok(r) => println!(
-            "nul status={} len={} hex={}",
-            r.status,
-            r.raw_bytes.len(),
+            "nul status={} len={} hex={}"
+            r.status
+            r.raw_bytes.len()
             encoding::hex::encode(r.raw_bytes)
-        ),
-        Err(e) => println!("nul error: {}", e),
+        )
+        Err(e) => println!("nul error: {}", e)
     }
 
     let strict = http::Client::builder().max_redirects(0).timeout_ms(5000).build()
     match strict.request("GET", "http://127.0.0.1:23908/hop", "", #[]) {
-        Ok(r) => println!("hop status={} location={}", r.status, r.location),
-        Err(e) => println!("hop error: {}", e),
+        Ok(r) => println!("hop status={} location={}", r.status, r.location)
+        Err(e) => println!("hop error: {}", e)
     }
 
     match http::get("http://127.0.0.1:23909/fwd", Vec::from([])) {
         Ok(r) => println!(
-            "fwd status={} body={} x-up={}",
-            r.status,
-            r.body,
+            "fwd status={} body={} x-up={}"
+            r.status
+            r.body
             header_of(&r.headers, "x-up")
-        ),
-        Err(e) => println!("fwd error: {}", e),
+        )
+        Err(e) => println!("fwd error: {}", e)
     }
 
     match http::stream("GET", "http://127.0.0.1:23909/stream", "", Vec::from([])) {
@@ -167,7 +167,7 @@ fn main() {
             }
             println!("stream total={} chunks={} first_hex={}", total, chunks, first_hex)
         }
-        Err(e) => println!("stream error: {}", e),
+        Err(e) => println!("stream error: {}", e)
     }
 
     process::exit(0)

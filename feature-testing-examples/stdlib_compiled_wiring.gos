@@ -32,8 +32,8 @@ fn main() {
 
     // Regex first-match replacement.
     match regex::compile(&"[0-9]") {
-        Ok(p) => println!("replace = {}", regex::replace(&p, &"a1b2c3", &"X")),
-        Err(_) => println!("replace = err"),
+        Ok(p) => println!("replace = {}", regex::replace(&p, &"a1b2c3", &"X"))
+        Err(_) => println!("replace = err")
     }
 
     // json::Value mutator round-trip: the `&mut` update must persist.

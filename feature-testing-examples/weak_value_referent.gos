@@ -42,7 +42,7 @@ fn main() {
     // No binding at all: downgrade and upgrade in one expression.
     let c = Node { v: 7 }
     println!(
-        "case3={}",
+        "case3={}"
         if let Some(p) = c.downgrade().upgrade() { p.v } else { -1 }
     )
 

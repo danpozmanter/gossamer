@@ -24,9 +24,20 @@ properties follow from that single decision:
 
 A byte-budget recursion guard is armed at the shallow entry point of
 each goroutine (and re-armed on every resume, since a goroutine can
-migrate between worker threads). Runaway recursion trips a clean
-`GX0008` stack-overflow diagnostic before it can reach the hardware
-guard page, on every tier.
+migrate between worker threads). The bytecode VM consults it on every
+call, so runaway recursion there trips a clean `GX0008` diagnostic
+before it can reach the hardware guard page.
+
+Compiled frames do not consult it: neither backend emits a prologue
+safepoint. JIT-compiled and native recursion instead reaches the guard
+page, where the installed handler reports the same `GX0008` code and
+exits with the same status the VM uses, naming the faulting address it
+alone knows. Both paths are deterministic and neither corrupts memory.
+
+Checking the budget in compiled prologues was measured and rejected: an
+opaque runtime call at every function entry blocks inlining, and a
+call-heavy benchmark (recursive `fib(40)`, `--release`) went from 0.16 s
+to 0.96 s. The guard page costs nothing until it is hit.
 
 Because the reservation is generous and commit is lazy, both cheap
 goroutines and deep recursion fall out of the same mechanism: thousands
@@ -65,8 +76,8 @@ price is much higher here than in Go:
 - **Three tiers, one meaning.** A feature must behave identically on the
   bytecode VM, the Cranelift JIT, and the LLVM AOT backend. The VM does
   not use the machine stack for Gossamer frames the way native code does
-  (its frames are heap-backed, and deep recursion is already a clean
-  depth-guarded `GX0008`, not a hardware overflow). "Grow the stack by
+  (its frames are heap-backed, and deep recursion there is a clean
+  depth-guarded `GX0008` rather than a hardware overflow). "Grow the stack by
   copying frames" is three different problems across the three tiers,
   and unifying them is awkward.
 

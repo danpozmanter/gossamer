@@ -9,8 +9,8 @@ fn fmt(ms: i64) -> String {
 
 fn parse(s: &String) -> String {
     match time::parse_rfc3339(s) {
-        Ok(ms) => format!("{}", ms),
-        Err(_) => "<err>",
+        Ok(ms) => format!("{}", ms)
+        Err(_) => "<err>"
     }
 }
 

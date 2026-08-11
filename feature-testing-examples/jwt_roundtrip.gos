@@ -15,11 +15,11 @@ fn main() {
         Ok(tok) => {
             println!("hs256_token={}", tok)
             match jwt::verify_hs(tok, "HS256", key, 0) {
-                Ok(c) => println!("hs256_claims={}", c),
-                Err(e) => println!("hs256_verify_err={}", e),
+                Ok(c) => println!("hs256_claims={}", c)
+                Err(e) => println!("hs256_verify_err={}", e)
             }
         }
-        Err(e) => println!("hs256_sign_err={}", e),
+        Err(e) => println!("hs256_sign_err={}", e)
     }
 
     // ES256 - fresh P-256 keypair => deterministic recovered claims.
@@ -28,14 +28,14 @@ fn main() {
             match jwt::sign_es256(claims, sk) {
                 Ok(tok) => {
                     match jwt::verify_es256(tok, pk, 0) {
-                        Ok(c) => println!("es256_claims={}", c),
-                        Err(e) => println!("es256_verify_err={}", e),
+                        Ok(c) => println!("es256_claims={}", c)
+                        Err(e) => println!("es256_verify_err={}", e)
                     }
                 }
-                Err(e) => println!("es256_sign_err={}", e),
+                Err(e) => println!("es256_sign_err={}", e)
             }
         }
-        Err(e) => println!("es256_keypair_err={}", e),
+        Err(e) => println!("es256_keypair_err={}", e)
     }
 
     // EdDSA - fixed Ed25519 PKCS#8 key => deterministic token.
@@ -45,10 +45,10 @@ fn main() {
         Ok(tok) => {
             println!("eddsa_token={}", tok)
             match jwt::verify_eddsa(tok, ed_pk, 0) {
-                Ok(c) => println!("eddsa_claims={}", c),
-                Err(e) => println!("eddsa_verify_err={}", e),
+                Ok(c) => println!("eddsa_claims={}", c)
+                Err(e) => println!("eddsa_verify_err={}", e)
             }
         }
-        Err(e) => println!("eddsa_sign_err={}", e),
+        Err(e) => println!("eddsa_sign_err={}", e)
     }
 }

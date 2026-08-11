@@ -6,8 +6,8 @@
 // or off (it is reference-count preserving).
 
 enum Tree {
-    Node(Box<Tree>, Box<Tree>),
-    Leaf(i64),
+    Node(Box<Tree>, Box<Tree>)
+    Leaf(i64)
 }
 
 fn build(depth: i64) -> Tree {
@@ -20,14 +20,14 @@ fn build(depth: i64) -> Tree {
 
 fn sum(t: &Tree) -> i64 {
     match t {
-        Tree::Node(l, r) => sum(l) + sum(r),
-        Tree::Leaf(v) => v,
+        Tree::Node(l, r) => sum(l) + sum(r)
+        Tree::Leaf(v) => v
     }
 }
 
 struct Named {
-    label: String,
-    tags: Vec<String>,
+    label: String
+    tags: Vec<String>
 }
 
 fn make_named(k: i64) -> Named {

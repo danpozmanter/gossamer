@@ -8,7 +8,7 @@ use std::collections::Map
 // to recover the type - inline access degraded the key type to i64.
 
 struct Tags {
-    tags: Map<String, i64>,
+    tags: Map<String, i64>
 }
 
 fn build() -> Result<Tags, i64> {
@@ -25,6 +25,6 @@ fn main() {
             let missing = t.tags.get(&"zz").unwrap_or(-9)
             println!("a={} missing={} keys={:?} values={:?}", a, missing, t.tags.keys(), t.tags.values())
         }
-        Err(e) => println!("err={}", e),
+        Err(e) => println!("err={}", e)
     }
 }

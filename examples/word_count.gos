@@ -13,8 +13,8 @@ fn is_space(b: i64) -> bool {
 }
 
 struct Stats {
-    chars: i64,
-    words: i64,
+    chars: i64
+    words: i64
 }
 
 fn analyse(text: &String) -> Stats {

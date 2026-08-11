@@ -26,13 +26,13 @@ const READ_FAILED: i64 = -2
 
 fn client(addr: String, tx: Sender<i64>) {
     let stream = match net::TcpStream::connect(&addr) {
-        Ok(s) => s,
+        Ok(s) => s
         Err(_) => { tx.send(CONNECT_FAILED)
             return }
     }
     let _ = stream.write(#[80, 73, 78, 71])
     let echo = match stream.read(64) {
-        Ok(b) => b,
+        Ok(b) => b
         Err(_) => { tx.send(READ_FAILED)
             return }
     }
@@ -43,24 +43,24 @@ fn client(addr: String, tx: Sender<i64>) {
 
 fn main() {
     let listener = match net::TcpListener::bind("127.0.0.1:0") {
-        Ok(l) => l,
+        Ok(l) => l
         Err(e) => { println!("bind failed: {}", e)
             return }
     }
     let addr = match listener.local_addr() {
-        Ok(a) => a,
+        Ok(a) => a
         Err(e) => { println!("addr failed: {}", e)
             return }
     }
     let (tx, rx) = channel()
     go client(addr, tx)
     let (stream, _peer) = match listener.accept() {
-        Ok(p) => p,
+        Ok(p) => p
         Err(e) => { println!("accept failed: {}", e)
             return }
     }
     let req = match stream.read(64) {
-        Ok(b) => b,
+        Ok(b) => b
         Err(e) => { println!("server read failed: {}", e)
             return }
     }
@@ -68,7 +68,7 @@ fn main() {
     let _ = stream.close()
     let _ = listener.close()
     let code = match rx.recv() {
-        Some(c) => c,
+        Some(c) => c
         None => { println!("no client result")
             return }
     }

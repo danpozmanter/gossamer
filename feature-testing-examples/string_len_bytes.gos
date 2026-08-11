@@ -13,9 +13,9 @@ fn main() {
     let c = "日本語"
     println!("len {} {} {}", a.len(), b.len(), c.len())
     println!(
-        "runes {} {} {}",
-        utf8::rune_count_in_string(&a),
-        utf8::rune_count_in_string(&b),
+        "runes {} {} {}"
+        utf8::rune_count_in_string(&a)
+        utf8::rune_count_in_string(&b)
         utf8::rune_count_in_string(&c)
     )
 }

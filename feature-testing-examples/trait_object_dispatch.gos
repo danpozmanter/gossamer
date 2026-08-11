@@ -12,8 +12,8 @@ trait Shape {
 }
 
 struct Rectangle {
-    width: f64,
-    height: f64,
+    width: f64
+    height: f64
 }
 
 impl Shape for Rectangle {
@@ -29,7 +29,7 @@ impl Shape for Rectangle {
 }
 
 struct Circle {
-    radius: f64,
+    radius: f64
 }
 
 impl Shape for Circle {
@@ -45,9 +45,9 @@ impl Shape for Circle {
 }
 
 struct Triangle {
-    a: f64,
-    b: f64,
-    c: f64,
+    a: f64
+    b: f64
+    c: f64
 }
 
 impl Shape for Triangle {

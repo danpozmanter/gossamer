@@ -39,9 +39,9 @@ fn make_map(x: i64) -> Result<Node, errors::Error> {
 
 fn weigh(n: &Node) -> i64 {
     match n {
-        Node::Nil => 1,
-        Node::Num(v) => *v,
-        Node::Txt(s) => s.len(),
+        Node::Nil => 1
+        Node::Num(v) => *v
+        Node::Txt(s) => s.len()
         Node::List(xs) => { let mut s = 0
             for x in xs { s += weigh(x) }
             s }
@@ -56,7 +56,7 @@ fn main() {
     let mut k = 0
     while k < 3000 {
         match make_map(k) {
-            Ok(node) => total += weigh(&node),
+            Ok(node) => total += weigh(&node)
             Err(_) => {}
         }
         k += 1

@@ -54,16 +54,16 @@ fn main() {
     go serve_chained()
     await_ready(&"http://127.0.0.1:23882/a")
     match http::get("http://127.0.0.1:23882/a", Vec::from([])) {
-        Ok(r) => println!("get_a status={} body={}", r.status, r.body),
-        Err(e) => println!("get_a error: {}", e),
+        Ok(r) => println!("get_a status={} body={}", r.status, r.body)
+        Err(e) => println!("get_a error: {}", e)
     }
     match http::request("POST", "http://127.0.0.1:23882/b", "", Vec::from([])) {
-        Ok(r) => println!("post_b status={} body={}", r.status, r.body),
-        Err(e) => println!("post_b error: {}", e),
+        Ok(r) => println!("post_b status={} body={}", r.status, r.body)
+        Err(e) => println!("post_b error: {}", e)
     }
     match http::get("http://127.0.0.1:23882/c", Vec::from([])) {
-        Ok(r) => println!("get_c status={} body={}", r.status, r.body),
-        Err(e) => println!("get_c error: {}", e),
+        Ok(r) => println!("get_c status={} body={}", r.status, r.body)
+        Err(e) => println!("get_c error: {}", e)
     }
     process::exit(0)
 }

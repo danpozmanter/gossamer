@@ -1407,7 +1407,11 @@ mod tier_parity {
     use super::TestOpts;
     use crate::cmd::feature_status::{TierStatus, render_sidecar};
 
+    /// Per-tier budget when `--timeout` is not given.
+    const DEFAULT_TIER_BUDGET: Duration = Duration::from_mins(1);
+
     pub(super) fn run(opts: &TestOpts) -> Result<()> {
+        let budget = opts.timeout.unwrap_or(DEFAULT_TIER_BUDGET);
         let roots = match opts.path.as_ref() {
             Some(p) => vec![p.clone()],
             None => default_walk_roots(),
@@ -1428,33 +1432,39 @@ mod tier_parity {
             ));
         }
         let mut records: Vec<(String, TierStatus)> = Vec::with_capacity(files.len());
+        // A fixture's imports name the stdlib modules it exercises, so a
+        // module's row is the aggregate over every fixture that imports it:
+        // a tier passes only when all of them pass on it.
+        let mut by_module: BTreeMap<String, TierStatus> = BTreeMap::new();
         for file in &files {
             let name = file
                 .strip_prefix(workspace_root_or_cwd().unwrap_or_else(|| PathBuf::from(".")))
                 .unwrap_or(file)
                 .display()
                 .to_string();
-            let vm = tier_outcome(run_vm(file));
-            let llvm = tier_outcome(run_llvm(file));
-            // Cranelift is the in-process JIT under `gos`; tier
-            // outcome maps to the VM outcome until a separate
-            // dispatch lands.
-            let cranelift = vm.clone();
+            let observed = [
+                run_vm(file, budget),
+                run_cranelift(file, budget),
+                run_llvm(file, budget),
+            ];
+            let [vm, cranelift, llvm] = parity_outcomes(&observed);
             println!(
                 "{name}: vm={} cranelift={} llvm={}",
                 vm.as_deref().unwrap_or("-"),
                 cranelift.as_deref().unwrap_or("-"),
                 llvm.as_deref().unwrap_or("-"),
             );
-            records.push((
-                name,
-                TierStatus {
-                    vm,
-                    cranelift,
-                    llvm,
-                },
-            ));
+            let status = TierStatus {
+                vm,
+                cranelift,
+                llvm,
+            };
+            for module in stdlib_modules_used(file) {
+                merge_module_status(&mut by_module, module, &status);
+            }
+            records.push((name, status));
         }
+        records.extend(by_module);
         let json = render_sidecar(&records);
         if opts.report.as_deref() == Some("status") {
             let out_path = sidecar_path();
@@ -1471,14 +1481,31 @@ mod tier_parity {
         } else if opts.report.is_some() {
             return Err(anyhow!("unknown --report value (only `status` supported)"));
         }
-        let failed: Vec<&(String, TierStatus)> =
-            records.iter().filter(|(_, s)| !s.all_pass()).collect();
-        if failed.is_empty() {
+        // A tier that reached no verdict is absent from the record rather
+        // than marked failing, so only an explicit `fail` counts here.
+        let failed = records
+            .iter()
+            .filter(|(_, s)| {
+                [&s.vm, &s.cranelift, &s.llvm]
+                    .iter()
+                    .any(|t| t.as_deref() == Some("fail"))
+            })
+            .count();
+        let undetermined = records
+            .iter()
+            .filter(|(_, s)| [&s.vm, &s.cranelift, &s.llvm].iter().any(|t| t.is_none()))
+            .count();
+        if undetermined > 0 {
+            println!(
+                "{undetermined} fixture(s) reached no verdict on at least one tier \
+                 (a fixture that runs until it is killed exceeds the per-tier budget)"
+            );
+        }
+        if failed == 0 {
             Ok(())
         } else {
             Err(anyhow!(
-                "{} tier-parity failure(s) - see sidecar for details",
-                failed.len(),
+                "{failed} tier-parity failure(s) - see sidecar for details"
             ))
         }
     }
@@ -1531,18 +1558,122 @@ mod tier_parity {
         Ok(())
     }
 
-    fn tier_outcome(outcome: Outcome) -> Option<String> {
-        match outcome {
-            Outcome::Pass => Some("pass".into()),
-            Outcome::Fail => Some("fail".into()),
-            Outcome::Skipped => None,
+    /// Canonical paths of the stdlib modules `file` imports. Handles both
+    /// `use std::path::to::module` and the braced `use std::{a, b::c}`
+    /// form; a name the manifest does not declare is ignored.
+    fn stdlib_modules_used(file: &Path) -> Vec<String> {
+        let Ok(source) = fs::read_to_string(file) else {
+            return Vec::new();
+        };
+        let mut found: Vec<String> = Vec::new();
+        for line in source.lines() {
+            let Some(rest) = line.trim().strip_prefix("use std::") else {
+                continue;
+            };
+            let rest = rest.split("//").next().unwrap_or(rest).trim();
+            let (prefix, leaves) = match rest.split_once('{') {
+                Some((prefix, tail)) => (
+                    prefix.trim(),
+                    tail.trim_end_matches('}').split(',').collect::<Vec<_>>(),
+                ),
+                None => ("", vec![rest]),
+            };
+            for leaf in leaves {
+                let leaf = leaf.split(" as ").next().unwrap_or(leaf).trim();
+                if leaf.is_empty() {
+                    continue;
+                }
+                let path = format!("std::{prefix}{leaf}");
+                // A leaf may name an item rather than a module
+                // (`use std::sync::channel`); take the module above it.
+                let parent = path
+                    .rsplit_once("::")
+                    .map_or_else(|| path.clone(), |(module, _)| module.to_string());
+                for candidate in [path, parent] {
+                    if gossamer_std::registry::module(&candidate).is_some() {
+                        if !found.contains(&candidate) {
+                            found.push(candidate);
+                        }
+                        break;
+                    }
+                }
+            }
         }
+        found
+    }
+
+    /// Folds one fixture's outcome into a module's aggregate. `fail` on any
+    /// fixture wins over `pass`; a tier with no data anywhere stays absent.
+    fn merge_module_status(
+        by_module: &mut BTreeMap<String, TierStatus>,
+        module: String,
+        status: &TierStatus,
+    ) {
+        let entry = by_module.entry(module).or_default();
+        for (slot, incoming) in [
+            (&mut entry.vm, &status.vm),
+            (&mut entry.cranelift, &status.cranelift),
+            (&mut entry.llvm, &status.llvm),
+        ] {
+            match (slot.as_deref(), incoming.as_deref()) {
+                (_, None) => {}
+                (None, Some(v)) => *slot = Some(v.to_string()),
+                (Some("fail"), _) => {}
+                (Some(_), Some(v)) => *slot = Some(v.to_string()),
+            }
+        }
+    }
+
+    /// Reduces what each tier did into the per-tier verdicts the sidecar
+    /// records.
+    ///
+    /// Parity is agreement between tiers, not success: an example that
+    /// deliberately aborts, or one that needs an argument it was not
+    /// given, exits non-zero everywhere, and three tiers agreeing on that
+    /// is exactly the property this walk exists to prove. Only a tier that
+    /// disagrees with the reference - or fails to build at all - is a
+    /// failure. The bytecode VM is the reference when it reached a
+    /// verdict, otherwise the first tier that did.
+    fn parity_outcomes(observed: &[Outcome; 3]) -> [Option<String>; 3] {
+        let reference = observed.iter().find_map(|o| match o {
+            Outcome::Ran { exit_code, stdout } => Some((*exit_code, stdout.as_str())),
+            _ => None,
+        });
+        let Some(reference) = reference else {
+            return [None, None, None];
+        };
+        std::array::from_fn(|i| match &observed[i] {
+            Outcome::Ran { exit_code, stdout } => {
+                if (*exit_code, stdout.as_str()) == reference {
+                    Some("pass".to_string())
+                } else {
+                    Some("fail".to_string())
+                }
+            }
+            Outcome::BuildFailed => Some("fail".to_string()),
+            Outcome::NoVerdict | Outcome::Skipped => None,
+        })
     }
 
     #[derive(Debug)]
     enum Outcome {
-        Pass,
-        Fail,
+        /// The program ran to completion. The exit code and stdout are
+        /// what the tiers have to agree on.
+        Ran {
+            exit_code: Option<i32>,
+            stdout: String,
+        },
+        /// A native build that did not produce a binary. Unlike a
+        /// non-zero exit, this is tier-specific by construction.
+        BuildFailed,
+        /// The process was still running at the deadline. A server example
+        /// runs until it is killed, so exceeding the budget says nothing
+        /// about whether the tiers agree; recording it as a failure would
+        /// publish every long-running fixture's modules as broken. The
+        /// `tier_parity` harness models servers directly (boot, probe,
+        /// kill) and remains the gate that catches a real hang.
+        NoVerdict,
+        /// The tier could not be exercised at all.
         Skipped,
     }
 
@@ -1552,20 +1683,81 @@ mod tier_parity {
             .unwrap_or_else(|| PathBuf::from("gos"))
     }
 
-    fn run_vm(file: &Path) -> Outcome {
-        let result = Command::new(gos_bin())
-            .arg(file)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn();
-        let Ok(child) = result else {
-            return Outcome::Skipped;
-        };
-        wait_bounded(child, Duration::from_mins(1))
+    /// Runs `file` under `gos run` with the JIT disabled, so this column
+    /// reports the bytecode VM alone.
+    fn run_vm(file: &Path, budget: Duration) -> Outcome {
+        run_interpreted(file, &[("GOS_JIT", "0")], budget)
     }
 
-    fn run_llvm(file: &Path) -> Outcome {
+    /// Runs `file` with the promotion threshold at one call, so every
+    /// eligible body reaches Cranelift and this column reports the JIT
+    /// rather than a second bytecode run.
+    fn run_cranelift(file: &Path, budget: Duration) -> Outcome {
+        run_interpreted(file, &[("GOSSAMER_JIT_THRESHOLD", "1")], budget)
+    }
+
+    fn run_interpreted(file: &Path, env: &[(&str, &str)], budget: Duration) -> Outcome {
+        let Some(sink) = StdoutSink::create(file) else {
+            return Outcome::Skipped;
+        };
+        let mut cmd = Command::new(gos_bin());
+        cmd.arg("run")
+            .arg(file)
+            .stdin(Stdio::null())
+            .stdout(sink.stdio())
+            .stderr(Stdio::null());
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+        let Ok(child) = cmd.spawn() else {
+            return Outcome::Skipped;
+        };
+        wait_bounded(child, budget, &sink)
+    }
+
+    /// A file the child's stdout is redirected into.
+    ///
+    /// Comparing tiers means reading what each one printed, and a pipe
+    /// the parent only drains after the wait would deadlock as soon as a
+    /// fixture prints more than the pipe buffer holds.
+    struct StdoutSink {
+        path: PathBuf,
+    }
+
+    impl StdoutSink {
+        fn create(file: &Path) -> Option<Self> {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "gos-tier-parity-out-{}-{}-{}.txt",
+                std::process::id(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                file.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("fixture"),
+            ));
+            fs::File::create(&path).ok()?;
+            Some(Self { path })
+        }
+
+        fn stdio(&self) -> Stdio {
+            fs::OpenOptions::new()
+                .write(true)
+                .open(&self.path)
+                .map_or_else(|_| Stdio::null(), Stdio::from)
+        }
+
+        fn read(&self) -> String {
+            fs::read_to_string(&self.path).unwrap_or_default()
+        }
+    }
+
+    impl Drop for StdoutSink {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+
+    fn run_llvm(file: &Path, budget: Duration) -> Outcome {
         let scratch = std::env::temp_dir().join(format!(
             "gos-tier-parity-{}-{}",
             std::process::id(),
@@ -1590,7 +1782,7 @@ mod tier_parity {
         let ok = matches!(build, Ok(status) if status.success());
         if !ok {
             let _ = fs::remove_dir_all(&scratch);
-            return Outcome::Fail;
+            return Outcome::BuildFailed;
         }
         // Find the produced executable (first non-dir, non-`.o` file).
         let mut binary: Option<PathBuf> = None;
@@ -1608,44 +1800,47 @@ mod tier_parity {
                 }
             }
         }
-        let outcome = match binary {
-            Some(p) => {
+        let outcome = match (binary, StdoutSink::create(file)) {
+            (Some(p), Some(sink)) => {
                 let run = Command::new(&p)
                     .stdin(Stdio::null())
-                    .stdout(Stdio::null())
+                    .stdout(sink.stdio())
                     .stderr(Stdio::null())
                     .spawn();
                 match run {
-                    Ok(child) => wait_bounded(child, Duration::from_mins(1)),
-                    Err(_) => Outcome::Fail,
+                    Ok(child) => wait_bounded(child, budget, &sink),
+                    Err(_) => Outcome::BuildFailed,
                 }
             }
-            None => Outcome::Skipped,
+            _ => Outcome::Skipped,
         };
         let _ = fs::remove_dir_all(&scratch);
         outcome
     }
 
-    fn wait_bounded(mut child: std::process::Child, timeout: Duration) -> Outcome {
+    fn wait_bounded(
+        mut child: std::process::Child,
+        timeout: Duration,
+        sink: &StdoutSink,
+    ) -> Outcome {
         let start = std::time::Instant::now();
         loop {
             match child.try_wait() {
                 Ok(Some(status)) => {
-                    return if status.success() {
-                        Outcome::Pass
-                    } else {
-                        Outcome::Fail
+                    return Outcome::Ran {
+                        exit_code: status.code(),
+                        stdout: sink.read(),
                     };
                 }
                 Ok(None) => {
                     if start.elapsed() >= timeout {
                         let _ = child.kill();
                         let _ = child.wait();
-                        return Outcome::Fail;
+                        return Outcome::NoVerdict;
                     }
                     std::thread::sleep(Duration::from_millis(40));
                 }
-                Err(_) => return Outcome::Fail,
+                Err(_) => return Outcome::Skipped,
             }
         }
     }

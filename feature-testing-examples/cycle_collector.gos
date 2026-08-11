@@ -19,8 +19,8 @@ fn build(depth: i64) -> Tree {
 
 fn sum(t: &Tree) -> i64 {
     match t {
-        Tree::Node(v, l, r) => v + sum(l) + sum(r),
-        Tree::Leaf => 0,
+        Tree::Node(v, l, r) => v + sum(l) + sum(r)
+        Tree::Leaf => 0
     }
 }
 

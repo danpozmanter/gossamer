@@ -12,8 +12,8 @@
 use std::runtime
 
 enum Tree {
-    Leaf(i64),
-    Node(Box<Tree>, Box<Tree>),
+    Leaf(i64)
+    Node(Box<Tree>, Box<Tree>)
 }
 
 fn build(depth: i64, seed: i64) -> Tree {
@@ -25,15 +25,15 @@ fn build(depth: i64, seed: i64) -> Tree {
 
 fn sum(t: &Tree) -> i64 {
     match t {
-        Tree::Leaf(v) => *v,
-        Tree::Node(l, r) => sum(l) + sum(r),
+        Tree::Leaf(v) => *v
+        Tree::Node(l, r) => sum(l) + sum(r)
     }
 }
 
 fn count(t: &Tree) -> i64 {
     match t {
-        Tree::Leaf(_) => 1,
-        Tree::Node(l, r) => 1 + count(l) + count(r),
+        Tree::Leaf(_) => 1
+        Tree::Node(l, r) => 1 + count(l) + count(r)
     }
 }
 

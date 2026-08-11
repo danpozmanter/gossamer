@@ -27,17 +27,17 @@ impl http::Handler for App {
                     sum += b as i64
                 }
                 http::Response::text(
-                    200,
+                    200
                     format!(
-                        "file={} ctype={} len={} sum={}",
-                        part.filename,
-                        part.content_type,
-                        part.content.len(),
-                        sum,
-                    ),
+                        "file={} ctype={} len={} sum={}"
+                        part.filename
+                        part.content_type
+                        part.content.len()
+                        sum
+                    )
                 )
-            },
-            None => http::Response::text(404, "no file"),
+            }
+            None => http::Response::text(404, "no file")
         }
     }
 }
@@ -74,13 +74,13 @@ fn main() {
     + "--ZZBOUND--\r\n"
     let hdr: Vec<(String, String)> = Vec::from([("Content-Type", "multipart/form-data; boundary=ZZBOUND")])
     match http::request("POST", "http://127.0.0.1:23922/x", body, hdr) {
-        Ok(r) => println!("status={} body={}", r.status, r.body),
-        Err(e) => println!("error: {}", e),
+        Ok(r) => println!("status={} body={}", r.status, r.body)
+        Err(e) => println!("error: {}", e)
     }
     // No multipart body: the convenience degrades to a 404.
     match http::get("http://127.0.0.1:23922/x", Vec::from([])) {
-        Ok(r) => println!("status={} body={}", r.status, r.body),
-        Err(e) => println!("error: {}", e),
+        Ok(r) => println!("status={} body={}", r.status, r.body)
+        Err(e) => println!("error: {}", e)
     }
     process::exit(0)
 }

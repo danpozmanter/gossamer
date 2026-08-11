@@ -8,32 +8,32 @@ enum Shape { Circle(f64), Rect { w: f64, h: f64 } }
 
 fn pair(a: bool, b: bool) -> i64 {
     match (a, b) {
-        (true, true) => 3,
-        (true, false) => 2,
-        (false, true) => 1,
-        (false, false) => 0,
+        (true, true) => 3
+        (true, false) => 2
+        (false, true) => 1
+        (false, false) => 0
     }
 }
 
 fn ends(xs: [i64; 3]) -> i64 {
     match xs {
-        [first, ..rest] => first + rest.len(),
-        [] => 0,
+        [first, ..rest] => first + rest.len()
+        [] => 0
     }
 }
 
 fn unwrap_or(o: Option<Result<i64, String>>) -> i64 {
     match o {
-        Some(Ok(v)) => v,
-        Some(Err(_)) => -1,
-        None => -2,
+        Some(Ok(v)) => v
+        Some(Err(_)) => -1
+        None => -2
     }
 }
 
 fn area(s: &Shape) -> f64 {
     match s {
-        Shape::Circle(r) => 3.0 * r * r,
-        Shape::Rect { w, h } => w * h,
+        Shape::Circle(r) => 3.0 * r * r
+        Shape::Rect { w, h } => w * h
     }
 }
 

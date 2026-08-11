@@ -29,13 +29,13 @@ impl http::Handler for App {
 fn main() {
     println!("about to bind")
     let result = http_h3::serve(
-        "127.0.0.1:0",
-        "/nonexistent/gossamer-h3-cert.pem",
-        "/nonexistent/gossamer-h3-key.pem",
-        App { },
+        "127.0.0.1:0"
+        "/nonexistent/gossamer-h3-cert.pem"
+        "/nonexistent/gossamer-h3-key.pem"
+        App { }
     )
     match result {
-        Ok(_) => println!("unexpected ok"),
-        Err(e) => println!("Error: {}", e),
+        Ok(_) => println!("unexpected ok")
+        Err(e) => println!("Error: {}", e)
     }
 }

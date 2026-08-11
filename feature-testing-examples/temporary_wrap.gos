@@ -26,8 +26,8 @@ fn main() {
     println!("min = {} max = {}", lo, hi)
 
     let present = match iter::min(&xs) {
-        Some(_) => true,
-        None => false,
+        Some(_) => true
+        None => false
     }
     println!("min is_some = {}", present)
 

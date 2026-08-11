@@ -18,38 +18,38 @@ fn main() {
     println!("{}", "hello".count('l'))
 
     let idx = match "hello".find('l') {
-        Some(i) => i,
-        None => -1,
+        Some(i) => i
+        None => -1
     }
     println!("{}", idx)
 
     let ridx = match "hello".rfind('l') {
-        Some(i) => i,
-        None => -1,
+        Some(i) => i
+        None => -1
     }
     println!("{}", ridx)
 
     let (head, tail) = match "key:value".split_once(':') {
-        Some(parts) => parts,
-        None => (String::new(), String::new()),
+        Some(parts) => parts
+        None => (String::new(), String::new())
     }
     println!("{}/{}", head, tail)
 
     let (rh, rt) = match "a:b:c".rsplit_once(':') {
-        Some(parts) => parts,
-        None => (String::new(), String::new()),
+        Some(parts) => parts
+        None => (String::new(), String::new())
     }
     println!("{}/{}", rh, rt)
 
     let stripped = match "hello".strip_prefix('h') {
-        Some(s) => s,
-        None => String::new(),
+        Some(s) => s
+        None => String::new()
     }
     println!("{}", stripped)
 
     let suffixed = match "hello".strip_suffix('o') {
-        Some(s) => s,
-        None => String::new(),
+        Some(s) => s
+        None => String::new()
     }
     println!("{}", suffixed)
 

@@ -7,8 +7,8 @@ enum Shape { Circle(f64), Square(f64), Rectangle(f64, f64) }
 // `Shape::Square` and `Shape::Rectangle` share the first-field binding `side`.
 fn area(s: Shape) -> f64 {
     match s {
-        Shape::Circle(r) => 3.14159 * r * r,
-        Shape::Square(side) | Shape::Rectangle(side, _) => side * side,
+        Shape::Circle(r) => 3.14159 * r * r
+        Shape::Square(side) | Shape::Rectangle(side, _) => side * side
     }
 }
 
@@ -27,8 +27,8 @@ mod or_patterns_tests {
         let got = super::area(super::Shape::Circle(1.0))
         let want = 3.14159
         let _ = testing::check(
-            &((got - want).abs() < 0.001),
-            "circle area",
+            &((got - want).abs() < 0.001)
+            "circle area"
         )
     }
 
@@ -40,9 +40,9 @@ mod or_patterns_tests {
     #[test]
     fn rectangle_uses_first_side() {
         let _ = testing::check_eq(
-            &super::area(super::Shape::Rectangle(3.0, 4.0)),
-            &9.0,
-            "rectangle side*side",
+            &super::area(super::Shape::Rectangle(3.0, 4.0))
+            &9.0
+            "rectangle side*side"
         )
     }
 }

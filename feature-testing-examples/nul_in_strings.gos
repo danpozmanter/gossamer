@@ -78,10 +78,10 @@ fn main() {
     counts.insert("a\0c", 2)
     counts.insert("a", 3)
     println!(
-        "map={} {} {} {}",
-        counts.len(),
-        counts.get_or("a\0b", 0),
-        counts.get_or("a\0c", 0),
+        "map={} {} {} {}"
+        counts.len()
+        counts.get_or("a\0b", 0)
+        counts.get_or("a\0c", 0)
         counts.get_or("a", 0)
     )
     println!("map_contains={}", counts.contains_key("a\0b"))

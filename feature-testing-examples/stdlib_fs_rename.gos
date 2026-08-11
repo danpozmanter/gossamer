@@ -17,8 +17,8 @@ fn main() {
     let _ = fs::write(&src, "payload\n".to_string().as_bytes())
 
     match fs::rename(&src, &dst) {
-        Ok(_) => println!("rename_ok=true"),
-        Err(e) => println!("rename_err={}", e),
+        Ok(_) => println!("rename_ok=true")
+        Err(e) => println!("rename_err={}", e)
     }
     println!("src_exists={}", fs::exists(&src))
     println!("dst_exists={}", fs::exists(&dst))
@@ -27,8 +27,8 @@ fn main() {
 
     // env::set_current_dir into the temp dir, then back.
     match env::set_current_dir(&dir) {
-        Ok(_) => println!("chdir_ok=true"),
-        Err(e) => println!("chdir_err={}", e),
+        Ok(_) => println!("chdir_ok=true")
+        Err(e) => println!("chdir_err={}", e)
     }
 
     let _ = fs::remove_dir_all(&dir)

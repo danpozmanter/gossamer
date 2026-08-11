@@ -1057,6 +1057,11 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_image_encode_png_base64" => (&[types::I64], Some(ptr_ty)),
         "gos_rt_image_encode_jpeg_base64" => (&[types::I64, types::I64], Some(ptr_ty)),
         "gos_rt_runtime_scheduler_stats_json" => (&[], Some(ptr_ty)),
+        "gos_rt_pprof_goroutine_profile"
+        | "gos_rt_pprof_mutex_profile"
+        | "gos_rt_pprof_block_profile" => (&[], Some(ptr_ty)),
+        "gos_rt_pprof_execution_trace" => (&[types::I64], Some(ptr_ty)),
+        "gos_rt_pprof_route" => (&[ptr_ty, ptr_ty], Some(types::I128)),
         "gos_rt_runtime_cycle_collection_supported" => (&[], Some(types::I8)),
         "gos_rt_parse_i64_result" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_iter_count_by_i64" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),

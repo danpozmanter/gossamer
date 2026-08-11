@@ -5,8 +5,8 @@
 // that provides `next() -> Option<T>` is iterable.
 
 struct Counter {
-    next_value: i64,
-    end: i64,
+    next_value: i64
+    end: i64
 }
 
 trait Iterator {

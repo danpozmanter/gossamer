@@ -21,14 +21,14 @@ fn main() {
     let hay = "foo bar baz"
     let pos = hay.find("bar")
     match pos {
-        Some(i) => println!("'bar' at {}", i),
-        None => println!("not found"),
+        Some(i) => println!("'bar' at {}", i)
+        None => println!("not found")
     }
 
     let missing = hay.find("qux")
     match missing {
-        Some(_) => println!("unexpected"),
-        None => println!("'qux' not found"),
+        Some(_) => println!("unexpected")
+        None => println!("'qux' not found")
     }
 
     // Trim
@@ -77,9 +77,9 @@ mod tests {
         let s = "hello world"
         match s.find("world") {
             Some(i) => { let _ = testing::check_eq(&i, &6, "find offset")
-            },
+            }
             None => { let _ = testing::check(false, "expected Some")
-            },
+            }
         }
     }
 

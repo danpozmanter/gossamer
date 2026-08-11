@@ -12,9 +12,9 @@ use std::runtime
 use std::sync::channel
 
 struct Node {
-    id: i64,
-    next: Option<Box<Node>>,
-    shared: Option<Box<Node>>,
+    id: i64
+    next: Option<Box<Node>>
+    shared: Option<Box<Node>>
 }
 
 fn worker(rx: Receiver<Node>, done: Sender<i64>) {

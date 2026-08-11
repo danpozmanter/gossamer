@@ -19,8 +19,8 @@ fn sum(Pt(x, y): Pt) -> i64 {
 
 fn classify(p: Pt) -> i64 {
     match p {
-        Pt(0, y) => y,
-        Pt(x, _) => x,
+        Pt(0, y) => y
+        Pt(x, _) => x
     }
 }
 

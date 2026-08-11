@@ -1,6 +1,6 @@
 enum Tree {
-    Node(Box<Tree>, Box<Tree>),
-    Nil,
+    Node(Box<Tree>, Box<Tree>)
+    Nil
 }
 
 fn build(depth: i64) -> Tree {
@@ -13,8 +13,8 @@ fn build(depth: i64) -> Tree {
 
 fn check(t: &Tree) -> i64 {
     match t {
-        Tree::Node(l, r) => 1 + check(l) + check(r),
-        Tree::Nil => 0,
+        Tree::Node(l, r) => 1 + check(l) + check(r)
+        Tree::Nil => 0
     }
 }
 

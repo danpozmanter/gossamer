@@ -25,7 +25,7 @@ fn main() {
         let op = if i < 5 { 1 } else { 0 }
         tx.send(Cmd { op: op, x: i, reply: rtx })
         match rrx.recv() {
-            Some(v) => total += v,
+            Some(v) => total += v
             None => {}
         }
         i += 1

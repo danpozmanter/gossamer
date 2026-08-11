@@ -6,8 +6,8 @@
 // the bytecode VM, the Cranelift JIT, and the LLVM AOT tiers.
 
 struct Rec {
-    name: String,
-    count: i64,
+    name: String
+    count: i64
 }
 
 fn build(i: i64) -> Rec {

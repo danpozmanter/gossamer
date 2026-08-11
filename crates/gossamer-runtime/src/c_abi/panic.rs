@@ -105,6 +105,16 @@ pub unsafe extern "C-unwind" fn gos_rt_panic(msg: *const c_char) {
     } else {
         unsafe { crate::c_abi::gos_str_arg_string(msg) }
     };
+    raise("GX0005", "panic: ", text);
+}
+
+/// Raises `text` as a fault carrying diagnostic `code`, rendered as
+/// `error[<code>]: <prefix><text>`.
+///
+/// Every fault a compiled body can raise shares this path: the user
+/// hook, the per-goroutine isolation, the stdout flush, and the pinned
+/// exit code are properties of the fault, not of which one it is.
+fn raise(code: &str, prefix: &str, text: String) -> ! {
     install_silent_gos_hook();
     let hooked = call_user_panic_hook(&text);
     // per-goroutine panic isolation. If the panic originates inside a spawned
@@ -122,17 +132,17 @@ pub unsafe extern "C-unwind" fn gos_rt_panic(msg: *const c_char) {
         // `go` panic is unobserved, so it still reports - eagerly, so the report
         // is reliable even when `main` exits right after.
         if !hooked && !gossamer_coro::in_joinable_spawn() {
-            eprintln!("error[GX0005]: panic: {text}");
+            eprintln!("error[{code}]: {prefix}{text}");
         }
         std::panic::panic_any(GosPanic(text));
     }
-    // Fatal main-goroutine panic: report (with the active call stack), flush
+    // Fatal main-goroutine fault: report (with the active call stack), flush
     // buffered stdout (a plain `abort` would drop it), and exit with the pinned
     // panic code 101 - matching Rust; no core is dumped for an ordinary panic.
     if !hooked {
-        // Match the unified diagnostic-code prefix the VM / tree-walker use so
-        // both execution modes tag panics with `error[GX0005]`.
-        eprintln!("error[GX0005]: panic: {text}");
+        // Match the unified diagnostic-code prefix the VM uses so both
+        // execution modes tag a fault with the same code.
+        eprintln!("error[{code}]: {prefix}{text}");
         let trace = crate::sigquit::render_active_panic_trace();
         if trace.is_empty() {
             let native = crate::sigquit::render_native_panic_trace();

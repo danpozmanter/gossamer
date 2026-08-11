@@ -3,29 +3,29 @@
 // exhaustiveness checks and runtime dispatch agree everywhere.
 
 enum Color {
-    Red,
-    Green,
-    Blue,
+    Red
+    Green
+    Blue
 }
 
 enum Shape {
-    Circle(f64, Color),
-    Rect(f64, f64, Color),
-    Triangle(f64, f64),
-    Point,
+    Circle(f64, Color)
+    Rect(f64, f64, Color)
+    Triangle(f64, f64)
+    Point
 }
 
 fn describe(shape: &Shape) -> String {
     match shape {
-        Shape::Circle(r, Color::Red) => format!("red circle r={}", r),
-        Shape::Circle(r, Color::Green) => format!("green circle r={}", r),
-        Shape::Circle(r, Color::Blue) => format!("blue circle r={}", r),
-        Shape::Rect(w, h, Color::Red) => format!("red rect {}x{}", w, h),
-        Shape::Rect(w, h, Color::Green) => format!("green rect {}x{}", w, h),
-        Shape::Rect(w, h, Color::Blue) => format!("blue rect {}x{}", w, h),
-        Shape::Triangle(base, height) if *base == *height => format!("iso triangle b=h={}", base),
-        Shape::Triangle(base, height) => format!("triangle {}x{}", base, height),
-        Shape::Point => "point",
+        Shape::Circle(r, Color::Red) => format!("red circle r={}", r)
+        Shape::Circle(r, Color::Green) => format!("green circle r={}", r)
+        Shape::Circle(r, Color::Blue) => format!("blue circle r={}", r)
+        Shape::Rect(w, h, Color::Red) => format!("red rect {}x{}", w, h)
+        Shape::Rect(w, h, Color::Green) => format!("green rect {}x{}", w, h)
+        Shape::Rect(w, h, Color::Blue) => format!("blue rect {}x{}", w, h)
+        Shape::Triangle(base, height) if *base == *height => format!("iso triangle b=h={}", base)
+        Shape::Triangle(base, height) => format!("triangle {}x{}", base, height)
+        Shape::Point => "point"
     }
 }
 

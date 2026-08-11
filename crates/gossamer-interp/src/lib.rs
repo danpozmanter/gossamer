@@ -200,3 +200,11 @@ pub fn panic_message(err: &value::RuntimeError) -> String {
 pub fn is_panic_error(err: &value::RuntimeError) -> bool {
     err.to_string().starts_with("error[GX0005]")
 }
+
+/// Whether `err` is the stack-overflow fault. Reported like a panic -
+/// the compiled tiers raise it through the same path and exit 101 - so
+/// the exit status does not depend on which tier ran the program.
+#[must_use]
+pub fn is_stack_overflow(err: &value::RuntimeError) -> bool {
+    err.to_string().starts_with("error[GX0008]")
+}

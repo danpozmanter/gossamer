@@ -22,6 +22,7 @@ pub(crate) fn dispatch(
     path: Option<PathBuf>,
     timings: bool,
     message_format: crate::cli::MessageFormat,
+    fix: bool,
 ) -> Result<()> {
     if let Err(err) = crate::binding_dispatch::ensure_external_signatures() {
         eprintln!("warning: failed to load rust-binding signatures: {err}");
@@ -32,7 +33,7 @@ pub(crate) fn dispatch(
     };
     let meta = fs::metadata(&resolved).map_err(|e| friendly_io_error(e, &resolved))?;
     if meta.is_file() {
-        return run(&resolved, timings, message_format);
+        return run(&resolved, timings, message_format, fix);
     }
     // A project directory is checked as one bundled unit (the entry plus
     // its auto-bundled sibling / subdirectory modules), so cross-module
@@ -42,7 +43,7 @@ pub(crate) fn dispatch(
     // error. A directory without a single resolvable entry falls back to
     // the per-file sweep below.
     if let Ok(entry) = resolve_project_entry(&resolved) {
-        return run(&entry, timings, message_format);
+        return run(&entry, timings, message_format, fix);
     }
     let files = collect_lint_targets(&resolved)?;
     if files.is_empty() {
@@ -56,7 +57,7 @@ pub(crate) fn dispatch(
         if files.len() > 1 {
             println!("=== {} ===", file.display());
         }
-        match run(file, timings, message_format) {
+        match run(file, timings, message_format, fix) {
             Ok(()) => {}
             Err(err) => {
                 eprintln!("{err}");
@@ -85,6 +86,7 @@ pub(crate) fn run(
     file: &Path,
     timings: bool,
     message_format: crate::cli::MessageFormat,
+    fix: bool,
 ) -> Result<()> {
     let unit = crate::paths::read_entry_unit(file)?;
     let user_source = unit.source;
@@ -116,6 +118,10 @@ pub(crate) fn run(
     let elapsed = stage.elapsed();
     for diag in &outcome.diagnostics {
         emit_diag(diag, &map, render_opts, message_format);
+    }
+    if fix {
+        let applied = apply_suggestions(file, &user_source, &source, &outcome.diagnostics)?;
+        println!("fix: {applied} edit(s) applied to {}", file.display());
     }
     // The editor and `gos lint` both run the default lint registry, so
     // `check` runs it too and stays the superset gate. Lints are advisory
@@ -198,4 +204,110 @@ fn emit_diag(
             eprint!("{}", gossamer_diagnostics::render_json(structured, map));
         }
     }
+}
+
+/// Applies the machine-applicable rewrites for `file` and returns how
+/// many landed: first the suggestions the diagnostics carry, then the
+/// lint fixes `gos lint --fix` would apply, each verified against a
+/// re-check.
+///
+/// The two sources are applied in rounds rather than merged. A lint fix
+/// is derived from what the source means, and a source that still holds
+/// an unresolved name means something else: an undefined-variable error
+/// makes its intended binding look unused, so a merged pass would rename
+/// the binding and the use apart.
+///
+/// A suggestion also has to address the file on disk. The checked text is
+/// the author's source plus the project bundle, the synthesized
+/// autoderive tail, and any comptime splices, so the applicable region is
+/// the longest common prefix of the two; a span reaching past it is left
+/// for the author.
+fn apply_suggestions(
+    file: &Path,
+    user_source: &str,
+    checked_source: &str,
+    diagnostics: &[gossamer_diagnostics::Diagnostic],
+) -> Result<usize> {
+    let safe_len = common_prefix_len(user_source, checked_source).min(user_source.len());
+    let mut current = crate::paths::read_source(file)?;
+    let original = current.clone();
+    let mut applied = 0usize;
+
+    let suggested: Vec<gossamer_lint::Fix> = diagnostics
+        .iter()
+        .flat_map(|diag| &diag.suggestions)
+        .filter(|s| (s.location.span.end as usize) <= safe_len)
+        .map(|s| gossamer_lint::Fix {
+            span: s.location.span,
+            replacement: s.replacement.clone(),
+            lint_id: "diagnostic",
+        })
+        .collect();
+    if !suggested.is_empty() {
+        let candidate = gossamer_lint::apply_fixes(&current, &suggested);
+        if candidate != current && recheck(file, &candidate) < diagnostics.len() {
+            current = candidate;
+            applied += suggested.len();
+        }
+    }
+
+    let lint_fixes = lint_fixes_for(file, &current);
+    if !lint_fixes.is_empty() {
+        let candidate = gossamer_lint::apply_fixes(&current, &lint_fixes);
+        let baseline = recheck(file, &current);
+        if candidate != current && recheck(file, &candidate) <= baseline {
+            current = candidate;
+            applied += lint_fixes.len();
+        }
+    }
+
+    if current == original {
+        return Ok(0);
+    }
+    fs::write(file, current).map_err(|e| friendly_io_error(e, file))?;
+    Ok(applied)
+}
+
+/// Auto-applicable lint edits for `source` read as `file`'s text, under
+/// the registry its own attributes configure.
+fn lint_fixes_for(file: &Path, source: &str) -> Vec<gossamer_lint::Fix> {
+    let mut map = gossamer_lex::SourceMap::new();
+    let id = map.add_file(file.to_string_lossy().into_owned(), source.to_string());
+    let (sf, parse_diags) = gossamer_parse::parse_source_file(source, id);
+    if !parse_diags.is_empty() {
+        return Vec::new();
+    }
+    let mut registry = gossamer_lint::Registry::with_defaults();
+    for item in &sf.items {
+        gossamer_lint::apply_attributes(&item.attrs, &mut registry);
+    }
+    gossamer_lint::fixes(&sf, &registry, source)
+}
+
+/// Error count the front-end gate reports for `candidate` as `file`'s text.
+fn recheck(file: &Path, candidate: &str) -> usize {
+    let augmented = gossamer_parse::autoderive::augment_source(candidate);
+    let Ok(folded) = crate::comptime_fold::fold_comptime(augmented, &file.to_string_lossy()) else {
+        return usize::MAX;
+    };
+    let mut map = gossamer_lex::SourceMap::new();
+    let id = map.add_file(file.to_string_lossy().into_owned(), folded.clone());
+    let outcome =
+        gossamer_driver::check_frontend_with_edition(&folded, id, crate::paths::project_edition());
+    outcome.diagnostics.len()
+}
+
+/// Byte length of the longest common prefix of `a` and `b`, rounded down
+/// to a character boundary so a span slice stays valid UTF-8.
+fn common_prefix_len(a: &str, b: &str) -> usize {
+    let mut len = a
+        .as_bytes()
+        .iter()
+        .zip(b.as_bytes())
+        .take_while(|(x, y)| x == y)
+        .count();
+    while len > 0 && !a.is_char_boundary(len) {
+        len -= 1;
+    }
+    len
 }

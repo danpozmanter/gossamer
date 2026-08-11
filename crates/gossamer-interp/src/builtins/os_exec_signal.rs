@@ -358,6 +358,46 @@ fn builtin_time_sleep(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Unit)
 }
 
+fn builtin_pprof_goroutine_profile(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::String(
+        gossamer_runtime::pprof::goroutine_profile().into(),
+    ))
+}
+
+fn builtin_pprof_mutex_profile(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::String(
+        gossamer_runtime::pprof::mutex_profile().into(),
+    ))
+}
+
+fn builtin_pprof_block_profile(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::String(
+        gossamer_runtime::pprof::block_profile().into(),
+    ))
+}
+
+fn builtin_pprof_execution_trace(args: &[Value]) -> RuntimeResult<Value> {
+    let ms = args.first().and_then(value_to_int).unwrap_or(0);
+    if ms < 0 {
+        return Err(RuntimeError::Type(
+            "pprof::execution_trace: millis must be non-negative".to_string(),
+        ));
+    }
+    let window = std::time::Duration::from_millis(u64::try_from(ms).unwrap_or(0));
+    Ok(Value::String(
+        gossamer_runtime::pprof::execution_trace(window).into(),
+    ))
+}
+
+fn builtin_pprof_route(args: &[Value]) -> RuntimeResult<Value> {
+    let path = args.first().and_then(as_str).unwrap_or("");
+    let query = args.get(1).and_then(as_str).unwrap_or("");
+    match gossamer_runtime::pprof::route(path, query) {
+        Some(body) => Ok(some_variant(Value::String(body.into()))),
+        None => Ok(none_variant()),
+    }
+}
+
 /// `runtime::collect_cycles()`. The interpreter models heap values with
 /// `Arc`, so reclamation timing is not observable in program output. Once
 /// those refs have dropped, force a process allocator collection/purge so

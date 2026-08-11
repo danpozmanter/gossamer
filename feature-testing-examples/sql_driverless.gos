@@ -29,32 +29,32 @@ fn try_query_each() -> Result<(), sql::Error> {
 fn cursor_safety() -> String {
     let mut rows = sql::Rows { __handle: 0 }
     let closed = match rows.close() {
-        Ok(_) => "close-ok",
-        Err(_) => "close-err",
+        Ok(_) => "close-ok"
+        Err(_) => "close-err"
     }
     let advanced = match rows.next_row() {
-        Ok(_) => "next-ok",
-        Err(_) => "next-err",
+        Ok(_) => "next-ok"
+        Err(_) => "next-err"
     }
     format!("{} {}", closed, advanced)
 }
 
 fn describe(v: &sql::Value) -> String {
     match v {
-        sql::Value::Null => "null",
-        sql::Value::Bool(b) => if b { "true" } else { "false" },
-        sql::Value::Int(n) => format!("int:{}", n),
-        sql::Value::Float(f) => format!("float:{}", f),
-        sql::Value::Text(s) => format!("text:{}", s),
-        sql::Value::Blob(b) => format!("blob:{}", b.len()),
+        sql::Value::Null => "null"
+        sql::Value::Bool(b) => if b { "true" } else { "false" }
+        sql::Value::Int(n) => format!("int:{}", n)
+        sql::Value::Float(f) => format!("float:{}", f)
+        sql::Value::Text(s) => format!("text:{}", s)
+        sql::Value::Blob(b) => format!("blob:{}", b.len())
     }
 }
 
 fn main() {
     println!("drivers: {}", sql::drivers().len())
     match try_open() {
-        Ok(_) => println!("opened"),
-        Err(e) => println!("error: {}", e),
+        Ok(_) => println!("opened")
+        Err(e) => println!("error: {}", e)
     }
     let vals = #[sql::Value::Int(7), sql::Value::Text("abc"), sql::Value::Null,
         sql::Value::Bool(true), sql::Value::Float(1.5), sql::Value::Blob(Vec::from([1, 2, 3]))]
@@ -63,12 +63,12 @@ fn main() {
         println!("{}", describe(v))
     }
     match sql::IsolationLevel::Serializable {
-        sql::IsolationLevel::Serializable => println!("iso: serializable"),
-        _ => println!("iso: other"),
+        sql::IsolationLevel::Serializable => println!("iso: serializable")
+        _ => println!("iso: other")
     }
     match try_query_each() {
-        Ok(_) => println!("query_each ok"),
-        Err(e) => println!("query_each error: {}", e),
+        Ok(_) => println!("query_each ok")
+        Err(e) => println!("query_each error: {}", e)
     }
     println!("cursor: {}", cursor_safety())
     let sel = sql::Select::new("players").columns(&["id", "name"]).where_eq("score", sql::Value::Int(90)).where_eq("name", sql::Value::Text("alice")).order_by("id", true).limit(10).offset(5)
@@ -76,9 +76,9 @@ fn main() {
     println!("select params: {}", sel.params().len())
     match sql::Pool::open("nope", "x", 4) {
         Ok(pool) => match pool.acquire() {
-            Ok(_) => println!("pool: unexpected conn"),
-            Err(e) => println!("pool get error: {}", e),
-        },
-        Err(e) => println!("pool open error: {}", e),
+            Ok(_) => println!("pool: unexpected conn")
+            Err(e) => println!("pool get error: {}", e)
+        }
+        Err(e) => println!("pool open error: {}", e)
     }
 }

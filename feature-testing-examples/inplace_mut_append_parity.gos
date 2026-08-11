@@ -22,8 +22,8 @@ fn classify(xs: &[i64]) -> Vec<i64> {
         }
         // Tail-position push inside a `match` arm.
         match *x % 2 {
-            0 => odds.push(*x * 0),
-            _ => odds.push(*x),
+            0 => odds.push(*x * 0)
+            _ => odds.push(*x)
         }
     }
     let mut out: Vec<i64> = Vec::from([])
@@ -40,8 +40,8 @@ fn classify(xs: &[i64]) -> Vec<i64> {
 // tails - the serialize-style shape.
 fn render(depth: i64, label: i64, out: &mut String) {
     match label {
-        0 => *out += "(",
-        _ => *out += "[",
+        0 => *out += "("
+        _ => *out += "["
     }
     if depth > 0 {
         render(depth - 1, 1 - label, out)

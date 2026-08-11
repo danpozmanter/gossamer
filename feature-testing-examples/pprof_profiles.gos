@@ -1,0 +1,56 @@
+use std::pprof
+
+// Profiles read live scheduler state, so sample counts differ run to run.
+// The shape does not: every text profile carries the format header, the
+// execution trace is a Chrome trace object, and the router answers only
+// the paths it serves.
+//
+// The calls sit inside a loop so the Cranelift tier promotes this body and
+// the parity row exercises the native lowering rather than a second
+// bytecode run.
+
+const HEADER: String = "# pprof text format"
+
+fn main() {
+    let mut text_profiles = 0
+    let mut traces = 0
+    let mut routed = 0
+    let mut unrouted = 0
+
+    for _ in 0..4 {
+        if pprof::goroutine_profile().starts_with(&HEADER) { text_profiles += 1 }
+        if pprof::mutex_profile().starts_with(&HEADER) { text_profiles += 1 }
+        if pprof::block_profile().starts_with(&HEADER) { text_profiles += 1 }
+
+        let trace = pprof::execution_trace(0)
+        if trace.starts_with("{\"traceEvents\":[") && trace.ends_with("]}") { traces += 1 }
+
+        match pprof::route("/debug/pprof/block", "") {
+            Some(body) => {
+                if body.starts_with(&HEADER) { routed += 1 }
+            }
+            None => unrouted += 1
+        }
+        match pprof::route("/debug/pprof/does-not-exist", "") {
+            Some(_) => routed += 1
+            None => unrouted += 1
+        }
+    }
+
+    println!("text profiles: {}", text_profiles)
+    println!("traces: {}", traces)
+    println!("routed: {}", routed)
+    println!("unrouted: {}", unrouted)
+
+    match pprof::route("/debug/pprof/", "") {
+        Some(index) => {
+            println!("index lists goroutine: {}", index.contains("goroutine"))
+            println!("index lists trace: {}", index.contains("trace"))
+        }
+        None => println!("index missing")
+    }
+    match pprof::route("/healthz", "") {
+        Some(_) => println!("foreign path routed")
+        None => println!("foreign path: None")
+    }
+}

@@ -7,13 +7,13 @@
 // the VM, Cranelift, and LLVM tiers.
 
 struct P {
-    x: i64,
-    y: i64,
+    x: i64
+    y: i64
 }
 
 struct Named {
-    p: P,
-    tag: String,
+    p: P
+    tag: String
 }
 
 fn main() {

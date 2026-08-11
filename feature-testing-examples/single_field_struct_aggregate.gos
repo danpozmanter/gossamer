@@ -43,8 +43,8 @@ fn main() {
     m.insert(1, One { v: 100 })
     m.insert(2, One { v: 200 })
     let got = match Map::get(m, 2) {
-        Some(c) => c.v,
-        None => -1,
+        Some(c) => c.v
+        None => -1
     }
     let mut val_sum = 0
     for v in m.values() {
@@ -58,7 +58,7 @@ fn main() {
     let w = ws[0]
 
     println!(
-        "picked={} idx_sum={} loop_sum={} got={} val_sum={} named={} w={} {}",
+        "picked={} idx_sum={} loop_sum={} got={} val_sum={} named={} w={} {}"
         picked.v, idx_sum, loop_sum, got, val_sum, named.s, w.inner.v, w.tag
     )
 }

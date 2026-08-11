@@ -494,6 +494,17 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         globals,
     );
     install_module(
+        "pprof",
+        &[
+            ("goroutine_profile", builtin_pprof_goroutine_profile),
+            ("mutex_profile", builtin_pprof_mutex_profile),
+            ("block_profile", builtin_pprof_block_profile),
+            ("execution_trace", builtin_pprof_execution_trace),
+            ("route", builtin_pprof_route),
+        ],
+        globals,
+    );
+    install_module(
         "runtime",
         &[
             ("collect_cycles", builtin_runtime_collect_cycles),

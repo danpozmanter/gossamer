@@ -1,8 +1,8 @@
 #[derive(PartialEq, Debug)]
 enum Shape {
-    Circle(f64),
-    Rect(f64, f64),
-    Origin,
+    Circle(f64)
+    Rect(f64, f64)
+    Origin
 }
 
 fn main() {

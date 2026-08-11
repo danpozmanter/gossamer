@@ -14,7 +14,7 @@ fn main() {
             }
             println!("")
         }
-        Err(e) => println!("std: err {}", e),
+        Err(e) => println!("std: err {}", e)
     }
 
     // "foobar" in the hex (extended) Base32 alphabet.
@@ -26,12 +26,12 @@ fn main() {
             }
             println!("")
         }
-        Err(e) => println!("hex: err {}", e),
+        Err(e) => println!("hex: err {}", e)
     }
 
     // Invalid character surfaces the same error text on every tier.
     match encoding::base32::decode(&"!!!!") {
-        Ok(_) => println!("bad: ok"),
-        Err(e) => println!("bad: {}", e),
+        Ok(_) => println!("bad: ok")
+        Err(e) => println!("bad: {}", e)
     }
 }

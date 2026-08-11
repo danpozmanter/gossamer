@@ -10,8 +10,8 @@
  */
 
 enum List {
-    Nil,
-    Cons(i64, List),
+    Nil
+    Cons(i64, List)
 }
 
 fn cons(v: i64, rest: List) -> List { List::Cons(v, rest) }

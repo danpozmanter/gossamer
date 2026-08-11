@@ -17,13 +17,13 @@ fn safe_divide(a: i64, b: i64) -> Result<i64, errors::Error> {
 
 fn pipeline(a: i64, b: i64) -> Result<i64, errors::Error> {
     let doubled = match maybe_double(a) {
-        Some(v) => v,
-        None => return Err(errors::new("double failed")),
+        Some(v) => v
+        None => return Err(errors::new("double failed"))
     }
     let divided = safe_divide(doubled, b)?
     let tripled = match maybe_double(divided) {
-        Some(v) => v + divided,
-        None => return Err(errors::new("triple failed")),
+        Some(v) => v + divided
+        None => return Err(errors::new("triple failed"))
     }
     Ok(tripled)
 }
@@ -32,22 +32,22 @@ fn main() {
     // Happy path
     let r = pipeline(6, 3)
     match r {
-        Ok(v) => println!("pipeline(6,3) = {}", v),
-        Err(e) => println!("unexpected error: {}", e.message()),
+        Ok(v) => println!("pipeline(6,3) = {}", v)
+        Err(e) => println!("unexpected error: {}", e.message())
     }
 
     // Short-circuit on bad double
     let r2 = pipeline(-1, 3)
     match r2 {
-        Ok(v) => println!("unexpected success: {}", v),
-        Err(e) => println!("expected error: {}", e.message()),
+        Ok(v) => println!("unexpected success: {}", v)
+        Err(e) => println!("expected error: {}", e.message())
     }
 
     // Short-circuit on divide-by-zero
     let r3 = pipeline(6, 0)
     match r3 {
-        Ok(v) => println!("unexpected success: {}", v),
-        Err(e) => println!("expected error: {}", e.message()),
+        Ok(v) => println!("unexpected success: {}", v)
+        Err(e) => println!("expected error: {}", e.message())
     }
 
     // if let chain
@@ -76,9 +76,9 @@ mod tests {
     fn maybe_double_positive() {
         match super::maybe_double(5) {
             Some(v) => { let _ = testing::check_eq(&v, &10, "double(5)=10")
-            },
+            }
             None => { let _ = testing::check(false, "expected Some")
-            },
+            }
         }
     }
 
@@ -86,9 +86,9 @@ mod tests {
     fn maybe_double_negative_gives_none() {
         match super::maybe_double(-1) {
             Some(_) => { let _ = testing::check(false, "expected None")
-            },
+            }
             None => { let _ = testing::check(true, "None for negative")
-            },
+            }
         }
     }
 
@@ -96,9 +96,9 @@ mod tests {
     fn safe_divide_ok() {
         match super::safe_divide(10, 2) {
             Ok(v) => { let _ = testing::check_eq(&v, &5, "10/2=5")
-            },
+            }
             Err(_) => { let _ = testing::check(false, "unexpected error")
-            },
+            }
         }
     }
 
@@ -106,9 +106,9 @@ mod tests {
     fn safe_divide_zero() {
         match super::safe_divide(10, 0) {
             Ok(_) => { let _ = testing::check(false, "expected error")
-            },
+            }
             Err(e) => { let _ = testing::check(e.message().contains("zero"), "div zero error")
-            },
+            }
         }
     }
 
@@ -116,9 +116,9 @@ mod tests {
     fn pipeline_happy_path() {
         match super::pipeline(6, 3) {
             Ok(v) => { let _ = testing::check_eq(&v, &12, "6*2/3*2=12")
-            },
+            }
             Err(_) => { let _ = testing::check(false, "unexpected error")
-            },
+            }
         }
     }
 }

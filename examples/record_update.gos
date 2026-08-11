@@ -5,9 +5,9 @@
  */
 
 struct Config {
-    host: String,
-    port: i64,
-    verbose: bool,
+    host: String
+    port: i64
+    verbose: bool
 }
 
 fn main() {

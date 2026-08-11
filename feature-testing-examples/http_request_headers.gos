@@ -47,8 +47,8 @@ impl http::Handler for App {
         let alpha = header_of(&r.headers, "x-alpha")
         let beta = header_of(&r.headers, "x-beta")
         let body = format!(
-            "custom={} alpha={} beta={} path={} query={}",
-            custom, alpha, beta, r.path, r.query,
+            "custom={} alpha={} beta={} path={} query={}"
+            custom, alpha, beta, r.path, r.query
         )
         Ok(http::Response::text(200, body))
     }
@@ -80,8 +80,8 @@ fn main() {
     await_ready(&"http://127.0.0.1:23879/echo")
     let headers: Vec<(String, String)> = Vec::from([("X-Alpha", "a1"), ("x-beta", "b2")])
     match http::request("GET", "http://127.0.0.1:23879/echo?k=1&n=2", "", headers) {
-        Ok(r) => println!("status={} {}", r.status, r.body),
-        Err(e) => println!("error: {}", e),
+        Ok(r) => println!("status={} {}", r.status, r.body)
+        Err(e) => println!("error: {}", e)
     }
     process::exit(0)
 }

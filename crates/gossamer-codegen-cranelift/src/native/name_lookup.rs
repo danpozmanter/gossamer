@@ -769,6 +769,11 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_image_encode_png_base64" => Some("gos_rt_image_encode_png_base64"),
         "gos_rt_image_encode_jpeg_base64" => Some("gos_rt_image_encode_jpeg_base64"),
         "gos_rt_runtime_scheduler_stats_json" => Some("gos_rt_runtime_scheduler_stats_json"),
+        "gos_rt_pprof_goroutine_profile" => Some("gos_rt_pprof_goroutine_profile"),
+        "gos_rt_pprof_mutex_profile" => Some("gos_rt_pprof_mutex_profile"),
+        "gos_rt_pprof_block_profile" => Some("gos_rt_pprof_block_profile"),
+        "gos_rt_pprof_execution_trace" => Some("gos_rt_pprof_execution_trace"),
+        "gos_rt_pprof_route" => Some("gos_rt_pprof_route"),
         "gos_rt_runtime_cycle_collection_supported" => {
             Some("gos_rt_runtime_cycle_collection_supported")
         }

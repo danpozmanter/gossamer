@@ -44,8 +44,8 @@ impl http::Handler for Proxy {
                     return Ok(streamed)
                 }
                 Ok(http::Response::stream(up.status, up.content_type, up))
-            },
-            Err(_) => Ok(http::Response::text(502, "bad upstream")),
+            }
+            Err(_) => Ok(http::Response::text(502, "bad upstream"))
         }
     }
 }
@@ -65,14 +65,14 @@ fn run_proxy() {
 fn fetch(label: String, path: String) {
     match http::get("http://127.0.0.1:23878" + &path, Vec::from([])) {
         Ok(resp) => println!(
-            "{} status={} ct={} len={} body={}",
-            label,
-            resp.status,
-            resp.content_type,
-            resp.raw_bytes.len(),
+            "{} status={} ct={} len={} body={}"
+            label
+            resp.status
+            resp.content_type
+            resp.raw_bytes.len()
             resp.body
-        ),
-        Err(e) => println!("{} error: {}", label, e),
+        )
+        Err(e) => println!("{} error: {}", label, e)
     }
 }
 

@@ -28,12 +28,12 @@ fn main() {
     // Option<String> (Some when present, None when absent).
     env::set_var(&"WINB_SYS_KEY", &"winb-value")
     match env::var(&"WINB_SYS_KEY") {
-        Some(v) => println!("var=[{}]", v),
-        None => println!("var=<none>"),
+        Some(v) => println!("var=[{}]", v)
+        None => println!("var=<none>")
     }
     env::unset_var(&"WINB_SYS_KEY")
     match env::var(&"WINB_SYS_KEY") {
-        Some(v) => println!("after_unset=[{}]", v),
-        None => println!("after_unset=<none>"),
+        Some(v) => println!("after_unset=[{}]", v)
+        None => println!("after_unset=<none>")
     }
 }

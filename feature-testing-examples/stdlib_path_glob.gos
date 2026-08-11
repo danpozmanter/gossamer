@@ -9,8 +9,8 @@ fn names_of(paths: &Vec<String>) -> Vec<String> {
     let mut out = Vec::new()
     for p in paths {
         match path::file_name(p) {
-            Some(n) => out.push(n),
-            None => out.push(p),
+            Some(n) => out.push(n)
+            None => out.push(p)
         }
     }
     out
@@ -26,8 +26,8 @@ fn main() {
     println!("{}", path::matches("data/*", "data/x"))
 
     let root = match fs::temp_dir("gos-glob") {
-        Ok(d) => d,
-        Err(e) => { println!("temp_dir failed: {}", e); return },
+        Ok(d) => d
+        Err(e) => { println!("temp_dir failed: {}", e); return }
     }
     let nested = path::join(&root, "nested")
     if let Err(e) = fs::create_dir_all(&nested) {
@@ -40,16 +40,16 @@ fn main() {
     let _ = fs::write(&path::join(&nested, "delta.gos"), "d".bytes())
 
     match path::glob(&path::join(&root, "*.gos")) {
-        Ok(found) => println!("top={}", names_of(&found).join(",")),
-        Err(e) => println!("glob failed: {}", e),
+        Ok(found) => println!("top={}", names_of(&found).join(","))
+        Err(e) => println!("glob failed: {}", e)
     }
     match path::glob(&path::join(&root, "**/*.gos")) {
-        Ok(found) => println!("deep={}", names_of(&found).join(",")),
-        Err(e) => println!("glob failed: {}", e),
+        Ok(found) => println!("deep={}", names_of(&found).join(","))
+        Err(e) => println!("glob failed: {}", e)
     }
     match path::glob(&path::join(&root, "*.md")) {
-        Ok(found) => println!("none={}", found.len()),
-        Err(e) => println!("glob failed: {}", e),
+        Ok(found) => println!("none={}", found.len())
+        Err(e) => println!("glob failed: {}", e)
     }
 
     let _ = fs::remove_dir_all(&root)

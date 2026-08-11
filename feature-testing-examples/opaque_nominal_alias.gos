@@ -82,8 +82,8 @@ fn main() {
     seats.insert(a, "front")
     seats.insert(b, "back")
     match seats.get(a) {
-        Some(seat) => println!("seat {}", seat),
-        None => println!("seat missing"),
+        Some(seat) => println!("seat {}", seat)
+        None => println!("seat missing")
     }
     println!("seats {}", seats.len())
 
@@ -109,10 +109,10 @@ fn main() {
         Ok(text) => {
             println!("json {}", text)
             match from_json::<Record>(&text) {
-                Ok(back) => println!("back {} {} {}", back.id, back.plain, back.n),
-                Err(e) => println!("decode failed {}", e),
+                Ok(back) => println!("back {} {} {}", back.id, back.plain, back.n)
+                Err(e) => println!("decode failed {}", e)
             }
         }
-        Err(e) => println!("encode failed {}", e),
+        Err(e) => println!("encode failed {}", e)
     }
 }

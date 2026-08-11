@@ -16,8 +16,8 @@ fn main() {
     assert(method_form >= 0, "method-form elapsed_ms is non-negative")
     assert(qualified_form >= 0, "qualified-form elapsed_ms is non-negative")
     assert(
-        qualified_form >= method_form,
-        "monotonic: qualified form sampled after method form",
+        qualified_form >= method_form
+        "monotonic: qualified form sampled after method form"
     )
     println!("instant ok")
 }

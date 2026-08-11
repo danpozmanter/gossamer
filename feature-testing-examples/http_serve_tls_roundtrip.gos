@@ -63,51 +63,51 @@ fn await_ready() {
 
 fn insecure_ok() -> bool {
     let stream = match net::TcpStream::connect(&ADDR) {
-        Ok(s) => s,
-        Err(_) => return false,
+        Ok(s) => s
+        Err(_) => return false
     }
     let tls = match stream.start_tls_insecure("localhost") {
-        Ok(t) => t,
-        Err(_) => return false,
+        Ok(t) => t
+        Err(_) => return false
     }
     let _ = tls.write(REQUEST.as_bytes())
     match tls.read(1024) {
-        Ok(b) => b.len() > 0,
-        Err(_) => false,
+        Ok(b) => b.len() > 0
+        Err(_) => false
     }
 }
 
 fn default_rejected() -> bool {
     let stream = match net::TcpStream::connect(&ADDR) {
-        Ok(s) => s,
-        Err(_) => return false,
+        Ok(s) => s
+        Err(_) => return false
     }
     // `start_tls` defers the handshake to the first I/O; verification
     // against the public roots fails there, so no reply is read.
     let tls = match stream.start_tls("localhost") {
-        Ok(t) => t,
-        Err(_) => return true,
+        Ok(t) => t
+        Err(_) => return true
     }
     let _ = tls.write(REQUEST.as_bytes())
     match tls.read(1024) {
-        Ok(b) => b.len() == 0,
-        Err(_) => true,
+        Ok(b) => b.len() == 0
+        Err(_) => true
     }
 }
 
 fn ca_ok() -> bool {
     let stream = match net::TcpStream::connect(&ADDR) {
-        Ok(s) => s,
-        Err(_) => return false,
+        Ok(s) => s
+        Err(_) => return false
     }
     let tls = match stream.start_tls_ca("localhost", &CA_CERT) {
-        Ok(t) => t,
-        Err(_) => return false,
+        Ok(t) => t
+        Err(_) => return false
     }
     let _ = tls.write(REQUEST.as_bytes())
     match tls.read(1024) {
-        Ok(b) => b.len() > 0,
-        Err(_) => false,
+        Ok(b) => b.len() > 0
+        Err(_) => false
     }
 }
 

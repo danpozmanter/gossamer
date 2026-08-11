@@ -59,16 +59,16 @@ fn main() {
     go serve_router()
     await_ready(&"http://127.0.0.1:23881/plain")
     match http::get("http://127.0.0.1:23881/users/42", Vec::from([])) {
-        Ok(r) => println!("A status={} body={}", r.status, r.body),
-        Err(e) => println!("A error: {}", e),
+        Ok(r) => println!("A status={} body={}", r.status, r.body)
+        Err(e) => println!("A error: {}", e)
     }
     match http::get("http://127.0.0.1:23881/files/docs/readme.md", Vec::from([])) {
-        Ok(r) => println!("B status={} body={}", r.status, r.body),
-        Err(e) => println!("B error: {}", e),
+        Ok(r) => println!("B status={} body={}", r.status, r.body)
+        Err(e) => println!("B error: {}", e)
     }
     match http::get("http://127.0.0.1:23881/plain", Vec::from([])) {
-        Ok(r) => println!("C status={} body={}", r.status, r.body),
-        Err(e) => println!("C error: {}", e),
+        Ok(r) => println!("C status={} body={}", r.status, r.body)
+        Err(e) => println!("C error: {}", e)
     }
     process::exit(0)
 }

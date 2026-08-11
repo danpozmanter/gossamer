@@ -37,8 +37,8 @@ fn main() {
 
     // Stateless helpers operate on the UTF-8 bytes of a string.
     match bytes::index_of("hello world".to_string().as_bytes(), "world".to_string().as_bytes()) {
-        Some(_) => println!("idx=checked"),
-        None => println!("idx=checked"),
+        Some(_) => println!("idx=checked")
+        None => println!("idx=checked")
     }
     let parts = bytes::split("a,b,,c".to_string().as_bytes(), ",".to_string().as_bytes())
     println!("parts={}", parts.len())

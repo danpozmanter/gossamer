@@ -10,8 +10,8 @@ struct Item { id: i64, tag: String }
 
 fn show_opt_i64(label: String, o: Option<i64>) {
     match o {
-        Some(v) => println!("{} Some({})", label, v),
-        None => println!("{} None", label),
+        Some(v) => println!("{} Some({})", label, v)
+        None => println!("{} None", label)
     }
 }
 
@@ -81,13 +81,13 @@ fn main() {
         Ok(part) => { print!("slice 1..3 ")
             for v in part { print!("{} ", v) }
             println!("") }
-        Err(e) => println!("slice err {}", e),
+        Err(e) => println!("slice err {}", e)
     }
     match sl.slice(2, 99) {
         Ok(part) => { print!("slice 2..99 ")
             for v in part { print!("{} ", v) }
             println!("") }
-        Err(_) => println!("slice oob err"),
+        Err(_) => println!("slice oob err")
     }
 
     // Qualified Vec::insert / Vec::remove are checked and mutate through &mut.
@@ -105,8 +105,8 @@ fn main() {
     rv.push(3)
     rv.push(4)
     match Vec::remove(&mut rv, 0) {
-        Ok(removed) => println!("removed {}", removed),
-        Err(_) => println!("remove failed"),
+        Ok(removed) => println!("removed {}", removed)
+        Err(_) => println!("remove failed")
     }
     print!("after remove ")
     for v in rv { print!("{} ", v) }

@@ -23,8 +23,8 @@ fn main() {
     for i in 0..40 {
         let shifted = 1 << (i % 40)
         match classify(shifted - 1) {
-            Ok(v) => acc += v % 1000,
-            Err(_) => acc -= 1,
+            Ok(v) => acc += v % 1000
+            Err(_) => acc -= 1
         }
         if let Some(m) = maybe(i) {
             acc += m
@@ -32,12 +32,12 @@ fn main() {
     }
     let opt = if acc > 0 { Some(acc) } else { None }
     match opt {
-        Some(v) => println!("acc={v}"),
-        None => println!("none"),
+        Some(v) => println!("acc={v}")
+        None => println!("none")
     }
     let r = classify(-5)
     match r {
-        Ok(v) => println!("ok {v}"),
-        Err(e) => println!("err {e}"),
+        Ok(v) => println!("ok {v}")
+        Err(e) => println!("err {e}")
     }
 }

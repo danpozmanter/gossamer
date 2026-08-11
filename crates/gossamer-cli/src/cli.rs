@@ -66,6 +66,16 @@ enum Command {
         /// `gossamer_diagnostics::render_json`.
         #[arg(long, value_enum, default_value_t = MessageFormat::Plain)]
         message_format: MessageFormat,
+        /// Apply every machine-applicable suggestion the diagnostics
+        /// carry and write each file back, then report what changed.
+        ///
+        /// A suggestion is applied only when its span lands in the text
+        /// the author wrote: the checked source also carries the
+        /// project bundle, the synthesized autoderive tail, and any
+        /// comptime splices, and a span past that prefix does not
+        /// address the file on disk.
+        #[arg(long)]
+        fix: bool,
     },
     /// Execute a program by invoking its `main` function.
     ///
@@ -365,8 +375,10 @@ enum Command {
     },
     /// Emit an item listing derived from doc comments / signatures.
     Doc {
-        /// Path to a `.gos` source file. Optional when using
-        /// `--emit-stdlib`.
+        /// Path to a `.gos` source file, or a standard library
+        /// query: `std` lists every module, `std::strings` lists a
+        /// module's exports, `std::strings::trim` documents one
+        /// item. Optional when using `--emit-stdlib`.
         file: Option<PathBuf>,
         /// Write an HTML page to this path instead of printing a
         /// plain-text index to stdout.
@@ -1003,7 +1015,8 @@ fn dispatch(
             file,
             timings,
             message_format,
-        }) => cmd::check::dispatch(file, timings, message_format),
+            fix,
+        }) => cmd::check::dispatch(file, timings, message_format, fix),
         Some(Command::Run {
             file,
             no_jit,
@@ -1118,6 +1131,8 @@ fn dispatch(
         }) => {
             if let Some(out) = emit_stdlib {
                 doc::cmd_emit_stdlib(&out, check)
+            } else if let Some(q) = file.as_deref().filter(|f| doc::is_stdlib_query(f)) {
+                doc::cmd_doc_std(&q.to_string_lossy())
             } else if let Some(f) = file {
                 doc::cmd_doc(&f, html.as_deref())
             } else {

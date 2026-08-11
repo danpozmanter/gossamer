@@ -20,8 +20,8 @@ fn main() {
     println!("message={}", outer.message())
     println!("display={}", outer)
     match outer.cause() {
-        Some(c) => println!("cause={}", c.message()),
-        None => println!("cause=none"),
+        Some(c) => println!("cause={}", c.message())
+        None => println!("cause=none")
     }
     for link in outer.chain() {
         println!("link={}", link.message())
@@ -32,12 +32,12 @@ fn main() {
         .with_field("op", "insert")
         .with_field("sqlstate", "23505")
     match tagged.field("sqlstate") {
-        Some(v) => println!("sqlstate={}", v),
-        None => println!("sqlstate=none"),
+        Some(v) => println!("sqlstate={}", v)
+        None => println!("sqlstate=none")
     }
     match tagged.field("absent") {
-        Some(v) => println!("absent={}", v),
-        None => println!("absent=none"),
+        Some(v) => println!("absent={}", v)
+        None => println!("absent=none")
     }
     for (key, value) in tagged.fields() {
         println!("field {}={}", key, value)

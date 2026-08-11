@@ -61,12 +61,12 @@ fn main() {
     await_ready(&"http://127.0.0.1:23890/hello.txt")
 
     match http::get("http://127.0.0.1:23890/hello.txt", Vec::from([])) {
-        Ok(r) => println!("status={} body={}", r.status, r.body),
-        Err(e) => println!("error: {}", e),
+        Ok(r) => println!("status={} body={}", r.status, r.body)
+        Err(e) => println!("error: {}", e)
     }
     match http::get("http://127.0.0.1:23890/missing.txt", Vec::from([])) {
-        Ok(r) => println!("missing status={}", r.status),
-        Err(e) => println!("missing error: {}", e),
+        Ok(r) => println!("missing status={}", r.status)
+        Err(e) => println!("missing error: {}", e)
     }
 
     let _ = fs::remove_dir_all(root)

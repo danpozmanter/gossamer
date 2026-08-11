@@ -7,8 +7,8 @@
 // tier and break parity.
 
 enum Tree {
-    Leaf(i64),
-    Node(i64, Box<Tree>, Box<Tree>),
+    Leaf(i64)
+    Node(i64, Box<Tree>, Box<Tree>)
 }
 
 struct Holder { t: Tree, tag: i64 }
@@ -41,8 +41,8 @@ fn build(depth: i64) -> Tree {
 
 fn checksum(t: &Tree) -> i64 {
     match t {
-        Tree::Leaf(v) => *v,
-        Tree::Node(v, l, r) => *v + checksum(l) + checksum(r),
+        Tree::Leaf(v) => *v
+        Tree::Node(v, l, r) => *v + checksum(l) + checksum(r)
     }
 }
 

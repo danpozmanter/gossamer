@@ -1,10 +1,10 @@
 fn classify(x: i64, y: i64) -> String {
     match (x, y) {
-        (0, 0) => "origin",
-        (0, _) => "y-axis",
-        (_, 0) => "x-axis",
-        (x, y) if x == y => "diagonal",
-        _ => "general",
+        (0, 0) => "origin"
+        (0, _) => "y-axis"
+        (_, 0) => "x-axis"
+        (x, y) if x == y => "diagonal"
+        _ => "general"
     }
 }
 

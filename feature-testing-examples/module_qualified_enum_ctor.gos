@@ -7,9 +7,9 @@ mod shapes {
 
     pub fn area(s: Shape) -> f64 {
         match s {
-            Shape::Circle(r) => 3.14159 * r * r,
-            Shape::Rect(w, h) => w * h,
-            Shape::Point => 0.0,
+            Shape::Circle(r) => 3.14159 * r * r
+            Shape::Rect(w, h) => w * h
+            Shape::Point => 0.0
         }
     }
 
@@ -22,9 +22,9 @@ mod shapes {
 
 fn describe(s: shapes::Shape) -> String {
     match s {
-        shapes::Shape::Circle(r) => format!("circle {:.1}", r),
-        shapes::Shape::Rect(w, h) => format!("rect {:.1}x{:.1}", w, h),
-        shapes::Shape::Point => "point".to_string(),
+        shapes::Shape::Circle(r) => format!("circle {:.1}", r)
+        shapes::Shape::Rect(w, h) => format!("rect {:.1}x{:.1}", w, h)
+        shapes::Shape::Point => "point".to_string()
     }
 }
 

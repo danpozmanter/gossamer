@@ -33,8 +33,8 @@ struct App { }
 impl http::Handler for App {
     fn serve(&self, r: http::Request) -> Result<http::Response, http::Error> {
         match websocket::accept(&r) {
-            Ok(upgrade) => Ok(http::Response::text(200, format!("status={}", upgrade.status))),
-            Err(e) => Ok(http::Response::text(400, format!("{}", e))),
+            Ok(upgrade) => Ok(http::Response::text(200, format!("status={}", upgrade.status)))
+            Err(e) => Ok(http::Response::text(400, format!("{}", e)))
         }
     }
 }
@@ -71,12 +71,12 @@ fn main() {
         ("Sec-WebSocket-Key", SAMPLE_KEY),
     ])
     match http::request("GET", "http://127.0.0.1:23891/ws", "", up) {
-        Ok(r) => println!("valid={}", r.body),
-        Err(e) => println!("valid error: {}", e),
+        Ok(r) => println!("valid={}", r.body)
+        Err(e) => println!("valid error: {}", e)
     }
     match http::get("http://127.0.0.1:23891/ws", Vec::from([])) {
-        Ok(r) => println!("reject={}", r.body),
-        Err(e) => println!("reject error: {}", e),
+        Ok(r) => println!("reject={}", r.body)
+        Err(e) => println!("reject error: {}", e)
     }
 
     process::exit(0)

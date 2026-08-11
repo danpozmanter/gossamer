@@ -7,9 +7,9 @@
 // reference's lifetime to a function scope.
 
 enum Node {
-    Leaf(i64),
-    Pair(i64, i64),
-    Nil,
+    Leaf(i64)
+    Pair(i64, i64)
+    Nil
 }
 
 // The strong `Node` is dropped when this function returns, so the
@@ -22,11 +22,11 @@ fn make_dead_weak() -> Weak<Node> {
 fn describe(w: Weak<Node>) -> i64 {
     match w.upgrade() {
         Some(n) => match n {
-            Node::Leaf(v) => v,
-            Node::Pair(a, b) => a + b,
-            Node::Nil => 0,
-        },
-        None => -1,
+            Node::Leaf(v) => v
+            Node::Pair(a, b) => a + b
+            Node::Nil => 0
+        }
+        None => -1
     }
 }
 
@@ -43,11 +43,11 @@ fn main() {
     let wb = wa
     match wb.upgrade() {
         Some(n) => match n {
-            Node::Leaf(v) => println!("copy_alive={}", v),
-            Node::Pair(_, _) => println!("copy_pair"),
-            Node::Nil => println!("copy_nil"),
-        },
-        None => println!("copy_dead"),
+            Node::Leaf(v) => println!("copy_alive={}", v)
+            Node::Pair(_, _) => println!("copy_pair")
+            Node::Nil => println!("copy_nil")
+        }
+        None => println!("copy_dead")
     }
     let _keep_strong2_alive = strong2
 
@@ -56,9 +56,9 @@ fn main() {
     let w3 = strong3.downgrade()
     if let Some(n) = w3.upgrade() {
         match n {
-            Node::Leaf(v) => println!("iflet_alive={}", v),
-            Node::Pair(_, _) => println!("iflet_pair"),
-            Node::Nil => println!("iflet_nil"),
+            Node::Leaf(v) => println!("iflet_alive={}", v)
+            Node::Pair(_, _) => println!("iflet_pair")
+            Node::Nil => println!("iflet_nil")
         }
     } else {
         println!("iflet_dead")

@@ -15,10 +15,10 @@ comptime fn gen_record(fields: Vec<(String, String)>, v: String) -> String {
     let mut out = "\"\""
     for (name, ty) in fields {
         let label = match ty {
-            "String" => "str",
-            "bool" => "bool",
-            "f64" => "real",
-            _ => "int",
+            "String" => "str"
+            "bool" => "bool"
+            "f64" => "real"
+            _ => "int"
         }
         out += " + \"" + name + ":" + label + "=\" + format!(\"{}\", " + v + "." + name + ") + \";\""
     }

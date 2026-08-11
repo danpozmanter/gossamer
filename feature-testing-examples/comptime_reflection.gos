@@ -16,11 +16,11 @@ comptime fn create_table(table: String, fields: Vec<(String, String)>) -> String
         }
         first = false
         let sql_ty = match ty {
-            "i64" => "INTEGER",
-            "f64" => "REAL",
-            "String" => "TEXT",
-            "bool" => "BOOLEAN",
-            _ => "BLOB",
+            "i64" => "INTEGER"
+            "f64" => "REAL"
+            "String" => "TEXT"
+            "bool" => "BOOLEAN"
+            _ => "BLOB"
         }
         cols += name + " " + sql_ty
     }

@@ -10,21 +10,21 @@ impl Add for Sign {
     fn add(self, o: Sign) -> Sign {
         match self {
             Sign::Pos(a) => match o {
-                Sign::Pos(b) => Sign::Pos(a + b),
-                Sign::Neg(b) => Sign::Pos(a - b),
-            },
+                Sign::Pos(b) => Sign::Pos(a + b)
+                Sign::Neg(b) => Sign::Pos(a - b)
+            }
             Sign::Neg(a) => match o {
-                Sign::Pos(b) => Sign::Pos(b - a),
-                Sign::Neg(b) => Sign::Neg(a + b),
-            },
+                Sign::Pos(b) => Sign::Pos(b - a)
+                Sign::Neg(b) => Sign::Neg(a + b)
+            }
         }
     }
 }
 impl Neg for Sign {
     fn neg(self) -> Sign {
         match self {
-            Sign::Pos(n) => Sign::Neg(n),
-            Sign::Neg(n) => Sign::Pos(n),
+            Sign::Pos(n) => Sign::Neg(n)
+            Sign::Neg(n) => Sign::Pos(n)
         }
     }
 }
@@ -37,8 +37,8 @@ impl<T: Add> Add for Wrap<T> {
 
 fn show(s: Sign) {
     match s {
-        Sign::Pos(n) => println!("pos {n}"),
-        Sign::Neg(n) => println!("neg {n}"),
+        Sign::Pos(n) => println!("pos {n}")
+        Sign::Neg(n) => println!("neg {n}")
     }
 }
 

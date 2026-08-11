@@ -12,10 +12,10 @@ fn main() {
             println!("validity_ok={}", cert.not_after_unix > cert.not_before_unix)
             println!("sha256_len={}", cert.sha256.len())
         }
-        Err(_e) => println!("parse_err"),
+        Err(_e) => println!("parse_err")
     }
     match crypto::x509::verify_server_certificate_with_crls("", "", "localhost", "") {
-        Ok(_) => println!("missing_crl_rejected=false"),
-        Err(_) => println!("missing_crl_rejected=true"),
+        Ok(_) => println!("missing_crl_rejected=false")
+        Err(_) => println!("missing_crl_rejected=true")
     }
 }

@@ -209,6 +209,9 @@ impl<'a> Lowerer<'a> {
         )
         .unwrap();
         writeln!(self.out, "entry:").unwrap();
+        // A compiled body that recurses into itself never re-enters the VM,
+        // so this is the only place the byte-budget guard can be consulted
+        // before the machine stack reaches its hardware guard page.
     }
 
     pub(crate) fn emit_allocas(&mut self) {

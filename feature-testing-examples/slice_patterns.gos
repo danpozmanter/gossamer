@@ -5,16 +5,16 @@
 
 fn classify(xs: Vec<i64>) -> String {
     match xs {
-        [] => "empty".to_string(),
-        [a] => format!("one({})", a),
-        [a, b] => format!("two({},{})", a, b),
-        [first, .., last] => format!("ends({},{})", first, last),
+        [] => "empty".to_string()
+        [a] => format!("one({})", a)
+        [a, b] => format!("two({},{})", a, b)
+        [first, .., last] => format!("ends({},{})", first, last)
     }
 }
 
 fn middle_sum(xs: Vec<i64>) -> i64 {
     match xs {
-        [] => 0,
+        [] => 0
         [_first, ..rest] => {
             let mut total = 0
             for x in rest {
@@ -27,22 +27,22 @@ fn middle_sum(xs: Vec<i64>) -> i64 {
 
 fn starts_with_zero(xs: Vec<i64>) -> bool {
     match xs {
-        [0, ..] => true,
-        _ => false,
+        [0, ..] => true
+        _ => false
     }
 }
 
 fn last_or(xs: Vec<i64>, fallback: i64) -> i64 {
     match xs {
-        [] => fallback,
-        [.., last] => last,
+        [] => fallback
+        [.., last] => last
     }
 }
 
 fn literal_prefix(xs: Vec<i64>) -> String {
     match xs {
-        [1, second, _third] => format!("one-then-{}", second),
-        _ => "other".to_string(),
+        [1, second, _third] => format!("one-then-{}", second)
+        _ => "other".to_string()
     }
 }
 
@@ -75,7 +75,7 @@ fn main() {
     // Slice pattern in a `let` binding (irrefutable destructure).
     let pair = build(&[100, 200])
     match pair {
-        [x, y] => println!("pair {} {}", x, y),
-        _ => println!("nope"),
+        [x, y] => println!("pair {} {}", x, y)
+        _ => println!("nope")
     }
 }

@@ -17,7 +17,7 @@ fn main() {
     // --- list ---
     let mut primes: Vec<i64> = #[2, 3, 5, 7]
     primes.push(11)
-    println!("primes: {} entries, first={}, last={}",
+    println!("primes: {} entries, first={}, last={}"
         primes.len(), primes[0], primes[primes.len() - 1])
 
     // --- map (hash) - `if let` reads the natural way ---
@@ -35,7 +35,7 @@ fn main() {
     tally.inc("apple")
     tally.inc("apple", 4)
     tally.inc("banana")
-    println!("apple = {}, banana = {}",
+    println!("apple = {}, banana = {}"
         tally.get_or("apple", 0), tally.get_or("banana", 0))
 
     // --- map (sorted) - destructured iteration ---

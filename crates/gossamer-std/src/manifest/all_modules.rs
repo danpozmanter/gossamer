@@ -195,6 +195,7 @@ pub const ALL_MODULES: &[StdModule] = &[
     // 0.9.0 - observability (metrics, distributed tracing), HTTP/3,
     // Zstandard.
     METRICS,
+    PPROF,
     TRACE,
     HTTP_H3,
     COMPRESS_ZSTD,

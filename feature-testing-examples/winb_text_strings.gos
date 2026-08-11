@@ -2,22 +2,22 @@ use std::strings
 
 fn opt_i(label: &String, o: Option<i64>) {
     match o {
-        Some(n) => println!("{} = Some({})", label, n),
-        None => println!("{} = None", label),
+        Some(n) => println!("{} = Some({})", label, n)
+        None => println!("{} = None", label)
     }
 }
 
 fn opt_s(label: &String, o: Option<String>) {
     match o {
-        Some(s) => println!("{} = Some({:?})", label, s),
-        None => println!("{} = None", label),
+        Some(s) => println!("{} = Some({:?})", label, s)
+        None => println!("{} = None", label)
     }
 }
 
 fn opt_pair(label: &String, o: Option<(String, String)>) {
     match o {
-        Some((a, b)) => println!("{} = Some(({:?}, {:?}))", label, a, b),
-        None => println!("{} = None", label),
+        Some((a, b)) => println!("{} = Some(({:?}, {:?}))", label, a, b)
+        None => println!("{} = None", label)
     }
 }
 
@@ -101,16 +101,16 @@ fn main() {
     println!("repeat = {:?}", strings::repeat(&"ab", 3))
     println!("repeat-zero = {:?}", strings::repeat(&"ab", 0))
     match strings::slice(multi, 0, 6) {
-        Ok(out) => println!("slice = Ok({:?})", out),
-        Err(e) => println!("slice = Err({})", e),
+        Ok(out) => println!("slice = Ok({:?})", out)
+        Err(e) => println!("slice = Err({})", e)
     }
     match strings::slice(multi, 0, 100) {
-        Ok(out) => println!("slice-oob = Ok({:?})", out),
-        Err(e) => println!("slice-oob = Err({})", e),
+        Ok(out) => println!("slice-oob = Ok({:?})", out)
+        Err(e) => println!("slice-oob = Err({})", e)
     }
     match strings::slice(multi, 0, 1) {
-        Ok(out) => println!("slice-mid = Ok({:?})", out),
-        Err(e) => println!("slice-mid = Err({})", e),
+        Ok(out) => println!("slice-mid = Ok({:?})", out)
+        Err(e) => println!("slice-mid = Err({})", e)
     }
 
     // join

@@ -700,6 +700,39 @@ jobs:
       - name: Verify generated LLM documentation is byte-clean
         run: cargo xtask docs-llm --check
 
+  # Regenerates the tier-parity evidence `gos feature-status` reports and
+  # fails when the committed copy is stale. The evidence is compiled into
+  # the binary, so a `gos` with no repository behind it reports what the
+  # walk proved rather than nothing.
+  feature-status-evidence:
+    name: Tier-parity evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - run: rustup set profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v2-feature-status-evidence
+      - name: Build gos
+        run: cargo build --bin gos
+      - name: Walk every fixture across the VM, the JIT, and LLVM
+        run: ./target/debug/gos test --tier-parity --report status || true
+      - name: Fail when the committed evidence is stale
+        run: |
+          python3 - <<'PYEOF'
+          import json, sys
+          fresh = json.load(open("target/debug/.feature-status.json"))
+          committed = json.load(open("resources/feature-status.json"))
+          fresh = [r for r in fresh if r["name"].startswith("std::")]
+          committed = [r for r in committed if r["name"].startswith("std::")]
+          if fresh != committed:
+              print("resources/feature-status.json is stale; copy the module rows from")
+              print("target/debug/.feature-status.json after running the walk locally.")
+              sys.exit(1)
+          PYEOF
+
   # Cross-compilation correctness: `gos build --target aarch64-linux-*`
   # from a Linux host, run under QEMU, must match the bytecode VM. This is
   # the all-tier gate for the Linux-host cross path (gnu + musl).

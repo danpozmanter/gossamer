@@ -6,29 +6,29 @@
 
 fn head_rest(xs: [i64; 4]) -> String {
     match xs {
-        [first, ..rest] => format!("first={} rest_len={}", first, rest.len()),
-        [] => "empty".to_string(),
+        [first, ..rest] => format!("first={} rest_len={}", first, rest.len())
+        [] => "empty".to_string()
     }
 }
 
 fn last_only(xs: [i64; 4]) -> i64 {
     match xs {
-        [.., last] => last,
-        [] => -1,
+        [.., last] => last
+        [] => -1
     }
 }
 
 fn exact_four(xs: [i64; 4]) -> i64 {
     match xs {
-        [a, b, c, d] => a + b + c + d,
-        _ => 0,
+        [a, b, c, d] => a + b + c + d
+        _ => 0
     }
 }
 
 fn str_head_rest(xs: [String; 3]) -> String {
     match xs {
-        [h, ..t] => format!("h={} t_len={}", h, t.len()),
-        [] => "empty".to_string(),
+        [h, ..t] => format!("h={} t_len={}", h, t.len())
+        [] => "empty".to_string()
     }
 }
 
@@ -43,7 +43,7 @@ fn main() {
 
     // Inline match over a fresh array literal.
     match [100, 200, 300, 400] {
-        [first, ..rest] => println!("inline first={} rest_len={}", first, rest.len()),
-        [] => println!("inline empty"),
+        [first, ..rest] => println!("inline first={} rest_len={}", first, rest.len())
+        [] => println!("inline empty")
     }
 }

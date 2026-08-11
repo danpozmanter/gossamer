@@ -16,8 +16,8 @@ fn cookie_value(headers: &[(String, String)]) -> String {
     }
     // Browsers echo only the bare `name=value` pair back in `Cookie`.
     match sc.split_once(";") {
-        Some((pair, _)) => pair,
-        None => sc,
+        Some((pair, _)) => pair
+        None => sc
     }
 }
 
@@ -27,8 +27,8 @@ fn roundtrip(label: &String, store: http::session::Store, data: &String) {
     let pair = cookie_value(&resp.headers)
     let req = http::Client::new().get("http://x/").header("cookie", pair)
     match http::session::load(&store, req) {
-        Ok(got) => println!("{}_load={} match={}", label, got, got == *data),
-        Err(e) => println!("{}_err={}", label, e),
+        Ok(got) => println!("{}_load={} match={}", label, got, got == *data)
+        Err(e) => println!("{}_err={}", label, e)
     }
 }
 
@@ -50,7 +50,7 @@ fn main() {
     let bad_store = http::session::signed(wrong)
     let req = http::Client::new().get("http://x/").header("cookie", pair)
     match http::session::load(&bad_store, req) {
-        Ok(_) => println!("wrongkey=ok"),
-        Err(_) => println!("wrongkey=err"),
+        Ok(_) => println!("wrongkey=ok")
+        Err(_) => println!("wrongkey=err")
     }
 }

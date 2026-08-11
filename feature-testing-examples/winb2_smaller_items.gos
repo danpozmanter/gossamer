@@ -11,12 +11,12 @@ fn main() {
     let ok: Result<i64, _> = "42".parse()
     let bad: Result<i64, _> = "abc".parse()
     match ok {
-        Ok(n) => println!("ok={}", n),
-        Err(e) => println!("okerr=[{}]", e),
+        Ok(n) => println!("ok={}", n)
+        Err(e) => println!("okerr=[{}]", e)
     }
     match bad {
-        Ok(n) => println!("bad={}", n),
-        Err(e) => println!("baderr=[{}]", e),
+        Ok(n) => println!("bad={}", n)
+        Err(e) => println!("baderr=[{}]", e)
     }
 
     let a = #[10, 20, 30]

@@ -25,11 +25,14 @@ card:
 
 - `gos mcp` (stdio MCP server, e.g. `claude mcp add gossamer -- gos
   mcp`) exposes `check` (structured diagnostics), `execute`, `build`,
-  `test`, `fmt`, `doc`, `explain`, and semantic navigation (`hover`,
-  `definition`, `references`, `workspace_symbols`). Prefer these to
-  memorized API detail: `hover` answers "what is this and its type",
-  `check` validates a draft, `explain CODE` expands any diagnostic,
-  `doc` lists a file's items. This card ships as its
+  `test`, `fmt`, `doc`, `explain`, `lint`, `feature_status`, and semantic
+  navigation (`hover`, `definition`, `references`, `workspace_symbols`).
+  `check`, `execute`, `fmt`, `doc`, and `lint` take an inline `source`
+  string in place of a path, so a snippet needs no file of its own.
+  Prefer these to memorized API detail: `hover` answers "what is this and
+  its type", `check` validates a draft, `explain CODE` expands any
+  diagnostic, `doc` lists a file's items or a stdlib module's exports,
+  `feature_status` says whether an API is settled. This card ships as its
   `gossamer://skill-card` resource.
 - Without MCP: `gos check FILE` (rustc-class diagnostics with
   did-you-mean), `gos run FILE`, `gos explain CODE`, `gos doc FILE`.
@@ -339,9 +342,10 @@ fn load(path: &String) -> Result<String, errors::Error> {
 Panics are goroutine-scoped: a spawned goroutine's panic ends only
 that goroutine; a main-goroutine panic is fatal (exit 101). Integer
 divide/modulo by zero panics (GX0005); `i64::MIN / -1` wraps. Deep
-recursion is bounded: the VM/JIT reports GX0008 and native builds use
-the installed stack guard (`stack overflow ... aborting`) rather than
-silently corrupting memory.
+recursion raises `GX0008` and exits 101 on every tier: the bytecode VM
+refuses the call and prints the call stack, while JIT-compiled and
+native frames reach the installed stack guard, which names the faulting
+address. Neither corrupts memory.
 
 ## 9. Concurrency
 
@@ -505,7 +509,10 @@ Full path spelling is validated (GR0005); discover signatures with
   `hash::{fnv, crc32, adler32}`, `uuid` (v4/v7), `jwt`,
   `compress::{gzip, flate, zlib, zstd, bzip2}`, `archive::{zip,
   tar}`, `metrics`, `trace`, `slog`, `lifecycle`, `validate`,
-  `testing`, `runtime` (`collect_cycles`, `set_panic_hook`).
+  `testing`, `runtime` (`collect_cycles`, `set_panic_hook`),
+  `pprof` (`goroutine_profile` / `mutex_profile` / `block_profile` in
+  `go tool pprof` text form, `execution_trace(millis)` as Chrome trace
+  JSON, `route(path, query)` for `/debug/pprof/...`).
 
 ```gossamer
 use std::http
@@ -570,10 +577,10 @@ output wraps to the terminal width, capped at 80 columns.
 
 | Command | Purpose |
 |---------|---------|
-| `gos check / parse / build FILE`; `gos run FILE` | Typecheck; AST dump; fast native build; VM+JIT execution. |
+| `gos check [--fix] / parse / build FILE`; `gos run FILE` | Typecheck; AST dump; fast native build; VM+JIT execution. `--fix` applies the rewrites the diagnostics carry, keeping only edits a re-check proves better. |
 | `gos build --release [--target T]` | Full LLVM `-O3` (static-musl on Linux); cross to `{x86_64,aarch64}-unknown-linux-{gnu,musl}`. |
 | `gos test / bench PATH` | `#[test]` / `#[bench]`; `--coverage`, `--parallel N`, `--format junit`, `--tier-parity`. |
-| `gos fmt [--check] / lint / doc / explain CODE` | Format; lints; item docs; diagnostic rationale. |
+| `gos fmt [--check] / lint [--fix] / doc / explain CODE` | Format; lints; item docs; diagnostic rationale. `gos doc std`, `gos doc std::<module>`, and `gos doc std::<module>::<item>` answer from the stdlib manifest. |
 | `gos mcp / lsp / repl` | MCP server for agents; stdio LSP for editors; REPL. |
 | `gos new / init / add / remove / tidy / vendor / publish` | Scaffold and package management (Ed25519-signed registry). |
 | `gos watch / clean / env / completion / bindgen / feature-status` | Re-run on change; caches; toolchain info; shell completions; Rust-binding skeletons; feature registry. |

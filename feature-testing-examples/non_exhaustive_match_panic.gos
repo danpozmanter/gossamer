@@ -8,9 +8,9 @@
 
 fn classify(xs: Vec<i64>) -> i64 {
     match xs {
-        [] => 0,
-        [only] => only,
-        [a, b] => a + b,
+        [] => 0
+        [only] => only
+        [a, b] => a + b
     }
 }
 

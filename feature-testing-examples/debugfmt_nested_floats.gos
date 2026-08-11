@@ -3,39 +3,39 @@
 
 #[derive(Debug)]
 struct Reading {
-    label: String,
-    value: f64,
-    scale: f64,
+    label: String
+    value: f64
+    scale: f64
 }
 
 #[derive(Debug)]
 struct Wrapped {
-    inner: Reading,
-    count: i64,
+    inner: Reading
+    count: i64
 }
 
 #[derive(Debug)]
 enum Measure {
-    Exact(f64),
-    Range { lo: f64, hi: f64 },
+    Exact(f64)
+    Range { lo: f64, hi: f64 }
 }
 
 fn main() {
     let r = Reading {
-        label: "temp",
-        value: 7.0,
-        scale: 0.5,
+        label: "temp"
+        value: 7.0
+        scale: 0.5
     }
     println!("{:?}", r)
     println!(
-        "{:?}",
+        "{:?}"
         Wrapped {
             inner: Reading {
-                label: "inner",
-                value: -0.0,
-                scale: 1e300,
+                label: "inner"
+                value: -0.0
+                scale: 1e300
             },
-            count: 2,
+            count: 2
         }
     )
 

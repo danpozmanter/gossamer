@@ -66,7 +66,7 @@ fn main() {
             println!("x-b={}", header_of(&headers, "x-b"))
             println!("content-type={}", header_of(&headers, "content-type"))
         }
-        Err(e) => println!("error: {}", e),
+        Err(e) => println!("error: {}", e)
     }
     process::exit(0)
 }

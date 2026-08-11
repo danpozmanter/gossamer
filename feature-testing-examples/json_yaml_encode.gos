@@ -6,7 +6,7 @@ use std::encoding
 
 fn main() {
     let arr = match encoding::json::parse(&"[1, 2, 3]") {
-        Ok(v) => v,
+        Ok(v) => v
         Err(e) => { println!("parse err: {}", e)
             return }
     }
@@ -14,7 +14,7 @@ fn main() {
     println!("{}", encoding::json::encode_pretty(&arr))
 
     let obj = match encoding::json::parse(&"{\"x\": 42}") {
-        Ok(v) => v,
+        Ok(v) => v
         Err(e) => { println!("parse err: {}", e)
             return }
     }
@@ -23,14 +23,14 @@ fn main() {
 
     println!("--- yaml encode array ---")
     match encoding::yaml::encode(&arr) {
-        Ok(s) => print!("{}", s),
-        Err(e) => println!("yaml err: {}", e),
+        Ok(s) => print!("{}", s)
+        Err(e) => println!("yaml err: {}", e)
     }
 
     println!("--- yaml encode object ---")
     match encoding::yaml::encode(&obj) {
-        Ok(s) => print!("{}", s),
-        Err(e) => println!("yaml err: {}", e),
+        Ok(s) => print!("{}", s)
+        Err(e) => println!("yaml err: {}", e)
     }
 
     println!("--- yaml parse_all ---")
@@ -40,6 +40,6 @@ fn main() {
             println!("doc0: {}", encoding::json::encode(&docs[0]))
             println!("doc1: {}", encoding::json::encode(&docs[1]))
         }
-        Err(e) => println!("parse_all err: {}", e),
+        Err(e) => println!("parse_all err: {}", e)
     }
 }

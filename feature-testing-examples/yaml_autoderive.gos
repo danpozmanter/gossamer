@@ -10,9 +10,9 @@
 use std::errors
 
 struct ServerConfig {
-    name: String,
-    port: i64,
-    debug: bool,
+    name: String
+    port: i64
+    debug: bool
 }
 
 fn main() -> Result<(), errors::Error> {

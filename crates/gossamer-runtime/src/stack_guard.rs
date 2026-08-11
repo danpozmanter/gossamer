@@ -440,8 +440,13 @@ mod unix {
         // use `format!` or `eprintln!` - both allocate / take
         // locks. `itoa::Buffer` writes into a stack-resident
         // array.
-        let prefix = b"gossamer: stack overflow at 0x";
-        let suffix = b"; aborting\n";
+        //
+        // The code and the exit status match what the bytecode VM
+        // reports for the same program, so a stack overflow reads the
+        // same whichever tier ran it. The faulting address is the one
+        // detail only this path can supply.
+        let prefix = b"error[GX0008]: stack overflow at 0x";
+        let suffix = b"; recursion exceeded the stack\n";
         let mut scratch = [0_u8; 96];
         let mut len = 0;
         len += copy_into(&mut scratch[len..], prefix);
@@ -456,9 +461,12 @@ mod unix {
                 len,
             )
         };
-        // `_exit(134)` would also work; abort gives core-dump
-        // semantics matching the underlying SIGSEGV.
-        std::process::abort();
+        // Exit with the fault status the other tiers report rather than
+        // aborting: a diagnosed overflow is not a crash, and a core dump
+        // for it is noise. `_exit` is async-signal-safe; `std::process::exit`
+        // would run atexit handlers from a signal handler.
+        // SAFETY: `_exit(2)` is async-signal-safe and does not return.
+        unsafe { libc::_exit(101) }
     }
 
     fn propagate_signal(sig: libc::c_int) {
@@ -728,7 +736,12 @@ mod windows {
         // an FFI boundary inside an SEH handler); the message
         // length is fixed so a raw WriteFile call is enough.
         write_message();
-        std::process::abort();
+        // Exit with the fault status the other tiers report rather than
+        // aborting: a diagnosed overflow is not a crash. `ExitProcess`
+        // is the SEH-safe counterpart of `_exit`.
+        // SAFETY: ExitProcess is callable from any thread and does not
+        // return.
+        unsafe { windows_sys::Win32::System::Threading::ExitProcess(101) }
     }
 
     /// Renders the fault report into a stack scratch buffer and writes
@@ -804,7 +817,7 @@ mod windows {
     }
 
     fn write_message() {
-        const MSG: &[u8] = b"gossamer: stack overflow; aborting\n";
+        const MSG: &[u8] = b"error[GX0008]: stack overflow; recursion exceeded the stack\n";
         write_bytes(MSG);
     }
 

@@ -29,9 +29,9 @@ impl http::Handler for App {
         // Replace-then-push: re-setting `user` overwrites the value.
         let r = r.set_value("user", "bob")
         http::Response::text(
-            200,
+            200
             "user=" + &r.value("user") + " role=" + &r.value("role")
-            + " missing=[" + &r.value("nope") + "]",
+            + " missing=[" + &r.value("nope") + "]"
         )
     }
 }
@@ -59,8 +59,8 @@ fn main() {
     go serve_app()
     await_ready(&"http://127.0.0.1:23884/x")
     match http::get("http://127.0.0.1:23884/x", Vec::from([])) {
-        Ok(r) => println!("status={} body={}", r.status, r.body),
-        Err(e) => println!("error: {}", e),
+        Ok(r) => println!("status={} body={}", r.status, r.body)
+        Err(e) => println!("error: {}", e)
     }
     process::exit(0)
 }

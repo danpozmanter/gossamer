@@ -16,8 +16,8 @@ fn is_letter(b: i64) -> bool {
 }
 
 struct LetterCounts {
-    vowels: i64,
-    consonants: i64,
+    vowels: i64
+    consonants: i64
 }
 
 fn count_vowels(text: &String) -> LetterCounts {

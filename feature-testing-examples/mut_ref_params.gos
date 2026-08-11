@@ -37,7 +37,7 @@ fn swap_ends(v: &mut [i64]) {
 }
 
 struct Holder {
-    data: Vec<i64>,
+    data: Vec<i64>
 }
 
 fn main() {

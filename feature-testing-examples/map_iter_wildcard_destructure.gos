@@ -43,7 +43,7 @@ fn main() {
     }
 
     println!(
-        "value_sum={} key_sum={} count={} str_value_sum={}",
+        "value_sum={} key_sum={} count={} str_value_sum={}"
         value_sum, key_sum, count, str_value_sum
     )
 }

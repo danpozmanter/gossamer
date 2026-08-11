@@ -15,8 +15,8 @@ struct Score { wins: i64, name: String }
 
 fn show_opt_i64(label: String, o: Option<i64>) {
     match o {
-        Some(v) => println!("{} Some({})", label, v),
-        None => println!("{} None", label),
+        Some(v) => println!("{} Some({})", label, v)
+        None => println!("{} None", label)
     }
 }
 
@@ -65,12 +65,12 @@ fn main() {
     rm.remove("x")
     println!("after remove len {} has_x {}", rm.len(), rm.contains_key("x"))
     match Map::pop(rm, "y") {
-        Some(v) => println!("pop y {}", v),
-        None => println!("pop y none"),
+        Some(v) => println!("pop y {}", v)
+        None => println!("pop y none")
     }
     match Map::pop(rm, "y") {
-        Some(v) => println!("pop y again {}", v),
-        None => println!("pop y again none"),
+        Some(v) => println!("pop y again {}", v)
+        None => println!("pop y again none")
     }
 
     // i64-keyed map: deterministic numeric-sorted iteration.
@@ -105,8 +105,8 @@ fn main() {
     sm.insert("ada", Score { wins: 7, name: "ada" })
     sm.insert("bob", Score { wins: 3, name: "bob" })
     match sm.get("ada") {
-        Some(s) => println!("score ada wins {} name {}", s.wins, s.name),
-        None => println!("no ada"),
+        Some(s) => println!("score ada wins {} name {}", s.wins, s.name)
+        None => println!("no ada")
     }
     println!("sm len {}", sm.len())
 

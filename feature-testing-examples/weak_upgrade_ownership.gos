@@ -9,17 +9,17 @@
 // bit-identically across VM, JIT, and LLVM, with no leak or double-free.
 
 enum Node {
-    Leaf(i64),
-    Pair(i64, i64),
+    Leaf(i64)
+    Pair(i64, i64)
 }
 
 fn leaf_value(w: Weak<Node>) -> i64 {
     match w.upgrade() {
         Some(n) => match n {
-            Node::Leaf(v) => v,
-            Node::Pair(a, b) => a + b,
-        },
-        None => -1,
+            Node::Leaf(v) => v
+            Node::Pair(a, b) => a + b
+        }
+        None => -1
     }
 }
 
@@ -45,17 +45,17 @@ fn main() {
     let o = w.upgrade()
     let first = match o {
         Some(n) => match n {
-            Node::Leaf(v) => v,
-            Node::Pair(a, _) => a,
-        },
-        None => -1,
+            Node::Leaf(v) => v
+            Node::Pair(a, _) => a
+        }
+        None => -1
     }
     let second = match o {
         Some(n) => match n {
-            Node::Leaf(v) => v,
-            Node::Pair(_, b) => b,
-        },
-        None => -1,
+            Node::Leaf(v) => v
+            Node::Pair(_, b) => b
+        }
+        None => -1
     }
     println!("rematch={} {}", first, second)
 

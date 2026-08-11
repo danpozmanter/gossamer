@@ -1,10 +1,10 @@
 // Positional field copying from an existing struct across all three tiers.
 
 struct Config {
-    host: String,
-    port: i64,
-    verbose: bool,
-    retries: i64,
+    host: String
+    port: i64
+    verbose: bool
+    retries: i64
 }
 
 fn default_config() -> Config {

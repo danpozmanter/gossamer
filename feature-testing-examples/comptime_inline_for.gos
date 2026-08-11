@@ -17,10 +17,10 @@ fn rec<T>(v: T) -> String {
     let mut out = ""
     for (name, ty) in typeInfo::<T>() {
         let label = match ty {
-            "String" => "str",
-            "bool" => "bool",
-            "f64" => "real",
-            _ => "int",
+            "String" => "str"
+            "bool" => "bool"
+            "f64" => "real"
+            _ => "int"
         }
         out += name + ":" + label + "=" + format!("{}", field_of(v, name)) + ";"
     }

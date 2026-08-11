@@ -218,6 +218,14 @@ pub fn stack_guard_tripped() -> bool {
     origin.saturating_sub(current_stack_ptr()) > budget
 }
 
+/// Unarms the guard on this thread, so a caller that has just tripped
+/// it can run its reporting and unwind path with the guard's own margin
+/// to work in rather than tripping again on every frame.
+pub fn disarm_stack_guard() {
+    STACK_ORIGIN.with(|o| o.set(0));
+    STACK_BUDGET.with(|b| b.set(0));
+}
+
 /// Stackful coroutine that runs a single Gossamer goroutine to
 /// completion across one or more `resume()` calls.
 #[cfg(not(target_arch = "wasm32"))]

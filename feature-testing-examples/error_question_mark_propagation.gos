@@ -28,40 +28,40 @@ fn sum_positives(inputs: Vec<String>) -> Result<i64, String> {
 fn main() {
     // Happy path
     match double_positive("21") {
-        Ok(v) => println!("double(21) = {}", v),
-        Err(e) => println!("error: {}", e),
+        Ok(v) => println!("double(21) = {}", v)
+        Err(e) => println!("error: {}", e)
     }
 
     // Not a number
     match double_positive("abc") {
-        Ok(v) => println!("unexpected {}", v),
-        Err(e) => println!("not a number: {}", e),
+        Ok(v) => println!("unexpected {}", v)
+        Err(e) => println!("not a number: {}", e)
     }
 
     // Non-positive
     match double_positive("-5") {
-        Ok(v) => println!("unexpected {}", v),
-        Err(e) => println!("non-positive: {}", e),
+        Ok(v) => println!("unexpected {}", v)
+        Err(e) => println!("non-positive: {}", e)
     }
 
     // Zero
     match parse_positive("0") {
-        Ok(v) => println!("unexpected {}", v),
-        Err(e) => println!("zero rejected: {}", e),
+        Ok(v) => println!("unexpected {}", v)
+        Err(e) => println!("zero rejected: {}", e)
     }
 
     // Sum success
     let words: Vec<String> = Vec::from(["1", "2", "3"])
     match sum_positives(words) {
-        Ok(s) => println!("sum = {}", s),
-        Err(e) => println!("sum error: {}", e),
+        Ok(s) => println!("sum = {}", s)
+        Err(e) => println!("sum error: {}", e)
     }
 
     // Sum with bad element
     let bad: Vec<String> = Vec::from(["1", "bad", "3"])
     match sum_positives(bad) {
-        Ok(s) => println!("unexpected sum {}", s),
-        Err(e) => println!("sum stopped at: {}", e),
+        Ok(s) => println!("unexpected sum {}", s)
+        Err(e) => println!("sum stopped at: {}", e)
     }
 }
 
@@ -74,9 +74,9 @@ mod tests {
         let r = super::parse_positive("42")
         match r {
             Ok(v) => { let _ = testing::check_eq(&v, &42, "parse_positive 42")
-            },
+            }
             Err(e) => { let _ = testing::check(false, e)
-            },
+            }
         }
     }
 
@@ -85,9 +85,9 @@ mod tests {
         let r = super::parse_positive("0")
         match r {
             Ok(_) => { let _ = testing::check(false, "expected error for 0")
-            },
+            }
             Err(_) => { let _ = testing::check(true, "zero rejected")
-            },
+            }
         }
     }
 
@@ -96,9 +96,9 @@ mod tests {
         let r = super::sum_positives(#["1", "-1", "2"])
         match r {
             Ok(_) => { let _ = testing::check(false, "expected early exit")
-            },
+            }
             Err(_) => { let _ = testing::check(true, "short-circuited on -1")
-            },
+            }
         }
     }
 }

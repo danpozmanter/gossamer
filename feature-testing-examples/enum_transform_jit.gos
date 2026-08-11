@@ -4,10 +4,10 @@ use std::strings
 // shapes: scalar, string, `Vec<Node>` (the `Arr` layout) and
 // `Vec<(String, Node)>` (the `Obj` layout).
 enum Node {
-    Leaf(i64),
-    Text(String),
-    List(Vec<Node>),
-    Map(Vec<(String, Node)>),
+    Leaf(i64)
+    Text(String)
+    List(Vec<Node>)
+    Map(Vec<(String, Node)>)
 }
 
 // By-value enum in, a freshly built enum out. The `for` loops make it
@@ -15,8 +15,8 @@ enum Node {
 // trees (including their `Vec` fields) cross the VM<->native boundary.
 fn transform(v: Node) -> Node {
     match v {
-        Node::Leaf(n) => Node::Leaf(n + 1),
-        Node::Text(s) => Node::Text(strings::to_uppercase(&s)),
+        Node::Leaf(n) => Node::Leaf(n + 1)
+        Node::Text(s) => Node::Text(strings::to_uppercase(&s))
         Node::List(xs) => {
             let mut out: Vec<Node> = Vec::from([])
             for x in xs { out.push(transform(x)) }
@@ -34,7 +34,7 @@ fn transform(v: Node) -> Node {
 // recursive serialize. Exercises the `&mut String` pointer-to-slot ABI.
 fn serialize_into(v: &Node, out: &mut String) {
     match v {
-        Node::Leaf(n) => *out += format!("{}", n),
+        Node::Leaf(n) => *out += format!("{}", n)
         Node::Text(s) => {
             *out += "\""
             *out += s

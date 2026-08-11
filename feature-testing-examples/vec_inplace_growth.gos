@@ -6,8 +6,8 @@
 // fixture lowerable on the LLVM tier.
 fn unwrap_or(o: Option<i64>, d: i64) -> i64 {
     match o {
-        Some(v) => v,
-        None => d,
+        Some(v) => v
+        None => d
     }
 }
 

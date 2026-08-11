@@ -3509,6 +3509,11 @@ impl<'a> Builder<'a> {
             "runtime::scheduler_stats_json" => {
                 ("gos_rt_runtime_scheduler_stats_json", self.tcx.string_ty())
             }
+            "pprof::goroutine_profile" => ("gos_rt_pprof_goroutine_profile", self.tcx.string_ty()),
+            "pprof::mutex_profile" => ("gos_rt_pprof_mutex_profile", self.tcx.string_ty()),
+            "pprof::block_profile" => ("gos_rt_pprof_block_profile", self.tcx.string_ty()),
+            "pprof::execution_trace" => ("gos_rt_pprof_execution_trace", self.tcx.string_ty()),
+            "pprof::route" => ("gos_rt_pprof_route", self.option_string_adt_ty()),
             // Bare `fn(String)` only: the hook is a raw code pointer the
             // runtime calls with the rendered message.
             "runtime::set_panic_hook" => ("gos_rt_set_panic_hook", self.tcx.unit()),

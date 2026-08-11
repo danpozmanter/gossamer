@@ -4,9 +4,9 @@
 // the frame that built it (an escaping closure) and reads fields past index 0.
 
 struct Point {
-    x: i64,
-    y: i64,
-    z: i64,
+    x: i64
+    y: i64
+    z: i64
 }
 
 fn apply(f: Fn(i64) -> i64, n: i64) -> i64 {

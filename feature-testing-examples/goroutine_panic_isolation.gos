@@ -33,7 +33,7 @@ fn main() {
     let mut results: Vec<i64> = Vec::from([])
     for _ in 0..3 {
         match rx.recv() {
-            Some(v) => results.push(v),
+            Some(v) => results.push(v)
             None => {}
         }
     }
@@ -88,9 +88,9 @@ mod tests {
         time::sleep(20)
         match rx.recv() {
             Some(v) => { let _ = testing::check_eq(&v, &7, "42/6=7")
-            },
+            }
             None => { let _ = testing::check(false, "expected result")
-            },
+            }
         }
     }
 
@@ -101,9 +101,9 @@ mod tests {
         time::sleep(20)
         match rx.recv() {
             Some(v) => { let _ = testing::check_eq(&v, &-1, "div by zero sentinel")
-            },
+            }
             None => { let _ = testing::check(false, "expected result")
-            },
+            }
         }
     }
 

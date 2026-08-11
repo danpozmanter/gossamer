@@ -49,18 +49,18 @@ fn main() {
 
     // qualified Map::get
     let got = match Map::get(m, 3) {
-        Some(r) => r.label,
-        None => format!("missing"),
+        Some(r) => r.label
+        None => format!("missing")
     }
 
     // qualified Map::pop
     let popped = match Map::pop(m, 5) {
-        Some(r) => r.weight,
-        None => -1,
+        Some(r) => r.weight
+        None => -1
     }
 
     println!(
-        "iter={} values={} keys={} got={} popped={} remaining={}",
+        "iter={} values={} keys={} got={} popped={} remaining={}"
         iter_sum, values_sum, keys_sum, got, popped, m.len()
     )
 }

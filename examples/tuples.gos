@@ -6,8 +6,8 @@
 // Returning several values without declaring a struct for them.
 fn split_name(full: String) -> (String, String) {
     match full.split_once(" ") {
-        Some((first, rest)) => (first, rest),
-        None => (full, ""),
+        Some((first, rest)) => (first, rest)
+        None => (full, "")
     }
 }
 

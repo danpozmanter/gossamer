@@ -6,7 +6,7 @@ fn main() {
     let _ = xs.insert(3, 4)
     println!("before {}", xs.len())
     match xs.insert(5, 99) {
-        Ok(_) => println!("unexpected ok"),
-        Err(_) => println!("insert oob err len={}", xs.len()),
+        Ok(_) => println!("unexpected ok")
+        Err(_) => println!("insert oob err len={}", xs.len())
     }
 }

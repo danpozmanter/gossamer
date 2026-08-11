@@ -1,7 +1,7 @@
 // Explicit mutable references must behave identically in every execution tier.
 
 struct Counter {
-    value: i64,
+    value: i64
 }
 
 impl Counter {
@@ -36,10 +36,10 @@ fn main() {
     append_value(&mut values, scalar)
 
     println!(
-        "scalar={} counter={} values={} last={}",
-        scalar,
-        counter.value,
-        values.len(),
+        "scalar={} counter={} values={} last={}"
+        scalar
+        counter.value
+        values.len()
         values[1]
     )
 }

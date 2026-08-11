@@ -6,38 +6,38 @@
 // the intact payload. Output is bit-identical across tiers.
 
 enum E {
-    Wrap(i64),
-    Pair(i64, i64),
+    Wrap(i64)
+    Pair(i64, i64)
 }
 
 // Single refutable field, fresh unique scrutinee bound to a local.
 fn single(e: E) -> i64 {
     match e {
-        E::Wrap(0) => 100,
-        E::Wrap(n) => n + 1,
-        E::Pair(a, b) => a + b,
+        E::Wrap(0) => 100
+        E::Wrap(n) => n + 1
+        E::Pair(a, b) => a + b
     }
 }
 
 // Two fields, first-field literal refutable in the earlier arm.
 fn two(e: E) -> i64 {
     match e {
-        E::Pair(1, b) => b,
-        E::Pair(a, b) => a * 100 + b,
-        E::Wrap(n) => n,
+        E::Pair(1, b) => b
+        E::Pair(a, b) => a * 100 + b
+        E::Wrap(n) => n
     }
 }
 
 // A guard-free all-binding match (the shape that DOES drain) over a
 // recursively rebuilt enum, exercising the for-loop drain path too.
 enum Tree {
-    Leaf(i64),
-    Node(Vec<Tree>),
+    Leaf(i64)
+    Node(Vec<Tree>)
 }
 
 fn bump(t: Tree) -> Tree {
     match t {
-        Tree::Leaf(n) => Tree::Leaf(n + 1),
+        Tree::Leaf(n) => Tree::Leaf(n + 1)
         Tree::Node(kids) => {
             let mut out: Vec<Tree> = Vec::from([])
             for k in kids {
@@ -50,7 +50,7 @@ fn bump(t: Tree) -> Tree {
 
 fn total(t: &Tree) -> i64 {
     match t {
-        Tree::Leaf(n) => *n,
+        Tree::Leaf(n) => *n
         Tree::Node(kids) => {
             let mut sum: i64 = 0
             for k in kids {

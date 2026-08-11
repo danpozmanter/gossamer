@@ -17,18 +17,18 @@
 use std::http
 
 struct Field {
-    name: String,
-    filename: String,
+    name: String
+    filename: String
 }
 
 fn attr(disp: &String, key: &String) -> String {
     let needle = key.clone() + "=\""
     match disp.split_once(&needle) {
         Some((_, rest)) => match rest.split_once("\"") {
-            Some((value, _)) => value,
-            None => "",
-        },
-        None => "",
+            Some((value, _)) => value
+            None => ""
+        }
+        None => ""
     }
 }
 

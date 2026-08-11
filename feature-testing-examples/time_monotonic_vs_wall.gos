@@ -78,9 +78,9 @@ mod tests {
         let ms = time::now_ms()
         match time::format_rfc3339(ms) {
             Ok(s) => { let _ = testing::check(s.contains("T"), "RFC3339 contains T")
-            },
+            }
             Err(e) => { let _ = testing::check(false, e)
-            },
+            }
         }
     }
 
@@ -95,11 +95,11 @@ mod tests {
                         let _ = testing::check(diff < 1000, "roundtrip within 1s")
                     }
                     Err(e) => { let _ = testing::check(false, e)
-                    },
+                    }
                 }
             }
             Err(e) => { let _ = testing::check(false, e)
-            },
+            }
         }
     }
 }

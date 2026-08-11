@@ -26,14 +26,14 @@ fn main() {
     m.insert(2, Person { name: format!("grace"), age: 45 })
 
     let popped = match Map::pop(m, 1) {
-        Some(p) => p.name,
-        None => format!("none"),
+        Some(p) => p.name
+        None => format!("none")
     }
     let _ = churn()
 
     let present_after = match m.get(1) {
-        Some(_) => 1,
-        None => 0,
+        Some(_) => 1
+        None => 0
     }
     println!("popped={} present_after={} remaining={}", popped, present_after, m.len())
 }

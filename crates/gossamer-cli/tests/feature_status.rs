@@ -227,3 +227,104 @@ fn unknown_status_returns_error() {
         "expected status error: {stderr}"
     );
 }
+
+/// The parity walk records the modules a fixture imports, so a feature
+/// row can join against them; keying only by fixture path left every row
+/// reading `(no test data)`.
+#[test]
+fn the_parity_walk_records_module_rows_a_feature_row_can_join() {
+    let dir = scratch("module-rows");
+    fs::write(
+        dir.join("uses_strings.gos"),
+        "use std::strings\n\nfn main() {\n    println!(\"{}\", strings::trim(\"  x  \"))\n}\n",
+    )
+    .expect("write fixture");
+
+    let out = Command::new(gos_bin())
+        .args(["test", "--tier-parity", "--report", "status"])
+        .arg(&dir)
+        .env("CARGO_TARGET_DIR", dir.join("target"))
+        .output()
+        .expect("spawn tier-parity walk");
+    let report = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        report.contains("vm=pass cranelift=pass llvm=pass"),
+        "every tier must reach a verdict on a plain fixture: {report}"
+    );
+
+    let sidecar =
+        fs::read_to_string(dir.join("target/debug/.feature-status.json")).expect("sidecar written");
+    assert!(
+        sidecar.contains("\"std::strings\""),
+        "the walk recorded no module row: {sidecar}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A fixture that runs until it is killed says nothing about whether the
+/// tiers agree. Recording it as a failure would publish every module a
+/// server example imports as broken.
+#[test]
+fn a_fixture_that_never_exits_reaches_no_verdict_rather_than_failing() {
+    let dir = scratch("no-verdict");
+    fs::write(dir.join("spins.gos"), "fn main() {\n    loop { }\n}\n").expect("write fixture");
+
+    let out = Command::new(gos_bin())
+        .args([
+            "test",
+            "--tier-parity",
+            "--report",
+            "status",
+            "--timeout",
+            "2s",
+        ])
+        .arg(&dir)
+        .env("CARGO_TARGET_DIR", dir.join("target"))
+        .output()
+        .expect("spawn tier-parity walk");
+    let report = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        report.contains("vm=- cranelift=- llvm=-"),
+        "a non-terminating fixture must reach no verdict: {report}"
+    );
+    assert!(
+        out.status.success(),
+        "no verdict is not a parity failure: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Parity is agreement between tiers, not success. An example that
+/// deliberately exits non-zero on all three tiers has proved exactly the
+/// property the walk exists to check.
+#[test]
+fn a_fixture_that_fails_identically_on_every_tier_is_parity_passing() {
+    let dir = scratch("agreeing-failure");
+    fs::write(
+        dir.join("exits_nonzero.gos"),
+        "use std::process\n\nfn main() {\n    println!(\"before\")\n    process::exit(3)\n}\n",
+    )
+    .expect("write fixture");
+
+    let out = Command::new(gos_bin())
+        .args(["test", "--tier-parity", "--report", "status"])
+        .arg(&dir)
+        .env("CARGO_TARGET_DIR", dir.join("target"))
+        .output()
+        .expect("spawn tier-parity walk");
+    let report = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        report.contains("vm=pass cranelift=pass llvm=pass"),
+        "agreeing tiers must read as parity, whatever the exit code: {report}"
+    );
+    assert!(
+        out.status.success(),
+        "no tier diverged: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}

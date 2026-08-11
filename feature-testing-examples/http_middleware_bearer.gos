@@ -58,19 +58,19 @@ fn main() {
     // Valid token → handler body.
     let ok_hdr: Vec<(String, String)> = Vec::from([("Authorization", "Bearer s3cret")])
     match http::request("GET", "http://127.0.0.1:23885/x", "", ok_hdr) {
-        Ok(r) => println!("valid status={} body={}", r.status, r.body),
-        Err(e) => println!("valid error: {}", e),
+        Ok(r) => println!("valid status={} body={}", r.status, r.body)
+        Err(e) => println!("valid error: {}", e)
     }
     // Wrong token → 401.
     let bad_hdr: Vec<(String, String)> = Vec::from([("Authorization", "Bearer nope")])
     match http::request("GET", "http://127.0.0.1:23885/x", "", bad_hdr) {
-        Ok(r) => println!("wrong status={} body={}", r.status, r.body),
-        Err(e) => println!("wrong error: {}", e),
+        Ok(r) => println!("wrong status={} body={}", r.status, r.body)
+        Err(e) => println!("wrong error: {}", e)
     }
     // No header → 401 (verify is never invoked).
     match http::get("http://127.0.0.1:23885/x", Vec::from([])) {
-        Ok(r) => println!("none status={} body={}", r.status, r.body),
-        Err(e) => println!("none error: {}", e),
+        Ok(r) => println!("none status={} body={}", r.status, r.body)
+        Err(e) => println!("none error: {}", e)
     }
     process::exit(0)
 }

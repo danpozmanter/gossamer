@@ -16,11 +16,11 @@ fn double_maybe(n: i64) -> Option<i64> {
 
 fn main() {
     match double_maybe(4) {
-        Some(v) => println!("double_maybe(4) = {}", v),
-        None => println!("double_maybe(4) = none"),
+        Some(v) => println!("double_maybe(4) = {}", v)
+        None => println!("double_maybe(4) = none")
     }
     match double_maybe(-2) {
-        Some(v) => println!("double_maybe(-2) = {}", v),
-        None => println!("double_maybe(-2) = none"),
+        Some(v) => println!("double_maybe(-2) = {}", v)
+        None => println!("double_maybe(-2) = none")
     }
 }

@@ -16,8 +16,8 @@ fn worker(id: i64, stop: channel::Sender<i64>, result_tx: channel::Sender<String
 }
 
 fn coordinator(
-    num_workers: i64,
-    results_rx: channel::Sender<String>,
+    num_workers: i64
+    results_rx: channel::Sender<String>
 ) -> Vec<String> {
     let mut collected: Vec<String> = Vec::from([])
     let mut i = 0

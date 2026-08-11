@@ -30,12 +30,12 @@ fn main() {
     println!("diff len={} has_x={} has_y={}", d.len(), d.contains("x"), d.contains("y"))
 
     let sd = a.symmetric_difference(b)
-    println!("symdiff len={} has_x={} has_w={} has_y={}",
+    println!("symdiff len={} has_x={} has_w={} has_y={}"
         sd.len(), sd.contains("x"), sd.contains("w"), sd.contains("y"))
 
-    println!("subset={} superset={} disjoint={}",
-        set_of("x", "y", "x").is_subset(a),
-        a.is_superset(set_of("x", "x", "x")),
+    println!("subset={} superset={} disjoint={}"
+        set_of("x", "y", "x").is_subset(a)
+        a.is_superset(set_of("x", "x", "x"))
         a.is_disjoint(set_of("q", "r", "s")))
 }
 

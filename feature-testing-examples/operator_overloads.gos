@@ -68,7 +68,7 @@ fn main() {
 
     let tc: Result<Centimetres, errors::Error> = Inches { n: 20 }.try_into()
     match tc {
-        Ok(c) => println!("try {}", c.n),
-        Err(e) => println!("err {}", e),
+        Ok(c) => println!("try {}", c.n)
+        Err(e) => println!("err {}", e)
     }
 }

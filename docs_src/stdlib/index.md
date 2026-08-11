@@ -100,6 +100,7 @@ For receiver methods on built-in types, see [`Methods by type`](../method_suppor
 | [`std::os::user`](os_user.md) | POSIX user / group lookup. Unix-backed by `nix`; Windows falls back to env vars. |
 | [`std::panic`](panic.md) | Panic / `catch_unwind` integration. |
 | [`std::path`](path.md) | Lexical filesystem-path operations; platform path grammar, no URL parsing. |
+| [`std::pprof`](pprof.md) | Runtime profiles in the text format `go tool pprof` reads, plus a Chrome-trace scheduler capture. |
 | [`std::process`](process.md) | Canonical process control and child-process API; std::os::exec is compatibility-only. |
 | [`std::regex`](regex.md) | Compiled regular expressions (Rust `regex` crate syntax; no backreferences or look-around). |
 | [`std::result`](result.md) | Data-last Result combinators for pipeline chaining: map, map_err, unwrap_or_else, etc. |

@@ -21,15 +21,15 @@ impl http::Handler for App {
 
 fn serve_app() {
     let secured = middleware::security_headers(
-        middleware::cors(App { }, middleware::CorsConfig::permissive()),
+        middleware::cors(App { }, middleware::CorsConfig::permissive())
         middleware::SecurityHeaders::strict())
     let cached = middleware::cache_control(
-        middleware::hsts(secured, middleware::HstsConfig::safe_default()),
+        middleware::hsts(secured, middleware::HstsConfig::safe_default())
         middleware::CacheControl::no_store())
     let stack = middleware::rate_limit(
         middleware::timeout(
-            middleware::compress_gzip(middleware::etag(cached)),
-            2500),
+            middleware::compress_gzip(middleware::etag(cached))
+            2500)
         middleware::RateLimit::per_ip(2, 1))
     if let Err(e) = http::serve("127.0.0.1:23947", stack) {
         eprintln!("serve failed: {e}")
@@ -92,12 +92,12 @@ fn main() {
 
     // The readiness probe already consumed one token.
     match http::get(&url, Vec::from([])) {
-        Ok(r) => report("allowed", &r),
-        Err(e) => println!("error: {}", e),
+        Ok(r) => report("allowed", &r)
+        Err(e) => println!("error: {}", e)
     }
     match http::get(&url, Vec::from([])) {
-        Ok(r) => report("limited", &r),
-        Err(e) => println!("error: {}", e),
+        Ok(r) => report("limited", &r)
+        Err(e) => println!("error: {}", e)
     }
 
     process::exit(0)

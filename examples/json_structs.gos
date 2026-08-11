@@ -22,16 +22,16 @@
 use std::errors
 
 struct Address {
-    city: String,
-    zip: String,
+    city: String
+    zip: String
 }
 
 struct User {
-    name: String,
-    age: i64,
-    active: bool,
-    tags: Vec<String>,
-    address: Address,
+    name: String
+    age: i64
+    active: bool
+    tags: Vec<String>
+    address: Address
 }
 
 fn main() -> Result<(), errors::Error> {

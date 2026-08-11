@@ -17,7 +17,7 @@ fn main() {
     ])
 
     let token = match http::csrf::issue_token(key) {
-        Ok(t) => t,
+        Ok(t) => t
         Err(_) => {
             println!("issue: err")
             return
@@ -26,8 +26,8 @@ fn main() {
 
     // A self-paired, freshly issued token verifies under its key.
     match http::csrf::verify_token(token, token, key) {
-        Ok(_) => println!("self: ok"),
-        Err(_) => println!("self: err"),
+        Ok(_) => println!("self: ok")
+        Err(_) => println!("self: err")
     }
 
     // The same token under a different key fails the HMAC check.
@@ -38,8 +38,8 @@ fn main() {
         8, 7, 6, 5, 4, 3, 2, 1,
     ])
     match http::csrf::verify_token(token, token, wrong) {
-        Ok(_) => println!("wrongkey: ok"),
-        Err(_) => println!("wrongkey: err"),
+        Ok(_) => println!("wrongkey: ok")
+        Err(_) => println!("wrongkey: err")
     }
 
     // A key under the minimum HMAC strength is rejected before any HMAC
@@ -49,22 +49,22 @@ fn main() {
     // renders correctly across tiers.
     let weak: Vec<u8> = Vec::from([1, 2, 3, 4])
     match http::csrf::verify_token(token, token, weak) {
-        Ok(_) => println!("weakkey: ok"),
-        Err(e) => println!("weakkey: err {}", e),
+        Ok(_) => println!("weakkey: ok")
+        Err(e) => println!("weakkey: err {}", e)
     }
 
     // Two independently issued tokens carry different nonces, so the
     // cookie-vs-supplied nonce compare rejects them.
     let a = match http::csrf::issue_token(key) {
-        Ok(t) => t,
-        Err(_) => "",
+        Ok(t) => t
+        Err(_) => ""
     }
     let b = match http::csrf::issue_token(key) {
-        Ok(t) => t,
-        Err(_) => "",
+        Ok(t) => t
+        Err(_) => ""
     }
     match http::csrf::verify_token(a, b, key) {
-        Ok(_) => println!("mismatch: ok"),
-        Err(_) => println!("mismatch: err"),
+        Ok(_) => println!("mismatch: ok")
+        Err(_) => println!("mismatch: err")
     }
 }

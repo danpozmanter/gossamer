@@ -11,10 +11,10 @@ fn escape(text: &String) -> String {
     let mut out = String::new()
     for ch in text.chars() {
         match ch {
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '&' => out.push_str("&amp;"),
-            _ => out.push(ch),
+            '<' => out.push_str("&lt;")
+            '>' => out.push_str("&gt;")
+            '&' => out.push_str("&amp;")
+            _ => out.push(ch)
         }
     }
     out

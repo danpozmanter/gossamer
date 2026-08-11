@@ -3,27 +3,27 @@
 // traverse it to test heap layout and recursive dispatch.
 
 enum Tree {
-    Leaf(i64),
-    Node(i64, Box<Tree>, Box<Tree>),
+    Leaf(i64)
+    Node(i64, Box<Tree>, Box<Tree>)
 }
 
 fn sum(tree: &Tree) -> i64 {
     match tree {
-        Tree::Leaf(v) => *v,
-        Tree::Node(v, left, right) => *v + sum(left) + sum(right),
+        Tree::Leaf(v) => *v
+        Tree::Node(v, left, right) => *v + sum(left) + sum(right)
     }
 }
 
 fn count(tree: &Tree) -> i64 {
     match tree {
-        Tree::Leaf(_) => 1,
-        Tree::Node(_, left, right) => 1 + count(left) + count(right),
+        Tree::Leaf(_) => 1
+        Tree::Node(_, left, right) => 1 + count(left) + count(right)
     }
 }
 
 fn max_depth(tree: &Tree) -> i64 {
     match tree {
-        Tree::Leaf(_) => 1,
+        Tree::Leaf(_) => 1
         Tree::Node(_, left, right) => {
             let dl = max_depth(left)
             let dr = max_depth(right)
@@ -34,17 +34,17 @@ fn max_depth(tree: &Tree) -> i64 {
 
 fn main() {
     let tree = Tree::Node(
-        10,
+        10
         Box::new(Tree::Node(
-            5,
-            Box::new(Tree::Leaf(2)),
-            Box::new(Tree::Leaf(7)),
-        )),
+            5
+            Box::new(Tree::Leaf(2))
+            Box::new(Tree::Leaf(7))
+        ))
         Box::new(Tree::Node(
-            15,
-            Box::new(Tree::Leaf(12)),
-            Box::new(Tree::Leaf(20)),
-        )),
+            15
+            Box::new(Tree::Leaf(12))
+            Box::new(Tree::Leaf(20))
+        ))
     )
 
     println!("sum = {}", sum(&tree))
@@ -58,8 +58,8 @@ fn main() {
 }
 
 enum List {
-    Nil,
-    Cons(i64, Box<List>),
+    Nil
+    Cons(i64, Box<List>)
 }
 
 fn cons(v: i64, rest: List) -> List {
@@ -68,15 +68,15 @@ fn cons(v: i64, rest: List) -> List {
 
 fn list_sum(list: &List) -> i64 {
     match list {
-        List::Nil => 0,
-        List::Cons(v, rest) => *v + list_sum(rest),
+        List::Nil => 0
+        List::Cons(v, rest) => *v + list_sum(rest)
     }
 }
 
 fn list_len(list: &List) -> i64 {
     match list {
-        List::Nil => 0,
-        List::Cons(_, rest) => 1 + list_len(rest),
+        List::Nil => 0
+        List::Cons(_, rest) => 1 + list_len(rest)
     }
 }
 
@@ -93,9 +93,9 @@ mod tests {
     #[test]
     fn tree_sum_count_depth() {
         let t = super::Tree::Node(
-            10,
-            Box::new(super::Tree::Leaf(5)),
-            Box::new(super::Tree::Leaf(7)),
+            10
+            Box::new(super::Tree::Leaf(5))
+            Box::new(super::Tree::Leaf(7))
         )
         let _ = testing::check_eq(&super::sum(&t), &22, "10+5+7=22")
         let _ = testing::check_eq(&super::count(&t), &3, "3 nodes")

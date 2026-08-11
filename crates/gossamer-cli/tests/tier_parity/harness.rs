@@ -171,6 +171,17 @@ const SPECS: &[Spec] = &[
     // runtime value, so every tier must produce the representation's
     // behaviour and the identical output.
     spec("feature-testing-examples/opaque_nominal_alias.gos"),
+    // Profiles are rendered by one implementation in the runtime, so the
+    // shape assertions hold on every tier even though the sample counts
+    // behind them differ run to run.
+    spec("feature-testing-examples/pprof_profiles.gos"),
+    // Recursion that genuinely consumes stack reports the same GX0008 and
+    // the same exit status whether the VM refused the call or the guard
+    // page caught the frame.
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/stack_overflow_parity.gos")
+    },
     // Copy-update carries every unnamed field from the base and leaves the
     // base usable, including through String and Vec fields.
     spec("feature-testing-examples/struct_copy_update.gos"),

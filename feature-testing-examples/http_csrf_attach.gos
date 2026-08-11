@@ -31,7 +31,7 @@ fn main() {
     cfg.trusted_origins = Vec::from(["https://app.example.com"])
 
     let token = match http::csrf::issue_token(cfg.key) {
-        Ok(t) => t,
+        Ok(t) => t
         Err(_) => {
             println!("issue: err")
             return
@@ -52,20 +52,20 @@ fn main() {
         .header("X-CSRF-Token", &token)
 
     let supplied = match http::csrf::extract_token(req, &cfg) {
-        Some(t) => t,
-        None => "",
+        Some(t) => t
+        None => ""
     }
     println!("extract_match={}", supplied == token)
 
     match http::csrf::check(req, http::csrf::RouteAuth::CookieSession, &cfg) {
-        Ok(_) => println!("check_valid=ok"),
-        Err(_) => println!("check_valid=err"),
+        Ok(_) => println!("check_valid=ok")
+        Err(_) => println!("check_valid=err")
     }
 
     // Bearer-only routes bypass the check entirely.
     match http::csrf::check(req, http::csrf::RouteAuth::BearerOnly, &cfg) {
-        Ok(_) => println!("check_bearer=ok"),
-        Err(_) => println!("check_bearer=err"),
+        Ok(_) => println!("check_bearer=ok")
+        Err(_) => println!("check_bearer=err")
     }
 
     // A request from an untrusted origin is rejected.
@@ -74,7 +74,7 @@ fn main() {
         .header("cookie", "gos_csrf=" + &token)
         .header("X-CSRF-Token", &token)
     match http::csrf::check(evil, http::csrf::RouteAuth::CookieSession, &cfg) {
-        Ok(_) => println!("check_evil=ok"),
-        Err(_) => println!("check_evil=err"),
+        Ok(_) => println!("check_evil=ok")
+        Err(_) => println!("check_evil=err")
     }
 }

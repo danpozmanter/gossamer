@@ -13169,6 +13169,101 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-pprof-block-profile",
+      "name": "std::pprof::block_profile",
+      "kind": "function",
+      "signature": "fn block_profile() -> String",
+      "description": "Text profile of microseconds parked on channels, I/O, and timers since process start.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdpprof",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-pprof-execution-trace",
+      "name": "std::pprof::execution_trace",
+      "kind": "function",
+      "signature": "fn execution_trace(millis: i64) -> String",
+      "description": "Chrome trace JSON of scheduler spawn/park/unpark events; blocks for the given milliseconds.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdpprof",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-pprof-goroutine-profile",
+      "name": "std::pprof::goroutine_profile",
+      "kind": "function",
+      "signature": "fn goroutine_profile() -> String",
+      "description": "Text profile with one sample per live goroutine and its last-known frame.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdpprof",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-pprof-mutex-profile",
+      "name": "std::pprof::mutex_profile",
+      "kind": "function",
+      "signature": "fn mutex_profile() -> String",
+      "description": "Text profile of microseconds parked on synchronization since process start.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdpprof",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-pprof-route",
+      "name": "std::pprof::route",
+      "kind": "function",
+      "signature": "fn route(path: String, query: String) -> Option<String>",
+      "description": "Serves a `/debug/pprof/...` path, returning the body to write, or `None` for an unknown path.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdpprof",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-process-Child",
       "name": "std::process::Child",
       "kind": "type",

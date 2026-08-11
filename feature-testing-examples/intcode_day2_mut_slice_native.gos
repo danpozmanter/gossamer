@@ -17,7 +17,7 @@ fn run_intcode(program: &[i64], v1: i64, v2: i64) -> i64 {
     let mut pos = 0
     while pos < prog.len() {
         match prog[pos] {
-            99 => break,
+            99 => break
             op => program_step(&mut prog, pos, op)
         }
         pos += 4
@@ -57,7 +57,7 @@ fn main() {
 
     let part2 = #[1, 0, 0, 0, 99]
     match solve_part2(&part2, 4) {
-        Some(answer) => println!("part2={}", answer),
+        Some(answer) => println!("part2={}", answer)
         None => println!("part2=none")
     }
     println!("part2_base={}", part2[0])

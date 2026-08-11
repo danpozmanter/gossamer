@@ -11,8 +11,8 @@ use std::encoding::toml
 fn show_b64(label: String, bytes: Vec<u8>) {
     let enc = encoding::base64::encode(bytes)
     let n = match encoding::base64::decode(&enc) {
-        Ok(b) => b.len(),
-        Err(_) => -1,
+        Ok(b) => b.len()
+        Err(_) => -1
     }
     println!("b64 {} = {} (rt len {})", label, enc, n)
 }
@@ -20,8 +20,8 @@ fn show_b64(label: String, bytes: Vec<u8>) {
 fn show_hex(label: String, bytes: Vec<u8>) {
     let enc = encoding::hex::encode(bytes)
     let n = match encoding::hex::decode(&enc) {
-        Ok(b) => b.len(),
-        Err(_) => -1,
+        Ok(b) => b.len()
+        Err(_) => -1
     }
     println!("hex {} = {} (rt len {})", label, enc, n)
 }
@@ -44,12 +44,12 @@ fn main() {
     show_hex("bytes", Vec::from([0, 15, 16, 127, 128, 255]))
     // decode error path
     match encoding::hex::decode("zz") {
-        Ok(_) => println!("hex bad: ok?!"),
-        Err(_) => println!("hex bad: err"),
+        Ok(_) => println!("hex bad: ok?!")
+        Err(_) => println!("hex bad: err")
     }
     match encoding::base64::decode("!!!!") {
-        Ok(_) => println!("b64 bad: ok?!"),
-        Err(_) => println!("b64 bad: err"),
+        Ok(_) => println!("b64 bad: ok?!")
+        Err(_) => println!("b64 bad: err")
     }
 
     // --- encoding::binary fixed-width + varint ---
@@ -58,33 +58,33 @@ fn main() {
     println!("u16be = {}", encoding::hex::encode(u16b))
     println!("u16le = {}", encoding::hex::encode(u16l))
     match encoding::binary::get_u16_be(u16b) {
-        Ok(v) => println!("get u16be = {}", v),
-        Err(e) => println!("get u16be err {}", e),
+        Ok(v) => println!("get u16be = {}", v)
+        Err(e) => println!("get u16be err {}", e)
     }
     let u32b = encoding::binary::put_u32_be(empty, 305419896)
     println!("u32be = {}", encoding::hex::encode(u32b))
     match encoding::binary::get_u32_le(encoding::binary::put_u32_le(empty, 305419896)) {
-        Ok(v) => println!("get u32le = {}", v),
-        Err(e) => println!("get u32le err {}", e),
+        Ok(v) => println!("get u32le = {}", v)
+        Err(e) => println!("get u32le err {}", e)
     }
     let u64b = encoding::binary::put_u64_be(empty, 72623859790382856)
     println!("u64be = {}", encoding::hex::encode(u64b))
     match encoding::binary::get_u64_be(u64b) {
-        Ok(v) => println!("get u64be = {}", v),
-        Err(e) => println!("get u64be err {}", e),
+        Ok(v) => println!("get u64be = {}", v)
+        Err(e) => println!("get u64be err {}", e)
     }
     // varint decode (150 -> 0x96 0x01) and short-buffer error.
     match encoding::binary::uvarint(Vec::from([150, 1])) {
-        Ok((v, n)) => println!("uvarint = {} consumed {}", v, n),
-        Err(e) => println!("uvarint err {}", e),
+        Ok((v, n)) => println!("uvarint = {} consumed {}", v, n)
+        Err(e) => println!("uvarint err {}", e)
     }
     match encoding::binary::varint(Vec::from([1])) {
-        Ok((v, n)) => println!("varint = {} consumed {}", v, n),
-        Err(e) => println!("varint err {}", e),
+        Ok((v, n)) => println!("varint = {} consumed {}", v, n)
+        Err(e) => println!("varint err {}", e)
     }
     match encoding::binary::uvarint(empty) {
-        Ok((v, _)) => println!("uvarint empty = {}", v),
-        Err(_) => println!("uvarint empty err"),
+        Ok((v, _)) => println!("uvarint empty = {}", v)
+        Err(_) => println!("uvarint empty err")
     }
 
     // --- JSON dynamic parse / render / precision / specials ---
@@ -93,7 +93,7 @@ fn main() {
             println!("json render = {}", json::render(&v))
             println!("json len = {}", json::len(&v))
         }
-        Err(e) => println!("json parse err {}", e),
+        Err(e) => println!("json parse err {}", e)
     }
     println!("json encode int = {}", json::encode(42))
     println!("json encode arr = {}", json::encode(#[1, 2, 3]))
@@ -101,21 +101,21 @@ fn main() {
     // number precision: large-but-exact int (2^53-1) + float.
     // Integers above 2^53 are a known VM/AOT divergence (see report).
     match json::parse(&"{\"big\":9007199254740991,\"f\":0.1}") {
-        Ok(v) => println!("json big/f render = {}", json::render(&v)),
-        Err(e) => println!("json err {}", e),
+        Ok(v) => println!("json big/f render = {}", json::render(&v))
+        Err(e) => println!("json err {}", e)
     }
 
     // --- YAML text converters (canonical short-path form) ---
     match yaml::to_json(&"a: 1\nb: two\nc: [1, 2, 3]\n") {
-        Ok(j) => println!("yaml->json = {}", j),
-        Err(e) => println!("yaml->json err {}", e),
+        Ok(j) => println!("yaml->json = {}", j)
+        Err(e) => println!("yaml->json err {}", e)
     }
     println!("yaml valid = {}", yaml::is_valid(&"k: v\n"))
     println!("yaml invalid = {}", yaml::is_valid(&"a: b: c: ::"))
     // dynamic parse rendered via the documented renderer (json::encode).
     match encoding::yaml::parse(&"x: 7\n") {
-        Ok(v) => println!("yaml parse->json = {}", json::encode(&v)),
-        Err(e) => println!("yaml parse err {}", e),
+        Ok(v) => println!("yaml parse->json = {}", json::encode(&v))
+        Err(e) => println!("yaml parse err {}", e)
     }
 
     // --- TOML text converters (canonical short-path form) ---
@@ -126,10 +126,10 @@ fn main() {
         Ok(j) => {
             println!("toml->json has port = {}", j.contains("\"port\":8080"))
             match toml::from_json(&j) {
-                Ok(t) => println!("json->toml has host = {}", t.contains("host")),
-                Err(e) => println!("json->toml err {}", e),
+                Ok(t) => println!("json->toml has host = {}", t.contains("host"))
+                Err(e) => println!("json->toml err {}", e)
             }
         }
-        Err(e) => println!("toml->json err {}", e),
+        Err(e) => println!("toml->json err {}", e)
     }
 }

@@ -1,21 +1,20 @@
 //! Profile output compatible with `go tool pprof`.
 //!
-//! Three profile shapes are exposed:
+//! Four profile shapes are exposed, each read directly from live
+//! scheduler state rather than from a sampler:
 //!
-//! - **CPU profile** - signal-driven sampler in
-//!   [`gossamer_runtime::preempt`] records the program counter at
-//!   ~100 Hz; [`cpu_profile`] drains the samples into a profile
-//!   blob.
-//! - **Heap profile** - allocation events produce a sample per N
-//!   bytes (Go's default is 512 KiB); [`heap_profile`] reads the
-//!   accumulated counters.
-//! - **Goroutine profile** - snapshot of every live goroutine via
-//!   [`gossamer_runtime::sigquit::snapshot`]; [`goroutine_profile`]
-//!   formats it.
+//! - **Goroutine profile** - one sample per live goroutine, from
+//!   [`crate::sigquit::snapshot`].
+//! - **Mutex profile** - microseconds parked on synchronization,
+//!   from the scheduler's park-wait accounting.
+//! - **Block profile** - microseconds parked on channels, I/O, and
+//!   timers, from the same accounting.
+//! - **Execution trace** - scheduler spawn / park / unpark events
+//!   over a window, as Chrome trace JSON.
 //!
-//! All three return bytes that `go tool pprof -text` (or
-//! `-web`) reads. The wire format is the simple "legacy text"
-//! profile shape - every line is a sample of the form:
+//! The first three render the simple "legacy text" profile shape
+//! that `go tool pprof -text` (or `-web`) reads - every line is a
+//! sample of the form:
 //!
 //! ```text
 //! samples=N self=K
@@ -23,16 +22,14 @@
 //!   func2 file:line
 //! ```
 //!
-//! `go tool pprof` accepts this format; the protobuf-encoded
-//! variant (`profile.proto`) is a Phase-2 follow-up and is wired
-//! once a `prost`-shaped dependency is acceptable in the workspace.
+//! This module lives in the runtime rather than the standard
+//! library so the bytecode VM's builtins and the compiled tiers'
+//! C-ABI shims render from one implementation over one set of
+//! counters.
 
 #![forbid(unsafe_code)]
 
 use std::time::Duration;
-
-use parking_lot::Mutex;
-use std::sync::OnceLock;
 
 /// One sampled stack frame.
 #[derive(Debug, Clone)]
@@ -100,55 +97,12 @@ impl ProfileBuffer {
     }
 }
 
-static CPU_BUF: OnceLock<Mutex<ProfileBuffer>> = OnceLock::new();
-static HEAP_BUF: OnceLock<Mutex<ProfileBuffer>> = OnceLock::new();
-
-fn cpu_buf() -> &'static Mutex<ProfileBuffer> {
-    CPU_BUF.get_or_init(|| Mutex::new(ProfileBuffer::default()))
-}
-
-fn heap_buf() -> &'static Mutex<ProfileBuffer> {
-    HEAP_BUF.get_or_init(|| Mutex::new(ProfileBuffer::default()))
-}
-
-/// Records one CPU sample. Called from the SIGPROF handler.
-pub fn record_cpu_sample(sample: Sample) {
-    cpu_buf().lock().record(sample);
-}
-
-/// Records one allocation sample. Called by the allocator when the
-/// per-thread bytes-since-last-sample counter crosses the sample
-/// rate threshold.
-pub fn record_alloc_sample(sample: Sample) {
-    heap_buf().lock().record(sample);
-}
-
-/// Returns a CPU profile gathered over `duration`. The function
-/// blocks the caller for `duration`; samples accumulated during
-/// that window are drained and returned.
-#[must_use]
-pub fn cpu_profile(duration: Duration) -> Vec<u8> {
-    drop(cpu_buf().lock().drain());
-    std::thread::sleep(duration);
-    let samples = cpu_buf().lock().drain();
-    let buf = ProfileBuffer { samples };
-    buf.render().into_bytes()
-}
-
-/// Returns the current heap profile.
-#[must_use]
-pub fn heap_profile() -> Vec<u8> {
-    let samples = heap_buf().lock().drain();
-    let buf = ProfileBuffer { samples };
-    buf.render().into_bytes()
-}
-
 /// Returns a goroutine snapshot. One sample per live goroutine,
 /// each with the goroutine's last-known frame.
 #[must_use]
-pub fn goroutine_profile() -> Vec<u8> {
+pub fn goroutine_profile() -> String {
     let mut samples = Vec::new();
-    for info in gossamer_runtime::sigquit::snapshot() {
+    for info in crate::sigquit::snapshot() {
         let stack = if info.function.is_empty() {
             vec![Frame {
                 function: format!("goroutine#{}", info.gid),
@@ -165,52 +119,52 @@ pub fn goroutine_profile() -> Vec<u8> {
         samples.push(Sample { weight: 1, stack });
     }
     let buf = ProfileBuffer { samples };
-    buf.render().into_bytes()
+    buf.render()
 }
 
 /// Returns accumulated mutex/synchronization contention time. Sample weights
 /// are microseconds spent parked since process start.
 #[must_use]
 #[cfg(not(target_arch = "wasm32"))]
-pub fn mutex_profile() -> Vec<u8> {
-    let waits = gossamer_runtime::sched_global::scheduler().park_wait_stats();
+pub fn mutex_profile() -> String {
+    let waits = crate::sched_global::scheduler().park_wait_stats();
     render_wait_profile("sync", waits.sync_micros)
 }
 
 /// The cooperative wasm scheduler has no blocking mutex park accounting.
 #[must_use]
 #[cfg(target_arch = "wasm32")]
-pub fn mutex_profile() -> Vec<u8> {
-    ProfileBuffer::default().render().into_bytes()
+pub fn mutex_profile() -> String {
+    ProfileBuffer::default().render()
 }
 
 /// Returns accumulated wait time for channel operations, I/O, timers, and
 /// unspecified runtime waits. Sample weights are microseconds.
 #[must_use]
 #[cfg(not(target_arch = "wasm32"))]
-pub fn block_profile() -> Vec<u8> {
-    let waits = gossamer_runtime::sched_global::scheduler().park_wait_stats();
+pub fn block_profile() -> String {
+    let waits = crate::sched_global::scheduler().park_wait_stats();
     let mut buf = ProfileBuffer::default();
     record_wait_sample(&mut buf, "channel", waits.chan_micros);
     record_wait_sample(&mut buf, "io", waits.io_micros);
     record_wait_sample(&mut buf, "timer", waits.timer_micros);
     record_wait_sample(&mut buf, "other", waits.other_micros);
-    buf.render().into_bytes()
+    buf.render()
 }
 
 /// The cooperative wasm scheduler has no blocking wait accounting.
 #[must_use]
 #[cfg(target_arch = "wasm32")]
-pub fn block_profile() -> Vec<u8> {
-    ProfileBuffer::default().render().into_bytes()
+pub fn block_profile() -> String {
+    ProfileBuffer::default().render()
 }
 
 /// Captures scheduler execution events for `duration` and returns Chrome trace
 /// JSON. The capture includes goroutine spawns and park/unpark transitions.
 #[must_use]
 #[cfg(not(target_arch = "wasm32"))]
-pub fn execution_trace(duration: Duration) -> Vec<u8> {
-    let scheduler = gossamer_runtime::sched_global::scheduler();
+pub fn execution_trace(duration: Duration) -> String {
+    let scheduler = crate::sched_global::scheduler();
     scheduler.start_execution_trace();
     std::thread::sleep(duration);
     let events = scheduler.finish_execution_trace();
@@ -220,11 +174,11 @@ pub fn execution_trace(duration: Duration) -> Vec<u8> {
             out.push(',');
         }
         let reason = match event.reason {
-            Some(gossamer_runtime::sched::ParkReason::Other) => "other",
-            Some(gossamer_runtime::sched::ParkReason::Chan) => "channel",
-            Some(gossamer_runtime::sched::ParkReason::Sync) => "sync",
-            Some(gossamer_runtime::sched::ParkReason::Io) => "io",
-            Some(gossamer_runtime::sched::ParkReason::Timer) => "timer",
+            Some(crate::sched::ParkReason::Other) => "other",
+            Some(crate::sched::ParkReason::Chan) => "channel",
+            Some(crate::sched::ParkReason::Sync) => "sync",
+            Some(crate::sched::ParkReason::Io) => "io",
+            Some(crate::sched::ParkReason::Timer) => "timer",
             None => "",
         };
         out.push_str(&format!(
@@ -233,21 +187,21 @@ pub fn execution_trace(duration: Duration) -> Vec<u8> {
         ));
     }
     out.push_str("]}");
-    out.into_bytes()
+    out
 }
 
 /// wasm runs goroutines cooperatively and does not collect scheduler events.
 #[must_use]
 #[cfg(target_arch = "wasm32")]
-pub fn execution_trace(_duration: Duration) -> Vec<u8> {
-    b"{\"traceEvents\":[]}".to_vec()
+pub fn execution_trace(_duration: Duration) -> String {
+    String::from("{\"traceEvents\":[]}")
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn render_wait_profile(reason: &str, micros: u64) -> Vec<u8> {
+fn render_wait_profile(reason: &str, micros: u64) -> String {
     let mut buf = ProfileBuffer::default();
     record_wait_sample(&mut buf, reason, micros);
-    buf.render().into_bytes()
+    buf.render()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -266,7 +220,7 @@ fn record_wait_sample(buf: &mut ProfileBuffer, reason: &str, micros: u64) {
 }
 
 #[cfg(test)]
-fn render_blocked_counts(counts: gossamer_runtime::sched::ParkedReasonCounts) -> String {
+fn render_blocked_counts(counts: crate::sched::ParkedReasonCounts) -> String {
     let mut buf = ProfileBuffer::default();
     record_wait_sample(&mut buf, "channel", counts.chan as u64);
     record_wait_sample(&mut buf, "io", counts.io as u64);
@@ -275,29 +229,25 @@ fn render_blocked_counts(counts: gossamer_runtime::sched::ParkedReasonCounts) ->
     buf.render()
 }
 
+/// Endpoints the router serves, in index-page order.
+const ENDPOINTS: &[&str] = &["goroutine", "mutex", "block", "trace"];
+
 /// Routes a request path under `/debug/pprof/...` to the right
-/// profile generator and returns the bytes the HTTP handler should
+/// profile generator and returns the body the HTTP handler should
 /// write. Returns `None` for paths the pprof router doesn't know.
 ///
-/// Wire format matches Go's `net/http/pprof`:
+/// Path shapes match Go's `net/http/pprof`:
 ///
-/// - `/debug/pprof/profile?seconds=N` → CPU profile.
-/// - `/debug/pprof/heap` → heap profile.
-/// - `/debug/pprof/goroutine` → goroutine snapshot.
-/// - `/debug/pprof/mutex` → mutex contention profile.
-/// - `/debug/pprof/block` → block profile.
-/// - `/debug/pprof/trace?seconds=N` → Chrome scheduler execution trace.
-/// - `/debug/pprof/` → index page listing the others.
+/// - `/debug/pprof/goroutine` - goroutine snapshot.
+/// - `/debug/pprof/mutex` - mutex contention profile.
+/// - `/debug/pprof/block` - block profile.
+/// - `/debug/pprof/trace?seconds=N` - Chrome scheduler execution trace.
+/// - `/debug/pprof/` - index page listing the others.
 #[must_use]
-pub fn route(path: &str, query: &str) -> Option<Vec<u8>> {
+pub fn route(path: &str, query: &str) -> Option<String> {
     let suffix = path.strip_prefix("/debug/pprof/")?;
     match suffix {
-        "" => Some(index_page().into_bytes()),
-        "profile" => {
-            let secs = parse_query_seconds(query).unwrap_or(30);
-            Some(cpu_profile(Duration::from_secs(secs)))
-        }
-        "heap" => Some(heap_profile()),
+        "" => Some(index_page()),
         "goroutine" => Some(goroutine_profile()),
         "mutex" => Some(mutex_profile()),
         "block" => Some(block_profile()),
@@ -321,7 +271,7 @@ fn parse_query_seconds(query: &str) -> Option<u64> {
 fn index_page() -> String {
     let mut out = String::new();
     out.push_str("/debug/pprof/\n");
-    for endpoint in ["profile", "heap", "goroutine", "mutex", "block", "trace"] {
+    for endpoint in ENDPOINTS {
         out.push_str(&format!("  {endpoint}\n"));
     }
     out
@@ -330,7 +280,7 @@ fn index_page() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gossamer_runtime::sched::ParkedReasonCounts;
+    use crate::sched::ParkedReasonCounts;
 
     #[test]
     fn buffer_records_and_drains() {
@@ -376,7 +326,7 @@ mod tests {
             other: 7,
             sync: 11,
         };
-        let mutex = String::from_utf8(render_wait_profile("sync", counts.sync as u64)).unwrap();
+        let mutex = render_wait_profile("sync", counts.sync as u64);
         assert!(mutex.contains("samples=11"));
         assert!(mutex.contains("runtime.park.sync"));
 
@@ -390,7 +340,7 @@ mod tests {
 
     #[test]
     fn execution_trace_is_chrome_trace_json() {
-        let trace = String::from_utf8(execution_trace(Duration::ZERO)).unwrap();
+        let trace = execution_trace(Duration::ZERO);
         assert!(trace.starts_with("{\"traceEvents\":["));
         assert!(trace.ends_with("]}"));
     }

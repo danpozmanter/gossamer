@@ -71,7 +71,7 @@ fn main() -> Result<(), errors::Error> {
     }
 
     println!("---")
-    println!("{} file(s), {} dir(s), {} bytes total in regular files",
+    println!("{} file(s), {} dir(s), {} bytes total in regular files"
         files, dirs, comma_size(total_bytes))
     Ok(())
 }

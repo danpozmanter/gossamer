@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.47.1 - Profiles, applied fixes, canonical sources, agent tooling
+
+- Add `std::pprof`: `goroutine_profile`, `mutex_profile`, `block_profile`,
+  `execution_trace(millis)`, and `route(path, query)` for the
+  `/debug/pprof/...` shapes. The three text profiles render the format
+  `go tool pprof` reads and the trace is Chrome trace JSON. The generators
+  live in the runtime, so the VM, the JIT, and both native builds render
+  from one implementation over one set of scheduler counters. CPU and heap
+  profiles need a sampler and are absent rather than empty.
+- Apply the rewrites a diagnostic carries with `gos check --fix`. The
+  suggestions were span-anchored and machine-applicable but nothing
+  consumed them. Diagnostic suggestions and lint fixes are applied in
+  separate rounds - an unresolved name makes its intended binding look
+  unused - and each round is kept only when a re-check proves the file
+  got better, so a speculative `did you mean` cannot rewrite working code.
+- Report the real Cranelift and bytecode-VM outcomes in
+  `gos test --tier-parity`. The walk invoked `gos FILE` rather than
+  `gos run FILE`, so every fixture recorded `vm=fail`, and the Cranelift
+  column was a copy of the VM's result rather than a JIT run.
+- Decide `gos test --tier-parity` by comparing the tiers against each
+  other - exit code and stdout - rather than against a zero exit. An
+  example that deliberately aborts, or one given no argument, exits
+  non-zero everywhere, and three tiers agreeing on that is the property
+  the walk exists to prove; each was recorded as a failure on every tier.
+- Record no verdict, rather than a failure, for a fixture still running at
+  the per-tier budget, and honour `--timeout` for that budget. A server
+  example runs until it is killed, so its modules were published as broken
+  on every tier.
+- Report a stack overflow as `GX0008` with exit 101 on every tier. The
+  bytecode VM refused the call and exited 1 while JIT-compiled and native
+  frames reached the guard page and aborted with a core dump, so the same
+  program ended three different ways. The guard handler now reports the
+  code the VM uses and exits with the fault status the other faults use;
+  it still names the faulting address, which only it knows.
+- Aggregate tier-parity evidence per stdlib module, keyed by the module
+  paths a fixture imports, so `gos feature-status` reports what the walk
+  proved. The sidecar recorded only file paths, which no feature row could
+  ever match. Evidence recorded for the release is compiled into the
+  binary, so an installed `gos` with no repository behind it still reports
+  it.
+- Answer `gos doc std`, `gos doc std::<module>`, and `gos doc
+  std::<module>::<item>` from the stdlib manifest. Three diagnostics
+  (`GR0005`, `GR0009`, and the unknown-export help) point at these commands;
+  `gos doc` only ever read files, so following the help reported
+  `file not found: std`.
+- Accept inline `source` in place of a file path on the MCP `check`,
+  `execute`, `fmt`, `doc`, and `lint` tools, so a snippet needs no file of
+  its own, and add `lint` and `feature_status` to the tool table.
+- Format every shipped `.gos` source canonically and gate it in CI: 254 of
+  them disagreed with `gos fmt`, including trait method declarations
+  carrying a trailing semicolon.
+
 ## 0.47.0 - Visibility, pub(package), deadlock detection, silently dropped fix,
 ## keyword and constant default arg, goroutine scalability/fixes, 
 ## opaque nominal aliases, typeInfo over enums/generics, 

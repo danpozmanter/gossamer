@@ -26,12 +26,12 @@ fn main() {
     let from = io::string_reader("0123456789")
     let to = io::buffer_writer()
     match io::copy_n(to, from, 4) {
-        Ok(n) => println!("copied={} body={}", n, io::contents(to)),
-        Err(e) => println!("copy failed: {}", e),
+        Ok(n) => println!("copied={} body={}", n, io::contents(to))
+        Err(e) => println!("copy failed: {}", e)
     }
     match io::copy_n(to, from, 100) {
-        Ok(n) => println!("rest={} body={}", n, io::contents(to)),
-        Err(e) => println!("copy failed: {}", e),
+        Ok(n) => println!("rest={} body={}", n, io::contents(to))
+        Err(e) => println!("copy failed: {}", e)
     }
 
     // A limit reader stacked under a tee still mirrors only what it yields.

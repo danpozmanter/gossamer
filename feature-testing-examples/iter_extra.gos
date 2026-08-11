@@ -85,7 +85,7 @@ fn main() {
     let ch = iter::chain(ys, ys)
     let rg = iter::range(0, 4)
     let rp = iter::repeat(7, 3)
-    println!("take {} skip {} step_by {} chain {} range {} repeat {}",
+    println!("take {} skip {} step_by {} chain {} range {} repeat {}"
         t[0], s[0], st[1], ch[3], rg[3], rp[2])
 
     // -- collect / once / empty as public free functions, plus method collect.

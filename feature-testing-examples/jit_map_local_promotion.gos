@@ -20,7 +20,7 @@ fn counter_i64(n: i64) -> i64 {
 }
 
 fn counter_str(n: i64) -> i64 {
-    let mut m = {"seed": 7}
+    let mut m = { "seed": 7 }
     let mut i = 0
     while i < n {
         m.inc("hits", 2)

@@ -12,8 +12,8 @@
 // Both paths must produce identical output under `gos` and `gos build`.
 
 enum Tree {
-    Leaf(i64),
-    Node(Box<Tree>, Box<Tree>),
+    Leaf(i64)
+    Node(Box<Tree>, Box<Tree>)
 }
 
 fn build(depth: i64, seed: i64) -> (Tree, i64) {
@@ -28,8 +28,8 @@ fn build(depth: i64, seed: i64) -> (Tree, i64) {
 
 fn sum(t: &Tree) -> i64 {
     match t {
-        Tree::Leaf(v) => *v,
-        Tree::Node(l, r) => sum(l) + sum(r),
+        Tree::Leaf(v) => *v
+        Tree::Node(l, r) => sum(l) + sum(r)
     }
 }
 

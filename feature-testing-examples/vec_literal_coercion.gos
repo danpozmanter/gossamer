@@ -17,8 +17,8 @@ fn pick(branch: bool) -> Vec<i64> {
 
 fn classify(n: i64) -> Vec<String> {
     match n {
-        0 => Vec::from(["zero"]),
-        _ => Vec::from(["many", "values"]),
+        0 => Vec::from(["zero"])
+        _ => Vec::from(["many", "values"])
     }
 }
 

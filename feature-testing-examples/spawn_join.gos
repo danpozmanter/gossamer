@@ -17,8 +17,8 @@ fn main() {
     // callable thunk before it runs on the goroutine.
     let h1 = spawn(compute)
     match h1.join() {
-        Ok(v) => println!("ok {}", v),
-        Err(e) => println!("err {}", e),
+        Ok(v) => println!("ok {}", v)
+        Err(e) => println!("err {}", e)
     }
 
     // Capturing-closure spawn: the lifted body reads `base` from the
@@ -26,16 +26,16 @@ fn main() {
     let base = 100
     let h2 = spawn(|| base + 11)
     match h2.join() {
-        Ok(v) => println!("ok {}", v),
-        Err(e) => println!("err {}", e),
+        Ok(v) => println!("ok {}", v)
+        Err(e) => println!("err {}", e)
     }
 
     // A panic on the spawned goroutine surfaces as Err(message); the
     // unwind crosses the thunk frame back into the runtime's catch.
     let h3 = spawn(boom)
     match h3.join() {
-        Ok(v) => println!("ok {}", v),
-        Err(e) => println!("err {}", e),
+        Ok(v) => println!("ok {}", v)
+        Err(e) => println!("err {}", e)
     }
 }
 
@@ -52,9 +52,9 @@ mod tests {
         let h = spawn(|| doubler(21))
         match h.join() {
             Ok(v) => { let _ = testing::check_eq(&v, &42, "ok value")
-            },
+            }
             Err(_) => { let _ = testing::check(false, "expected Ok")
-            },
+            }
         }
     }
 
@@ -63,9 +63,9 @@ mod tests {
         let h = spawn(|| super::boom())
         match h.join() {
             Ok(_) => { let _ = testing::check(false, "expected Err")
-            },
+            }
             Err(e) => { let _ = testing::check_eq(&e, &"boom", "panic message")
-            },
+            }
         }
     }
 
@@ -75,9 +75,9 @@ mod tests {
         let h = spawn(|| base + 7)
         match h.join() {
             Ok(v) => { let _ = testing::check_eq(&v, &1007, "captured env")
-            },
+            }
             Err(_) => { let _ = testing::check(false, "expected Ok")
-            },
+            }
         }
     }
 }

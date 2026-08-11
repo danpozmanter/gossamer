@@ -47,6 +47,6 @@ fn main() {
     println!("removed {}", counts.remove((1, 1)).unwrap_or(-1))
     println!("count len {}", counts.len())
 
-    let seen = #{(1, 2), (3, 4)}
+    let seen = #{ (1, 2), (3, 4) }
     println!("set len {} contains {}", seen.len(), seen.contains((1, 2)))
 }

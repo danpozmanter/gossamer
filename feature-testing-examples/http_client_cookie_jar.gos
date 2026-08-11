@@ -73,12 +73,12 @@ fn main() {
 
     let client = http::Client::builder().cookie_jar(true).timeout_ms(5000).build()
     match client.request("GET", "http://127.0.0.1:23892/login", "", #[]) {
-        Ok(r) => println!("login status={}", r.status),
-        Err(e) => println!("login error: {}", e),
+        Ok(r) => println!("login status={}", r.status)
+        Err(e) => println!("login error: {}", e)
     }
     match client.request("GET", "http://127.0.0.1:23892/me", "", #[]) {
-        Ok(r) => println!("me_body={}", r.body),
-        Err(e) => println!("me error: {}", e),
+        Ok(r) => println!("me_body={}", r.body)
+        Err(e) => println!("me error: {}", e)
     }
 
     process::exit(0)

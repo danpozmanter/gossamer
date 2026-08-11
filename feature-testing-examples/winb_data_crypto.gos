@@ -71,11 +71,11 @@ fn main() {
     let pt: Vec<u8> = Vec::from([104, 101, 108, 108, 111])
     let aad: Vec<u8> = Vec::from([109, 101, 116, 97])
     match crypto::aead::aes_256_gcm_seal(key, nonce, pt, aad) {
-        Ok(ct) => println!("aes ct = {}", encoding::hex::encode(ct)),
-        Err(e) => println!("aes seal err {}", e),
+        Ok(ct) => println!("aes ct = {}", encoding::hex::encode(ct))
+        Err(e) => println!("aes seal err {}", e)
     }
     match crypto::aead::chacha20_poly1305_seal(key, nonce, pt, aad) {
-        Ok(ct) => println!("chacha ct = {}", encoding::hex::encode(ct)),
-        Err(e) => println!("chacha seal err {}", e),
+        Ok(ct) => println!("chacha ct = {}", encoding::hex::encode(ct))
+        Err(e) => println!("chacha seal err {}", e)
     }
 }

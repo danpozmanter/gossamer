@@ -159,6 +159,7 @@ pub fn collect_process_allocator(force: bool) {
 pub mod builtins;
 pub mod c_abi;
 pub mod coverage;
+pub mod pprof;
 pub mod preempt;
 pub mod race;
 pub mod replay;

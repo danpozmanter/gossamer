@@ -66,28 +66,28 @@ fn main() {
     await_ready(&base)
 
     match http::get(&base, Vec::from([])) {
-        Ok(r) => println!("get status={} body={}", r.status, r.body),
-        Err(e) => println!("get error: {}", e),
+        Ok(r) => println!("get status={} body={}", r.status, r.body)
+        Err(e) => println!("get error: {}", e)
     }
     match http::options(&base, Vec::from([])) {
-        Ok(r) => println!("options status={} body={}", r.status, r.body),
-        Err(e) => println!("options error: {}", e),
+        Ok(r) => println!("options status={} body={}", r.status, r.body)
+        Err(e) => println!("options error: {}", e)
     }
     match http::post(&base, "hello-post", "application/json") {
-        Ok(r) => println!("post status={} body={}", r.status, r.body),
-        Err(e) => println!("post error: {}", e),
+        Ok(r) => println!("post status={} body={}", r.status, r.body)
+        Err(e) => println!("post error: {}", e)
     }
     match http::put(&base, "hello-put", "text/plain") {
-        Ok(r) => println!("put status={} body={}", r.status, r.body),
-        Err(e) => println!("put error: {}", e),
+        Ok(r) => println!("put status={} body={}", r.status, r.body)
+        Err(e) => println!("put error: {}", e)
     }
     match http::delete(&base, "hello-delete", Vec::from([])) {
-        Ok(r) => println!("delete status={} body={}", r.status, r.body),
-        Err(e) => println!("delete error: {}", e),
+        Ok(r) => println!("delete status={} body={}", r.status, r.body)
+        Err(e) => println!("delete error: {}", e)
     }
     match http::head(&base, Vec::from([])) {
-        Ok(r) => println!("head status={}", r.status),
-        Err(e) => println!("head error: {}", e),
+        Ok(r) => println!("head status={}", r.status)
+        Err(e) => println!("head error: {}", e)
     }
 
     process::exit(0)

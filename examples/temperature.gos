@@ -37,7 +37,7 @@ fn main() {
     let body = Celsius { value: 37.0 }
     let body_f = body.to_fahrenheit()
     let body_k = body.to_kelvin()
-    println!("body: {} C = {} F = {} K",
+    println!("body: {} C = {} F = {} K"
         body.value, body_f.value, body_k.value)
 
     let summer = Fahrenheit { value: 86.0 }

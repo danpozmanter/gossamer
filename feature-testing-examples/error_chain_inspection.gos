@@ -19,7 +19,7 @@ fn high_level() -> Result<i64, errors::Error> {
 fn main() {
     let result = high_level()
     match result {
-        Ok(v) => println!("unexpected success: {}", v),
+        Ok(v) => println!("unexpected success: {}", v)
         Err(e) => {
             println!("top message: {}", e.message())
 
@@ -48,8 +48,8 @@ fn main() {
     let e2 = errors::new("second failure")
     let combined = errors::join(Vec::from([e1, e2]))
     match combined {
-        Some(e) => println!("combined message: {}", e.message()),
-        None => println!("no errors to join"),
+        Some(e) => println!("combined message: {}", e.message())
+        None => println!("no errors to join")
     }
 }
 
@@ -61,9 +61,9 @@ mod tests {
     fn low_level_is_error() {
         match super::low_level() {
             Ok(_) => { let _ = testing::check(false, "should be Err")
-            },
+            }
             Err(e) => { let _ = testing::check(e.message().contains("disk full"), "disk full message")
-            },
+            }
         }
     }
 
@@ -71,9 +71,9 @@ mod tests {
     fn high_level_message() {
         match super::high_level() {
             Ok(_) => { let _ = testing::check(false, "should be Err")
-            },
+            }
             Err(e) => { let _ = testing::check(e.message().contains("start server"), "top-level message")
-            },
+            }
         }
     }
 
@@ -81,7 +81,7 @@ mod tests {
     fn chain_traversal() {
         match super::high_level() {
             Ok(_) => { let _ = testing::check(false, "should be Err")
-            },
+            }
             Err(e) => {
                 let mut found_disk_full = false
                 let mut cursor = e.cause()

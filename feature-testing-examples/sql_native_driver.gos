@@ -78,7 +78,7 @@ fn run() -> Result<(), errors::Error> {
 
 fn main() {
     match run() {
-        Ok(()) => println!("done"),
-        Err(e) => println!("error: {}", e),
+        Ok(()) => println!("done")
+        Err(e) => println!("error: {}", e)
     }
 }

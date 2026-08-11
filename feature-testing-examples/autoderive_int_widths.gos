@@ -9,13 +9,13 @@
 use std::errors
 
 struct Mixed {
-    a: i32,
-    b: i16,
-    c: u8,
-    d: i64,
-    e: f64,
-    f: bool,
-    g: String,
+    a: i32
+    b: i16
+    c: u8
+    d: i64
+    e: f64
+    f: bool
+    g: String
 }
 
 fn main() -> Result<(), errors::Error> {

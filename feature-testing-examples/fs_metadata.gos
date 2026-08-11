@@ -17,7 +17,7 @@ fn main() {
 
     let m = fs::metadata(&file).unwrap()
     println!(
-        "file: size={} is_file={} is_dir={} is_symlink={} readonly={}",
+        "file: size={} is_file={} is_dir={} is_symlink={} readonly={}"
         m.size, m.is_file, m.is_dir, m.is_symlink, m.readonly
     )
     assert(m.size > 0, "file size positive")

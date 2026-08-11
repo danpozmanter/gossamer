@@ -57,8 +57,8 @@ mod tests {
         // Block exit ran the defers LIFO: [0, 9, 2, 1].
         let _ = testing::check(order.len() == 4, "all four pushes recorded")
         let _ = testing::check(
-            order[0] == 0 && order[1] == 9 && order[2] == 2 && order[3] == 1,
-            "LIFO defer order at block exit",
+            order[0] == 0 && order[1] == 9 && order[2] == 2 && order[3] == 1
+            "LIFO defer order at block exit"
         )
     }
 

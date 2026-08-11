@@ -57,8 +57,8 @@ fn case_err_side() -> i64 {
     let mut i = 0
     while i < 1000 {
         match fail_with(i) {
-            Ok(v) => total += v,
-            Err(e) => total += e.b,
+            Ok(v) => total += v
+            Err(e) => total += e.b
         }
         i += 1
     }
