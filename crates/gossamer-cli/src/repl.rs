@@ -4759,13 +4759,21 @@ fn rebuild_session(declarations: &[String]) -> std::result::Result<(), String> {
     let source = gossamer_parse::autoderive::augment_source(&source);
     let mut map = gossamer_lex::SourceMap::new();
     let file = map.add_file("<repl>".to_string(), source.clone());
-    let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&source, file);
+    let (mut sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&source, file);
     if !parse_diags.is_empty() {
         return Err(format_parse_diags(&parse_diags, &map));
     }
     let (res, resolve_diags) = gossamer_resolve::resolve_source_file(&sf);
     if !resolve_diags.is_empty() {
         return Err(format_resolve_diags(&sf, &resolve_diags, &map));
+    }
+    // Labelled and defaulted arguments are a caller-side spelling, rewritten
+    // into the callee's declared order before type checking. The REPL drives
+    // the front-end phase by phase rather than through `check_frontend`, so
+    // it has to run this pass itself to see the same calls a file does.
+    let named_arg_diags = gossamer_resolve::resolve_named_arguments(&mut sf, &res);
+    if !named_arg_diags.is_empty() {
+        return Err(format_resolve_diags(&sf, &named_arg_diags, &map));
     }
     let mut tcx = gossamer_types::TyCtxt::new();
     let (tbl, type_diags) = gossamer_types::typecheck_source_file(&sf, &res, &mut tcx);
@@ -4796,13 +4804,21 @@ fn infer_repl_tail_type(source: &str) -> std::result::Result<ReplValueType, Stri
     let source = gossamer_parse::autoderive::augment_source(source);
     let mut map = gossamer_lex::SourceMap::new();
     let file = map.add_file("<repl>".to_string(), source.clone());
-    let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&source, file);
+    let (mut sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&source, file);
     if !parse_diags.is_empty() {
         return Err(format_parse_diags(&parse_diags, &map));
     }
     let (res, resolve_diags) = gossamer_resolve::resolve_source_file(&sf);
     if !resolve_diags.is_empty() {
         return Err(format_resolve_diags(&sf, &resolve_diags, &map));
+    }
+    // Labelled and defaulted arguments are a caller-side spelling, rewritten
+    // into the callee's declared order before type checking. The REPL drives
+    // the front-end phase by phase rather than through `check_frontend`, so
+    // it has to run this pass itself to see the same calls a file does.
+    let named_arg_diags = gossamer_resolve::resolve_named_arguments(&mut sf, &res);
+    if !named_arg_diags.is_empty() {
+        return Err(format_resolve_diags(&sf, &named_arg_diags, &map));
     }
     let mut tcx = gossamer_types::TyCtxt::new();
     let (tbl, type_diags) =
@@ -4829,13 +4845,21 @@ fn build_and_call_with_type_inner(
     let source = gossamer_parse::autoderive::augment_source(source);
     let mut map = gossamer_lex::SourceMap::new();
     let file = map.add_file("<repl>".to_string(), source.clone());
-    let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&source, file);
+    let (mut sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&source, file);
     if !parse_diags.is_empty() {
         return Err(format_parse_diags(&parse_diags, &map));
     }
     let (res, resolve_diags) = gossamer_resolve::resolve_source_file(&sf);
     if !resolve_diags.is_empty() {
         return Err(format_resolve_diags(&sf, &resolve_diags, &map));
+    }
+    // Labelled and defaulted arguments are a caller-side spelling, rewritten
+    // into the callee's declared order before type checking. The REPL drives
+    // the front-end phase by phase rather than through `check_frontend`, so
+    // it has to run this pass itself to see the same calls a file does.
+    let named_arg_diags = gossamer_resolve::resolve_named_arguments(&mut sf, &res);
+    if !named_arg_diags.is_empty() {
+        return Err(format_resolve_diags(&sf, &named_arg_diags, &map));
     }
     let mut tcx = gossamer_types::TyCtxt::new();
     let (tbl, type_diags) = if inspection {

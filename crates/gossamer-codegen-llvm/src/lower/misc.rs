@@ -552,6 +552,7 @@ impl<'a> Lowerer<'a> {
             Operand::Const(ConstValue::Unit) => ConcatKind::Int,
             Operand::Copy(p) => {
                 let ty = self.unwrap_ref(self.place_leaf_ty(p));
+                let ty = self.tcx.peel_nominal(ty);
                 // A container renders through its own runtime shim whether
                 // the local carries the container's type or the bare i64
                 // handle the constructor returned.
@@ -754,6 +755,9 @@ impl<'a> Lowerer<'a> {
                     }
                     Some(TyKind::Param { .. } | TyKind::Alias { .. } | TyKind::Error) | None => {
                         ConcatKind::Int
+                    }
+                    Some(TyKind::Nominal { .. }) => {
+                        unreachable!("nominal aliases are peeled above")
                     }
                 }
             }

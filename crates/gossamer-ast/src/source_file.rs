@@ -34,6 +34,27 @@ pub struct SourceFile {
     /// synthesis) can mint fresh ids for the wrapper nodes without colliding.
     #[serde(default)]
     pub next_node_id: u32,
+    /// Argument labels written at a call site, keyed by the call
+    /// expression's id.
+    ///
+    /// Kept beside the tree rather than inside `ExprKind::Call` so the
+    /// call shape stays one thing everywhere it is built and matched.
+    /// The named-argument pass reads this, rewrites each call into
+    /// declared parameter order, and empties the map; nothing
+    /// downstream of that pass sees a labelled argument.
+    #[serde(default)]
+    pub named_args: std::collections::HashMap<NodeId, Vec<NamedArg>>,
+}
+
+/// One `name: value` argument label at a call site.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct NamedArg {
+    /// Position of the labelled argument in the call's `args` list, as written.
+    pub index: usize,
+    /// The parameter name the caller wrote.
+    pub name: Ident,
+    /// Span of the label, for diagnostics that name a parameter.
+    pub span: Span,
 }
 
 impl SourceFile {
@@ -47,6 +68,7 @@ impl SourceFile {
             items,
             top_level_stmts: Vec::new(),
             next_node_id: 0,
+            named_args: std::collections::HashMap::new(),
         }
     }
 }

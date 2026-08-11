@@ -1,0 +1,71 @@
+// A `Vec<String>` membership test whose result is computed before a
+// range-`for` in the same function keeps that result across the loop.
+//
+// The membership call reads a module-level `const Vec<String>` through a
+// helper, and its argument is a borrow into a local vector - the shapes a
+// JIT'd frame is most likely to reuse a register for once a counted loop
+// follows in the same body. Every tier must agree on the answer.
+
+const GOOS: Vec<String> = Vec::from(["linux", "darwin"])
+
+fn is_goos(s: &String) -> bool {
+    GOOS.contains(s)
+}
+
+fn found_then_loop() -> bool {
+    let v = Vec::from(["bandwidth", "linux"])
+    let last = &v[v.len() - 1]
+    let found = is_goos(last)
+    let mut sum = 0
+    for i in 0..v.len() {
+        sum += i
+    }
+    println!("sum {}", sum)
+    found
+}
+
+fn missing_then_loop() -> bool {
+    let v = Vec::from(["bandwidth", "plan9"])
+    let last = &v[v.len() - 1]
+    let found = is_goos(last)
+    let mut sum = 0
+    for i in 0..v.len() {
+        sum += i
+    }
+    println!("sum {}", sum)
+    found
+}
+
+// The loop before the call has to leave the same answer as the loop after.
+fn loop_then_found() -> bool {
+    let v = Vec::from(["bandwidth", "darwin"])
+    let mut sum = 0
+    for i in 0..v.len() {
+        sum += i
+    }
+    println!("sum {}", sum)
+    is_goos(&v[v.len() - 1])
+}
+
+// A membership test held across a nested loop, with the borrow taken from
+// a local rather than a temporary.
+fn nested_loops() -> bool {
+    let v = Vec::from(["darwin", "bandwidth"])
+    let first = &v[0]
+    let found = is_goos(first)
+    let mut sum = 0
+    for i in 0..3 {
+        for j in 0..v.len() {
+            sum += i * j
+        }
+    }
+    println!("sum {}", sum)
+    found
+}
+
+fn main() {
+    println!("found_then_loop {}", found_then_loop())
+    println!("missing_then_loop {}", missing_then_loop())
+    println!("loop_then_found {}", loop_then_found())
+    println!("nested_loops {}", nested_loops())
+}

@@ -3191,6 +3191,22 @@ impl<'tcx> FnBuilder<'tcx> {
             }
             _ => None,
         };
+        // An `impl` method wins over a builtin of the same name. An enum
+        // value carries only its variant name at run time, so the receiver's
+        // own type cannot be recovered there; naming the method by its
+        // declaring type here is what reaches the user's body.
+        let user_impl_method = match self.tcx.kind(resolved_receiver_ty) {
+            Some(TyKind::Adt { def, .. }) => self
+                .tcx
+                .def_name(*def)
+                .map(|type_name| format!("{type_name}::{}", name.name))
+                .filter(|qualified| self.fn_param_tys.contains_key(qualified)),
+            // A payload binding extracted from a generic enum keeps an
+            // unresolved type, which is exactly the receiver of a recursive
+            // method's inner call. One `impl` declaring the name settles it
+            // without a type: there is nothing else the call could reach.
+            _ => self.sole_impl_method(&name.name),
+        };
         let dispatch_name = if is_map_pop {
             "Map::pop"
         } else if matches!(name.name.as_str(), "wrapping_add" | "wrapping_mul") {
@@ -3271,7 +3287,10 @@ impl<'tcx> FnBuilder<'tcx> {
                 _ => &name.name,
             }
         } else {
-            qualified_collection_method.as_deref().unwrap_or(&name.name)
+            qualified_collection_method
+                .as_deref()
+                .or(user_impl_method.as_deref())
+                .unwrap_or(&name.name)
         };
         let name_idx = self.global_idx(dispatch_name);
         let dst = self.alloc_reg();
@@ -4336,6 +4355,28 @@ impl<'tcx> FnBuilder<'tcx> {
             HirExprKind::Path { .. } | HirExprKind::Field { .. } | HirExprKind::Index { .. }
         )
         .then_some(place)
+    }
+
+    /// The single `Type::method` key matching bare `method`, when exactly
+    /// one `impl` in the program declares it. Two or more is genuinely
+    /// ambiguous without the receiver's type, so the caller keeps the
+    /// by-name dispatch.
+    fn sole_impl_method(&self, method: &str) -> Option<String> {
+        let suffix = format!("::{method}");
+        let mut found: Option<&String> = None;
+        for key in self.fn_param_tys.keys() {
+            if !key.ends_with(&suffix) {
+                continue;
+            }
+            // `mod::Type::method` and `Type::method` name one method.
+            if found.is_some_and(|prev| !prev.ends_with(key.as_str()) && !key.ends_with(prev)) {
+                return None;
+            }
+            if found.is_none_or(|prev| key.len() < prev.len()) {
+                found = Some(key);
+            }
+        }
+        found.cloned()
     }
 
     fn callee_param_tys(&self, callee: &HirExpr) -> Option<Vec<Ty>> {

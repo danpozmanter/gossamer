@@ -1,0 +1,109 @@
+# Keyword arguments and parameter defaults
+
+A call may name the parameter each argument fills, and a parameter may
+declare a constant default that callers can leave out.
+
+```gossamer
+fn volume(width: i64, height: i64 = 2, depth: i64 = 3) -> i64 {
+    width * height * depth
+}
+
+fn main() {
+    println!("{}", volume(2))                              // 12
+    println!("{}", volume(2, 3))                           // 18
+    println!("{}", volume(width = 2, height = 3, depth = 4))  // 24
+    println!("{}", volume(depth = 4, width = 2, height = 3))  // 24
+    println!("{}", volume(2, depth = 10))                   // 40
+}
+```
+
+Both are spellings at the call site. The compiler rewrites every call
+into the order its callee declares before type checking, so the compiled
+program is the same one you would get by writing the arguments in order.
+The calling convention is untouched, and the bytecode VM, the JIT, and
+native builds all compile the identical call.
+
+## Naming an argument
+
+Write `name = value` in place of a positional argument. A name selects the
+parameter it fills, so named arguments may appear in any order.
+
+Positional arguments come first, then names:
+
+```gossamer
+volume(2, depth = 10)        // width positionally, depth by name
+volume(width = 2, 3)         // error[GR0013]
+```
+
+Once a name is used the remaining positions are no longer in written
+order, so every later argument needs a name too.
+
+A name has to name a parameter of the callee, and may be given once:
+
+```gossamer
+volume(depht = 3)            // error[GR0013]: `depht` is not a parameter
+volume(width = 1, width = 2)  // error[GR0013]: `width` is given twice
+```
+
+## Declaring a default
+
+Write `= value` after a parameter's type. A call that omits the parameter
+gets that value spliced in at its position.
+
+```gossamer
+fn label(text: String, prefix: String = "item", times: i64 = 1) -> String
+```
+
+A default must be a constant: an integer, float, string, char, byte, or
+bool literal, optionally negated (`-1`). The default is spliced into
+every call that omits it, so an expression that would have to be resolved
+separately at each of those sites is rejected:
+
+```gossamer
+fn f(a: i64, b: i64 = a + 1)   // error[GR0014]: a parameter default must be a constant
+```
+
+Defaults are per call site. Two calls to the same function never share a
+value, so a default of a String or any other owned type is safe.
+
+## Methods and associated functions
+
+Both forms work on methods and associated functions:
+
+```gossamer
+struct Rect { w: i64, h: i64 }
+
+impl Rect {
+    fn make(w: i64, h: i64 = 5) -> Rect { Rect { w: w, h: h } }
+    fn scaled(&self, factor: i64 = 2) -> i64 { self.w * self.h * factor }
+}
+
+let r = Rect::make(w = 3)     // h defaults to 5
+r.scaled()                   // factor defaults to 2
+r.scaled(factor = 10)
+```
+
+A method call is rewritten before its receiver's type is known, so the
+rewrite has to be the same whichever type the receiver turns out to be.
+When several types declare a method of the same name, that holds as long
+as they agree on their parameter names and defaults - which is the usual
+case. When they disagree, the call is reported rather than guessed:
+
+```gossamer
+impl A { fn scaled(&self, factor: i64 = 2) -> i64 { .. } }
+impl B { fn scaled(&self, factor: i64 = 3) -> i64 { .. } }
+
+a.scaled()        // error[GR0013]: declared with different parameters
+a.scaled(2)       // fine - nothing to rewrite
+```
+
+Passing the argument explicitly always works.
+
+## Diagnostics
+
+| Code | Meaning |
+|---|---|
+| `GR0013` | A name that matches no parameter, is given twice, follows a positional argument, or is on a method several types declare differently. |
+| `GR0014` | A parameter default that is not a constant. |
+
+`gos explain GR0013` and `gos explain GR0014` expand both.

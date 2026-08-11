@@ -1550,21 +1550,37 @@ fn render_declared_item_inventory(out: &mut String) {
     writeln!(out).unwrap();
     writeln!(
         out,
-        "Every public manifest item appears below. `not item-audited` is a\n\
-         deliberate non-claim until executable per-tier evidence is linked to\n\
-         the canonical item path."
+        "Every public manifest item appears below. An item whose row names a\n\
+         program is exercised by it on every tier and every host in the CI\n\
+         matrix. `not item-audited` is a deliberate non-claim: no executable\n\
+         evidence is linked to that canonical item path yet."
     )
     .unwrap();
     writeln!(out).unwrap();
     writeln!(out, "| Item | Kind | Lifecycle | Evidence |").unwrap();
     writeln!(out, "|------|------|-----------|----------|").unwrap();
     for record in gossamer_std::registry::item_records() {
+        let evidence = gossamer_std::manifest::feature_status::item_evidence(
+            &record.path,
+            record.status,
+        );
+        let cited = if evidence.positive_tests.is_empty() {
+            "not item-audited".to_string()
+        } else {
+            evidence
+                .positive_tests
+                .iter()
+                .map(|test| format!("`{test}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
         writeln!(
             out,
-            "| `{}` | {:?} | {} | not item-audited |",
+            "| `{}` | {:?} | {} | {} |",
             record.path,
             record.kind,
             record.status.tag(),
+            cited,
         )
         .unwrap();
     }

@@ -345,6 +345,24 @@ impl TyCtxt {
         ty
     }
 
+    /// Interns the opaque nominal alias `def` over representation `repr`.
+    pub fn nominal_ty(&mut self, def: gossamer_resolve::DefId, repr: Ty) -> Ty {
+        self.intern(TyKind::Nominal { def, repr })
+    }
+
+    /// Follows a chain of nominal aliases down to the representation.
+    ///
+    /// Lowering erases nominal aliases, so a backend should never meet
+    /// one; the backends peel with this anyway so that a value which does
+    /// reach them behaves as the type it actually is at runtime.
+    #[must_use]
+    pub fn peel_nominal(&self, mut ty: Ty) -> Ty {
+        while let Some(TyKind::Nominal { repr, .. }) = self.kind(ty) {
+            ty = *repr;
+        }
+        ty
+    }
+
     /// Interns an integer primitive.
     pub fn int_ty(&mut self, int: IntTy) -> Ty {
         self.intern(TyKind::Int(int))

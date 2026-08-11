@@ -459,6 +459,20 @@ impl Resolver {
     /// to carry that hint, so a bare `HashSet<i64>` in a signature reported
     /// only that the name was missing.
     fn emit_unresolved_or_rename(&mut self, name: &str, span: Span) {
+        // The reflection pass rewrites `typeInfo::<T>()` to a synthesized
+        // function; when no such function exists the user wrote a type that
+        // has nothing to reflect, and they should read about that rather
+        // than about a name they never wrote.
+        if let Some(reflected) = name.strip_prefix("__gos_typeinfo_") {
+            let spelled = reflected.split("__").next().unwrap_or(reflected);
+            self.emit(
+                ResolveError::UnreflectableType {
+                    name: spelled.to_string(),
+                },
+                span,
+            );
+            return;
+        }
         if let Some(replacement) = crate::stdlib_exports::canonical_collection_name(name) {
             self.emit(
                 ResolveError::RemovedStdItem {
@@ -883,14 +897,61 @@ impl Resolver {
         );
     }
 
+    /// Definition an imported `name` ultimately refers to, when the `use`
+    /// target names an item of this same compilation unit.
+    ///
+    /// A `use` binds an opaque [`Resolution::Import`] because a target may
+    /// live outside the unit; a local module's item is also registered under
+    /// its `mod::name` path, so the import's target text finds the very
+    /// definition it names and the reference can be checked like any other.
+    fn imported_definition(&self, name: &str) -> Option<DefId> {
+        let target = self.imported_targets.get(name)?;
+        let qualified: Vec<&str> = target
+            .split("::")
+            .skip_while(|segment| matches!(*segment, "crate" | "root" | "self"))
+            .collect();
+        if qualified.len() < 2 {
+            return None;
+        }
+        let joined = qualified.join("::");
+        let binding = self
+            .scopes
+            .module_ref()
+            .lookup_value(&joined)
+            .or_else(|| self.scopes.module_ref().lookup_type(&joined))?;
+        match binding.resolution {
+            Resolution::Def { def, .. } => Some(def),
+            _ => None,
+        }
+    }
+
     /// Reports `resolution` when it names an item the module currently
-    /// being resolved is not allowed to reach.
-    fn check_visibility(&mut self, resolution: Resolution, span: Span) {
+    /// being resolved is not allowed to reach. `name` is the name written
+    /// at the reference, which is what follows a `use` to its target.
+    /// Records the definition a `use`-imported name at `anchor` targets,
+    /// so the type checker can read its signature through the import.
+    fn record_import_def(&mut self, resolution: Resolution, name: &str, anchor: NodeId) {
+        if !matches!(resolution, Resolution::Import { .. }) {
+            return;
+        }
+        if let Some(def) = self.imported_definition(name) {
+            self.resolutions.insert_import_def(anchor, def);
+        }
+    }
+
+    fn check_visibility(&mut self, resolution: Resolution, name: Option<&str>, span: Span) {
         if self.synthesized_depth > 0 {
             return;
         }
-        let Resolution::Def { def, .. } = resolution else {
-            return;
+        let def = match resolution {
+            Resolution::Def { def, .. } => def,
+            Resolution::Import { .. } => {
+                let Some(def) = name.and_then(|name| self.imported_definition(name)) else {
+                    return;
+                };
+                def
+            }
+            _ => return,
         };
         let Some(home) = self.item_homes.get(&def) else {
             return;
@@ -923,13 +984,25 @@ impl Resolver {
     }
 
     /// An item is reachable when the module resolving it is the
-    /// declaring module or one of its descendants, or when the item is
-    /// `pub` and every module on the way in can be named from here.
+    /// declaring module or one of its descendants, when the item is
+    /// `pub`, or when it is `pub(package)` and both modules belong to the
+    /// same package - and, in every case, when each module on the way in
+    /// can be named from here.
     fn is_reachable(&self, home: &ItemHome) -> bool {
-        if !self.current_module.starts_with(&home.module) && !home.visibility.is_public() {
-            return false;
-        }
-        self.module_is_nameable(&home.module)
+        let visible_here = self.current_module.starts_with(&home.module)
+            || match home.visibility {
+                Visibility::Public => true,
+                Visibility::Package => self.same_package(&home.module),
+                Visibility::Inherited => false,
+            };
+        visible_here && self.module_is_nameable(&home.module)
+    }
+
+    /// True when `home_module` and the module being resolved belong to the
+    /// same package.
+    fn same_package(&self, home_module: &[String]) -> bool {
+        self.resolutions
+            .same_package(home_module, &self.current_module)
     }
 
     /// True when every module along `path` is either declared in a
@@ -945,10 +1018,15 @@ impl Resolver {
         if self.current_module.starts_with(&path[..depth - 1]) {
             return true;
         }
-        self.module_visibility
+        match self
+            .module_visibility
             .get(&path[..depth].join("::"))
             .copied()
-            .is_none_or(Visibility::is_public)
+        {
+            None | Some(Visibility::Public) => true,
+            Some(Visibility::Package) => self.same_package(path),
+            Some(Visibility::Inherited) => false,
+        }
     }
 
     fn resolve_item(&mut self, item: &Item) {
@@ -974,7 +1052,7 @@ impl Resolver {
             ItemKind::Struct(decl) => self.resolve_struct(decl),
             ItemKind::Enum(decl) => self.resolve_enum(decl),
             ItemKind::Trait(decl) => self.resolve_trait(decl),
-            ItemKind::Impl(decl) => self.resolve_impl(decl),
+            ItemKind::Impl(decl) => self.resolve_impl(decl, item.span),
             ItemKind::TypeAlias(decl) => self.resolve_type_alias(decl),
             ItemKind::Const(decl) => {
                 self.resolve_type(&decl.ty);
@@ -1108,11 +1186,15 @@ impl Resolver {
         }
     }
 
-    fn resolve_impl(&mut self, decl: &ImplDecl) {
+    fn resolve_impl(&mut self, decl: &ImplDecl, span: Span) {
         self.scopes.push();
         self.bind_generics(&decl.generics);
         if let Some(bound) = &decl.trait_ref {
-            self.resolve_trait_bound(bound);
+            // A trait a module keeps to itself cannot be implemented from
+            // outside it, so this reference is checked like any other. A
+            // trait path carries no span of its own; the `impl` header is
+            // what the reader needs pointed at anyway.
+            self.resolve_trait_bound_at(bound, Some(span));
         }
         self.resolve_type(&decl.self_ty);
         self.resolve_where_clause(&decl.where_clause);
@@ -1149,7 +1231,27 @@ impl Resolver {
     }
 
     fn resolve_trait_bound(&mut self, bound: &TraitBound) {
+        self.resolve_trait_bound_at(bound, None);
+    }
+
+    /// Resolves a trait bound, and when a span is supplied also checks that
+    /// the trait is one this module may name.
+    ///
+    /// The visibility check is separate from path resolution here because a
+    /// bound may legitimately name a trait the resolver has no entry for -
+    /// the operator traits (`Add`, `Index`, `Neg`, `From`) are recognised
+    /// later by the checker - and reporting those as unresolved names would
+    /// reject `impl Add for Vec3`.
+    fn resolve_trait_bound_at(&mut self, bound: &TraitBound, span: Option<Span>) {
         self.resolve_type_path_in(&bound.path, None, None);
+        let (Some(span), Some(head)) = (span, bound.path.segments.first()) else {
+            return;
+        };
+        let name = &head.name.name;
+        let Some(binding) = self.scopes.lookup_type(name) else {
+            return;
+        };
+        self.check_visibility(binding.resolution, Some(name), span);
     }
 
     fn resolve_where_clause(&mut self, clause: &WhereClause) {
@@ -1224,7 +1326,7 @@ impl Resolver {
         if matches!(resolution, Resolution::Err) {
             self.emit_unresolved_or_rename(name, span);
         }
-        self.check_visibility(resolution, span);
+        self.check_visibility(resolution, Some(name), span);
         if path.segments.len() == 1 {
             self.reject_ambiguous_variant(resolution, name, span);
         }
@@ -1258,7 +1360,7 @@ impl Resolver {
         if effective.len() > 1 {
             if let Some(resolution) = self.lookup_qualified_type(&written) {
                 if let Some(span) = span {
-                    self.check_visibility(resolution, span);
+                    self.check_visibility(resolution, None, span);
                 }
                 if let Some(anchor) = anchor {
                     self.resolutions.insert(anchor, resolution);
@@ -1283,7 +1385,7 @@ impl Resolver {
             if matches!(resolution, Resolution::Err) && !is_self_type(name) {
                 self.emit_unresolved_or_rename(name, span);
             }
-            self.check_visibility(resolution, span);
+            self.check_visibility(resolution, Some(name), span);
         }
         if let Some(anchor) = anchor {
             self.resolutions.insert(anchor, resolution);
@@ -1468,6 +1570,23 @@ impl Resolver {
 
     fn resolve_literal(&self, _lit: &Literal) {}
 
+    /// Resolves a path whose head is a `use`-imported name by respelling
+    /// that head as the import's target.
+    ///
+    /// An item registers under its module-qualified path, so
+    /// `use money::Amount` followed by `Amount::new(..)` has to be looked up
+    /// as `money::Amount::new`. Without this the call type-checks and is
+    /// unbound at run time.
+    fn resolve_through_import_head(&self, effective: &[&str]) -> Option<Resolution> {
+        let head = effective.first()?;
+        let mut rejoined = self.imported_targets.get(*head)?.clone();
+        for seg in &effective[1..] {
+            rejoined.push_str("::");
+            rejoined.push_str(seg);
+        }
+        self.lookup_value_or_type(&rejoined)
+    }
+
     fn resolve_value_path(&mut self, path: &PathExpr, anchor: NodeId, span: Span) {
         let Some(head) = path.segments.first() else {
             return;
@@ -1509,7 +1628,13 @@ impl Resolver {
                 return;
             }
             if let Some(resolution) = self.lookup_qualified_value_or_type(&written) {
-                self.check_visibility(resolution, span);
+                self.check_visibility(resolution, None, span);
+                self.resolutions.insert(anchor, resolution);
+                self.resolve_path_generic_args(path);
+                return;
+            }
+            if let Some(resolution) = self.resolve_through_import_head(&effective) {
+                self.check_visibility(resolution, None, span);
                 self.resolutions.insert(anchor, resolution);
                 self.resolve_path_generic_args(path);
                 return;
@@ -1625,7 +1750,8 @@ impl Resolver {
                 self.emit_unresolved_or_rename(lookup_name, span);
                 Resolution::Err
             });
-        self.check_visibility(resolution, span);
+        self.check_visibility(resolution, Some(lookup_name), span);
+        self.record_import_def(resolution, lookup_name, anchor);
         if effective.len() == 1 {
             self.reject_ambiguous_variant(resolution, lookup_name, span);
         }
@@ -1718,7 +1844,8 @@ impl Resolver {
                 self.emit_unresolved_or_rename(lookup_name, span);
                 Resolution::Err
             });
-        self.check_visibility(resolution, span);
+        self.check_visibility(resolution, Some(lookup_name), span);
+        self.record_import_def(resolution, lookup_name, anchor);
         self.resolutions.insert(anchor, resolution);
         for segment in &path.segments {
             self.resolve_generic_args(&segment.generics);

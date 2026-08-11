@@ -18,7 +18,7 @@ evidence visible.
 | `std::os` | experimental | 2 | module-only | module-only | module-only | args, env, exit, read_file, write_file, mkdir, mkdir_all, read_dir. |
 | `std::os::exec` | shipped | 12 | module-only | module-only | module-only | Command builder + output / status / spawn / kill / wait. Wired through interp builtins, MIR lower, and C ABI. |
 | `std::os::signal` | experimental | 5 | module-only | module-only | module-only | on(signum) + Notifier::wait/try_wait. Wired through interp builtins, MIR lower, and C ABI. |
-| `std::env` | experimental | 9 | none | none | none | No module-level evidence record. |
+| `std::env` | shipped | 9 | none | none | none | No module-level evidence record. |
 | `std::process` | shipped | 12 | none | none | none | No module-level evidence record. |
 | `std::thread` | shipped | 2 | none | none | none | No module-level evidence record. |
 | `std::strings` | experimental | 44 | module-only | module-only | module-only | split, trim, contains, find, replace, to_lower, to_upper, starts_with, ends_with. |
@@ -33,7 +33,7 @@ evidence visible.
 | `std::errors` | experimental | 6 | module-only | module-only | module-only | new, newf, wrap, is, join. |
 | `std::flag` | experimental | 8 | module-only | module-only | module-only | Set with string/int/uint/float/bool/duration/string_list, --help, equals form. Subcommands deferred to v1.x. |
 | `std::path` | shipped | 15 | module-only | module-only | module-only | join, split, base, dir, ext, clean. |
-| `std::fs` | experimental | 26 | module-only | module-only | module-only | read_dir, walk_dir, mkdir_all, remove_all, copy, rename. |
+| `std::fs` | shipped | 26 | module-only | module-only | module-only | read_dir, walk_dir, mkdir_all, remove_all, copy, rename. |
 | `std::bytes` | experimental | 5 | module-only | module-only | module-only | Buffer, Builder, index_of, split, replace. |
 | `std::bufio` | experimental | 7 | module-only | module-only | module-only | Reader, Writer, Scanner with split_lines / split_words. |
 | `std::net::url` | shipped | 5 | module-only | module-only | module-only | Url, query_escape, query_unescape. |
@@ -129,9 +129,10 @@ evidence visible.
 
 ## Declared item inventory
 
-Every public manifest item appears below. `not item-audited` is a
-deliberate non-claim until executable per-tier evidence is linked to
-the canonical item path.
+Every public manifest item appears below. An item whose row names a
+program is exercised by it on every tier and every host in the CI
+matrix. `not item-audited` is a deliberate non-claim: no executable
+evidence is linked to that canonical item path yet.
 
 | Item | Kind | Lifecycle | Evidence |
 |------|------|-----------|----------|
@@ -337,15 +338,15 @@ the canonical item path.
 | `std::encoding::yaml::parse` | Function | experimental | not item-audited |
 | `std::encoding::yaml::parse_all` | Function | experimental | not item-audited |
 | `std::encoding::yaml::to_json` | Function | experimental | not item-audited |
-| `std::env::args` | Function | experimental | not item-audited |
-| `std::env::current_dir` | Function | experimental | not item-audited |
-| `std::env::home_dir` | Function | experimental | not item-audited |
-| `std::env::program_name` | Function | experimental | not item-audited |
-| `std::env::set_current_dir` | Function | experimental | not item-audited |
-| `std::env::set_var` | Function | experimental | not item-audited |
-| `std::env::temp_dir` | Function | experimental | not item-audited |
-| `std::env::unset_var` | Function | experimental | not item-audited |
-| `std::env::var` | Function | experimental | not item-audited |
+| `std::env::args` | Function | experimental | `feature-testing-examples/stdlib_env_portable.gos` |
+| `std::env::current_dir` | Function | experimental | `feature-testing-examples/stdlib_env_portable.gos` |
+| `std::env::home_dir` | Function | experimental | `feature-testing-examples/stdlib_env_portable.gos` |
+| `std::env::program_name` | Function | experimental | `feature-testing-examples/stdlib_env_portable.gos` |
+| `std::env::set_current_dir` | Function | experimental | `feature-testing-examples/stdlib_env_portable.gos` |
+| `std::env::set_var` | Function | experimental | `feature-testing-examples/stdlib_env_portable.gos` |
+| `std::env::temp_dir` | Function | experimental | `feature-testing-examples/stdlib_env_portable.gos` |
+| `std::env::unset_var` | Function | experimental | `feature-testing-examples/stdlib_env_portable.gos` |
+| `std::env::var` | Function | experimental | `feature-testing-examples/stdlib_env_portable.gos` |
 | `std::errors::Error` | Type | experimental | not item-audited |
 | `std::errors::is` | Function | experimental | not item-audited |
 | `std::errors::join` | Function | experimental | not item-audited |
@@ -369,32 +370,32 @@ the canonical item path.
 | `std::fmt::println` | Macro | experimental | not item-audited |
 | `std::fmt::write` | Macro | experimental | not item-audited |
 | `std::fmt::writeln` | Macro | experimental | not item-audited |
-| `std::fs::DirInfo` | Type | experimental | not item-audited |
-| `std::fs::File` | Type | experimental | not item-audited |
-| `std::fs::OpenOptions` | Type | experimental | not item-audited |
-| `std::fs::canonicalize` | Function | experimental | not item-audited |
-| `std::fs::copy` | Function | experimental | not item-audited |
-| `std::fs::create` | Function | experimental | not item-audited |
-| `std::fs::create_dir` | Function | experimental | not item-audited |
-| `std::fs::create_dir_all` | Function | experimental | not item-audited |
-| `std::fs::exists` | Function | experimental | not item-audited |
-| `std::fs::file_size` | Function | experimental | not item-audited |
-| `std::fs::is_dir` | Function | experimental | not item-audited |
-| `std::fs::is_file` | Function | experimental | not item-audited |
-| `std::fs::is_symlink` | Function | experimental | not item-audited |
-| `std::fs::metadata` | Function | experimental | not item-audited |
-| `std::fs::open` | Function | experimental | not item-audited |
-| `std::fs::read` | Function | experimental | not item-audited |
-| `std::fs::read_dir` | Function | experimental | not item-audited |
-| `std::fs::read_to_string` | Function | experimental | not item-audited |
-| `std::fs::remove_dir` | Function | experimental | not item-audited |
-| `std::fs::remove_dir_all` | Function | experimental | not item-audited |
-| `std::fs::remove_file` | Function | experimental | not item-audited |
-| `std::fs::rename` | Function | experimental | not item-audited |
-| `std::fs::temp_dir` | Function | experimental | not item-audited |
-| `std::fs::temp_file` | Function | experimental | not item-audited |
-| `std::fs::walk_dir` | Function | experimental | not item-audited |
-| `std::fs::write` | Function | experimental | not item-audited |
+| `std::fs::DirInfo` | Type | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::File` | Type | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::OpenOptions` | Type | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::canonicalize` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::copy` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::create` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::create_dir` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::create_dir_all` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::exists` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::file_size` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::is_dir` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::is_file` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::is_symlink` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::metadata` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::open` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::read` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::read_dir` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::read_to_string` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::remove_dir` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::remove_dir_all` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::remove_file` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::rename` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::temp_dir` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::temp_file` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::walk_dir` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
+| `std::fs::write` | Function | experimental | `feature-testing-examples/stdlib_fs_portable.gos` |
 | `std::hash::adler32::checksum` | Function | experimental | not item-audited |
 | `std::hash::adler32::checksum_string` | Function | experimental | not item-audited |
 | `std::hash::adler32::update` | Function | experimental | not item-audited |

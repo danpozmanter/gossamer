@@ -26,7 +26,7 @@ concurrency, and which Rust features are intentionally absent.
 Entry files may omit `fn main`. Bare statements at file scope become an
 implicit `fn main()`.
 
-## Gossamer 0.37 Syntax At A Glance
+## Gossamer 0.47 Syntax At A Glance
 
 Rust and Gossamer use similar delimiters, but not the same separators.
 Gossamer accepts semicolons only between statements on the same line; trailing
@@ -254,6 +254,50 @@ let total = xs
 
 Mutating collection helpers such as `push`, `sort`, `insert`, and
 `remove` stay as methods.
+
+## Visibility
+
+Gossamer has three visibilities, and they are declared per item, per method,
+and per struct field.
+
+| Annotation | Reachable from |
+| --- | --- |
+| none | the declaring module and its descendants |
+| `pub(package)` | every module of the declaring package |
+| `pub` | anything that depends on the package |
+
+A **package** is the unit of distribution: one `project.toml`, one project id.
+A **module** is a directory under `src/`. A module nested inside another is a
+**module descendant**, and visibility flows inward only: a descendant reaches
+its ancestors' private items, never the reverse.
+
+```gossamer
+// src/money/mod.gos
+pub struct Amount {
+    pub currency: String,
+    cents: i64,                     // private representation
+}
+
+impl Amount {
+    pub fn new(currency: String, cents: i64) -> Amount {
+        Amount { currency: currency, cents: cents }
+    }
+    pub fn cents(&self) -> i64 { self.cents }
+    fn normalize(&self) -> i64 { self.cents }   // private helper
+}
+
+pub(package) fn round_trip(a: &Amount) -> i64 { a.normalize() }
+```
+
+A `pub` type may keep private methods and private fields, so a struct with any
+private field can only be built by the module that declares it. Importing does
+not widen anything: a `use` is a spelling convenience, and visibility is
+decided by where the name is used.
+
+Coming from Rust this is nearly the same model. `pub(package)` is
+Gossamer's `pub(crate)`, and it is the only restricted form: `pub(crate)`,
+`pub(super)`, and `pub(in path)` are rejected with a diagnostic naming
+`pub(package)`.
 
 ## Standard Library Map
 

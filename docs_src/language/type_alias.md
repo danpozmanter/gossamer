@@ -1,6 +1,6 @@
 # `lang::type_alias`
 
-Transparent type alias: `type X = T` (and generic `type Pair<A> = (A, A)`) is interchangeable with its target everywhere; a cyclic alias is rejected (`GT0024`).
+Transparent type alias: `type X = T` (and generic `type Pair<A> = (A, A)`) is interchangeable with its target everywhere; a cyclic alias is rejected (`GT0024`). The opaque form `type X = new T` declares a distinct type over the same representation.
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 A `type` declaration names an existing type. It is **transparent** - an
@@ -42,7 +42,15 @@ type A = B
 type B = A      // error[GT0024]: type alias `B` is cyclic - it expands to itself
 ```
 
-Because aliases are transparent there is no newtype distinction: two
-aliases of the same target compare and convert exactly as the target
-does. Reach for a single-field `struct` when you want a genuinely
-distinct type.
+## Opaque aliases
+
+Writing `new` before the target - `type UserId = new i64` - declares a
+distinct type over the same representation instead of another spelling
+of it. It inherits equality, ordering, hashing and formatting and
+nothing else, converts to and from its representation with `.into()`,
+and carries its own `impl`. See
+[opaque nominal aliases](opaque_nominal_alias.md).
+
+Use a transparent alias to shorten a spelling, an opaque one to make a
+distinction the checker enforces, and a single-field `struct` when the
+type needs named fields or its own layout.

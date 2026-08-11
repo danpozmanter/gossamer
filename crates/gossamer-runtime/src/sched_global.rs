@@ -391,7 +391,9 @@ pub fn wait_io<S: mio::event::Source + ?Sized>(
     }
     let mut result: io::Result<()> = Ok(());
     let mut source = None;
+    let mut parked_as = None;
     park(ParkReason::Io, |parker| {
+        parked_as = Some(parker.gid);
         let gid = parker.gid;
         register_waker(
             gid,
@@ -410,7 +412,7 @@ pub fn wait_io<S: mio::event::Source + ?Sized>(
             }
         }
     });
-    if let Some(gid) = current_gid() {
+    if let Some(gid) = parked_as {
         forget_waker(gid);
     }
     if let Some(source) = source {
@@ -504,6 +506,102 @@ pub fn sleep_until(deadline: Instant) {
     if let Some(gid) = current_gid() {
         forget_waker(gid);
     }
+}
+
+/// Channels holding a waiter whose operation would complete if it woke now.
+/// A non-zero count means the program can still move even with every
+/// goroutine inside a channel wait.
+static PENDING_HANDOFFS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Adds or removes one channel from the ready count.
+pub fn adjust_pending_handoffs(ready: bool) {
+    if ready {
+        PENDING_HANDOFFS.fetch_add(1, Ordering::AcqRel);
+    } else {
+        PENDING_HANDOFFS.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Stops the program with the deadlock report when the caller is about to
+/// block on another goroutine and nothing is left that could wake it.
+///
+/// Call immediately before suspending on a channel, with the caller already
+/// registered among that channel's waiters so a handoff it would complete is
+/// visible. At that point every value that could satisfy any waiter is
+/// already queued, so a runtime with no ready waiter and nothing runnable is
+/// in a terminal state - waiting longer cannot change the answer.
+///
+/// A deadlock is a property of the whole program rather than of the
+/// goroutine that notices it, so the report ends the program. `op` names the
+/// operation that could not complete.
+pub fn report_deadlock_if_stuck(op: &str) {
+    if !PROGRAM_ENTERED.load(Ordering::Acquire) {
+        return;
+    }
+    if PENDING_HANDOFFS.load(Ordering::Acquire) > 0 {
+        return;
+    }
+    // No scheduler has ever been built, so no goroutine exists to send,
+    // receive, or release: an OS thread blocking here waits on nobody.
+    let Some(globals) = GLOBALS.get() else {
+        report_fatal_deadlock(op);
+    };
+    // Reported only with no goroutine left to run: the caller is then the
+    // whole program, and a channel that can hand nothing over will never be
+    // able to. With a goroutine still live the counts are read while it is
+    // free to change them, and a deadlock claimed over a state still being
+    // written would end a working program - so that case waits, exactly as
+    // it did before this check existed.
+    //
+    // The read is an atomic. The caller holds a channel lock here, and the
+    // scheduler's own locks are taken by workers that then reach for channel
+    // locks, so consulting them from this side would invert the order.
+    // The caller must also be the only thread inside a channel operation.
+    // Goroutines are not the only actors: an embedder's thread, a blocking
+    // worker, or a test can hold the other end, and none of them is a live
+    // goroutine. A second waiter means someone else is positioned to act.
+    if globals.scheduler.live_goroutines() == 0 && CHANNEL_WAITERS.load(Ordering::Acquire) == 1 {
+        report_fatal_deadlock(op);
+    }
+}
+
+/// Threads and goroutines currently suspended inside a channel wait.
+static CHANNEL_WAITERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Set once a compiled Gossamer program has entered `main`.
+///
+/// Deadlock reporting needs to know every party that could act on a channel.
+/// That holds for a Gossamer program - its actors are `main` and the
+/// goroutines - and not for this library linked into something else, where an
+/// embedder's or a test's own thread can hold the other end without being a
+/// goroutine. Reporting stays off until a program says the process is one.
+static PROGRAM_ENTERED: AtomicBool = AtomicBool::new(false);
+
+/// Marks the process as a running Gossamer program. Called from the entry
+/// shim a compiled binary emits, and from nowhere else.
+pub fn mark_program_entered() {
+    PROGRAM_ENTERED.store(true, Ordering::Release);
+}
+
+/// Adds or removes the caller from the channel-waiter count.
+pub fn adjust_channel_waiters(entering: bool) {
+    if entering {
+        CHANNEL_WAITERS.fetch_add(1, Ordering::AcqRel);
+    } else {
+        CHANNEL_WAITERS.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+fn report_fatal_deadlock(op: &str) -> ! {
+    use std::io::Write as _;
+    let mut err = std::io::stderr();
+    let _ = writeln!(
+        err,
+        "error: runtime error: error[GX0005]: panic: all goroutines are \
+         asleep - deadlock! ({op} can never complete)"
+    );
+    let _ = err.flush();
+    std::process::exit(101);
 }
 
 /// Runs a potentially blocking OS operation without pinning a scheduler

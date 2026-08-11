@@ -98,9 +98,11 @@ impl<T> Mutex<T> {
                 }
                 return result;
             }
+            let mut parked_as = None;
             gossamer_runtime::sched_global::park(
                 gossamer_runtime::sched::ParkReason::Sync,
                 |parker| {
+                    parked_as = Some(parker.gid);
                     self.waiters.lock().push_back(parker.gid);
                     // Wake-before-park race close: re-check inside
                     // arm. If the lock is now free, self-unpark via
@@ -110,7 +112,10 @@ impl<T> Mutex<T> {
                     }
                 },
             );
-            if let Some(gid) = gossamer_runtime::sched_global::current_gid() {
+            // The parker names the goroutine that suspended. A
+            // thread-local read here would name whichever goroutine the
+            // resuming thread is running, and drop its registration.
+            if let Some(gid) = parked_as {
                 self.waiters.lock().retain(|g| *g != gid);
             }
         }
@@ -176,16 +181,18 @@ impl<T> Mutex<T> {
                     .unwrap_or_else(|| crate::errors::Error::new("context cancelled")));
             }
             if gossamer_coro::in_goroutine() {
+                let mut parked_as = None;
                 gossamer_runtime::sched_global::park(
                     gossamer_runtime::sched::ParkReason::Sync,
                     |parker| {
+                        parked_as = Some(parker.gid);
                         self.waiters.lock().push_back(parker.gid);
                         if !self.inner.is_locked() {
                             gossamer_runtime::sched_global::scheduler().unpark(parker.gid);
                         }
                     },
                 );
-                if let Some(gid) = gossamer_runtime::sched_global::current_gid() {
+                if let Some(gid) = parked_as {
                     self.waiters.lock().retain(|g| *g != gid);
                 }
             } else {
@@ -593,9 +600,11 @@ impl WaitGroup {
                     .unwrap_or_else(|| crate::errors::Error::new("context cancelled")));
             }
             if gossamer_coro::in_goroutine() {
+                let mut parked_as = None;
                 gossamer_runtime::sched_global::park(
                     gossamer_runtime::sched::ParkReason::Sync,
                     |parker| {
+                        parked_as = Some(parker.gid);
                         // Register with WaitGroup so `done()` wakes us;
                         // re-check the counter under the same lock to
                         // close the wake-before-park race.
@@ -606,7 +615,7 @@ impl WaitGroup {
                         }
                     },
                 );
-                if let Some(gid) = gossamer_runtime::sched_global::current_gid() {
+                if let Some(gid) = parked_as {
                     self.waiters.lock().retain(|g| *g != gid);
                 }
             } else {
@@ -630,9 +639,11 @@ impl WaitGroup {
                 }
             }
             if gossamer_coro::in_goroutine() {
+                let mut parked_as = None;
                 gossamer_runtime::sched_global::park(
                     gossamer_runtime::sched::ParkReason::Sync,
                     |parker| {
+                        parked_as = Some(parker.gid);
                         // Push our gid first, then re-check the
                         // counter under the same lock to close the
                         // wake-before-park race window.
@@ -648,7 +659,7 @@ impl WaitGroup {
                         }
                     },
                 );
-                if let Some(gid) = gossamer_runtime::sched_global::current_gid() {
+                if let Some(gid) = parked_as {
                     self.waiters.lock().retain(|g| *g != gid);
                 }
             } else {

@@ -1880,6 +1880,22 @@ impl<'a> Builder<'a> {
         clippy::too_many_lines,
         reason = "flat method-name dispatch table; arm order encodes guarded/unguarded same-name shadowing"
     )]
+    /// True when the receiver's own type declares `method` in an `impl`.
+    ///
+    /// Keyed by the type's registered identity, so a method on a type
+    /// declared inside a module is found under the same name its `impl`
+    /// registered.
+    fn user_impl_method_exists(&self, receiver_ty: Ty, receiver: &HirExpr, method: &str) -> bool {
+        let Some(owner) = self
+            .adt_dispatch_name(receiver_ty)
+            .or_else(|| self.struct_name_from_expr(receiver))
+        else {
+            return false;
+        };
+        self.impl_methods
+            .contains_key(&format!("{owner}::{method}"))
+    }
+
     fn runtime_symbol_by_name(
         &self,
         receiver: &HirExpr,
@@ -1889,6 +1905,14 @@ impl<'a> Builder<'a> {
         receiver_ty: Ty,
     ) -> SymbolLookup {
         let receiver_kind_flat = receiver_kind_flat.clone();
+        // A user `impl` method wins over every builtin of the same name. The
+        // table below keys on method name first and receiver kind second, and
+        // several arms end in a catch-all that would take a user type with
+        // it - `len` on an enum reaching `gos_rt_len`, which reads a Vec
+        // header out of the enum's pointer.
+        if self.user_impl_method_exists(receiver_ty, receiver, &method.name) {
+            return SymbolLookup::Found(None);
+        }
         SymbolLookup::Found(match method.name.as_str() {
             // `.to_string()` routes to the runtime numeric
             // formatter for integer / float receivers. String

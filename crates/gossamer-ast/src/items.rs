@@ -92,6 +92,51 @@ impl Attrs {
     pub fn is_empty(&self) -> bool {
         self.outer.is_empty() && self.inner.is_empty()
     }
+
+    /// Returns `true` when a bare `#[name]` or `#![name]` is present.
+    #[must_use]
+    pub fn has_word(&self, name: &str) -> bool {
+        self.outer
+            .iter()
+            .chain(&self.inner)
+            .any(|attr| attr.is_word(name))
+    }
+
+    /// Returns `true` when `#[allow(lint)]` or `#![allow(lint)]` names
+    /// `lint` among its comma-separated arguments.
+    #[must_use]
+    pub fn allows(&self, lint: &str) -> bool {
+        self.outer
+            .iter()
+            .chain(&self.inner)
+            .any(|attr| attr.lists_argument("allow", lint))
+    }
+}
+
+impl Attribute {
+    /// Returns `true` when this attribute is the bare word `name` with no
+    /// argument list.
+    #[must_use]
+    pub fn is_word(&self, name: &str) -> bool {
+        self.tokens.is_none() && self.is_named(name)
+    }
+
+    /// Returns `true` when this attribute is `name(..)` and `argument`
+    /// appears among the comma-separated arguments.
+    #[must_use]
+    pub fn lists_argument(&self, name: &str, argument: &str) -> bool {
+        self.is_named(name)
+            && self
+                .tokens
+                .as_deref()
+                .is_some_and(|tokens| tokens.split(',').any(|tok| tok.trim() == argument))
+    }
+
+    /// Returns `true` when the attribute path is the single segment `name`.
+    #[must_use]
+    pub fn is_named(&self, name: &str) -> bool {
+        self.path.segments.len() == 1 && self.path.segments[0].name.name == name
+    }
 }
 
 /// A single `#[...]` or `#![...]` attribute.
@@ -256,6 +301,11 @@ pub enum FnParam {
         /// replaced with its result literal by the comptime fold.
         #[serde(default)]
         is_comptime: bool,
+        /// Constant default written `pattern: type = expr`. A call that
+        /// omits this parameter has the expression spliced in at its
+        /// position, so every tier compiles the same positional call.
+        #[serde(default)]
+        default: Option<Box<Expr>>,
     },
 }
 
@@ -451,6 +501,11 @@ pub struct TypeAliasDecl {
     pub generics: Generics,
     /// Right-hand type.
     pub ty: Type,
+    /// `true` for the opaque form `type Name = new Type`, which declares a
+    /// distinct nominal type over the same representation instead of a
+    /// transparent spelling of it.
+    #[serde(default)]
+    pub nominal: bool,
 }
 
 /// `const` item declaration.

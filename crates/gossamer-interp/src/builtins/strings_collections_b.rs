@@ -907,11 +907,12 @@ fn builtin_channel_join(args: &[Value]) -> RuntimeResult<Value> {
         ));
     };
     match channel.recv() {
-        Some(outcome) => Ok(outcome),
-        None => Ok(Value::variant(
+        crate::value::RecvOutcome::Value(outcome) => Ok(outcome),
+        crate::value::RecvOutcome::Closed => Ok(Value::variant(
             "Err",
             vec![Value::String("join: handle channel closed".into())],
         )),
+        crate::value::RecvOutcome::Deadlocked => Err(crate::value::deadlock_error("join")),
     }
 }
 
@@ -1173,6 +1174,10 @@ fn builtin_channel_send(args: &[Value]) -> RuntimeResult<Value> {
         ));
     };
     let value = args.get(1).cloned().unwrap_or(Value::Unit);
-    channel.send(value);
-    Ok(Value::Unit)
+    if channel.send(value) {
+        Ok(Value::Unit)
+    } else {
+        Err(crate::value::deadlock_error("send"))
+    }
 }
+

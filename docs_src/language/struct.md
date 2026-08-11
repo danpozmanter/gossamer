@@ -14,6 +14,11 @@ let p2 = Point { x: 10, y: p1.y }
 
 - Explicit fields win over the base for the same name.
 - Exactly one `..base` spread is allowed (a second is a parse error).
+- A spread references every field the literal does not name, so the whole
+  struct has to be visible where the update is written. A struct with any
+  private field cannot be updated from outside the module that declares it,
+  exactly as it cannot be constructed there - see
+  [visibility](visibility.md).
 - Fields copied from the base share its heap children and are retained,
   so the base stays usable after the update with no double-free. Output
   is identical across the VM, Cranelift, and LLVM tiers.

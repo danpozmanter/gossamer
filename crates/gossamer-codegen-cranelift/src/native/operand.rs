@@ -505,7 +505,7 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
         Operand::Const(ConstValue::Char(_)) => PrintKind::Char,
         Operand::Const(ConstValue::Unit) => PrintKind::Int,
         Operand::Copy(place) => {
-            let ty = resolve_place_ty(tcx, body, place);
+            let ty = tcx.peel_nominal(resolve_place_ty(tcx, body, place));
             // A container renders through its own runtime shim whether the
             // local carries the container's type or the bare i64 handle the
             // constructor returned.
@@ -693,6 +693,7 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                 TyKind::Param { .. } | TyKind::Alias { .. } | TyKind::Error => {
                     PrintKind::Unsupported("opaque type")
                 }
+                TyKind::Nominal { .. } => unreachable!("nominal aliases are peeled above"),
             }
         }
         Operand::FnRef { .. } => PrintKind::Unsupported("function"),

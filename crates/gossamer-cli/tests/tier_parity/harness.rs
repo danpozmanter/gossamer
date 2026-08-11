@@ -153,6 +153,39 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/unit_main_goroutine_drain.gos"),
     spec("feature-testing-examples/jit_map_local_promotion.gos"),
     spec("feature-testing-examples/string_append_self_consuming.gos"),
+    // A `Vec<String>` membership result computed beside a range-`for` in
+    // the same body survives the loop. The JIT is the tier at risk: the
+    // counted loop and the earlier call compete for the same frame slots.
+    spec("feature-testing-examples/vec_contains_before_range_loop.gos"),
+    // A user `impl` method wins over a builtin of the same name. An enum
+    // value carries only its variant name at run time, so the receiver's
+    // type has to come from the call site.
+    spec("feature-testing-examples/enum_method_dispatch_and_generics.gos"),
+    // Every goroutine blocks at some point here; a pending handoff is
+    // progress, so none of it reads as a deadlock.
+    spec("feature-testing-examples/channel_progress_not_deadlock.gos"),
+    // Reflection over a struct, a tuple struct, an enum, and a generic type
+    // at two instantiations, all folded during compilation.
+    spec("feature-testing-examples/typeinfo_enums_and_generics.gos"),
+    // A nominal alias is a checker-only distinction over an unchanged
+    // runtime value, so every tier must produce the representation's
+    // behaviour and the identical output.
+    spec("feature-testing-examples/opaque_nominal_alias.gos"),
+    // Copy-update carries every unnamed field from the base and leaves the
+    // base usable, including through String and Vec fields.
+    spec("feature-testing-examples/struct_copy_update.gos"),
+    // Fan-in, fan-out, pipeline, and many-channel shapes at counts that hold
+    // far more workers than the pool starts with.
+    spec("feature-testing-examples/concurrency_stress_shapes.gos"),
+    // The `std::fs` and `std::env` surface a program can rely on regardless
+    // of host. Registered here so the CI matrix runs them on Linux x64,
+    // Linux arm64, macOS arm64, and Windows x64.
+    spec("feature-testing-examples/stdlib_fs_portable.gos"),
+    spec("feature-testing-examples/stdlib_env_portable.gos"),
+    // The channel contract: rendezvous, capacity, close-then-drain, and
+    // `select` arm order with a non-blocking `default`.
+    spec("feature-testing-examples/channel_semantics_conformance.gos"),
+    spec("feature-testing-examples/keyword_and_default_arguments.gos"),
     spec("examples/concurrency.gos"),
     spec("examples/containers_ordered_demo.gos"),
     spec("examples/containers_seq_demo.gos"),
@@ -1987,4 +2020,25 @@ fn parity_walk(compiled: Tier, group: usize) {
         compiled.label(),
         failures.join("\n\n"),
     );
+}
+
+#[cfg(test)]
+mod evidence_ledger_tests {
+    use super::SPECS;
+
+    /// The stdlib evidence ledger claims that every fixture it cites runs
+    /// on each tier and each host in the CI matrix. That is only true of a
+    /// program registered here, so the two must agree.
+    #[test]
+    fn every_cited_fixture_is_registered_for_tier_parity() {
+        for (item, fixtures) in gossamer_std::manifest::feature_status::ITEM_FIXTURES {
+            for fixture in *fixtures {
+                assert!(
+                    SPECS.iter().any(|spec| spec.path == *fixture),
+                    "{item} cites {fixture}, which is not registered in SPECS, \
+                     so it does not run across tiers or hosts"
+                );
+            }
+        }
+    }
 }

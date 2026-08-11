@@ -307,6 +307,7 @@ pub fn parse_with_autoderive(source: &str, file: FileId) -> (SourceFile, Vec<Par
 /// pointing at the first offending field.
 fn serde_unsupported_field_diags(sf: &SourceFile) -> Vec<ParseDiagnostic> {
     let struct_names: HashMap<String, TyId> = struct_identities(&sf.items);
+    let aliases = alias_targets(&sf.items);
     let decls: HashMap<&str, &StructDecl> = flatten_items(&sf.items)
         .into_iter()
         .filter_map(|item| match &item.kind {
@@ -329,31 +330,57 @@ fn serde_unsupported_field_diags(sf: &SourceFile) -> Vec<ParseDiagnostic> {
         })
         .collect();
 
+    // The rewriter maps a written spelling onto the symbol its synthesized
+    // functions carry - through a module path, an import, or an alias. Asking
+    // the same index here is what keeps the two from disagreeing: a spelling
+    // the rewriter can resolve is never reported, and one it cannot is never
+    // left to surface as the mangled name.
+    let symbols = serde_symbol_index(sf);
+    let resolved = |written: &str| -> String {
+        symbols
+            .get(written)
+            .cloned()
+            .unwrap_or_else(|| written.to_string())
+    };
+
     let mut diags = Vec::new();
     let mut reported: HashSet<String> = HashSet::new();
-    for (op, ty_name) in collect_serde_turbofish_calls(sf) {
-        if reported.contains(&ty_name) || synthesized.contains(ty_name.as_str()) {
+    for (op, ty_name, call_span) in collect_serde_turbofish_calls(sf) {
+        let symbol = resolved(&ty_name);
+        if reported.contains(&ty_name) || synthesized.contains(symbol.as_str()) {
             continue;
         }
-        let Some(decl) = decls.get(ty_name.as_str()) else {
+        let Some(decl) = decls.get(symbol.as_str()).or_else(|| decls.get(ty_name.as_str())) else {
+            // No concrete struct behind the spelling. Naming which shape it is
+            // beats the alternative, which is the absent synthesized function
+            // surfacing as an internal name the user never wrote.
+            reported.insert(ty_name.clone());
+            diags.push(ParseDiagnostic::new(
+                crate::ParseError::SerdeUnsupportedTarget {
+                    ty: ty_name,
+                    op,
+                    reason: refusal_for(sf, &symbol),
+                },
+                call_span,
+            ));
             continue;
         };
         let offending = match &decl.body {
             StructBody::Named(fields) => fields.iter().find_map(|f| {
-                FieldKind::from_type(&f.ty, &struct_names)
+                FieldKind::from_type(&f.ty, &struct_names, &aliases)
                     .is_none()
                     .then(|| (f.name.name.clone(), ty_to_string(&f.ty), f.ty.span))
             }),
             StructBody::Tuple(fields) => fields.iter().enumerate().find_map(|(i, f)| {
-                FieldKind::from_type(&f.ty, &struct_names)
+                FieldKind::from_type(&f.ty, &struct_names, &aliases)
                     .is_none()
                     .then(|| (i.to_string(), ty_to_string(&f.ty), f.ty.span))
             }),
             StructBody::Unit => None,
         };
-        if let Some((field, field_ty, span)) = offending {
-            reported.insert(ty_name.clone());
-            diags.push(ParseDiagnostic::new(
+        reported.insert(ty_name.clone());
+        match offending {
+            Some((field, field_ty, span)) => diags.push(ParseDiagnostic::new(
                 crate::ParseError::SerdeUnserializableField {
                     ty: ty_name,
                     field,
@@ -361,22 +388,54 @@ fn serde_unsupported_field_diags(sf: &SourceFile) -> Vec<ParseDiagnostic> {
                     op,
                 },
                 span,
-            ));
+            )),
+            // Every field classified, yet no function was synthesized. The
+            // shape is unattributable to one field, so the report says only
+            // what is certain rather than pointing somewhere arbitrary.
+            None => diags.push(ParseDiagnostic::new(
+                crate::ParseError::SerdeUnsupportedTarget {
+                    ty: ty_name,
+                    op,
+                    reason: SerdeTargetRefusal::Unsupported,
+                },
+                call_span,
+            )),
         }
     }
     diags
 }
 
+/// Which shape a serde turbofish target is, once it is known that no
+/// synthesized codec exists for it.
+fn refusal_for(sf: &SourceFile, symbol: &str) -> SerdeTargetRefusal {
+    for (module, item) in flatten_items_with_modules(&sf.items) {
+        let (name, generic, is_enum) = match &item.kind {
+            ItemKind::Struct(decl) => (&decl.name.name, !decl.generics.params.is_empty(), false),
+            ItemKind::Enum(decl) => (&decl.name.name, !decl.generics.params.is_empty(), true),
+            _ => continue,
+        };
+        if TyId::new(&module, name).symbol != symbol && name != symbol {
+            continue;
+        }
+        return match (is_enum, generic) {
+            (true, _) => SerdeTargetRefusal::Enum,
+            (false, true) => SerdeTargetRefusal::Generic,
+            (false, false) => SerdeTargetRefusal::Unsupported,
+        };
+    }
+    SerdeTargetRefusal::NotAStruct
+}
+
 /// Collects `(op, type_name)` for every serde turbofish call in `sf`
 /// (`to_json::<T>` / `from_json::<T>` and the toml/yaml forms, bare or
 /// format-module-qualified), on the un-mangled AST.
-fn collect_serde_turbofish_calls(sf: &SourceFile) -> Vec<(String, String)> {
+fn collect_serde_turbofish_calls(sf: &SourceFile) -> Vec<(String, String, Span)> {
     use gossamer_ast::Visitor;
     use gossamer_ast::expr::{Expr, ExprKind};
     use gossamer_ast::visitor::walk_expr;
 
     struct Collector {
-        calls: Vec<(String, String)>,
+        calls: Vec<(String, String, Span)>,
     }
     impl Visitor for Collector {
         fn visit_expr(&mut self, expr: &Expr) {
@@ -418,8 +477,11 @@ fn collect_serde_turbofish_calls(sf: &SourceFile) -> Vec<(String, String)> {
             let Some(type_seg) = tp.segments.last() else {
                 return;
             };
-            self.calls
-                .push((seg.name.name.clone(), type_seg.name.name.clone()));
+            self.calls.push((
+                seg.name.name.clone(),
+                type_seg.name.name.clone(),
+                callee.span,
+            ));
         }
     }
 

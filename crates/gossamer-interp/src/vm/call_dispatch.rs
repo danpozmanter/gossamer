@@ -436,7 +436,7 @@ impl Vm {
         let struct_shape_handles = self.struct_shape_handles.borrow().clone();
         let jit_eager_names = Arc::clone(&self.jit_eager_names.borrow());
         let jit_cache_key = self.jit_cache_key.borrow().clone();
-        crate::vm::goroutine::pool().spawn(Box::new(move || {
+        crate::vm::goroutine::GoroutinePool::spawn(crate::vm::goroutine::pool(), Box::new(move || {
             thread_local! {
                 static THREAD_VM: std::cell::OnceCell<std::cell::RefCell<Option<Vm>>> =
                     const { std::cell::OnceCell::new() };
@@ -515,7 +515,9 @@ impl Vm {
                 }
                 Err(other) => Value::variant("Err", vec![Value::String(format!("{other}").into())]),
             };
-            worker_channel.send(outcome);
+            // This send delivers the join handle's result on a channel the
+            // joiner holds, so it can never be the last thing running.
+            let _delivered = worker_channel.send(outcome);
         });
         Ok(Value::Channel(channel))
     }

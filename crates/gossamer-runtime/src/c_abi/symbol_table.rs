@@ -2479,6 +2479,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_len_is_zero as *const u8,
         ),
         (
+            "gos_rt_program_start",
+            crate::c_abi::gos_rt_program_start as *const u8,
+        ),
+        (
             "gos_rt_main_exit_code",
             crate::c_abi::gos_rt_main_exit_code as *const u8,
         ),

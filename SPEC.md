@@ -147,7 +147,8 @@ Identifiers are case-sensitive. `_` alone is the "discard" pattern and
 is not a binding.
 
 Visibility follows Rust: items are private by default. Public items use
-the `pub` keyword. Gossamer does not use Go's capitalization-based
+the `pub` keyword, and `pub(package)` restricts an item to the declaring
+package (§6.3a). Gossamer does not use Go's capitalization-based
 visibility rule.
 
 ### 2.4 Keywords
@@ -444,6 +445,32 @@ not currently expose an escaping sub-slice value. Sequence iteration yields
 managed element values rather than element references; the iterator retains
 its source state and detects structural mutation.
 
+### 3.3a Slicing
+
+A range in index position takes a subsequence:
+
+```
+let xs = #[1, 2, 3, 4, 5]
+xs[1..3]     // #[2, 3]
+xs[..2]      // #[1, 2]
+xs[3..]      // #[4, 5]
+xs[..]       // the whole sequence
+xs[1..=3]    // #[2, 3, 4]
+```
+
+Arrays, slices, and `Vec` all accept it, and so does `String`.
+
+**Bounds clamp; they do not panic.** `xs[1..99]` yields the elements that
+exist. This is deliberate and differs from element indexing, which panics:
+an out-of-range single index has no sensible answer, while an out-of-range
+range has exactly one - the part that overlaps. It is also the rule
+`substring` already follows, and slicing a `String` *is* `substring`.
+
+**A `String` slice takes byte offsets** (§3.2), the same index space
+`substring`, `byte_at`, and `as_bytes` use, and snaps outward to codepoint
+boundaries so the result is always valid text. `s.len()` and `s[i]` count
+Unicode scalars, so do not mix the two spellings on non-ASCII text.
+
 ### 3.4 Pointers and references
 
 - `T` is a value. Primitive values copy directly. Owned arrays and Vec values
@@ -529,6 +556,54 @@ distinguish shared from exclusive environment access, so `Fn` and `FnMut`
 collapse into essentially the same constraint; the distinction is retained
 for readability and forward compatibility.
 
+#### 3.5.1 Keyword arguments and parameter defaults
+
+```
+Param       = [ "comptime" ] Pattern ":" Type [ "=" ConstExpr ]
+CallArg     = [ Ident "=" ] Expr
+```
+
+A call may name the parameter each argument fills, and a parameter may
+declare a constant default.
+
+```gossamer
+fn volume(width: i64, height: i64 = 2, depth: i64 = 3) -> i64 { .. }
+
+volume(2)                              // 2, 2, 3
+volume(depth = 4, width = 2, height = 3)  // 2, 3, 4
+volume(2, depth = 10)                   // 2, 2, 10
+```
+
+Both are spellings at the call site. Between name resolution and type
+checking every call is rewritten into the order its callee declares:
+named arguments are moved to their parameter's position and a parameter
+the call omits has its default spliced in. The calling convention is
+unchanged, and the bytecode VM, the JIT, and native builds compile the
+identical positional call.
+
+An argument label binds with `=`, not `:`; `:` is the annotation and
+struct-literal spelling, and `==` is a single token, so an equality test
+in argument position is never read as a label.
+
+A name must name a parameter of the callee and may be given once.
+Positional arguments precede named ones: once a name is used, the
+positions after it are no longer in written order, so every later
+argument needs a name too. Violations are `GR0013`.
+
+A default must be a literal - integer, float, string, char, byte, or bool
+- optionally negated. It is spliced into every call that omits the
+parameter, so an expression needing resolution at each of those sites is
+rejected with `GR0014`. Each call site receives its own copy, so no two
+calls share a default value.
+
+Methods and associated functions accept both forms. A method call is
+rewritten before its receiver's type is known, so the rewrite must be
+independent of which type the receiver has: when several types declare a
+method of that name, the call is rewritten only if they agree on
+parameter names and defaults, and is otherwise reported as `GR0013`
+rather than resolved by guessing. Passing the arguments positionally is
+always accepted.
+
 ### 3.6 Structs
 
 ```
@@ -564,12 +639,18 @@ struct. Empty named structs use `struct Empty {}` and empty tuple structs use
 with `..base` and override individual fields:
 
 ```
-Struct construction uses braced literals: `Point { x: 10.0, y: p1.y }`.
+let origin = Point { x: 0.0, y: 0.0 }
+let shifted = Point { x: 10.0, ..origin }
 ```
 
 Explicit fields win over the base for the same name; exactly one `..base`
 spread is allowed. Fields copied from the base share its heap children and
 are retained, so the base stays usable after the update.
+
+A spread references every field the literal does not name, so the whole
+struct has to be visible here (§6.3a): a struct with any private field
+cannot be updated from outside the module that declares it, exactly as it
+cannot be constructed there.
 
 ### 3.7 Enums (sum types)
 
@@ -796,8 +877,45 @@ pointer, but it is not spelled `dyn`.
 ### 3.12 Type aliases
 
 ```
-TypeAlias = "type" Ident [ Generics ] "=" Type
+TypeAlias = "type" Ident [ Generics ] "=" [ "new" ] Type
 ```
+
+Without `new` the alias is **transparent**: the name is a second spelling
+of the target and substitutes for it everywhere, so the two are the same
+type and interchange freely. Aliases take parameters
+(`type Pair<A> = (A, A)`). An alias that reaches itself is rejected
+(GT0024).
+
+```
+type Id = i64
+type Pair<A> = (A, A)
+```
+
+With `new` the alias is **opaque**: it declares a type of its own over an
+unchanged representation. `type UserId = new i64` makes `UserId` and
+`i64` distinct, as are two opaque aliases of the same target. The
+distinction exists only in the checker - the runtime value is the
+representation, so an opaque alias adds no layout, no indirection, and no
+cost on any tier.
+
+```
+type UserId = new i64
+```
+
+An opaque alias converts to and from its own representation with
+`.into()`, in both directions and without work. Every other pair requires
+an `impl From` written for it; reaching for `.into()` without one is
+GT0066.
+
+An opaque alias inherits equality, ordering, hashing, and formatting from
+its representation, which is what lets it be a `Map` or `Set` key, sort,
+and print. It inherits nothing else: the representation's methods
+(GT0002) and operators (GT0003) are not part of it, and are reached by
+converting or by writing an `impl` on the alias. Inherent and operator
+`impl` blocks apply to an opaque alias as to any other type.
+
+A struct field typed by either form of alias serializes as the
+representation and decodes back to the alias (§10.3).
 
 ### 3.13 Derivable traits
 
@@ -822,6 +940,12 @@ and `Ord`:
   derivable default).
 - `Debug` - `{:?}` / `{}` render `Name { field: value, … }`.
 
+A plain struct or enum whose fields all render gets a `fmt` with no derive at
+all, including one recursive through `Box`. A **generic** type does not: what
+its fields render as depends on the arguments each instantiation supplies, so
+the declaration asks for the `fmt` with `#[derive(Debug)]`. Formatting a
+generic type without one is `GT0062`, on every tier.
+
 `Clone` is **not** derivable (`GT0025`): structs copy by value, so `let b = a`
 copies and `a.clone()` is a universal builtin. `Hash`, `Copy`, `Display`, and
 serde are likewise automatic; `From` / operators are written `impl Trait for T`.
@@ -831,8 +955,8 @@ so they compile and run identically on every tier. Fields may be primitives,
 `String`, `[T]`, **nested structs** (which derive the same traits), and the
 struct may be **generic** (`struct Wrap<T> { … }`).
 
-`#[derive(...)]` also works on **enums**, including variants with
-struct payloads. Tuple (`Circle(f64)`), unit (`Point`), and
+`#[derive(...)]` also works on **enums**, generic ones included, and on
+variants with struct payloads. Tuple (`Circle(f64)`), unit (`Point`), and
 struct-payload (`Rect { w, h }`) variants may be mixed freely:
 `Clone`, `PartialEq` / `Eq`, `Debug` (`Rect { w: 2, h: 3 }`), and
 `Default` (which selects the `#[default]` unit variant) all derive and
@@ -995,6 +1119,13 @@ while the whole chain holds.
 implementing `Iterator<Item = T>` (see §10.4 on stdlib traits) can be
 ranged over. The built-in ranges `a..b` and `a..=b` implement
 `Iterator`.
+
+A `Result` or an `Option` is not a sequence, and a `for` over one is
+rejected (`GT0067`). Each holds at most one value and carries no element
+type, so such a loop would bind nothing and run zero times while whatever
+its body read off the binding still type-checked. Take the value out
+first - with `?`, a `match`, `if let Some(v) = ..`, or `unwrap_or(..)` -
+and iterate that.
 
 #### `break`, `continue`
 
@@ -1381,7 +1512,45 @@ mod vector {
 ```
 
 Items within the same module reference each other by bare name. Items
-in a sibling or nested module use a path: `math::vector::Vec3`.
+in a sibling or nested module use a path: `math::vector::Vec3`, or are
+brought into scope with a `use` (§6.6). A module's items are never in
+scope on their own; naming one without a path or import is `GR0011`.
+
+A module nested inside another is a **module descendant**:
+`math::vector` is a descendant of `math`. Descendancy runs one way and
+is what §6.3a's default visibility is written against.
+
+### 6.3a Visibility
+
+Three visibilities, declared per item:
+
+| Annotation | Reachable from |
+|---|---|
+| none | the declaring module and its descendants |
+| `pub(package)` | every module of the declaring package |
+| `pub` | anything that depends on the package |
+
+Visibility flows inward: a descendant reaches its ancestors' private
+items, and an ancestor does not reach its descendants'. A `pub` item
+inside a private module stays unreachable from outside that module, and
+the module is what the diagnostic names.
+
+Every named item carries a visibility - `fn`, `struct`, `enum`, `trait`,
+`const`, `static`, `type`, and `mod`. So do **methods**, declared inside
+the `impl` block, and **struct fields**, declared on the field. A `pub`
+type may keep private methods (`GT0063`) and private fields (`GT0065`);
+the type is API while its representation need not be. A struct with a
+private field cannot be constructed from outside the module that
+declares it, because naming the field in a literal is a reference to it.
+
+A reference to an item the current module may not reach is `GR0008`.
+Importing does not widen anything: a `use` is a spelling convenience,
+and visibility is decided by where the name is used, not by where the
+`use` was written.
+
+Rust's other restriction forms are rejected with `GP0038`:
+`pub(crate)`, `pub(super)`, and `pub(in path)` all name `pub(package)`
+instead. There is one restricted spelling, not four.
 
 ### 6.4 Projects (unit of distribution)
 
@@ -1822,6 +1991,34 @@ Channel operations (non-`select`):
 
 Channels are many-to-many. Close only once.
 
+**Deadlock is reported, not waited on.** When a channel operation would
+block and **no goroutine is left running**, the caller is the whole program:
+a channel that can hand nothing over will never be able to, however long it
+waits. The runtime reports it and stops the program:
+
+```text
+error: runtime error: error[GX0005]: panic: all goroutines are asleep - deadlock! (send can never complete)
+```
+
+The exit code is 101, matching a panic. A deadlock is a property of the whole
+program rather than of the goroutine that notices it, so the report ends the
+program even when a spawned goroutine is the one that detects it - unlike an
+ordinary panic, which ends only its own goroutine (§8.1).
+
+The check is deliberately one-sided: it reports only what it can establish
+without racing a goroutine that is still free to act. A program whose
+goroutines are all blocked *on each other* is not reported and waits, as it
+did before - the last goroutine to park is itself running at the moment it
+would check, so "no goroutine left running" is never true then. Ending a
+working program over a state still being written would be far worse than
+missing a case, so the rule stays on the side that cannot do that.
+
+A pending handoff is never a deadlock either: an unbuffered send has the
+sender waiting for its value to be taken and the receiver waiting for a value
+to arrive, and that pair is progress. Nor is a goroutine waiting on a timer,
+a socket, or a blocking call - each waits on something outside the goroutine
+graph.
+
 `Sender::send` copies primitive values and clones a named Vec value, including
 nested Vec storage, and marks all managed children shared. Scalar-only inline
 aggregates are copied. GT0055 rejects channel values whose inline aggregate
@@ -1854,10 +2051,17 @@ order. A panic that is not recovered inside the goroutine ends that goroutine
 (its defers still run as the stack unwinds); a panic on the main goroutine
 crashes the process.
 
-### 8.5 `recover`
+### 8.5 Recovering from a panic
 
-`std::panic::catch_unwind(|| { ... })` returns `Result<T, PanicPayload>`,
-catching panics inside the closure. This replaces Go's `recover()`.
+There is no `recover`, and no user-callable `catch_unwind`. A panic
+marks a violated invariant, and the failures a caller is meant to handle
+travel as `Result` (§9).
+
+What a program can do with a panic is contain it and observe it. `go
+expr` and `spawn(f)` are the containment boundary: a panic ends that
+goroutine alone, and `spawn`'s `handle.join() -> Result<T, String>`
+delivers the message to the joiner. `runtime::set_panic_hook` observes
+one before it unwinds.
 
 ### 8.6 `unsafe`
 
@@ -1903,15 +2107,45 @@ No exceptions, no `throw`, no `try/catch` in user code (the `?`
 operator handles control flow).
 
 **`Result` is `#[must_use]` by default.** A `Result<T, E>` expression
-used as a statement (its value discarded) is a compile error unless
-the type is explicitly ignored with `let _ = expr` or the function is
-annotated `#[allow(unused_result)]`. Dropping an error on the floor
-must be an intentional act. The same treatment applies to `Option<T>`
-only when the function producing it is itself marked `#[must_use]`.
+whose value is discarded is a compile error (`GT0007`). Dropping an
+error on the floor must be an intentional act.
 
-> **Implementation status (pre-v1):** The `must_use` lint for `Result`
-> is not yet emitted. Silently-dropped `Result` values compile without
-> warning today; the lint will be added before v1.0.0.
+A value is discarded when it is used as a statement, and equally when
+it is the value of a construct whose own value is discarded: the tail
+expression of a block, either branch of an `if`, any arm of a `match`,
+and the body of a `for`, `while`, or `loop`. An else-less `if` is
+typed `()` while its branch keeps the branch's own type, so
+`if ready() { flush() }` discards `flush()`'s `Result` and is
+reported at the call.
+
+Two forms discard deliberately and are accepted:
+
+- `let _ = expr` - acknowledges the value at the call site.
+- `#[allow(unused_result)]` on an item, or `#![allow(unused_result)]`
+  on a source file, covering everything inside it.
+
+Consuming the value is not discarding it: `?`, a `match` on the
+`Result`, binding it with `let`, and passing it to another call all
+satisfy the rule.
+
+**`#[must_use]` on user declarations.** A `fn`, `struct`, or `enum`
+may carry `#[must_use]`. Discarding the return of such a function, or
+a value of such a type, is `GT0064` under the same rules and the same
+two escape forms. This is how a type other than `Result` - a guard, a
+builder, a handle whose whole point is the value - opts into the same
+guarantee.
+
+```gossamer
+#[must_use]
+struct Guard { held: bool }
+
+fn acquire() -> Guard { Guard { held: true } }
+
+fn main() {
+    acquire()              // GT0064: unused value
+    let _guard = acquire() // held for the scope
+}
+```
 
 ---
 
@@ -1937,29 +2171,72 @@ This is an outline; full API docs ship with the first implementation.
 - `copy<R: Reader, W: Writer>(r: &mut R, w: &mut W) -> Result<u64, Error>`
   (static dispatch via generic bounds; there is no `dyn`, §3.11).
 
-### 10.3 `std::os`
+### 10.3 Filesystem, paths, processes, environment
 
-- `os::read_file(path: String) -> Result<Vec<u8>, Error>`.
-- `os::write_file(path: String, bytes: &Vec<u8>) -> Result<(), Error>`.
-- `os::open(path: String) -> Result<File, Error>`.
-- `File` with `read`, `write`, `read_to_end`, `read_to_string`, `close`.
-- `os::args() -> Vec<String>`.
-- `os::env(key: String) -> Option<String>`.
-- `os::exit(code: i32) -> !`.
+Four modules, each with one job. They are separate imports; importing
+one does not bring in its siblings.
+
+**`std::fs`** - files and directories. Types `File`, `DirInfo`,
+`OpenOptions`. Reading and writing: `read`, `read_to_string`, `write`,
+`open`, `create`, `copy`, `rename`. Directories: `read_dir`, `walk_dir`,
+`create_dir`, `create_dir_all`, `remove_file`, `remove_dir`,
+`remove_dir_all`. Interrogation: `exists`, `is_file`, `is_dir`,
+`is_symlink`, `file_size`, `metadata`, `canonicalize`. Temporaries:
+`temp_dir(prefix)`, `temp_file(prefix)` create one; `env::temp_dir()` is
+the system directory they live in.
+
+An entry from `read_dir` / `walk_dir` already carries `is_file`,
+`is_dir`, `is_symlink`, `size`, `path`, and `name`. Read those fields
+rather than re-querying the path: the second lookup is slower and can
+disagree with the first if the directory changed underneath.
+
+**`std::path`** - path strings, without touching the filesystem.
+`join`, `split`, `components`, `parent`, `file_name`, `file_stem`,
+`extension`, `is_absolute`, `normalize`, `starts_with`, `prefixes`,
+`unique_prefixes`, `matches`, `glob`, `walk`. Separator handling is
+per-platform, so a path built with `join` is correct on every supported
+target. `file_name`, `file_stem`, and `extension` return `Option<String>`
+because not every path has one.
+
+**`std::process`** - running other programs. `run(prog, args)` executes
+directly with no shell and returns `Result<{stdout, stderr, code},
+String>`. `spawn_piped(prog, args) -> Result<Child, errors::Error>`
+drives an interactive child through `write_stdin`, `close_stdin`,
+`read_line`, `read_stdout`, `wait`, and `kill`. Also `spawn`,
+`pipeline_run`, `wait_timeout`, `kill_group`, `signal`, `id`, `exit`,
+and `abort`. There is no `Command` builder; that shape belongs to the
+Rust bindings, not to Gossamer.
+
+**`std::env`** - the process environment. `args`, `program_name`, `var`,
+`set_var`, `unset_var`, `current_dir`, `set_current_dir`, `home_dir`,
+`temp_dir`.
+
+**`std::os`** holds only what is genuinely about the host and fits none
+of the four: `family` and `arch`, plus the `std::os::signal` and
+`std::os::user` submodules. `std::os::exec` is a compatibility alias for
+`std::process` and is Deprecated; new code writes `std::process`.
+
+Fallible operations return `Result` (§9), so a discarded call is a
+compile error rather than a silently ignored failure.
 
 ### 10.4 `std::iter`
 
 **One obvious way.** Transformations (`map`, `filter`, `fold`,
-`reduce`, `partition`, …) live as **free functions in `std::iter`
-only**. `Vec<T>`, `Map<K, V>`, `Set<T>`, `BTreeMap<K, V>`,
-`Receiver<T>`, and friends do **not** carry `.map(…)` / `.filter(…)`
-/ `.fold(…)` methods. F#'s `Seq`/`List`/`Array` module convention
-applies: data flows through `|>` into free functions; the surface
-stays small and the call shape is uniform. The mutating helpers
-that don't compose with `|>` (`xs.push`, `xs.pop`, `xs.sort`,
-`xs.swap`, `m.inc`, `m.or_insert`, etc.) remain methods because
-they operate by side-effect on the receiver - there is no chain
-to fit them into.
+`sum`, `min`, `max`, `count`, `any`, `all`, `find`, `position`,
+`take`, `step_by`, …) are **methods on sequences**, and ranges carry
+them too: `(1..5).map(|i| i * i).sum()`, `xs.filter(p).count()`. No
+import is needed. Mutating helpers (`xs.push`, `xs.pop`, `xs.sort`,
+`xs.swap`, `m.inc`, `m.or_insert`) are methods for the same reason -
+they operate by side-effect on the receiver.
+
+The same transformations also exist as **data-last free functions in
+`std::iter`** (§4.6), which is the shape `|>` pipelines want:
+`0..n |> iter::sum`. The two spellings name one implementation; the
+method form is the default and the free form exists for piping.
+
+Arrays and slices reach the eager combinators through `iter()` first;
+`Vec` carries them directly. `%i` in the REPL reports each type's real
+method surface.
 
 The iterator protocol is one trait. User code declares it as
 needed (or any name; the for-loop dispatch only checks for a
@@ -2063,7 +2340,7 @@ The `?` operator (§4.5) remains the right tool for short-circuit
 propagation; `result::map` / `result::and_then` are for in-pipeline
 transformation when the chain doesn't return from the enclosing fn.
 
-### 10.5 `std::strings` (alias `std::str`)
+### 10.5 `std::strings`
 
 - Split, join, trim, contains, replace, find, lines, chars, bytes,
   to_lowercase, to_uppercase, starts_with, ends_with, repeat.
@@ -2117,9 +2394,9 @@ until cancellation, blocking behavior, and platform differences have a Stable
 contract.
 
 HTTP/3 remains Experimental under the historical `std::http_h3` spelling.
-There is intentionally no `std::http::h3` alias in 0.27: adding a second
-public name before streaming and resource-limit semantics are complete would
-create a compatibility promise without improving fidelity.
+There is intentionally no `std::http::h3` alias: a second public name before
+streaming and resource-limit semantics are complete would create a
+compatibility promise without improving fidelity.
 
 ### 10.11 `std::encoding::json`, `std::encoding::csv`
 
@@ -2143,20 +2420,34 @@ create a compatibility promise without improving fidelity.
 - Serialization is automatic (every struct gets `to_json::<T>` /
   `from_json::<T>` using the source field names verbatim);
   `#[derive(Serialize, Deserialize)]` is rejected (`GT0025`).
+- The turbofish may spell its target through a type alias of either form
+  (§3.12); the codec is the target struct's, and an opaque alias
+  serializes as its representation.
+- The typed surface covers a concrete struct whose fields it can
+  classify. A generic struct, an enum, or a name that is not a struct
+  has no codec and is reported as `GP0039`, and a struct with one
+  unclassifiable field as `GP0022`; read those shapes with `json::parse`
+  instead, or hand-write the function.
 
-### 10.12 `std::thread`, `std::channel`
+### 10.12 `std::thread`, `std::sync::channel`
 
 - `thread::yield_now()` and `thread::num_cpus()` expose OS-thread scheduling
   hints and CPU availability only. There is no user-facing `thread::spawn`.
 - `go expr` and `spawn(f)` create Gossamer goroutines; channels coordinate
-  goroutines with `channel<T>()` and `channel<T>(cap)`.
+  goroutines with `channel()` and `channel(cap)` from `std::sync`. There is
+  no `std::channel` module path.
 - Runtime workers, blocking pools, and protocol threads are implementation
   details, not a language-level thread API.
 
 ### 10.13 `std::panic`
 
 - `panic!(msg: String)`.
-- `catch_unwind(f: impl FnOnce() -> T) -> Result<T, PanicPayload>`.
+- A panic is goroutine-scoped: a spawned goroutine's panic ends that
+  goroutine alone, and a main-goroutine panic is fatal (exit 101).
+  `spawn(f)` reports it through `handle.join() -> Result<T, String>`.
+- `runtime::set_panic_hook` observes a panic before it unwinds. There is
+  no `catch_unwind`: a panic marks an invariant violation, and `Result`
+  carries the failures a caller is meant to handle (§9).
 
 ---
 
@@ -2215,9 +2506,7 @@ LLVM is the canonical native backend; the Cranelift code path is
 reserved for the in-process JIT inside `gossamer-interp` and is not
 reachable from `gos build`. Any MIR shape the LLVM lowerer cannot
 handle is a hard `gos build` failure rather than a silent per-function
-Cranelift fallback. `--allow-llvm-fallback` is an explicit Experimental
-diagnostic opt-out; an artifact produced with it is not a Stable
-contract-conforming release artifact. The register-based bytecode VM is the sole `gos
+Cranelift fallback. The register-based bytecode VM is the sole `gos
 run` / `gos test` engine and lowers every construct natively; there is
 no tree-walker interpreter. VM correctness is pinned by the tier-parity
 suite and the VM-vs-LLVM-AOT differential.
@@ -2382,9 +2671,12 @@ during compilation and folded to a literal, so the bytecode VM, the
 Cranelift JIT, and the LLVM AOT backend all compile the identical
 constant. A region must read only compile-time-known values (literals,
 consts, other `comptime fn` results) and evaluate to a scalar or string;
-otherwise it is a compile error. `typeInfo::<T>()` reflects a struct's
-fields (`[(name, type)]`) at compile time so a `comptime fn` can
-generate per-type code, and the `regex!` / `sql!` macros validate their
+otherwise it is a compile error. `typeInfo::<T>()` reflects a type's shape
+at compile time as `[(String, String)]` - a named struct's fields, a tuple
+struct's positions, or an enum's variants and payloads, with the arguments
+substituted in for a generic instantiation - so a `comptime fn` can
+generate per-type code. A type with nothing to reflect is `GR0012`. The
+`regex!` / `sql!` macros validate their
 argument at build time, failing the build on malformed input. See the
 [`comptime` language page](docs_src/language/comptime.md).
 
@@ -2619,6 +2911,72 @@ that needs to materialize a 2027 iterator uses `iter::collect`.
   selected release backend; it must not silently substitute an interpreter or
   alternate execution tier.
 
+### 17.5 Declined features
+
+The features below are **permanently declined**, not planned or deferred.
+They are recorded here so their absence reads as a decision rather than a
+gap, and so a proposal to add one starts from the stated reason. Each is
+rejected at parse or check time with a diagnostic naming the alternative.
+
+Power, but not complexity: a feature earns its place by making correct
+code the shortest code, without adding a second spelling of an existing
+idiom, a new type-system theory, or machinery the reader cannot see.
+
+**Concurrency and control flow**
+
+- **`async` / `await`.** Function coloring, `Send`/`'static`/`Pin`
+  obligations, and runtime fragmentation are the most-documented regret
+  surface in both Rust and Python. Goroutines and channels (§8) cover the
+  same ground with no colored functions.
+- **`panic` / `recover` at function level.** A panic is a violated
+  invariant; recoverable failure is `Result` (§9). Containment is the
+  goroutine boundary (§8.5).
+- **Exceptions, `throw` / `try` / `catch`.** Same reason, plus invisible
+  control flow at every call site.
+
+**Types and the type system**
+
+- **Lifetimes, a borrow checker, and the `move` keyword.** The most-cited
+  Rust learning obstacle. Deterministic reference counting plus `arena { }`
+  is the memory model (§7); the lexical `&mut` check (§7.5) is the
+  intended ceiling.
+- **`dyn Trait` and trait objects.** Object-safety rules, vtable variance,
+  and years of repair work on return-position trait methods. Enums cover
+  the heterogeneous cases (§3.11); the `Fn` callable stays the one carved-out
+  fat pointer, because callbacks genuinely need it.
+- **GATs, higher-kinded types, specialization, blanket impls.** This is the
+  machinery behind "the language is getting too complex". Associated types
+  without GATs (§3.8) is the stopping point.
+- **General union types.** Full unions wreck inference; `Result<T, E>` plus
+  exhaustive `match` is the shape that pays.
+- **Full units of measure.** Admired for over a decade and copied by no
+  one. The opaque-alias subset captures the real-world wins.
+- **`i128` / `u128`.** Rejected with `GT0014`; `math::big` covers the need.
+- **Nil, zero-value initialization, untyped error interfaces, inheritance.**
+  These are the recurring complaints about the languages Gossamer replaces.
+
+**Metaprogramming**
+
+- **User macros, procedural or declarative.** `comptime` plus `codegen!`
+  (§7 of the skill card, `lang::comptime`) is the metaprogramming bet: no
+  hygiene problem, no separate codegen language. The macro set is fixed
+  (§14).
+- **Type providers.** Compile-time network dependencies break hermetic
+  builds. `comptime` over checked-in files is the deterministic subset.
+
+**Syntax**
+
+- **Comprehensions.** A second spelling of `filter().map()`.
+- **Computation expressions / generic monad syntax.** `?`, goroutines, and
+  `|>` cover the concrete cases without the abstraction.
+- **Scope functions (`let` / `run` / `with` / `apply` / `also`).** Five
+  interchangeable spellings with documented team confusion. `|> $.method`
+  is one mechanism with an explicit receiver (§4.6).
+- **Context parameters and implicit receivers.** Implicitness is the cost
+  center.
+- **Push-style function iterators.** Pull-style `next()` is strictly
+  easier to reason about and to stop early (§10.4).
+
 ---
 
 ## Appendix A - Differences from Go
@@ -2670,8 +3028,9 @@ that needs to materialize a 2027 iterator uses `iter::collect`.
 - `iota` (use `enum` discriminants).
 - Embedded structs with method promotion (use explicit delegation or
   traits with default methods).
-- `panic`/`recover` at function level (use `catch_unwind` at closure
-  level).
+- `panic`/`recover` at function level. A panic is contained by the
+  goroutine that raised it, and `spawn(f).join()` reports it as an
+  `Err` (§8.5); recoverable failure is `Result` (§9).
 - Init functions with ordering by import - replaced by explicit
   `fn init()` called in dependency-topological order.
 - Untyped constants with arbitrary precision - literal constants have

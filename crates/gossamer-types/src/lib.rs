@@ -100,18 +100,137 @@ pub fn is_mutating_method_name(name: &str) -> bool {
     )
 }
 
-/// Rewrites `Range<T>` to `Iterator<T>` for the lowering pipeline.
+/// Rewrites `Range<T>` to `Iterator<T>` and erases opaque nominal
+/// aliases to their representation for the lowering pipeline.
 ///
 /// `Range` exists so a range reports the type the reader wrote. The two
 /// share one representation and one method surface, and only `Iterator`
 /// has lowering behind it, so the boundary into HIR maps ranges onto it.
+///
+/// A `type Name = new Repr` alias is likewise a checker-only distinction
+/// over an identical runtime value, so it erases here and no backend ever
+/// sees one. The erasure is structural because a nominal alias can sit
+/// anywhere a type can - `Vec<UserId>`, `Map<UserId, String>`, a function
+/// signature - and every one of those positions must reach lowering as the
+/// representation.
 #[must_use]
 pub fn normalize_for_lowering(tcx: &mut TyCtxt, ty: Ty) -> Ty {
-    match tcx.kind(ty) {
+    let ty = match tcx.kind(ty) {
         Some(TyKind::Range(item)) => {
             let item = *item;
             tcx.iterator_ty(item)
         }
         _ => ty,
+    };
+    erase_nominal(tcx, ty)
+}
+
+/// Replaces every [`TyKind::Nominal`] in `ty` with its representation,
+/// rebuilding the containers around it. Returns `ty` untouched when it
+/// holds no nominal alias, so the common case interns nothing.
+#[must_use]
+pub fn erase_nominal(tcx: &mut TyCtxt, ty: Ty) -> Ty {
+    let Some(kind) = tcx.kind(ty).cloned() else {
+        return ty;
+    };
+    match kind {
+        TyKind::Nominal { repr, .. } => erase_nominal(tcx, repr),
+        TyKind::Tuple(elems) => {
+            let mapped: Vec<Ty> = elems.iter().map(|e| erase_nominal(tcx, *e)).collect();
+            if mapped == elems {
+                ty
+            } else {
+                tcx.intern(TyKind::Tuple(mapped))
+            }
+        }
+        TyKind::Array { elem, len } => {
+            let mapped = erase_nominal(tcx, elem);
+            if mapped == elem {
+                ty
+            } else {
+                tcx.intern(TyKind::Array { elem: mapped, len })
+            }
+        }
+        TyKind::HashMap { key, value } => {
+            let k = erase_nominal(tcx, key);
+            let v = erase_nominal(tcx, value);
+            if k == key && v == value {
+                ty
+            } else {
+                tcx.intern(TyKind::HashMap { key: k, value: v })
+            }
+        }
+        TyKind::Ref { mutability, inner } => {
+            let mapped = erase_nominal(tcx, inner);
+            if mapped == inner {
+                ty
+            } else {
+                tcx.intern(TyKind::Ref {
+                    mutability,
+                    inner: mapped,
+                })
+            }
+        }
+        TyKind::FnPtr(ref sig) | TyKind::FnTrait(ref sig) => {
+            let inputs: Vec<Ty> = sig.inputs.iter().map(|i| erase_nominal(tcx, *i)).collect();
+            let output = erase_nominal(tcx, sig.output);
+            if inputs == sig.inputs && output == sig.output {
+                return ty;
+            }
+            let mapped = FnSig { inputs, output };
+            tcx.intern(if matches!(kind, TyKind::FnPtr(_)) {
+                TyKind::FnPtr(mapped)
+            } else {
+                TyKind::FnTrait(mapped)
+            })
+        }
+        TyKind::Slice(inner)
+        | TyKind::Vec(inner)
+        | TyKind::Iterator(inner)
+        | TyKind::Range(inner)
+        | TyKind::Sender(inner)
+        | TyKind::Receiver(inner)
+        | TyKind::JoinHandle(inner) => {
+            let mapped = erase_nominal(tcx, inner);
+            if mapped == inner {
+                return ty;
+            }
+            tcx.intern(match kind {
+                TyKind::Slice(_) => TyKind::Slice(mapped),
+                TyKind::Vec(_) => TyKind::Vec(mapped),
+                TyKind::Iterator(_) => TyKind::Iterator(mapped),
+                TyKind::Range(_) => TyKind::Range(mapped),
+                TyKind::Sender(_) => TyKind::Sender(mapped),
+                TyKind::Receiver(_) => TyKind::Receiver(mapped),
+                _ => TyKind::JoinHandle(mapped),
+            })
+        }
+        TyKind::Adt { def, substs } => match erase_nominal_substs(tcx, &substs) {
+            Some(mapped) => tcx.intern(TyKind::Adt {
+                def,
+                substs: mapped,
+            }),
+            None => ty,
+        },
+        _ => ty,
     }
+}
+
+/// Erases nominal aliases inside a substitution list, returning `None`
+/// when nothing changed.
+fn erase_nominal_substs(tcx: &mut TyCtxt, substs: &Substs) -> Option<Substs> {
+    let mut changed = false;
+    let args: Vec<GenericArg> = substs
+        .as_slice()
+        .iter()
+        .map(|arg| match arg {
+            GenericArg::Type(t) => {
+                let mapped = erase_nominal(tcx, *t);
+                changed |= mapped != *t;
+                GenericArg::Type(mapped)
+            }
+            other @ GenericArg::Const(_) => other.clone(),
+        })
+        .collect();
+    changed.then(|| Substs::from_args(args))
 }

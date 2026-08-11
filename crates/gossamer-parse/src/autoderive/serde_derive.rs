@@ -8,6 +8,9 @@ pub fn synthesize_serde_impls(parsed: &SourceFile) -> String {
     out.push('\n');
 
     let struct_names: HashMap<String, TyId> = struct_identities(&parsed.items);
+    let aliases = alias_targets(&parsed.items);
+    let opaque = opaque_alias_names(&parsed.items);
+
 
     for (module, item) in flatten_items_with_modules(&parsed.items) {
         let ItemKind::Struct(decl) = &item.kind else {
@@ -22,17 +25,23 @@ pub fn synthesize_serde_impls(parsed: &SourceFile) -> String {
                 let typed: Option<Vec<(String, FieldKind)>> = fields
                     .iter()
                     .map(|f| {
-                        FieldKind::from_type(&f.ty, &struct_names).map(|k| (f.name.name.clone(), k))
+                        FieldKind::from_type(&f.ty, &struct_names, &aliases)
+                            .map(|k| (f.name.name.clone(), k))
                     })
                     .collect();
+                let opaque_fields: HashSet<String> = fields
+                    .iter()
+                    .filter(|f| type_names_opaque_alias(&f.ty, &opaque))
+                    .map(|f| f.name.name.clone())
+                    .collect();
                 if let Some(typed) = typed {
-                    emit_impl(&mut out, &ty, &typed);
+                    emit_impl(&mut out, &ty, &typed, &opaque_fields);
                 }
             }
             StructBody::Tuple(fields) => {
                 let typed: Option<Vec<FieldKind>> = fields
                     .iter()
-                    .map(|f| FieldKind::from_type(&f.ty, &struct_names))
+                    .map(|f| FieldKind::from_type(&f.ty, &struct_names, &aliases))
                     .collect();
                 if let Some(typed) = typed {
                     emit_tuple_impl(&mut out, &ty, &typed);
@@ -104,9 +113,14 @@ fn emit_tuple_from_json(out: &mut String, ty: &TyId, fields: &[FieldKind]) {
     ));
 }
 
-fn emit_impl(out: &mut String, ty: &TyId, fields: &[(String, FieldKind)]) {
+fn emit_impl(
+    out: &mut String,
+    ty: &TyId,
+    fields: &[(String, FieldKind)],
+    opaque: &HashSet<String>,
+) {
     emit_to_json(out, ty, fields);
-    emit_from_json(out, ty, fields);
+    emit_from_json(out, ty, fields, opaque);
     emit_to_toml(out, ty);
     emit_from_toml(out, ty);
     emit_to_yaml(out, ty);
@@ -189,7 +203,12 @@ fn emit_from_yaml(out: &mut String, ty: &TyId) {
     out.push_str("}\n\n");
 }
 
-fn emit_from_json(out: &mut String, ty: &TyId, fields: &[(String, FieldKind)]) {
+fn emit_from_json(
+    out: &mut String,
+    ty: &TyId,
+    fields: &[(String, FieldKind)],
+    opaque: &HashSet<String>,
+) {
     let name = ty.path.as_str();
     out.push_str(
         "// Parse a JSON object into a value. Auto-derived; reached via `from_json::<T>(text)`.\n// Returns `Err` when a required field is missing or a field's value\n// type does not match the declaration; the error names the field.\n",
@@ -212,12 +231,36 @@ fn emit_from_json(out: &mut String, ty: &TyId, fields: &[(String, FieldKind)]) {
             "    let {fname} = match json::get(v, \"{fname}\") {{\n        Some(__child) => {extract},\n        None => {missing},\n    }}\n"
         ));
     }
+    // The extracted local carries the representation; an opaque alias
+    // field takes it back across the boundary, and the field's declared
+    // type is what fixes `.into()`'s target.
+    let values: Vec<String> = fields
+        .iter()
+        .map(|(field, _)| {
+            if opaque.contains(field) {
+                format!("{field}.into()")
+            } else {
+                field.clone()
+            }
+        })
+        .collect();
     let fields = fields
         .iter()
-        .map(|(field, _)| (field.as_str(), field.as_str()))
+        .zip(values.iter())
+        .map(|((field, _), value)| (field.as_str(), value.as_str()))
         .collect::<Vec<_>>();
     out.push_str(&format!("    Ok({})\n", named_struct_literal(name, &fields)));
     out.push_str("}\n\n");
+}
+
+/// Whether `ty` is written as the bare name of an opaque alias.
+fn type_names_opaque_alias(ty: &gossamer_ast::Type, opaque: &HashSet<String>) -> bool {
+    let TypeKind::Path(path) = &ty.kind else {
+        return false;
+    };
+    path.segments.len() == 1
+        && path.segments[0].generics.is_empty()
+        && opaque.contains(&path.segments[0].name.name)
 }
 
 fn named_struct_literal(name: &str, fields: &[(&str, &str)]) -> String {
@@ -316,17 +359,52 @@ fn is_scalar_fmt_name(name: &str) -> bool {
 /// references-to-containers, channels, and function types are excluded -
 /// `{}` on them does not lower through the implicit `fmt` path, so a type
 /// carrying one keeps the runtime's default render and gets no implicit `fmt`.
-fn ty_is_renderable(ty: &gossamer_ast::Type, formattable: &HashSet<String>) -> bool {
+/// Type-parameter names a declaration introduces.
+fn param_name_set(generics: &gossamer_ast::Generics) -> HashSet<String> {
+    generics
+        .params
+        .iter()
+        .filter_map(|p| match p {
+            gossamer_ast::GenericParam::Type { name, .. } => Some(name.name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn ty_is_renderable(
+    ty: &gossamer_ast::Type,
+    formattable: &HashSet<String>,
+    params: &HashSet<String>,
+) -> bool {
     match &ty.kind {
         TypeKind::Path(path) if path.segments.len() == 1 => {
             let seg = &path.segments[0];
+            let name = seg.name.name.as_str();
+            // Whether a field typed by one of the declaration's own
+            // parameters renders depends on the argument each instantiation
+            // supplies, which is not known here. A generic type asks for its
+            // `fmt` with `#[derive(Debug)]`, where the author has the
+            // instantiations in view.
+            if params.contains(name) {
+                return false;
+            }
+            // `Box` / `Arc` / `Rc` are transparent, so a value inside one
+            // renders exactly as the value does. This is what lets a
+            // recursive type reach its own `fmt`.
+            if matches!(name, "Box" | "Arc" | "Rc") {
+                return match seg.generics.as_slice() {
+                    [gossamer_ast::GenericArg::Type(inner)] => {
+                        ty_is_renderable(inner, formattable, params)
+                    }
+                    _ => false,
+                };
+            }
             if !seg.generics.is_empty() {
                 return false;
             }
-            let name = seg.name.name.as_str();
             is_scalar_fmt_name(name) || formattable.contains(name)
         }
-        TypeKind::Ref { inner, .. } => ty_is_renderable(inner, formattable),
+        TypeKind::Ref { inner, .. } => ty_is_renderable(inner, formattable, params),
         _ => false,
     }
 }
@@ -436,12 +514,15 @@ fn types_with_user_method(parsed: &SourceFile, method: &str) -> HashSet<String> 
 )]
 pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
     let struct_names: HashMap<String, TyId> = struct_identities(&parsed.items);
+    let aliases = alias_targets(&parsed.items);
     let user_fmt = types_with_user_fmt(parsed);
     let user_eq = types_with_user_method(parsed, "eq");
     let user_cmp = types_with_user_method(parsed, "cmp");
 
-    // Field types per struct / enum, used to grow the `formattable` set.
+    // Field types per struct / enum, used to grow the `formattable` set,
+    // paired with the declaration's own type-parameter names.
     let mut field_tys: HashMap<String, Vec<&gossamer_ast::Type>> = HashMap::new();
+    let mut type_params: HashMap<String, HashSet<String>> = HashMap::new();
     for item in flatten_items(&parsed.items) {
         match &item.kind {
             ItemKind::Struct(decl) => {
@@ -451,12 +532,14 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
                     StructBody::Unit => Vec::new(),
                 };
                 field_tys.insert(decl.name.name.clone(), tys);
+                type_params.insert(decl.name.name.clone(), param_name_set(&decl.generics));
             }
-            ItemKind::Enum(decl) if decl.generics.params.is_empty() => {
+            ItemKind::Enum(decl) => {
                 field_tys.insert(
                     decl.name.name.clone(),
                     decl.variants.iter().flat_map(variant_fields).collect(),
                 );
+                type_params.insert(decl.name.name.clone(), param_name_set(&decl.generics));
             }
             _ => {}
         }
@@ -476,7 +559,7 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
             {
                 Some(&d.name.name)
             }
-            ItemKind::Enum(d) if d.generics.params.is_empty() => Some(&d.name.name),
+            ItemKind::Enum(d) => Some(&d.name.name),
             _ => None,
         };
         if let Some(n) = name
@@ -491,7 +574,16 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
             if formattable.contains(name) {
                 continue;
             }
-            if tys.iter().all(|ty| ty_is_renderable(ty, &formattable)) {
+            let params = type_params.get(name).cloned().unwrap_or_default();
+            // A recursive type reaches its own `fmt`, so treating the name
+            // under test as already formattable is what lets the fixpoint
+            // admit it at all.
+            let mut reachable = formattable.clone();
+            reachable.insert(name.clone());
+            if tys
+                .iter()
+                .all(|ty| ty_is_renderable(ty, &reachable, &params))
+            {
                 formattable.insert(name.clone());
                 changed = true;
             }
@@ -555,7 +647,7 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
             {
                 Some(&d.name.name)
             }
-            ItemKind::Enum(d) if d.generics.params.is_empty() => Some(&d.name.name),
+            ItemKind::Enum(d) => Some(&d.name.name),
             _ => None,
         };
         if let Some(tn) = implicit_target
@@ -591,7 +683,9 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
             ItemKind::Struct(decl) => match &decl.body {
                 StructBody::Named(fields) => {
                     let ty = TyId::new(&module, &decl.name.name);
-                    emit_struct_derive_impl(&mut out, decl, &ty, fields, &derives, &struct_names);
+                    emit_struct_derive_impl(
+                        &mut out, decl, &ty, fields, &derives, &struct_names, &aliases,
+                    );
                 }
                 StructBody::Tuple(fields) => {
                     let ty = TyId::new(&module, &decl.name.name);
@@ -602,11 +696,12 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
                         fields,
                         &derives,
                         &struct_names,
+                        &aliases,
                     );
                 }
                 StructBody::Unit => {}
             },
-            ItemKind::Enum(decl) if decl.generics.params.is_empty() => {
+            ItemKind::Enum(decl) => {
                 let ty = TyId::new(&module, &decl.name.name);
                 emit_enum_derive_impl(&mut out, decl, &ty, &derives);
             }
@@ -685,9 +780,14 @@ fn emit_enum_derive_impl(out: &mut String, decl: &EnumDecl, ty: &TyId, derives: 
     if !(want_clone || want_eq || want_cmp || want_default || want_debug) {
         return;
     }
+    // A generic enum's derived methods live on `impl<T> Name<T>`, the same
+    // shape a generic struct's do. Emitted without the parameters, the
+    // methods would not be found on any instantiation.
+    let (gen_decl, self_ty) = enum_generics(decl, name);
     out.push_str(&format!(
-        "// Auto-derived from #[derive(...)] for {name}.\n#[gos_synthesized]\nimpl {name} {{\n"
+        "// Auto-derived from #[derive(...)] for {name}.\n#[gos_synthesized]\nimpl{gen_decl} {self_ty} {{\n"
     ));
+    let name = self_ty.as_str();
     if want_clone {
         out.push_str(&format!(
             "    fn clone(&self) -> {name} {{\n        match self {{\n"
@@ -861,6 +961,27 @@ fn emit_named_struct_fmt_impl(
 
 /// `("<T, U>", "Name<T, U>")` for a generic struct, or `("", "Name")` for a
 /// non-generic one. Lifetime / const params are skipped (rare in derives).
+/// `(<T, U>, Name<T, U>)` for a generic enum, or `("", Name)` when it has no
+/// parameters - the declaration and self-type spellings a derived `impl`
+/// needs.
+fn enum_generics(decl: &EnumDecl, qualified: &str) -> (String, String) {
+    let names: Vec<&str> = decl
+        .generics
+        .params
+        .iter()
+        .filter_map(|p| match p {
+            gossamer_ast::GenericParam::Type { name, .. } => Some(name.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    if names.is_empty() {
+        (String::new(), qualified.to_string())
+    } else {
+        let args = format!("<{}>", names.join(", "));
+        (args.clone(), format!("{qualified}{args}"))
+    }
+}
+
 fn struct_generics(decl: &StructDecl, qualified: &str) -> (String, String) {
     let names: Vec<&str> = decl
         .generics
@@ -894,6 +1015,7 @@ fn emit_tuple_struct_derive_impl(
     fields: &[gossamer_ast::TupleField],
     derives: &[String],
     structs: &HashMap<String, TyId>,
+    aliases: &HashMap<String, gossamer_ast::Type>,
 ) {
     let name = ty.path.as_str();
     // `{:?}` renders the type the user declared, not the path used to
@@ -945,7 +1067,7 @@ fn emit_tuple_struct_derive_impl(
     if want_default {
         let typed: Option<Vec<FieldKind>> = fields
             .iter()
-            .map(|f| FieldKind::from_type(&f.ty, structs))
+            .map(|f| FieldKind::from_type(&f.ty, structs, aliases))
             .collect();
         if let Some(typed) = typed {
             let init: Vec<String> = typed.iter().map(FieldKind::default_literal).collect();
@@ -984,6 +1106,7 @@ fn emit_struct_derive_impl(
     fields: &[gossamer_ast::StructField],
     derives: &[String],
     structs: &HashMap<String, TyId>,
+    aliases: &HashMap<String, gossamer_ast::Type>,
 ) {
     let name = ty.path.as_str();
     let has = |t: &str| derives.iter().any(|d| d == t);
@@ -1055,7 +1178,7 @@ fn emit_struct_derive_impl(
         // than emit code that won't compile.
         let typed: Option<Vec<(String, FieldKind)>> = fields
             .iter()
-            .map(|f| FieldKind::from_type(&f.ty, structs).map(|k| (f.name.name.clone(), k)))
+            .map(|f| FieldKind::from_type(&f.ty, structs, aliases).map(|k| (f.name.name.clone(), k)))
             .collect();
         if let Some(typed) = typed {
             let init: Vec<(String, String)> = typed

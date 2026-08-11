@@ -697,6 +697,7 @@ fn occurs_in_kind(infer: &InferCtxt, tcx: &TyCtxt, vid: TyVid, kind: &TyKind) ->
         TyKind::Sender(pointee)
         | TyKind::Receiver(pointee)
         | TyKind::JoinHandle(pointee)
+        | TyKind::Nominal { repr: pointee, .. }
         | TyKind::Ref { inner: pointee, .. } => occurs(infer, tcx, vid, *pointee),
         TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
             sig.inputs.iter().any(|t| occurs(infer, tcx, vid, *t))

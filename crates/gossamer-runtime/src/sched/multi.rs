@@ -980,7 +980,7 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
                     // `arm()` and the park insertion), the gid is
                     // queued in `pre_unpark`. Drain that and, if
                     // our gid is in it, immediately re-eject the
-                    // task back onto the injector.
+                    // task.
                     let mut pre = shared.pre_unpark.lock();
                     if pre.remove(&gid) {
                         if let Some(entry) = parked.remove(&gid) {
@@ -997,18 +997,17 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
                                     reason: None,
                                 });
                             }
-                            shared.injector.push(entry.task);
+                            // Back onto this worker's own deque, never the
+                            // global injector. This goroutine parked on this
+                            // OS thread, and a suspended stackful coroutine
+                            // stays on the thread it suspended on - the same
+                            // reason `unpark` pins to `home` and peer
+                            // stealing is off. A thread-local read taken
+                            // before the suspend and used after it, such as
+                            // the current-goroutine id, resolves against
+                            // whichever thread resumed the stack.
+                            deque.push(entry.task);
                             shared.stats.unparks.fetch_add(1, Ordering::Relaxed);
-                            // Wake any worker that may have parked
-                            // while there was no work - we just
-                            // produced some.
-                            let workers = shared.workers.lock();
-                            for slot in workers.iter() {
-                                if slot.parked.load(Ordering::Acquire) {
-                                    slot.wake();
-                                    break;
-                                }
-                            }
                         }
                     }
                 } else {

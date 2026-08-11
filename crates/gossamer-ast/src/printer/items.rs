@@ -499,6 +499,11 @@ impl Printer {
         self.write_ident(&decl.name);
         self.print_generics(&decl.generics);
         self.write(" = ");
+        // Dropping `new` would rewrite an opaque alias into a transparent
+        // one, changing the program's types rather than its layout.
+        if decl.nominal {
+            self.write("new ");
+        }
         self.print_type(&decl.ty);
         self.write(";");
     }

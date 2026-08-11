@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GR0015]: A call left a parameter with neither an argument nor a default. - here
+--- framed ---
+error[GR0015]: A call left a parameter with neither an argument nor a default.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

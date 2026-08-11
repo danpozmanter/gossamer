@@ -67,9 +67,46 @@ a compile error.
 
 ## Reflection - `typeInfo`
 
-`typeInfo::<T>()` reflects a struct's fields at compile time, returning
-`[(String, String)]` of each field's `(name, type)`. A `comptime fn`
-consumes that to generate per-type code:
+`typeInfo::<T>()` reflects a type's shape at compile time, returning
+`[(String, String)]`. What the pairs mean follows the type:
+
+| `T` | Pairs |
+| --- | --- |
+| named struct | each field's `(name, type)` |
+| tuple struct | each field's `(position, type)` - `"0"`, `"1"`, ... |
+| enum | each variant's `(name, payload)`, in declaration order |
+| generic type | the same, with the type arguments substituted in |
+
+An enum's payload spelling is `()` for a unit variant, the field's type for
+a single payload, and a tuple of the fields for anything wider - the same
+spellings a `match` arm binds:
+
+```gossamer
+enum Shape { Circle(f64), Rect { w: f64, h: f64 }, Nothing }
+
+for (variant, payload) in typeInfo::<Shape>() {
+    println!("{} carries {}", variant, payload)
+}
+// Circle carries f64
+// Rect carries (f64, f64)
+// Nothing carries ()
+```
+
+A generic type reflects per instantiation, so each spelling describes the
+fields that instantiation actually has:
+
+```gossamer
+struct Wrapper<T> { inner: T, count: i64 }
+
+for (name, ty) in typeInfo::<Wrapper<String>>() { println!("{}: {}", name, ty) }
+// inner: String
+// count: i64
+```
+
+A type with nothing to reflect - a unit struct, or a name this program does
+not declare - is `GR0012`.
+
+A `comptime fn` consumes the pairs to generate per-type code:
 
 ```gossamer
 struct User { id: i64, name: String, active: bool }

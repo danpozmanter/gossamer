@@ -426,6 +426,12 @@ pub(super) fn emit_c_main_shim(module: &mut dyn Module, gos_main: FuncId) -> Res
     let set_args = module
         .declare_function("gos_rt_set_args", Linkage::Import, &set_args_sig)
         .map_err(|e| anyhow!("declare set_args: {e}"))?;
+    // Tells the runtime this process is a Gossamer program, so deadlock
+    // reporting knows every party that can act on a channel.
+    let program_start_sig = module.make_signature();
+    let program_start = module
+        .declare_function("gos_rt_program_start", Linkage::Import, &program_start_sig)
+        .map_err(|e| anyhow!("declare program_start: {e}"))?;
     let flush_sig = module.make_signature();
     let flush_stdout = module
         .declare_function("gos_rt_flush_stdout", Linkage::Import, &flush_sig)
@@ -445,6 +451,8 @@ pub(super) fn emit_c_main_shim(module: &mut dyn Module, gos_main: FuncId) -> Res
         builder.switch_to_block(entry);
         let argc = builder.block_params(entry)[0];
         let argv = builder.block_params(entry)[1];
+        let program_start_ref = module.declare_func_in_func(program_start, builder.func);
+        let _ = builder.ins().call(program_start_ref, &[]);
         let set_args_ref = module.declare_func_in_func(set_args, builder.func);
         let _ = builder.ins().call(set_args_ref, &[argc, argv]);
         let gos_main_ref = module.declare_func_in_func(gos_main, builder.func);

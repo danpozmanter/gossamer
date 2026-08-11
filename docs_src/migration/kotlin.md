@@ -24,7 +24,7 @@ JVM-hosted and does not use exceptions or `suspend`; it uses explicit
 | `async { ... }.await()` | channel send and receive |
 | `println("$name")` | `println!("{name}")` |
 
-## Gossamer 0.37 Syntax At A Glance
+## Gossamer 0.47 Syntax At A Glance
 
 Kotlin uses semicolons optionally and commas in parameter lists, data classes,
 and collection literals. Gossamer accepts semicolons only as same-line
@@ -285,6 +285,50 @@ impl Connection {
 
 const DEFAULT_PORT: i64 = 5432
 ```
+
+## Visibility
+
+Gossamer has three visibilities, and they are declared per item, per method,
+and per struct field.
+
+| Annotation | Reachable from |
+| --- | --- |
+| none | the declaring module and its descendants |
+| `pub(package)` | every module of the declaring package |
+| `pub` | anything that depends on the package |
+
+A **package** is the unit of distribution: one `project.toml`, one project id.
+A **module** is a directory under `src/`. A module nested inside another is a
+**module descendant**, and visibility flows inward only: a descendant reaches
+its ancestors' private items, never the reverse.
+
+```gossamer
+// src/money/mod.gos
+pub struct Amount {
+    pub currency: String,
+    cents: i64,                     // private representation
+}
+
+impl Amount {
+    pub fn new(currency: String, cents: i64) -> Amount {
+        Amount { currency: currency, cents: cents }
+    }
+    pub fn cents(&self) -> i64 { self.cents }
+    fn normalize(&self) -> i64 { self.cents }   // private helper
+}
+
+pub(package) fn round_trip(a: &Amount) -> i64 { a.normalize() }
+```
+
+A `pub` type may keep private methods and private fields, so a struct with any
+private field can only be built by the module that declares it. Importing does
+not widen anything: a `use` is a spelling convenience, and visibility is
+decided by where the name is used.
+
+Coming from Kotlin: `pub(package)` is `internal`, `pub` is
+`public`, and no annotation is closer to `private` than to Kotlin's default -
+Kotlin defaults to public, Gossamer defaults to private. There is no
+`protected`, because there is no inheritance.
 
 ## Standard Library Map
 

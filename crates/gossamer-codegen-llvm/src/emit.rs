@@ -24,6 +24,7 @@ const LLVM_SPECIAL_DECLS: &[&str] = &[
     "@GOS_RT_STDOUT_LEN = external local_unnamed_addr global i64",
     // Called directly by the @main shim - not reachable via declare_rt().
     "declare void @gos_rt_set_args(i32, ptr)",
+    "declare void @gos_rt_program_start()",
     "declare void @gos_rt_flush_stdout()",
     "declare i32 @gos_rt_main_exit_code(i64)",
     "declare i32 @gos_rt_main_exit_code_err(i64, i64)",
@@ -859,6 +860,7 @@ fn render_chunk_module(chunk_indices: &[usize], ctx: &ModuleCtx<'_>) -> Result<S
         let ret_is_result = !ret_is_unit && ctx.tcx.slot_bytes(ret_ty) == 16;
         writeln!(out, "define i32 @main(i32 %argc, ptr %argv) {{").unwrap();
         writeln!(out, "entry:").unwrap();
+        writeln!(out, "  call void @gos_rt_program_start()").unwrap();
         writeln!(out, "  call void @gos_rt_set_args(i32 %argc, ptr %argv)").unwrap();
         if ret_is_unit {
             writeln!(out, "  call void @\"gos_main\"()").unwrap();
@@ -1309,6 +1311,7 @@ fn render_module_to_path(
         let ret_is_result = !ret_is_unit && tcx.slot_bytes(ret_ty) == 16;
         writeln!(body_w, "define i32 @main(i32 %argc, ptr %argv) {{")?;
         writeln!(body_w, "entry:")?;
+        writeln!(body_w, "  call void @gos_rt_program_start()")?;
         writeln!(body_w, "  call void @gos_rt_set_args(i32 %argc, ptr %argv)")?;
         if ret_is_unit {
             writeln!(body_w, "  call void @\"gos_main\"()")?;

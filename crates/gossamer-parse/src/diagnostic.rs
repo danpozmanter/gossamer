@@ -7,6 +7,64 @@ use std::fmt;
 use gossamer_lex::Span;
 use thiserror::Error;
 
+/// Why typed serde declined to synthesize a codec for a turbofish target.
+///
+/// Typed serde covers a concrete struct whose fields it can classify. Each
+/// variant here is a shape outside that, named so the report says which.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SerdeTargetRefusal {
+    /// A generic struct. Codecs are synthesized per declared struct, not per
+    /// instantiation, so there is no single shape to encode.
+    Generic,
+    /// An enum. Typed serde has no encoding for a tagged union.
+    Enum,
+    /// Not a struct declared in this unit - a scalar, a stdlib type, or a
+    /// name that does not resolve to a struct at all.
+    NotAStruct,
+    /// A struct the synthesizer declined for a reason the caller could not
+    /// attribute to a single field.
+    Unsupported,
+}
+
+impl SerdeTargetRefusal {
+    /// The clause completing "`T` cannot derive `op`: ...".
+    #[must_use]
+    pub const fn describe(self) -> &'static str {
+        match self {
+            Self::Generic => "typed serde covers concrete structs, and this one is generic",
+            Self::Enum => "typed serde covers structs, and this is an enum",
+            Self::NotAStruct => "typed serde covers structs, and this does not name one",
+            Self::Unsupported => "typed serde has no encoding for this type",
+        }
+    }
+
+    /// The way forward for this refusal.
+    #[must_use]
+    pub fn help(self, op: &str) -> String {
+        let dynamic = "`json::parse` with `get` / `at` / `as_i64` / `as_str` reads a document \
+                       without a declared type";
+        match self {
+            Self::Generic => format!(
+                "wrap the instantiation in a concrete struct (`struct Ids {{ v: Vec<i64> }}`), \
+                 or hand-write `{op}`"
+            ),
+            Self::Enum => format!(
+                "give the enum a struct wrapper carrying the payload you exchange, \
+                 or hand-write `{op}`; {dynamic}"
+            ),
+            Self::NotAStruct | Self::Unsupported => {
+                format!("name a struct declared in this program, or hand-write `{op}`; {dynamic}")
+            }
+        }
+    }
+}
+
+impl fmt::Display for SerdeTargetRefusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.describe())
+    }
+}
+
 /// Every class of error the parser may emit.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ParseError {
@@ -202,6 +260,19 @@ pub enum ParseError {
         /// The serde operation requested (`to_json`, `from_json`, ...).
         op: String,
     },
+    /// A `to_json` / `from_json` (or toml/yaml) call named a type typed serde
+    /// does not synthesize for at all, as opposed to a struct with one
+    /// unserializable field. The synthesized function is absent either way, so
+    /// without this the call surfaces only as an unresolved internal name.
+    #[error("`{ty}` cannot derive `{op}`: {reason}")]
+    SerdeUnsupportedTarget {
+        /// The type named in the turbofish, as written.
+        ty: String,
+        /// The serde operation requested (`to_json`, `from_json`, ...).
+        op: String,
+        /// Why the synthesizer declined this target.
+        reason: SerdeTargetRefusal,
+    },
     /// A slice pattern wrote a second `..`. One rest binding splits the
     /// elements into a prefix and a suffix; a second one has no meaning.
     #[error("a slice pattern may contain at most one `..`")]
@@ -213,6 +284,12 @@ pub enum ParseError {
     /// `else` block that gives the failure a diverging path.
     #[error("a refutable `let` pattern requires an `else` block")]
     RefutableLetNeedsElse,
+    /// A `pub(..)` restriction other than `pub(package)`.
+    #[error("`pub({written})` is not a visibility Gossamer has")]
+    UnsupportedVisibilityRestriction {
+        /// Restriction as written, without the parentheses.
+        written: String,
+    },
 }
 
 /// A diagnostic with its source location.
@@ -550,6 +627,11 @@ impl ParseError {
                      Map<String, _>, json::Value, or a nested struct), or hand-write `{op}`"
                 )),
             ),
+            ParseError::SerdeUnsupportedTarget { ty, op, reason } => (
+                "GP0039",
+                format!("`{ty}` cannot derive `{op}`: {}", reason.describe()),
+                Some(reason.help(op)),
+            ),
             other => other.code_title_help_shape(),
         }
     }
@@ -608,6 +690,15 @@ impl ParseError {
                 "a refutable `let` pattern requires an `else` block".to_string(),
                 Some(
                     "write `let Some(x) = opt else { return }`; the `else` block must diverge"
+                        .to_string(),
+                ),
+            ),
+            ParseError::UnsupportedVisibilityRestriction { written } => (
+                "GP0038",
+                format!("`pub({written})` is not a visibility Gossamer has"),
+                Some(
+                    "the three visibilities are private (no annotation), \
+                     `pub(package)`, and `pub`"
                         .to_string(),
                 ),
             ),

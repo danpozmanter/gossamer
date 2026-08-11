@@ -40,7 +40,7 @@ pub use node_id::{NodeId, NodeIdGenerator};
 pub use path::{Path, Segment};
 pub use pattern::{FieldPattern, Pattern, PatternKind};
 pub use printer::Printer;
-pub use source_file::{ModulePath, SourceFile, UseDecl, UseListEntry, UseTarget};
+pub use source_file::{ModulePath, NamedArg, SourceFile, UseDecl, UseListEntry, UseTarget};
 pub use stmt::{Stmt, StmtKind};
 pub use ty::{FnTypeKind, GenericArg, Type, TypeKind, TypePath, TypePathSegment};
 pub use visitor::{Visitor, VisitorMut};

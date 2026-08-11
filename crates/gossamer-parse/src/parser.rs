@@ -51,6 +51,12 @@ pub struct Parser<'src> {
     /// file-level `uses` slot, so a `use std::encoding::json` inside
     /// `mod chat { ... }` would otherwise be silently dropped.
     pub(crate) hoisted_uses: Vec<gossamer_ast::UseDecl>,
+    /// Argument labels written at call sites (`f(width: 10)`), moved into
+    /// [`gossamer_ast::SourceFile::named_args`] by
+    /// [`crate::parse_source_file`]. Held beside the tree rather than in
+    /// the call expression so `ExprKind::Call` keeps one shape everywhere.
+    pub(crate) named_args:
+        std::collections::HashMap<gossamer_ast::NodeId, Vec<gossamer_ast::NamedArg>>,
 }
 
 impl<'src> Parser<'src> {
@@ -92,6 +98,26 @@ impl<'src> Parser<'src> {
             recursion_depth: 0,
             recursion_limit_reported: false,
             hoisted_uses: Vec::new(),
+            named_args: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Drains the call-site argument names collected during the parse.
+    /// See the field docs on the parser's `named_args` field.
+    pub fn take_named_args(
+        &mut self,
+    ) -> std::collections::HashMap<gossamer_ast::NodeId, Vec<gossamer_ast::NamedArg>> {
+        std::mem::take(&mut self.named_args)
+    }
+
+    /// Files `labels` under `call`, the id of the call they belong to.
+    pub(crate) fn record_named_args(
+        &mut self,
+        call: gossamer_ast::NodeId,
+        labels: Vec<gossamer_ast::NamedArg>,
+    ) {
+        if !labels.is_empty() {
+            self.named_args.insert(call, labels);
         }
     }
 

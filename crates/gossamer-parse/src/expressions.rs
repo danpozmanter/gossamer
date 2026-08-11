@@ -730,10 +730,11 @@ impl Parser<'_> {
         };
         if self.at_punct(Punct::LParen) {
             self.bump();
-            let args = self.parse_call_args();
+            let (args, labels) = self.parse_labelled_call_args();
             let end_span = self.last_span();
             let span = self.join(receiver.span, end_span);
             let id = self.alloc_id();
+            self.record_named_args(id, labels);
             return Expr::new(
                 id,
                 span,
@@ -771,7 +772,7 @@ impl Parser<'_> {
 
     fn parse_call_suffix(&mut self, callee: Expr) -> Expr {
         self.bump();
-        let args = self.parse_call_args();
+        let (args, labels) = self.parse_labelled_call_args();
         let end_span = self.last_span();
         let span = self.join(callee.span, end_span);
         // 0.7.0: `errors::newf(fmt, args…)` is a format-shaped sibling
@@ -785,6 +786,7 @@ impl Parser<'_> {
             return self.rewrite_errors_newf(span, args);
         }
         let id = self.alloc_id();
+        self.record_named_args(id, labels);
         Expr::new(
             id,
             span,
@@ -891,13 +893,57 @@ impl Parser<'_> {
         )
     }
 
+    /// Parses a macro-style argument list. `name: value` is not a label
+    /// here - macros take positional arguments only - so it reaches the
+    /// expression parser and is reported there.
     pub(crate) fn parse_call_args(&mut self) -> Vec<Expr> {
+        self.parse_arg_list(false).0
+    }
+
+    /// Parses a call's argument list, returning the arguments as written
+    /// alongside any `name = value` labels.
+    pub(crate) fn parse_labelled_call_args(&mut self) -> (Vec<Expr>, Vec<gossamer_ast::NamedArg>) {
+        self.parse_arg_list(true)
+    }
+
+    fn parse_arg_list(&mut self, allow_labels: bool) -> (Vec<Expr>, Vec<gossamer_ast::NamedArg>) {
         self.with_struct_literals_allowed(|p| {
             let mut args = Vec::new();
+            let mut labels = Vec::new();
             while !p.at_punct(Punct::RParen) && !p.at_eof() {
                 if p.at_punct(Punct::DotDotDot) {
                     p.bump();
                     continue;
+                }
+                if allow_labels && let Some((name, span)) = p.eat_argument_name() {
+                    labels.push(gossamer_ast::NamedArg {
+                        index: args.len(),
+                        name,
+                        span,
+                    });
+                } else if allow_labels
+                    && matches!(p.peek().kind, TokenKind::Ident)
+                    && matches!(p.peek_nth(1).kind, TokenKind::Punct(Punct::Colon))
+                {
+                    // `name: value` is the struct-literal and type-annotation
+                    // spelling; an argument label binds with `=`.
+                    let span = p.peek_span();
+                    let name = p.slice(span).to_string();
+                    p.record(
+                        crate::ParseError::unexpected_help(
+                            "an argument label to bind with `=`",
+                            "`:`".to_string(),
+                            format!("write `{name} = value`"),
+                        ),
+                        span,
+                    );
+                    p.bump();
+                    p.bump();
+                    labels.push(gossamer_ast::NamedArg {
+                        index: args.len(),
+                        name: Ident::new(name),
+                        span,
+                    });
                 }
                 args.push(p.parse_expr_no_assign());
                 if !p.eat_list_separator() {
@@ -907,8 +953,27 @@ impl Parser<'_> {
             if !p.expect_punct(Punct::RParen, "to close the argument list") {
                 p.recover_to_close(Punct::LParen, Punct::RParen);
             }
-            args
+            (args, labels)
         })
+    }
+
+    /// Consumes a `name =` argument label when one starts here. `==` is a
+    /// single token, so an equality test in argument position cannot be
+    /// mistaken for a label.
+    ///
+    /// A path segment is separated by `::`, which lexes as its own
+    /// token, so a bare identifier followed by `:` is only ever a label.
+    fn eat_argument_name(&mut self) -> Option<(Ident, gossamer_lex::Span)> {
+        if !matches!(self.peek().kind, TokenKind::Ident)
+            || !matches!(self.peek_nth(1).kind, TokenKind::Punct(Punct::Eq))
+        {
+            return None;
+        }
+        let span = self.peek_span();
+        let name = Ident::new(self.slice(span));
+        self.bump();
+        self.bump();
+        Some((name, span))
     }
 
     fn parse_primary(&mut self) -> Expr {

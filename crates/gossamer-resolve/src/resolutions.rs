@@ -92,6 +92,7 @@ pub struct Resolutions {
     bindings: HashMap<NodeId, DefId>,
     definitions: HashMap<DefId, DefKind>,
     project_aliases: HashMap<String, String>,
+    import_defs: HashMap<NodeId, DefId>,
 }
 
 impl Resolutions {
@@ -118,6 +119,45 @@ impl Resolutions {
     #[must_use]
     pub fn project_alias(&self, alias: &str) -> Option<&str> {
         self.project_aliases.get(alias).map(String::as_str)
+    }
+
+    /// Records that the `use`-imported name at `node` ultimately refers
+    /// to `def`, an item of this same compilation unit.
+    ///
+    /// The node keeps its [`Resolution::Import`] so HIR lowering still
+    /// qualifies the name by the import's path; this side table is what
+    /// lets the type checker read the target's signature.
+    pub fn insert_import_def(&mut self, node: NodeId, def: DefId) {
+        self.import_defs.insert(node, def);
+    }
+
+    /// Definition a `use`-imported name at `node` refers to, when the
+    /// target is an item of this compilation unit.
+    #[must_use]
+    pub fn import_def(&self, node: NodeId) -> Option<DefId> {
+        self.import_defs.get(&node).copied()
+    }
+
+    /// Root module segment naming the inlined package `module` belongs
+    /// to, or `None` when it belongs to the package being compiled.
+    ///
+    /// A path dependency's source is inlined under a module named for its
+    /// project id, so that root segment is what separates one package's
+    /// modules from another's inside a single compilation unit. This is
+    /// the rule `pub(package)` reachability is defined against.
+    #[must_use]
+    pub fn package_root<'m>(&self, module: &'m [String]) -> Option<&'m str> {
+        let first = module.first()?;
+        self.project_aliases
+            .values()
+            .any(|inlined| inlined == first)
+            .then_some(first.as_str())
+    }
+
+    /// True when `a` and `b` belong to the same package.
+    #[must_use]
+    pub fn same_package(&self, a: &[String], b: &[String]) -> bool {
+        self.package_root(a) == self.package_root(b)
     }
 
     /// Looks up the resolution for a path node. Returns `None` if the

@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GR0012]: A `typeInfo::<T>()` named a type with nothing to reflect. The - here
+--- framed ---
+error[GR0012]: A `typeInfo::<T>()` named a type with nothing to reflect. The
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

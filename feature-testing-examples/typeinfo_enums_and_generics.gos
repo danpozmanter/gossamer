@@ -1,0 +1,40 @@
+// `typeInfo::<T>()` describes a named struct's fields, a tuple struct's
+// positions, an enum's variants and payloads, and a generic type at the
+// instantiation the turbofish names.
+//
+// The reflection folds during compilation, so every tier compiles the same
+// literals and the loop below is per-field code, not a runtime walk.
+
+struct User { id: i64, name: String, active: bool }
+struct Pair(i64, String)
+struct Wrapper<T> { inner: T, count: i64 }
+
+enum Shape { Circle(f64), Rect { w: f64, h: f64 }, Nothing }
+enum Maybe<T> { Just(T), Nada }
+
+comptime fn describe(entries: Vec<(String, String)>) -> String {
+    let mut out = ""
+    for (name, ty) in entries {
+        out += name + ":" + ty + " "
+    }
+    out
+}
+
+fn main() {
+    println!("User {}", comptime { describe(typeInfo::<User>()) })
+    println!("Pair {}", comptime { describe(typeInfo::<Pair>()) })
+    println!("Shape {}", comptime { describe(typeInfo::<Shape>()) })
+    println!("Maybe<f64> {}", comptime { describe(typeInfo::<Maybe<f64>>()) })
+
+    for (name, ty) in typeInfo::<Wrapper<String>>() {
+        println!("Wrapper<String> {} {}", name, ty)
+    }
+    for (name, ty) in typeInfo::<Wrapper<i64>>() {
+        println!("Wrapper<i64> {} {}", name, ty)
+    }
+
+    let u = User { id: 7, name: "ada", active: true }
+    for (name, _ty) in typeInfo::<User>() {
+        println!("value {} = {}", name, field_of(u, name))
+    }
+}

@@ -911,6 +911,19 @@ pub unsafe extern "C" fn gos_rt_exec_run(prog: *const c_char, args: *mut GosVec)
     })
 }
 
+/// Marks the process as a running Gossamer program, from the entry shim a
+/// compiled binary emits.
+///
+/// Deadlock reporting needs to know every party that could act on a channel.
+/// That holds for a Gossamer program - its actors are `main` and the
+/// goroutines - and not for this library linked into something else, where an
+/// embedder's or a test's own thread can hold the other end without being a
+/// goroutine.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_program_start() {
+    crate::sched_global::mark_program_entered();
+}
+
 #[cfg(test)]
 mod args_tests {
     use super::*;

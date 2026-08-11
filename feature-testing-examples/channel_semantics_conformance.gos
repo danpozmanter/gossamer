@@ -1,0 +1,60 @@
+// The channel contract, pinned: rendezvous on an unbuffered channel,
+// capacity on a buffered one, close draining before it reports absence,
+// `select` arm order, and a non-blocking `default`.
+
+use std::sync::channel
+
+fn send_all(tx: Sender<i64>, from: i64, to: i64) {
+    let mut i = from
+    while i < to {
+        tx.send(i)
+        i += 1
+    }
+    tx.close()
+}
+
+fn main() {
+    // Unbuffered: every value arrives, in order, one at a time.
+    let (tx, rx) = channel()
+    go send_all(tx, 0, 5)
+    let mut order = Vec::new()
+    while let Some(v) = rx.recv() { order.push(v) }
+    println!("unbuffered {:?}", order)
+
+    // A closed, drained channel reports absence rather than blocking.
+    let (ctx, crx) = channel(4)
+    ctx.send(1)
+    ctx.send(2)
+    ctx.close()
+    println!("drain {:?} {:?}", crx.recv(), crx.recv())
+    println!("after close {:?}", crx.recv())
+
+    // Buffered sends up to capacity complete without a receiver.
+    let (btx, brx) = channel(3)
+    btx.send(10)
+    btx.send(20)
+    btx.send(30)
+    println!("buffered {:?} {:?} {:?}", brx.recv(), brx.recv(), brx.recv())
+
+    // `try_recv` never blocks and reports an empty channel as absence.
+    let (ttx, trx) = channel(1)
+    println!("empty try {:?}", trx.try_recv())
+    ttx.send(7)
+    println!("filled try {:?}", trx.try_recv())
+
+    // `select` with a `default` is non-blocking when no arm is ready.
+    let (stx, srx) = channel(1)
+    let picked = select {
+        _v = srx.recv() => "recv",
+        default => "default",
+    }
+    println!("select empty {}", picked)
+
+    // With a ready arm, that arm is taken.
+    stx.send(99)
+    let got = select {
+        v = srx.recv() => v,
+        default => -2,
+    }
+    println!("select ready {}", got)
+}

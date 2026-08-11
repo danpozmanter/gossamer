@@ -246,7 +246,7 @@ fn directory_modules_nest_and_carry_types() {
             ),
             (
                 "src/deep/nest/mod.gos",
-                "pub struct Nested { n: i64 }\npub fn nested() -> i64 { 42 }\n",
+                "pub struct Nested { pub n: i64 }\npub fn nested() -> i64 { 42 }\n",
             ),
         ],
     );
@@ -1522,7 +1522,7 @@ fn cross_file_from_json_on_sibling_struct() {
         &[
             (
                 "src/types.gos",
-                "pub struct Point {\n    x: i64,\n    y: i64,\n    label: String,\n}\n",
+                "pub struct Point {\n    pub x: i64,\n    pub y: i64,\n    pub label: String,\n}\n",
             ),
             (
                 "src/codec.gos",
@@ -1561,7 +1561,7 @@ fn cross_file_to_json_derive_and_typeinfo_on_sibling_struct() {
             (
                 "src/model.gos",
                 "#[derive(Debug)]\n\
-                 pub struct Rec {\n    id: i64,\n    name: String,\n}\n\
+                 pub struct Rec {\n    pub id: i64,\n    pub name: String,\n}\n\
                  pub fn new(id: i64, name: String) -> Rec { Rec { id: id, name: name } }\n\
                  pub fn roundtrip(r: Rec) -> String {\n\
                  \x20   match to_json::<Rec>(r) {\n\
@@ -1608,8 +1608,8 @@ fn cross_file_from_json_nested_struct_on_vm() {
         &[
             (
                 "src/types.gos",
-                "pub struct Inner {\n    status: String,\n}\n\
-                 pub struct Outer {\n    is_error: bool,\n    inner: Inner,\n}\n",
+                "pub struct Inner {\n    pub status: String,\n}\n\
+                 pub struct Outer {\n    pub is_error: bool,\n    pub inner: Inner,\n}\n",
             ),
             (
                 "src/main.gos",
@@ -1928,7 +1928,7 @@ fn a_diagnostic_in_a_path_dependency_names_the_dependencys_file() {
         &root,
         "lib",
         "example.com/lib",
-        "pub struct Point {\n    x: i64\n}\n\n\
+        "pub struct Point {\n    pub x: i64\n}\n\n\
          impl Point {\n\
              pub fn get(self) -> i64 { self.nosuchmethod() }\n\
          }\n",

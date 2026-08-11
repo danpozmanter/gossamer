@@ -761,6 +761,30 @@ fn serde_symbol_index(sf: &SourceFile) -> std::collections::HashMap<String, Stri
             out.insert(bare.to_string(), only.clone());
         }
     }
+    // A turbofish may spell a type through an alias. A transparent alias is
+    // the type it names, and an opaque one serializes as its representation -
+    // the rule its fields already follow - so both resolve to the target's
+    // symbol. The chain bound keeps a cyclic alias from spinning here; the
+    // checker is what reports the cycle (GT0024).
+    let aliases = alias_targets(&sf.items);
+    for name in aliases.keys() {
+        let mut cursor = name.clone();
+        for _ in 0..MAX_ALIAS_DEPTH {
+            let Some(gossamer_ast::ty::TypeKind::Path(target)) =
+                aliases.get(&cursor).map(|ty| &ty.kind)
+            else {
+                break;
+            };
+            let Some(leaf) = target.segments.last().map(|seg| seg.name.name.clone()) else {
+                break;
+            };
+            if let Some(symbol) = out.get(&leaf).cloned() {
+                out.entry(name.clone()).or_insert(symbol);
+                break;
+            }
+            cursor = leaf;
+        }
+    }
     // A `use a::Point` (or `use a::{Point as P}`) makes the imported name
     // stand for that module's type at every turbofish in this file.
     for decl in &sf.uses {

@@ -8,14 +8,14 @@ use a::Point
 use b::Point as Label
 
 mod a {
-    pub struct Point { x: i64, y: i64 }
-    pub struct Pair(i64, i64)
+    pub struct Point { pub x: i64, pub y: i64 }
+    pub struct Pair(pub i64, pub i64)
     pub enum Tag { One, Two(i64) }
     pub fn make() -> Point { Point { x: 1, y: 2 } }
 }
 
 mod b {
-    pub struct Point { name: String }
+    pub struct Point { pub name: String }
     pub enum Tag { Red, Blue }
     pub fn make() -> Point { Point { name: "b" } }
 }

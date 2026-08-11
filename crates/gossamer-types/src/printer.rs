@@ -86,6 +86,16 @@ fn write_kind(tcx: &TyCtxt, kind: &TyKind, out: &mut String) {
         }
         TyKind::Adt { def, substs } => write_def("adt", tcx, def.local, substs, out),
         TyKind::Alias { def, substs } => write_def("alias", tcx, def.local, substs, out),
+        // A nominal alias is its own type, so it prints under its own
+        // name. Falling back to the representation would make the two
+        // sides of a mismatch read identically.
+        TyKind::Nominal { def, repr } => {
+            if let Some(name) = tcx.def_name(*def) {
+                out.push_str(name);
+            } else {
+                write_ty(tcx, *repr, out);
+            }
+        }
         TyKind::Dyn(trait_ref) => write_dyn(tcx, trait_ref, out),
         TyKind::Var(vid) => {
             let _ = write!(out, "?{}", vid.as_u32());

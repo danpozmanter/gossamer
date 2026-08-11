@@ -163,6 +163,23 @@ Pre-stable. `gos feature-status` distinguishes available Shipped surface from
 compatibility-protected Stable surface. Until entries are explicitly promoted
 to Stable, treat them as may-change-with-notice.
 
+### Packages, Modules, and Visibility
+
+A **package** is the unit of distribution: one `project.toml`, one project id,
+the thing `gos add` pulls in. A **module** is a directory of source under
+`src/` - `src/util/mod.gos` is module `util`. A module nested inside another is
+a **module descendant**: `src/deep/nest/` is `deep::nest`, a descendant of
+`deep`.
+
+Visibility is defined against those three. An item with no annotation is
+private to the module that declares it and to that module's descendants, as in
+Rust. `pub(package)` widens it to every module of the declaring package and no
+further. `pub` makes it part of the package's public API. Methods and struct
+fields carry their own visibility, so a `pub` type can keep private helpers and
+a private representation.
+
+Full rules: [visibility](docs_src/language/visibility.md) and SPEC §6.3a.
+
 ### On Mutability and Ownership
 
 The broad goal is be inspired by Rust, but not as strict.

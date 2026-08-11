@@ -349,6 +349,25 @@ pub enum TyKind {
         /// Generic substitutions.
         substs: Substs,
     },
+    /// Opaque nominal alias `type Name = new Repr`.
+    ///
+    /// A type distinct from every other, including `repr`, and distinct
+    /// from any other nominal alias over the same representation. Nothing
+    /// converts between the two implicitly; `From` / `TryFrom` impls are
+    /// how a program crosses the boundary.
+    ///
+    /// The runtime value is exactly `repr`, following `Duration` and
+    /// `Instant`: the distinct kind exists only so the checker can keep
+    /// the two apart and so method dispatch resolves against the alias.
+    /// [`crate::normalize_for_lowering`] erases it at the boundary into
+    /// HIR, so no backend observes it and the representation's ABI is
+    /// unchanged.
+    Nominal {
+        /// `DefId` of the alias declaration.
+        def: DefId,
+        /// Runtime representation this alias is a distinct name for.
+        repr: Ty,
+    },
     /// Dynamic trait object `dyn Trait<Args>`.
     Dyn(TraitRef),
     /// Unresolved inference variable introduced during unification.

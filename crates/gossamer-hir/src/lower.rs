@@ -457,6 +457,16 @@ enum TryKind {
     Result,
 }
 
+/// How an `.into()` involving an opaque nominal alias lowers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum NominalInto {
+    /// The alias and the other side share one representation, so the
+    /// conversion is the value itself.
+    Identity,
+    /// The pair needs the target's `From` impl, named by the alias.
+    From(String),
+}
+
 struct Lowerer<'a> {
     resolutions: &'a Resolutions,
     table: &'a TypeTable,
@@ -515,6 +525,43 @@ impl Lowerer<'_> {
         // every backend below it know only the latter.
         let ty = self.table.get(node).unwrap_or_else(|| self.tcx.error_ty());
         gossamer_types::normalize_for_lowering(self.tcx, ty)
+    }
+
+    /// How `.into()` on `receiver` producing `result` should lower when an
+    /// opaque alias is involved, or `None` when neither side is one and the
+    /// ordinary routing applies.
+    ///
+    /// The decision is made here because the erasure that follows removes
+    /// the distinction it depends on: below this point both sides are the
+    /// representation, and the alias's name - which keys its impl - is gone.
+    fn nominal_into_route(&mut self, receiver: NodeId, result: NodeId) -> Option<NominalInto> {
+        let (Some(recv), Some(res)) = (self.table.get(receiver), self.table.get(result)) else {
+            return None;
+        };
+        // A method receiver reaches here behind whatever reference layers
+        // the call site introduced (`self` in an inherent impl is `&Alias`).
+        let mut recv = recv;
+        while let Some(gossamer_types::TyKind::Ref { inner, .. }) = self.tcx.kind(recv) {
+            recv = *inner;
+        }
+        let nominal_name = |tcx: &gossamer_types::TyCtxt, ty| match tcx.kind(ty) {
+            Some(gossamer_types::TyKind::Nominal { def, repr }) => Some((*def, *repr)),
+            _ => None,
+        };
+        let recv_nominal = nominal_name(self.tcx, recv);
+        let res_nominal = nominal_name(self.tcx, res);
+        if recv_nominal.is_none() && res_nominal.is_none() {
+            return None;
+        }
+        if recv == res
+            || recv_nominal.is_some_and(|(_, repr)| repr == res)
+            || res_nominal.is_some_and(|(_, repr)| repr == recv)
+        {
+            return Some(NominalInto::Identity);
+        }
+        let (def, _) = res_nominal?;
+        let name = self.tcx.def_name(def)?.to_string();
+        Some(NominalInto::From(name))
     }
 
     fn unit(&mut self) -> gossamer_types::Ty {
@@ -637,6 +684,7 @@ impl Lowerer<'_> {
                     pattern,
                     ty: ast_ty,
                     is_comptime,
+                    ..
                 } => {
                     let ty = self.ty_of(ast_ty.id);
                     let p = self.lower_typed_param(
@@ -946,6 +994,37 @@ impl Lowerer<'_> {
             } => {
                 if let Some(desugared) = self.desugar_or_insert_value(expr) {
                     return desugared.kind;
+                }
+                // Crossing an opaque alias's boundary with `.into()` is the
+                // identity: the two types share one representation, and the
+                // conversion exists to be written, not to compute. This is
+                // decided here because the erasure below loses the very
+                // distinction that selects it.
+                if name.name == "into" && args.is_empty() {
+                    match self.nominal_into_route(receiver.id, expr.id) {
+                        Some(NominalInto::Identity) => return self.lower_expr(receiver).kind,
+                        // The alias's own name keys its `From` impl; the
+                        // erasure below would leave the representation's
+                        // name, which no impl is filed under.
+                        Some(NominalInto::From(target)) => {
+                            let span = expr.span;
+                            let ty = self.ty_of(expr.id);
+                            let callee = HirExpr {
+                                id: self.fresh(),
+                                span,
+                                ty,
+                                kind: HirExprKind::Path {
+                                    segments: vec![Ident::new(&target), Ident::new("from")],
+                                    def: None,
+                                },
+                            };
+                            return HirExprKind::Call {
+                                callee: Box::new(callee),
+                                args: vec![self.lower_expr(receiver)],
+                            };
+                        }
+                        None => {}
+                    }
                 }
                 HirExprKind::MethodCall {
                     receiver: Box::new(self.lower_expr(receiver)),
@@ -2407,6 +2486,30 @@ impl Lowerer<'_> {
                 }
             }
         }
+        // A `Type::assoc` whose `Type` came from a `use` names an impl
+        // keyed by the type's module-qualified spelling, so the import's
+        // target is what the name-keyed dispatch has to see. Without this
+        // the call type-checks and is unbound at run time.
+        if !qualified_spelling
+            && segments.len() == 2
+            && let Some(Resolution::Import { use_id }) = self.resolutions.get(node)
+            && let Some(entries) = self.import_targets.get(&use_id)
+            && let Some((_, full)) = entries.iter().find(|(bound, _)| *bound == segments[0].name)
+        {
+            let target: Vec<&str> = full
+                .iter()
+                .map(|s| s.name.as_str())
+                .filter(|s| !matches!(*s, "crate" | "self" | "super" | "root"))
+                .collect();
+            let qualified = format!("{}::{}", target.join("::"), segments[1].name);
+            if self.module_impl_fns.contains(&qualified) {
+                segments = target
+                    .iter()
+                    .map(|s| Ident::new(*s))
+                    .chain(std::iter::once(segments[1].clone()))
+                    .collect();
+            }
+        }
         // A path headed by a `use "id" as alias` binding names items
         // registered under the dependency module's real name, so the
         // head is respelled before any name-keyed dispatch sees it.
@@ -2429,6 +2532,10 @@ impl Lowerer<'_> {
                 None
             }
             Some(Resolution::Def { def, .. }) => Some(def),
+            // A `use`-imported name keeps its opaque import resolution, so
+            // the definition it targets is what carries the canonical
+            // spelling the rewrite below needs.
+            Some(Resolution::Import { .. }) => self.resolutions.import_def(node),
             _ => None,
         };
         // A reference to an inline-module function - bare from inside

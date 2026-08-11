@@ -7,6 +7,34 @@ use std::fmt;
 use gossamer_lex::Span;
 use thiserror::Error;
 
+/// Prefix of the per-type serde functions the autoderive stage synthesizes.
+/// A call to one that does not exist means that stage declined the type and
+/// reported why, so the missing name is not the user's to act on.
+const SYNTHESIZED_SERDE_PREFIX: &str = "__gos_serde_";
+
+/// Note and help for a call that leaves a parameter unfilled: which
+/// parameters must be given, and which may be left out.
+fn missing_argument_help(
+    out: gossamer_diagnostics::Diagnostic,
+    missing: &str,
+    plural: bool,
+    optional: &str,
+) -> gossamer_diagnostics::Diagnostic {
+    let subject = if plural {
+        format!("{missing} have no defaults")
+    } else {
+        format!("{missing} has no default")
+    };
+    let out = out.with_note(format!(
+        "{subject}, so every call supplies a value - positionally or by name"
+    ));
+    if optional.is_empty() {
+        out
+    } else {
+        out.with_help(format!("only {optional} may be omitted"))
+    }
+}
+
 /// A single resolver diagnostic with its source span.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolveDiagnostic {
@@ -113,6 +141,69 @@ pub enum ResolveError {
         /// Item shape, for the message.
         kind: &'static str,
     },
+    /// A `typeInfo::<T>()` naming a type this unit does not declare, or
+    /// one whose shape carries nothing to reflect.
+    #[error("`typeInfo::<{name}>()` has nothing to reflect")]
+    UnreflectableType {
+        /// Type as the user spelled it in the turbofish.
+        name: String,
+    },
+    /// A `name =` argument label naming no parameter of the callee.
+    #[error("`{name}` is not a parameter of this function")]
+    UnknownNamedArgument {
+        /// Label as the caller wrote it.
+        name: String,
+        /// Declared parameter names, for the help line.
+        expected: String,
+    },
+    /// The same parameter named twice in one call.
+    #[error("`{name}` is given twice in this call")]
+    DuplicateNamedArgument {
+        /// Label as the caller wrote it.
+        name: String,
+    },
+    /// A positional argument written after a labelled one.
+    #[error("positional arguments must come before named ones")]
+    PositionalAfterNamed,
+    /// A labelled call to a method more than one type declares
+    /// differently.
+    #[error("`{method}` is declared with different parameters by more than one type")]
+    AmbiguousNamedArgument {
+        /// Method name as written.
+        method: String,
+        /// One declaring type.
+        first: String,
+        /// Another declaring type, whose parameters differ.
+        second: String,
+    },
+    /// A `name =` label on a call this pass cannot match to a declaration.
+    #[error("`{name} =` cannot be matched to a parameter of {target}")]
+    NamedArgumentTarget {
+        /// Label as the caller wrote it.
+        name: String,
+        /// Description of the call target.
+        target: String,
+    },
+    /// A call that leaves a parameter with neither an argument nor a
+    /// default. Reported here rather than as an arity mismatch because
+    /// names and defaults make the count a poor description of the
+    /// problem: a call can supply the declared number of arguments and
+    /// still leave a parameter unfilled.
+    #[error("this call gives no value for {missing}")]
+    MissingRequiredArgument {
+        /// Backticked, comma-joined names of the unfilled parameters.
+        missing: String,
+        /// Whether more than one parameter is unfilled.
+        plural: bool,
+        /// Backticked, comma-joined parameters that do have defaults.
+        optional: String,
+    },
+    /// A parameter default that is not a constant.
+    #[error("a parameter default must be a constant")]
+    NonConstantDefault {
+        /// Parameter the default was written on.
+        name: String,
+    },
     /// A bare enum-variant name that more than one enum declares.
     #[error("`{name}` is a variant of more than one enum")]
     AmbiguousVariant {
@@ -151,27 +242,48 @@ impl ResolveError {
             Self::UnknownStdItem { .. } => "unknown-std-item",
             Self::RemovedStdItem { .. } => "removed-std-item",
             Self::PrivateItem { .. } => "private-item",
+            Self::UnreflectableType { .. } => "unreflectable-type",
+            Self::UnknownNamedArgument { .. } => "unknown-named-argument",
+            Self::DuplicateNamedArgument { .. } => "duplicate-named-argument",
+            Self::PositionalAfterNamed => "positional-after-named",
+            Self::AmbiguousNamedArgument { .. } => "ambiguous-named-argument",
+            Self::NamedArgumentTarget { .. } => "named-argument-target",
+            Self::NonConstantDefault { .. } => "non-constant-default",
+            Self::MissingRequiredArgument { .. } => "missing-required-argument",
             Self::AmbiguousVariant { .. } => "ambiguous-variant",
             Self::NotImported { .. } => "not-imported",
             Self::MissingModuleSource { .. } => "missing-module-source",
         }
     }
 
-    /// Whether this error is about a name the parser fabricated during
-    /// recovery rather than one the user wrote.
+    /// Whether this error is about a name an earlier stage produced rather
+    /// than one the user wrote: a parser recovery placeholder, or a
+    /// synthesized function the autoderive stage declined to emit.
     ///
-    /// The parse error that produced the placeholder is the actionable
-    /// report; repeating it as an unresolved name would point the user at
-    /// a name that does not appear in their source.
+    /// In both cases that stage has already reported the actionable error,
+    /// and repeating it here would point the user at a name absent from
+    /// their source.
     #[must_use]
     pub fn is_about_parse_placeholder(&self) -> bool {
+        if let Self::UnresolvedName { name } = self
+            && name.starts_with(SYNTHESIZED_SERDE_PREFIX)
+        {
+            return true;
+        }
         let reported = match self {
             Self::UnresolvedName { name }
             | Self::WrongNamespace { name, .. }
             | Self::DuplicateItem { name }
             | Self::AmbiguousVariant { name, .. }
             | Self::MissingModuleSource { name }
+            | Self::UnreflectableType { name }
+            | Self::UnknownNamedArgument { name, .. }
+            | Self::DuplicateNamedArgument { name }
+            | Self::NamedArgumentTarget { name, .. }
+            | Self::NonConstantDefault { name }
             | Self::DuplicateImport { name } => name,
+            Self::PositionalAfterNamed | Self::MissingRequiredArgument { .. } => return false,
+            Self::AmbiguousNamedArgument { method, .. } => method,
             Self::UnknownModulePath { path } | Self::RemovedStdItem { path, .. } => path,
             Self::PrivateItem { name, module, .. } => {
                 return name
@@ -206,6 +318,14 @@ impl ResolveError {
             Self::AmbiguousVariant { .. } => "GR0009",
             Self::MissingModuleSource { .. } => "GR0010",
             Self::NotImported { .. } => "GR0011",
+            Self::UnreflectableType { .. } => "GR0012",
+            Self::UnknownNamedArgument { .. }
+            | Self::DuplicateNamedArgument { .. }
+            | Self::PositionalAfterNamed
+            | Self::AmbiguousNamedArgument { .. }
+            | Self::NamedArgumentTarget { .. } => "GR0013",
+            Self::NonConstantDefault { .. } => "GR0014",
+            Self::MissingRequiredArgument { .. } => "GR0015",
         }
     }
 }
@@ -274,6 +394,49 @@ impl ResolveDiagnostic {
 
     /// Attaches the help line for every resolve error that is not an
     /// unresolved name, which carries its own did-you-mean search.
+    /// Help lines for the named-argument and parameter-default family.
+    fn named_argument_help(
+        &self,
+        out: gossamer_diagnostics::Diagnostic,
+    ) -> gossamer_diagnostics::Diagnostic {
+        match &self.error {
+            ResolveError::UnknownNamedArgument { expected, .. } => {
+                if expected.is_empty() {
+                    out.with_help("this function declares no parameters".to_string())
+                } else {
+                    out.with_help(format!("its parameters are `{expected}`"))
+                }
+            }
+            ResolveError::DuplicateNamedArgument { .. } => {
+                out.with_help("give each parameter at most once".to_string())
+            }
+            ResolveError::PositionalAfterNamed => out.with_help(
+                "once a name is used, every later argument needs one too, because the \
+                 positions after it are no longer in written order"
+                    .to_string(),
+            ),
+            ResolveError::AmbiguousNamedArgument {
+                method,
+                first,
+                second,
+            } => out.with_help(format!(
+                "`{first}` and `{second}` both declare `{method}`, with different parameters; \
+                 the receiver's type is not known here, so pass the arguments by position"
+            )),
+            ResolveError::NamedArgumentTarget { .. } => out.with_help(
+                "a name may only be given for a call to a function, method, or associated \
+                 function declared in this package"
+                    .to_string(),
+            ),
+            ResolveError::NonConstantDefault { .. } => out.with_help(
+                "a default is spliced into every call that omits it, so it must be a \
+                 literal - `10`, `-1`, `true`, `\"\"`"
+                    .to_string(),
+            ),
+            _ => out,
+        }
+    }
+
     fn with_error_specific_help(
         &self,
         out: gossamer_diagnostics::Diagnostic,
@@ -288,6 +451,17 @@ impl ResolveDiagnostic {
             } => out.with_help(format!(
                 "use a {expected} in this position; `{name}` resolves to a {found}"
             )),
+            ResolveError::UnknownNamedArgument { .. }
+            | ResolveError::DuplicateNamedArgument { .. }
+            | ResolveError::PositionalAfterNamed
+            | ResolveError::AmbiguousNamedArgument { .. }
+            | ResolveError::NamedArgumentTarget { .. }
+            | ResolveError::NonConstantDefault { .. } => self.named_argument_help(out),
+            ResolveError::MissingRequiredArgument {
+                missing,
+                plural,
+                optional,
+            } => missing_argument_help(out, missing, *plural, optional),
             ResolveError::UnknownModulePath { path } => match closest_module_path(path) {
                 Some(known) => out.with_suggestion(Suggestion::replacement(
                     location,
@@ -325,7 +499,14 @@ impl ResolveDiagnostic {
             }
             ResolveError::PrivateItem { name, module, kind } => out.with_help(format!(
                 "`{name}` is declared without `pub`, so only `{module}` and its child \
-                 modules can name it; write `pub` on the {kind} to reach it from here"
+                 modules can name it; write `pub(package)` on the {kind} to reach it \
+                 from anywhere in this package, or `pub` to make it part of the \
+                 package's public API"
+            )),
+            ResolveError::UnreflectableType { name } => out.with_help(format!(
+                "`typeInfo` reflects a struct's fields or an enum's variants; \
+                 check that `{name}` is declared in this program and is not a \
+                 unit struct, which has no fields"
             )),
             ResolveError::NotImported { name, module } => out
                 .with_suggestion(Suggestion::replacement(

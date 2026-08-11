@@ -1,0 +1,13 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+assertion_line: 86
+expression: rendered
+---
+--- plain ---
+error[GR0013]: A call gave an argument a name its callee does not declare, gave - here
+--- framed ---
+error[GR0013]: A call gave an argument a name its callee does not declare, gave
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

@@ -34,7 +34,7 @@ more explicit types and errors.
 Entry files may use top-level statements. Items are hoisted, and bare
 statements become the body of an implicit `fn main()`.
 
-## Gossamer 0.37 Syntax At A Glance
+## Gossamer 0.47 Syntax At A Glance
 
 Go permits implicit statement termination but still uses commas in multiline
 composite literals. Gossamer permits semicolons only between same-line
@@ -257,6 +257,51 @@ let total = #[1, 2, 3, 4, 5]
 
 The same pipe-friendly shape exists for `std::option` and
 `std::result`.
+
+## Visibility
+
+Gossamer has three visibilities, and they are declared per item, per method,
+and per struct field.
+
+| Annotation | Reachable from |
+| --- | --- |
+| none | the declaring module and its descendants |
+| `pub(package)` | every module of the declaring package |
+| `pub` | anything that depends on the package |
+
+A **package** is the unit of distribution: one `project.toml`, one project id.
+A **module** is a directory under `src/`. A module nested inside another is a
+**module descendant**, and visibility flows inward only: a descendant reaches
+its ancestors' private items, never the reverse.
+
+```gossamer
+// src/money/mod.gos
+pub struct Amount {
+    pub currency: String,
+    cents: i64,                     // private representation
+}
+
+impl Amount {
+    pub fn new(currency: String, cents: i64) -> Amount {
+        Amount { currency: currency, cents: cents }
+    }
+    pub fn cents(&self) -> i64 { self.cents }
+    fn normalize(&self) -> i64 { self.cents }   // private helper
+}
+
+pub(package) fn round_trip(a: &Amount) -> i64 { a.normalize() }
+```
+
+A `pub` type may keep private methods and private fields, so a struct with any
+private field can only be built by the module that declares it. Importing does
+not widen anything: a `use` is a spelling convenience, and visibility is
+decided by where the name is used.
+
+Coming from Go, the biggest change is that visibility is
+declared, not inferred from capitalization. `Amount` and `amount` are equally
+public or private depending on the `pub` you write. Go's package-level
+visibility maps to `pub(package)`; Go has no equivalent of `pub`, because a
+Go package's exported surface is exported to everyone.
 
 ## Common Ports
 

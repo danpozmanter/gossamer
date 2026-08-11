@@ -18,10 +18,13 @@ fn builtin_channel_recv(args: &[Value]) -> RuntimeResult<Value> {
             "recv: receiver must be a channel".to_string(),
         ));
     };
-    Ok(match channel.recv() {
-        Some(value) => some_variant(value),
-        None => none_variant(),
-    })
+    match channel.recv() {
+        crate::value::RecvOutcome::Value(value) => Ok(some_variant(value)),
+        crate::value::RecvOutcome::Closed => Ok(none_variant()),
+        crate::value::RecvOutcome::Deadlocked => Err(
+            crate::value::deadlock_error("receive"),
+        ),
+    }
 }
 
 fn builtin_channel_try_recv(args: &[Value]) -> RuntimeResult<Value> {

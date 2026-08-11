@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0067]: A `for` loop's subject was a `Result` or an `Option`. Neither is a - here
+--- framed ---
+error[GT0067]: A `for` loop's subject was a `Result` or an `Option`. Neither is a
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

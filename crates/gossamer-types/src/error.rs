@@ -40,6 +40,10 @@ pub enum NotDisplayableClass {
     Callable,
     /// A channel endpoint or join handle.
     Concurrency,
+    /// A generic type with no `fmt`: whether its fields render depends on
+    /// the arguments each instantiation supplies, so the declaration has to
+    /// ask for one.
+    GenericWithoutDebug,
 }
 
 fn not_displayable_message(ty: &str, class: NotDisplayableClass) -> String {
@@ -52,6 +56,9 @@ fn not_displayable_message(ty: &str, class: NotDisplayableClass) -> String {
         }
         NotDisplayableClass::Concurrency => {
             format!("`{ty}` is runtime state and has no display representation")
+        }
+        NotDisplayableClass::GenericWithoutDebug => {
+            format!("`{ty}` is generic and has no `fmt` to format it with")
         }
     }
 }
@@ -129,6 +136,17 @@ pub enum TypeError {
         /// Method name.
         name: String,
         /// Module the `impl` was written in.
+        module: String,
+    },
+    /// A field reached from outside the module declaring its struct,
+    /// without `pub`.
+    #[error("field `{name}` on `{ty}` is private to module `{module}`")]
+    PrivateField {
+        /// Struct that declares the field.
+        ty: String,
+        /// Field name.
+        name: String,
+        /// Module the struct was declared in.
         module: String,
     },
     /// A binary or unary operator could not be resolved for the given
@@ -255,6 +273,15 @@ pub enum TypeError {
         /// Target type.
         to: String,
     },
+    /// `.into()` was written across an opaque alias boundary that has no
+    /// conversion behind it.
+    #[error("no conversion from `{from}` to `{to}`")]
+    NoConversion {
+        /// Source type.
+        from: String,
+        /// Target type.
+        to: String,
+    },
     /// Field access (`value.field`) on a type that has no such field.
     /// Splits two failure modes: `opaque` is true when the receiver's
     /// type is known but the checker has no field map for it (typical
@@ -280,6 +307,25 @@ pub enum TypeError {
     /// are a compile error unless explicitly suppressed with `let _ =`.
     #[error("unused `Result` value - the `Err` variant may go unhandled")]
     DiscardedResult,
+    /// A value produced by a `#[must_use]` function, or of a
+    /// `#[must_use]` type, was used as a statement without binding or
+    /// consuming it.
+    #[error("unused {what} - `{name}` is marked `#[must_use]`")]
+    DiscardedMustUse {
+        /// Shape of the discarded value, for the message.
+        what: &'static str,
+        /// Name of the annotated function or type.
+        name: String,
+    },
+    /// A `for` loop whose subject is a `Result` or an `Option` rather
+    /// than a sequence. The value inside has to be taken first.
+    #[error("`{name}` is not a sequence - a `for` over it binds nothing and runs zero times")]
+    IterableWrapper {
+        /// `Result` or `Option`.
+        name: String,
+        /// How to take the value, for the help line.
+        taken: &'static str,
+    },
     /// An expression, type, or pattern nested past the type-checker's
     /// hard recursion limit. Emitted on adversarial input that
     /// survives parsing (rare, but the typechecker has its own
@@ -741,6 +787,7 @@ impl TypeError {
             Self::ArgumentTypeMismatch { .. } => "argument-type-mismatch",
             Self::UnresolvedMethod { .. } => "unresolved-method",
             Self::PrivateMethod { .. } => "private-method",
+            Self::PrivateField { .. } => "private-field",
             Self::UnresolvedOp { .. } => "unresolved-op",
             Self::UnresolvedOpImpl { .. } => "unresolved-op-impl",
             Self::NonExhaustiveMatch { .. } => "non-exhaustive-match",
@@ -762,8 +809,11 @@ impl TypeError {
             Self::DuplicateStructField { .. } => "duplicate-struct-field",
             Self::TooManyStructFields { .. } => "too-many-struct-fields",
             Self::InvalidCast { .. } => "invalid-cast",
+            Self::NoConversion { .. } => "no-conversion",
             Self::UnknownField { .. } => "unknown-field",
             Self::DiscardedResult => "discarded-result",
+            Self::DiscardedMustUse { .. } => "discarded-must-use",
+            Self::IterableWrapper { .. } => "iterable-wrapper",
             Self::RecursionLimit { .. } => "recursion-limit",
             Self::CyclicTypeAlias { .. } => "cyclic-type-alias",
             Self::UnsupportedDerive { .. } => "unsupported-derive",
@@ -845,8 +895,11 @@ impl TypeError {
             Self::DuplicateStructField { .. } => "GT0036",
             Self::TooManyStructFields { .. } => "GT0037",
             Self::InvalidCast { .. } => "GT0005",
+            Self::NoConversion { .. } => "GT0066",
             Self::UnknownField { .. } => "GT0006",
             Self::DiscardedResult => "GT0007",
+            Self::DiscardedMustUse { .. } => "GT0064",
+            Self::IterableWrapper { .. } => "GT0067",
             Self::RecursionLimit { .. } => "GT0008",
             Self::CyclicTypeAlias { .. } => "GT0024",
             Self::UnsupportedDerive { .. } => "GT0025",
@@ -862,6 +915,7 @@ impl TypeError {
             Self::IteratorStateFormatted => "GT0041",
             Self::ValueNotDisplayable { .. } => "GT0062",
             Self::PrivateMethod { .. } => "GT0063",
+            Self::PrivateField { .. } => "GT0065",
             Self::IteratorStateConsumed { .. } => "GT0042",
             Self::JsonNotSerializable { .. } => "GT0016",
             Self::TraitBoundNotSatisfied { .. } => "GT0017",
@@ -1174,6 +1228,14 @@ impl TypeDiagnostic {
                     )
                     .with_note(format!("cannot cast `{from}` to `{to}`"));
             }
+            TypeError::NoConversion { from, to } => {
+                out = out
+                    .with_help(format!("write `impl From<{from}> for {to}`"))
+                    .with_note(
+                        "an opaque alias converts to and from its own representation with `.into()`; every other pair needs a `From` impl"
+                            .to_string(),
+                    );
+            }
             TypeError::UnknownField {
                 ty,
                 field,
@@ -1199,6 +1261,25 @@ impl TypeDiagnostic {
                 );
             }
             TypeError::DiscardedResult => out = discarded_result_diagnostic(out),
+            TypeError::PrivateField { name, .. } => {
+                out = out.with_help(format!(
+                    "write `pub(package)` on field `{name}` to reach it from anywhere in \
+                     this package, or `pub` to expose it beyond the package"
+                ));
+            }
+            TypeError::DiscardedMustUse { .. } => {
+                out = out
+                    .with_note("`#[must_use]` marks a value whose whole point is the value")
+                    .with_help("bind it with `let`, consume it, or discard it explicitly with `let _ = <expr>`");
+            }
+            TypeError::IterableWrapper { name, taken } => {
+                out = out
+                    .with_note(format!(
+                        "`{name}` holds at most one value and carries no element type, \
+                         so the loop binding is unconstrained and the body never runs"
+                    ))
+                    .with_help(format!("take the value first with {taken}, then iterate it"));
+            }
             TypeError::TraitBoundNotSatisfied { ty, bound } => {
                 out = out.with_help(format!(
                     "add `impl {bound} for {ty} {{ ... }}`, or pass a type that already implements `{bound}`"
@@ -1768,6 +1849,14 @@ fn value_not_displayable_diagnostic(
                 "format the values that pass through the `{ty}`, not the endpoint itself"
             ))
             .with_note("a channel endpoint or join handle is runtime state, not data"),
+        NotDisplayableClass::GenericWithoutDebug => out
+            .with_help(format!(
+                "add `#[derive(Debug)]` to `{ty}` so every instantiation gets a `fmt`"
+            ))
+            .with_note(
+                "whether a generic type's fields render depends on the arguments each \
+                 instantiation supplies, so the declaration is where the choice is made",
+            ),
     }
 }
 

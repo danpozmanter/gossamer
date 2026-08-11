@@ -102,7 +102,10 @@ Write clear, low-complexity, concise code.
   Bare `String` iteration yields Unicode `char` values; use `.bytes()`
   for UTF-8 bytes. An omitted range start begins at zero (`..3` yields
   `0`, `1`, `2`). A range can also be stored and consumed later:
-  `let a = 0..3`, then `for i in a { println(i) }`.
+  `let a = 0..3`, then `for i in a { println(i) }`. A `Result` or
+  `Option` is NOT iterable (GT0067): a fallible API like
+  `fs::read_dir(dir)` hands back `Result<Vec<T>, _>`, so take the value
+  first (`?`, a `match`, `unwrap_or(..)`) and iterate that.
 - **Bare integer indices** - `arr[i]` takes `i64`, no `as usize`.
   Indexed reads and writes outside `[0, len)` panic on every tier. Vec
   `insert` accepts `0..=len` and returns `Result<(), errors::Error>`;
@@ -180,6 +183,13 @@ Write clear, low-complexity, concise code.
 - **`defer expr`** - runs when control leaves the enclosing `{ }` by
   any path, LIFO; per-iteration in a loop body.
 - **`let PAT = expr else { ... }`** - the else block must diverge.
+- **Name an argument or default a parameter** when a call reads better
+  for it: `fn volume(width: i64, height: i64 = 2)` then `volume(2)`,
+  `volume(width: 2, height: 3)`, or `volume(2, height: 3)`. Positional
+  arguments come first, then names, in any order. A default must be a
+  literal (optionally negated) and is spliced per call site. Works on
+  methods and associated fns; when two types declare one method name with
+  different parameters, a named call on it is GR0013 - pass positionally.
 - **Plain functions for free-standing logic**; `impl` only when state
   is genuinely tied to a type.
 - **`Result<T, E>` + `?`** for fallibility; panic only for invariant
@@ -277,7 +287,14 @@ let n = 3 |> double |> add(10) |> clamp(0, 100)
   [T] [T; N] (A, B) Option<T> Result<T, E> &T` + user types. `i128`
   / `u128` are rejected (GT0014). Transparent `type Id = i64` /
   `type Pair<A> = (A, A)` aliases substitute everywhere (cycle =
-  GT0024).
+  GT0024). `type UserId = new i64` is the OPAQUE form: a distinct
+  type over the same representation, at no runtime cost. `.into()`
+  converts to and from its own representation only (any other pair
+  needs `impl From`, else GT0066); it inherits equality, ordering,
+  hashing, and formatting - so it keys a `Map`, sorts, and prints -
+  but NOT the representation's methods (GT0002) or operators
+  (GT0003). Give it an `impl` of its own, and it serializes as the
+  representation.
 - **Casts**: `x as T` is whitelist-checked (numeric<->numeric,
   bool/char->int, u8->char). Int->narrow-int masks at width (`300 as
   u8 == 44`); float->int truncates toward zero and saturates at i64
@@ -367,6 +384,14 @@ OS-thread spawn API. Use `go expr` or `spawn(f)` for concurrency.
 Use `Fn(args) -> ret` for callback parameters. Plain `fn(args) -> ret`
 is a raw pointer shape; bare named functions coerce to `Fn(...) -> ...`
 at callback sites (no FnMut/FnOnce distinction in practice).
+**Capture splits by type**: a heap value (`Vec`, `Map`, `Set`, `String`,
+a struct) is captured by managed reference, so `xs.push(v)` inside a
+closure is visible outside it; a `Copy` scalar (`i64`, `bool`, `char`,
+`f64`) is captured BY COPY, so `count += 1` updates the closure's own
+copy and the outer binding does NOT change. To accumulate a count
+across a callback - `fs::walk_dir`, a sort comparator, a visitor -
+push into a `Vec` (or collect into a `Map`) rather than incrementing a
+scalar.
 
 **Iterators**: any type with `fn next(&mut self) -> Option<T>` works
 in `for`. Sequence combinators (`map`/`filter`/`take`/`skip`/`step_by`)

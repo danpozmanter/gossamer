@@ -1,0 +1,69 @@
+// An `impl` method wins over a builtin of the same name.
+//
+// An enum value carries only its variant name at run time, so the receiver's
+// own type has to come from the call site. Where the call site cannot supply
+// it - a payload binding extracted inside a recursive method - one `impl`
+// declaring the name settles it, because there is nothing else the call
+// could reach.
+
+enum Bag { One(i64), Many(Box<Bag>, Box<Bag>) }
+
+impl Bag {
+    // Every name here also names a sequence combinator.
+    fn count(&self) -> i64 {
+        match self { Bag::One(_) => 1, Bag::Many(l, r) => l.count() + r.count() }
+    }
+    fn len(&self) -> i64 { 43 }
+    fn sum(&self) -> i64 { 44 }
+    fn map(&self) -> i64 { 46 }
+    fn min(&self) -> i64 { 47 }
+    fn find(&self) -> i64 { 48 }
+}
+
+enum Tree<T> { Leaf(T), Node(Box<Tree<T>>, Box<Tree<T>>) }
+
+impl<T> Tree<T> {
+    fn which(&self) -> i64 {
+        match self { Tree::Leaf(_) => 10, Tree::Node(_, _) => 20 }
+    }
+    fn tally(&self) -> i64 {
+        match self { Tree::Leaf(_) => 1, Tree::Node(l, r) => l.tally() + r.tally() }
+    }
+}
+
+enum Either<A, B> { Left(A), Right(B) }
+
+fn side<A, B>(e: &Either<A, B>) -> i64 {
+    match e { Either::Left(_) => 0, Either::Right(_) => 1 }
+}
+
+// Calls the methods under test enough times to pass the JIT's admission
+// threshold, so the compiled tier actually compiles this dispatch rather
+// than falling back to the interpreter and comparing it against itself.
+fn hot_dispatch(bag: &Bag, tree: &Tree<i64>) -> i64 {
+    let mut total = 0
+    for _ in 0..2000 {
+        total += bag.count() + bag.len() + bag.sum() + bag.map() + bag.min() + bag.find()
+        total += tree.which() + tree.tally()
+    }
+    total
+}
+
+fn main() {
+    let bag = Bag::Many(Bag::One(1), Bag::Many(Bag::One(2), Bag::One(3)))
+    println!("count {}", bag.count())
+    println!("len {} sum {} map {}", bag.len(), bag.sum(), bag.map())
+    println!("min {} find {}", bag.min(), bag.find())
+
+    let leaf: Tree<i64> = Tree::Leaf(9)
+    println!("leaf which {} tally {}", leaf.which(), leaf.tally())
+
+    let node: Tree<i64> = Tree::Node(Tree::Leaf(1), Tree::Node(Tree::Leaf(2), Tree::Leaf(3)))
+    println!("node which {} tally {}", node.which(), node.tally())
+
+    println!("hot {}", hot_dispatch(&bag, &node))
+
+    let l: Either<String, i64> = Either::Left("x")
+    let r: Either<String, i64> = Either::Right(7)
+    println!("either {} {}", side(&l), side(&r))
+}

@@ -339,3 +339,130 @@ fn names_without_a_type_behind_them_are_rejected() {
         ],
     );
 }
+
+/// Keyword arguments bind with `=`, defaults fill the gaps, and a
+/// parameter with neither is named rather than counted.
+#[test]
+fn keyword_arguments_and_defaults() {
+    const DECL: &str = "fn wow(a: i64, b: i64 = 100) -> i64 { a * 2 + b * 10 }\n";
+    gate(
+        "keyword arguments",
+        &[
+            (
+                "default filled",
+                &format!("{DECL}fn main() {{ let _ = wow(9) }}"),
+                Expect::Accept,
+            ),
+            (
+                "named argument",
+                &format!("{DECL}fn main() {{ let _ = wow(a = 9) }}"),
+                Expect::Accept,
+            ),
+            (
+                "named out of order",
+                &format!("{DECL}fn main() {{ let _ = wow(b = 1, a = 9) }}"),
+                Expect::Accept,
+            ),
+            (
+                "parameter with no default omitted",
+                &format!("{DECL}fn main() {{ let _ = wow(b = 0) }}"),
+                Expect::Reject("GR0015"),
+            ),
+            (
+                "colon is not a label",
+                &format!("{DECL}fn main() {{ let _ = wow(a: 9, b: 1) }}"),
+                Expect::Reject("GP0001"),
+            ),
+            (
+                "equality is not a label",
+                &format!("{DECL}fn main() {{ let _ = wow(9, 1) == 28 }}"),
+                Expect::Accept,
+            ),
+        ],
+    );
+}
+
+/// A `for` over a wrapper binds nothing and runs zero times, so accepting
+/// it is a program that silently does nothing.
+#[test]
+fn for_over_a_wrapper_is_rejected() {
+    gate(
+        "wrapper iteration",
+        &[
+            (
+                "result",
+                "use std::fs\nfn main() { for e in fs::read_dir(\".\") { println!(\"{}\", e.name) } }",
+                Expect::Reject("GT0067"),
+            ),
+            (
+                "option",
+                "fn first_of(xs: &[i64]) -> Option<i64> { xs.first() }\n\
+                 fn main() { for v in first_of(&#[1, 2]) { println!(\"{}\", v) } }",
+                Expect::Reject("GT0067"),
+            ),
+            (
+                "taken first",
+                "use std::fs\n\
+                 fn main() { for e in fs::read_dir(\".\").unwrap_or(#[]) { println!(\"{}\", e.name) } }",
+                Expect::Accept,
+            ),
+        ],
+    );
+}
+
+/// A synthesized name is not the user's to act on. Every shape that makes
+/// the autoderive stage decline must report in the user's own vocabulary,
+/// and none may leave a `__gos_` symbol in a message.
+#[test]
+fn refused_serde_targets_report_without_leaking_a_synthesized_name() {
+    let cases = [
+        (
+            "generic struct",
+            "struct W<T> { v: T }\nfn main() { let _ = to_json::<W<i64>>(W { v: 1 }) }",
+            "GP0039",
+        ),
+        (
+            "enum",
+            "enum E { A(i64), B }\nfn main() { let _ = to_json::<E>(E::A(1)) }",
+            "GP0039",
+        ),
+        (
+            "not a struct",
+            "fn main() { let _ = to_json::<Nope>(1) }",
+            "GP0039",
+        ),
+        (
+            "unserializable field",
+            "struct H { cb: Fn(i64) -> i64 }\n\
+             fn main() { let _ = to_json::<H>(H { cb: |x: i64| x }) }",
+            "GP0022",
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, source, expected) in cases {
+        let mut map = SourceMap::new();
+        let file = map.add_file("serde_refusal.gos".to_string(), source.to_string());
+        let result = check_frontend(source, file);
+        let codes: Vec<String> = result
+            .diagnostics
+            .iter()
+            .map(|d| d.code.as_str().to_string())
+            .collect();
+        if !codes.iter().any(|code| code == expected) {
+            failures.push(format!("{name}: expected {expected}, got {codes:?}"));
+        }
+        for diagnostic in &result.diagnostics {
+            let rendered = format!(
+                "{} {} {} {}",
+                diagnostic.code.as_str(),
+                diagnostic.title,
+                diagnostic.notes.join(" "),
+                diagnostic.helps.join(" "),
+            );
+            if rendered.contains("__gos_") {
+                failures.push(format!("{name}: leaked a synthesized name: {rendered}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

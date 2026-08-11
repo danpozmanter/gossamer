@@ -1,5 +1,138 @@
 # Changelog
 
+## 0.47.0 - Visibility, pub(package), deadlock detection, silently dropped fix,
+## keyword and constant default arg, goroutine scalability/fixes, 
+## opaque nominal aliases, typeInfo over enums/generics, 
+## must_use and allow(unused_result), other fixes
+
+- Resume a parked goroutine on the thread it parked on. A wake that arrived
+  in the window between arming and suspending re-queued the goroutine onto the
+  shared injector, so a suspended stack could continue on another worker
+  thread; every thread-local read taken before the suspend then resolved
+  against whoever resumed it. A goroutine could delete another's registration
+  on a channel, a mutex, or a wait group, and the value queued for the victim
+  was consumed by a wake nobody was left waiting for - a fan-in over an
+  unbuffered channel hung.
+- Wake the unbuffered sender whose value was taken, rather than the
+  longest-waiting one, so a sender that re-parks cannot absorb another's
+  handoff.
+- Name the parameters a call leaves unfilled (`GR0015`) instead of reporting
+  an argument count. With names and defaults a call can supply the declared
+  number of arguments and still miss a parameter, so `wow(b = 0)` now says it
+  gives no value for `a` and which parameters may be omitted.
+- Splice a parameter default and rewrite a named argument in the REPL, not
+  only in a file. The REPL drives the front-end phase by phase and never ran
+  the rewrite, so `fn wow(a: i64, b: i64 = 100)` then `wow(9)` reported a
+  missing argument.
+- Name an argument at a call site (`volume(depth = 4, width = 2)`) and give a
+  parameter a constant default (`fn volume(width: i64, height: i64 = 2)`).
+  Positional arguments come first, then names, in any order; a default is
+  spliced into every call that omits it. Both are rewritten into the callee's
+  declared order before type checking, so the calling convention is unchanged.
+- Report a call that names a parameter no callee declares, names one twice,
+  writes a positional argument after a named one, or names an argument on a
+  method that several types declare with different parameters (`GR0013`), and
+  a parameter default that is not a constant (`GR0014`).
+- Report a deadlock instead of hanging. A channel operation that would block
+  with no goroutine left running now stops the program with `all goroutines
+  are asleep - deadlock!` and exit 101, instead of waiting forever. A pending
+  handoff, a timer, a socket, or a blocking call all count as progress, so a
+  working program is never reported.
+- Infer a generic enum's type arguments from its constructor. `Tree::Leaf(1)`
+  left `T` unresolved unless an annotation supplied it, which left the value's
+  type unknown: two instantiations of one enum could not coexist in a program,
+  a nullary variant would not unify with the type it belonged to, and native
+  builds read the wrong variant from any method on such a value while the
+  interpreter read the right one.
+- Bind a generic enum's payload at the instantiation the scrutinee has, so
+  `Tree<i64>`'s `Leaf(v)` binds `v: i64` rather than an unresolved type.
+- Reflect enums, tuple structs, and generic instantiations with
+  `typeInfo::<T>()`. It described named-field non-generic structs only; an
+  enum or a `W<i64>` reported a missing internal name. An enum yields each
+  variant with its payload spelling, a tuple struct yields its positions, and
+  a generic type yields its fields with the arguments substituted in.
+- Report `GR0012` for a `typeInfo::<T>()` with nothing to reflect, instead of
+  an unresolved `__gos_typeinfo_T` the user never wrote.
+- Format a type recursive through `Box` on every tier. `println!("{:?}", node)`
+  rendered on the interpreter and failed the native build.
+- Derive on a generic enum. `#[derive(Debug)]` and its siblings produced no
+  usable method for one, so `{:?}`, `==`, and `clone` were unavailable on
+  every instantiation.
+- Reject formatting a generic type that has no `fmt` (`GT0062`), naming
+  `#[derive(Debug)]`. Formatting one rendered on the interpreter and failed
+  the native build, because whether a generic type's fields render depends on
+  the arguments each instantiation supplies.
+- Enforce `pub` on names reached through a `use`. A `use` binds an opaque
+  import, and the visibility check never followed it, so any module could
+  import and call another module's private functions, types, constants, and
+  aliases. A private item named from outside the module that declares it, or
+  from outside that module's descendants, is now `GR0008`.
+- Enforce visibility on associated functions and on traits. A `Type::helper()`
+  declared without `pub` was callable from any module, and a trait a module
+  kept to itself could be implemented from outside it.
+- Enforce visibility on struct fields. A non-`pub` field of a `pub` struct is
+  unreachable from outside the declaring module, whether it is read, written,
+  or named in a struct literal, so a type can be public while its
+  representation stays private (`GT0065`).
+- Add `pub(package)`, reaching every module of the declaring package and
+  nothing beyond it. `pub(crate)`, `pub(super)`, and `pub(in path)` are
+  rejected with a diagnostic naming it (`GP0038`).
+- Type a value produced by an imported item. A call to a `use`-imported
+  function of the same program, and a literal of an imported struct, both came
+  back as an unresolved type, so nothing downstream of either was checked:
+  assigning an imported function's `i64` result to a `String` compiled.
+- Report a `Result` discarded as the value of an `if`, a `for`, or a `while`.
+  Only a directly-discarded expression was checked, so `if ready() { flush() }`
+  dropped the error with no diagnostic.
+- Honour `#[allow(unused_result)]` on an item and `#![allow(unused_result)]` on
+  a file. Both parsed and did nothing, leaving the escape hatch the language
+  documents unavailable.
+- Honour `#[must_use]` on a function, struct, or enum declaration. Discarding
+  such a value is `GT0064`, so a guard or a builder can carry the same
+  guarantee `Result` does.
+- Call the `impl` method rather than a builtin of the same name on every
+  tier. Beyond the interpreter, a native build routed `value.len()` on a user
+  type to the sequence-length helper, which reads a `Vec` header out of the
+  receiver's pointer: `len` and `map` on an enum returned garbage from
+  compiled code while the interpreter returned the declared value.
+- Call the `impl` method rather than a builtin of the same name. An enum value
+  carries only its variant name at run time, so a user method named for a
+  sequence combinator - `count`, `len`, `map`, `min`, `find` - reached the
+  builtin instead: `count` answered 0 on the interpreter and the real value in
+  a native build, with no diagnostic on either.
+- Explain `GT0063` in `gos explain`. The code was emitted for a private method
+  but had no registry entry, so the command had nothing to say about it.
+- Declare a distinct type over an existing representation with
+  `type UserId = new i64`. It converts to and from its representation with
+  `.into()`, inherits equality, ordering, hashing, and formatting, and
+  inherits neither the representation's methods nor its operators.
+- Keep `new` when formatting a type alias. `gos fmt` wrote the target without
+  it, so formatting a file turned every opaque alias into a transparent one.
+- Serialize a struct field whose type is written as an alias. Both forms were
+  rejected as unserializable, which made `struct User { id: UserId }` - the
+  case an opaque alias exists for - underivable.
+- Spell a serde turbofish target through an alias: `to_json::<Record>(v)`
+  where `type Record = Rec` uses the target struct's codec.
+- Report which shape a serde turbofish named when no codec exists for it
+  (`GP0039`): a generic struct, an enum, or a name that is not a struct. Those
+  three reported only a synthesized internal name the user never wrote, and a
+  struct with an unserializable field reported that name after `GP0022`.
+- Name a callable field's type when reporting an underivable struct. It
+  rendered as `_`, so the report identified nothing to act on.
+- Reject a `for` loop over a `Result` or an `Option` (`GT0067`). Neither is a
+  sequence, so the loop bound nothing, ran zero times, and left the binding
+  unconstrained - `for entry in fs::read_dir(dir)` compiled, read fields off
+  `entry`, and silently did nothing.
+- Promote `std::fs` and `std::env` to shipped, and record the programs that
+  exercise them. `gos feature-status` and the stdlib coverage table now name
+  the fixture behind an item instead of reading `not item-audited` for every
+  entry regardless of what was run.
+- Grow the interpreter's goroutine pool on demand. It was fixed at four
+  threads, and a goroutine blocked in a channel operation holds its thread, so
+  four blocked goroutines starved every goroutine still queued - including the
+  sender whose value would have released them. A worker pool of four or more
+  receivers fed by a goroutine hung.
+
 ## 0.46.2 - Arena slab retention, library impls, method visibility
 
 - Bulk-free a sequence combinator's per-element allocations. A closure body

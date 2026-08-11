@@ -1,0 +1,46 @@
+// A program whose goroutines all block at some point still runs to
+// completion when a handoff is pending.
+//
+// Deadlock reporting counts a channel waiter as stuck only when no channel
+// holds a waiter that could proceed. An unbuffered send has both sides
+// waiting - the sender for its value to be taken, the receiver for a value
+// to arrive - and that pair is progress, not deadlock.
+
+use std::sync::channel
+
+fn produce(tx: Sender<i64>, n: i64) {
+    for i in 0..n { tx.send(i) }
+    tx.close()
+}
+
+fn worker(id: i64, tx: Sender<i64>) {
+    for i in 0..20 { tx.send(id * 100 + i) }
+}
+
+fn main() {
+    // Unbuffered: every send waits for a receiver to take the value.
+    let (tx, rx) = channel()
+    go produce(tx, 200)
+    let mut total = 0
+    while let Some(v) = rx.recv() { total += v }
+    println!("unbuffered total {}", total)
+
+    // Buffered: sends wait only when the buffer is full.
+    let (btx, brx) = channel(4)
+    go produce(btx, 100)
+    let mut buffered = 0
+    while let Some(v) = brx.recv() { buffered += v }
+    println!("buffered total {}", buffered)
+
+    // Fan-in: eight senders on one unbuffered channel. Each blocks holding a
+    // value only that sender's own handoff releases, so every wake has to
+    // reach the sender it belongs to.
+    let (ftx, frx) = channel()
+    for w in 0..8 { go worker(w, ftx) }
+    let mut seen = 0
+    let mut sum = 0
+    while seen < 8 * 20 {
+        if let Some(v) = frx.recv() { sum += v; seen += 1 } else { break }
+    }
+    println!("fan-in {} {}", seen, sum)
+}

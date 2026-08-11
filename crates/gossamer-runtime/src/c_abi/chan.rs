@@ -52,15 +52,81 @@ pub struct GosChan {
     /// goroutines are waiting, in which case the OS-thread
     /// `not_empty` Condvar is the only waker path.
     parked_recv: parking_lot::Mutex<std::collections::VecDeque<crate::sched::Gid>>,
-    /// Gids of goroutines parked on a send (buffer full). The next
-    /// receiver pops one and unparks it.
-    parked_send: parking_lot::Mutex<std::collections::VecDeque<crate::sched::Gid>>,
+    /// Goroutines parked on a send, each tagged with the value it is
+    /// waiting to hand off. See [`SendWaiter`] for why the tag is
+    /// needed to route a wake.
+    parked_send: parking_lot::Mutex<std::collections::VecDeque<SendWaiter>>,
     /// Goroutine id of the most recent sender. Read by recv to
     /// record a happens-before edge into the race detector. `-1`
     /// means "no sender yet observed".
     pub last_sender: AtomicI64,
     next_send_id: AtomicU64,
     recv_waiters: AtomicUsize,
+    /// Threads and goroutines blocked in a send on this channel.
+    send_waiters: AtomicUsize,
+    /// Whether this channel is currently counted among those holding a
+    /// waiter that could proceed. Kept in step by [`GosChan::sync_ready`].
+    counted_ready: std::sync::atomic::AtomicBool,
+}
+
+/// A goroutine suspended inside a send, and the value it is waiting to
+/// hand off.
+///
+/// An unbuffered sender queues its value and then waits for *that*
+/// value to be taken, so its wake condition is per-waiter and a wake
+/// delivered to any other sender does not satisfy it. `send_id` carries
+/// the queued value's id so a consuming receiver can route the wake to
+/// the one sender it released. Waiters with no value of their own - a
+/// sender blocked on a full buffer, a `select` send arm - use
+/// [`ANY_SEND`], because any consumption is what they are waiting for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SendWaiter {
+    gid: crate::sched::Gid,
+    send_id: u64,
+}
+
+/// `send_id` of a waiter that is released by any consumption rather
+/// than by one specific value. Never collides with a real send id:
+/// [`GosChan::next_send_id`] starts at 1.
+const ANY_SEND: u64 = 0;
+
+impl GosChan {
+    /// True when a waiter already on this channel would complete if it woke
+    /// now: a queued value with a receiver to take it, or room (or a
+    /// receiver) for a blocked sender's value. A closed channel releases
+    /// every waiter, so it is always ready.
+    fn has_ready_waiter(&self, queued: usize) -> bool {
+        let recvs = self.recv_waiters.load(Ordering::Acquire);
+        let sends = self.send_waiters.load(Ordering::Acquire);
+        if *self.closed.lock() && (recvs > 0 || sends > 0) {
+            return true;
+        }
+        if recvs > 0 && queued > 0 {
+            return true;
+        }
+        if sends == 0 {
+            return false;
+        }
+        if self.cap == 0 {
+            // An unbuffered sender's value is queued until a receiver takes
+            // it. A receiver present means the handoff is imminent; an empty
+            // buffer means it already happened and the sender has simply not
+            // observed it yet. Either way the sender is not stuck.
+            return recvs > 0 || queued == 0;
+        }
+        self.cap < 0 || (queued as i64) < self.cap
+    }
+
+    /// Re-reads this channel's readiness and applies the difference to the
+    /// process-wide count. Call under the `buf` lock after any change to the
+    /// buffer, the waiter counts, or the closed flag.
+    fn sync_ready(&self, queued: usize) {
+        let ready = self.has_ready_waiter(queued);
+        if ready == self.counted_ready.swap(ready, Ordering::AcqRel) {
+            return;
+        }
+        crate::sched_global::adjust_pending_handoffs(ready);
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -83,6 +149,8 @@ pub unsafe extern "C" fn gos_rt_chan_new(elem_bytes: u32, cap: i64) -> *mut GosC
             last_sender: AtomicI64::new(-1),
             next_send_id: AtomicU64::new(1),
             recv_waiters: AtomicUsize::new(0),
+            send_waiters: AtomicUsize::new(0),
+            counted_ready: std::sync::atomic::AtomicBool::new(false),
         }))
     })
 }
@@ -103,10 +171,12 @@ pub unsafe extern "C" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
         };
         loop {
             let mut guard = chan.buf.lock();
+            chan.sync_ready(storage_len(&guard));
             if chan.cap == 0 {
                 if !queued_unbuffered {
                     push_back(&mut guard, send_id, val, bytes_len);
                     queued_unbuffered = true;
+                    chan.sync_ready(storage_len(&guard));
                     drop(guard);
                     chan.last_sender
                         .store(i64::from(crate::race::current_gid()), Ordering::Release);
@@ -118,13 +188,21 @@ pub unsafe extern "C" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
                 }
             } else if chan.cap < 0 || (storage_len(&guard) as i64) < chan.cap {
                 push_back(&mut guard, 0, val, bytes_len);
+                chan.sync_ready(storage_len(&guard));
                 drop(guard);
                 chan.last_sender
                     .store(i64::from(crate::race::current_gid()), Ordering::Release);
                 wake_one_recv(chan);
                 return;
             }
-            // Buffer full. Goroutines park; OS threads block.
+            // Buffer full. Goroutines park; OS threads block. Either way,
+            // a runtime with nothing left able to run cannot deliver the
+            // value this send is waiting to hand off.
+            chan.send_waiters.fetch_add(1, Ordering::AcqRel);
+            crate::sched_global::adjust_channel_waiters(true);
+            let _sending = SendWaiterGuard { chan };
+            chan.sync_ready(storage_len(&guard));
+            crate::sched_global::report_deadlock_if_stuck("send");
             if gossamer_coro::in_goroutine() {
                 // Publish our waiter entry before releasing `buf`. A receiver
                 // can otherwise consume the last queued value between the
@@ -132,16 +210,23 @@ pub unsafe extern "C" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
                 // parked sender, and leave this goroutine asleep forever.
                 // `park` records a pre-unpark wake that arrives after the
                 // queue registration but before suspension.
+                let mut parked_as = None;
                 let mut guard = Some(guard);
                 crate::sched_global::park(crate::sched::ParkReason::Chan, |parker| {
-                    chan.parked_send.lock().push_back(parker.gid);
+                    parked_as = Some(parker.gid);
+                    chan.parked_send.lock().push_back(SendWaiter {
+                        gid: parker.gid,
+                        send_id,
+                    });
                     drop(guard.take());
                 });
                 // Cleanup: remove our gid from parked_send if still
                 // present (e.g. a parallel close fired with pre_unpark
-                // before any matching receive).
-                if let Some(gid) = crate::sched_global::current_gid() {
-                    chan.parked_send.lock().retain(|g| *g != gid);
+                // before any matching receive). The gid comes from the
+                // parker rather than from the thread-local, which names
+                // whichever goroutine the resuming thread is running.
+                if let Some(gid) = parked_as {
+                    chan.parked_send.lock().retain(|w| w.gid != gid);
                 }
             } else {
                 // Non-goroutine fallback: condvar-block the OS thread.
@@ -155,6 +240,33 @@ pub unsafe extern "C" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
     });
 }
 
+/// Releases a send registration when the wait ends, by any path. The
+/// channel's readiness is re-synced by whichever thread next holds its lock;
+/// taking the lock here would re-enter one the wait sites already hold.
+struct SendWaiterGuard<'a> {
+    chan: &'a GosChan,
+}
+
+impl Drop for SendWaiterGuard<'_> {
+    fn drop(&mut self) {
+        crate::sched_global::adjust_channel_waiters(false);
+        self.chan.send_waiters.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Releases a receive registration. As with the send guard, the lock stays
+/// untouched here.
+struct RecvWaiterGuard<'a> {
+    chan: &'a GosChan,
+}
+
+impl Drop for RecvWaiterGuard<'_> {
+    fn drop(&mut self) {
+        crate::sched_global::adjust_channel_waiters(false);
+        self.chan.recv_waiters.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 fn wake_one_recv(chan: &GosChan) {
     if let Some(gid) = chan.parked_recv.lock().pop_front() {
         crate::sched_global::scheduler().unpark(gid);
@@ -162,18 +274,56 @@ fn wake_one_recv(chan: &GosChan) {
     chan.not_empty.notify_one();
 }
 
-fn wake_one_send(chan: &GosChan) {
-    if let Some(gid) = chan.parked_send.lock().pop_front() {
-        crate::sched_global::scheduler().unpark(gid);
+/// Removes the send waiters released by consuming the value tagged
+/// `consumed_id`, longest-waiting first.
+///
+/// The waiter holding `consumed_id` is released because its own value
+/// was taken. One [`ANY_SEND`] waiter is released too, because room -
+/// or a receiver - is what it is waiting for and this consumption
+/// provided it.
+fn take_released_senders(
+    queue: &mut std::collections::VecDeque<SendWaiter>,
+    consumed_id: u64,
+) -> Vec<crate::sched::Gid> {
+    let mut released = Vec::new();
+    if consumed_id != ANY_SEND
+        && let Some(i) = queue.iter().position(|w| w.send_id == consumed_id)
+        && let Some(w) = queue.remove(i)
+    {
+        released.push(w.gid);
     }
-    chan.not_full.notify_one();
+    if let Some(i) = queue.iter().position(|w| w.send_id == ANY_SEND)
+        && let Some(w) = queue.remove(i)
+    {
+        released.push(w.gid);
+    }
+    released
+}
+
+/// Wakes the senders released by a receiver taking the value tagged
+/// `consumed_id` (`ANY_SEND` when the value carries no tag, which is
+/// every buffered send).
+fn wake_send_after_consume(chan: &GosChan, consumed_id: u64) {
+    let released = take_released_senders(&mut chan.parked_send.lock(), consumed_id);
+    let sched = crate::sched_global::scheduler();
+    for gid in released {
+        sched.unpark(gid);
+    }
+    if chan.cap == 0 {
+        // An OS-thread sender on an unbuffered channel waits on the same
+        // per-sender condition as a goroutine one, and a Condvar cannot
+        // name the waiter to release, so every waiter re-tests instead.
+        chan.not_full.notify_all();
+    } else {
+        chan.not_full.notify_one();
+    }
 }
 
 fn wake_all(chan: &GosChan) {
     let recvs: Vec<_> = chan.parked_recv.lock().drain(..).collect();
     let sends: Vec<_> = chan.parked_send.lock().drain(..).collect();
     let sched = crate::sched_global::scheduler();
-    for gid in recvs.into_iter().chain(sends) {
+    for gid in recvs.into_iter().chain(sends.into_iter().map(|w| w.gid)) {
         sched.unpark(gid);
     }
     chan.not_empty.notify_all();
@@ -220,29 +370,39 @@ pub unsafe extern "C" fn gos_rt_chan_recv(c: *mut GosChan, out: *mut u8) -> i32 
         let bytes_len = chan.elem_bytes as usize;
         loop {
             let mut guard = chan.buf.lock();
-            if pop_front(&mut guard, out, bytes_len) {
+            chan.sync_ready(storage_len(&guard));
+            if let Some(consumed_id) = pop_front(&mut guard, out, bytes_len) {
+                chan.sync_ready(storage_len(&guard));
                 drop(guard);
                 record_chan_handoff(chan);
-                wake_one_send(chan);
+                wake_send_after_consume(chan, consumed_id);
                 return 1;
             }
             if *chan.closed.lock() {
                 return 0;
             }
-            // Empty channel. Goroutines park; OS threads block.
+            // Empty channel. Goroutines park; OS threads block. An empty
+            // channel that no runnable goroutine can fill stays empty.
+            chan.recv_waiters.fetch_add(1, Ordering::AcqRel);
+            crate::sched_global::adjust_channel_waiters(true);
+            let _receiving = RecvWaiterGuard { chan };
+            chan.sync_ready(storage_len(&guard));
+            crate::sched_global::report_deadlock_if_stuck("receive");
             if gossamer_coro::in_goroutine() {
                 // Register while still holding `buf`, pairing this empty
                 // check with waiter publication. Without that pairing a
                 // sender can queue a value in the gap, find no waiter to
                 // wake, and strand both goroutines indefinitely.
+                let mut parked_as = None;
                 let mut guard = Some(guard);
                 crate::sched_global::park(crate::sched::ParkReason::Chan, |parker| {
+                    parked_as = Some(parker.gid);
                     chan.recv_waiters.fetch_add(1, Ordering::AcqRel);
                     chan.parked_recv.lock().push_back(parker.gid);
                     drop(guard.take());
                 });
                 chan.recv_waiters.fetch_sub(1, Ordering::AcqRel);
-                if let Some(gid) = crate::sched_global::current_gid() {
+                if let Some(gid) = parked_as {
                     chan.parked_recv.lock().retain(|g| *g != gid);
                 }
             } else {
@@ -264,10 +424,10 @@ pub unsafe extern "C" fn gos_rt_chan_try_recv(c: *mut GosChan, out: *mut u8) -> 
         let chan = unsafe { &*c };
         let bytes_len = chan.elem_bytes as usize;
         let mut guard = chan.buf.lock();
-        if pop_front(&mut guard, out, bytes_len) {
+        if let Some(consumed_id) = pop_front(&mut guard, out, bytes_len) {
             drop(guard);
             record_chan_handoff(chan);
-            wake_one_send(chan);
+            wake_send_after_consume(chan, consumed_id);
             return 1;
         }
         0
@@ -420,28 +580,37 @@ pub unsafe extern "C" fn gos_rt_chan_recv_ctx_option(
         let out_ptr = std::ptr::addr_of_mut!(out_val).cast::<u8>();
         let (result_disc, result_payload) = loop {
             let mut guard = chan.buf.lock();
-            if pop_front(&mut guard, out_ptr, bytes_len) {
+            chan.sync_ready(storage_len(&guard));
+            if let Some(consumed_id) = pop_front(&mut guard, out_ptr, bytes_len) {
+                chan.sync_ready(storage_len(&guard));
                 drop(guard);
                 record_chan_handoff(chan);
-                wake_one_send(chan);
+                wake_send_after_consume(chan, consumed_id);
                 break (0i64, out_val);
             }
             if *chan.closed.lock() {
                 break (1i64, 0i64);
             }
+            chan.recv_waiters.fetch_add(1, Ordering::AcqRel);
+            crate::sched_global::adjust_channel_waiters(true);
+            let _receiving = RecvWaiterGuard { chan };
+            chan.sync_ready(storage_len(&guard));
+            crate::sched_global::report_deadlock_if_stuck("receive");
             if gossamer_coro::in_goroutine() {
                 // Keep the empty-buffer check and receiver registration in
                 // one critical section, just like the unconditional recv
                 // path. Cancellation does not change the channel wakeup
                 // contract.
+                let mut parked_as = None;
                 let mut guard = Some(guard);
                 crate::sched_global::park(crate::sched::ParkReason::Chan, |parker| {
+                    parked_as = Some(parker.gid);
                     chan.recv_waiters.fetch_add(1, Ordering::AcqRel);
                     chan.parked_recv.lock().push_back(parker.gid);
                     drop(guard.take());
                 });
                 chan.recv_waiters.fetch_sub(1, Ordering::AcqRel);
-                if let Some(g) = crate::sched_global::current_gid() {
+                if let Some(g) = parked_as {
                     chan.parked_recv.lock().retain(|x| *x != g);
                 }
                 if unsafe { is_cancelled(ctx_handle) } != 0 {
@@ -500,20 +669,22 @@ fn push_back(storage: &mut ChanStorage, id: u64, val: *const u8, bytes_len: usiz
     }
 }
 
-fn pop_front(storage: &mut ChanStorage, out: *mut u8, bytes_len: usize) -> bool {
+/// Moves the front value into `out`, returning its send id so the
+/// caller can wake the sender that queued it. `None` when empty.
+fn pop_front(storage: &mut ChanStorage, out: *mut u8, bytes_len: usize) -> Option<u64> {
     match storage {
-        ChanStorage::I64(deque) => deque.pop_front().is_some_and(|(_, n)| {
+        ChanStorage::I64(deque) => deque.pop_front().map(|(id, n)| {
             let bytes = n.to_ne_bytes();
             unsafe {
                 std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, 8);
             }
-            true
+            id
         }),
-        ChanStorage::Bytes(deque) => deque.pop_front().is_some_and(|(_, item)| {
+        ChanStorage::Bytes(deque) => deque.pop_front().map(|(id, item)| {
             unsafe {
                 std::ptr::copy_nonoverlapping(item.as_ptr(), out, bytes_len);
             }
-            true
+            id
         }),
     }
 }
@@ -542,6 +713,14 @@ pub(crate) fn chan_close_idempotent(chan: &GosChan) -> bool {
             return false;
         }
         *guard = true;
+    }
+    // A close releases every waiter, so the channel becomes one that can
+    // make progress. Recording that before the wake keeps a waiter elsewhere
+    // from reading the program as stuck while these waiters are on their way
+    // to being resumed.
+    {
+        let queued = storage_len(&chan.buf.lock());
+        chan.sync_ready(queued);
     }
     wake_all(chan);
     true
@@ -764,14 +943,14 @@ pub unsafe extern "C" fn gos_rt_select_wait(b: *mut SelectBuilder) -> i64 {
                     let chan = unsafe { &*c };
                     let mut tmp = 0i64;
                     let mut guard = chan.buf.lock();
-                    if pop_front(
+                    if let Some(consumed_id) = pop_front(
                         &mut guard,
                         std::ptr::addr_of_mut!(tmp).cast::<u8>(),
                         chan.elem_bytes as usize,
                     ) {
                         drop(guard);
                         record_chan_handoff(chan);
-                        wake_one_send(chan);
+                        wake_send_after_consume(chan, consumed_id);
                         builder.last_value = tmp;
                         return i as i64;
                     }
@@ -803,8 +982,12 @@ pub unsafe extern "C" fn gos_rt_select_wait(b: *mut SelectBuilder) -> i64 {
             // Nothing ready, no default: block until a channel changes, then
             // re-poll. Mirrors the single-channel recv/send park discipline,
             // registering on every arm's queue so any sender/receiver wakes us.
+            // No arm can become ready if nothing is left to run.
+            crate::sched_global::report_deadlock_if_stuck("select");
             if gossamer_coro::in_goroutine() {
+                let mut parked_as = None;
                 crate::sched_global::park(crate::sched::ParkReason::Chan, |parker| {
+                    parked_as = Some(parker.gid);
                     for (kind, c, _) in &arms {
                         if c.is_null() {
                             continue;
@@ -814,7 +997,12 @@ pub unsafe extern "C" fn gos_rt_select_wait(b: *mut SelectBuilder) -> i64 {
                             chan.recv_waiters.fetch_add(1, Ordering::AcqRel);
                             chan.parked_recv.lock().push_back(parker.gid);
                         } else if *kind == 1 {
-                            chan.parked_send.lock().push_back(parker.gid);
+                            // A select send arm holds no queued value; it is
+                            // waiting for the channel to become sendable.
+                            chan.parked_send.lock().push_back(SendWaiter {
+                                gid: parker.gid,
+                                send_id: ANY_SEND,
+                            });
                         }
                     }
                     // An arm may have become ready after the initial poll but
@@ -827,7 +1015,7 @@ pub unsafe extern "C" fn gos_rt_select_wait(b: *mut SelectBuilder) -> i64 {
                         crate::sched_global::scheduler().unpark(parker.gid);
                     }
                 });
-                if let Some(gid) = crate::sched_global::current_gid() {
+                if let Some(gid) = parked_as {
                     for (kind, c, _) in &arms {
                         if c.is_null() {
                             continue;
@@ -837,7 +1025,7 @@ pub unsafe extern "C" fn gos_rt_select_wait(b: *mut SelectBuilder) -> i64 {
                             chan.recv_waiters.fetch_sub(1, Ordering::AcqRel);
                             chan.parked_recv.lock().retain(|g| *g != gid);
                         } else if *kind == 1 {
-                            chan.parked_send.lock().retain(|g| *g != gid);
+                            chan.parked_send.lock().retain(|w| w.gid != gid);
                         }
                     }
                 }
@@ -921,6 +1109,125 @@ mod tests {
         assert_eq!(out, 77);
         sender.join().expect("sender");
         assert!(done.load(Ordering::Acquire));
+        unsafe { gos_rt_chan_drop(chan) };
+    }
+
+    #[test]
+    fn consuming_a_value_releases_the_sender_that_queued_it() {
+        let mut queue = std::collections::VecDeque::from(vec![
+            SendWaiter {
+                gid: crate::sched::Gid(7),
+                send_id: 2,
+            },
+            SendWaiter {
+                gid: crate::sched::Gid(3),
+                send_id: 1,
+            },
+        ]);
+        // Taking value 1 must release gid 3, which queued it - not the
+        // longest-waiting sender, whose own value is still in the buffer.
+        assert_eq!(
+            take_released_senders(&mut queue, 1),
+            vec![crate::sched::Gid(3)]
+        );
+        assert_eq!(
+            queue.iter().map(|w| w.gid).collect::<Vec<_>>(),
+            vec![crate::sched::Gid(7)]
+        );
+    }
+
+    #[test]
+    fn untagged_consumption_releases_the_longest_waiting_sender() {
+        let mut queue = std::collections::VecDeque::from(vec![
+            SendWaiter {
+                gid: crate::sched::Gid(4),
+                send_id: ANY_SEND,
+            },
+            SendWaiter {
+                gid: crate::sched::Gid(5),
+                send_id: ANY_SEND,
+            },
+        ]);
+        assert_eq!(
+            take_released_senders(&mut queue, ANY_SEND),
+            vec![crate::sched::Gid(4)]
+        );
+        assert_eq!(queue.len(), 1);
+    }
+
+    #[test]
+    fn a_tagged_consumption_also_releases_one_untagged_waiter() {
+        let mut queue = std::collections::VecDeque::from(vec![
+            SendWaiter {
+                gid: crate::sched::Gid(9),
+                send_id: ANY_SEND,
+            },
+            SendWaiter {
+                gid: crate::sched::Gid(1),
+                send_id: 4,
+            },
+        ]);
+        assert_eq!(
+            take_released_senders(&mut queue, 4),
+            vec![crate::sched::Gid(1), crate::sched::Gid(9)]
+        );
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn a_consumption_no_sender_is_waiting_for_releases_nobody() {
+        let mut queue = std::collections::VecDeque::from(vec![SendWaiter {
+            gid: crate::sched::Gid(2),
+            send_id: 8,
+        }]);
+        assert!(take_released_senders(&mut queue, 3).is_empty());
+        assert_eq!(queue.len(), 1);
+    }
+
+    #[test]
+    fn every_unbuffered_sender_completes_under_a_single_receiver() {
+        const SENDERS: i64 = 8;
+        const PER_SENDER: i64 = 20;
+
+        let chan = unsafe { gos_rt_chan_new(8, 0) };
+        assert!(!chan.is_null());
+        let addr = chan as usize;
+        let senders: Vec<_> = (0..SENDERS)
+            .map(|id| {
+                std::thread::spawn(move || {
+                    for i in 0..PER_SENDER {
+                        let value = id * 100 + i;
+                        unsafe {
+                            gos_rt_chan_send(
+                                addr as *mut GosChan,
+                                std::ptr::addr_of!(value).cast(),
+                            );
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        let mut sum = 0i64;
+        for _ in 0..SENDERS * PER_SENDER {
+            let mut out = 0i64;
+            assert_eq!(
+                unsafe { gos_rt_chan_recv(chan, std::ptr::addr_of_mut!(out).cast()) },
+                1
+            );
+            sum += out;
+        }
+        // Every send must have returned. A misrouted wake leaves one
+        // sender blocked on a value that was already taken, and this join
+        // never completes.
+        for sender in senders {
+            sender.join().expect("sender");
+        }
+
+        let expected: i64 = (0..SENDERS)
+            .flat_map(|id| (0..PER_SENDER).map(move |i| id * 100 + i))
+            .sum();
+        assert_eq!(sum, expected);
         unsafe { gos_rt_chan_drop(chan) };
     }
 

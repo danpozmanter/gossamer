@@ -432,7 +432,9 @@ fn check_mode(
                     )),
                 }
             }
-            Status::Shipped | Status::Experimental => {
+            // A declined feature still carries a doc page: the page is
+            // where the decision and its alternative are written down.
+            Status::Shipped | Status::Experimental | Status::Declined => {
                 if doc_page_for(entry.path, docs_root).is_none() {
                     failures.push(format!(
                         "{}: {} item missing doc page under {}",

@@ -33,6 +33,10 @@ pub enum Status {
     /// tooling can answer "where did `foo` go?" with a deliberate
     /// removal note.
     Removed,
+    /// Permanently declined (SPEC §17.5). The surface is rejected with
+    /// a diagnostic naming the alternative, and no implementation is
+    /// coming - the entry exists so the absence reads as a decision.
+    Declined,
 }
 
 /// Execution implementation covered by an item contract.
@@ -95,6 +99,53 @@ const ALL_TIERS: &[EvidenceTier] = &[
 ];
 const HOST_TARGET: &[&str] = &["host"];
 
+/// Host families a registered tier-parity fixture is executed on. The CI
+/// matrix runs that suite on each of these, so a fixture named in
+/// [`ITEM_FIXTURES`] carries evidence from all of them rather than from
+/// whichever host happened to build it.
+const MATRIX_TARGETS: &[&str] = &[
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+];
+
+/// Items an executable fixture exercises, and the fixture that does it.
+///
+/// This is the audited subset: an entry means the named program calls the
+/// item and asserts its result, and that the program is registered in the
+/// tier-parity suite, so it runs on every tier and every host in the
+/// matrix. An item absent here is not claimed to be unaudited - it is
+/// simply not yet covered by this ledger, which is why
+/// [`item_evidence`] still falls back to what the status alone implies.
+pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
+    (
+        "std::fs",
+        &[
+            "feature-testing-examples/stdlib_fs_portable.gos",
+        ],
+    ),
+    (
+        "std::env",
+        &[
+            "feature-testing-examples/stdlib_env_portable.gos",
+        ],
+    ),
+];
+
+/// Fixtures covering `path`, or the module `path` belongs to. An item
+/// inherits its module's fixtures: a program that asserts `fs::write` and
+/// `fs::read_to_string` round-trip is evidence for both, and naming the
+/// module keeps the ledger from having to restate every call a fixture
+/// makes.
+fn fixtures_for(path: &str) -> &'static [&'static str] {
+    let module = path.rsplit_once("::").map_or(path, |(head, _)| head);
+    ITEM_FIXTURES
+        .iter()
+        .find(|(covered, _)| *covered == path || *covered == module)
+        .map_or(&[][..], |(_, fixtures)| *fixtures)
+}
+
 /// Materializes the audit ledger fields for one canonical item ID.
 ///
 /// The function is also used for flattened stdlib exports, which makes the
@@ -131,13 +182,26 @@ pub fn item_evidence(path: &str, status: Status) -> ItemEvidence {
             &[][..],
             vec!["Removed surface; retained only for migration guidance.".to_string()],
         ),
+        Status::Declined => (
+            &[][..],
+            vec!["Declined permanently (SPEC 17.5); no implementation is planned.".to_string()],
+        ),
+    };
+    // A fixture in the tier-parity suite is executed on every tier and
+    // every host in the matrix, so where one covers this item its evidence
+    // replaces what the status alone would imply.
+    let fixtures = fixtures_for(path);
+    let (supported_tiers, supported_targets) = if fixtures.is_empty() {
+        (supported_tiers, HOST_TARGET)
+    } else {
+        (ALL_TIERS, MATRIX_TARGETS)
     };
     ItemEvidence {
         status,
         supported_tiers,
-        supported_targets: HOST_TARGET,
+        supported_targets,
         doc_path,
-        positive_tests: Vec::new(),
+        positive_tests: fixtures.iter().map(|f| (*f).to_string()).collect(),
         negative_tests: Vec::new(),
         known_limits,
     }
@@ -154,6 +218,7 @@ impl Status {
             Status::Experimental => "experimental",
             Status::Planned => "planned",
             Status::Removed => "removed",
+            Status::Declined => "declined",
         }
     }
 
@@ -168,6 +233,7 @@ impl Status {
             "experimental" => Some(Status::Experimental),
             "planned" => Some(Status::Planned),
             "removed" => Some(Status::Removed),
+            "declined" => Some(Status::Declined),
             _ => None,
         }
     }
@@ -268,6 +334,18 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
         "Module-level mutable or immutable static slot.",
     ),
     lang(
+        "lang::opaque_nominal_alias",
+        "`type Name = new Repr` declares a distinct nominal type over an unchanged runtime representation, erased before lowering so no tier sees one. It inherits equality, ordering, hashing, and formatting - which describe the value both sides share - and nothing else: arithmetic needs the alias's own `impl Add`, and the representation's methods are not in scope. `.into()` converts to and from its own representation; any other pair needs `impl From`.",
+    ),
+    lang(
+        "lang::slicing",
+        "A range in index position takes a subsequence: `xs[1..3]`, `xs[..k]`, `xs[k..]`, `xs[..]`, `xs[a..=b]`, over fixed arrays, slices, `Vec`, and `String`. Bounds clamp rather than panic, matching `substring`; a `String` slice takes byte offsets and snaps to codepoint boundaries.",
+    ),
+    lang(
+        "lang::visibility",
+        "Three visibilities: private by default (the declaring module and its descendants), `pub(package)` (every module of the declaring package), and `pub` (the package's public API). Declared per item, per method, and per struct field; `pub(crate)` / `pub(super)` / `pub(in path)` are rejected (`GP0038`).",
+    ),
+    lang(
         "lang::type_alias",
         "Transparent type alias: `type X = T` (and generic `type Pair<A> = (A, A)`) is interchangeable with its target everywhere; a cyclic alias is rejected (`GT0024`).",
     ),
@@ -283,23 +361,29 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     // Compile-time evaluation. Folds to a literal before the tiers split.
     lang(
         "lang::comptime",
-        "Zig-style compile-time evaluation: `comptime { ... }` blocks, `comptime fn` calls, and `comptime` parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. `typeInfo::<T>()` reflects a type's fields, a `for (name, ty) in typeInfo::<T>()` loop unrolls into native per-field code, and `codegen!(...)` splices a `comptime fn`'s `String` back as source. Includes the `regex!` / `sql!` build-time validation macros.",
+        "Zig-style compile-time evaluation: `comptime { ... }` blocks, `comptime fn` calls, and `comptime` parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. `typeInfo::<T>()` reflects a struct's fields, a tuple struct's positions, or an enum's variants - substituting the arguments for a generic instantiation - and a `for (name, ty) in typeInfo::<T>()` loop unrolls into native per-field code, and `codegen!(...)` splices a `comptime fn`'s `String` back as source. Includes the `regex!` / `sql!` build-time validation macros.",
+    ),
+    // Caller-side argument spellings. Rewritten into declared order before
+    // type checking, so every tier compiles the same positional call.
+    lang(
+        "lang::keyword_arguments",
+        "Keyword arguments and constant parameter defaults: a call may name any parameter (`volume(depth = 4, width = 2)`), and a parameter may declare a constant default (`fn volume(width: i64, height: i64 = 2)`) that is spliced into every call omitting it. Positional arguments come first, then names. Both are caller-side spellings rewritten into the callee's declared order before type checking, so the calling convention is unchanged. A name on a method call is matched when every type declaring that method name would rewrite the call identically; when they disagree the call is reported (GR0013) rather than guessed.",
     ),
     // Planned / partial language surface.
     FeatureStatus {
         path: "lang::move_keyword",
-        status: Status::Planned,
-        doc: "`move` closure capture keyword - parses, lowers to the same Fn shape as a non-move closure (the runtime manages ownership).",
+        status: Status::Declined,
+        doc: "`move` closure capture keyword - declined permanently (SPEC 17.5). Capture is automatic and the runtime manages ownership, so `move` would annotate a decision the language does not make.",
     },
     FeatureStatus {
         path: "lang::async_await",
-        status: Status::Planned,
-        doc: "`async fn` / `.await` - goroutines + channels cover the same shape today.",
+        status: Status::Declined,
+        doc: "`async fn` / `.await` - declined permanently (SPEC 17.5). Goroutines and channels cover the same shape without colored functions.",
     },
     FeatureStatus {
         path: "lang::lifetimes",
-        status: Status::Planned,
-        doc: "References have implicit lexical lifetimes ending at the closing brace; explicit lifetime annotations are not part of safe Gossamer.",
+        status: Status::Declined,
+        doc: "Explicit lifetime annotations and a borrow checker - declined permanently (SPEC 17.5). References have implicit lexical lifetimes ending at the closing brace, and the lexical `&mut` check is the intended ceiling.",
     },
     // -----------------------------------------------------------------
     // Stdlib status overrides. Modules are shipped library surface; these
@@ -345,6 +429,16 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
         path: "std::path",
         status: Status::Shipped,
         doc: "Lexical filesystem-path API. It uses platform path grammar and never parses, escapes, or resolves network URLs.",
+    },
+    FeatureStatus {
+        path: "std::fs",
+        status: Status::Shipped,
+        doc: "Filesystem reading, writing, and traversal. The portable surface - create, write, read, copy, rename, remove, list, walk, canonicalize, and the temp-directory helpers - is exercised on every tier and on each supported host family. Symbolic links, permission bits, and ownership are platform-specific: they report `Unsupported` where the host has no equivalent, and creating a link needs privilege on Windows.",
+    },
+    FeatureStatus {
+        path: "std::env",
+        status: Status::Shipped,
+        doc: "Process environment, arguments, and working directory. The portable surface is exercised on every tier and on each supported host family. Which variable backs `home_dir`, and whether the environment block compares names case-insensitively, is the host's business.",
     },
     FeatureStatus {
         path: "std::net::url",
@@ -512,6 +606,43 @@ mod tests {
     fn weak_references_remain_explicitly_experimental() {
         let entry = lookup("lang::weak_references").expect("weak-reference status");
         assert_eq!(entry.status, Status::Experimental);
+    }
+
+    /// An item a fixture covers reports that fixture, on every tier and
+    /// host the matrix runs, rather than the tiers its status implies.
+    #[test]
+    fn item_evidence_reports_the_fixture_that_exercises_the_item() {
+        let evidence = item_evidence("std::fs::read_to_string", Status::Shipped);
+        assert_eq!(
+            evidence.positive_tests,
+            vec!["feature-testing-examples/stdlib_fs_portable.gos".to_string()]
+        );
+        assert_eq!(evidence.supported_tiers, ALL_TIERS);
+        assert_eq!(evidence.supported_targets, MATRIX_TARGETS);
+        // An item outside the ledger keeps deriving from its status, so
+        // the ledger cannot silently vouch for what it does not cover.
+        let underived = item_evidence("std::encoding::json::parse", Status::Shipped);
+        assert!(underived.positive_tests.is_empty());
+        assert_eq!(underived.supported_targets, HOST_TARGET);
+    }
+
+    /// Every fixture the ledger cites must exist. A renamed or deleted
+    /// program would otherwise leave the ledger claiming evidence from a
+    /// file nothing runs.
+    #[test]
+    fn every_ledger_fixture_exists() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("workspace root is two levels above this crate");
+        for (item, fixtures) in ITEM_FIXTURES {
+            for fixture in *fixtures {
+                assert!(
+                    root.join(fixture).is_file(),
+                    "{item} cites {fixture}, which does not exist"
+                );
+            }
+        }
     }
 
     #[test]

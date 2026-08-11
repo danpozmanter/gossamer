@@ -1,0 +1,69 @@
+// The `std::env` surface a program can rely on regardless of host: Linux,
+// macOS, and Windows. Nothing here asserts a spelling the platform owns -
+// no variable name that only one family defines, no path syntax, no
+// separator - only that each entry point answers and that the answers are
+// consistent with one another.
+use std::{env, errors, fs, path}
+
+fn main() -> Result<(), errors::Error> {
+    // Every host has a temp directory and a working directory, and both
+    // name real directories rather than empty strings.
+    let temp = env::temp_dir()
+    assert(temp.byte_len() > 0, "temp_dir is not empty")
+    assert(fs::is_dir(&temp), "temp_dir names a directory")
+
+    let cwd = env::current_dir()?
+    assert(cwd.byte_len() > 0, "current_dir is not empty")
+    assert(fs::is_dir(&cwd), "current_dir names a directory")
+
+    // `home_dir` reads a different variable per family (HOME, USERPROFILE);
+    // what is portable is that it answers with a directory.
+    let home = env::home_dir().unwrap_or("")
+    assert(home.byte_len() > 0, "home_dir is not empty")
+
+    let program = env::program_name()
+    assert(program.byte_len() > 0, "program_name is not empty")
+
+    // A variable this program sets is readable, overwritable, and removable.
+    // The name is uppercase ASCII so it means the same thing on a
+    // case-insensitive environment block as on a case-sensitive one.
+    let key = "GOS_PORTABLE_PROBE"
+    assert(env::var(&key).is_none(), "the probe variable starts unset")
+
+    env::set_var(&key, "first")
+    assert(env::var(&key).unwrap_or("") == "first", "set_var is readable")
+
+    env::set_var(&key, "second")
+    assert(env::var(&key).unwrap_or("") == "second", "set_var overwrites")
+
+    env::unset_var(&key)
+    assert(env::var(&key).is_none(), "unset_var removes")
+
+    // An empty value is a set variable, not an absent one - a distinction
+    // Windows historically collapses, so it is worth stating.
+    env::set_var(&key, "")
+    assert(env::var(&key).unwrap_or("absent") == "", "an empty value stays set")
+    env::unset_var(&key)
+
+    // Changing the working directory is observable, and restoring it puts
+    // the process back where it started.
+    let probe = fs::temp_dir("gos-env-portable")?
+    let canonical_probe = fs::canonicalize(&probe).unwrap_or(probe)
+    env::set_current_dir(&canonical_probe)?
+    let here = env::current_dir()?
+    let moved = fs::canonicalize(&here).unwrap_or(here)
+    assert(moved == canonical_probe, "set_current_dir moves the process")
+    env::set_current_dir(&cwd)?
+    assert(env::current_dir()? == cwd, "the original directory is restorable")
+    fs::remove_dir_all(&canonical_probe)?
+
+    // `args` excludes the interpreter and the script: a program run with no
+    // arguments of its own sees none. `path::join` on the answers above is
+    // the only path construction here, and it round-trips on every host.
+    assert(env::args().len() == 0, "no arguments were passed to this program")
+    let joined = path::join(&temp, "leaf")
+    assert(joined.byte_len() > temp.byte_len(), "join extends its base")
+
+    println!("env portable ok")
+    Ok(())
+}

@@ -70,6 +70,8 @@ nav:
       - Top-level statements: language/top_level_statements.md
       - Arena blocks: language/arena.md
       - Comptime: language/comptime.md
+      - Keyword arguments: language/keyword_arguments.md
+      - Opaque nominal aliases: language/opaque_nominal_alias.md
       - Tuples: language/tuples.md
   - Memory model: memory.md
   - Writing libraries: libraries.md
@@ -123,6 +125,8 @@ not_in_nav: |
   !/language/top_level_statements.md
   !/language/arena.md
   !/language/comptime.md
+  !/language/keyword_arguments.md
+  !/language/opaque_nominal_alias.md
   !/language/tuples.md
 
 markdown_extensions:

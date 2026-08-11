@@ -1530,6 +1530,8 @@ fn jit_local_ty_needs_bytecode_inner(
         TyKind::Vec(elem) | TyKind::Slice(elem) | TyKind::Array { elem, .. } => {
             jit_local_ty_needs_bytecode_inner(tcx, *elem, visiting)
         }
+        // Erased before lowering; a leak takes its representation's answer.
+        TyKind::Nominal { repr, .. } => jit_local_ty_needs_bytecode_inner(tcx, *repr, visiting),
         TyKind::Tuple(elems) => elems
             .iter()
             .any(|elem| jit_local_ty_needs_bytecode_inner(tcx, *elem, visiting)),
@@ -2037,6 +2039,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
     }
     reg! {
         "gos_rt_set_args"            => rt::gos_rt_set_args,
+        "gos_rt_program_start"       => rt::gos_rt_program_start,
         "gos_rt_os_args"             => rt::gos_rt_os_args,
         "gos_rt_arr_len"             => rt::gos_rt_arr_len,
         "gos_rt_len"                 => rt::gos_rt_len,

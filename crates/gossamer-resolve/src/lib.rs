@@ -19,6 +19,7 @@ mod cfg;
 mod def_id;
 mod diagnostic;
 mod external;
+mod named_args;
 mod resolutions;
 mod resolver;
 mod scope;
@@ -28,6 +29,7 @@ pub use cfg::{item_is_active, set_test_cfg, test_cfg_enabled};
 
 pub use def_id::{CrateId, DefId, DefIdGenerator, DefKind, ModId};
 pub use diagnostic::{ResolveDiagnostic, ResolveError};
+pub use named_args::resolve_named_arguments;
 pub use resolutions::{FloatWidth, IntWidth, PrimitiveTy, Resolution, Resolutions};
 pub use resolver::{project_dep_module_name, resolve_source_file};
 pub use stdlib_exports::{

@@ -1,0 +1,155 @@
+// Fan-in, fan-out, pipeline, and many-goroutine many-channel shapes at
+// counts high enough that a lost wakeup shows up as a hang or a short
+// count rather than passing by luck. Every result is order-independent -
+// a sum, a count, or a set - so the three tiers agree exactly.
+use std::sync::channel
+
+const PRODUCERS: i64 = 96
+const PER_PRODUCER: i64 = 200
+const WORKERS: i64 = 32
+const STAGES_INPUT: i64 = 500
+const CHANNEL_PAIRS: i64 = 48
+
+fn produce(tx: Sender<i64>, base: i64) {
+    for i in 0..PER_PRODUCER {
+        tx.send(base + i)
+    }
+}
+
+// Every producer holds a clone of one channel. A clone shares the channel
+// rather than owning a second one, so the count the consumer expects is what
+// bounds the drain; closing is the job of whoever owns the last handle.
+fn fan_in() -> i64 {
+    let (tx, rx) = channel()
+    for p in 0..PRODUCERS {
+        let sender = tx.clone()
+        go produce(sender, p * PER_PRODUCER)
+    }
+    let mut total = 0
+    let mut seen = 0
+    while seen < PRODUCERS * PER_PRODUCER {
+        let Some(v) = rx.recv() else { break }
+        total += v
+        seen += 1
+    }
+    total
+}
+
+fn square_all(jobs: Receiver<i64>, out: Sender<i64>) {
+    while let Some(v) = jobs.recv() {
+        out.send(v * v)
+    }
+}
+
+fn feed_jobs(tx: Sender<i64>) {
+    for i in 1..=PER_PRODUCER {
+        tx.send(i)
+    }
+    // Ends every worker's drain loop. Each then leaves its `results` clone
+    // behind without closing the channel they share.
+    tx.close()
+}
+
+// One queue, many workers competing for it: a wake delivered to a worker
+// that has already gone back to sleep would strand the remaining jobs. The
+// jobs are fed from their own goroutine so that feeding and draining are
+// concurrent - both channels are unbuffered, so a feeder that is also the
+// drainer cannot make progress once every worker is parked on a send.
+fn fan_out() -> i64 {
+    let (jobs, jobs_rx) = channel()
+    let (results, results_rx) = channel()
+    for _ in 0..WORKERS {
+        let rx = jobs_rx.clone()
+        let tx = results.clone()
+        go square_all(rx, tx)
+    }
+    go feed_jobs(jobs)
+    let mut total = 0
+    let mut seen = 0
+    while seen < PER_PRODUCER {
+        let Some(v) = results_rx.recv() else { break }
+        total += v
+        seen += 1
+    }
+    total
+}
+
+fn stage_double(input: Receiver<i64>, output: Sender<i64>) {
+    while let Some(v) = input.recv() {
+        output.send(v * 2)
+    }
+    output.close()
+}
+
+fn stage_offset(input: Receiver<i64>, output: Sender<i64>) {
+    while let Some(v) = input.recv() {
+        output.send(v + 1)
+    }
+    output.close()
+}
+
+// Three goroutines chained by two channels: each stage is both a receiver
+// waiting on its predecessor and a sender its successor waits on.
+fn pipeline() -> i64 {
+    let (feed, feed_rx) = channel()
+    let (mid, mid_rx) = channel()
+    let (out, out_rx) = channel()
+    go stage_double(feed_rx, mid)
+    go stage_offset(mid_rx, out)
+    go produce_range(feed)
+    let mut total = 0
+    while let Some(v) = out_rx.recv() {
+        total += v
+    }
+    total
+}
+
+fn produce_range(tx: Sender<i64>) {
+    for i in 0..STAGES_INPUT {
+        tx.send(i)
+    }
+    tx.close()
+}
+
+fn echo_once(tx: Sender<i64>, value: i64) {
+    tx.send(value)
+    tx.close()
+}
+
+// Many channels each with a single sender and a single receiver, so the
+// runtime is tracking a large set of independent parked pairs at once.
+fn many_channels() -> i64 {
+    let mut receivers: Vec<Receiver<i64>> = #[]
+    for i in 0..CHANNEL_PAIRS {
+        let (tx, rx) = channel()
+        go echo_once(tx, i * i)
+        receivers.push(rx)
+    }
+    let mut total = 0
+    for rx in receivers {
+        while let Some(v) = rx.recv() {
+            total += v
+        }
+    }
+    total
+}
+
+// A buffered channel whose capacity is smaller than the burst, so senders
+// park on a full buffer and are woken by the receiver draining it.
+fn buffered_backpressure() -> i64 {
+    let (tx, rx) = channel(8)
+    go produce_range(tx)
+    let mut count = 0
+    while let Some(_) = rx.recv() {
+        count += 1
+    }
+    count
+}
+
+fn main() {
+    println!("fan_in {}", fan_in())
+    println!("fan_out {}", fan_out())
+    println!("pipeline {}", pipeline())
+    println!("many_channels {}", many_channels())
+    println!("buffered {}", buffered_backpressure())
+}

@@ -11,7 +11,9 @@ fn sorted_ascending(xs: &[i64]) -> Vec<i64> {
     let n = out.len()
     for i in 0..n {
         for j in 0..n - i - 1 {
-            if out[j] > out[j + 1] { out.swap(j, j + 1) }
+            // The loop bound keeps `j + 1` inside the vector, so the
+            // swap's `Result` carries no case the caller can act on.
+            if out[j] > out[j + 1] { let _ = out.swap(j, j + 1) }
         }
     }
     out

@@ -23,7 +23,7 @@ use gossamer_ast::{
 };
 use gossamer_lex::{FileId, Keyword, Lexer, Punct, SourceMap, Span, TokenKind};
 
-use crate::ParseDiagnostic;
+use crate::{ParseDiagnostic, SerdeTargetRefusal};
 
 /// Classification of a struct field for the synthesizer. Anything
 /// outside this set causes the struct to be skipped - we don't want
@@ -54,14 +54,34 @@ enum FieldKind {
     Json,
 }
 
+/// Bounds how far a chain of type aliases is followed. A cyclic alias
+/// reaches the autoderive passes before the checker reports `GT0024`, so
+/// every alias walk terminates on its own rather than relying on that
+/// report.
+pub(crate) const MAX_ALIAS_DEPTH: u32 = 32;
+
 impl FieldKind {
-    fn from_type(ty: &gossamer_ast::Type, structs: &HashMap<String, TyId>) -> Option<Self> {
+    fn from_type(
+        ty: &gossamer_ast::Type,
+        structs: &HashMap<String, TyId>,
+        aliases: &HashMap<String, gossamer_ast::Type>,
+    ) -> Option<Self> {
+        Self::from_type_within(ty, structs, aliases, 0)
+    }
+
+    /// `depth` bounds alias expansion, per [`MAX_ALIAS_DEPTH`].
+    fn from_type_within(
+        ty: &gossamer_ast::Type,
+        structs: &HashMap<String, TyId>,
+        aliases: &HashMap<String, gossamer_ast::Type>,
+        depth: u32,
+    ) -> Option<Self> {
         // A generic argument that must itself be a supported field kind.
         let arg_kind = |g: &GenericArg, structs: &HashMap<String, TyId>| -> Option<Self> {
             let GenericArg::Type(inner) = g else {
                 return None;
             };
-            Self::from_type(inner, structs)
+            Self::from_type_within(inner, structs, aliases, depth)
         };
         match &ty.kind {
             TypeKind::Path(path) => {
@@ -92,7 +112,20 @@ impl FieldKind {
                         "f32" => Some(Self::F64),
                         "bool" => Some(Self::Bool),
                         "String" => Some(Self::String),
-                        other => structs.get(other).cloned().map(Self::Struct),
+                        other => {
+                            if let Some(target) = aliases.get(other) {
+                                if depth >= MAX_ALIAS_DEPTH {
+                                    return None;
+                                }
+                                return Self::from_type_within(
+                                    target,
+                                    structs,
+                                    aliases,
+                                    depth + 1,
+                                );
+                            }
+                            structs.get(other).cloned().map(Self::Struct)
+                        }
                     };
                 }
                 match name {
@@ -120,11 +153,13 @@ impl FieldKind {
                     _ => None,
                 }
             }
-            TypeKind::Slice(inner) => Some(Self::Vec(Box::new(Self::from_type(inner, structs)?))),
+            TypeKind::Slice(inner) => Some(Self::Vec(Box::new(Self::from_type_within(
+                inner, structs, aliases, depth,
+            )?))),
             TypeKind::Tuple(elems) => {
                 let mut kinds = Vec::with_capacity(elems.len());
                 for e in elems {
-                    kinds.push(Self::from_type(e, structs)?);
+                    kinds.push(Self::from_type_within(e, structs, aliases, depth)?);
                 }
                 Some(Self::Tuple(kinds))
             }
@@ -313,6 +348,47 @@ pub(crate) fn struct_identities(items: &[Item]) -> HashMap<String, TyId> {
     out
 }
 
+/// Right-hand side of every non-generic `type X = T` alias, transparent
+/// or opaque, keyed by the alias's name.
+///
+/// Both forms carry the representation's runtime value, so a field typed
+/// by one serializes exactly as the representation does. Generic aliases
+/// are excluded: substituting their parameters is the type checker's job,
+/// not this pass's.
+pub(crate) fn alias_targets(items: &[Item]) -> HashMap<String, gossamer_ast::Type> {
+    let mut out: HashMap<String, gossamer_ast::Type> = HashMap::new();
+    for (_, item) in flatten_items_with_modules(items) {
+        let ItemKind::TypeAlias(decl) = &item.kind else {
+            continue;
+        };
+        if !decl.generics.params.is_empty() {
+            continue;
+        }
+        out.entry(decl.name.name.clone())
+            .or_insert_with(|| decl.ty.clone());
+    }
+    out
+}
+
+/// Names of the non-generic opaque aliases (`type X = new T`).
+///
+/// Serialization reads and writes the representation, so a field typed
+/// by one needs an explicit `.into()` where the synthesized code builds
+/// the value back; formatting needs none, since an opaque alias renders
+/// as its representation.
+pub(crate) fn opaque_alias_names(items: &[Item]) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for (_, item) in flatten_items_with_modules(items) {
+        let ItemKind::TypeAlias(decl) = &item.kind else {
+            continue;
+        };
+        if decl.nominal && decl.generics.params.is_empty() {
+            out.insert(decl.name.name.clone());
+        }
+    }
+    out
+}
+
 /// Every item in the tree paired with the `::`-joined path of the module
 /// that declares it (empty at the unit root).
 pub(crate) fn flatten_items_with_modules(items: &[Item]) -> Vec<(String, &Item)> {
@@ -463,12 +539,28 @@ fn synthesize_validators(source: &str) -> String {
 }
 
 /// Renders an AST type as a compact source-like string for reflection
-/// (`typeInfo`). Falls back to the leaf path segment for shapes the
-/// renderer does not special-case.
+/// (`typeInfo`) and for diagnostics that quote a field's written type.
+///
+/// The match is exhaustive so a type shape added later is a compile error
+/// here rather than a silent `_` in a user-facing message.
 fn ty_to_string(ty: &gossamer_ast::ty::Type) -> String {
     use gossamer_ast::ty::TypeKind;
     match &ty.kind {
         TypeKind::Unit => "()".to_string(),
+        TypeKind::Never => "!".to_string(),
+        TypeKind::Infer => "_".to_string(),
+        TypeKind::Fn { kind, params, ret } => {
+            let params = params
+                .iter()
+                .map(ty_to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let head = format!("{}({params})", kind.as_str());
+            match ret {
+                Some(ret) => format!("{head} -> {}", ty_to_string(ret)),
+                None => head,
+            }
+        }
         TypeKind::Slice(inner) => format!("[{}]", ty_to_string(inner)),
         TypeKind::Array { elem, .. } => format!("[{}]", ty_to_string(elem)),
         TypeKind::Ref { inner, .. } => ty_to_string(inner),
@@ -495,7 +587,6 @@ fn ty_to_string(ty: &gossamer_ast::ty::Type) -> String {
             Some(seg) => seg.name.name.clone(),
             None => "_".to_string(),
         },
-        _ => "_".to_string(),
     }
 }
 

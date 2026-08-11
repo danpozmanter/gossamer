@@ -64,6 +64,8 @@ feature-testing-examples/chan_select_struct_payload.gos	bytecode-only local
 feature-testing-examples/chan_struct_local_recv.gos	bytecode-only local
 feature-testing-examples/chan_struct_payload.gos	bytecode-only local
 feature-testing-examples/channel_fan_in.gos	cross-goroutine
+feature-testing-examples/channel_progress_not_deadlock.gos	cross-goroutine
+feature-testing-examples/channel_semantics_conformance.gos	cross-goroutine
 feature-testing-examples/channel_timers.gos	bytecode-only local
 feature-testing-examples/clone_builtin_dispatch.gos	bytecode-only local
 feature-testing-examples/closure_capture_aggregate.gos	callable local
@@ -80,6 +82,7 @@ feature-testing-examples/comptime_fold.gos	admission gate
 feature-testing-examples/comptime_inline_for.gos	bytecode-only local
 feature-testing-examples/comptime_params_validate.gos	admission gate
 feature-testing-examples/comptime_reflection.gos	bytecode-only local
+feature-testing-examples/concurrency_stress_shapes.gos	cross-goroutine
 feature-testing-examples/concurrent_atomic.gos	cross-goroutine
 feature-testing-examples/container_display.gos	bytecode-only local
 feature-testing-examples/context_cancel.gos	no hot body
@@ -260,9 +263,11 @@ feature-testing-examples/stdlib_alias_wiring.gos	no hot body
 feature-testing-examples/stdlib_archive.gos	bytecode-only local
 feature-testing-examples/stdlib_compiled_wiring.gos	bytecode-only local
 feature-testing-examples/stdlib_encoding_crypto.gos	no hot body
+feature-testing-examples/stdlib_env_portable.gos	no hot body
 feature-testing-examples/stdlib_errors_chain.gos	bytecode-only local
 feature-testing-examples/stdlib_expansion.gos	no hot body
 feature-testing-examples/stdlib_fs_ops.gos	no hot body
+feature-testing-examples/stdlib_fs_portable.gos	bytecode-only local
 feature-testing-examples/stdlib_fs_rename.gos	no hot body
 feature-testing-examples/stdlib_hash.gos	no hot body
 feature-testing-examples/stdlib_io_adapters.gos	no hot body

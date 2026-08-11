@@ -16,7 +16,17 @@ struct Rec {
     caps: Map<String, i64>,
 }
 
+// A turbofish may spell its target through an alias; the codec is the
+// target struct's.
+type Record = Rec
+type Handle = new Inner
+
 fn main() {
+    let aliased = to_json::<Record>(&Rec { id: 1, nick: None, absent: None, pair: (0, "a"), tags: Vec::from(["z"]), inner: Inner { n: 2 }, caps: Map::new() }) |> $.unwrap_or("ERR")
+    println!("{}", aliased)
+    let opaque = to_json::<Handle>(&Inner { n: 9 }) |> $.unwrap_or("ERR")
+    println!("{}", opaque)
+
     let mut caps: Map<String, i64> = Map::new()
     caps.insert(&"a", 1)
     caps.insert(&"b", 2)

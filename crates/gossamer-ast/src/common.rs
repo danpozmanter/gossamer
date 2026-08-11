@@ -24,10 +24,13 @@ impl Mutability {
     Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
 )]
 pub enum Visibility {
-    /// Not annotated - private to the enclosing module.
+    /// Not annotated - private to the declaring module and its descendants.
     #[default]
     Inherited,
-    /// Annotated with `pub`.
+    /// Annotated with `pub(package)` - reachable from every module of the
+    /// declaring package, and from nowhere outside it.
+    Package,
+    /// Annotated with `pub` - part of the package's public API.
     Public,
 }
 
@@ -36,6 +39,23 @@ impl Visibility {
     #[must_use]
     pub const fn is_public(self) -> bool {
         matches!(self, Self::Public)
+    }
+
+    /// Returns `true` when a reference from another module of the same
+    /// package may reach the item. Both `pub` and `pub(package)` qualify.
+    #[must_use]
+    pub const fn is_package_visible(self) -> bool {
+        matches!(self, Self::Public | Self::Package)
+    }
+
+    /// The annotation as written, for diagnostics.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Inherited => "private",
+            Self::Package => "pub(package)",
+            Self::Public => "pub",
+        }
     }
 }
 

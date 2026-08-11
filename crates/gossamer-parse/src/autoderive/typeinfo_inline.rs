@@ -7,26 +7,263 @@
 pub fn synthesize_type_info(parsed: &SourceFile) -> String {
     let mut out = String::new();
     for item in flatten_items(&parsed.items) {
-        let ItemKind::Struct(decl) = &item.kind else {
-            continue;
-        };
-        let StructBody::Named(fields) = &decl.body else {
-            continue;
-        };
-        if !decl.generics.params.is_empty() {
-            continue;
+        match &item.kind {
+            ItemKind::Struct(decl) if decl.generics.params.is_empty() => {
+                if let Some(entries) = struct_entries(&decl.body) {
+                    emit_type_info(&mut out, &decl.name.name, &entries);
+                }
+            }
+            ItemKind::Enum(decl) if decl.generics.params.is_empty() => {
+                emit_type_info(&mut out, &decl.name.name, &enum_entries(decl));
+            }
+            _ => {}
         }
-        let entries: Vec<String> = fields
-            .iter()
-            .map(|f| format!("(\"{}\", \"{}\")", f.name.name, ty_to_string(&f.ty)))
-            .collect();
-        out.push_str(&format!(
-            "fn {}() -> Vec<(String, String)> {{ Vec::from([{}]) }}\n",
-            type_info_fn(&decl.name.name),
-            entries.join(", "),
-        ));
+    }
+    // A generic type reflects per instantiation: `typeInfo::<W<i64>>()`
+    // describes the fields `W<i64>` actually has. Each spelling the source
+    // reflects on gets its own function with the arguments substituted in.
+    for (mangled, decl_name, args) in generic_type_info_requests(parsed) {
+        for item in flatten_items(&parsed.items) {
+            match &item.kind {
+                ItemKind::Struct(decl) if decl.name.name == decl_name => {
+                    let params = param_names(&decl.generics);
+                    if let Some(entries) = struct_entries(&decl.body) {
+                        let entries = substitute_entries(&entries, &params, &args);
+                        emit_named(&mut out, &mangled, &entries);
+                    }
+                }
+                ItemKind::Enum(decl) if decl.name.name == decl_name => {
+                    let params = param_names(&decl.generics);
+                    let entries = substitute_entries(&enum_entries(decl), &params, &args);
+                    emit_named(&mut out, &mangled, &entries);
+                }
+                _ => {}
+            }
+        }
     }
     out
+}
+
+/// `(field name, field type)` for a struct body, or `None` for a unit
+/// struct, which has nothing to reflect. Tuple-struct fields are named by
+/// their position, matching how they are written (`p.0`).
+fn struct_entries(body: &StructBody) -> Option<Vec<(String, String)>> {
+    match body {
+        StructBody::Named(fields) => Some(
+            fields
+                .iter()
+                .map(|f| (f.name.name.clone(), ty_to_string(&f.ty)))
+                .collect(),
+        ),
+        StructBody::Tuple(fields) => Some(
+            fields
+                .iter()
+                .enumerate()
+                .map(|(i, f)| (i.to_string(), ty_to_string(&f.ty)))
+                .collect(),
+        ),
+        StructBody::Unit => None,
+    }
+}
+
+/// `(variant name, payload spelling)` for each variant in declaration
+/// order. A unit variant carries `()`, a single payload carries that type,
+/// and a multi-field variant carries the tuple of its fields - the same
+/// spellings a `match` arm binds.
+fn enum_entries(decl: &gossamer_ast::EnumDecl) -> Vec<(String, String)> {
+    decl.variants
+        .iter()
+        .map(|variant| {
+            let payload = match &variant.body {
+                StructBody::Unit => "()".to_string(),
+                StructBody::Tuple(fields) => match fields.as_slice() {
+                    [one] => ty_to_string(&one.ty),
+                    many => format!(
+                        "({})",
+                        many.iter()
+                            .map(|f| ty_to_string(&f.ty))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                },
+                StructBody::Named(fields) => format!(
+                    "({})",
+                    fields
+                        .iter()
+                        .map(|f| ty_to_string(&f.ty))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            };
+            (variant.name.name.clone(), payload)
+        })
+        .collect()
+}
+
+fn param_names(generics: &gossamer_ast::Generics) -> Vec<String> {
+    generics
+        .params
+        .iter()
+        .filter_map(|p| match p {
+            gossamer_ast::GenericParam::Type { name, .. } => Some(name.name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Replaces each type-parameter name in an entry's type spelling with the
+/// argument at the same position.
+fn substitute_entries(
+    entries: &[(String, String)],
+    params: &[String],
+    args: &[String],
+) -> Vec<(String, String)> {
+    entries
+        .iter()
+        .map(|(name, ty)| {
+            let mut ty = ty.clone();
+            for (param, arg) in params.iter().zip(args) {
+                ty = substitute_param(&ty, param, arg);
+            }
+            (name.clone(), ty)
+        })
+        .collect()
+}
+
+/// Rewrites whole-identifier occurrences of `param` in a type spelling.
+/// Matching on identifier boundaries keeps `T` from rewriting the `T` in
+/// `Tree`.
+fn substitute_param(ty: &str, param: &str, arg: &str) -> String {
+    let mut out = String::with_capacity(ty.len());
+    let mut rest = ty;
+    while let Some(at) = rest.find(param) {
+        let before_ok = rest[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+        let after = &rest[at + param.len()..];
+        let after_ok = after
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+        out.push_str(&rest[..at]);
+        if before_ok && after_ok {
+            out.push_str(arg);
+        } else {
+            out.push_str(param);
+        }
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
+fn emit_type_info(out: &mut String, type_name: &str, entries: &[(String, String)]) {
+    emit_named(out, &type_info_fn(type_name), entries);
+}
+
+fn emit_named(out: &mut String, fn_name: &str, entries: &[(String, String)]) {
+    let rendered: Vec<String> = entries
+        .iter()
+        .map(|(name, ty)| format!("(\"{name}\", \"{ty}\")"))
+        .collect();
+    out.push_str(&format!(
+        "fn {fn_name}() -> Vec<(String, String)> {{ Vec::from([{}]) }}\n",
+        rendered.join(", "),
+    ));
+}
+
+/// Name of the reflection function a `typeInfo::<T>()` turbofish targets.
+/// A generic instantiation carries its arguments into the name so each one
+/// reaches the function describing that instantiation's own fields.
+fn type_info_target(type_seg: &gossamer_ast::TypePathSegment) -> String {
+    let base = type_info_fn(&type_seg.name.name);
+    let args = type_arg_names(&type_seg.generics);
+    if args.is_empty() {
+        return base;
+    }
+    format!("{base}__{}", args.join("_"))
+}
+
+/// Type-argument spellings of a path segment, flattened to identifier-safe
+/// text so they can form part of a function name.
+fn type_arg_names(generics: &[GenericArg]) -> Vec<String> {
+    generics
+        .iter()
+        .filter_map(|arg| match arg {
+            GenericArg::Type(ty) => Some(mangle_ty(&ty_to_string(ty))),
+            GenericArg::Const(_) => None,
+        })
+        .collect()
+}
+
+/// Reduces a type spelling to the identifier characters a function name
+/// accepts, so two different spellings cannot collide on the same name.
+fn mangle_ty(spelling: &str) -> String {
+    spelling
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect()
+}
+
+/// Every `typeInfo::<Name<Args>>()` spelling in the source, as
+/// `(mangled function name, declared type name, argument spellings)`.
+fn generic_type_info_requests(sf: &SourceFile) -> Vec<(String, String, Vec<String>)> {
+    use gossamer_ast::Visitor;
+    use gossamer_ast::expr::{Expr, ExprKind};
+    use gossamer_ast::visitor::walk_expr;
+
+    struct Collect {
+        found: Vec<(String, String, Vec<String>)>,
+    }
+    impl Visitor for Collect {
+        fn visit_expr(&mut self, expr: &Expr) {
+            walk_expr(self, expr);
+            let ExprKind::Call { callee, .. } = &expr.kind else {
+                return;
+            };
+            let ExprKind::Path(path) = &callee.kind else {
+                return;
+            };
+            let [seg] = path.segments.as_slice() else {
+                return;
+            };
+            if seg.name.name != "typeInfo" || seg.generics.len() != 1 {
+                return;
+            }
+            let GenericArg::Type(ty) = &seg.generics[0] else {
+                return;
+            };
+            let TypeKind::Path(tp) = &ty.kind else {
+                return;
+            };
+            let Some(type_seg) = tp.segments.last() else {
+                return;
+            };
+            if type_seg.generics.is_empty() {
+                return;
+            }
+            let args: Vec<String> = type_seg
+                .generics
+                .iter()
+                .filter_map(|arg| match arg {
+                    GenericArg::Type(t) => Some(ty_to_string(t)),
+                    GenericArg::Const(_) => None,
+                })
+                .collect();
+            let entry = (
+                type_info_target(type_seg),
+                type_seg.name.name.clone(),
+                args,
+            );
+            if !self.found.contains(&entry) {
+                self.found.push(entry);
+            }
+        }
+    }
+    let mut collect = Collect { found: Vec::new() };
+    collect.visit_source_file(sf);
+    collect.found
 }
 
 /// Rewrites `typeInfo::<Type>()` into a call to the synthesized
@@ -62,7 +299,7 @@ pub fn rewrite_type_info_calls(sf: &mut SourceFile) {
             let Some(type_seg) = tp.segments.last() else {
                 return;
             };
-            seg.name.name = type_info_fn(&type_seg.name.name);
+            seg.name.name = type_info_target(type_seg);
             seg.generics.clear();
         }
     }

@@ -132,7 +132,7 @@ pub fn check_frontend_with_edition(
     }
 
     let phase_started = Instant::now();
-    let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(source, file_id);
+    let (mut sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(source, file_id);
     let parse = phase_started.elapsed();
 
     let mut diagnostics: Vec<Diagnostic> = parse_diags
@@ -147,7 +147,16 @@ pub fn check_frontend_with_edition(
     // resolver already suppresses the one class that is not actionable
     // (names the parser fabricated during recovery), so admitting the rest
     // keeps `gos check` a superset of what the LSP and the REPL report.
+    // Labelled and defaulted arguments are a caller-side spelling. Rewriting
+    // them into declared order here means the checker, HIR, and every tier's
+    // codegen only ever see a positional call.
+    let named_arg_diags = gossamer_resolve::resolve_named_arguments(&mut sf, &resolutions);
     let in_scope = collect_top_level_names(&sf);
+    diagnostics.extend(
+        named_arg_diags
+            .iter()
+            .map(|diag| diag.to_diagnostic(&in_scope)),
+    );
     diagnostics.extend(
         resolve_diags
             .iter()

@@ -25,7 +25,7 @@ mod stream;
 mod types;
 mod use_decls;
 
-pub use diagnostic::{ParseDiagnostic, ParseError};
+pub use diagnostic::{ParseDiagnostic, ParseError, SerdeTargetRefusal};
 pub use entry_main::synthesize_entry_main;
 pub use format::{FormatError, format_source};
 pub use parser::Parser;
@@ -80,9 +80,11 @@ pub fn parse_source_file(source: &str, file: FileId) -> (SourceFile, Vec<ParseDi
             .filter(|u| !is_local_single_segment_use(u)),
     );
     let next_node_id = parser.ids.issued();
+    let named_args = parser.take_named_args();
     let mut source_file = SourceFile::new(file, uses, items);
     source_file.top_level_stmts = top_level_stmts;
     source_file.next_node_id = next_node_id;
+    source_file.named_args = named_args;
     let diagnostics = parser.take_diagnostics();
     (source_file, diagnostics)
 }

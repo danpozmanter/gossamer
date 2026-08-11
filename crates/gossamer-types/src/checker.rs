@@ -30,11 +30,11 @@ use gossamer_ast::{
     ArrayExpr, BinaryOp, Block, ClosureParam, Expr, ExprKind, FieldPattern, FnDecl, FnParam,
     GenericArg as AstGenericArg, ImplDecl, ImplItem, Item, ItemKind, Literal, MatchArm, NodeId,
     Pattern, PatternKind, SourceFile, Stmt, StmtKind, StructBody, TraitItem, Type as AstType,
-    TypeKind as AstTypeKind, TypePath, UnaryOp,
+    TypeKind as AstTypeKind, TypePath, UnaryOp, Visibility,
 };
 use gossamer_lex::Span;
 use gossamer_pkg::Edition;
-use gossamer_resolve::{FloatWidth, IntWidth, PrimitiveTy, Resolution, Resolutions};
+use gossamer_resolve::{DefId, FloatWidth, IntWidth, PrimitiveTy, Resolution, Resolutions};
 
 use crate::context::TyCtxt;
 use crate::error::{TypeDiagnostic, TypeError};
@@ -89,6 +89,8 @@ impl TypeChecker<'_> {
         self.collect_import_targets(&source.uses);
         self.assoc = gossamer_ast::AssocIndex::build(source);
         self.collect_signatures(&source.items);
+        // A file-level `#![allow(unused_result)]` covers every item in it.
+        self.unused_result_allowed = source.attrs.allows("unused_result");
         for item in &source.items {
             self.check_item(item);
         }
@@ -97,8 +99,10 @@ impl TypeChecker<'_> {
         self.check_deferred_reference_storage();
         self.check_deferred_adt_bounds();
         self.check_deferred_type_mismatches();
+        self.check_deferred_into_conversions();
         self.check_deferred_literal_type_mismatches();
         self.check_deferred_mutating_receivers();
+        self.check_deferred_private_fields();
         self.check_deferred_structural();
         self.resolve_table();
         let diagnostics = Self::dedupe_diagnostics(self.diagnostics);
@@ -494,6 +498,14 @@ struct TypeChecker<'a> {
     /// cannot be assigned to (GT0030).
     mut_scopes: Vec<HashMap<Box<str>, bool>>,
     binding_types: HashMap<NodeId, Ty>,
+    /// Set while checking a body under `#[allow(unused_result)]`, the
+    /// suppression SPEC §9 names for the discarded-value reports.
+    unused_result_allowed: bool,
+    /// Functions declared `#[must_use]`, so a discarded call to one is
+    /// reported even though its return type carries no marker.
+    must_use_fns: HashMap<DefId, String>,
+    /// Structs and enums declared `#[must_use]`.
+    must_use_types: HashMap<DefId, String>,
     /// The `Self` type of the `impl` block currently being checked,
     /// so a method's `self` receiver binds to the concrete type
     /// instead of a free inference var. Without this, `self.field`
@@ -568,6 +580,12 @@ struct TypeChecker<'a> {
     /// field-access and struct-literal expressions can resolve leaf
     /// types without having to look up the original AST.
     struct_fields: HashMap<gossamer_resolve::DefId, Vec<(String, Ty)>>,
+    /// Declaring module and declared visibility of each struct field,
+    /// keyed by the owning struct and the field name.
+    field_homes: HashMap<(DefId, String), (Vec<String>, Visibility)>,
+    /// Nesting depth inside autoderive-spliced items, which reach a
+    /// type's private surface by construction.
+    synthesized_depth: u32,
     /// Cached function signatures keyed by `DefId`. Built during
     /// `collect_signatures` so a cross-function call site can pull
     /// the input/return types instead of returning a fresh var.
@@ -630,10 +648,18 @@ struct TypeChecker<'a> {
     /// defaulting. Their place capability is stable and can be checked once
     /// the receiver type selects the actual method.
     deferred_mutating_receivers: Vec<DeferredMutatingReceiver>,
+    /// Field accesses whose receiver was still an inference variable when
+    /// the access was checked, re-examined once inference has settled.
+    deferred_private_fields: Vec<(Ty, String, Span, Vec<String>)>,
     /// Assignment mismatches whose outer shapes are already incompatible but
     /// whose literal elements need integer/float defaulting before their
     /// rendered types are useful to the user.
     deferred_type_mismatches: Vec<(Ty, Ty, Span)>,
+    /// `.into()` call sites, recorded as (receiver, result, span). The
+    /// target is a fresh variable when the call is checked, so whether a
+    /// conversion exists can only be decided once unification has pinned
+    /// it.
+    deferred_into_conversions: Vec<(Ty, Ty, Span)>,
     deferred_literal_type_mismatches: Vec<(Ty, &'static str, Span)>,
     /// Tuple-variant payload types keyed by `(enum_name,
     /// variant_name)`. Drives literal re-typing at variant
@@ -641,6 +667,10 @@ struct TypeChecker<'a> {
     /// `[u8]`, not a fixed `[i64; 3]` whose first slot would pose as
     /// the payload word on the compiled tier.
     enum_variant_payloads: HashMap<(String, String), Vec<Ty>>,
+    /// Per-call-site instantiation of a generic enum's parameters, keyed by
+    /// the constructor path's node. The argument expectations, the argument
+    /// checks, and the call's result type all read the same variables.
+    variant_ctor_substs: HashMap<NodeId, (DefId, Vec<Ty>)>,
     /// Struct-variant field types keyed by `(enum_name, variant_name)`,
     /// each entry a declared field name paired with its type. A
     /// `Shape::Rect { w, h }` pattern binds through these exactly as a
@@ -672,6 +702,10 @@ struct TypeChecker<'a> {
     /// Alias `DefId`s currently being expanded, guarding against cyclic
     /// aliases (`type A = B; type B = A`).
     alias_expanding: std::collections::HashSet<gossamer_resolve::DefId>,
+    /// Alias `DefId`s declared with the opaque form `type X = new T`.
+    /// A use of one surfaces as [`TyKind::Nominal`] over the expansion of
+    /// `T` rather than as `T` itself.
+    nominal_aliases: std::collections::HashSet<gossamer_resolve::DefId>,
     /// Generic-parameter arity for every named struct, keyed by
     /// the struct's `DefId`. Built during `register_struct`. Used
     /// at struct-literal sites to allocate one fresh inference
@@ -841,6 +875,9 @@ impl<'a> TypeChecker<'a> {
             scopes: vec![HashMap::new()],
             mut_scopes: vec![HashMap::new()],
             binding_types: HashMap::new(),
+            unused_result_allowed: false,
+            must_use_fns: HashMap::new(),
+            must_use_types: HashMap::new(),
             current_self_ty: None,
             current_impl_generics: None,
             current_impl_where: gossamer_ast::WhereClause::default(),
@@ -859,6 +896,8 @@ impl<'a> TypeChecker<'a> {
             suppress_borrow_read_conflict: false,
             deferred_reference_storage: Vec::new(),
             struct_fields: checker_struct_fields,
+            field_homes: HashMap::new(),
+            synthesized_depth: 0,
             fn_sigs: HashMap::new(),
             method_arg_sigs: HashMap::new(),
             current_fn_ret: None,
@@ -872,15 +911,19 @@ impl<'a> TypeChecker<'a> {
             trait_impl_method_requires_mut: HashMap::new(),
             deferred_structural: Vec::new(),
             deferred_mutating_receivers: Vec::new(),
+            deferred_private_fields: Vec::new(),
             deferred_type_mismatches: Vec::new(),
+            deferred_into_conversions: Vec::new(),
             deferred_literal_type_mismatches: Vec::new(),
             enum_variant_payloads: HashMap::new(),
+            variant_ctor_substs: HashMap::new(),
             enum_variant_named_payloads: HashMap::new(),
             enum_tys: HashMap::new(),
             const_tys: HashMap::new(),
             static_mutability: HashMap::new(),
             alias_targets: HashMap::new(),
             alias_expanding: std::collections::HashSet::new(),
+            nominal_aliases: std::collections::HashSet::new(),
             struct_generic_arity: HashMap::new(),
             fn_generic_arity: HashMap::new(),
             fn_param_bounds: HashMap::new(),
@@ -2268,6 +2311,7 @@ impl<'a> TypeChecker<'a> {
         // `T` regardless of declaration order.
         self.collect_type_aliases(items);
         for item in items {
+            self.register_must_use(item);
             match &item.kind {
                 ItemKind::Fn(decl) => self.register_fn_sig(item.id, decl, item.span),
                 ItemKind::Impl(decl) => {
@@ -2457,6 +2501,13 @@ impl<'a> TypeChecker<'a> {
                                 _ => None,
                             })
                             .collect();
+                        if decl.nominal {
+                            self.nominal_aliases.insert(def);
+                            // The type prints under its own name, so a
+                            // mismatch against the representation names
+                            // both sides distinctly.
+                            self.tcx.register_def_name(def, decl.name.name.clone());
+                        }
                         self.alias_targets.insert(def, (params, decl.ty.clone()));
                     }
                 }
@@ -2488,6 +2539,18 @@ impl<'a> TypeChecker<'a> {
                 .entry(decl.name.name.clone())
                 .or_insert(def);
             self.record_adt_param_bounds(def, &decl.generics, &decl.where_clause);
+            // A generic enum instantiates its parameters per constructor call
+            // and per match arm, exactly as a generic struct does. The arity
+            // says how many fresh variables each of those needs.
+            let arity = decl
+                .generics
+                .params
+                .iter()
+                .filter(|p| matches!(p, gossamer_ast::GenericParam::Type { .. }))
+                .count();
+            if arity > 0 {
+                self.struct_generic_arity.insert(def, arity);
+            }
             self.tcx.register_enum_variant_names(
                 def,
                 decl.variants
@@ -2531,6 +2594,12 @@ impl<'a> TypeChecker<'a> {
                 variant_names.insert(variant.name.name.clone());
             }
         }
+        // A payload type naming a parameter (`Leaf(T)`) records a rigid
+        // `TyKind::Param` slot so each constructor call and each match arm
+        // substitutes it independently. Lowered outside the scope it would be
+        // one shared inference variable, and the first instantiation to pin
+        // it would fix the payload type for every other.
+        let payload_scope = self.enter_generic_scope(&decl.generics);
         for variant in &decl.variants {
             match &variant.body {
                 StructBody::Tuple(fields) => {
@@ -2573,6 +2642,7 @@ impl<'a> TypeChecker<'a> {
             }
             self.tcx.register_enum_variant_tys(def, variant_tys);
         }
+        self.leave_generic_scope(payload_scope);
         // The heap representation stores the discriminant in a one-byte
         // header field.
         if decl.variants.len() > 256 {
@@ -2592,6 +2662,29 @@ impl<'a> TypeChecker<'a> {
     /// `PartialEq`, `Eq`, `PartialOrd`, and `Ord`. Every other name is either
     /// automatic (`Clone` - `let b = a` copies, `Hash`, `Copy`, `Display`,
     /// serde) or implemented with `impl Trait for T` (`From`, operators).
+    /// Records `#[must_use]` on a function, struct, or enum declaration so
+    /// a discarded value of it is reported (GT0064).
+    fn register_must_use(&mut self, item: &Item) {
+        if !item.attrs.has_word("must_use") {
+            return;
+        }
+        let Some(def) = self.resolutions.definition_of(item.id) else {
+            return;
+        };
+        match &item.kind {
+            ItemKind::Fn(decl) => {
+                self.must_use_fns.insert(def, decl.name.name.clone());
+            }
+            ItemKind::Struct(decl) => {
+                self.must_use_types.insert(def, decl.name.name.clone());
+            }
+            ItemKind::Enum(decl) => {
+                self.must_use_types.insert(def, decl.name.name.clone());
+            }
+            _ => {}
+        }
+    }
+
     fn validate_derives(&mut self, attrs: &gossamer_ast::Attrs, span: Span) {
         for attr in &attrs.outer {
             let is_derive =
@@ -2671,6 +2764,25 @@ impl<'a> TypeChecker<'a> {
                 .collect(),
             StructBody::Unit => Vec::new(),
         };
+        // A field's visibility is declared on the field, so a `pub` struct
+        // may keep private ones. Record each field's home module alongside
+        // it so a reference from outside is checked like a method call.
+        let visibilities: Vec<(String, Visibility)> = match &decl.body {
+            StructBody::Named(fields) => fields
+                .iter()
+                .map(|f| (f.name.name.clone(), f.visibility))
+                .collect(),
+            StructBody::Tuple(fields) => fields
+                .iter()
+                .enumerate()
+                .map(|(i, f)| (i.to_string(), f.visibility))
+                .collect(),
+            StructBody::Unit => Vec::new(),
+        };
+        for (name, visibility) in visibilities {
+            self.field_homes
+                .insert((def, name), (module_path.to_vec(), visibility));
+        }
         if !matches!(decl.body, StructBody::Unit) {
             let tys: Vec<Ty> = list.iter().map(|(_, t)| *t).collect();
             self.tcx.register_struct_fields(def, tys);
@@ -3206,6 +3318,31 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn check_item(&mut self, item: &Item) {
+        // SPEC §9: `#[allow(unused_result)]` on an item covers its body.
+        let prior_allowed = self.unused_result_allowed;
+        self.unused_result_allowed |= item.attrs.allows("unused_result");
+        // An autoderive-spliced body belongs to the type it completes, and
+        // reads every field of it regardless of where the splice landed.
+        // The serde and reflection helpers carry the same meaning in their
+        // `__`-prefixed names.
+        let synthesized = item.attrs.has_word("gos_synthesized")
+            || match &item.kind {
+                ItemKind::Fn(decl) => is_compiler_generated(&decl.name.name),
+                ItemKind::Struct(decl) => is_compiler_generated(&decl.name.name),
+                ItemKind::Enum(decl) => is_compiler_generated(&decl.name.name),
+                _ => false,
+            };
+        if synthesized {
+            self.synthesized_depth += 1;
+        }
+        self.check_item_inner(item);
+        if synthesized {
+            self.synthesized_depth -= 1;
+        }
+        self.unused_result_allowed = prior_allowed;
+    }
+
+    fn check_item_inner(&mut self, item: &Item) {
         match &item.kind {
             ItemKind::Fn(decl) => self.check_fn(decl),
             ItemKind::Impl(decl) => self.check_impl(decl),
@@ -3390,11 +3527,10 @@ impl<'a> TypeChecker<'a> {
                 self.check_expr_expecting(body, Expectation::HasType(ret))
             } else {
                 let body_ty = self.check_expr(body);
-                let resolved = self.infer.resolve(self.tcx, body_ty);
-                if let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved)
-                    && self.tcx.def_name(*def) == Some("Result")
-                {
+                if !self.unused_result_allowed && self.is_result_ty(body_ty) {
                     self.emit(TypeError::DiscardedResult, body_value_span(body));
+                } else {
+                    self.report_discarded_result(body, None);
                 }
                 body_ty
             };
@@ -3837,6 +3973,7 @@ impl<'a> TypeChecker<'a> {
         let break_ty = self.fresh();
         self.loop_break_tys.push((break_ty, false));
         self.check_expr(body);
+        self.report_discarded_result(body, None);
         let (break_ty, used) = self.loop_break_tys.pop().expect("loop stack");
         if used {
             self.infer.resolve(self.tcx, break_ty)
@@ -3919,6 +4056,7 @@ impl<'a> TypeChecker<'a> {
                 let receiver_ty = self.check_expr(receiver);
                 match field {
                     gossamer_ast::FieldSelector::Named(name) => {
+                        self.reject_private_field(receiver_ty, &name.name, expr.span);
                         match self.lookup_field_ty_diagnosed(receiver_ty, &name.name) {
                             Ok(ty) => ty,
                             Err(err) => {
@@ -3959,6 +4097,7 @@ impl<'a> TypeChecker<'a> {
                 let cond_ty = self.check_expr(condition);
                 self.unify(bool_ty, cond_ty, condition.span);
                 self.check_expr(body);
+                self.report_discarded_result(body, None);
                 self.tcx.unit()
             }
             ExprKind::For {
@@ -4016,7 +4155,21 @@ impl<'a> TypeChecker<'a> {
                 // literal's value type - that lets the inferencer
                 // pin `A` and `B` from the field values.
                 let head_node = expr.id;
-                let (struct_ty, substs_table) = if let Some(res) = self.resolutions.get(head_node) {
+                // A `use`d type keeps its opaque `Import` resolution; the
+                // definition it names is what the literal is built from.
+                let head_res = self.resolutions.get(head_node).map(|res| match res {
+                    Resolution::Import { .. } => self
+                        .resolutions
+                        .import_def(head_node)
+                        .and_then(|def| {
+                            self.resolutions
+                                .kind_of(def)
+                                .map(|kind| Resolution::Def { def, kind })
+                        })
+                        .unwrap_or(res),
+                    other => other,
+                });
+                let (struct_ty, substs_table) = if let Some(res) = head_res {
                     match res {
                         Resolution::Def {
                             def,
@@ -4126,6 +4279,31 @@ impl<'a> TypeChecker<'a> {
                     } else {
                         None
                     };
+                // Naming a field in a literal is a reference to it, so the
+                // same visibility rule applies: a struct with a private
+                // field cannot be built from outside its declaring module.
+                // A `..base` spread carries every field the literal does not
+                // name, so it references all of them.
+                if let TyKind::Adt { def, .. } = self.tcx.kind_of(resolved).clone()
+                    && let (Some(literal_fields), Some(declared_fields)) =
+                        (resolved_literal_fields.as_ref(), declared.as_ref())
+                {
+                    let referenced: Vec<String> = if base.is_some() {
+                        declared_fields
+                            .iter()
+                            .map(|(field_name, _)| field_name.clone())
+                            .collect()
+                    } else {
+                        literal_fields
+                            .values()
+                            .filter_map(|&idx| declared_fields.get(idx))
+                            .map(|(field_name, _)| field_name.clone())
+                            .collect()
+                    };
+                    for field_name in referenced {
+                        self.reject_private_field_of(def, &field_name, expr.span);
+                    }
+                }
                 for (field_idx, field) in fields.iter().enumerate() {
                     if let Some(value) = &field.value {
                         // Substitute `Param { idx }` slots with the
@@ -4506,6 +4684,16 @@ impl<'a> TypeChecker<'a> {
             if let Some(payloads) = self.enum_variant_payloads.get(&key).cloned()
                 && payloads.len() == n_args
             {
+                // A generic enum's declared payloads carry `Param` slots;
+                // this call site's own instantiation is what they shape
+                // against.
+                let payloads = match self.variant_ctor_instantiation(callee.id, &key.0) {
+                    Some((_, substs)) => payloads
+                        .iter()
+                        .map(|t| self.subst_params_in_ty(*t, &substs))
+                        .collect(),
+                    None => payloads,
+                };
                 // Coerce-only: variant payload registration is keyed
                 // by (enum, variant) name and a same-named pair from
                 // another scope must not unify into this call.
@@ -4981,6 +5169,10 @@ impl<'a> TypeChecker<'a> {
         let type_name = [owner.join("::"), (*owner.last()?).to_string()]
             .into_iter()
             .find(|candidate| self.user_type_decls.contains(candidate))?;
+        // An associated function carries its own visibility, the same as a
+        // method: `Type::helper()` reached from outside the module the
+        // `impl` was written in is private unless it says `pub`.
+        self.reject_private_method(&type_name, fn_name, callee.span);
         self.method_ret_types
             .get(&(type_name, (*fn_name).to_string(), args.len()))
             .copied()
@@ -5359,6 +5551,17 @@ impl<'a> TypeChecker<'a> {
             .enum_variant_payloads
             .get(&(enum_name.clone(), variant_name))?
             .clone();
+        // A generic enum's parameters are instantiated once per call site;
+        // the payload checks below and the type this call produces read the
+        // same variables, so an argument pins the enum's own arguments.
+        let instantiation = self.variant_ctor_instantiation(callee.id, &enum_name);
+        let payloads: Vec<Ty> = match &instantiation {
+            Some((_, substs)) => payloads
+                .iter()
+                .map(|t| self.subst_params_in_ty(*t, substs))
+                .collect(),
+            None => payloads,
+        };
         if payloads.len() == arg_tys.len() {
             for (param, (arg_ty, arg)) in payloads.iter().zip(arg_tys.iter().zip(args)) {
                 self.check_sig_param_arg(*param, *arg_ty, arg);
@@ -5372,6 +5575,12 @@ impl<'a> TypeChecker<'a> {
                 },
                 callee.span,
             );
+        }
+        if let Some((def, substs)) = instantiation {
+            return Some(self.tcx.intern(TyKind::Adt {
+                def,
+                substs: crate::Substs::from_types(substs.iter().copied()),
+            }));
         }
         Some(
             self.enum_tys
@@ -6457,6 +6666,16 @@ impl<'a> TypeChecker<'a> {
                         self.emit(TypeError::ValueNotDisplayable { ty, class }, span);
                         return Some(self.tcx.error_ty());
                     }
+                    if let Some(ty) = self.generic_without_fmt(resolved) {
+                        self.emit(
+                            TypeError::ValueNotDisplayable {
+                                ty,
+                                class: crate::error::NotDisplayableClass::GenericWithoutDebug,
+                            },
+                            span,
+                        );
+                        return Some(self.tcx.error_ty());
+                    }
                 }
                 self.tcx.string_ty()
             }
@@ -6774,6 +6993,26 @@ impl<'a> TypeChecker<'a> {
     /// Bare nominal name of a struct/enum type, seeing through `&`/`&mut`.
     /// Returns `None` for non-ADT types. Used to look up operator-overload
     /// impl methods (`V2::add`).
+    /// Nominal-type name of an operator operand: a user ADT, or an opaque
+    /// alias.
+    ///
+    /// An opaque alias inherits nothing from its representation, so
+    /// arithmetic on one routes to the alias's own operator impl and is
+    /// rejected when it has none - the same contract a struct or enum
+    /// operand gets. Comparison, hashing and formatting are unaffected;
+    /// those describe the value, which the alias and its representation
+    /// share.
+    fn operand_nominal_name_of(&mut self, ty: Ty) -> Option<String> {
+        let mut r = self.infer.resolve(self.tcx, ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(r) {
+            r = self.infer.resolve(self.tcx, *inner);
+        }
+        if let Some(TyKind::Nominal { def, .. }) = self.tcx.kind(r) {
+            return self.tcx.def_name(*def).map(str::to_string);
+        }
+        self.adt_name_of(ty)
+    }
+
     fn adt_name_of(&mut self, ty: Ty) -> Option<String> {
         let mut r = self.infer.resolve(self.tcx, ty);
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(r) {
@@ -6797,11 +7036,14 @@ impl<'a> TypeChecker<'a> {
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(r) {
             r = self.infer.resolve(self.tcx, *inner);
         }
-        let Some(TyKind::Adt { def, substs }) = self.tcx.kind(r) else {
-            return None;
+        // An opaque alias carries operator impls under its own name, and
+        // takes no generic arguments of its own.
+        let (def, substs) = match self.tcx.kind(r) {
+            Some(TyKind::Adt { def, substs }) => (*def, substs.clone()),
+            Some(TyKind::Nominal { def, .. }) => (*def, crate::Substs::new()),
+            _ => return None,
         };
-        let substs = substs.clone();
-        let name = self.tcx.def_name(*def)?.to_string();
+        let name = self.tcx.def_name(def)?.to_string();
         if let Some(&ret) = self
             .method_ret_types
             .get(&(name.clone(), method.to_string(), arity))
@@ -7391,14 +7633,8 @@ impl<'a> TypeChecker<'a> {
         {
             return ty;
         }
-        if self.reject_method_off_bound(receiver_ty, method, args, receiver.span) {
-            return self.tcx.error_ty();
-        }
-        if self.reject_supertrait_method_through_bound(receiver_ty, method, receiver.span) {
-            for arg in args {
-                self.check_expr(arg);
-            }
-            return self.tcx.error_ty();
+        if let Some(ty) = self.reject_method_on_receiver(receiver_ty, method, args, receiver.span) {
+            return ty;
         }
         if let Some(ty) = self.check_channel_method(method, receiver_ty, args) {
             return ty;
@@ -7412,7 +7648,7 @@ impl<'a> TypeChecker<'a> {
         // a return), so type it as a fresh variable here and let unification
         // bind it; lowering reads the resolved type and routes accordingly.
         if matches!(method, "into" | "try_into") && args.is_empty() {
-            return self.fresh();
+            return self.check_conversion_method(method, receiver_ty, receiver.span);
         }
         if let Some(ty) = self.check_deque_method(method, receiver_ty, receiver.span, args) {
             return ty;
@@ -8226,6 +8462,7 @@ impl<'a> TypeChecker<'a> {
             Some(TyKind::Alias { def, substs }) => {
                 self.render_public_def("alias", def.local, substs.as_slice())
             }
+            Some(TyKind::Nominal { def, .. }) => self.render_public_def("alias", def.local, &[]),
             Some(TyKind::Dyn(trait_ref)) => {
                 self.render_public_def("trait", trait_ref.def.local, trait_ref.substs.as_slice())
             }
@@ -9176,6 +9413,143 @@ impl<'a> TypeChecker<'a> {
     /// Emits mismatches held until numeric literal defaulting has made their
     /// type names stable. This keeps a rejected `r = [2, 3]` diagnostic
     /// readable as `&[i64; 2]` versus `[i64; 2]`, not inference variables.
+    /// Runs the receiver-shape rejections that share one outcome: the
+    /// method does not exist on this receiver, so the arguments are
+    /// checked for their own errors and the call types as `error`.
+    ///
+    /// Returns the error type when one of them reported.
+    fn reject_method_on_receiver(
+        &mut self,
+        receiver_ty: Ty,
+        method: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Option<Ty> {
+        if self.reject_method_off_bound(receiver_ty, method, args, span) {
+            return Some(self.tcx.error_ty());
+        }
+        if self.reject_supertrait_method_through_bound(receiver_ty, method, span) {
+            for arg in args {
+                self.check_expr(arg);
+            }
+            return Some(self.tcx.error_ty());
+        }
+        // `into` / `try_into` are conversions rather than surface the
+        // receiver has to declare, and are typed further down.
+        if matches!(method, "into" | "try_into") && args.is_empty() {
+            return None;
+        }
+        self.reject_nominal_repr_method(receiver_ty, method, args, span)
+    }
+
+    /// Rejects a method reached on an opaque alias that only its
+    /// representation declares.
+    ///
+    /// The alias exists to hide what it is made of, so the
+    /// representation's surface is not part of it: `type Name = new
+    /// String` gets no `len()` unless its own `impl` provides one.
+    /// Converting to the representation is how that surface is reached.
+    /// Returns the error type when a diagnostic was emitted.
+    fn reject_nominal_repr_method(
+        &mut self,
+        receiver_ty: Ty,
+        method: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Option<Ty> {
+        let mut r = self.infer.resolve(self.tcx, receiver_ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(r) {
+            r = self.infer.resolve(self.tcx, *inner);
+        }
+        let Some(TyKind::Nominal { def, .. }) = self.tcx.kind(r) else {
+            return None;
+        };
+        let name = self.tcx.def_name(*def).map(str::to_string)?;
+        if self
+            .user_method_owners
+            .get(method)
+            .is_some_and(|owners| owners.contains(&name))
+        {
+            return None;
+        }
+        for arg in args {
+            self.check_expr(arg);
+        }
+        let mut available: Vec<String> = self
+            .user_method_owners
+            .iter()
+            .filter(|(_, owners)| owners.contains(&name))
+            .map(|(m, _)| m.clone())
+            .collect();
+        available.sort();
+        self.emit(
+            TypeError::UnresolvedMethod {
+                ty: name,
+                name: method.to_string(),
+                available,
+            },
+            span,
+        );
+        Some(self.tcx.error_ty())
+    }
+
+    /// Types `x.into()` / `x.try_into()`, whose target is fixed by the use
+    /// site rather than by the call, and records `into` for the conversion
+    /// audit once unification has pinned that target.
+    fn check_conversion_method(&mut self, method: &str, receiver_ty: Ty, span: Span) -> Ty {
+        let result = self.fresh();
+        if method == "into" {
+            self.deferred_into_conversions
+                .push((receiver_ty, result, span));
+        }
+        result
+    }
+
+    /// Reports `.into()` across an opaque alias boundary with nothing
+    /// behind it.
+    ///
+    /// An alias and its representation convert for free in both
+    /// directions - one runtime value, so the conversion is the identity.
+    /// Every other pair, including two aliases that happen to erase to the
+    /// same representation, needs a `From` impl, and saying so here keeps
+    /// the failure at `check` instead of at run time.
+    fn check_deferred_into_conversions(&mut self) {
+        let deferred = std::mem::take(&mut self.deferred_into_conversions);
+        for (recv, result, span) in deferred {
+            let mut recv = self.deep_resolve(recv);
+            while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(recv) {
+                recv = self.deep_resolve(*inner);
+            }
+            let result = self.deep_resolve(result);
+            let recv_nominal = matches!(self.tcx.kind(recv), Some(TyKind::Nominal { .. }));
+            let result_nominal = matches!(self.tcx.kind(result), Some(TyKind::Nominal { .. }));
+            if !recv_nominal && !result_nominal {
+                continue;
+            }
+            if recv == result || self.is_nominal_repr_pair(recv, result) {
+                continue;
+            }
+            // A user `From` impl on the target answers for the pair.
+            let target = self.render_public_ty(result);
+            if self
+                .user_method_owners
+                .get("from")
+                .is_some_and(|owners| owners.contains(&target))
+            {
+                continue;
+            }
+            let from = self.render_public_ty(recv);
+            self.emit(TypeError::NoConversion { from, to: target }, span);
+        }
+    }
+
+    /// Whether one of `a` / `b` is an opaque alias whose representation is
+    /// the other.
+    fn is_nominal_repr_pair(&self, a: Ty, b: Ty) -> bool {
+        let over = |outer: Ty, inner: Ty| matches!(self.tcx.kind(outer), Some(TyKind::Nominal { repr, .. }) if *repr == inner);
+        over(a, b) || over(b, a)
+    }
+
     fn check_deferred_type_mismatches(&mut self) {
         let deferred = std::mem::take(&mut self.deferred_type_mismatches);
         for (expected, found, span) in deferred {
@@ -9250,6 +9624,81 @@ impl<'a> TypeChecker<'a> {
             return;
         };
         self.reject_private_method(&name, method, span);
+    }
+
+    /// Rejects a reference to a field declared without `pub` from outside
+    /// the module its struct was declared in. A `pub` struct may keep
+    /// private fields: the type is API, its representation need not be.
+    fn reject_private_field(&mut self, receiver_ty: Ty, field: &str, span: Span) {
+        let mut peeled = self.infer.resolve(self.tcx, receiver_ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(peeled) {
+            peeled = self.infer.resolve(self.tcx, *inner);
+        }
+        let Some(TyKind::Adt { def, .. }) = self.tcx.kind(peeled) else {
+            // The receiver's type is not known yet; a struct it later
+            // resolves to still has to satisfy the rule.
+            self.deferred_private_fields.push((
+                receiver_ty,
+                field.to_string(),
+                span,
+                self.current_module.clone(),
+            ));
+            return;
+        };
+        let def = *def;
+        self.reject_private_field_of(def, field, span);
+    }
+
+    /// Re-runs the field-visibility rule for accesses whose receiver type
+    /// only became known after inference finished.
+    fn check_deferred_private_fields(&mut self) {
+        let deferred = std::mem::take(&mut self.deferred_private_fields);
+        for (receiver_ty, field, span, module) in deferred {
+            let mut peeled = self.infer.resolve(self.tcx, receiver_ty);
+            while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(peeled) {
+                peeled = self.infer.resolve(self.tcx, *inner);
+            }
+            let Some(TyKind::Adt { def, .. }) = self.tcx.kind(peeled) else {
+                continue;
+            };
+            let def = *def;
+            let prior = std::mem::replace(&mut self.current_module, module);
+            self.reject_private_field_of(def, &field, span);
+            self.current_module = prior;
+        }
+    }
+
+    /// As [`Self::reject_private_field`], with the owning struct already
+    /// resolved.
+    fn reject_private_field_of(&mut self, def: DefId, field: &str, span: Span) {
+        if self.synthesized_depth > 0 {
+            return;
+        }
+        let Some((home, visibility)) = self.field_homes.get(&(def, field.to_string())) else {
+            return;
+        };
+        let reachable = self.current_module.starts_with(home.as_slice())
+            || match visibility {
+                Visibility::Public => true,
+                Visibility::Package => self.resolutions.same_package(home, &self.current_module),
+                Visibility::Inherited => false,
+            };
+        if reachable {
+            return;
+        }
+        let module = home.join("::");
+        let ty = self
+            .tcx
+            .def_name(def)
+            .map_or_else(|| "?".to_string(), str::to_string);
+        self.emit(
+            TypeError::PrivateField {
+                ty,
+                name: field.to_string(),
+                module,
+            },
+            span,
+        );
     }
 
     /// Rejects a call to a method declared without `pub` from outside the
@@ -10357,6 +10806,27 @@ impl<'a> TypeChecker<'a> {
     /// leaves an inline `E::B(1) < E::B(2)` undispatchable. Scoped to the
     /// comparison arm so it does not retype constructors feeding a `let`
     /// destructure (whose compiled-tier payload extraction wants the bare form).
+    /// Instantiation of a generic enum's parameters for the constructor
+    /// call at `node`, allocating fresh variables on first use and returning
+    /// the same ones afterwards.
+    ///
+    /// Returns `None` for a non-generic enum, whose payload types carry no
+    /// parameters and whose `Adt` is cached whole in `enum_tys`.
+    fn variant_ctor_instantiation(
+        &mut self,
+        node: NodeId,
+        enum_name: &str,
+    ) -> Option<(DefId, Vec<Ty>)> {
+        if let Some(found) = self.variant_ctor_substs.get(&node) {
+            return Some(found.clone());
+        }
+        let def = *self.user_type_defs.get(enum_name)?;
+        let arity = self.struct_generic_arity.get(&def).copied()?;
+        let substs: Vec<Ty> = (0..arity).map(|_| self.fresh()).collect();
+        self.variant_ctor_substs.insert(node, (def, substs.clone()));
+        Some((def, substs))
+    }
+
     fn variant_ctor_enum_ty(&self, expr: &Expr) -> Option<Ty> {
         let ExprKind::Call { callee, .. } = &expr.kind else {
             return None;
@@ -10485,8 +10955,8 @@ impl<'a> TypeChecker<'a> {
                     }
                     let lhs_res = self.infer.resolve(self.tcx, lhs_ty);
                     let rhs_res = self.infer.resolve(self.tcx, rhs_ty);
-                    let lhs_adt = self.adt_name_of(lhs_res);
-                    let rhs_adt = self.adt_name_of(rhs_res);
+                    let lhs_adt = self.operand_nominal_name_of(lhs_res);
+                    let rhs_adt = self.operand_nominal_name_of(rhs_res);
                     if lhs_adt.is_some() || rhs_adt.is_some() {
                         // Anchor ADT operand nodes to their resolved
                         // nominal type: tier lowering dispatches the
@@ -11394,6 +11864,7 @@ impl<'a> TypeChecker<'a> {
     fn check_for(&mut self, pattern: &Pattern, iter: &Expr, body: &Expr) -> Ty {
         let iter_ty = self.check_expr(iter);
         self.reject_unbounded_generic_iteration(iter_ty, iter.span);
+        self.reject_wrapper_iteration(iter_ty, iter.span);
         self.mark_consumed_iterator_expr("into_iter", iter, iter_ty);
         self.push_scope();
         // Derive the pattern's type from the iterator: arrays/slices
@@ -11494,8 +11965,153 @@ impl<'a> TypeChecker<'a> {
         };
         self.bind_pattern(pattern, pat_ty);
         self.check_expr(body);
+        self.report_discarded_result(body, None);
         self.pop_scope();
         self.tcx.unit()
+    }
+
+    /// Reports GT0064 when `expr` discards a value of a `#[must_use]` type
+    /// or the result of a call to a `#[must_use]` function. Returns whether
+    /// a report was made.
+    fn report_discarded_must_use(&mut self, expr: &Expr, ty: Option<Ty>) -> bool {
+        if let Some(ty) = ty {
+            let resolved = self.infer.resolve(self.tcx, ty);
+            if let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved)
+                && let Some(name) = self.must_use_types.get(def).cloned()
+            {
+                self.emit(
+                    TypeError::DiscardedMustUse {
+                        what: "value",
+                        name,
+                    },
+                    expr.span,
+                );
+                return true;
+            }
+        }
+        let ExprKind::Call { callee, .. } = &expr.kind else {
+            return false;
+        };
+        let Some(Resolution::Def { def, .. }) = self.resolutions.get(callee.id) else {
+            return false;
+        };
+        let Some(name) = self.must_use_fns.get(&def).cloned() else {
+            return false;
+        };
+        self.emit(
+            TypeError::DiscardedMustUse {
+                what: "return value",
+                name,
+            },
+            expr.span,
+        );
+        true
+    }
+
+    /// Name of a user generic type with no `fmt`, when `ty` is one.
+    ///
+    /// A generic declaration only gets a synthesized `fmt` from an explicit
+    /// `#[derive(Debug)]`, because whether its fields render depends on the
+    /// arguments each instantiation supplies. Formatting one without that
+    /// would run on the interpreter and fail the native build, so it is
+    /// rejected here, where both tiers see it.
+    fn generic_without_fmt(&mut self, ty: Ty) -> Option<String> {
+        let TyKind::Adt { def, substs } = self.tcx.kind(ty)? else {
+            return None;
+        };
+        if substs.is_empty() {
+            return None;
+        }
+        let name = self.tcx.def_name(*def)?.to_string();
+        // Built-in generic types render through the runtime, not a `fmt`.
+        if !self.user_type_defs.values().any(|d| d == def) {
+            return None;
+        }
+        let has_fmt = self
+            .method_homes
+            .contains_key(&(name.clone(), "fmt".to_string()));
+        (!has_fmt).then_some(name)
+    }
+
+    /// True when `ty` resolves to a `Result<T, E>`.
+    /// Reports a `for` whose subject is a `Result` or an `Option`.
+    ///
+    /// Neither is a sequence. Iterating one binds nothing and runs the body
+    /// zero times, and because the binding is then unconstrained, whatever
+    /// the body reads off it type-checks - so the loop compiles, runs, and
+    /// silently does nothing. The value inside has to be taken first.
+    fn reject_wrapper_iteration(&mut self, ty: Ty, span: Span) {
+        let resolved = self.infer.resolve(self.tcx, ty);
+        let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved) else {
+            return;
+        };
+        let Some(name) = self.tcx.def_name(*def) else {
+            return;
+        };
+        let taken = match name {
+            "Result" => "`?`, a `match`, or `unwrap_or(..)`",
+            "Option" => "`if let Some(v) = ..`, `?`, or `unwrap_or(..)`",
+            _ => return,
+        };
+        let name = name.to_string();
+        self.emit(TypeError::IterableWrapper { name, taken }, span);
+    }
+
+    fn is_result_ty(&mut self, ty: Ty) -> bool {
+        let resolved = self.infer.resolve(self.tcx, ty);
+        matches!(self.tcx.kind(resolved), Some(TyKind::Adt { def, .. })
+            if self.tcx.def_name(*def) == Some("Result"))
+    }
+
+    /// Reports GT0007 for `expr` sitting in a position whose value is
+    /// discarded.
+    ///
+    /// A construct that passes its operand's value through - a block, an
+    /// `if`, a `match` - discards that operand exactly when its own value is
+    /// discarded, so the report lands on the expression that produced the
+    /// `Result` rather than on the construct wrapping it. An else-less `if`
+    /// is typed `()` while its `then` branch keeps the branch's own type, so
+    /// recursion is what reaches it at all.
+    ///
+    /// `ty` is the type already computed for `expr` by the caller; the
+    /// recursive steps read the side table instead.
+    fn report_discarded_result(&mut self, expr: &Expr, ty: Option<Ty>) {
+        if self.unused_result_allowed {
+            return;
+        }
+        let ty = ty.or_else(|| self.table.get(expr.id));
+        if let Some(ty) = ty
+            && self.is_result_ty(ty)
+        {
+            self.emit(TypeError::DiscardedResult, expr.span);
+            return;
+        }
+        if self.report_discarded_must_use(expr, ty) {
+            return;
+        }
+        match &expr.kind {
+            ExprKind::Block(block) | ExprKind::Unsafe(block) => {
+                if let Some(tail) = &block.tail {
+                    self.report_discarded_result(tail, None);
+                }
+            }
+            ExprKind::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                self.report_discarded_result(then_branch, None);
+                if let Some(else_branch) = else_branch {
+                    self.report_discarded_result(else_branch, None);
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    self.report_discarded_result(&arm.body, None);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn check_block(&mut self, block: &Block, expected: Expectation) -> Ty {
@@ -11531,16 +12147,11 @@ impl<'a> TypeChecker<'a> {
             }
             StmtKind::Expr { expr, .. } => {
                 let expr_ty = self.check_expr(expr);
-                // N6 / SPEC §9: a `Result<T,E>` value used as a statement
-                // (value discarded) is a compile error. The explicit discard
-                // form `let _ = expr` goes through `StmtKind::Let` and is
-                // not subject to this check.
-                let resolved = self.infer.resolve(self.tcx, expr_ty);
-                if let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved) {
-                    if self.tcx.def_name(*def) == Some("Result") {
-                        self.emit(TypeError::DiscardedResult, expr.span);
-                    }
-                }
+                // SPEC §9: a `Result<T, E>` value used as a statement (value
+                // discarded) is a compile error. The explicit discard form
+                // `let _ = expr` goes through `StmtKind::Let` and is not
+                // subject to this check.
+                self.report_discarded_result(expr, Some(expr_ty));
             }
             StmtKind::Item(item) => {
                 // Block-local items are not part of the source file's
@@ -11899,6 +12510,9 @@ impl<'a> TypeChecker<'a> {
                 .iter()
                 .all(|elem| self.is_hashable_ty_rec(*elem, seen)),
             Some(TyKind::Array { elem, .. }) => self.is_hashable_ty_rec(*elem, seen),
+            // A nominal alias hashes and compares exactly as the value it
+            // erases to, so it is a key wherever its representation is.
+            Some(TyKind::Nominal { repr, .. }) => self.is_hashable_ty_rec(*repr, seen),
             Some(TyKind::Adt { def, substs }) => {
                 match def.local {
                     RESULT_DEF_LOCAL | OPTION_DEF_LOCAL => {
@@ -12283,10 +12897,17 @@ impl<'a> TypeChecker<'a> {
                         substs: crate::Substs::new(),
                     })
                 }
-                gossamer_resolve::DefKind::Enum => self.tcx.intern(TyKind::Adt {
-                    def,
-                    substs: crate::Substs::new(),
-                }),
+                gossamer_resolve::DefKind::Enum => {
+                    // A generic enum named without a payload to infer from -
+                    // `L::Nil` - still has to carry parameters, or it will
+                    // not unify with the `L<i64>` it is being bound to.
+                    let arity = self.struct_generic_arity.get(&def).copied().unwrap_or(0);
+                    let substs: Vec<Ty> = (0..arity).map(|_| self.fresh()).collect();
+                    self.tcx.intern(TyKind::Adt {
+                        def,
+                        substs: crate::Substs::from_types(substs),
+                    })
+                }
                 gossamer_resolve::DefKind::Fn => {
                     // Pull turbofish args (`ident::<i64, bool>`) off
                     // the last path segment, resolve each to a
@@ -12305,6 +12926,17 @@ impl<'a> TypeChecker<'a> {
                 _ => self.fresh(),
             },
             Resolution::Import { .. } | Resolution::Err => {
+                // A `use` of this unit's own item keeps its opaque
+                // `Import` resolution so lowering still qualifies the
+                // name, but the item's type is known here: type the
+                // reference by its definition rather than by a fresh
+                // variable, which would leave every use of the value
+                // unchecked.
+                if let Some(def) = self.resolutions.import_def(node)
+                    && let Some(ty) = self.ty_of_imported_def(def, path)
+                {
+                    return self.record(node, ty);
+                }
                 self.check_std_path_value(node, path, span)
             }
         }
@@ -12373,6 +13005,26 @@ impl<'a> TypeChecker<'a> {
     /// are rejected uniformly (GT0015) because the compiled tiers
     /// have no symbol to take the address of. Everything else keeps
     /// the historical fresh-var fallback.
+    /// Type of a reference to `def`, reached through a `use` of this
+    /// unit's own item. Mirrors the `Resolution::Def` arm of
+    /// [`Self::check_path_expr`] for the kinds a value path can name.
+    fn ty_of_imported_def(&mut self, def: DefId, path: &gossamer_ast::PathExpr) -> Option<Ty> {
+        match self.resolutions.kind_of(def)? {
+            gossamer_resolve::DefKind::Fn => {
+                let substs = self.substs_from_path(path);
+                Some(self.tcx.intern(TyKind::FnDef { def, substs }))
+            }
+            gossamer_resolve::DefKind::Struct | gossamer_resolve::DefKind::Enum => {
+                Some(self.tcx.intern(TyKind::Adt {
+                    def,
+                    substs: crate::Substs::new(),
+                }))
+            }
+            gossamer_resolve::DefKind::Const => self.const_tys.get(&def).copied(),
+            _ => None,
+        }
+    }
+
     fn check_std_path_value(
         &mut self,
         node: NodeId,
@@ -12648,6 +13300,12 @@ impl<'a> TypeChecker<'a> {
         };
         let expanded = body.map(|b| self.type_from_ast(&b));
         self.alias_expanding.remove(&def);
+        // An opaque alias keeps the expansion only as its representation:
+        // the type it hands back is distinct from that representation and
+        // from every other alias over it.
+        if self.nominal_aliases.contains(&def) {
+            return expanded.map(|repr| self.tcx.nominal_ty(def, repr));
+        }
         expanded
     }
 
@@ -13791,16 +14449,21 @@ impl<'a> TypeChecker<'a> {
                 // User enums: bind the declared tuple-variant payload
                 // types, keyed by the scrutinee's own resolved enum name
                 // so a same-named variant from another enum cannot unify
-                // into this match. Generic enums fall back to fresh vars
-                // (their stored payloads mention un-substituted params).
-                if !args.is_empty() {
-                    return None;
-                }
+                // into this match. A generic enum's declared payloads carry
+                // `Param` slots; the scrutinee's own arguments are what they
+                // stand for here, so `Tree<i64>`'s `Leaf(v)` binds `v: i64`.
                 let enum_name = self.tcx.def_name(*def)?;
                 let tys = self
                     .enum_variant_payloads
                     .get(&(enum_name.to_string(), last.to_string()))
                     .cloned()?;
+                let tys: Vec<Ty> = if args.is_empty() {
+                    tys
+                } else {
+                    tys.iter()
+                        .map(|t| self.subst_params_in_ty(*t, &args))
+                        .collect()
+                };
                 // Match ergonomics: through a reference scrutinee a
                 // heap-shaped payload binds as a borrow (a cursor walk's
                 // `cursor = rest` with `cursor: &List` stays typed), while
@@ -14028,6 +14691,12 @@ fn body_value_span(body: &Expr) -> Span {
             .map_or(body.span, |tail| body_value_span(tail)),
         _ => body.span,
     }
+}
+
+/// True for a name the compiler synthesized rather than the user wrote.
+/// The autoderive pass prefixes every helper it splices with `__`.
+fn is_compiler_generated(name: &str) -> bool {
+    name.starts_with("__")
 }
 
 /// Span of the field name inside a named field access. A named access
@@ -14744,6 +15413,7 @@ fn kind_is_concrete(checker: &TypeChecker<'_>, kind: &TyKind) -> bool {
         | TyKind::Sender(elem)
         | TyKind::Receiver(elem)
         | TyKind::JoinHandle(elem)
+        | TyKind::Nominal { repr: elem, .. }
         | TyKind::Ref { inner: elem, .. } => checker.is_concrete(*elem),
         TyKind::HashMap { key, value } => checker.is_concrete(*key) && checker.is_concrete(*value),
         TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {

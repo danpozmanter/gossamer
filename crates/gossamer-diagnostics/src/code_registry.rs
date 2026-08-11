@@ -479,6 +479,15 @@ pub const REGISTRY: &[(&str, &str)] = &[
             receiver, and `x |> f($, k)` selects which argument it fills.",
     ),
     (
+        "GP0039",
+        "A serde turbofish named a type typed serde does not cover.\n\
+            A codec is synthesized per concrete struct whose fields the\n\
+            synthesizer can classify, so a generic struct, an enum, or a name\n\
+            that is not a struct has none. Exchange a concrete struct, read\n\
+            the document dynamically with `json::parse`, or hand-write the\n\
+            function.",
+    ),
+    (
         "GR0001",
         "A name used in source could not be resolved to a declaration.\n\
                      Check the spelling, whether a `use` brings the name into scope,\n\
@@ -543,6 +552,41 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      in this scope. A module's items are reached through a path\n\
                      (`util::add`) or an import (`use util::add`); the file layout\n\
                      declares the module, and the import brings its names in.",
+    ),
+    (
+        "GR0012",
+        "A `typeInfo::<T>()` named a type with nothing to reflect. The\n\
+                     reflection surface describes a struct's fields or an enum's\n\
+                     variants, so the type has to be one this program declares,\n\
+                     and a unit struct - which has no fields - has nothing to\n\
+                     return.",
+    ),
+    (
+        "GR0013",
+        "A call gave an argument a name its callee does not declare, gave\n\
+                     the same one twice, wrote a positional argument after a named\n\
+                     one, or named an argument on a method more than one type\n\
+                     declares differently. A name selects a parameter, so it has to\n\
+                     name one, name it once, and - because the positions after a\n\
+                     name are no longer in written order - be followed only by\n\
+                     further names.",
+    ),
+    (
+        "GR0014",
+        "A parameter default was not a constant. The default is spliced\n\
+                     into every call that leaves the parameter out, so it has to be\n\
+                     a literal - `10`, `-1`, `true`, `\"\"` - rather than an\n\
+                     expression that would have to be resolved separately at each\n\
+                     of those call sites.",
+    ),
+    (
+        "GR0015",
+        "A call left a parameter with neither an argument nor a default.\n\
+            Once names and defaults are in play the argument count is a poor\n\
+            description of the problem - a call can supply the declared\n\
+            number of arguments and still leave a parameter unfilled - so\n\
+            this names the parameters instead. Give each one a value,\n\
+            positionally or by name, or declare a default for it.",
     ),
     (
         "GT0001",
@@ -931,6 +975,53 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      `Handler`), a function or closure, or a channel endpoint.\n\
                      Format an accessor, a call result, or the values that pass\n\
                      through the endpoint instead.",
+    ),
+    (
+        "GT0063",
+        "A method was called from outside the module whose `impl` block\n\
+                     declares it, and the method is not `pub`. A method's\n\
+                     visibility is declared on the method itself inside the\n\
+                     `impl`, independently of the type's visibility: a `pub`\n\
+                     type may keep private helpers. Add `pub` (or\n\
+                     `pub(package)`) to the method, or call it through a public\n\
+                     one.",
+    ),
+    (
+        "GT0064",
+        "A value from a `#[must_use]` function, or of a `#[must_use]`\n\
+                     type, was used as a statement and discarded. The attribute\n\
+                     marks values whose whole point is the value: dropping one\n\
+                     means the call did nothing observable, or a guard was\n\
+                     released immediately.\n\n\
+                     Bind it (`let guard = acquire()`), consume it, or discard\n\
+                     it deliberately with `let _ = expr`.",
+    ),
+    (
+        "GT0065",
+        "A struct field was read or written from outside the module that\n\
+                     declares the struct, and the field is not `pub`. A field's\n\
+                     visibility is declared on the field itself, so a `pub`\n\
+                     struct may keep private ones: the type is part of the API\n\
+                     while its representation is not.\n\n\
+                     Add `pub(package)` or `pub` to the field, or reach it\n\
+                     through a method the declaring module provides.",
+    ),
+    (
+        "GT0066",
+        "`.into()` was written between two types with no conversion\n\
+                     behind it. An opaque alias (`type Id = new i64`) converts\n\
+                     to and from its own representation for free, because the\n\
+                     two share one runtime value. Any other pair - including\n\
+                     two distinct aliases over the same representation - needs\n\
+                     an explicit `impl From<Source> for Target`.",
+    ),
+    (
+        "GT0067",
+        "A `for` loop's subject was a `Result` or an `Option`. Neither is a\n\
+            sequence: it holds at most one value and carries no element type,\n\
+            so the loop binds nothing and its body runs zero times. Take the\n\
+            value out first - with `?`, a `match`, `if let Some(v) = ..`, or\n\
+            `unwrap_or(..)` - and iterate that.",
     ),
     (
         "GX0001",

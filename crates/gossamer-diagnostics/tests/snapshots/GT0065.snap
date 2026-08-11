@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0065]: A struct field was read or written from outside the module that - here
+--- framed ---
+error[GT0065]: A struct field was read or written from outside the module that
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

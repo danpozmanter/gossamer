@@ -46,15 +46,74 @@ fn empty_enum_decl(name: Ident, generics: Generics, where_clause: WhereClause) -
 }
 
 impl Parser<'_> {
+    /// Parses a visibility annotation: nothing, `pub`, or `pub(package)`.
+    ///
+    /// Rust's other restriction forms (`pub(crate)`, `pub(super)`,
+    /// `pub(in path)`) are reported against `pub(package)`, the one
+    /// restricted spelling the language has.
+    fn parse_visibility(&mut self) -> Visibility {
+        if !self.eat_keyword(Keyword::Pub) {
+            return Visibility::Inherited;
+        }
+        if !self.at_punct(Punct::LParen) {
+            return Visibility::Public;
+        }
+        let start = self.peek_span();
+        self.eat_punct(Punct::LParen);
+        if self.at_keyword(Keyword::Package) {
+            self.bump();
+            if self.eat_punct(Punct::RParen) {
+                return Visibility::Package;
+            }
+        }
+        let written = self.visibility_restriction_text();
+        let span = self.join(start, self.last_span());
+        self.record(
+            ParseError::UnsupportedVisibilityRestriction { written },
+            span,
+        );
+        Visibility::Package
+    }
+
+    /// Consumes the tokens of a `pub(..)` restriction up to its closing
+    /// parenthesis and returns them as written.
+    fn visibility_restriction_text(&mut self) -> String {
+        let mut written = String::new();
+        let mut depth = 1usize;
+        while !self.at_eof() {
+            if self.at_punct(Punct::LParen) {
+                depth += 1;
+            } else if self.at_punct(Punct::RParen) {
+                depth -= 1;
+                self.bump();
+                if depth == 0 {
+                    break;
+                }
+                written.push(')');
+                continue;
+            }
+            if !written.is_empty() {
+                written.push(' ');
+            }
+            written.push_str(&self.token_source_text());
+            self.bump();
+        }
+        written
+    }
+
+    /// The next token exactly as the source spells it.
+    fn token_source_text(&self) -> String {
+        match &self.peek().kind {
+            TokenKind::Keyword(keyword) => keyword.as_str().to_string(),
+            _ => self.peek_text(),
+        }
+    }
+
     /// Parses a single top-level item.
     pub(crate) fn parse_item(&mut self) -> Item {
         let start_span = self.peek_span();
         let attrs = self.parse_attrs();
-        let visibility = if self.eat_keyword(Keyword::Pub) {
-            Visibility::Public
-        } else {
-            Visibility::Inherited
-        };
+        let visibility = self.parse_visibility();
         let kind = self.parse_item_kind(visibility);
         let end_span = self.last_span();
         let span = self.join(start_span, end_span);
@@ -313,10 +372,16 @@ impl Parser<'_> {
                 break;
             }
             let ty = self.parse_type();
+            let default = if self.eat_punct(Punct::Eq) {
+                Some(Box::new(self.parse_expr_no_assign()))
+            } else {
+                None
+            };
             params.push(FnParam::Typed {
                 pattern,
                 ty,
                 is_comptime,
+                default,
             });
             if self.tokens.checkpoint() == before_param {
                 self.bump();
@@ -405,11 +470,7 @@ impl Parser<'_> {
             while !self.at_punct(Punct::RBrace) && !self.at_eof() && !at_item_keyword(self) {
                 let before_field = self.tokens.checkpoint();
                 let attrs = self.parse_attrs();
-                let visibility = if self.eat_keyword(Keyword::Pub) {
-                    Visibility::Public
-                } else {
-                    Visibility::Inherited
-                };
+                let visibility = self.parse_visibility();
                 let name = self.parse_ident_required("field name");
                 self.expect_punct(Punct::Colon, "after field name");
                 let ty = self.parse_type();
@@ -435,11 +496,7 @@ impl Parser<'_> {
             while !self.at_punct(Punct::RParen) && !self.at_eof() {
                 let before_field = self.tokens.checkpoint();
                 let attrs = self.parse_attrs();
-                let visibility = if self.eat_keyword(Keyword::Pub) {
-                    Visibility::Public
-                } else {
-                    Visibility::Inherited
-                };
+                let visibility = self.parse_visibility();
                 let ty = self.parse_type();
                 fields.push(TupleField {
                     attrs,
@@ -481,11 +538,7 @@ impl Parser<'_> {
                 while !self.at_punct(Punct::RBrace) && !self.at_eof() {
                     let before_field = self.tokens.checkpoint();
                     let field_attrs = self.parse_attrs();
-                    let visibility = if self.eat_keyword(Keyword::Pub) {
-                        Visibility::Public
-                    } else {
-                        Visibility::Inherited
-                    };
+                    let visibility = self.parse_visibility();
                     let field_name = self.parse_ident_required("field name");
                     self.expect_punct(Punct::Colon, "after field name");
                     let ty = self.parse_type();
@@ -510,11 +563,7 @@ impl Parser<'_> {
                 while !self.at_punct(Punct::RParen) && !self.at_eof() {
                     let before_field = self.tokens.checkpoint();
                     let field_attrs = self.parse_attrs();
-                    let visibility = if self.eat_keyword(Keyword::Pub) {
-                        Visibility::Public
-                    } else {
-                        Visibility::Inherited
-                    };
+                    let visibility = self.parse_visibility();
                     let ty = self.parse_type();
                     fields.push(TupleField {
                         attrs: field_attrs,
@@ -678,11 +727,7 @@ impl Parser<'_> {
 
     fn parse_impl_item(&mut self) -> ImplItem {
         let attrs = self.parse_attrs();
-        let visibility = if self.eat_keyword(Keyword::Pub) {
-            Visibility::Public
-        } else {
-            Visibility::Inherited
-        };
+        let visibility = self.parse_visibility();
         if self.eat_keyword(Keyword::Type) {
             let name = self.parse_ident_required("associated type name");
             self.expect_punct(Punct::Eq, "after the associated type name");
@@ -712,9 +757,38 @@ impl Parser<'_> {
         let name = self.parse_ident_required("type alias name");
         let generics = self.parse_generics();
         self.expect_punct(Punct::Eq, "after the alias name");
+        // `new` is a contextual marker, never a reserved word - `Vec::new()`
+        // and every other constructor depend on it staying an ordinary
+        // identifier. It opens the opaque form only when a type follows it.
+        let nominal = self.at_contextual_new_before_type();
+        if nominal {
+            self.bump();
+        }
         let ty = self.parse_type();
         self.eat_punct(Punct::Semi);
-        TypeAliasDecl { name, generics, ty }
+        TypeAliasDecl {
+            name,
+            generics,
+            ty,
+            nominal,
+        }
+    }
+
+    /// Whether the cursor sits on the `new` of `type X = new T`.
+    ///
+    /// Requires a following token that can begin a type, so a transparent
+    /// alias of a type actually named `new` keeps its meaning.
+    fn at_contextual_new_before_type(&self) -> bool {
+        let token = self.peek();
+        if !matches!(token.kind, TokenKind::Ident) || self.slice(token.span) != "new" {
+            return false;
+        }
+        matches!(
+            self.peek_nth(1).kind,
+            TokenKind::Ident
+                | TokenKind::Keyword(Keyword::Fn | Keyword::SelfUpper)
+                | TokenKind::Punct(Punct::Amp | Punct::Bang | Punct::LBracket | Punct::LParen)
+        )
     }
 
     fn parse_const_decl(&mut self) -> ConstDecl {

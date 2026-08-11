@@ -182,6 +182,11 @@ impl ScopeStack {
         &mut self.layers[0]
     }
 
+    /// Read-only handle to the innermost module-level scope.
+    pub(crate) fn module_ref(&self) -> &Scope {
+        &self.layers[0]
+    }
+
     /// Searches from innermost to outermost for a type-namespace binding.
     pub(crate) fn lookup_type(&self, name: &str) -> Option<Binding> {
         for scope in self.layers.iter().rev() {

@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0064]: A value from a `#[must_use]` function, or of a `#[must_use]` - here
+--- framed ---
+error[GT0064]: A value from a `#[must_use]` function, or of a `#[must_use]`
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

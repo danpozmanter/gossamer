@@ -2159,7 +2159,40 @@ struct ChannelState {
     closed: bool,
     next_send_id: u64,
     waiting_receivers: usize,
+    waiting_senders: usize,
     select_waiters: Vec<Arc<SelectWaiter>>,
+    /// Whether this channel currently contributes to
+    /// [`crate::vm::goroutine::pending_handoffs`], kept in step with
+    /// [`ChannelState::has_ready_waiter`] so the global count is a plain sum.
+    counted_ready: bool,
+}
+
+impl ChannelState {
+    /// True when a thread already waiting on this channel would complete if
+    /// it woke right now: a queued value with a receiver to take it, or room
+    /// (or a receiver) for a blocked sender's value.
+    ///
+    /// A closed channel releases every waiter, so it is always ready.
+    fn has_ready_waiter(&self) -> bool {
+        if self.closed && (self.waiting_receivers > 0 || self.waiting_senders > 0) {
+            return true;
+        }
+        if self.waiting_receivers > 0 && !self.buf.is_empty() {
+            return true;
+        }
+        if self.waiting_senders == 0 {
+            return false;
+        }
+        match self.capacity {
+            // An unbuffered sender's value is queued until a receiver takes
+            // it. A receiver present means the handoff is imminent; an empty
+            // buffer means it already happened and the sender has simply not
+            // observed it yet. Either way the sender is not stuck.
+            ChannelCapacity::Unbuffered => self.waiting_receivers > 0 || self.buf.is_empty(),
+            ChannelCapacity::Unbounded => true,
+            ChannelCapacity::Bounded(capacity) => self.buf.len() < capacity,
+        }
+    }
 }
 
 /// Wait handle used by the bytecode VM to park one `select` expression
@@ -2191,6 +2224,65 @@ impl SelectWaiter {
     }
 }
 
+/// Every channel still reachable, so a deadlock report can recompute
+/// readiness from the channels themselves rather than trust a counter that
+/// any interleaving could have left behind.
+static LIVE_CHANNELS: Mutex<Vec<std::sync::Weak<ChannelInner>>> = Mutex::new(Vec::new());
+
+fn register_live_channel(inner: &Arc<ChannelInner>) {
+    let mut live = LIVE_CHANNELS.lock();
+    live.retain(|weak| weak.strong_count() > 0);
+    live.push(Arc::downgrade(inner));
+}
+
+/// True when any channel other than `holding` has a waiter that would
+/// complete, or is being changed right now by another thread.
+///
+/// Called only once the waiter counts already say every participant is
+/// blocked, so the walk is rare. A channel whose lock is held elsewhere is
+/// mid-update and counts as progress: reporting a deadlock over a state
+/// still being written would turn a working program into a failure, while
+/// missing one only means the program waits as it did before.
+fn any_channel_can_progress(holding: &ChannelInner) -> bool {
+    let live = LIVE_CHANNELS.lock();
+    for weak in live.iter() {
+        let Some(inner) = weak.upgrade() else {
+            continue;
+        };
+        if std::ptr::eq(Arc::as_ptr(&inner), std::ptr::from_ref(holding)) {
+            continue;
+        }
+        let Some(state) = inner.state.try_lock() else {
+            return true;
+        };
+        if state.has_ready_waiter() {
+            return true;
+        }
+    }
+    false
+}
+
+/// The deadlock report: every participant is waiting on a channel, so the
+/// value the operation waits for can never arrive.
+#[must_use]
+pub fn deadlock_error(op: &str) -> RuntimeError {
+    RuntimeError::Panic(format!(
+        "all goroutines are asleep - deadlock! ({op} can never complete)"
+    ))
+}
+
+/// Result of a blocking receive.
+#[derive(Debug)]
+pub enum RecvOutcome {
+    /// A value was taken from the channel.
+    Value(Value),
+    /// Every sender is gone and the channel is drained.
+    Closed,
+    /// Nothing in the program can send: every participant is waiting on a
+    /// channel, so no value will ever arrive.
+    Deadlocked,
+}
+
 impl Channel {
     /// Constructs a new unbuffered channel.
     #[must_use]
@@ -2217,7 +2309,7 @@ impl Channel {
     }
 
     fn with_mode(capacity: ChannelCapacity) -> Self {
-        Self {
+        let channel = Self {
             inner: Arc::new(ChannelInner {
                 state: Mutex::new(ChannelState {
                     buf: VecDeque::new(),
@@ -2225,11 +2317,15 @@ impl Channel {
                     closed: false,
                     next_send_id: 1,
                     waiting_receivers: 0,
+                    waiting_senders: 0,
                     select_waiters: Vec::new(),
+                    counted_ready: false,
                 }),
                 cv: parking_lot::Condvar::new(),
             }),
-        }
+        };
+        register_live_channel(&channel.inner);
+        channel
     }
 
     /// Pushes `value` onto the channel and notifies any parked
@@ -2237,16 +2333,35 @@ impl Channel {
     /// capacity) the caller parks on the condvar while the buffer is at
     /// capacity, so a producer outrunning its consumer applies
     /// backpressure exactly as the compiled tier's `gos_rt_chan_send`.
-    pub fn send(&self, value: Value) {
+    #[must_use]
+    pub fn send(&self, value: Value) -> bool {
         let mut guard = self.inner.state.lock();
         match guard.capacity {
             ChannelCapacity::Unbuffered => {
                 let id = guard.next_send_id;
                 guard.next_send_id = guard.next_send_id.wrapping_add(1).max(1);
                 guard.buf.push_back(ChannelMessage { id, value });
+                // Register before announcing: a receiver that wakes on the
+                // notify must find this sender already on record, or the
+                // channel reads as holding a value nobody is waiting to hand
+                // over. The registration is released only once the value has
+                // been taken, for the same reason.
+                guard.waiting_senders += 1;
                 self.notify_channel_changed(&mut guard);
+                let mut deadlocked = false;
                 while guard.buf.iter().any(|msg| msg.id == id) && !guard.closed {
+                    let Some(_waiting) = crate::vm::goroutine::ChannelWait::enter(|| {
+                        guard.has_ready_waiter() || any_channel_can_progress(&self.inner)
+                    }) else {
+                        deadlocked = true;
+                        break;
+                    };
                     self.inner.cv.wait(&mut guard);
+                }
+                guard.waiting_senders = guard.waiting_senders.saturating_sub(1);
+                Self::sync_ready_count(&mut guard);
+                if deadlocked {
+                    return false;
                 }
             }
             ChannelCapacity::Unbounded => {
@@ -2254,13 +2369,30 @@ impl Channel {
                 self.notify_channel_changed(&mut guard);
             }
             ChannelCapacity::Bounded(capacity) => {
-                while guard.buf.len() >= capacity {
-                    self.inner.cv.wait(&mut guard);
+                if guard.buf.len() >= capacity {
+                    guard.waiting_senders += 1;
+                    Self::sync_ready_count(&mut guard);
+                    let mut deadlocked = false;
+                    while guard.buf.len() >= capacity {
+                        let Some(_waiting) = crate::vm::goroutine::ChannelWait::enter(|| {
+                            guard.has_ready_waiter() || any_channel_can_progress(&self.inner)
+                        }) else {
+                            deadlocked = true;
+                            break;
+                        };
+                        self.inner.cv.wait(&mut guard);
+                    }
+                    guard.waiting_senders = guard.waiting_senders.saturating_sub(1);
+                    Self::sync_ready_count(&mut guard);
+                    if deadlocked {
+                        return false;
+                    }
                 }
                 guard.buf.push_back(ChannelMessage { id: 0, value });
                 self.notify_channel_changed(&mut guard);
             }
         }
+        true
     }
 
     /// Non-blocking send. Enqueues `value` and returns `true` when the
@@ -2333,21 +2465,38 @@ impl Channel {
     /// `v, ok := <-ch` shape so `while let Some(v) = rx.recv()`
     /// drains and exits cleanly when the producer closes.
     #[must_use]
-    pub fn recv(&self) -> Option<Value> {
+    pub fn recv(&self) -> RecvOutcome {
         let mut guard = self.inner.state.lock();
-        loop {
+        // The registration is held across the wait *and* the take that ends
+        // it. Dropping it the moment the wait returns would leave a queued
+        // value with no receiver on record, and a sender checking in that
+        // window would read a channel that is about to hand off as stuck.
+        let mut registered = false;
+        let outcome = loop {
             if let Some(msg) = guard.buf.pop_front() {
-                self.notify_channel_changed(&mut guard);
-                return Some(msg.value);
+                break RecvOutcome::Value(msg.value);
             }
             if guard.closed {
-                return None;
+                break RecvOutcome::Closed;
             }
-            guard.waiting_receivers += 1;
-            self.wake_select_waiters(&guard);
+            if !registered {
+                registered = true;
+                guard.waiting_receivers += 1;
+                Self::sync_ready_count(&mut guard);
+                self.wake_select_waiters(&guard);
+            }
+            let Some(_waiting) = crate::vm::goroutine::ChannelWait::enter(|| {
+                guard.has_ready_waiter() || any_channel_can_progress(&self.inner)
+            }) else {
+                break RecvOutcome::Deadlocked;
+            };
             self.inner.cv.wait(&mut guard);
+        };
+        if registered {
             guard.waiting_receivers = guard.waiting_receivers.saturating_sub(1);
         }
+        self.notify_channel_changed(&mut guard);
+        outcome
     }
 
     /// Blocking receive which also observes a caller-provided cancellation
@@ -2415,8 +2564,22 @@ impl Channel {
     }
 
     fn notify_channel_changed(&self, guard: &mut ChannelState) {
+        Self::sync_ready_count(guard);
         self.inner.cv.notify_all();
         self.wake_select_waiters(guard);
+    }
+
+    /// Re-reads this channel's readiness and applies the difference to the
+    /// process-wide count. Called under the channel lock on every state
+    /// change and on every waiter arrival or departure, so the count is
+    /// always the number of channels with a waiter that could proceed.
+    fn sync_ready_count(guard: &mut ChannelState) {
+        let ready = guard.has_ready_waiter();
+        if ready == guard.counted_ready {
+            return;
+        }
+        guard.counted_ready = ready;
+        crate::vm::goroutine::adjust_pending_handoffs(ready);
     }
 
     fn wake_select_waiters(&self, guard: &ChannelState) {
