@@ -555,9 +555,11 @@ struct TypeChecker<'a> {
     /// the current source file. Prevents flooding the diagnostic
     /// stream with duplicates.
     recursion_limit_reported: bool,
-    /// Iterator locals consumed by a lazy adapter or terminal. This is a
-    /// conservative source-level linearity check for simple named locals.
-    consumed_iterators: Vec<HashMap<String, String>>,
+    /// Iterator locals consumed by a lazy adapter or terminal, keyed by the
+    /// `NodeId` of the binding occurrence so that a later `let` of the same
+    /// name is a distinct, unconsumed binding. This is a conservative
+    /// source-level linearity check for simple named locals.
+    consumed_iterators: Vec<HashMap<NodeId, String>>,
     /// Lexically active named mutable borrows, keyed by referent root. This
     /// is deliberately conservative: it prevents a second named `&mut`
     /// binding while the first remains in scope.
@@ -10595,7 +10597,9 @@ impl<'a> TypeChecker<'a> {
         if path.segments.len() != 1 {
             return;
         }
-        let binding = path.segments[0].name.name.clone();
+        let Some(Resolution::Local(binding)) = self.resolutions.get(expr.id) else {
+            return;
+        };
         if let Some(scope) = self.consumed_iterators.last_mut() {
             scope.insert(binding, format!("iter::{name}"));
         }
@@ -12847,7 +12851,7 @@ impl<'a> TypeChecker<'a> {
                         .consumed_iterators
                         .iter()
                         .rev()
-                        .find_map(|scope| scope.get(name).cloned())
+                        .find_map(|scope| scope.get(&binding_id).cloned())
                 {
                     self.emit(
                         TypeError::IteratorStateConsumed {

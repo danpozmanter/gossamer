@@ -1967,6 +1967,17 @@ fn reusing_pipe_consumed_lazy_iterator_is_rejected() {
 }
 
 #[test]
+fn rebinding_a_consumed_iterator_name_starts_a_fresh_binding() {
+    for source in [
+        "use std::iter\nfn main() { let xs = iter::range(0, 3)\n let out = iter::collect(xs)\n let xs = iter::range(0, 4)\n let _ = iter::collect(xs)\n let _ = out }\n",
+        "use std::iter\nfn main() { let xs = iter::range(0, 3)\n let out = iter::collect(xs)\n let xs = 10\n let _ = xs\n let _ = out }\n",
+    ] {
+        let d = diagnostics_for_with_lazy_iterators(source, true);
+        assert!(!has_code(&d, "GT0042"), "{source}: {d:?}");
+    }
+}
+
+#[test]
 fn index_on_vec_and_string_is_accepted() {
     let d = diagnostics_for(
         "fn main() { let xs = [1, 2, 3]\n let s = \"hi\"\n println!(\"{} {}\", xs[0], s.byte_at(0)) }\n",

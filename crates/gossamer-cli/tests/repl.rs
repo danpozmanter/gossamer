@@ -248,6 +248,29 @@ fn repl_persists_bindings_across_lines() {
 }
 
 #[test]
+fn repl_redefines_a_name_whose_range_a_pipeline_consumed() {
+    let out =
+        run_repl("let r = 0..10\nlet m = r.map(|x| x * 2)\nlet r = 0..20\n%b\nlet r = 10\nr\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        !out.stdout.contains("GT0042") && !out.stderr.contains("GT0042"),
+        "rebinding `r` must start a fresh binding; stdout: {} stderr: {}",
+        out.stdout,
+        out.stderr
+    );
+    assert!(
+        out.stdout.contains("r: Range<i64> = 0..20"),
+        "rebound range was not listed with its type; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.lines().any(|line| line == "10"),
+        "rebinding `r` to a scalar did not take effect; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_accepts_trailing_line_comments() {
     let out = run_repl("let a = 1 // comment\na\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);

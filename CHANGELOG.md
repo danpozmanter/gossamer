@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.48.2 - Iterator rebinding
+
+- A `let` that reuses the name of a consumed iterator or range introduces a
+  fresh, unconsumed binding. Consumption tracked the name rather than the
+  binding, so shadowing a consumed name reported GT0042 on the new binding for
+  the rest of the scope, and a REPL session could not redefine the name at all
+  once any pipeline had taken it.
+
 ## 0.48.1 - Allocation speed, swap contract, float parity
 
 - Restore allocation-bound speed. The heap-profile hook added in front of
