@@ -134,6 +134,7 @@ run_step "cargo test -p gossamer-resolve --lib stdlib_exports" \
     cargo test -p gossamer-resolve --lib stdlib_exports
 run_step "cargo test -p gossamer-cli --lib cli::tests" \
     cargo test -p gossamer-cli --lib cli::tests
+run_step "cargo xtask item-fixtures --check" cargo xtask item-fixtures --check
 
 # Stdlib docs drift gate - verifies docs_src/stdlib/ pages match
 # what `manifest::ALL_MODULES` would emit. Build the binary first

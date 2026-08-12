@@ -1,6 +1,6 @@
 # `std::crypto::ed25519`
 
-Status: experimental
+Status: unproven
 
 Ed25519 digital signatures.
 

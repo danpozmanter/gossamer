@@ -25,14 +25,12 @@ fn is_palindrome(text: &String) -> bool {
     true
 }
 
-fn main() {
-    let inputs = #["hello", "racecar", "Gossamer", "level"]
-    for s in inputs {
-        let rev = reverse_bytes(&s)
-        let label = if is_palindrome(&s) { "palindrome" } else { "not palindrome" }
-        println!("{} rev-bytes={} ({})", s, rev.len(), label)
-        print!("  codes:")
-        rev |> iter::for_each(|code: i64| print!(" {}", code))
-        println!()
-    }
+let inputs = #["hello", "racecar", "Gossamer", "level"]
+for s in inputs {
+    let rev = reverse_bytes(&s)
+    let label = if is_palindrome(&s) { "palindrome" } else { "not palindrome" }
+    println!("{} rev-bytes={} ({})", s, rev.len(), label)
+    print!("  codes:")
+    rev |> iter::for_each(|code: i64| print!(" {}", code))
+    println!()
 }

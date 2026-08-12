@@ -1,7 +1,7 @@
 //! Profile output compatible with `go tool pprof`.
 //!
-//! Four profile shapes are exposed, each read directly from live
-//! scheduler state rather than from a sampler:
+//! Six profile shapes are exposed. Four read live scheduler state; the
+//! CPU and heap profiles are sampled:
 //!
 //! - **Goroutine profile** - one sample per live goroutine, from
 //!   [`crate::sigquit::snapshot`].
@@ -9,6 +9,9 @@
 //!   from the scheduler's park-wait accounting.
 //! - **Block profile** - microseconds parked on channels, I/O, and
 //!   timers, from the same accounting.
+//! - **CPU profile** - a timer interrupts the running thread and the
+//!   handler reads the stack that is already there.
+//! - **Heap profile** - one sample per fixed number of bytes allocated.
 //! - **Execution trace** - scheduler spawn / park / unpark events
 //!   over a window, as Chrome trace JSON.
 //!
@@ -94,6 +97,100 @@ impl ProfileBuffer {
             }
         }
         out
+    }
+}
+
+/// Returns a CPU profile gathered over `duration`.
+///
+/// Blocks the caller for the window, then turns the sampler's raw
+/// program counters into named frames. Symbolisation happens here rather
+/// than in the signal handler, which may not allocate.
+#[must_use]
+pub fn cpu_profile(duration: Duration) -> String {
+    let _ = crate::sampler::drain();
+    if crate::sampler::start(SAMPLE_HZ).is_err() {
+        return ProfileBuffer::default().render();
+    }
+    std::thread::sleep(duration);
+    crate::sampler::stop();
+    let raw = crate::sampler::drain();
+    let mut buf = ProfileBuffer::default();
+    for sample in raw {
+        let stack: Vec<Frame> = sample.frames[..sample.len as usize]
+            .iter()
+            .map(|pc| symbolise(*pc))
+            .collect();
+        buf.record(Sample { weight: 1, stack });
+    }
+    buf.render()
+}
+
+/// Sampling rate. Go's default, and low enough that the handler's cost
+/// stays in the noise on any real workload.
+const SAMPLE_HZ: u32 = 100;
+
+/// Resolves one return address to a named frame.
+///
+/// `backtrace` is a native-only dependency, and wasm has no sampler to
+/// produce addresses in the first place, so the address stands in for
+/// the name there.
+#[cfg(not(target_arch = "wasm32"))]
+fn symbolise(pc: usize) -> Frame {
+    let mut frame = Frame {
+        function: String::new(),
+        file: String::new(),
+        line: 0,
+    };
+    // SAFETY: `resolve` only reads the process's own symbol tables for an
+    // address the frame walk produced; an address it cannot resolve
+    // yields no symbol rather than misbehaving.
+    backtrace::resolve(pc as *mut std::ffi::c_void, |symbol| {
+        if frame.function.is_empty()
+            && let Some(name) = symbol.name()
+        {
+            frame.function = name.to_string();
+        }
+        if let Some(path) = symbol.filename() {
+            frame.file = path.display().to_string();
+        }
+        if let Some(line) = symbol.lineno() {
+            frame.line = line;
+        }
+    });
+    if frame.function.is_empty() {
+        frame.function = format!("0x{pc:x}");
+    }
+    frame
+}
+
+/// Returns a heap profile gathered over `duration`, weighted by the
+/// bytes each sampled allocation site accounted for.
+#[must_use]
+pub fn heap_profile(duration: Duration) -> String {
+    let _ = crate::sampler::drain_heap();
+    crate::sampler::start_heap();
+    std::thread::sleep(duration);
+    crate::sampler::stop_heap();
+    let mut buf = ProfileBuffer::default();
+    for sample in crate::sampler::drain_heap() {
+        let stack: Vec<Frame> = sample.frames[..sample.len as usize]
+            .iter()
+            .map(|pc| symbolise(*pc))
+            .collect();
+        buf.record(Sample {
+            weight: crate::sampler::HEAP_SAMPLE_BYTES as u64,
+            stack,
+        });
+    }
+    buf.render()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn symbolise(pc: usize) -> Frame {
+    Frame {
+        function: format!("0x{pc:x}"),
+        file: String::new(),
+        line: 0,
     }
 }
 
@@ -230,7 +327,7 @@ fn render_blocked_counts(counts: crate::sched::ParkedReasonCounts) -> String {
 }
 
 /// Endpoints the router serves, in index-page order.
-const ENDPOINTS: &[&str] = &["goroutine", "mutex", "block", "trace"];
+const ENDPOINTS: &[&str] = &["profile", "heap", "goroutine", "mutex", "block", "trace"];
 
 /// Routes a request path under `/debug/pprof/...` to the right
 /// profile generator and returns the body the HTTP handler should
@@ -248,6 +345,14 @@ pub fn route(path: &str, query: &str) -> Option<String> {
     let suffix = path.strip_prefix("/debug/pprof/")?;
     match suffix {
         "" => Some(index_page()),
+        "profile" => {
+            let secs = parse_query_seconds(query).unwrap_or(30);
+            Some(cpu_profile(Duration::from_secs(secs)))
+        }
+        "heap" => {
+            let secs = parse_query_seconds(query).unwrap_or(1);
+            Some(heap_profile(Duration::from_secs(secs)))
+        }
         "goroutine" => Some(goroutine_profile()),
         "mutex" => Some(mutex_profile()),
         "block" => Some(block_profile()),

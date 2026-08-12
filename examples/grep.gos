@@ -17,41 +17,38 @@ use std::flag
 use std::io
 use std::process
 
-fn main() -> Result<(), errors::Error> {
-    let mut fs = flag::Set::new("grep")
-    let count = fs.bool("count", false, "print only the match count")
-    let numbers = fs.bool("line-numbers", false, "prefix matches with line number")
-    let rest = fs.parse(env::args())
-        .map_err(|e| errors::wrap(e, "parse flags"))?
-    if rest.is_empty() {
-        return Err(errors::new("usage: grep [--count] [--line-numbers] PATTERN"))
-    }
-    let pattern = rest[0]
-    let count_only = *count
-    let line_numbers = *numbers
+let mut fs = flag::Set::new("grep")
+let count = fs.bool("count", false, "print only the match count")
+let numbers = fs.bool("line-numbers", false, "prefix matches with line number")
+let rest = fs.parse(env::args())
+    .map_err(|e| errors::wrap(e, "parse flags"))?
+if rest.is_empty() {
+    return Err(errors::new("usage: grep [--count] [--line-numbers] PATTERN"))
+}
+let pattern = rest[0]
+let count_only = *count
+let line_numbers = *numbers
 
-    let mut scanner = bufio::Scanner::new(io::stdin())
-    let mut line_no: u64 = 0
-    let mut hits: u64 = 0
-    while scanner.scan() {
-        line_no += 1
-        let text = scanner.text()
-        if text.contains(&pattern) {
-            hits += 1
-            if !count_only {
-                if line_numbers {
-                    println!("{line_no}:{text}")
-                } else {
-                    println!("{text}")
-                }
+let mut scanner = bufio::Scanner::new(io::stdin())
+let mut line_no: u64 = 0
+let mut hits: u64 = 0
+while scanner.scan() {
+    line_no += 1
+    let text = scanner.text()
+    if text.contains(&pattern) {
+        hits += 1
+        if !count_only {
+            if line_numbers {
+                println!("{line_no}:{text}")
+            } else {
+                println!("{text}")
             }
         }
     }
-    if count_only {
-        println!("{hits}")
-    }
-    if hits == 0 {
-        process::exit(1)
-    }
-    Ok(())
+}
+if count_only {
+    println!("{hits}")
+}
+if hits == 0 {
+    process::exit(1)
 }

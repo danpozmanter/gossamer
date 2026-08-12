@@ -2850,6 +2850,16 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::pprof",
+        name: "cpu_profile",
+        signature: "fn cpu_profile(millis: i64) -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::pprof",
+        name: "heap_profile",
+        signature: "fn heap_profile(millis: i64) -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::pprof",
         name: "goroutine_profile",
         signature: "fn goroutine_profile() -> String",
     },

@@ -48,6 +48,24 @@ pub unsafe extern "C" fn gos_rt_pprof_execution_trace(millis: i64) -> *mut c_cha
     })
 }
 
+/// `pprof::cpu_profile(millis: i64) -> String`. Blocks for the window.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_pprof_cpu_profile(millis: i64) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let window = Duration::from_millis(millis.max(0) as u64);
+        into_c_string(crate::pprof::cpu_profile(window))
+    })
+}
+
+/// `pprof::heap_profile(millis: i64) -> String`. Blocks for the window.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_pprof_heap_profile(millis: i64) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let window = Duration::from_millis(millis.max(0) as u64);
+        into_c_string(crate::pprof::heap_profile(window))
+    })
+}
+
 /// `pprof::route(path, query) -> Option<String>`, shaped as a
 /// `*mut GosResult` with disc 0 = Some, 1 = None.
 #[unsafe(no_mangle)]

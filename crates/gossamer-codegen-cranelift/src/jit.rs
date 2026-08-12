@@ -2651,6 +2651,8 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_image_encode_png_base64" => rt::gos_rt_image_encode_png_base64,
         "gos_rt_image_encode_jpeg_base64" => rt::gos_rt_image_encode_jpeg_base64,
         "gos_rt_runtime_scheduler_stats_json" => rt::gos_rt_runtime_scheduler_stats_json,
+        "gos_rt_pprof_cpu_profile" => rt::gos_rt_pprof_cpu_profile,
+        "gos_rt_pprof_heap_profile" => rt::gos_rt_pprof_heap_profile,
         "gos_rt_pprof_goroutine_profile" => rt::gos_rt_pprof_goroutine_profile,
         "gos_rt_pprof_mutex_profile" => rt::gos_rt_pprof_mutex_profile,
         "gos_rt_pprof_block_profile" => rt::gos_rt_pprof_block_profile,

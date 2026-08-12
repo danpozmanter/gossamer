@@ -1060,7 +1060,9 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_pprof_goroutine_profile"
         | "gos_rt_pprof_mutex_profile"
         | "gos_rt_pprof_block_profile" => (&[], Some(ptr_ty)),
-        "gos_rt_pprof_execution_trace" => (&[types::I64], Some(ptr_ty)),
+        "gos_rt_pprof_execution_trace"
+        | "gos_rt_pprof_cpu_profile"
+        | "gos_rt_pprof_heap_profile" => (&[types::I64], Some(ptr_ty)),
         "gos_rt_pprof_route" => (&[ptr_ty, ptr_ty], Some(types::I128)),
         "gos_rt_runtime_cycle_collection_supported" => (&[], Some(types::I8)),
         "gos_rt_parse_i64_result" => (&[ptr_ty], Some(ptr_ty)),

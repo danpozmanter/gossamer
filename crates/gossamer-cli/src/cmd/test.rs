@@ -137,11 +137,108 @@ pub(crate) struct TestOpts {
     /// `examples/` + `feature-testing-examples/`) and writes its
     /// per-tier outcome into a JSON sidecar driven by `report`.
     pub tier_parity: bool,
+    /// Run the fuzz loop over `#[fuzz]` functions instead of `#[test]`
+    /// discovery.
+    pub fuzz: bool,
+    /// How long to fuzz each target. Without it the loop runs a fixed
+    /// number of inputs, so a run is reproducible.
+    pub fuzz_time: Option<std::time::Duration>,
     /// Sidecar emission selector. `Some("status")` writes
     /// `target/debug/.feature-status.json` consumed by
     /// `gos feature-status`. Other values are reserved for future
     /// report shapes.
     pub report: Option<String>,
+}
+
+/// Runs every committed fuzz corpus entry, returning how many failed.
+///
+/// Reported alongside the `#[test]` results rather than as a separate
+/// command, so a committed crash cannot pass unnoticed.
+fn run_fuzz_corpus_regressions(path: Option<&Path>) -> usize {
+    let Ok(root) = (match path {
+        Some(p) => Ok(p.to_path_buf()),
+        None => default_test_root(),
+    }) else {
+        return 0;
+    };
+    let files = if root.is_file() {
+        vec![root]
+    } else {
+        match collect_lint_targets(&root) {
+            Ok(files) => files,
+            Err(_) => return 0,
+        }
+    };
+    let Ok(targets) = crate::cmd::fuzz::discover(&files) else {
+        return 0;
+    };
+    if targets.is_empty() {
+        return 0;
+    }
+    match crate::cmd::fuzz::run_corpus_as_tests(&targets) {
+        Ok((passed, failed)) => {
+            println!(
+                "fuzz corpus: {passed} passed, {failed} failed across {} target(s)",
+                targets.len()
+            );
+            failed
+        }
+        Err(_) => 0,
+    }
+}
+
+/// Discovers `#[fuzz]` targets under the test root and fuzzes them.
+fn run_fuzz(opts: &TestOpts) -> Result<()> {
+    let root = match opts.path.as_ref() {
+        Some(p) => p.clone(),
+        None => default_test_root()?,
+    };
+    let files = if root.is_file() {
+        vec![root]
+    } else {
+        collect_lint_targets(&root)?
+    };
+    let targets = crate::cmd::fuzz::discover(&files)?;
+    let seed = opts.seed.unwrap_or(0);
+    crate::cmd::fuzz::run(&targets, opts.fuzz_time, seed)
+}
+
+/// Fails when any source under `path` disagrees with `gos fmt`.
+fn enforce_canonical_format(path: Option<&Path>) -> Result<()> {
+    let root = match path {
+        Some(p) => p.to_path_buf(),
+        None => default_test_root()?,
+    };
+    let files = if root.is_file() {
+        vec![root]
+    } else {
+        collect_lint_targets(&root)?
+    };
+    let mut drift: Vec<String> = Vec::new();
+    for file in &files {
+        let Ok(source) = read_source(file) else {
+            continue;
+        };
+        let mut map = gossamer_lex::SourceMap::new();
+        let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
+        let Ok(canonical) = gossamer_parse::format_source(&source, file_id) else {
+            // Unparseable input is the type checker's report to make, not
+            // the formatter's.
+            continue;
+        };
+        if canonical != source {
+            drift.push(file.display().to_string());
+        }
+    }
+    if drift.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "project.enforce-format is set and {} file(s) are not canonically formatted; \
+         run `gos fmt`: {}",
+        drift.len(),
+        drift.join(", "),
+    ))
 }
 
 pub(crate) fn parse_timeout(input: &str) -> Result<std::time::Duration> {
@@ -226,6 +323,19 @@ pub(crate) fn run_with_opts(opts: TestOpts) -> Result<()> {
     if opts.tier_parity {
         return tier_parity::run(&opts);
     }
+    if opts.fuzz {
+        return run_fuzz(&opts);
+    }
+    // A project that opted into canonical formatting gets it checked as
+    // part of passing, rather than as a step someone has to remember.
+    // Checked before the suite runs so the report is not buried under it.
+    if crate::paths::project_enforces_format() {
+        enforce_canonical_format(opts.path.as_deref())?;
+    }
+    // Corpus entries run as ordinary tests: once a fuzz crash is
+    // committed, plain `gos test` fails until it is fixed. This is what
+    // makes a fuzz finding a gate rather than a report.
+    let fuzz_regressions = run_fuzz_corpus_regressions(opts.path.as_deref());
     gossamer_resolve::set_test_cfg(true);
     // Run tests on pure bytecode. The per-test assertion tally and the
     // coverage counters are interp-side mechanisms the whole-program
@@ -508,6 +618,7 @@ pub(crate) fn run_with_opts(opts: TestOpts) -> Result<()> {
             style.dim(&trailing)
         );
     }
+    let total_failures = total_failures + u32::try_from(fuzz_regressions).unwrap_or(u32::MAX);
     if total_failures > 0 {
         return Err(anyhow!("{total_failures} test failure(s)"));
     }
@@ -1442,12 +1553,7 @@ mod tier_parity {
                 .unwrap_or(file)
                 .display()
                 .to_string();
-            let observed = [
-                run_vm(file, budget),
-                run_cranelift(file, budget),
-                run_llvm(file, budget),
-            ];
-            let [vm, cranelift, llvm] = parity_outcomes(&observed);
+            let [vm, cranelift, llvm] = evaluate_fixture(file, budget);
             println!(
                 "{name}: vm={} cranelift={} llvm={}",
                 vm.as_deref().unwrap_or("-"),
@@ -1624,6 +1730,46 @@ mod tier_parity {
         }
     }
 
+    /// Runs one fixture on every tier and reduces the result to the
+    /// per-tier verdicts the sidecar records.
+    fn evaluate_fixture(file: &Path, budget: Duration) -> [Option<String>; 3] {
+        // A fixture the VM cannot run to completion - a server, an event
+        // loop, anything that exits only when killed - will not complete
+        // under the JIT or natively either. Charging it the budget twice
+        // more, and building it natively first, buys no information: no
+        // tier reaches a verdict, so none can agree.
+        let vm_outcome = run_vm(file, budget);
+        let mut observed = if matches!(vm_outcome, Outcome::NoVerdict) {
+            [vm_outcome, Outcome::NoVerdict, Outcome::NoVerdict]
+        } else {
+            [
+                vm_outcome,
+                run_cranelift(file, budget),
+                run_llvm(file, budget),
+            ]
+        };
+        for outcome in &mut observed {
+            if let Outcome::Ran { stdout, .. } = outcome {
+                *stdout = mask_program_path(stdout, file);
+            }
+        }
+        // A fixture whose own output moves between runs cannot be compared
+        // on stdout at all - goroutine interleaving, a timestamp, a random
+        // seed. Confirm it by re-running the reference tier rather than
+        // assuming, and pay for the extra run only when the tiers actually
+        // disagreed.
+        let mut compare_stdout = true;
+        if parity_outcomes(&observed, true)
+            .iter()
+            .any(|o| o.as_deref() == Some("fail"))
+            && let Outcome::Ran { stdout, .. } = &observed[0]
+            && let Outcome::Ran { stdout: again, .. } = run_vm(file, budget)
+        {
+            compare_stdout = *stdout == mask_program_path(&again, file);
+        }
+        parity_outcomes(&observed, compare_stdout)
+    }
+
     /// Reduces what each tier did into the per-tier verdicts the sidecar
     /// records.
     ///
@@ -1634,25 +1780,58 @@ mod tier_parity {
     /// disagrees with the reference - or fails to build at all - is a
     /// failure. The bytecode VM is the reference when it reached a
     /// verdict, otherwise the first tier that did.
-    fn parity_outcomes(observed: &[Outcome; 3]) -> [Option<String>; 3] {
-        let reference = observed.iter().find_map(|o| match o {
-            Outcome::Ran { exit_code, stdout } => Some((*exit_code, stdout.as_str())),
+    fn parity_outcomes(observed: &[Outcome; 3], compare_stdout: bool) -> [Option<String>; 3] {
+        let key = |o: &Outcome| match o {
+            Outcome::Ran { exit_code, stdout } => Some((
+                *exit_code,
+                if compare_stdout {
+                    stdout.clone()
+                } else {
+                    String::new()
+                },
+            )),
             _ => None,
-        });
-        let Some(reference) = reference else {
+        };
+        let Some(reference) = observed.iter().find_map(key) else {
             return [None, None, None];
         };
         std::array::from_fn(|i| match &observed[i] {
-            Outcome::Ran { exit_code, stdout } => {
-                if (*exit_code, stdout.as_str()) == reference {
+            Outcome::Ran { .. } => {
+                if key(&observed[i]).as_ref() == Some(&reference) {
                     Some("pass".to_string())
                 } else {
                     Some("fail".to_string())
                 }
             }
-            Outcome::BuildFailed => Some("fail".to_string()),
+            // A program that does not build has no run-time behaviour to
+            // compare. That is a tier failure only when another tier did
+            // run it: a fixture written to be rejected fails everywhere,
+            // which is agreement, not divergence.
+            Outcome::BuildFailed => (reference.0 == Some(0)).then(|| "fail".to_string()),
             Outcome::NoVerdict | Outcome::Skipped => None,
         })
+    }
+
+    /// Replaces the program's own path with a placeholder.
+    ///
+    /// A program that prints `argv[0]` reports the source path under
+    /// `gos run` and the executable's path when compiled. That is the
+    /// program correctly naming itself, not the tiers disagreeing.
+    fn mask_program_path(text: &str, file: &Path) -> String {
+        let mut out = text.to_string();
+        let mut needles: Vec<String> = vec![file.display().to_string()];
+        if let Some(stem) = file.file_stem().and_then(|s| s.to_str()) {
+            needles.push(stem.to_string());
+        }
+        // Longest first, so a stem inside a full path does not mask half
+        // of it and leave the remainder behind.
+        needles.sort_by_key(|n| std::cmp::Reverse(n.len()));
+        for needle in needles {
+            if !needle.is_empty() {
+                out = out.replace(&needle, "<program>");
+            }
+        }
+        out
     }
 
     #[derive(Debug)]
@@ -1769,9 +1948,14 @@ mod tier_parity {
         if fs::create_dir_all(&scratch).is_err() {
             return Outcome::Skipped;
         }
+        // Debug, not release. The VM checks integer overflow and an
+        // optimised build wraps - a profile-dependent difference the
+        // language defines on purpose, matching Rust. The debug native
+        // build keeps the checking semantics, so it is the build whose
+        // arithmetic the VM can be compared against at all. The release
+        // pipeline has its own parity groups in `tier_parity`.
         let build = Command::new(gos_bin())
             .arg("build")
-            .arg("--release")
             .arg("--out-dir")
             .arg(&scratch)
             .arg(file)
@@ -1808,7 +1992,16 @@ mod tier_parity {
                     .stderr(Stdio::null())
                     .spawn();
                 match run {
-                    Ok(child) => wait_bounded(child, budget, &sink),
+                    // The built executable lives under a scratch path the
+                    // source run never sees, so mask it here where it is
+                    // known; the caller masks the source path.
+                    Ok(child) => match wait_bounded(child, budget, &sink) {
+                        Outcome::Ran { exit_code, stdout } => Outcome::Ran {
+                            exit_code,
+                            stdout: mask_program_path(&stdout, &p),
+                        },
+                        other => other,
+                    },
                     Err(_) => Outcome::BuildFailed,
                 }
             }
@@ -1818,12 +2011,29 @@ mod tier_parity {
         outcome
     }
 
+    /// Grace period before idleness is meaningful: a process still
+    /// starting up has not had a chance to burn any CPU yet.
+    const IDLE_GRACE: Duration = Duration::from_secs(1);
+
+    /// How long a live process must stay under [`IDLE_TICKS_PER_SEC`]
+    /// before it counts as parked. Comfortably above the longest sleep any
+    /// fixture takes (100 ms), so a sleeping program is never mistaken for
+    /// a parked one.
+    const IDLE_WINDOW: Duration = Duration::from_secs(4);
+
+    /// CPU ticks per second under which a live process counts as parked.
+    /// The counters run at 100 Hz, so a compute-bound process accrues
+    /// about 100 per second per core; a server waiting on its netpoller
+    /// accrues well under one, waking only for timers.
+    const IDLE_TICKS_PER_SEC: f64 = 5.0;
+
     fn wait_bounded(
         mut child: std::process::Child,
         timeout: Duration,
         sink: &StdoutSink,
     ) -> Outcome {
         let start = std::time::Instant::now();
+        let mut cpu = ProcessCpu::watch(&child);
         loop {
             match child.try_wait() {
                 Ok(Some(status)) => {
@@ -1833,7 +2043,13 @@ mod tier_parity {
                     };
                 }
                 Ok(None) => {
-                    if start.elapsed() >= timeout {
+                    // A live process consuming no CPU is waiting for
+                    // something this walk never supplies - a connection, a
+                    // signal, a peer. Waiting out the rest of the budget
+                    // cannot change the outcome, so stop early and report
+                    // the same no-verdict the deadline would have.
+                    let parked = start.elapsed() >= IDLE_GRACE && cpu.is_parked();
+                    if parked || start.elapsed() >= timeout {
                         let _ = child.kill();
                         let _ = child.wait();
                         return Outcome::NoVerdict;
@@ -1842,6 +2058,77 @@ mod tier_parity {
                 }
                 Err(_) => return Outcome::Skipped,
             }
+        }
+    }
+
+    /// Tracks how long a child has gone without consuming CPU.
+    ///
+    /// Reads the process-wide user+system tick counters, so a program
+    /// blocked on one thread while another computes never reads as idle.
+    /// Where the counters are unavailable the watcher reports zero idle
+    /// time and the per-tier budget remains the only bound.
+    struct ProcessCpu {
+        #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+        pid: u32,
+        window_ticks: u64,
+        window_start: std::time::Instant,
+        available: bool,
+    }
+
+    impl ProcessCpu {
+        fn watch(child: &std::process::Child) -> Self {
+            let mut watcher = Self {
+                pid: child.id(),
+                window_ticks: 0,
+                window_start: std::time::Instant::now(),
+                available: false,
+            };
+            if let Some(ticks) = watcher.sample() {
+                watcher.window_ticks = ticks;
+                watcher.available = true;
+            }
+            watcher
+        }
+
+        /// Cumulative user+system ticks, or `None` where unsupported.
+        #[cfg(target_os = "linux")]
+        fn sample(&self) -> Option<u64> {
+            let stat = std::fs::read_to_string(format!("/proc/{}/stat", self.pid)).ok()?;
+            // Fields are space-separated, but the second (comm) may itself
+            // contain spaces; it is parenthesised, so resume after the last
+            // ')'. utime and stime are fields 14 and 15, counting from 1.
+            let rest = &stat[stat.rfind(')')? + 1..];
+            let mut fields = rest.split_whitespace().skip(11);
+            let utime: u64 = fields.next()?.parse().ok()?;
+            let stime: u64 = fields.next()?.parse().ok()?;
+            Some(utime + stime)
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        fn sample(&self) -> Option<u64> {
+            None
+        }
+
+        /// Whether the process has stayed under the idle rate for a full
+        /// window. Each completed window either confirms parking or
+        /// restarts the measurement.
+        fn is_parked(&mut self) -> bool {
+            if !self.available {
+                return false;
+            }
+            let elapsed = self.window_start.elapsed();
+            if elapsed < IDLE_WINDOW {
+                return false;
+            }
+            // The process exited between the poll and this read; let the
+            // next `try_wait` collect it.
+            let Some(ticks) = self.sample() else {
+                return false;
+            };
+            let rate = (ticks - self.window_ticks) as f64 / elapsed.as_secs_f64();
+            self.window_ticks = ticks;
+            self.window_start = std::time::Instant::now();
+            rate < IDLE_TICKS_PER_SEC
         }
     }
 

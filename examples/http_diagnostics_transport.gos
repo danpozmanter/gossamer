@@ -17,7 +17,5 @@ fn readiness_message(url: String) -> String {
     }
 }
 
-fn main() {
-    let fixture = httptest::server(200, "database=up")
-    println!("{}", readiness_message(fixture))
-}
+let fixture = httptest::server(200, "database=up")
+println!("{}", readiness_message(fixture))

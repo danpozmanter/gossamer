@@ -33,42 +33,40 @@ fn split_words(s: String) -> Vec<String> {
     s.trim().to_lowercase().split(" ")
 }
 
-fn main() {
-    // Arithmetic chain: 3 -> double -> add 10 -> clamp to [0, 100].
-    let n = 3 |> double |> add(10) |> clamp(0, 100)
-    println!("arithmetic: {n}")
+// Arithmetic chain: 3 -> double -> add 10 -> clamp to [0, 100].
+let n = 3 |> double |> add(10) |> clamp(0, 100)
+println!("arithmetic: {n}")
 
-    // Equivalent nested form (what `|>` desugars to):
-    let same = clamp(0, 100, add(10, double(3)))
-    println!("nested: {same}")
+// Equivalent nested form (what `|>` desugars to):
+let same = clamp(0, 100, add(10, double(3)))
+println!("nested: {same}")
 
-    // `_.method` pipes the value through its own methods - `_` is the
-    // receiver of the step, so `_.trim` is `x.trim()`.
-    let shout = "  hello  " |> $.trim |> $.to_uppercase
-    println!("shout: {shout}")
+// `_.method` pipes the value through its own methods - `_` is the
+// receiver of the step, so `_.trim` is `x.trim()`.
+let shout = "  hello  " |> $.trim |> $.to_uppercase
+println!("shout: {shout}")
 
-    // Word count, top-down: split on whitespace, drop empties, count.
-    let words = "  Hello  World  "
-        |> split_words
-        |> iter::filter(|w: String| w.len() > 0)
-        |> iter::count
-    println!("words: {words}")
+// Word count, top-down: split on whitespace, drop empties, count.
+let words = "  Hello  World  "
+    |> split_words
+    |> iter::filter(|w: String| w.len() > 0)
+    |> iter::count
+println!("words: {words}")
 
-    // Sum of squares of evens in 1..=10 - one expression, no `let mut`.
-    let total = iter::range_inclusive(1, 10)
-        |> iter::filter(|n: i64| n % 2 == 0)
-        |> iter::sum_by(|n: i64| n * n)
-    println!("sum of even squares: {total}")
+// Sum of squares of evens in 1..=10 - one expression, no `let mut`.
+let total = iter::range_inclusive(1, 10)
+    |> iter::filter(|n: i64| n % 2 == 0)
+    |> iter::sum_by(|n: i64| n * n)
+println!("sum of even squares: {total}")
 
-    // Pipeline through Option: first match, fall back to a default.
-    let xs = #[1, 3, 5, 9, 14, 21]
-    let first_big = xs
-        |> iter::find(|n: i64| n > 10)
-        |> option::unwrap_or(-1)
-    println!("first > 10 (or -1): {first_big}")
+// Pipeline through Option: first match, fall back to a default.
+let xs = #[1, 3, 5, 9, 14, 21]
+let first_big = xs
+    |> iter::find(|n: i64| n > 10)
+    |> option::unwrap_or(-1)
+println!("first > 10 (or -1): {first_big}")
 
-    // Filter twice - `iter::count` reports each subset's size.
-    let evens = xs |> iter::filter(|n: i64| n % 2 == 0)
-    let odds = xs |> iter::filter(|n: i64| n % 2 != 0)
-    println!("evens: {}, odds: {}", evens |> iter::count, odds |> iter::count)
-}
+// Filter twice - `iter::count` reports each subset's size.
+let evens = xs |> iter::filter(|n: i64| n % 2 == 0)
+let odds = xs |> iter::filter(|n: i64| n % 2 != 0)
+println!("evens: {}, odds: {}", evens |> iter::count, odds |> iter::count)

@@ -700,6 +700,49 @@ jobs:
       - name: Verify generated LLM documentation is byte-clean
         run: cargo xtask docs-llm --check
 
+  # Regenerates the tier-parity evidence `gos feature-status` reports and
+  # fails when the committed copy is stale. The evidence is compiled into
+  # the binary, so an installed `gos` with no repository behind it reports
+  # what the walk proved rather than nothing.
+  feature-status-evidence:
+    name: Tier-parity evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - run: rustup set profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v2-feature-status-evidence
+      - name: Build gos
+        run: cargo build --bin gos
+      - name: Walk every fixture across the VM, the JIT, and the native build
+        run: ./target/debug/gos test --tier-parity --report status || true
+      - name: Fail when the committed evidence is stale
+        run: |
+          python3 - <<'PYEOF'
+          import json, sys
+          fresh = json.load(open("target/debug/.feature-status.json"))
+          committed = json.load(open("resources/feature-status.json"))
+          fresh = {r["name"]: r["tiers"] for r in fresh if r["name"].startswith("std::")}
+          committed = {r["name"]: r["tiers"] for r in committed}
+          if fresh != committed:
+              added = sorted(set(fresh) - set(committed))
+              removed = sorted(set(committed) - set(fresh))
+              changed = sorted(k for k in set(fresh) & set(committed) if fresh[k] != committed[k])
+              print("resources/feature-status.json is stale.")
+              for label, items in (("added", added), ("removed", removed), ("changed", changed)):
+                  if items:
+                      print(f"  {label}: {items}")
+              print("Regenerate with `gos test --tier-parity --report status` and copy the")
+              print("std:: rows from target/debug/.feature-status.json.")
+              sys.exit(1)
+          print(f"evidence is current ({len(committed)} modules)")
+          PYEOF
+      - name: The reported status may not exceed its evidence
+        run: ./target/debug/gos feature-status --check
+
   # Cross-compilation correctness: `gos build --target aarch64-linux-*`
   # from a Linux host, run under QEMU, must match the bytecode VM. This is
   # the all-tier gate for the Linux-host cross path (gnu + musl).

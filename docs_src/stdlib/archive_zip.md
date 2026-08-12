@@ -1,6 +1,6 @@
 # `std::archive::zip`
 
-Status: experimental
+Status: unproven
 
 ZIP archive reader and writer.
 

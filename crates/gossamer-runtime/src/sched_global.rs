@@ -373,9 +373,42 @@ pub(crate) fn take_pending_park() -> Option<(Gid, ParkReason)> {
 /// `interest`. Wires the netpoller registration, the waker, the
 /// park, and the cleanup into one call.
 ///
-/// Falls back to a brief OS-thread sleep when called outside a
-/// goroutine context (e.g. from tooling code that hits the same
-/// helper). Real goroutine code should never trigger that path.
+/// Blocks the calling OS thread until `io` is ready, for callers with no
+/// goroutine to park. Uses a poll of its own rather than the shared
+/// scheduler poller, whose readiness is delivered by unparking a
+/// goroutine that does not exist here.
+fn block_thread_on_io<S: mio::event::Source + ?Sized>(
+    io: &mut S,
+    interest: crate::sched::Interest,
+) -> io::Result<()> {
+    let mio_interest = match interest {
+        crate::sched::Interest::Readable => mio::Interest::READABLE,
+        crate::sched::Interest::Writable => mio::Interest::WRITABLE,
+        crate::sched::Interest::Timer => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Interest::Timer is reserved for add_timer",
+            ));
+        }
+    };
+    let mut poll = mio::Poll::new()?;
+    let mut events = mio::Events::with_capacity(1);
+    poll.registry().register(io, mio::Token(0), mio_interest)?;
+    // A signal can cut the wait short; the caller re-checks readiness and
+    // comes back, so a spurious wake costs one extra syscall.
+    let waited = match poll.poll(&mut events, None) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::Interrupted => Ok(()),
+        Err(e) => Err(e),
+    };
+    let _ = poll.registry().deregister(io);
+    waited
+}
+
+/// Outside a goroutine there is no coroutine to suspend, so the calling
+/// OS thread blocks on the source itself. `fn main() { listener.accept() }`
+/// takes that path - the first shape a program is written in - and it has
+/// to cost nothing while it waits.
 ///
 /// # Errors
 ///
@@ -386,8 +419,7 @@ pub fn wait_io<S: mio::event::Source + ?Sized>(
     interest: crate::sched::Interest,
 ) -> io::Result<()> {
     if !gossamer_coro::in_goroutine() {
-        std::thread::sleep(Duration::from_millis(1));
-        return Ok(());
+        return block_thread_on_io(io, interest);
     }
     let mut result: io::Result<()> = Ok(());
     let mut source = None;

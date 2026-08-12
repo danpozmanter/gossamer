@@ -1,6 +1,6 @@
 # `std::crypto::subtle`
 
-Status: experimental
+Status: unproven
 
 Constant-time comparison helpers.
 

@@ -12,8 +12,6 @@ fn count_newlines(text: String) -> i64 {
     text.as_bytes().count(|b| b == b'\n')
 }
 
-fn main() {
-    let sample = "alpha\nbeta\ngamma\ndelta\n"
-    let n = count_newlines(sample)
-    println!("lines: {}", n)
-}
+let sample = "alpha\nbeta\ngamma\ndelta\n"
+let n = count_newlines(sample)
+println!("lines: {}", n)

@@ -12,21 +12,18 @@
 use std::env
 use std::flag
 
-fn main() -> Result<(), flag::Error> {
-    let mut fs = flag::Set::new("cli_args")
-    let name = fs.string("name", "world", "greeting target")
-    let port = fs.uint("port", 8080, "listen port")
-    let verbose = fs.bool("verbose", false, "enable chatty output")
-    let positional = fs.parse(env::args())?
+let mut fs = flag::Set::new("cli_args")
+let name = fs.string("name", "world", "greeting target")
+let port = fs.uint("port", 8080, "listen port")
+let verbose = fs.bool("verbose", false, "enable chatty output")
+let positional = fs.parse(env::args())?
 
-    println!("hello, {}!", *name)
-    if *verbose {
-        println!("config: port={}, {} positional arg(s)", *port, positional.len())
-        for i in 0..positional.len() {
-            println!("  [{i}] = {}", positional[i])
-        }
-    } else {
-        println!("running on port {}", *port)
+println!("hello, {}!", *name)
+if *verbose {
+    println!("config: port={}, {} positional arg(s)", *port, positional.len())
+    for i in 0..positional.len() {
+        println!("  [{i}] = {}", positional[i])
     }
-    Ok(())
+} else {
+    println!("running on port {}", *port)
 }

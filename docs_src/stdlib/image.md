@@ -1,6 +1,6 @@
 # `std::image`
 
-Status: experimental
+Status: unproven
 
 Opaque RGBA8 image handles with PNG and JPEG codecs.
 

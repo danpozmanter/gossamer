@@ -1,6 +1,6 @@
 # `std::compress::zstd`
 
-Status: experimental
+Status: unproven
 
 Zstandard encoder / decoder (RFC 8478; libzstd-vendored).
 

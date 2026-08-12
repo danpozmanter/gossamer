@@ -1,6 +1,6 @@
 # `std::encoding::binary`
 
-Status: experimental
+Status: unproven
 
 Big/little-endian integer packing and varint codecs.
 

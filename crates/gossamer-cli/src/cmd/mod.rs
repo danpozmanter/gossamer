@@ -6,6 +6,7 @@
 //! place to look when a flag stops landing where you expect.
 
 pub(crate) mod attr_walk;
+pub(crate) mod audit_cmd;
 pub(crate) mod bench;
 pub(crate) mod bindgen;
 pub(crate) mod build;
@@ -15,7 +16,9 @@ pub(crate) mod clean;
 pub(crate) mod env_cmd;
 pub(crate) mod explain;
 pub mod feature_status;
+pub(crate) mod fix_cmd;
 pub(crate) mod fmt_cmd;
+pub(crate) mod fuzz;
 pub(crate) mod lint_cmd;
 pub(crate) mod lsp_cmd;
 pub(crate) mod mcp_cmd;

@@ -15,19 +15,17 @@ fn report_env(name: &String) {
     }
 }
 
-fn main() {
-    println!("argv:")
-    let args = env::args()
-    for i in 0..args.len() {
-        println!("  argv[{i}] = {}", args[i])
-    }
+println!("argv:")
+let args = env::args()
+for i in 0..args.len() {
+    println!("  argv[{i}] = {}", args[i])
+}
 
-    println!("\nenvironment (selected):")
-    let env_vars = #["PATH", "HOME", "USER", "GOSSAMER_DEBUG"]
-    env_vars |> iter::for_each(|name| report_env(&name))
+println!("\nenvironment (selected):")
+let env_vars = #["PATH", "HOME", "USER", "GOSSAMER_DEBUG"]
+env_vars |> iter::for_each(|name| report_env(&name))
 
-    match env::current_dir() {
-        Ok(dir) => println!("\ncwd: {dir}")
-        Err(e) => println!("\ncwd error: {e}")
-    }
+match env::current_dir() {
+    Ok(dir) => println!("\ncwd: {dir}")
+    Err(e) => println!("\ncwd error: {e}")
 }

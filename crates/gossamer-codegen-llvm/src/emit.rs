@@ -737,6 +737,13 @@ fn render_chunk_module(chunk_indices: &[usize], ctx: &ModuleCtx<'_>) -> Result<S
     }
     writeln!(out, "target triple = \"{}\"", ctx.triple).unwrap();
     writeln!(out).unwrap();
+    // Every generated body carries `#0`. A profiler samples an arbitrary
+    // instruction and has to walk out of it, and DWARF unwinding is not
+    // async-signal-safe, so the frame chain has to be there. This must be
+    // an IR attribute: `clang -x ir` ignores `-fno-omit-frame-pointer`,
+    // which only sets it when clang generates the IR itself.
+    writeln!(out, "attributes #0 = {{ \"frame-pointer\"=\"all\" }}").unwrap();
+    writeln!(out).unwrap();
     for d in LLVM_SPECIAL_DECLS {
         writeln!(out, "{d}").unwrap();
     }
@@ -2251,7 +2258,13 @@ fn invoke_llc_pipeline(
     let profile = opt_profile();
     let mcpu = mcpu_target(triple);
     if let Some(clang) = integrated_clang_path(triple) {
+        if std::env::var_os("GOS_PIPELINE_TRACE").is_some() {
+            eprintln!("llvm pipeline: clang at {}", clang.display());
+        }
         return invoke_clang_pipeline(&clang, ll_path, obj_out, triple, profile, &mcpu);
+    }
+    if std::env::var_os("GOS_PIPELINE_TRACE").is_some() {
+        eprintln!("llvm pipeline: opt + llc");
     }
 
     let opt_path = ll_path.with_extension("opt.bc");

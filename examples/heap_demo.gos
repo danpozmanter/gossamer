@@ -7,23 +7,21 @@
 
 use std::collections::heap
 
-fn main() {
-    let h: Vec<i64> = #[]
-    let h = heap::push(h, 5)
-    let h = heap::push(h, 1)
-    let h = heap::push(h, 3)
-    let h = heap::push(h, 2)
-    let h = heap::push(h, 4)
+let h: Vec<i64> = #[]
+let h = heap::push(h, 5)
+let h = heap::push(h, 1)
+let h = heap::push(h, 3)
+let h = heap::push(h, 2)
+let h = heap::push(h, 4)
 
-    println!("len: {}", heap::len(&h))
-    println!("min: {}", heap::peek(&h))
+println!("len: {}", heap::len(&h))
+println!("min: {}", heap::peek(&h))
 
-    let mut cur = h
-    while heap::len(&cur) > 0 {
-        let v = heap::peek(&cur)
-        println!("pop: {}", v)
-        cur = heap::pop(cur)
-    }
-
-    println!("drained: {}", heap::len(&cur))
+let mut cur = h
+while heap::len(&cur) > 0 {
+    let v = heap::peek(&cur)
+    println!("pop: {}", v)
+    cur = heap::pop(cur)
 }
+
+println!("drained: {}", heap::len(&cur))

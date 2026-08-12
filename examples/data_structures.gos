@@ -13,50 +13,48 @@
 
 use std::collections::{Map, Set, BTreeMap}
 
-fn main() {
-    // --- list ---
-    let mut primes: Vec<i64> = #[2, 3, 5, 7]
-    primes.push(11)
-    println!("primes: {} entries, first={}, last={}"
-        primes.len(), primes[0], primes[primes.len() - 1])
+// --- list ---
+let mut primes: Vec<i64> = #[2, 3, 5, 7]
+primes.push(11)
+println!("primes: {} entries, first={}, last={}"
+    primes.len(), primes[0], primes[primes.len() - 1])
 
-    // --- map (hash) - `if let` reads the natural way ---
-    let mut scores: Map<String, i64> = Map::new()
-    scores.insert("alice", 95)
-    scores.insert("bob", 87)
-    if let Some(n) = scores.get(&"alice") {
-        println!("alice -> {n}")
-    } else {
-        println!("alice missing")
-    }
-
-    // --- counter idiom - `inc` halves the lock + hash work ---
-    let mut tally: Map<String, i64> = Map::new()
-    tally.inc("apple")
-    tally.inc("apple", 4)
-    tally.inc("banana")
-    println!("apple = {}, banana = {}"
-        tally.get_or("apple", 0), tally.get_or("banana", 0))
-
-    // --- map (sorted) - destructured iteration ---
-    let mut ranked: BTreeMap<String, i64> = BTreeMap::new()
-    ranked.insert("c", 3)
-    ranked.insert("a", 1)
-    ranked.insert("b", 2)
-    for (key, value) in ranked.iter() {
-        println!("  {} = {}", key, value)
-    }
-
-    // --- set ---
-    let mut seen: Set<String> = Set::new()
-    seen.insert("alpha")
-    seen.insert("beta")
-    seen.insert("alpha")
-    println!("unique tags: {}", seen.len())
-
-    // --- tuple destructuring at the call site ---
-    let (x, y) = origin()
-    println!("origin = ({}, {})", x, y)
+// --- map (hash) - `if let` reads the natural way ---
+let mut scores: Map<String, i64> = Map::new()
+scores.insert("alice", 95)
+scores.insert("bob", 87)
+if let Some(n) = scores.get(&"alice") {
+    println!("alice -> {n}")
+} else {
+    println!("alice missing")
 }
+
+// --- counter idiom - `inc` halves the lock + hash work ---
+let mut tally: Map<String, i64> = Map::new()
+tally.inc("apple")
+tally.inc("apple", 4)
+tally.inc("banana")
+println!("apple = {}, banana = {}"
+    tally.get_or("apple", 0), tally.get_or("banana", 0))
+
+// --- map (sorted) - destructured iteration ---
+let mut ranked: BTreeMap<String, i64> = BTreeMap::new()
+ranked.insert("c", 3)
+ranked.insert("a", 1)
+ranked.insert("b", 2)
+for (key, value) in ranked.iter() {
+    println!("  {} = {}", key, value)
+}
+
+// --- set ---
+let mut seen: Set<String> = Set::new()
+seen.insert("alpha")
+seen.insert("beta")
+seen.insert("alpha")
+println!("unique tags: {}", seen.len())
+
+// --- tuple destructuring at the call site ---
+let (x, y) = origin()
+println!("origin = ({}, {})", x, y)
 
 fn origin() -> (f64, f64) { (0.0, 0.0) }

@@ -21,6 +21,10 @@ fn main() {
         if pprof::goroutine_profile().starts_with(&HEADER) { text_profiles += 1 }
         if pprof::mutex_profile().starts_with(&HEADER) { text_profiles += 1 }
         if pprof::block_profile().starts_with(&HEADER) { text_profiles += 1 }
+        // Sampled profiles carry whatever the timer and the allocator
+        // caught, which differs every run; only the shape is comparable.
+        if pprof::cpu_profile(0).starts_with(&HEADER) { text_profiles += 1 }
+        if pprof::heap_profile(0).starts_with(&HEADER) { text_profiles += 1 }
 
         let trace = pprof::execution_trace(0)
         if trace.starts_with("{\"traceEvents\":[") && trace.ends_with("]}") { traces += 1 }

@@ -1,6 +1,6 @@
 # `std::encoding::ascii85`
 
-Status: experimental
+Status: unproven
 
 ASCII85 / base85 encode / decode.
 

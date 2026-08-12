@@ -1,5 +1,120 @@
 # Changelog
 
+## 0.48.0 - Evidence-backed feature status, source migrations, parity walk
+
+- Report what is known about a surface, not what was typed about it.
+  `gos feature-status` derives each row's lifecycle from evidence: a
+  surface no fixture exercises reads `unproven`, which is different from
+  `experimental` - a judgment someone made. The distribution moved from
+  107 experimental / 55 shipped / 0 stable to 79 experimental / 69
+  unproven / 14 shipped. 30 generated doc pages changed with it.
+- Stop deriving tier support from the lifecycle label. `item_evidence`
+  mapped `Shipped` to "runs on the VM" and `Stable` to "runs everywhere",
+  so the field named evidence restated the claim it existed to support.
+  Tiers now come only from a fixture that ran.
+- Generate the fixture ledger with `cargo xtask item-fixtures`, from the
+  tier-parity SPECS list and each fixture's imports: 2 hand-written
+  entries became 66 modules drawn from 510 registered fixtures.
+- Make `gos feature-status --check` capable of failing. An item may not
+  claim a tier with no fixture behind it, and a surface reported as
+  settled must pass every tier. Its only evidence-requiring branch had
+  never executed, because it applied to `Stable` items and there were
+  none.
+- Ship the tier-parity evidence with the release, compiled into the
+  binary, so an installed `gos` with no repository behind it reports what
+  the walk proved. A CI job regenerates it and fails on drift.
+- Resolve named arguments and parameter defaults in the playground. It
+  drives the front end itself rather than going through the driver, and
+  never ran that pass, so a call omitting a defaulted parameter reached
+  the checker with fewer arguments than the function declares and was
+  reported as an arity error. The tour's `arguments` lesson could not run
+  in the browser while the same program ran natively.
+- Sample CPU and heap profiles. `pprof::cpu_profile(millis)` arms a
+  `SIGPROF` timer at 100 Hz and walks the interrupted thread's
+  frame-pointer chain into a fixed buffer, allocating nothing and taking
+  no lock, because the handler can interrupt code holding any lock in the
+  process; addresses become names when the profile is drained.
+  `pprof::heap_profile(millis)` records one stack per 512 KiB allocated,
+  from inside the global allocator, using the same allocation-free walk.
+  Both are exposed on every tier and restore `/debug/pprof/profile` and
+  `/heap` to the router. Sampling costs nothing until it is asked for;
+  instrumenting every function instead measured 2.7x on call-heavy code.
+- Write the tour and the examples without the `fn main` wrapper the entry
+  file makes optional. Nine examples keep it: seven are nondeterministic
+  or embed line numbers in their output, and two carry a statement-level
+  `#[lint(allow(..))]`, which at top level parses as an item attribute.
+- Emit frame pointers in generated code. It has to be an IR function
+  attribute: `clang -x ir` ignores `-fno-omit-frame-pointer`, which only
+  sets the attribute when clang is the one generating the IR. Measured at
+  no cost on a call-heavy benchmark, and it is what lets a profiler walk
+  out of an arbitrary instruction, where DWARF unwinding is not
+  async-signal-safe.
+- Add `gos test --fuzz`: coverage-guided fuzzing of `#[fuzz]` functions
+  over `&[u8]`, using the counters `--coverage` already reports as the
+  feedback signal. A crash is minimised by delta debugging and written
+  into `testdata/fuzz/<target>/`, where plain `gos test` runs it from
+  then on - so a finding arrives as a deterministic test that fails until
+  it is fixed, not as a report. `--seed` makes a run reproducible.
+- Add `gos audit`: security advisories matched against the resolved
+  lockfile and filtered by reachability, so an advisory naming an item
+  the project never references is counted rather than printed. `--all`
+  lifts the filter, `--format json` emits the shared diagnostic schema,
+  and both are reachable over MCP. A registry feed is verified against a
+  key the project pins in `[trusted-publishers]`, never one the registry
+  supplies; with no pinned key there is no remote feed rather than an
+  unverified one. `gos publish` names any reachable advisory and
+  publishes anyway - refusing would put the feed in the path of every
+  release.
+- Resolve the project root when `gos publish` is given a bare manifest
+  name. `Path::new("project.toml").parent()` is `Some("")` rather than
+  `None`, so the root became the empty path and packing failed with a
+  bare "No such file or directory".
+- Report one row per exported item with `gos feature-status --items`: 911
+  rows instead of 165. A module is the wrong unit for "can I rely on this
+  call" - `std::strings` is one row whether an item has been there from
+  the start or landed last week. Each item inherits its module's tier
+  record. `--status` now filters on the status the table reports rather
+  than the one that was authored.
+- Add a `style` lint group naming one canonical spelling per construct:
+  `GL0053` for a data-last `iter::` call that has a method form, and
+  `GL0054` for the i64-only `collections::queue` family, which duplicates
+  a general container at a narrower element type. Only `GL0053` is
+  auto-fixable; the container families differ in what an empty container
+  means, so a mechanical rewrite would keep type-checking and change the
+  program.
+- Add `project.enforce-format`, which makes `gos test` fail on any source
+  that disagrees with `gos fmt`. Opt-in, so a project decides once that
+  canonical formatting is part of passing.
+- Add `gos fix`: deterministic, idempotent source migrations the
+  toolchain owns, separate from `gos lint --fix`, which acts on
+  observations about the code you wrote. Every rewrite is re-checked
+  before it is kept and idempotence is verified on each run. Seeded with
+  `method_form_combinators`, which rewrites `iter::map(f, xs)` to the
+  canonical `xs.map(f)`. Reachable over MCP.
+- Document the compatibility policy (`docs_src/compatibility.md`): what a
+  patch, a minor, and an edition may change, and the rule that a change
+  requiring hand edits is a defect in the release rather than work for
+  the reader.
+- Finish a full parity walk in minutes rather than hours. A fixture the
+  VM cannot run to completion is no longer charged to the other two
+  tiers, and a live process consuming no CPU is recognised as parked
+  instead of waiting out its budget. A server example went from 60s to
+  4s; the `examples/` walk from tens of minutes to three.
+- Decide the walk on what a program does, not on the paths it prints or
+  the order its goroutines finish. A program printing `argv[0]` reports
+  the source path under the VM and the executable's path when compiled;
+  output that moves between runs of one tier cannot be compared across
+  tiers. Both were recorded as divergences.
+- Compare the VM against the debug native build. The VM checks integer
+  overflow and an optimised build wraps - a profile-dependent difference
+  the language defines on purpose - so comparing against the release
+  build asserted a behaviour that must differ.
+- Score a fixture written to be rejected as agreement. Every tier refuses
+  to build it, which is the tiers agreeing, not diverging.
+- Block the calling thread on a socket that is not ready, rather than
+  polling it at 1 kHz. `fn main() { listener.accept() }` runs outside a
+  goroutine, where there is no coroutine to park.
+
 ## 0.47.1 - Profiles, applied fixes, canonical sources, agent tooling
 
 - Add `std::pprof`: `goroutine_profile`, `mutex_profile`, `block_profile`,

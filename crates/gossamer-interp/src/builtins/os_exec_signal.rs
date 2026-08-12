@@ -358,6 +358,32 @@ fn builtin_time_sleep(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Unit)
 }
 
+fn builtin_pprof_cpu_profile(args: &[Value]) -> RuntimeResult<Value> {
+    let ms = args.first().and_then(value_to_int).unwrap_or(0);
+    if ms < 0 {
+        return Err(RuntimeError::Type(
+            "pprof::cpu_profile: millis must be non-negative".to_string(),
+        ));
+    }
+    let window = std::time::Duration::from_millis(u64::try_from(ms).unwrap_or(0));
+    Ok(Value::String(
+        gossamer_runtime::pprof::cpu_profile(window).into(),
+    ))
+}
+
+fn builtin_pprof_heap_profile(args: &[Value]) -> RuntimeResult<Value> {
+    let ms = args.first().and_then(value_to_int).unwrap_or(0);
+    if ms < 0 {
+        return Err(RuntimeError::Type(
+            "pprof::heap_profile: millis must be non-negative".to_string(),
+        ));
+    }
+    let window = std::time::Duration::from_millis(u64::try_from(ms).unwrap_or(0));
+    Ok(Value::String(
+        gossamer_runtime::pprof::heap_profile(window).into(),
+    ))
+}
+
 fn builtin_pprof_goroutine_profile(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(
         gossamer_runtime::pprof::goroutine_profile().into(),

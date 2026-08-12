@@ -7,9 +7,10 @@
 //! with the implicit `Experimental` defaults from
 //! `manifest::ALL_MODULES`. The per-tier test status comes from
 //! `target/debug/.feature-status.json`, written by
-//! `gos test --tier-parity --report=status`. A missing sidecar is
-//! reported as `(no test data)`: no evidence ships with the release
-//! yet, so the column states what was proven locally or nothing.
+//! `gos test --tier-parity --report=status`, falling back to the
+//! evidence recorded for this release, which is compiled into the
+//! binary so an installed `gos` with no repository behind it still
+//! reports what the walk proved.
 //!
 //! `--check` enforces the CI gate: every `Stable` item must have a
 //! doc page on disk (`docs_src/stdlib/<slug>.md` or
@@ -115,11 +116,17 @@ pub struct FeatureStatusOpts {
     /// Override for the docs root used by `--check` (defaults to
     /// `docs_src/`).
     pub docs_root: Option<PathBuf>,
+    /// Report one row per exported item rather than per module.
+    pub items: bool,
 }
 
 /// Entry point for the `gos feature-status` subcommand.
 pub fn run(opts: FeatureStatusOpts) -> Result<()> {
-    let entries = collect_entries(&opts);
+    let entries = if opts.items {
+        collect_item_entries(&opts)
+    } else {
+        collect_entries(&opts)
+    };
     let tiers = load_tier_status(opts.sidecar.as_deref())?;
     let docs_root = opts.docs_root.clone().unwrap_or_else(default_docs_root);
 
@@ -131,7 +138,9 @@ pub fn run(opts: FeatureStatusOpts) -> Result<()> {
         .iter()
         .map(|e| Row {
             entry: *e,
-            tiers: tiers.get(e.path).cloned().unwrap_or_default(),
+            // An item inherits its module's record: the walk observes a
+            // module, which is the granularity a fixture's imports name.
+            tiers: tier_record(&tiers, e.path).cloned().unwrap_or_default(),
             doc: doc_page_for(e.path, &docs_root),
         })
         .collect();
@@ -149,8 +158,11 @@ pub fn run(opts: FeatureStatusOpts) -> Result<()> {
 fn collect_entries(opts: &FeatureStatusOpts) -> Vec<FeatureStatus> {
     let mut out: Vec<FeatureStatus> = feature_status::all_entries()
         .into_iter()
+        // Filtered on the status the table reports, not the one that was
+        // authored: selecting `experimental` must not return rows the
+        // same command renders as `unproven`.
         .filter(|e| match opts.status {
-            Some(s) => e.status == s,
+            Some(s) => derived_status_of(e) == s,
             None => true,
         })
         .filter(|e| match opts.filter.as_deref() {
@@ -162,6 +174,42 @@ fn collect_entries(opts: &FeatureStatusOpts) -> Vec<FeatureStatus> {
     out
 }
 
+/// One row per exported stdlib item, rather than one per module.
+///
+/// A module is the wrong unit for the question an item-level reader is
+/// asking. `std::strings` is one row whether `trim` has been there since
+/// the beginning or `split_once` landed last week; the evidence behind
+/// the two is identical only because it is recorded per module. Each
+/// item inherits its module's evidence and carries its own doc line, so
+/// the answer is at least addressed to the thing being asked about.
+fn collect_item_entries(opts: &FeatureStatusOpts) -> Vec<FeatureStatus> {
+    let mut out: Vec<FeatureStatus> = gossamer_std::registry::item_records()
+        .into_iter()
+        .map(|record| FeatureStatus {
+            // `item_records` owns its paths; the table holds `&'static`
+            // ones, and the registry is itself static data.
+            path: Box::leak(record.path.into_boxed_str()),
+            status: record.status,
+            doc: record.doc,
+        })
+        .filter(|e| match opts.status {
+            Some(s) => derived_status_of(e) == s,
+            None => true,
+        })
+        .filter(|e| match opts.filter.as_deref() {
+            Some(pattern) => glob_match(pattern, e.path),
+            None => true,
+        })
+        .collect();
+    out.sort_by(|a, b| a.path.cmp(b.path));
+    out
+}
+
+/// Status reported for `entry`, reduced to what evidence supports.
+fn derived_status_of(entry: &FeatureStatus) -> Status {
+    feature_status::derived_status(entry.path, entry.status)
+}
+
 /// Reads the JSON sidecar produced by
 /// `gos test --tier-parity --report=status`. Missing file silently
 /// returns an empty map so the caller can render `(no test data)`.
@@ -169,12 +217,19 @@ fn collect_entries(opts: &FeatureStatusOpts) -> Vec<FeatureStatus> {
 pub fn load_tier_status(path: Option<&Path>) -> Result<BTreeMap<String, TierStatus>> {
     let path = path.map_or_else(default_sidecar_path, Path::to_path_buf);
     if !path.exists() {
-        return Ok(BTreeMap::new());
+        return parse_sidecar(RELEASE_EVIDENCE)
+            .map_err(|e| anyhow!("parsing the recorded release evidence: {e}"));
     }
     let bytes = fs::read(&path)?;
     let text = String::from_utf8_lossy(&bytes).into_owned();
     parse_sidecar(&text).map_err(|e| anyhow!("parsing {}: {e}", path.display()))
 }
+
+/// Tier-parity evidence recorded for this release by
+/// `gos test --tier-parity --report status`, used when no locally
+/// generated sidecar is present. Regenerated by the CI walk; a stale
+/// copy fails that job.
+const RELEASE_EVIDENCE: &str = include_str!("../../../../resources/feature-status.json");
 
 /// Renders the sidecar JSON shape produced by the test harness.
 /// Exposed so the test harness can call it directly to keep one
@@ -267,6 +322,15 @@ struct Row {
     doc: Option<PathBuf>,
 }
 
+impl Row {
+    /// Status to report: the authored label reduced by what evidence
+    /// supports. Reading `entry.status` directly would print the claim
+    /// rather than what is known.
+    fn status(&self) -> Status {
+        feature_status::derived_status(self.entry.path, self.entry.status)
+    }
+}
+
 fn print_table(rows: &[Row], has_tiers: bool) {
     let header_tier = "Tier-Parity";
     let name_w = rows
@@ -304,7 +368,7 @@ fn print_table(rows: &[Row], has_tiers: bool) {
         println!(
             "{:name_w$} | {:status_w$} | {:tier_w$} | {}",
             row.entry.path,
-            row.entry.status.tag(),
+            row.status().tag(),
             tier_cell,
             doc_cell,
         );
@@ -320,7 +384,7 @@ fn print_json(rows: &[Row], has_tiers: bool) {
         out.push_str("  {\"name\":");
         out.push_str(&json_string(row.entry.path));
         out.push_str(",\"status\":");
-        out.push_str(&json_string(row.entry.status.tag()));
+        out.push_str(&json_string(row.status().tag()));
         out.push_str(",\"doc\":");
         out.push_str(&row.doc.as_ref().map_or_else(
             || "null".to_string(),
@@ -346,7 +410,7 @@ fn print_json(rows: &[Row], has_tiers: bool) {
         }
         out.push_str(",\"doc_description\":");
         out.push_str(&json_string(row.entry.doc));
-        let evidence = feature_status::item_evidence(row.entry.path, row.entry.status);
+        let evidence = feature_status::item_evidence(row.entry.path, row.status());
         out.push_str(",\"evidence\":{");
         out.push_str("\"status\":");
         out.push_str(&json_string(evidence.status.tag()));
@@ -396,7 +460,7 @@ fn print_markdown(rows: &[Row], has_tiers: bool) {
         println!(
             "| `{}` | {} | {} | {} |",
             row.entry.path,
-            row.entry.status.tag(),
+            row.status().tag(),
             tier_cell,
             doc_cell,
         );
@@ -405,6 +469,26 @@ fn print_markdown(rows: &[Row], has_tiers: bool) {
 
 /// CI gate. Per-feature failures are collected then reported together
 /// so one run surfaces the full punch list.
+/// Tier record for `path`, falling back to the module it belongs to.
+///
+/// The walk records a module - that is the granularity a fixture's
+/// imports name - while the lifecycle table also carries sub-feature
+/// labels like `std::http::redirect_policy`. A label inherits its
+/// module's evidence, exactly as its fixtures do.
+fn tier_record<'a>(tiers: &'a BTreeMap<String, TierStatus>, path: &str) -> Option<&'a TierStatus> {
+    if let Some(found) = tiers.get(path) {
+        return Some(found);
+    }
+    let mut cursor = path;
+    while let Some((parent, _)) = cursor.rsplit_once("::") {
+        if let Some(found) = tiers.get(parent) {
+            return Some(found);
+        }
+        cursor = parent;
+    }
+    None
+}
+
 fn check_mode(
     entries: &[FeatureStatus],
     tiers: &BTreeMap<String, TierStatus>,
@@ -421,7 +505,7 @@ fn check_mode(
                         docs_root.display(),
                     ));
                 }
-                match tiers.get(entry.path) {
+                match tier_record(tiers, entry.path) {
                     Some(t) if t.all_pass() => {}
                     Some(_) => failures.push(format!(
                         "{}: stable item failed at least one tier in test sidecar",
@@ -435,7 +519,9 @@ fn check_mode(
             }
             // A declined feature still carries a doc page: the page is
             // where the decision and its alternative are written down.
-            Status::Shipped | Status::Experimental | Status::Declined => {
+            // `Unproven` is a documented surface too - it is only the
+            // evidence that is missing, not the description.
+            Status::Shipped | Status::Experimental | Status::Declined | Status::Unproven => {
                 if doc_page_for(entry.path, docs_root).is_none() {
                     failures.push(format!(
                         "{}: {} item missing doc page under {}",
@@ -446,6 +532,35 @@ fn check_mode(
                 }
             }
             Status::Planned | Status::Removed => {}
+        }
+        // An item may not claim a tier no fixture ran it on. This is the
+        // gate that keeps the ledger from drifting back into restating
+        // its own labels: evidence has to come from a program that ran.
+        let evidence = feature_status::item_evidence(entry.path, entry.status);
+        if !evidence.supported_tiers.is_empty() && evidence.positive_tests.is_empty() {
+            failures.push(format!(
+                "{}: claims tiers {:?} with no fixture behind them",
+                entry.path, evidence.supported_tiers,
+            ));
+        }
+        // A surface reported as settled must have a fixture that proves
+        // it on every tier. `Unproven` is exempt - it is the label for
+        // exactly this absence.
+        let derived = feature_status::derived_status(entry.path, entry.status);
+        if matches!(derived, Status::Stable | Status::Shipped) {
+            match tier_record(tiers, entry.path) {
+                Some(t) if t.all_pass() => {}
+                Some(_) => failures.push(format!(
+                    "{}: reported {} but failed at least one tier",
+                    entry.path,
+                    derived.tag(),
+                )),
+                None => failures.push(format!(
+                    "{}: reported {} with no tier-parity record",
+                    entry.path,
+                    derived.tag(),
+                )),
+            }
         }
     }
     if failures.is_empty() {

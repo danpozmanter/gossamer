@@ -1016,6 +1016,8 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_pem_decode_raw", (Ptr) -> I128, Cranelift, "pem decode leaf -> Result<(String,[u8]), Error>."),
     rt!("gos_rt_pem_encode_raw", (Ptr, Ptr) -> Ptr, Cranelift, "pem encode leaf(block_type, bytes) -> String."),
     rt!("gos_rt_pprof_block_profile", () -> Ptr, Cranelift, "pprof::block_profile() -> text profile of time parked on channels, I/O, and timers."),
+    rt!("gos_rt_pprof_cpu_profile", (I64) -> Ptr, Cranelift, "pprof::cpu_profile(millis) -> a sampled CPU profile in go tool pprof text form."),
+    rt!("gos_rt_pprof_heap_profile", (I64) -> Ptr, Cranelift, "pprof::heap_profile(millis) -> a sampled allocation profile in go tool pprof text form."),
     rt!("gos_rt_pprof_execution_trace", (I64) -> Ptr, Cranelift, "pprof::execution_trace(millis) -> Chrome trace JSON of scheduler events over the window."),
     rt!("gos_rt_pprof_goroutine_profile", () -> Ptr, Cranelift, "pprof::goroutine_profile() -> text profile with one sample per live goroutine."),
     rt!("gos_rt_pprof_mutex_profile", () -> Ptr, Cranelift, "pprof::mutex_profile() -> text profile of time parked on synchronization."),

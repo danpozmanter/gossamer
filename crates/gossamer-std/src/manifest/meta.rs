@@ -534,6 +534,16 @@ pub const PPROF: StdModule = StdModule {
     summary: "Runtime profiles in the text format `go tool pprof` reads, plus a Chrome-trace scheduler capture.",
     items: &[
         StdItem {
+            name: "cpu_profile",
+            kind: StdItemKind::Function,
+            doc: "Sampled CPU profile over the given milliseconds; a timer reads the running stack.",
+        },
+        StdItem {
+            name: "heap_profile",
+            kind: StdItemKind::Function,
+            doc: "Sampled allocation profile over the given milliseconds, weighted by bytes.",
+        },
+        StdItem {
             name: "goroutine_profile",
             kind: StdItemKind::Function,
             doc: "Text profile with one sample per live goroutine and its last-known frame.",

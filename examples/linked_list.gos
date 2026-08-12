@@ -43,10 +43,8 @@ fn print_list(list: &List) {
     println!("]")
 }
 
-fn main() {
-    let xs = cons(1, cons(2, cons(3, cons(4, cons(5, List::Nil)))))
-    println!("length = {}", length(&xs))
-    println!("sum    = {}", sum(&xs))
-    print!("xs     = ")
-    print_list(&xs)
-}
+let xs = cons(1, cons(2, cons(3, cons(4, cons(5, List::Nil)))))
+println!("length = {}", length(&xs))
+println!("sum    = {}", sum(&xs))
+print!("xs     = ")
+print_list(&xs)

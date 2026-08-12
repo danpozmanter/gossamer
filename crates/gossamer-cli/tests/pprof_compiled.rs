@@ -87,6 +87,8 @@ use std::pprof
 
 fn main() {
     println!("goroutine: {}", pprof::goroutine_profile().starts_with("# pprof text format"))
+    println!("cpu: {}", pprof::cpu_profile(50).starts_with("# pprof text format"))
+    println!("heap: {}", pprof::heap_profile(50).starts_with("# pprof text format"))
     println!("mutex: {}", pprof::mutex_profile().starts_with("# pprof text format"))
     println!("block: {}", pprof::block_profile().starts_with("# pprof text format"))
     let trace = pprof::execution_trace(0)
@@ -102,8 +104,7 @@ fn main() {
 }
 "##;
 
-const EXPECTED: &str =
-    "goroutine: true\nmutex: true\nblock: true\ntrace: true\nrouted: true\nunknown: none";
+const EXPECTED: &str = "goroutine: true\ncpu: true\nheap: true\nmutex: true\nblock: true\ntrace: true\nrouted: true\nunknown: none";
 
 #[test]
 fn pprof_profiles_render_the_same_shape_on_every_tier() {

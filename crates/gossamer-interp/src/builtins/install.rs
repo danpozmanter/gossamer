@@ -496,6 +496,8 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
     install_module(
         "pprof",
         &[
+            ("cpu_profile", builtin_pprof_cpu_profile),
+            ("heap_profile", builtin_pprof_heap_profile),
             ("goroutine_profile", builtin_pprof_goroutine_profile),
             ("mutex_profile", builtin_pprof_mutex_profile),
             ("block_profile", builtin_pprof_block_profile),

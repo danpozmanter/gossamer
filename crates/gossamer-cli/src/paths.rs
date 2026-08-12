@@ -234,6 +234,16 @@ pub(crate) fn project_edition() -> gossamer_pkg::Edition {
         })
 }
 
+/// Whether the project asks `gos test` to fail on non-canonical
+/// formatting (`project.enforce-format`). False outside a project.
+#[must_use]
+pub(crate) fn project_enforces_format() -> bool {
+    project_context()
+        .manifest_result()
+        .and_then(Result::ok)
+        .is_some_and(|manifest| manifest.project.enforce_format)
+}
+
 /// The source edition for the project containing `entry`, falling back to the
 /// compatibility edition for loose-file invocations and malformed manifests.
 #[must_use]

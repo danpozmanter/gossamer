@@ -29,38 +29,34 @@ fn load_setting(key: String, raw: String) -> Result<i64, errors::Error> {
     )
 }
 
-fn main() -> Result<(), errors::Error> {
-    // Happy path.
-    let n = load_setting("port", "8080")?
-    println!("port = {n}")
+// Happy path.
+let n = load_setting("port", "8080")?
+println!("port = {n}")
 
-    // Failure path - propagate with `?` or inspect directly.
-    let attempt = load_setting("port", "oops")
-    match attempt {
-        Ok(v) => println!("parsed {v}")
-        Err(e) => {
-            println!("top-level: {}", e.message())
-            // Walk the cause chain - the natural `while let` shape.
-            // `cursor: Option<errors::Error>` falls through to `None`
-            // once the cause chain is exhausted.
-            let mut cursor = e.cause()
-            while let Some(inner) = cursor {
-                println!("  caused by: {}", inner.message())
-                cursor = inner.cause()
-            }
+// Failure path - propagate with `?` or inspect directly.
+let attempt = load_setting("port", "oops")
+match attempt {
+    Ok(v) => println!("parsed {v}")
+    Err(e) => {
+        println!("top-level: {}", e.message())
+        // Walk the cause chain - the natural `while let` shape.
+        // `cursor: Option<errors::Error>` falls through to `None`
+        // once the cause chain is exhausted.
+        let mut cursor = e.cause()
+        while let Some(inner) = cursor {
+            println!("  caused by: {}", inner.message())
+            cursor = inner.cause()
         }
     }
+}
 
-    // `errors::is` checks whether any link in the chain matches.
-    let broken = load_setting("workers", "-3")
-    match broken {
-        Ok(_) => println!("unexpected success")
-        Err(e) => {
-            if e.is("must be positive: -3") {
-                println!("caught the specific error we expected")
-            }
+// `errors::is` checks whether any link in the chain matches.
+let broken = load_setting("workers", "-3")
+match broken {
+    Ok(_) => println!("unexpected success")
+    Err(e) => {
+        if e.is("must be positive: -3") {
+            println!("caught the specific error we expected")
         }
     }
-
-    Ok(())
 }

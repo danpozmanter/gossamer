@@ -6,16 +6,14 @@
 
 use std::collections::ordered_vec
 
-fn main() {
-    let v: Vec<i64> = #[]
-    let v = ordered_vec::insert(v, 3)
-    let v = ordered_vec::insert(v, 1)
-    let v = ordered_vec::insert(v, 4)
-    let v = ordered_vec::insert(v, 1)
-    let v = ordered_vec::insert(v, 5)
-    println!("ovec min: {}", ordered_vec::peek_min(&v))
-    println!("ovec max: {}", ordered_vec::peek_max(&v))
-    println!("ovec len: {}", ordered_vec::len(&v))
-    println!("contains 4: {}", ordered_vec::contains(&v, 4))
-    println!("contains 99: {}", ordered_vec::contains(&v, 99))
-}
+let v: Vec<i64> = #[]
+let v = ordered_vec::insert(v, 3)
+let v = ordered_vec::insert(v, 1)
+let v = ordered_vec::insert(v, 4)
+let v = ordered_vec::insert(v, 1)
+let v = ordered_vec::insert(v, 5)
+println!("ovec min: {}", ordered_vec::peek_min(&v))
+println!("ovec max: {}", ordered_vec::peek_max(&v))
+println!("ovec len: {}", ordered_vec::len(&v))
+println!("contains 4: {}", ordered_vec::contains(&v, 4))
+println!("contains 99: {}", ordered_vec::contains(&v, 99))

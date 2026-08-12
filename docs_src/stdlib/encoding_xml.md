@@ -1,6 +1,6 @@
 # `std::encoding::xml`
 
-Status: experimental
+Status: unproven
 
 Streaming XML decoder + builder (quick-xml).
 

@@ -87,6 +87,11 @@ pub struct ProjectTable {
     /// manifest directory. Overrides convention-based entry resolution and
     /// designates the file that may carry top-level statements.
     pub entry: Option<String>,
+    /// `project.enforce-format` - when true, `gos test` fails on any
+    /// source that disagrees with `gos fmt`. Opt-in, so a project decides
+    /// once that canonical formatting is part of passing rather than a
+    /// separate step someone has to remember.
+    pub enforce_format: bool,
 }
 
 impl Edition {
@@ -338,6 +343,10 @@ impl Manifest {
         let license = optional_toml_str(project, "license", "project.license")?.unwrap_or_default();
         let output = optional_toml_str(project, "output", "project.output")?;
         let entry = optional_toml_str(project, "entry", "project.entry")?;
+        let enforce_format = project
+            .get("enforce-format")
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false);
 
         let mut deps: BTreeMap<String, DependencySpec> = BTreeMap::new();
         if let Some(table) = optional_toml_table(root, "dependencies")? {
@@ -413,6 +422,7 @@ impl Manifest {
                 license,
                 output,
                 entry,
+                enforce_format,
             },
             dependencies: deps,
             registries,

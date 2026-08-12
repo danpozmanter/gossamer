@@ -32,13 +32,11 @@ fn cast_out_nines(n: i64) -> i64 {
     if n == 0 { 0 } else { 1 + (n - 1) % 9 }
 }
 
-fn main() {
-    for n in [38, 99, 1234, 9999, 100, 0, 65536] {
-        let s = digit_sum(n)
-        let r = digital_root(n)
-        let expected = cast_out_nines(n)
-        let ok = if r == expected { "ok" } else { "MISMATCH" }
-        println!("n={}, digit_sum={}, digital_root={} (cast-out-nines: {}, {})"
-            n, s, r, expected, ok)
-    }
+for n in [38, 99, 1234, 9999, 100, 0, 65536] {
+    let s = digit_sum(n)
+    let r = digital_root(n)
+    let expected = cast_out_nines(n)
+    let ok = if r == expected { "ok" } else { "MISMATCH" }
+    println!("n={}, digit_sum={}, digital_root={} (cast-out-nines: {}, {})"
+        n, s, r, expected, ok)
 }

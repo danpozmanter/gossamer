@@ -214,10 +214,66 @@ const TOOLS: &[Tool] = &[
         ],
     },
     Tool {
+        name: "fix",
+        description: "Apply the toolchain's source migrations - mechanical upgrades the \
+                      toolchain owns, distinct from lint fixes. Every rewrite is re-checked \
+                      before it is kept. Use list=true to see what migrations exist.",
+        args: &[
+            Arg {
+                name: "path",
+                ty: "string",
+                description: "A .gos file or directory; defaults to the project's src/.",
+                required: false,
+            },
+            SOURCE_ARG,
+            Arg {
+                name: "rewriter",
+                ty: "string",
+                description: "Apply only this rewriter id. Defaults to all of them.",
+                required: false,
+            },
+            Arg {
+                name: "list",
+                ty: "boolean",
+                description: "List the available rewriters instead of applying any.",
+                required: false,
+            },
+            Arg {
+                name: "check",
+                ty: "boolean",
+                description: "Report pending migrations without writing.",
+                required: false,
+            },
+        ],
+    },
+    Tool {
+        name: "audit",
+        description: "Report security advisories this project can reach. Filtered by \
+                      reachability - an advisory naming an item the project never \
+                      references is not actionable - with all=true to lift the filter. \
+                      Emits the same diagnostic schema as `check`.",
+        args: &[
+            Arg {
+                name: "path",
+                ty: "string",
+                description: "Path inside the project; defaults to the project's src/.",
+                required: false,
+            },
+            Arg {
+                name: "all",
+                ty: "boolean",
+                description: "Report every advisory affecting a resolved version.",
+                required: false,
+            },
+        ],
+    },
+    Tool {
         name: "feature_status",
-        description: "Lifecycle status (shipped / experimental / planned / declined) and \
-                      recorded tier-parity evidence for every language feature and stdlib \
-                      item. Use it to check whether an API is settled before relying on it.",
+        description: "What is actually known about every language feature and stdlib item: \
+                      a lifecycle status derived from evidence, not declared, plus the \
+                      tier-parity record behind it. `unproven` means no fixture exercises \
+                      the surface - nothing is claimed about it, which is different from \
+                      `experimental`, a judgment someone made. Use it before relying on an API.",
         args: &[
             Arg {
                 name: "filter",
@@ -428,18 +484,9 @@ pub(crate) fn call(
                 exec_tool(config, command, args)
             }
         },
-        "feature_status" => {
-            let mut command = vec!["feature-status".to_string()];
-            if let Some(filter) = field_str(args, "filter") {
-                command.push("--filter".to_string());
-                command.push(filter.to_string());
-            }
-            if let Some(status) = field_str(args, "status") {
-                command.push("--status".to_string());
-                command.push(status.to_string());
-            }
-            exec_tool(config, command, args)
-        }
+        "fix" => fix_tool(config, args),
+        "audit" => audit_tool(config, args),
+        "feature_status" => feature_status_tool(config, args),
         "hover" | "definition" | "references" => nav.position_tool(name, args),
         "workspace_symbols" => nav.workspace_symbols(args),
         other => return response_err(id, -32602, &format!("unknown tool: {other}")),
@@ -448,6 +495,56 @@ pub(crate) fn call(
         Ok(result) => response_ok(id, result),
         Err(message) => response_ok(id, text_result(&message, true)),
     }
+}
+
+/// Runs `gos feature-status` with the optional narrowing flags.
+fn feature_status_tool(config: &ServerConfig, args: &Value) -> Result<Value, String> {
+    let mut command = vec!["feature-status".to_string()];
+    if let Some(filter) = field_str(args, "filter") {
+        command.push("--filter".to_string());
+        command.push(filter.to_string());
+    }
+    if let Some(status) = field_str(args, "status") {
+        command.push("--status".to_string());
+        command.push(status.to_string());
+    }
+    exec_tool(config, command, args)
+}
+
+/// Runs `gos audit`, always in the shared diagnostic JSON shape.
+fn audit_tool(config: &ServerConfig, args: &Value) -> Result<Value, String> {
+    let mut command = vec![
+        "audit".to_string(),
+        "--format".to_string(),
+        "json".to_string(),
+    ];
+    if json::as_bool(field(args, "all")) == Some(true) {
+        command.push("--all".to_string());
+    }
+    if let Some(path) = field_str(args, "path") {
+        command.push(path.to_string());
+    }
+    exec_tool(config, command, args)
+}
+
+/// Runs `gos fix`, resolving an inline `source` to a temporary file.
+fn fix_tool(config: &ServerConfig, args: &Value) -> Result<Value, String> {
+    let (path, _guard) = target_of(args, "path")?;
+    let mut command = vec!["fix".to_string()];
+    if json::as_bool(field(args, "list")) == Some(true) {
+        command.push("--list".to_string());
+    }
+    if json::as_bool(field(args, "check")) == Some(true) {
+        command.push("--check".to_string());
+    }
+    if let Some(id) = field_str(args, "rewriter") {
+        command.push("--rewriter".to_string());
+        command.push(id.to_string());
+    }
+    if let Some(path) = path {
+        command.push(path);
+    }
+    exec_tool(config, command, args)
 }
 
 fn check_args(target: Option<&str>) -> Vec<String> {

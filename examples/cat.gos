@@ -15,6 +15,4 @@ fn cat(f: &String) -> Result<(), errors::Error> {
     fs::read_to_string(f) |> result::map(|s| print!("{}", s))
 }
 
-fn main() {
-    env::args() |> iter::for_each(|f| cat(&f) |> result::unwrap_or_else(|e| eprintln!("{f}: {e}")))
-}
+env::args() |> iter::for_each(|f| cat(&f) |> result::unwrap_or_else(|e| eprintln!("{f}: {e}")))

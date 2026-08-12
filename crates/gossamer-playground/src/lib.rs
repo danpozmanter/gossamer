@@ -214,14 +214,26 @@ fn front_end(
     source: &str,
     file_id: FileId,
 ) -> (Vec<Diagnostic>, Option<(gossamer_hir::HirProgram, TyCtxt)>) {
-    let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(source, file_id);
+    let (mut sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(source, file_id);
     let mut diagnostics: Vec<Diagnostic> = parse_diags
         .iter()
         .map(gossamer_parse::ParseDiagnostic::to_diagnostic)
         .collect();
 
     let (resolutions, resolve_diags) = resolve_source_file(&sf);
+    // A named argument and a parameter default are caller-side
+    // spellings, rewritten into the callee's declared order before the
+    // checker sees the call. Every front end has to run this: without
+    // it a call that omits a defaulted parameter reaches the checker
+    // with fewer arguments than the function declares, and is reported
+    // as an arity error.
+    let named_arg_diags = gossamer_resolve::resolve_named_arguments(&mut sf, &resolutions);
     let in_scope = top_level_names(&sf);
+    diagnostics.extend(
+        named_arg_diags
+            .iter()
+            .map(|diag| diag.to_diagnostic(&in_scope)),
+    );
     for diag in &resolve_diags {
         if matches!(
             diag.error,
@@ -305,5 +317,47 @@ fn panic_payload(payload: &(dyn std::any::Any + Send)) -> String {
         message.clone()
     } else {
         "unknown panic".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::front_end;
+
+    /// The playground drives the front end itself rather than going
+    /// through `gossamer_driver`, so every pass the driver runs has to
+    /// be run here too. Named arguments and parameter defaults are the
+    /// pass that was missed: a call omitting a defaulted parameter
+    /// reached the checker with fewer arguments than the function
+    /// declares and was reported as an arity error, so the tour's
+    /// `arguments` lesson could not run in the browser while the same
+    /// program ran natively.
+    #[test]
+    fn a_call_omitting_a_defaulted_parameter_checks() {
+        let source = concat!(
+            "fn greet(name: String, greeting: String = \"hello\", excited: bool = false)",
+            " -> String {\n",
+            "    let line = greeting + \", \" + &name\n",
+            "    if excited { line + \"!\" } else { line }\n",
+            "}\n\n",
+            "fn main() {\n",
+            "    println!(\"{}\", greet(\"world\"))\n",
+            "    println!(\"{}\", greet(\"world\", \"hi\"))\n",
+            "    println!(\"{}\", greet(\"world\", excited = true))\n",
+            "    println!(\"{}\", greet(greeting = \"hey\", name = \"g\", excited = true))\n",
+            "}\n",
+        );
+        let mut map = gossamer_lex::SourceMap::new();
+        let file_id = map.add_file("playground.gos", source.to_string());
+        let (diagnostics, lowered) = front_end(source, file_id);
+        assert!(
+            diagnostics.is_empty(),
+            "defaults and named arguments must resolve before type checking: {:?}",
+            diagnostics
+                .iter()
+                .map(|d| d.title.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(lowered.is_some(), "a clean program must lower");
     }
 }

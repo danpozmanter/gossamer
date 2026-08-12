@@ -33,18 +33,16 @@ impl Kelvin {
     }
 }
 
-fn main() {
-    let body = Celsius { value: 37.0 }
-    let body_f = body.to_fahrenheit()
-    let body_k = body.to_kelvin()
-    println!("body: {} C = {} F = {} K"
-        body.value, body_f.value, body_k.value)
+let body = Celsius { value: 37.0 }
+let body_f = body.to_fahrenheit()
+let body_k = body.to_kelvin()
+println!("body: {} C = {} F = {} K"
+    body.value, body_f.value, body_k.value)
 
-    let summer = Fahrenheit { value: 86.0 }
-    let summer_c = summer.to_celsius()
-    println!("summer day: {} F = {} C", summer.value, summer_c.value)
+let summer = Fahrenheit { value: 86.0 }
+let summer_c = summer.to_celsius()
+println!("summer day: {} F = {} C", summer.value, summer_c.value)
 
-    let helium = Kelvin { value: 4.0 }
-    let helium_c = helium.to_celsius()
-    println!("liquid helium: {} K = {} C", helium.value, helium_c.value)
-}
+let helium = Kelvin { value: 4.0 }
+let helium_c = helium.to_celsius()
+println!("liquid helium: {} K = {} C", helium.value, helium_c.value)

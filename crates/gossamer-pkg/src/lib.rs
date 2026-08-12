@@ -23,6 +23,12 @@ pub mod sha256;
 
 pub use edition::Edition;
 
+/// Security advisories: the feed format and matching it against a
+/// resolved dependency set. Native-only, like the version and JSON
+/// machinery it reads a feed with.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod advisory;
+
 /// Project source bundling: assembling an entry file plus its sibling
 /// modules and path dependencies into one compilation unit. Reads the
 /// project layout from disk, so it is native-only.

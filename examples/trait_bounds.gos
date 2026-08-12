@@ -41,13 +41,11 @@ fn is_larger_than<T: Shape>(s: &T, threshold: i64) -> bool {
     s.area() > threshold
 }
 
-fn main() {
-    let sq = Square { side: 4 }
-    let r = Rect { width: 3, height: 5 }
+let sq = Square { side: 4 }
+let r = Rect { width: 3, height: 5 }
 
-    // The same generic function serves both concrete types.
-    println!("{}", report(&sq))
-    println!("{}", report(&r))
-    println!("{}", is_larger_than(&sq, 10))
-    println!("{}", is_larger_than(&r, 100))
-}
+// The same generic function serves both concrete types.
+println!("{}", report(&sq))
+println!("{}", report(&r))
+println!("{}", is_larger_than(&sq, 10))
+println!("{}", is_larger_than(&r, 100))

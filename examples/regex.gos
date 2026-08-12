@@ -31,41 +31,39 @@ fn parse_pairs(line: String) -> Vec<Vec<Option<String>>> {
     regex::captures_all(&re, &line)
 }
 
-fn main() {
-    // Digit extraction.
-    let digits = match regex::compile("\\d+") {
-        Ok(r) => r
-        Err(e) => { eprintln!("bad: {}", e)
-            return }
-    }
-    for hit in regex::find_all(&digits, &"1 and 22 and 333") {
-        println!("digit: {}", hit.2)
-    }
+// Digit extraction.
+let digits = match regex::compile("\\d+") {
+    Ok(r) => r
+    Err(e) => { eprintln!("bad: {}", e)
+        return }
+}
+for hit in regex::find_all(&digits, &"1 and 22 and 333") {
+    println!("digit: {}", hit.2)
+}
 
-    // Group rewrite: "port=80 host=443" -> "80:port 443:host".
-    let kv = match regex::compile("(\\w+)=(\\d+)") {
-        Ok(r) => r
-        Err(e) => { eprintln!("bad: {}", e)
-            return }
-    }
-    let rewritten = regex::replace_all(&kv, &"port=80 host=443", &"$2:$1")
-    println!("rewritten: {rewritten}")
+// Group rewrite: "port=80 host=443" -> "80:port 443:host".
+let kv = match regex::compile("(\\w+)=(\\d+)") {
+    Ok(r) => r
+    Err(e) => { eprintln!("bad: {}", e)
+        return }
+}
+let rewritten = regex::replace_all(&kv, &"port=80 host=443", &"$2:$1")
+println!("rewritten: {rewritten}")
 
-    // Structured parse: each row is [full, key, value]. A let-chain
-    // binds both capture groups and tests them in one condition.
-    for row in parse_pairs("addr=localhost port=8080") {
-        if let Some(k) = row[1] && let Some(v) = row[2] {
-            println!("  {k} = {v}")
-        }
+// Structured parse: each row is [full, key, value]. A let-chain
+// binds both capture groups and tests them in one condition.
+for row in parse_pairs("addr=localhost port=8080") {
+    if let Some(k) = row[1] && let Some(v) = row[2] {
+        println!("  {k} = {v}")
     }
+}
 
-    // Split on any run of commas-with-whitespace.
-    let comma = match regex::compile("\\s*,\\s*") {
-        Ok(r) => r
-        Err(e) => { eprintln!("bad: {}", e)
-            return }
-    }
-    for piece in regex::split(&comma, &"a,  b , c,d") {
-        println!("piece: {piece}")
-    }
+// Split on any run of commas-with-whitespace.
+let comma = match regex::compile("\\s*,\\s*") {
+    Ok(r) => r
+    Err(e) => { eprintln!("bad: {}", e)
+        return }
+}
+for piece in regex::split(&comma, &"a,  b , c,d") {
+    println!("piece: {piece}")
 }

@@ -34,7 +34,5 @@ impl App {
     }
 }
 
-fn main() {
-    println!("HTTP/2 (h2c) listening on :8443")
-    let _ = http::serve_h2c("0.0.0.0:8443", App { })
-}
+println!("HTTP/2 (h2c) listening on :8443")
+let _ = http::serve_h2c("0.0.0.0:8443", App { })

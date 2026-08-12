@@ -36,6 +36,14 @@ pub fn fixes(sf: &SourceFile, registry: &Registry, source: &str) -> Vec<Fix> {
             continue;
         }
         match id {
+            // Safe to apply: the rewrite is span-local and the migration
+            // that shares this rule refuses any call whose data argument
+            // came from a pipe. The sibling `i64_only_container_family`
+            // is deliberately not auto-fixable - the two container
+            // families differ in what an empty container means.
+            "free_form_combinator" => {
+                crate::migrate::method_form_combinator_fixes(sf, source, &mut out);
+            }
             "double_negation" => fix_double_negation(sf, source, &mut out),
             "unused_variable" => fix_unused_variable(sf, source, &mut out),
             "unused_mut_variable" => fix_unused_mut_variable(sf, source, &mut out),

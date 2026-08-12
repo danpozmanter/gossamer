@@ -13188,6 +13188,25 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-pprof-cpu-profile",
+      "name": "std::pprof::cpu_profile",
+      "kind": "function",
+      "signature": "fn cpu_profile(millis: i64) -> String",
+      "description": "Sampled CPU profile over the given milliseconds; a timer reads the running stack.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdpprof",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-pprof-execution-trace",
       "name": "std::pprof::execution_trace",
       "kind": "function",
@@ -13212,6 +13231,25 @@
       "kind": "function",
       "signature": "fn goroutine_profile() -> String",
       "description": "Text profile with one sample per live goroutine and its last-known frame.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdpprof",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-pprof-heap-profile",
+      "name": "std::pprof::heap_profile",
+      "kind": "function",
+      "signature": "fn heap_profile(millis: i64) -> String",
+      "description": "Sampled allocation profile over the given milliseconds, weighted by bytes.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",

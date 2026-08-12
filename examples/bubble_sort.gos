@@ -23,11 +23,9 @@ fn print_array(xs: &[i64]) {
     println!("[{}]", xs.join(", "))
 }
 
-fn main() {
-    let inputs: [i64; 9] = #[7, 2, 9, 1, 5, 3, 8, 4, 6]
-    let sorted = sorted_ascending(&inputs)
-    print!("input:  ")
-    print_array(&inputs)
-    print!("sorted: ")
-    print_array(&sorted)
-}
+let inputs: [i64; 9] = #[7, 2, 9, 1, 5, 3, 8, 4, 6]
+let sorted = sorted_ascending(&inputs)
+print!("input:  ")
+print_array(&inputs)
+print!("sorted: ")
+print_array(&sorted)

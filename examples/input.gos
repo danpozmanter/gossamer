@@ -7,14 +7,12 @@
 
 use std::io
 
-fn main() {
-    let mut input = String::new()
-    println!("Type something: ")
+let mut input = String::new()
+println!("Type something: ")
 
-    io::stdin()
-        .read_line(&mut input)
-        .unwrap()
+io::stdin()
+    .read_line(&mut input)
+    .unwrap()
 
-    let result = input.trim()
-    println!("You typed: {}", result)
-}
+let result = input.trim()
+println!("You typed: {}", result)

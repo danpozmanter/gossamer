@@ -1,6 +1,6 @@
 # `std::crypto::rand`
 
-Status: experimental
+Status: unproven
 
 Secure random bytes from the host CSPRNG.
 

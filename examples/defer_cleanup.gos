@@ -33,13 +33,11 @@ fn per_iteration() {
     }
 }
 
-fn main() {
-    println!("lifo:")
-    lifo()
-    println!("early_return: returned {}", early_return(false))
-    println!("per_iteration:")
-    per_iteration()
-}
+println!("lifo:")
+lifo()
+println!("early_return: returned {}", early_return(false))
+println!("per_iteration:")
+per_iteration()
 
 #[cfg(test)]
 mod tests {

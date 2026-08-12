@@ -1,6 +1,6 @@
 # `std::crypto::insecure`
 
-Status: experimental
+Status: unproven
 
 Legacy / broken hashes (MD5, SHA-1). Compat only - never use for new code.
 

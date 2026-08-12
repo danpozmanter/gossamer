@@ -104,9 +104,9 @@
         <article class="card">
           <h3>Expressive and clear syntax</h3>
           <p>
-            Forward pipes (<code>|&gt;</code>), immutable by default,
-            and one obvious way to do things. Data flows top-to-bottom,
-            the way you wrote it - not nested inside-out.
+            Forward pipes (<code>|&gt;</code>), immutable by default.
+            Default & Keyword arguments. "?"/Rust like error handling.
+            Traits, generics, no <code>null</code>.
           </p>
         </article>
         <article class="card">
@@ -128,20 +128,17 @@
           </p>
         </article>
         <article class="card">
-          <h3>Run it, or ship it</h3>
+          <h3>Interpreted or Compiled</h3>
           <p>
-            A bytecode VM and a REPL for fast iteration; a single,
-            dependency-free native binary via LLVM when you ship. Same
-            language, your choice of tier.
+            A bytecode VM with JIT and a REPL for fast iteration; a single,
+            dependency-free native binary via LLVM when you ship.
           </p>
         </article>
         <article class="card">
-          <h3>Familiar types, fewer surprises</h3>
+          <h3>Pattern Matching and ADTs</h3>
           <p>
-            <code>Result</code> / <code>Option</code> / <code>?</code>,
-            exhaustive <code>match</code>, traits, generics, and no
-            <code>null</code>. If you know Rust, Go, or F#, you can
-            already read it.
+            <code>Result</code> / <code>Option</code>,
+            exhaustive <code>match</code>.
           </p>
         </article>
         <article class="card">
@@ -149,7 +146,7 @@
           <p>
             A broad standard library - HTTP, JSON, crypto, SQL,
             compression, and more - and a clean path to drop down
-            into safe Rust when you need it.
+            into safe synchronous Rust when you need it.
           </p>
         </article>
       </div>
@@ -174,10 +171,9 @@ fn clamp(lo: i64, hi: i64, x: i64) -&gt; i64 {
     if x &lt; lo { lo } else if x &gt; hi { hi } else { x }
 }
 
-fn main() {
-    let n = 3 |&gt; double |&gt; add(10) |&gt; clamp(0, 100)
-    println!("answer: {}", n)
-}</code></pre>
+let n = 3 |&gt; double |&gt; add(10) |&gt; clamp(0, 100)
+println!("answer: {}", n)
+</code></pre>
         </div>
 
         <div class="tabpanel" role="tabpanel" id="panel-web" aria-labelledby="tab-web" hidden>

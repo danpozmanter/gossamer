@@ -78,10 +78,17 @@ use super::*;
 pub fn render_module_markdown(module: &StdModule) -> String {
     let mut out = String::with_capacity(1024);
     out.push_str(&format!("# `{}`\n\n", module.path));
-    if super::feature_status::lookup(module.path)
-        .is_some_and(|entry| entry.status == super::feature_status::Status::Experimental)
-    {
-        out.push_str("Status: experimental\n\n");
+    // The reported status, not the authored one: a surface no fixture
+    // exercises reads `unproven` here, so a page cannot claim more than
+    // the evidence behind it.
+    if let Some(entry) = super::feature_status::lookup(module.path) {
+        let derived = super::feature_status::derived_status(module.path, entry.status);
+        if matches!(
+            derived,
+            super::feature_status::Status::Experimental | super::feature_status::Status::Unproven
+        ) {
+            out.push_str(&format!("Status: {}\n\n", derived.tag()));
+        }
     }
     out.push_str(&format!("{}\n\n", module.summary));
     out

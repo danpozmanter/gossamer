@@ -7,7 +7,6 @@
  * `big_numbers.gos`) when you need exact larger values.
  */
 
-
 fn factorial_recursive(n: i64) -> i64 {
     if n <= 1 { 1 } else { n * factorial_recursive(n - 1) }
 }
@@ -16,8 +15,6 @@ fn factorial_iterative(n: i64) -> i64 {
     (2..=n).fold(1, |acc, i| acc * i)
 }
 
-fn main() {
-    for n in [0, 1, 5, 10, 12, 20] {
-        println!("{}! = recursive {}, iterative {}", n, factorial_recursive(n), factorial_iterative(n))
-    }
+for n in [0, 1, 5, 10, 12, 20] {
+    println!("{}! = recursive {}, iterative {}", n, factorial_recursive(n), factorial_iterative(n))
 }

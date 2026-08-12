@@ -158,16 +158,14 @@ fn apply(f: Fn(i64) -> i64, x: i64) -> i64 { f(x) }
 
 fn inc(y: i64) -> i64 { y + 1 }
 
-fn main() {
-    let scale = 10
-    let scaled = |y: i64| scale * y       // captures \\\`scale\\\`
-    println!("scaled(5) = {}", apply(scaled, 5))
-    println!("inc(41)   = {}", apply(inc, 41))   // bare fn coerces
+let scale = 10
+let scaled = |y: i64| scale * y       // captures \\\`scale\\\`
+println!("scaled(5) = {}", apply(scaled, 5))
+println!("inc(41)   = {}", apply(inc, 41))   // bare fn coerces
 
-    // Closures power the sequence combinators, one per step.
-    let total = (1..=6).filter(|n| n % 2 == 0).map(|n| n * n).sum()
-    println!("sum of squares of evens in 1..=6 = {total}")
-}
+// Closures power the sequence combinators, one per step.
+let total = (1..=6).filter(|n| n % 2 == 0).map(|n| n * n).sum()
+println!("sum of squares of evens in 1..=6 = {total}")
 `,
   },
   {
@@ -203,20 +201,18 @@ impl Box {
     fn area(&self, scale: i64 = 1) -> i64 { self.w * self.h * scale }
 }
 
-fn main() {
-    println!("{}", greet("world"))
-    println!("{}", greet("world", "hi"))
+println!("{}", greet("world"))
+println!("{}", greet("world", "hi"))
 
-    // Name an argument with \\\`=\\\` to skip over a default in between.
-    println!("{}", greet("world", excited = true))
+// Name an argument with \\\`=\\\` to skip over a default in between.
+println!("{}", greet("world", excited = true))
 
-    // Names may come in any order once positional arguments are done.
-    println!("{}", greet(greeting = "hey", name = "Gossamer", excited = true))
+// Names may come in any order once positional arguments are done.
+println!("{}", greet(greeting = "hey", name = "Gossamer", excited = true))
 
-    let b = Box::new(3)
-    println!("area = {}", b.area())
-    println!("scaled = {}", b.area(scale = 10))
-}
+let b = Box::new(3)
+println!("area = {}", b.area())
+println!("scaled = {}", b.area(scale = 10))
 `,
   },
   {
@@ -299,37 +295,35 @@ fn total(xs: &[i64]) -> i64 {
       <p><code>BTreeMap</code> and <code>BTreeSet</code> keep their keys in sorted order, which is what you want whenever output order is part of the result.</p>`,
     code: `use std::collections::{BTreeMap, BTreeSet}
 
-fn main() {
-    // \`{}\` is a Map literal; \`#{}\` is a Set literal.
-    let mut stock = {"apples": 12, "pears": 3}
-    stock.insert("figs", 7)
+// \`{}\` is a Map literal; \`#{}\` is a Set literal.
+let mut stock = {"apples": 12, "pears": 3}
+stock.insert("figs", 7)
 
-    // \`inc\` is the counter idiom, \`get_or\` the fallback read.
-    stock.inc("apples", 5)
-    println!("apples = {}", stock.get_or("apples", 0))
-    println!("kiwis  = {}", stock.get_or("kiwis", 0))
-    println!("has figs = {}", stock.contains_key("figs"))
+// \`inc\` is the counter idiom, \`get_or\` the fallback read.
+stock.inc("apples", 5)
+println!("apples = {}", stock.get_or("apples", 0))
+println!("kiwis  = {}", stock.get_or("kiwis", 0))
+println!("has figs = {}", stock.contains_key("figs"))
 
-    for (name, count) in stock.iter() {
-        if count > 6 { println!("plenty of {name}: {count}") }
-    }
-
-    // Sets carry the algebra, not just membership.
-    let planted = #{"apples", "pears", "plums"}
-    let sold = #{"pears", "figs"}
-    println!("both      = {:?}", planted.intersection(&sold).to_vec())
-    println!("unsold    = {:?}", planted.difference(&sold).to_vec())
-    println!("every one = {:?}", planted.union(&sold).to_vec())
-
-    // The BTree pair keeps keys in sorted order.
-    let mut ordered: BTreeMap<String, i64> = BTreeMap::new()
-    ordered.insert("zebra", 1)
-    ordered.insert("ant", 2)
-    println!("sorted keys = {:?}", ordered.keys())
-
-    let tags: BTreeSet<String> = #{"gamma", "alpha", "beta"}
-    println!("sorted tags = {:?}", tags.to_vec())
+for (name, count) in stock.iter() {
+    if count > 6 { println!("plenty of {name}: {count}") }
 }
+
+// Sets carry the algebra, not just membership.
+let planted = #{"apples", "pears", "plums"}
+let sold = #{"pears", "figs"}
+println!("both      = {:?}", planted.intersection(&sold).to_vec())
+println!("unsold    = {:?}", planted.difference(&sold).to_vec())
+println!("every one = {:?}", planted.union(&sold).to_vec())
+
+// The BTree pair keeps keys in sorted order.
+let mut ordered: BTreeMap<String, i64> = BTreeMap::new()
+ordered.insert("zebra", 1)
+ordered.insert("ant", 2)
+println!("sorted keys = {:?}", ordered.keys())
+
+let tags: BTreeSet<String> = #{"gamma", "alpha", "beta"}
+println!("sorted tags = {:?}", tags.to_vec())
 `,
   },
   {
@@ -341,27 +335,25 @@ fn main() {
       <p>None of these have a literal: build them with <code>T::new()</code> or <code>T::from([..])</code>.</p>`,
     code: `use std::collections::{Deque, Queue, Stack, MinHeap, MaxHeap}
 
-fn main() {
-    let mut q = Queue::from([1, 2, 3])
-    q.push(4)
-    println!("queue front = {:?}, len = {}", q.pop(), q.len())
+let mut q = Queue::from([1, 2, 3])
+q.push(4)
+println!("queue front = {:?}, len = {}", q.pop(), q.len())
 
-    let mut st = Stack::from([1, 2, 3])
-    st.push(4)
-    println!("stack top = {:?}", st.pop())
+let mut st = Stack::from([1, 2, 3])
+st.push(4)
+println!("stack top = {:?}", st.pop())
 
-    let mut dq = Deque::from([2, 3])
-    dq.push_front(1)
-    dq.push_back(4)
-    println!("deque ends = {:?} {:?}", dq.pop_front(), dq.pop_back())
+let mut dq = Deque::from([2, 3])
+dq.push_front(1)
+dq.push_back(4)
+println!("deque ends = {:?} {:?}", dq.pop_front(), dq.pop_back())
 
-    let mut hi = MaxHeap::from([3, 9, 4])
-    hi.push(11)
-    println!("max = {:?}", hi.pop())
+let mut hi = MaxHeap::from([3, 9, 4])
+hi.push(11)
+println!("max = {:?}", hi.pop())
 
-    let mut lo = MinHeap::from([3, 9, 4])
-    println!("min = {:?}", lo.pop())
-}
+let mut lo = MinHeap::from([3, 9, 4])
+println!("min = {:?}", lo.pop())
 `,
   },
   {
@@ -412,35 +404,33 @@ fn main() {
       <p>Searching splits the same way: <code>find</code> and <code>position</code> scan linearly, while a sorted sequence supports a binary search you can write in a handful of lines.</p>`,
     code: `struct Player { name: String, score: i64 }
 
-fn main() {
-    let mut scores = #[42, 7, 19, 7, 88, 3]
+let mut scores = #[42, 7, 19, 7, 88, 3]
 
-    // \`sort\` orders in place; \`sort_by_key\` takes the key you care about.
-    scores.sort()
-    println!("sorted     = {:?}", scores)
-    println!("descending = {:?}", scores.rev())
-    println!("no repeats = {:?}", scores.dedup())
+// \`sort\` orders in place; \`sort_by_key\` takes the key you care about.
+scores.sort()
+println!("sorted     = {:?}", scores)
+println!("descending = {:?}", scores.rev())
+println!("no repeats = {:?}", scores.dedup())
 
-    // Structs and tuples compare structurally, field by field, with no
-    // derive - so a sequence of them sorts as it reads.
-    let mut board = #[
-        Player { name: "ada", score: 19 },
-        Player { name: "grace", score: 88 },
-        Player { name: "alan", score: 42 },
-    ]
-    board.sort_by_key(|p| 0 - p.score)
-    for p in board {
-        println!("  {:>6} {:>3}", p.name, p.score)
-    }
-
-    // Binary search over the sorted sequence: halve the window each step.
-    println!("19 lives at index {:?}", index_of_sorted(&scores, 19))
-    println!("20 is absent: {:?}", index_of_sorted(&scores, 20))
-
-    // The linear searches read the same either way.
-    println!("first over 40 = {:?}", scores.find(|n| n > 40))
-    println!("its position  = {:?}", scores.position(|n| n > 40))
+// Structs and tuples compare structurally, field by field, with no
+// derive - so a sequence of them sorts as it reads.
+let mut board = #[
+    Player { name: "ada", score: 19 },
+    Player { name: "grace", score: 88 },
+    Player { name: "alan", score: 42 },
+]
+board.sort_by_key(|p| 0 - p.score)
+for p in board {
+    println!("  {:>6} {:>3}", p.name, p.score)
 }
+
+// Binary search over the sorted sequence: halve the window each step.
+println!("19 lives at index {:?}", index_of_sorted(&scores, 19))
+println!("20 is absent: {:?}", index_of_sorted(&scores, 20))
+
+// The linear searches read the same either way.
+println!("first over 40 = {:?}", scores.find(|n| n > 40))
+println!("its position  = {:?}", scores.position(|n| n > 40))
 
 fn index_of_sorted(xs: &[i64], needle: i64) -> Option<i64> {
     let mut lo = 0
@@ -519,13 +509,11 @@ fn farther<T: Distance>(a: &T, b: &T) -> bool {
     a.from_origin() > b.from_origin()
 }
 
-fn main() {
-    let a = Point { x: 3, y: 4 }
-    let b = Point { x: 1, y: 2 }
-    println!("a = {:?}", a)
-    println!("a == a.clone(): {}", a == a.clone())
-    println!("a farther than b: {}", farther(&a, &b))
-}
+let a = Point { x: 3, y: 4 }
+let b = Point { x: 1, y: 2 }
+println!("a = {:?}", a)
+println!("a == a.clone(): {}", a == a.clone())
+println!("a farther than b: {}", farther(&a, &b))
 `,
   },
   {
@@ -549,12 +537,10 @@ impl Add for Vec2 {
     }
 }
 
-fn main() {
-    let a = Vec2 { x: 1.0, y: 2.0 }
-    let b = Vec2 { x: 3.0, y: 4.0 }
-    let c = a + b
-    println!("sum = ({}, {})", c.x, c.y)
-}
+let a = Vec2 { x: 1.0, y: 2.0 }
+let b = Vec2 { x: 3.0, y: 4.0 }
+let c = a + b
+println!("sum = ({}, {})", c.x, c.y)
 `,
   },
   {
@@ -588,11 +574,9 @@ fn eval(e: &Expr) -> i64 {
     }
 }
 
-fn main() {
-    // (2 + 3) * 4
-    let tree = Expr::Mul(Expr::Add(Expr::Num(2), Expr::Num(3)), Expr::Num(4))
-    println!("(2 + 3) * 4 = {}", eval(&tree))
-}
+// (2 + 3) * 4
+let tree = Expr::Mul(Expr::Add(Expr::Num(2), Expr::Num(3)), Expr::Num(4))
+println!("(2 + 3) * 4 = {}", eval(&tree))
 `,
   },
   {
@@ -622,14 +606,12 @@ fn half_of_first_even(xs: &[i64]) -> Option<i64> {
     Some(n / 2)
 }
 
-fn main() {
-    if let Some(n) = first_even(&[3, 5, 8, 9]) {
-        println!("first even = {n}")
-    }
-
-    println!("half = {:?}", half_of_first_even(&[3, 5, 8, 9]))
-    println!("half = {:?}", half_of_first_even(&[1, 3, 5]))
+if let Some(n) = first_even(&[3, 5, 8, 9]) {
+    println!("first even = {n}")
 }
+
+println!("half = {:?}", half_of_first_even(&[3, 5, 8, 9]))
+println!("half = {:?}", half_of_first_even(&[1, 3, 5]))
 `,
   },
   {
@@ -658,17 +640,15 @@ fn parse_port(text: &String) -> Result<i64, errors::Error> {
     Ok(n)
 }
 
-fn main() {
-    // Match the Ok value; handle the Err in-line.
-    match parse_port(&"8080") {
-        Ok(n) => println!("port = {n}"),
-        Err(e) => eprintln!("error: {}", e.message()),
-    }
-
-    // \\\`wrap\\\` adds context; printing shows the colon-joined cause chain.
-    let bad = parse_port(&"oops").map_err(|e| errors::wrap(e, "loading config"))
-    if let Err(e) = bad { println!("{e}") }
+// Match the Ok value; handle the Err in-line.
+match parse_port(&"8080") {
+    Ok(n) => println!("port = {n}"),
+    Err(e) => eprintln!("error: {}", e.message()),
 }
+
+// \\\`wrap\\\` adds context; printing shows the colon-joined cause chain.
+let bad = parse_port(&"oops").map_err(|e| errors::wrap(e, "loading config"))
+if let Err(e) = bad { println!("{e}") }
 `,
   },
   {
@@ -693,15 +673,13 @@ fn produce(tx: sync::Sender<i64>) {
     tx.close()
 }
 
-fn main() {
-    let (tx, rx) = sync::channel(5)
-    go produce(tx)
+let (tx, rx) = sync::channel(5)
+go produce(tx)
 
-    // \\\`recv\\\` yields \\\`Some\\\` until the channel is closed and drained.
-    let mut total = 0
-    while let Some(v) = rx.recv() { total += v }
-    println!("sum of squares 1..=5 = {total}")
-}
+// \\\`recv\\\` yields \\\`Some\\\` until the channel is closed and drained.
+let mut total = 0
+while let Some(v) = rx.recv() { total += v }
+println!("sum of squares 1..=5 = {total}")
 `,
   },
   {
@@ -722,24 +700,22 @@ fn produce(tx: sync::Sender<i64>, xs: Vec<i64>) {
     for x in xs { tx.send(x) }
 }
 
-fn main() {
-    let (tx_hi, rx_hi) = sync::channel(3)
-    let (tx_lo, rx_lo) = sync::channel(2)
+let (tx_hi, rx_hi) = sync::channel(3)
+let (tx_lo, rx_lo) = sync::channel(2)
 
-    go produce(tx_hi, #[1, 2, 3])
-    go produce(tx_lo, #[10, 20])
+go produce(tx_hi, #[1, 2, 3])
+go produce(tx_lo, #[10, 20])
 
-    // Five values arrive across two channels; \`select\` takes whichever
-    // arm is ready, polling them in source order.
-    let mut total = 0
-    for _ in 0..5 {
-        select {
-            v = rx_hi.recv() => total += v,
-            v = rx_lo.recv() => total += v,
-        }
+// Five values arrive across two channels; \`select\` takes whichever
+// arm is ready, polling them in source order.
+let mut total = 0
+for _ in 0..5 {
+    select {
+        v = rx_hi.recv() => total += v,
+        v = rx_lo.recv() => total += v,
     }
-    println!("merged total = {total}")
 }
+println!("merged total = {total}")
 `,
   },
   {
@@ -765,18 +741,16 @@ fn worker(total: sync::AtomicI64, wg: sync::WaitGroup, i: i64) {
     wg.done()
 }
 
-fn main() {
-    let total = sync::AtomicI64::new(0)
-    let wg = sync::WaitGroup::new()
+let total = sync::AtomicI64::new(0)
+let wg = sync::WaitGroup::new()
 
-    for i in 1..=4 {
-        wg.add(1)
-        go worker(total, wg, i)
-    }
-    wg.wait()      // block until every worker has called \\\`done\\\`
-
-    println!("sum of squares 1..=4 = {}", sync::AtomicI64::load(total))
+for i in 1..=4 {
+    wg.add(1)
+    go worker(total, wg, i)
 }
+wg.wait()      // block until every worker has called \\\`done\\\`
+
+println!("sum of squares 1..=4 = {}", sync::AtomicI64::load(total))
 `,
   },
   {
@@ -798,17 +772,15 @@ fn main() {
     println!("  use {name}")
 }
 
-fn main() {
-    // \\\`defer\\\` runs when control leaves the block, in LIFO order.
-    {
-        defer println!("third")
-        defer println!("second")
-        defer println!("first")
-        println!("body runs")
-    }
-    println!("---")
-    use_resource(&"file")
+// \\\`defer\\\` runs when control leaves the block, in LIFO order.
+{
+    defer println!("third")
+    defer println!("second")
+    defer println!("first")
+    println!("body runs")
 }
+println!("---")
+use_resource(&"file")
 `,
   },
   {
@@ -865,17 +837,15 @@ comptime fn factorial(n: i64) -> i64 {
 
 const FACT_10: i64 = comptime { factorial(10) }
 
-fn main() {
-    println!("10! folded at compile time = {FACT_10}")
+println!("10! folded at compile time = {FACT_10}")
 
-    // A \\\`comptime\\\` block can fold an inline computation to a literal too.
-    let triangular = comptime {
-        let mut acc = 0
-        for i in 1..=100 { acc += i }
-        acc
-    }
-    println!("sum 1..=100 = {triangular}")
+// A \\\`comptime\\\` block can fold an inline computation to a literal too.
+let triangular = comptime {
+    let mut acc = 0
+    for i in 1..=100 { acc += i }
+    acc
 }
+println!("sum 1..=100 = {triangular}")
 `,
   },
   {
@@ -887,41 +857,39 @@ fn main() {
       <p>Because instants are integers, comparing and sorting them is ordinary arithmetic.</p>`,
     code: `use std::time
 
-fn main() {
-    // RFC 3339 text in, milliseconds since the epoch out.
-    let launch = time::parse_rfc3339("2026-08-06T09:30:00Z").unwrap_or(0)
-    let landing = time::parse_rfc3339("2026-08-07T11:00:00Z").unwrap_or(0)
-    println!("launch ms = {launch}")
+// RFC 3339 text in, milliseconds since the epoch out.
+let launch = time::parse_rfc3339("2026-08-06T09:30:00Z").unwrap_or(0)
+let landing = time::parse_rfc3339("2026-08-07T11:00:00Z").unwrap_or(0)
+println!("launch ms = {launch}")
 
-    // Durations are values: build them, add them, read them back.
-    let day = time::Duration::from_secs(86400)
-    let hold = time::Duration::from_secs(5400)
-    let expected = launch + day.as_millis() + hold.as_millis()
-    println!("expected  = {}", time::format_rfc3339(expected).unwrap_or("?"))
+// Durations are values: build them, add them, read them back.
+let day = time::Duration::from_secs(86400)
+let hold = time::Duration::from_secs(5400)
+let expected = launch + day.as_millis() + hold.as_millis()
+println!("expected  = {}", time::format_rfc3339(expected).unwrap_or("?"))
 
-    // A span between two instants is a duration over the difference.
-    let flight = time::Duration::from_millis(landing - launch)
-    println!("flight    = {} h {} m", flight.as_secs() / 3600, (flight.as_secs() % 3600) / 60)
+// A span between two instants is a duration over the difference.
+let flight = time::Duration::from_millis(landing - launch)
+println!("flight    = {} h {} m", flight.as_secs() / 3600, (flight.as_secs() % 3600) / 60)
 
-    // Comparison and ordering are plain integer work.
-    println!("on time   = {}", landing <= expected)
+// Comparison and ordering are plain integer work.
+println!("on time   = {}", landing <= expected)
 
-    // A schedule is just a sequence of instants - sort and render it.
-    let mut stops = #[
-        time::parse_rfc3339("2026-08-06T18:00:00Z").unwrap_or(0),
-        launch,
-        landing,
-    ]
-    stops.sort()
-    for at in stops {
-        println!("  {}", time::format_rfc3339(at).unwrap_or("?"))
-    }
+// A schedule is just a sequence of instants - sort and render it.
+let mut stops = #[
+    time::parse_rfc3339("2026-08-06T18:00:00Z").unwrap_or(0),
+    launch,
+    landing,
+]
+stops.sort()
+for at in stops {
+    println!("  {}", time::format_rfc3339(at).unwrap_or("?"))
+}
 
-    // Bad input is a \`Result\`, never a silent zero.
-    match time::parse_rfc3339("not a timestamp") {
-        Ok(ms) => println!("parsed {ms}"),
-        Err(e) => println!("rejected: {e}"),
-    }
+// Bad input is a \`Result\`, never a silent zero.
+match time::parse_rfc3339("not a timestamp") {
+    Ok(ms) => println!("parsed {ms}"),
+    Err(e) => println!("rejected: {e}"),
 }
 `,
   },
@@ -966,28 +934,25 @@ println!("address = {}:{}", back.host, back.port)
     code: `use std::encoding::{base64, hex}
 use std::errors
 
-fn main() -> Result<(), errors::Error> {
-    // Base64 and hex round-trip bytes through text.
-    let secret = "gossamer".as_bytes()
-    let encoded = base64::encode(&secret)
-    println!("base64 = {encoded}")
-    let raw = base64::decode(&encoded)?
-    println!("back   = {} bytes, first = {}", raw.len(), raw[0] as char)
-    println!("hex    = {}", hex::encode(&secret))
+// Base64 and hex round-trip bytes through text.
+let secret = "gossamer".as_bytes()
+let encoded = base64::encode(&secret)
+println!("base64 = {encoded}")
+let raw = base64::decode(&encoded)?
+println!("back   = {} bytes, first = {}", raw.len(), raw[0] as char)
+println!("hex    = {}", hex::encode(&secret))
 
-    // A delimited record splits with the string surface.
-    let sheet = "name,role\\nada,analyst\\ngrace,admiral\\n"
-    for line in sheet.lines() {
-        if let Some((name, role)) = line.split_once(",") {
-            println!("  {name} | {role}")
-        }
+// A delimited record splits with the string surface.
+let sheet = "name,role\\nada,analyst\\ngrace,admiral\\n"
+for line in sheet.lines() {
+    if let Some((name, role)) = line.split_once(",") {
+        println!("  {name} | {role}")
     }
-
-    // Hex decodes back to the same bytes it encoded.
-    let round = hex::decode(&hex::encode(&secret))?
-    println!("hex round-trips = {}", round.len() == secret.len())
-    Ok(())
 }
+
+// Hex decodes back to the same bytes it encoded.
+let round = hex::decode(&hex::encode(&secret))?
+println!("hex round-trips = {}", round.len() == secret.len())
 `,
   },
   {
@@ -1007,23 +972,21 @@ fn main() -> Result<(), errors::Error> {
       <code>if</code>.</p>`,
     code: `use std::regex
 
-fn main() {
-    // Compile once; the pattern carries its source for diagnostics.
-    let re = match regex::compile("([0-9]{4}-[0-9]{2}-[0-9]{2}) ([A-Z]+) (.+)") {
-        Ok(r) => r,
-        Err(e) => { eprintln!("bad pattern: {e}"); return }
-    }
+// Compile once; the pattern carries its source for diagnostics.
+let re = match regex::compile("([0-9]{4}-[0-9]{2}-[0-9]{2}) ([A-Z]+) (.+)") {
+    Ok(r) => r,
+    Err(e) => { eprintln!("bad pattern: {e}"); return }
+}
 
-    let lines = ["2026-06-29 ERROR disk full", "2026-06-30 INFO restarted"]
-    for line in lines {
-        // \\\`captures\\\` yields [full, group1, group2, ...]; a let-chain
-        // binds all three groups and tests them in one condition.
-        if let Some(c) = regex::captures(&re, &line)
-            && let Some(date) = c[1]
-            && let Some(level) = c[2]
-            && let Some(msg) = c[3] {
-            println!("{date}  [{level}]  {msg}")
-        }
+let lines = ["2026-06-29 ERROR disk full", "2026-06-30 INFO restarted"]
+for line in lines {
+    // \\\`captures\\\` yields [full, group1, group2, ...]; a let-chain
+    // binds all three groups and tests them in one condition.
+    if let Some(c) = regex::captures(&re, &line)
+        && let Some(date) = c[1]
+        && let Some(level) = c[2]
+        && let Some(msg) = c[3] {
+        println!("{date}  [{level}]  {msg}")
     }
 }
 `,
@@ -1055,32 +1018,29 @@ fn note_json(id: i64) -> Result<String, errors::Error> {
     to_json::<Note>(Note { id: id, title: "written in Gossamer" })
 }
 
-fn main() -> Result<(), errors::Error> {
-    // Routes chain with \`|>\`, one verb method per route.
-    let routes = router::Router::new()
-        |> $.get("/health", health)
-        |> $.get("/notes/{id}", get_note)
-        |> $.post("/notes", get_note)
-    println!("router ready")
+// Routes chain with \`|>\`, one verb method per route.
+let routes = router::Router::new()
+    |> $.get("/health", health)
+    |> $.get("/notes/{id}", get_note)
+    |> $.post("/notes", get_note)
+println!("router ready")
 
-    // On a host this is the whole program:
-    //     http::serve("127.0.0.1:8080", routes)?
-    // The browser sandbox has no sockets, so the responses below are built
-    // exactly as the handlers build them.
-    let ok = http::Response::text(200, "ok")
-    println!("GET /health   -> {} {}", ok.status, ok.body)
+// On a host this is the whole program:
+//     http::serve("127.0.0.1:8080", routes)?
+// The browser sandbox has no sockets, so the responses below are built
+// exactly as the handlers build them.
+let ok = http::Response::text(200, "ok")
+println!("GET /health   -> {} {}", ok.status, ok.body)
 
-    let note = http::Response::json(200, note_json(42)?)
-    println!("GET /notes/42 -> {} {}", note.status, note.body)
+let note = http::Response::json(200, note_json(42)?)
+println!("GET /notes/42 -> {} {}", note.status, note.body)
 
-    let created = http::Response::json(201, note_json(43)?)
-        |> $.with_header("location", "/notes/43")
-    println!("POST /notes   -> {} ({} header)", created.status, created.headers.len())
+let created = http::Response::json(201, note_json(43)?)
+    |> $.with_header("location", "/notes/43")
+println!("POST /notes   -> {} ({} header)", created.status, created.headers.len())
 
-    let missing = http::Response::text(404, "no such note")
-    println!("miss          -> {} {}", missing.status, missing.body)
-    Ok(())
-}
+let missing = http::Response::text(404, "no such note")
+println!("miss          -> {} {}", missing.status, missing.body)
 `,
   },
   {
@@ -1096,48 +1056,45 @@ use std::strings
 
 struct Repo { name: String, stars: i64 }
 
-fn main() -> Result<(), errors::Error> {
-    // On a host, one call fetches a body:
-    //     let body = http::get("https://api.example.com/repos/gossamer")?.body
-    // The browser sandbox has no sockets, so this page decodes a captured
-    // payload the same way the response body would be decoded.
-    let body = "{\\"name\\":\\"gossamer\\",\\"stars\\":420}"
+// On a host, one call fetches a body:
+//     let body = http::get("https://api.example.com/repos/gossamer")?.body
+// The browser sandbox has no sockets, so this page decodes a captured
+// payload the same way the response body would be decoded.
+let body = "{\\"name\\":\\"gossamer\\",\\"stars\\":420}"
 
-    // Typed decode: fields land in a struct, unknown keys are ignored.
-    let repo = from_json::<Repo>(&body)?
-    println!("{} has {} stars", repo.name, repo.stars)
+// Typed decode: fields land in a struct, unknown keys are ignored.
+let repo = from_json::<Repo>(&body)?
+println!("{} has {} stars", repo.name, repo.stars)
 
-    // Dynamic decode for a shape you only partly know: query the document
-    // itself rather than describing it with a struct.
-    let doc = json::parse(&body)?
-    println!("keys       = {:?}", doc.keys())
-    if let Some(name) = doc.get("name") {
-        println!("name field = {:?}", name.as_str())
-    }
-    println!("re-encoded = {}", to_json::<Repo>(repo)?)
+// Dynamic decode for a shape you only partly know: query the document
+// itself rather than describing it with a struct.
+let doc = json::parse(&body)?
+println!("keys       = {:?}", doc.keys())
+if let Some(name) = doc.get("name") {
+    println!("name field = {:?}", name.as_str())
+}
+println!("re-encoded = {}", to_json::<Repo>(repo)?)
 
-    // Streaming: a server-sent-event feed arrives as lines, not as one
-    // document, so each chunk is handled as it lands.
-    let feed = "event: tick\\ndata: 1\\n\\nevent: tick\\ndata: 2\\n\\nevent: done\\ndata: bye\\n"
-    let mut ticks = 0
-    for line in feed.lines() {
-        if let Some(payload) = line.strip_prefix("data: ") {
-            if payload == "bye" {
-                println!("stream closed")
-            } else {
-                ticks += 1
-                println!("chunk {ticks}: {payload}")
-            }
+// Streaming: a server-sent-event feed arrives as lines, not as one
+// document, so each chunk is handled as it lands.
+let feed = "event: tick\\ndata: 1\\n\\nevent: tick\\ndata: 2\\n\\nevent: done\\ndata: bye\\n"
+let mut ticks = 0
+for line in feed.lines() {
+    if let Some(payload) = line.strip_prefix("data: ") {
+        if payload == "bye" {
+            println!("stream closed")
+        } else {
+            ticks += 1
+            println!("chunk {ticks}: {payload}")
         }
     }
+}
 
-    // A failed request is a \`Result\`, so the error path is written once.
-    let bad = from_json::<Repo>(&"{\\"name\\":42}")
-    match bad {
-        Ok(r) => println!("decoded {}", r.name),
-        Err(e) => println!("decode failed: {e}"),
-    }
-    Ok(())
+// A failed request is a \`Result\`, so the error path is written once.
+let bad = from_json::<Repo>(&"{\\"name\\":42}")
+match bad {
+    Ok(r) => println!("decoded {}", r.name),
+    Err(e) => println!("decode failed: {e}"),
 }
 `,
   },
@@ -1154,20 +1111,18 @@ fn main() -> Result<(), errors::Error> {
     if sorted.len() % 2 == 1 { sorted[mid] } else { (sorted[mid - 1] + sorted[mid]) / 2 }
 }
 
-fn main() {
-    // \`assert\` and \`assert_eq\` are prelude builtins - no import, no harness.
-    assert(median(#[3, 1, 2]) == 2, "odd count takes the middle")
-    assert_eq(median(#[4, 1, 3, 2]), 2, "even count averages the pair")
-    println!("median checks passed")
+// \`assert\` and \`assert_eq\` are prelude builtins - no import, no harness.
+assert(median(#[3, 1, 2]) == 2, "odd count takes the middle")
+assert_eq(median(#[4, 1, 3, 2]), 2, "even count averages the pair")
+println!("median checks passed")
 
-    // A failing assertion panics with the message you wrote.
-    let empty: Vec<i64> = Vec::from([])
-    assert(empty.is_empty(), "an empty vec has no elements")
+// A failing assertion panics with the message you wrote.
+let empty: Vec<i64> = Vec::from([])
+assert(empty.is_empty(), "an empty vec has no elements")
 
-    // \`#[test]\` functions run under \`gos test\`, and the fenced code in a
-    // doc comment above an item runs there too, so examples cannot rot.
-    println!("2 of 2 checks passed")
-}
+// \`#[test]\` functions run under \`gos test\`, and the fenced code in a
+// doc comment above an item runs there too, so examples cannot rot.
+println!("2 of 2 checks passed")
 
 #[cfg(test)]
 mod tour_testing_tests {
@@ -1200,25 +1155,23 @@ mod tour_testing_tests {
     code: `#[derive(Debug)]
 struct Tally { word: String, count: i64 }
 
-fn main() {
-    let text = "go rust go gossamer rust go"
+let text = "go rust go gossamer rust go"
 
-    // Count each word; \`inc\` does get-or-zero then add.
-    let mut counts = {}
-    for word in text.split(" ") {
-        counts.inc(word)
-    }
+// Count each word; \`inc\` does get-or-zero then add.
+let mut counts = {}
+for word in text.split(" ") {
+    counts.inc(word)
+}
 
-    // Move the entries into structs and sort by count, descending.
-    let mut rows = #[]
-    for (word, count) in counts.iter() {
-        rows.push(Tally { word: word, count: count })
-    }
-    rows.sort_by_key(|r| Reverse(r.count))
+// Move the entries into structs and sort by count, descending.
+let mut rows = #[]
+for (word, count) in counts.iter() {
+    rows.push(Tally { word: word, count: count })
+}
+rows.sort_by_key(|r| Reverse(r.count))
 
-    for r in rows {
-        println!("{:>9} x {}", r.word, r.count)
-    }
+for r in rows {
+    println!("{:>9} x {}", r.word, r.count)
 }
 `,
   },

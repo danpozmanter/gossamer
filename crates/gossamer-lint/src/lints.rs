@@ -35,6 +35,8 @@ pub(crate) fn run_lint(id: &str, sf: &SourceFile, src: &str) -> Vec<Finding> {
         "double_negation" => lint_double_negation(sf),
         "self_assignment" => lint_self_assignment(sf),
         "todo_macro" => lint_todo_macro(sf),
+        "free_form_combinator" => lint_free_form_combinator(sf, src),
+        "i64_only_container_family" => lint_i64_only_container_family(sf),
         "bool_literal_in_condition" => lint_bool_literal_in_condition(sf),
         "let_and_return" => lint_let_and_return(sf),
         "collapsible_if" => lint_collapsible_if(sf),
@@ -836,6 +838,82 @@ fn path_eq(a: &Expr, b: &Expr) -> bool {
         }
         _ => false,
     }
+}
+
+/// A data-last `iter::` call written out in full where the method form
+/// says the same thing.
+///
+/// One operation with two spellings is one more than a reader, or a
+/// model, should have to choose between. The free form keeps its place
+/// as a `|>` pipeline target, which this does not touch - the migration
+/// that shares this rule refuses a piped call too.
+fn lint_free_form_combinator(sf: &SourceFile, src: &str) -> Vec<Finding> {
+    let mut fixes = Vec::new();
+    crate::migrate::method_form_combinator_fixes(sf, src, &mut fixes);
+    fixes
+        .into_iter()
+        .map(|fix| {
+            (
+                fix.span,
+                "this combinator has a canonical method form".to_string(),
+                Some(format!("write it as `{}`", fix.replacement)),
+            )
+        })
+        .collect()
+}
+
+/// The i64-only re-bind container modules, which duplicate a general
+/// container type at a narrower element type.
+const I64_ONLY_CONTAINERS: &[(&str, &str)] = &[
+    ("queue", "Queue"),
+    ("stack", "Stack"),
+    ("deque", "Deque"),
+    ("heap", "MinHeap"),
+    ("ordered_set", "BTreeSet"),
+    ("ordered_map", "BTreeMap"),
+    ("ordered_vec", "Vec"),
+];
+
+/// Importing an i64-only container module where a general container
+/// type says the same thing over any element.
+///
+/// Deliberately not auto-fixable. The two families differ in more than
+/// spelling: the re-bind modules return a new container from every
+/// mutator, and `peek` answers `0` on an empty container where the type
+/// answers `None`. A mechanical rewrite would keep type-checking and
+/// quietly change what an empty container means.
+fn lint_i64_only_container_family(sf: &SourceFile) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for decl in &sf.uses {
+        let UseTarget::Module(path) = &decl.target else {
+            continue;
+        };
+        let names: Vec<&str> = path.segments.iter().map(|s| s.name.as_str()).collect();
+        // The module may be named by the path itself, or by a brace-list
+        // leaf: `use std::collections::{queue, stack}`.
+        let leaves: Vec<&str> = match &decl.list {
+            Some(list) => list.iter().map(|entry| entry.name.name.as_str()).collect(),
+            None => names.last().copied().into_iter().collect(),
+        };
+        let prefix_is_collections = names.starts_with(&["std", "collections"]);
+        if !prefix_is_collections {
+            continue;
+        }
+        for leaf in leaves {
+            let text = format!("std::collections::{leaf}");
+            if let Some((_, canonical)) = I64_ONLY_CONTAINERS.iter().find(|(m, _)| *m == leaf) {
+                out.push((
+                    decl.span,
+                    format!("`{text}` holds `i64` only and re-binds on every mutation"),
+                    Some(format!(
+                        "`{canonical}` holds any element type and mutates in place; \
+                         note `peek` answers `None` on empty where this module answers `0`"
+                    )),
+                ));
+            }
+        }
+    }
+    out
 }
 
 fn lint_todo_macro(sf: &SourceFile) -> Vec<Finding> {

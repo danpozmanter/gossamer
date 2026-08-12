@@ -3513,6 +3513,8 @@ impl<'a> Builder<'a> {
             "pprof::mutex_profile" => ("gos_rt_pprof_mutex_profile", self.tcx.string_ty()),
             "pprof::block_profile" => ("gos_rt_pprof_block_profile", self.tcx.string_ty()),
             "pprof::execution_trace" => ("gos_rt_pprof_execution_trace", self.tcx.string_ty()),
+            "pprof::cpu_profile" => ("gos_rt_pprof_cpu_profile", self.tcx.string_ty()),
+            "pprof::heap_profile" => ("gos_rt_pprof_heap_profile", self.tcx.string_ty()),
             "pprof::route" => ("gos_rt_pprof_route", self.option_string_adt_ty()),
             // Bare `fn(String)` only: the hook is a raw code pointer the
             // runtime calls with the rendered message.

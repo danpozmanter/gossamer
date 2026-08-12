@@ -1,6 +1,6 @@
 # `std::crypto::kdf`
 
-Status: experimental
+Status: unproven
 
 Password-based key-derivation functions.
 

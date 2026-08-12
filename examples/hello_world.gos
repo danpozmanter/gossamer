@@ -6,6 +6,4 @@
  * `{}` placeholders: `println!("hello, {name}")`.
  */
 
-fn main() {
-    println!("hello, world")
-}
+println!("hello, world")

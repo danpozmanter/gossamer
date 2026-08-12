@@ -4096,6 +4096,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_router_serve as *const u8,
         ),
         (
+            "gos_rt_pprof_cpu_profile",
+            crate::c_abi::gos_rt_pprof_cpu_profile as *const u8,
+        ),
+        (
+            "gos_rt_pprof_heap_profile",
+            crate::c_abi::gos_rt_pprof_heap_profile as *const u8,
+        ),
+        (
             "gos_rt_pprof_goroutine_profile",
             crate::c_abi::gos_rt_pprof_goroutine_profile as *const u8,
         ),

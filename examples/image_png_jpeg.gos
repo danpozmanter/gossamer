@@ -8,11 +8,9 @@ fn png_width() -> i64 {
     image::width(decoded)
 }
 
-fn main() {
-    println(png_width())
-    println(png_width())
-    let source = image::filled(2, 1, 0xff0000ff)
-    image::set_pixel(source, 1, 0, 0x00ff00ff)
-    println(image::pixel(source, 1, 0))
-    println(image::height(image::decode_base64(image::encode_jpeg_base64(source, 90))))
-}
+println(png_width())
+println(png_width())
+let source = image::filled(2, 1, 0xff0000ff)
+image::set_pixel(source, 1, 0, 0x00ff00ff)
+println(image::pixel(source, 1, 0))
+println(image::height(image::decode_base64(image::encode_jpeg_base64(source, 90))))

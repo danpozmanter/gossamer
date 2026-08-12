@@ -36,7 +36,54 @@
 // uses the default dlmalloc that ships with the wasm std.
 #[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
 #[global_allocator]
-static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+static GLOBAL_ALLOCATOR: SamplingAllocator = SamplingAllocator;
+
+/// mimalloc, with a byte counter in front of it for heap profiles.
+///
+/// The counter is a relaxed atomic add on the allocation path and
+/// nothing else until sampling is armed, so a program that never asks
+/// for a heap profile pays one add per allocation. Recording a sample
+/// walks the stack into a fixed buffer: the recorder runs inside the
+/// allocator and so must not allocate.
+#[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
+struct SamplingAllocator;
+
+#[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
+// SAFETY: every method forwards to mimalloc, which upholds the
+// `GlobalAlloc` contract; the sampling hook only reads the layout size.
+unsafe impl std::alloc::GlobalAlloc for SamplingAllocator {
+    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+        // SAFETY: the caller upholds `GlobalAlloc::alloc`'s contract.
+        let ptr = unsafe { mimalloc::MiMalloc.alloc(layout) };
+        if !ptr.is_null() {
+            crate::sampler::record_allocation(layout.size());
+        }
+        ptr
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+        // SAFETY: the caller upholds `GlobalAlloc::dealloc`'s contract.
+        unsafe { mimalloc::MiMalloc.dealloc(ptr, layout) }
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
+        // SAFETY: the caller upholds the contract.
+        let ptr = unsafe { mimalloc::MiMalloc.alloc_zeroed(layout) };
+        if !ptr.is_null() {
+            crate::sampler::record_allocation(layout.size());
+        }
+        ptr
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
+        // SAFETY: the caller upholds the contract.
+        let out = unsafe { mimalloc::MiMalloc.realloc(ptr, layout, new_size) };
+        if !out.is_null() && new_size > layout.size() {
+            crate::sampler::record_allocation(new_size - layout.size());
+        }
+        out
+    }
+}
 
 // mimalloc's `mi_option_purge_delay` (15),
 // `mi_option_deprecated_max_segment_reclaim` (21), and
@@ -165,6 +212,7 @@ pub mod race;
 pub mod replay;
 pub mod safe_daemon;
 pub mod safe_env;
+pub mod sampler;
 pub mod sched;
 // The process-global scheduler singleton ties together OS worker
 // threads and a mio netpoller. The wasm playground links a

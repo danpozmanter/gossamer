@@ -1,6 +1,6 @@
 # `std::crypto::password`
 
-Status: experimental
+Status: unproven
 
 Argon2id password hashing facade: PHC-string hash / verify / re-hash policy.
 

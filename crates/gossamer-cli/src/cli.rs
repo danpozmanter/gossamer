@@ -467,6 +467,17 @@ enum Command {
         /// running each through the VM and the LLVM-compiled binary.
         #[arg(long = "tier-parity")]
         tier_parity: bool,
+        /// Fuzz every `#[fuzz]` function instead of running `#[test]`
+        /// discovery. A crash is minimised and written into the
+        /// target's corpus, where plain `gos test` runs it as a
+        /// regression from then on.
+        #[arg(long)]
+        fuzz: bool,
+        /// How long to fuzz each target, such as `30s`. Without it each
+        /// target runs a fixed number of inputs, so a run with the same
+        /// `--seed` is reproducible.
+        #[arg(long = "fuzz-time", value_name = "DURATION")]
+        fuzz_time: Option<String>,
         /// Report shape for `--tier-parity`. Only `status` is
         /// implemented today; it writes
         /// `target/debug/.feature-status.json` consumed by
@@ -488,6 +499,43 @@ enum Command {
         /// benches sharing a core perturb each other's measurements.
         #[arg(long)]
         parallel: Option<usize>,
+    },
+    /// Report security advisories this project can reach.
+    ///
+    /// Filtered by reachability: an advisory naming an item the project
+    /// never references is not actionable, and a report full of those
+    /// teaches a reader to skip it. `--all` lifts the filter.
+    Audit {
+        /// Path inside the project. Defaults to the project's `src/`.
+        file: Option<PathBuf>,
+        /// Report every advisory affecting a resolved version, whether
+        /// or not this project references an affected item.
+        #[arg(long)]
+        all: bool,
+        /// Output format: `text` (default) or `json`, which emits the
+        /// shared diagnostic schema.
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Apply the toolchain's source migrations.
+    ///
+    /// A migration is a mechanical upgrade the toolchain owns, distinct
+    /// from `gos lint --fix`, which acts on observations about the code
+    /// you wrote. Every rewrite is re-checked before it is kept.
+    Fix {
+        /// Path to a `.gos` source file or a directory to walk.
+        /// Optional: defaults to the project's `src/` directory.
+        file: Option<PathBuf>,
+        /// Apply only this rewriter. Defaults to all of them.
+        #[arg(long, value_name = "ID")]
+        rewriter: Option<String>,
+        /// List the available rewriters and exit.
+        #[arg(long)]
+        list: bool,
+        /// Report pending migrations without writing; non-zero exit when
+        /// any file would change.
+        #[arg(long)]
+        check: bool,
     },
     /// Run the built-in lint suite over one file or every `.gos`
     /// source under a directory.
@@ -630,6 +678,12 @@ enum Command {
         /// `docs_src/` next to the workspace root.
         #[arg(long = "docs-root")]
         docs_root: Option<PathBuf>,
+        /// Report one row per exported item instead of one per module.
+        /// `std::strings` is one row whether an item has been there from
+        /// the start or landed last week; this addresses the answer to
+        /// the item being asked about.
+        #[arg(long)]
+        items: bool,
     },
 }
 
@@ -1017,6 +1071,13 @@ fn dispatch(
             message_format,
             fix,
         }) => cmd::check::dispatch(file, timings, message_format, fix),
+        Some(Command::Fix {
+            file,
+            rewriter,
+            list,
+            check,
+        }) => cmd::fix_cmd::dispatch(file, rewriter, list, check),
+        Some(Command::Audit { file, all, format }) => cmd::audit_cmd::dispatch(file, all, &format),
         Some(Command::Run {
             file,
             no_jit,
@@ -1160,6 +1221,8 @@ fn dispatch(
             race,
             coverage,
             tier_parity,
+            fuzz,
+            fuzz_time,
             report,
         }) => {
             let cpu_count =
@@ -1190,6 +1253,11 @@ fn dispatch(
                 race,
                 coverage,
                 tier_parity,
+                fuzz,
+                fuzz_time: fuzz_time
+                    .as_deref()
+                    .map(cmd::test::parse_timeout)
+                    .transpose()?,
                 report,
             })
         }
@@ -1274,6 +1342,7 @@ fn dispatch(
             status,
             sidecar,
             docs_root,
+            items,
         }) => dispatch_feature_status(
             &format,
             check,
@@ -1281,6 +1350,7 @@ fn dispatch(
             status.as_deref(),
             sidecar,
             docs_root,
+            items,
         ),
     }
 }
@@ -1323,6 +1393,7 @@ fn dispatch_feature_status(
     status: Option<&str>,
     sidecar: Option<PathBuf>,
     docs_root: Option<PathBuf>,
+    items: bool,
 ) -> anyhow::Result<()> {
     let format = cmd::feature_status::OutputFormat::parse(format)
         .ok_or_else(|| anyhow::anyhow!("unknown --format: {format} (table|json|markdown)"))?;
@@ -1339,6 +1410,7 @@ fn dispatch_feature_status(
         status,
         sidecar,
         docs_root,
+        items,
     })
 }
 

@@ -200,18 +200,19 @@ impl<'a> Lowerer<'a> {
             };
             let _ = write!(params, "{p_ty}{attrs} %p{i}");
         }
+        // `#0` carries the frame-pointer decision. It has to be a
+        // function attribute in the IR: `clang -x ir` ignores
+        // `-fno-omit-frame-pointer`, which only sets this attribute when
+        // clang is the one generating the IR.
         writeln!(
             self.out,
-            "define {ret_ty} @\"{name}\"({params}) {{",
+            "define {ret_ty} @\"{name}\"({params}) #0 {{",
             name = escape_ident(&mangle_fn_name(&self.body.name)),
             ret_ty = ret_ty,
             params = params,
         )
         .unwrap();
         writeln!(self.out, "entry:").unwrap();
-        // A compiled body that recurses into itself never re-enters the VM,
-        // so this is the only place the byte-budget guard can be consulted
-        // before the machine stack reaches its hardware guard page.
     }
 
     pub(crate) fn emit_allocas(&mut self) {

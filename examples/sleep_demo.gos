@@ -12,21 +12,19 @@
 
 use std::time
 
-fn main() {
-    println!("phase 1 - work")
-    let mut total: i64 = 0
-    for i in 0..100_000 {
-        total += i
-    }
-    println!("  ran tight loop, sum = {}", total)
-
-    println!("phase 2 - short sleep (10 ms)")
-    time::sleep(time::Duration::from_millis(10))
-    println!("  back from sleep")
-
-    println!("phase 3 - longer sleep (50 ms)")
-    time::sleep(time::Duration::from_millis(50))
-    println!("  back from sleep")
-
-    println!("done")
+println!("phase 1 - work")
+let mut total: i64 = 0
+for i in 0..100_000 {
+    total += i
 }
+println!("  ran tight loop, sum = {}", total)
+
+println!("phase 2 - short sleep (10 ms)")
+time::sleep(time::Duration::from_millis(10))
+println!("  back from sleep")
+
+println!("phase 3 - longer sleep (50 ms)")
+time::sleep(time::Duration::from_millis(50))
+println!("  back from sleep")
+
+println!("done")

@@ -297,6 +297,134 @@ fn a_fixture_that_never_exits_reaches_no_verdict_rather_than_failing() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A parked process is recognised long before its budget runs out, and
+/// the other two tiers are not charged for a fixture the first could not
+/// run to completion. Without this a walk over every fixture is dominated
+/// by server examples waiting out three full budgets each.
+#[test]
+fn a_parked_fixture_is_detected_well_inside_its_budget() {
+    let dir = scratch("parked");
+    // Waits on an ephemeral port nobody connects to: alive, consuming
+    // no CPU, exactly the shape of a server example. A blocked channel
+    // would not do - the runtime reports that as a deadlock and exits.
+    fs::write(
+        dir.join("parked.gos"),
+        concat!(
+            "use std::net\n\n",
+            "fn main() {\n",
+            "    let listener = net::TcpListener::bind(\"127.0.0.1:0\").unwrap()\n",
+            "    loop {\n",
+            "        let _ = listener.accept()\n",
+            "    }\n",
+            "}\n",
+        ),
+    )
+    .expect("write fixture");
+
+    let started = std::time::Instant::now();
+    let out = Command::new(gos_bin())
+        .args([
+            "test",
+            "--tier-parity",
+            "--report",
+            "status",
+            "--timeout",
+            "120s",
+        ])
+        .arg(&dir)
+        .env("CARGO_TARGET_DIR", dir.join("target"))
+        .output()
+        .expect("spawn tier-parity walk");
+    let elapsed = started.elapsed();
+    let report = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        report.contains("vm=- cranelift=- llvm=-"),
+        "a parked fixture reaches no verdict on any tier: {report}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_mins(1),
+        "detection must not wait out the 120s budget; took {elapsed:?}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A program printing its own name reports the source path under the VM
+/// and the executable's path when compiled. That is the program naming
+/// itself correctly, not the tiers disagreeing.
+#[test]
+fn a_fixture_that_prints_its_own_path_is_not_a_divergence() {
+    let dir = scratch("argv0");
+    fs::write(
+        dir.join("names_itself.gos"),
+        concat!(
+            "use std::env\n\n",
+            "fn main() {\n",
+            "    println!(\"program: {}\", env::program_name())\n",
+            "}\n",
+        ),
+    )
+    .expect("write fixture");
+
+    let out = Command::new(gos_bin())
+        .args(["test", "--tier-parity", "--report", "status"])
+        .arg(&dir)
+        .env("CARGO_TARGET_DIR", dir.join("target"))
+        .output()
+        .expect("spawn tier-parity walk");
+    let report = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        report.contains("vm=pass cranelift=pass llvm=pass"),
+        "the program's own path must not read as a divergence: {report}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Output that moves between runs of the same tier cannot be compared
+/// across tiers. The walk confirms nondeterminism by re-running the
+/// reference rather than assuming it, and falls back to exit codes.
+#[test]
+fn a_nondeterministic_fixture_is_compared_on_exit_status_only() {
+    let dir = scratch("nondet");
+    fs::write(
+        dir.join("interleaved.gos"),
+        concat!(
+            "use std::sync::channel\n\n",
+            "fn worker(tx: Sender<i64>, id: i64) {\n",
+            "    tx.send(id)\n",
+            "}\n\n",
+            "fn main() {\n",
+            "    let (tx, rx) = channel()\n",
+            "    for i in 0..8 { go worker(tx, i) }\n",
+            "    let mut seen = 0\n",
+            "    while seen < 8 {\n",
+            "        match rx.recv() {\n",
+            "            Some(v) => { println!(\"got {}\", v); seen += 1 }\n",
+            "            None => { seen = 8 }\n",
+            "        }\n",
+            "    }\n",
+            "}\n",
+        ),
+    )
+    .expect("write fixture");
+
+    let out = Command::new(gos_bin())
+        .args(["test", "--tier-parity", "--report", "status"])
+        .arg(&dir)
+        .env("CARGO_TARGET_DIR", dir.join("target"))
+        .output()
+        .expect("spawn tier-parity walk");
+    let report = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        report.contains("vm=pass cranelift=pass llvm=pass"),
+        "goroutine interleaving must not read as a divergence: {report}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// Parity is agreement between tiers, not success. An example that
 /// deliberately exits non-zero on all three tiers has proved exactly the
 /// property the walk exists to check.
@@ -327,4 +455,41 @@ fn a_fixture_that_fails_identically_on_every_tier_is_parity_passing() {
     );
 
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// A module is the wrong unit for "can I rely on this call". `--items`
+/// answers about the item, inheriting the module's tier evidence.
+#[test]
+fn items_mode_reports_one_row_per_export_with_inherited_evidence() {
+    let out = Command::new(gos_bin())
+        .args(["feature-status", "--items", "--filter", "std::strings::*"])
+        .output()
+        .expect("spawn gos feature-status --items");
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("std::strings::trim"), "{text}");
+    assert!(
+        !text.contains("\nstd::strings  "),
+        "the module row must not appear in item mode: {text}"
+    );
+    assert!(
+        text.contains("vm:pass"),
+        "an item inherits its module's tier record: {text}"
+    );
+}
+
+/// `unproven` is not a judgment. A surface no fixture exercises must not
+/// be reported as `experimental`, which is one.
+#[test]
+fn a_surface_with_no_fixture_reports_unproven() {
+    let out = Command::new(gos_bin())
+        .args(["feature-status", "--filter", "std::lifecycle"])
+        .output()
+        .expect("spawn gos feature-status");
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("unproven"),
+        "a module with no fixture must read unproven: {text}"
+    );
 }

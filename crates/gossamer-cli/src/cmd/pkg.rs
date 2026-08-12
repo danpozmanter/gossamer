@@ -523,17 +523,45 @@ pub(crate) fn vendor(manifest: Option<PathBuf>, out: Option<PathBuf>) -> Result<
 /// `gos publish [--registry URL] [--dry-run]` - pack the current
 /// project deterministically, sha256 it, optionally sign with
 /// ed25519, and POST to `<registry>/v1/upload/<id>/<ver>`.
+/// Reports any advisory this project can reach, without blocking.
+fn warn_on_reachable_advisories(project_root: &Path) {
+    let Ok(report) = std::process::Command::new(std::env::current_exe().unwrap_or_default())
+        .arg("audit")
+        .current_dir(project_root)
+        .output()
+    else {
+        return;
+    };
+    if report.status.success() {
+        return;
+    }
+    let text = String::from_utf8_lossy(&report.stdout);
+    for line in text.lines().filter(|l| l.starts_with("advisory[")) {
+        eprintln!("warning: {line}");
+    }
+    eprintln!("warning: publishing anyway; `gos audit` has the detail");
+}
+
 pub(crate) fn publish(
     manifest: Option<PathBuf>,
     registry: Option<String>,
     dry_run: bool,
 ) -> Result<()> {
     let path = manifest.unwrap_or_else(|| PathBuf::from("project.toml"));
-    let project_root = path
-        .parent()
-        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    // `Path::new("project.toml").parent()` is `Some("")`, not `None`, so
+    // a bare manifest name resolves the project root to the empty path
+    // and every later read fails with a bare "No such file or directory".
+    let project_root = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
     let source = fs::read_to_string(&path).map_err(|e| friendly_io_error(e, &path))?;
     let m = gossamer_pkg::Manifest::parse(&source)?;
+    // Warn-only: publishing a package whose own dependencies carry a
+    // known advisory is worth saying out loud, but refusing the publish
+    // would put the registry's advisory feed in the path of every
+    // release, where an entry added in error becomes an outage.
+    warn_on_reachable_advisories(&project_root);
     let registry_url = registry.unwrap_or_else(|| self::registry_url(&m));
     let artifact = gossamer_pkg::pack_crate_streaming(&project_root)
         .map_err(|e| anyhow!("pack failed: {e}"))?;
