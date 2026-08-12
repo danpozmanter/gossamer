@@ -98,7 +98,7 @@ The literal spelling of each container is in
 | `v.rev()` | `Vec<T>` | Non-mutating; `v.reverse()` is in-place. |
 | `v.contains(&x)` | `bool` | `v.index_of(&x)` returns `Option<i64>`, `v.count_of(&x)` the tally. |
 | `v.sort()` / `v.sort_by(cmp)` / `v.sort_by_key(f)` | `()` | In-place; `Reverse(k)` keys give descending order. |
-| `v.swap(i, j)` | `Result<(), errors::Error>` | Exchanges two existing elements or returns a bounds error. |
+| `v.swap(i, j)` | `()` | Exchanges two existing elements; an index outside `[0, len)` panics. |
 | `v.fill(value)` | `()` | Clones `value` into every existing element without changing length or capacity; also available on mutable arrays and slices. |
 
 ## Map

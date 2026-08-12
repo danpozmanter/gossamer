@@ -476,6 +476,10 @@
 
 
 
+
+
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -592,6 +596,62 @@
 
 
     Comptime
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../language/keyword_arguments/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Keyword arguments
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../language/opaque_nominal_alias/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Opaque nominal aliases
 
 
 
@@ -2366,11 +2426,14 @@ card:</p>
 <ul>
 <li><code>gos mcp</code> (stdio MCP server, e.g. <code>claude mcp add gossamer -- gos
   mcp</code>) exposes <code>check</code> (structured diagnostics), <code>execute</code>, <code>build</code>,
-  <code>test</code>, <code>fmt</code>, <code>doc</code>, <code>explain</code>, and semantic navigation (<code>hover</code>,
-  <code>definition</code>, <code>references</code>, <code>workspace_symbols</code>). Prefer these to
-  memorized API detail: <code>hover</code> answers "what is this and its type",
-  <code>check</code> validates a draft, <code>explain CODE</code> expands any diagnostic,
-  <code>doc</code> lists a file's items. This card ships as its
+  <code>test</code>, <code>fmt</code>, <code>doc</code>, <code>explain</code>, <code>lint</code>, <code>feature_status</code>, and semantic
+  navigation (<code>hover</code>, <code>definition</code>, <code>references</code>, <code>workspace_symbols</code>).
+  <code>check</code>, <code>execute</code>, <code>fmt</code>, <code>doc</code>, and <code>lint</code> take an inline <code>source</code>
+  string in place of a path, so a snippet needs no file of its own.
+  Prefer these to memorized API detail: <code>hover</code> answers "what is this and
+  its type", <code>check</code> validates a draft, <code>explain CODE</code> expands any
+  diagnostic, <code>doc</code> lists a file's items or a stdlib module's exports,
+  <code>feature_status</code> says whether an API is settled. This card ships as its
   <code>gossamer://skill-card</code> resource.</li>
 <li>Without MCP: <code>gos check FILE</code> (rustc-class diagnostics with
   did-you-mean), <code>gos run FILE</code>, <code>gos explain CODE</code>, <code>gos doc FILE</code>.</li>
@@ -2433,7 +2496,10 @@ card:</p>
   Bare <code>String</code> iteration yields Unicode <code>char</code> values; use <code>.bytes()</code>
   for UTF-8 bytes. An omitted range start begins at zero (<code>..3</code> yields
   <code>0</code>, <code>1</code>, <code>2</code>). A range can also be stored and consumed later:
-  <code>let a = 0..3</code>, then <code>for i in a { println(i) }</code>.</li>
+  <code>let a = 0..3</code>, then <code>for i in a { println(i) }</code>. A <code>Result</code> or
+  <code>Option</code> is NOT iterable (GT0067): a fallible API like
+  <code>fs::read_dir(dir)</code> hands back <code>Result&lt;Vec&lt;T&gt;, _&gt;</code>, so take the value
+  first (<code>?</code>, a <code>match</code>, <code>unwrap_or(..)</code>) and iterate that.</li>
 <li><strong>Bare integer indices</strong> - <code>arr[i]</code> takes <code>i64</code>, no <code>as usize</code>.
   Indexed reads and writes outside <code>[0, len)</code> panic on every tier. Vec
   <code>insert</code> accepts <code>0..=len</code> and returns <code>Result&lt;(), errors::Error&gt;</code>;
@@ -2511,6 +2577,13 @@ card:</p>
 <li><strong><code>defer expr</code></strong> - runs when control leaves the enclosing <code>{ }</code> by
   any path, LIFO; per-iteration in a loop body.</li>
 <li><strong><code>let PAT = expr else { ... }</code></strong> - the else block must diverge.</li>
+<li><strong>Name an argument or default a parameter</strong> when a call reads better
+  for it: <code>fn volume(width: i64, height: i64 = 2)</code> then <code>volume(2)</code>,
+  <code>volume(width = 2, height = 3)</code>, or <code>volume(2, height = 3)</code>. Positional
+  arguments come first, then names, in any order. A default must be a
+  literal (optionally negated) and is spliced per call site. Works on
+  methods and associated fns; when two types declare one method name with
+  different parameters, a named call on it is GR0013 - pass positionally.</li>
 <li><strong>Plain functions for free-standing logic</strong>; <code>impl</code> only when state
   is genuinely tied to a type.</li>
 <li><strong><code>Result&lt;T, E&gt;</code> + <code>?</code></strong> for fallibility; panic only for invariant
@@ -2605,7 +2678,14 @@ Left-associative, very low precedence.</p>
   [T] [T; N] (A, B) Option&lt;T&gt; Result&lt;T, E&gt; &amp;T</code> + user types. <code>i128</code>
   / <code>u128</code> are rejected (GT0014). Transparent <code>type Id = i64</code> /
   <code>type Pair&lt;A&gt; = (A, A)</code> aliases substitute everywhere (cycle =
-  GT0024).</li>
+  GT0024). <code>type UserId = new i64</code> is the OPAQUE form: a distinct
+  type over the same representation, at no runtime cost. <code>.into()</code>
+  converts to and from its own representation only (any other pair
+  needs <code>impl From</code>, else GT0066); it inherits equality, ordering,
+  hashing, and formatting - so it keys a <code>Map</code>, sorts, and prints -
+  but NOT the representation's methods (GT0002) or operators
+  (GT0003). Give it an <code>impl</code> of its own, and it serializes as the
+  representation.</li>
 <li><strong>Casts</strong>: <code>x as T</code> is whitelist-checked (numeric&lt;-&gt;numeric,
   bool/char-&gt;int, u8-&gt;char). Int-&gt;narrow-int masks at width (<code>300 as
   u8 == 44</code>); float-&gt;int truncates toward zero and saturates at i64
@@ -2649,9 +2729,10 @@ errors through <code>From</code>, and works inside macro args).</p>
 <p>Panics are goroutine-scoped: a spawned goroutine's panic ends only
 that goroutine; a main-goroutine panic is fatal (exit 101). Integer
 divide/modulo by zero panics (GX0005); <code>i64::MIN / -1</code> wraps. Deep
-recursion is bounded: the VM/JIT reports GX0008 and native builds use
-the installed stack guard (<code>stack overflow ... aborting</code>) rather than
-silently corrupting memory.</p>
+recursion raises <code>GX0008</code> and exits 101 on every tier: the bytecode VM
+refuses the call and prints the call stack, while JIT-compiled and
+native frames reach the installed stack guard, which names the faulting
+address. Neither corrupts memory.</p>
 <h2 id="9-concurrency">9. Concurrency<a class="headerlink" href="#9-concurrency" title="Permanent link">&para;</a></h2>
 <p><code>go expr</code> is fire-and-forget; <code>spawn(f)</code> returns a <code>JoinHandle&lt;T&gt;</code>
 (<code>handle.join()</code> -&gt; <code>Result&lt;T, String&gt;</code>). Typed channels: <code>recv()</code>
@@ -2681,7 +2762,15 @@ OS-thread spawn API. Use <code>go expr</code> or <code>spawn(f)</code> for concu
 <p><strong>Closures</strong>: <code>|x: T| body</code>; capture is automatic (no <code>move</code>).
 Use <code>Fn(args) -&gt; ret</code> for callback parameters. Plain <code>fn(args) -&gt; ret</code>
 is a raw pointer shape; bare named functions coerce to <code>Fn(...) -&gt; ...</code>
-at callback sites (no FnMut/FnOnce distinction in practice).</p>
+at callback sites (no FnMut/FnOnce distinction in practice).
+<strong>Capture splits by type</strong>: a heap value (<code>Vec</code>, <code>Map</code>, <code>Set</code>, <code>String</code>,
+a struct) is captured by managed reference, so <code>xs.push(v)</code> inside a
+closure is visible outside it; a <code>Copy</code> scalar (<code>i64</code>, <code>bool</code>, <code>char</code>,
+<code>f64</code>) is captured BY COPY, so <code>count += 1</code> updates the closure's own
+copy and the outer binding does NOT change. To accumulate a count
+across a callback - <code>fs::walk_dir</code>, a sort comparator, a visitor -
+push into a <code>Vec</code> (or collect into a <code>Map</code>) rather than incrementing a
+scalar.</p>
 <p><strong>Iterators</strong>: any type with <code>fn next(&amp;mut self) -&gt; Option&lt;T&gt;</code> works
 in <code>for</code>. Sequence combinators (<code>map</code>/<code>filter</code>/<code>take</code>/<code>skip</code>/<code>step_by</code>)
 are callable as methods/free functions and materialize results.</p>
@@ -2701,9 +2790,12 @@ are callable as methods/free functions and materialize results.</p>
   support <code>sort</code>, <code>reverse</code>, <code>swap</code>, and <code>fill</code> without resizing. <code>%i</code>
   reports each type's real surface, while <code>%e</code> also removes methods that the
   binding's mutability cannot call. Method-call
-  <code>xs.insert/remove/swap</code> mutate in place and return <code>Result</code>, with an
-  <code>Err</code> for an out-of-bounds index. Qualified calls use the same contract:
-  <code>Vec::insert(&amp;mut xs, i, v)</code> / <code>Vec::remove(&amp;mut xs, i)</code>.</li>
+  <code>xs.insert/remove</code> mutate in place and return <code>Result</code>, with an
+  <code>Err</code> for an out-of-bounds index. <code>xs.swap(i, j)</code> is an indexed write:
+  it returns unit and an index outside <code>[0, len)</code> panics, exactly as
+  <code>xs[i] = v</code> does. Qualified calls use the same contract:
+  <code>Vec::insert(&amp;mut xs, i, v)</code> / <code>Vec::remove(&amp;mut xs, i)</code> /
+  <code>Vec::swap(&amp;mut xs, i, j)</code>.</li>
 <li><strong>Tuple</strong> <code>(A, B, ...)</code> groups a fixed number of values whose types may
   differ. Read and assign positionally (<code>t.0</code>, chained <code>t.0.1</code>, <code>t.0 = v</code>
   through a <code>mut</code> binding), destructure in <code>let</code> / <code>for</code> / <code>match</code> / params,
@@ -2794,7 +2886,10 @@ test</code> also compiles and runs fenced code in doc comments.</p>
   <code>hash::{fnv, crc32, adler32}</code>, <code>uuid</code> (v4/v7), <code>jwt</code>,
   <code>compress::{gzip, flate, zlib, zstd, bzip2}</code>, <code>archive::{zip,
   tar}</code>, <code>metrics</code>, <code>trace</code>, <code>slog</code>, <code>lifecycle</code>, <code>validate</code>,
-  <code>testing</code>, <code>runtime</code> (<code>collect_cycles</code>, <code>set_panic_hook</code>).</li>
+  <code>testing</code>, <code>runtime</code> (<code>collect_cycles</code>, <code>set_panic_hook</code>),
+  <code>pprof</code> (<code>goroutine_profile</code> / <code>mutex_profile</code> / <code>block_profile</code> in
+  <code>go tool pprof</code> text form, <code>execution_trace(millis)</code> as Chrome trace
+  JSON, <code>route(path, query)</code> for <code>/debug/pprof/...</code>).</li>
 </ul>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">http</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">http</span>::<span class="n">router</span>
@@ -2856,8 +2951,8 @@ output wraps to the terminal width, capped at 80 columns.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>gos check / parse / build FILE</code>; <code>gos run FILE</code></td>
-<td>Typecheck; AST dump; fast native build; VM+JIT execution.</td>
+<td><code>gos check [--fix] / parse / build FILE</code>; <code>gos run FILE</code></td>
+<td>Typecheck; AST dump; fast native build; VM+JIT execution. <code>--fix</code> applies the rewrites the diagnostics carry, keeping only edits a re-check proves better.</td>
 </tr>
 <tr>
 <td><code>gos build --release [--target T]</code></td>
@@ -2868,8 +2963,8 @@ output wraps to the terminal width, capped at 80 columns.</p>
 <td><code>#[test]</code> / <code>#[bench]</code>; <code>--coverage</code>, <code>--parallel N</code>, <code>--format junit</code>, <code>--tier-parity</code>.</td>
 </tr>
 <tr>
-<td><code>gos fmt [--check] / lint / doc / explain CODE</code></td>
-<td>Format; lints; item docs; diagnostic rationale.</td>
+<td><code>gos fmt [--check] / lint [--fix] / doc / explain CODE</code></td>
+<td>Format; lints; item docs; diagnostic rationale. <code>gos doc std</code>, <code>gos doc std::&lt;module&gt;</code>, and <code>gos doc std::&lt;module&gt;::&lt;item&gt;</code> answer from the stdlib manifest.</td>
 </tr>
 <tr>
 <td><code>gos mcp / lsp / repl</code></td>

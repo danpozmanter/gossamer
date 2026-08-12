@@ -1,0 +1,42 @@
+// An owned fixed array of structs updated through an index: `xs[i].f` as a
+// read, as an assignment target, and as a compound-assignment target, with
+// two indices live in the same statement. A gravitational integrator, which
+// updates each body's velocity from every other body's, is the canonical
+// shape.
+
+struct Body { x: f64, vx: f64, mass: f64 }
+
+fn momentum(b: &[Body; 3]) -> f64 {
+    let mut p = 0.0
+    for i in 0..3 { p += b[i].vx * b[i].mass }
+    p
+}
+
+fn main() {
+    let mut bodies: [Body; 3] = [
+        Body { x: 0.0, vx: 0.0, mass: 10.0 },
+        Body { x: 1.0, vx: 0.25, mass: 2.0 },
+        Body { x: -3.0, vx: -0.5, mass: 4.0 },
+    ]
+
+    bodies[0].vx = -momentum(&bodies) / bodies[0].mass
+    println!("p0={:.9}", momentum(&bodies))
+
+    let dt = 0.01
+    for _ in 0..10 {
+        for a in 0..2 {
+            for b in (a + 1)..3 {
+                let dx = bodies[a].x - bodies[b].x
+                let mag = dt / (dx * dx * dx)
+                let mi = bodies[a].mass
+                let mj = bodies[b].mass
+                bodies[a].vx -= dx * mj * mag
+                bodies[b].vx += dx * mi * mag
+            }
+        }
+        for k in 0..3 { bodies[k].x += dt * bodies[k].vx }
+    }
+
+    for i in 0..3 { println!("body{} x={:.9} vx={:.9}", i, bodies[i].x, bodies[i].vx) }
+    println!("p1={:.9}", momentum(&bodies))
+}

@@ -773,8 +773,8 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         owner: "Vec",
         name: "swap",
         kind: "method",
-        signature: "fn swap<T>(self: &mut Vec<T>, a: i64, b: i64) -> Result<(), errors::Error>",
-        doc: "Swaps two vector positions.",
+        signature: "fn swap<T>(self: &mut Vec<T>, a: i64, b: i64)",
+        doc: "Swaps two vector positions; an index outside [0, len) panics.",
     },
     CoreMethodHelp {
         owner: "Vec",

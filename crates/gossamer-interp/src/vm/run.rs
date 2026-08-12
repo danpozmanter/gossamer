@@ -2296,10 +2296,9 @@ impl Vm {
                         && usize::try_from(a).is_ok_and(|index| index < len)
                         && usize::try_from(b).is_ok_and(|index| index < len);
                     if !valid {
-                        registers[dst as usize] = crate::builtins::slice_err(format!(
+                        return Err(RuntimeError::Panic(format!(
                             "swap: indexes {a} and {b} out of bounds for length {len}"
-                        ));
-                        continue;
+                        )));
                     }
                     let (a, b) = (a as usize, b as usize);
                     match &mut registers[receiver as usize] {
@@ -2319,28 +2318,43 @@ impl Vm {
                         Value::FloatVec(values) => Arc::make_mut(values).swap(a, b),
                         _ => {}
                     }
-                    registers[dst as usize] = Value::variant("Ok", vec![Value::Unit]);
+                    registers[dst as usize] = Value::Unit;
                 }
                 Op::VecSwapDiscard { receiver, a, b } => {
                     let a = super::index_value(&registers[a as usize])?;
                     let b = super::index_value(&registers[b as usize])?;
-                    if a < 0 || b < 0 {
-                        continue;
+                    let len = match &registers[receiver as usize] {
+                        Value::Array(values) => values.len(),
+                        Value::IntArray(values) => values.len(),
+                        Value::ByteArray(values) => values.len(),
+                        Value::InlineByteArray(values) => values.len(),
+                        Value::ByteVec(values) => values.len(),
+                        Value::FloatVec(values) => values.len(),
+                        _ => {
+                            return Err(RuntimeError::Type(
+                                "VecSwapDiscard: unsupported receiver".to_string(),
+                            ));
+                        }
+                    };
+                    if a < 0 || b < 0 || a as usize >= len || b as usize >= len {
+                        return Err(RuntimeError::Panic(format!(
+                            "swap: indexes {a} and {b} out of bounds for length {len}"
+                        )));
                     }
                     let (a, b) = (a as usize, b as usize);
-                    let valid = match &registers[receiver as usize] {
-                        Value::Array(values) => a < values.len() && b < values.len(),
-                        Value::IntArray(values) => a < values.len() && b < values.len(),
-                        Value::ByteVec(values) => a < values.len() && b < values.len(),
-                        Value::FloatVec(values) => a < values.len() && b < values.len(),
-                        _ => false,
-                    };
-                    if !valid {
-                        continue;
-                    }
                     match &mut registers[receiver as usize] {
                         Value::Array(values) => Arc::make_mut(values).swap(a, b),
                         Value::IntArray(values) => Arc::make_mut(values).swap(a, b),
+                        Value::ByteArray(values) => {
+                            let mut owned = values.to_vec();
+                            owned.swap(a, b);
+                            registers[receiver as usize] = Value::ByteVec(Arc::new(owned));
+                        }
+                        Value::InlineByteArray(values) => {
+                            let mut owned = values.to_vec();
+                            owned.swap(a, b);
+                            registers[receiver as usize] = Value::ByteVec(Arc::new(owned));
+                        }
                         Value::ByteVec(values) => Arc::make_mut(values).swap(a, b),
                         Value::FloatVec(values) => Arc::make_mut(values).swap(a, b),
                         _ => unreachable!("validated Vec swap receiver"),
@@ -2795,11 +2809,14 @@ impl Vm {
                     b_f,
                     c_f,
                 } => unsafe {
+                    // Two roundings, as `a * b + c` is written. The fusion is
+                    // over dispatch, not over arithmetic: a single-rounded
+                    // `mul_add` would give this expression a different value
+                    // here than the compiled tiers' separate multiply and add.
+                    let product =
+                        *floats.get_unchecked(a_f as usize) * *floats.get_unchecked(b_f as usize);
                     *floats.get_unchecked_mut(dst_f as usize) =
-                        floats.get_unchecked(a_f as usize).mul_add(
-                            *floats.get_unchecked(b_f as usize),
-                            *floats.get_unchecked(c_f as usize),
-                        );
+                        product + *floats.get_unchecked(c_f as usize);
                 },
                 Op::MulSubF64 {
                     dst_f,
@@ -2807,11 +2824,10 @@ impl Vm {
                     b_f,
                     c_f,
                 } => unsafe {
+                    let product =
+                        *floats.get_unchecked(a_f as usize) * *floats.get_unchecked(b_f as usize);
                     *floats.get_unchecked_mut(dst_f as usize) =
-                        floats.get_unchecked(a_f as usize).mul_add(
-                            -*floats.get_unchecked(b_f as usize),
-                            *floats.get_unchecked(c_f as usize),
-                        );
+                        *floats.get_unchecked(c_f as usize) - product;
                 },
 
                 Op::LoadConstI64 { dst_i, idx } => unsafe {
@@ -4230,7 +4246,7 @@ impl Vm {
                     let i_idx = *ints.get_unchecked(i_i as usize);
                     let j_idx = *ints.get_unchecked(j_i as usize);
                     if i_idx < 0 || j_idx < 0 {
-                        continue;
+                        return Err(RuntimeError::Panic("index out of bounds".to_string()));
                     }
                     let i = i_idx as usize;
                     let j = j_idx as usize;
@@ -4282,7 +4298,7 @@ impl Vm {
                     let i_idx = *ints.get_unchecked(i_i as usize);
                     let j_idx = *ints.get_unchecked(j_i as usize);
                     if i_idx < 0 || j_idx < 0 {
-                        continue;
+                        return Err(RuntimeError::Panic("index out of bounds".to_string()));
                     }
                     let i = i_idx as usize;
                     let j = j_idx as usize;

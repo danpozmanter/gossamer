@@ -1052,14 +1052,12 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
-    /// Inline the successful path of `gos_rt_vec_swap_safe(vec, i, j)` while
-    /// retaining the runtime helper as the uncommon error path. The helper's
-    /// `i128` return uses the native SysV ABI, so Windows continues through
-    /// the generic call lowering that handles its indirect aggregate return.
+    /// Inline the in-bounds path of `gos_rt_vec_swap_safe(vec, i, j)`,
+    /// retaining the runtime helper as the uncommon out-of-bounds path where
+    /// it raises the bounds panic.
     pub(crate) fn lower_vec_swap_safe_inline(
         &mut self,
         args: &[Operand],
-        destination: &Place,
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
         let word_elem = self.vec_operand_has_word_elem(&args[0]);
@@ -1111,10 +1109,9 @@ impl<'a> Lowerer<'a> {
 
         writeln!(self.out, "{invalid}:").unwrap();
         declare_rt(&mut self.runtime_refs, "gos_rt_vec_swap_safe");
-        let error_result = self.fresh();
         writeln!(
             self.out,
-            "  {error_result} = call i128 @gos_rt_vec_swap_safe(ptr {vec_ptr}, i64 {i}, i64 {j})"
+            "  call void @gos_rt_vec_swap_safe(ptr {vec_ptr}, i64 {i}, i64 {j})"
         )
         .unwrap();
         writeln!(self.out, "  br label %{join}").unwrap();
@@ -1146,21 +1143,6 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "  br label %{join}").unwrap();
 
         writeln!(self.out, "{join}:").unwrap();
-        let result = self.fresh();
-        writeln!(
-            self.out,
-            "  {result} = phi i128 [ 0, %{swap} ], [ {error_result}, %{invalid} ]"
-        )
-        .unwrap();
-        let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
-        if dest_ty != "void" {
-            writeln!(
-                self.out,
-                "  store i128 {result}, ptr {}",
-                local_slot(destination.local)
-            )
-            .unwrap();
-        }
         emit_terminator_branch(&mut self.out, target);
         Ok(())
     }

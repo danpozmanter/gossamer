@@ -218,6 +218,22 @@ pub fn stack_guard_tripped() -> bool {
     origin.saturating_sub(current_stack_ptr()) > budget
 }
 
+/// `(lo, hi)` byte bounds of the stack the calling code is running on
+/// when that stack is a goroutine's, or `None` on a bare OS thread.
+///
+/// A goroutine runs on its own allocated stack, so the OS thread's
+/// bounds do not describe it. The guard already records the shallow
+/// origin and the growth budget, which is exactly that window.
+#[must_use]
+pub fn goroutine_stack_bounds() -> Option<(usize, usize)> {
+    let origin = STACK_ORIGIN.with(Cell::get);
+    if origin == 0 {
+        return None;
+    }
+    let budget = STACK_BUDGET.with(Cell::get);
+    Some((origin.saturating_sub(budget), origin))
+}
+
 /// Unarms the guard on this thread, so a caller that has just tripped
 /// it can run its reporting and unwind path with the guard's own margin
 /// to work in rather than tripping again on every frame.

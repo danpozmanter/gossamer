@@ -1,0 +1,88 @@
+// Two whole-container rebind idioms that stencil and radix workloads are
+// built from: swapping two owned `Vec` bindings through a temporary across
+// passes, and a fixed-array histogram indexed by a value computed per element
+// then rewritten in place into a prefix sum.
+
+fn stencil_pass(src: &Vec<i64>, dst: &mut Vec<i64>, n: i64) {
+    for r in 1..(n - 1) {
+        for c in 1..(n - 1) {
+            let i = r * n + c
+            dst[i] = (src[i] + src[i - 1] + src[i + 1] + src[i - n] + src[i + n]) & 1023
+        }
+    }
+}
+
+fn radix_pass(src: &Vec<i64>, dst: &mut Vec<i64>, shift: i64) {
+    let n = src.len()
+    let mut count = [0; 256]
+    for i in 0..n {
+        let byte = (src[i] >> shift) & 0xff
+        count[byte] += 1
+    }
+    let mut total = 0
+    for k in 0..256 {
+        let c = count[k]
+        count[k] = total
+        total += c
+    }
+    for i in 0..n {
+        let byte = (src[i] >> shift) & 0xff
+        let pos = count[byte]
+        count[byte] = pos + 1
+        dst[pos] = src[i]
+    }
+}
+
+// The same rebind over locals the function owns, so this body is admissible
+// to the JIT and the ping-pong runs natively as well as through the VM.
+fn pingpong_sum(n: i64, passes: i64) -> i64 {
+    let mut a: Vec<i64> = Vec::with_capacity(n)
+    let mut b: Vec<i64> = Vec::with_capacity(n)
+    for i in 0..n { a.push(i * 5 + 1); b.push(0) }
+    for _ in 0..passes {
+        for i in 0..n { b[i] = (a[i] * 3 + i) & 4095 }
+        let tmp = a
+        a = b
+        b = tmp
+    }
+    let mut sum = 0
+    for i in 0..n { sum += a[i] }
+    sum
+}
+
+fn main() {
+    let mut hot = 0
+    for _ in 0..200 { hot += pingpong_sum(16, 3) }
+    println!("hot={}", hot)
+
+    let n = 8
+    let mut a: Vec<i64> = Vec::with_capacity(n * n)
+    let mut b: Vec<i64> = Vec::with_capacity(n * n)
+    for _ in 0..(n * n) { a.push(0); b.push(0) }
+    for i in 0..(n * n) { a[i] = (i * 17 + 3) & 255 }
+
+    // Each pass reads what the previous wrote, so the rebind has to hand the
+    // freshly written buffer to the next iteration.
+    for _ in 0..4 {
+        stencil_pass(&a, &mut b, n)
+        let tmp = a
+        a = b
+        b = tmp
+    }
+    let mut checksum = 0
+    for i in 0..(n * n) { checksum = (checksum + a[i] * (i + 1)) % 1000000007 }
+    println!("stencil={}", checksum)
+
+    let mut src: Vec<i64> = #[0; 12]
+    let mut dst: Vec<i64> = #[0; 12]
+    for i in 0..12 { src[i] = ((i * 2654435761) & 0xffff) ^ 0x5a5a }
+    let mut pass = 0
+    while pass < 2 {
+        radix_pass(&src, &mut dst, pass * 8)
+        let tmp = src
+        src = dst
+        dst = tmp
+        pass += 1
+    }
+    println!("radix={:?}", src)
+}

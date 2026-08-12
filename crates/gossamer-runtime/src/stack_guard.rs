@@ -131,6 +131,22 @@ pub fn current_thread_stack_size() -> Option<usize> {
     }
 }
 
+/// `(lo, hi)` byte bounds of the calling OS thread's stack, or `None`
+/// when the platform cannot report them. A frame-pointer walk checks
+/// every link against this window before dereferencing it.
+#[must_use]
+pub fn current_thread_stack_bounds() -> Option<(usize, usize)> {
+    #[cfg(unix)]
+    {
+        let (lo, hi) = unix::thread_stack_bounds();
+        (hi > lo).then_some((lo, hi))
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
 /// Composes the fault note into `scratch`, returning its byte length.
 /// Always produces a line on a non-stack-overflow fault: it names the
 /// JIT-compiled body that was running, or states the fault was outside

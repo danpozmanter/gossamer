@@ -311,34 +311,44 @@ fn builtin_reverse(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_swap(args: &[Value]) -> RuntimeResult<Value> {
-    let i = match args.get(1) {
-        Some(Value::Int(n)) if *n >= 0 => *n as usize,
+    fn oob(i: i64, j: i64, len: usize) -> RuntimeError {
+        RuntimeError::Panic(format!(
+            "swap: indexes {i} and {j} out of bounds for length {len}"
+        ))
+    }
+    let raw_i = match args.get(1) {
+        Some(Value::Int(n)) => *n,
         _ => return Ok(args.first().cloned().unwrap_or(Value::Unit)),
     };
-    let j = match args.get(2) {
-        Some(Value::Int(n)) if *n >= 0 => *n as usize,
+    let raw_j = match args.get(2) {
+        Some(Value::Int(n)) => *n,
         _ => return Ok(args.first().cloned().unwrap_or(Value::Unit)),
+    };
+    // `swap` is an indexed write, so an index outside `[0, len)` panics
+    // exactly as `xs[i] = v` does rather than leaving the receiver untouched.
+    let swapped = |len: usize| -> RuntimeResult<(usize, usize)> {
+        if raw_i < 0 || raw_j < 0 || raw_i as usize >= len || raw_j as usize >= len {
+            return Err(oob(raw_i, raw_j, len));
+        }
+        Ok((raw_i as usize, raw_j as usize))
     };
     match args.first() {
         Some(Value::Array(parts)) => {
             let mut owned = parts.as_ref().clone();
-            if i < owned.len() && j < owned.len() {
-                owned.swap(i, j);
-            }
+            let (i, j) = swapped(owned.len())?;
+            owned.swap(i, j);
             Ok(Value::Array(Arc::new(owned)))
         }
         Some(Value::IntArray(parts)) => {
             let mut owned = parts.as_ref().clone();
-            if i < owned.len() && j < owned.len() {
-                owned.swap(i, j);
-            }
+            let (i, j) = swapped(owned.len())?;
+            owned.swap(i, j);
             Ok(Value::IntArray(Arc::new(owned)))
         }
         Some(Value::FloatVec(parts)) => {
             let mut owned = parts.as_ref().clone();
-            if i < owned.len() && j < owned.len() {
-                owned.swap(i, j);
-            }
+            let (i, j) = swapped(owned.len())?;
+            owned.swap(i, j);
             Ok(Value::FloatVec(Arc::new(owned)))
         }
         Some(other) => Ok(other.clone()),

@@ -476,6 +476,10 @@
 
 
 
+
+
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -592,6 +596,62 @@
 
 
     Comptime
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../language/keyword_arguments/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Keyword arguments
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../language/opaque_nominal_alias/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Opaque nominal aliases
 
 
 
@@ -2103,9 +2163,18 @@ properties follow from that single decision:</p>
 </ul>
 <p>A byte-budget recursion guard is armed at the shallow entry point of
 each goroutine (and re-armed on every resume, since a goroutine can
-migrate between worker threads). Runaway recursion trips a clean
-<code>GX0008</code> stack-overflow diagnostic before it can reach the hardware
-guard page, on every tier.</p>
+migrate between worker threads). The bytecode VM consults it on every
+call, so runaway recursion there trips a clean <code>GX0008</code> diagnostic
+before it can reach the hardware guard page.</p>
+<p>Compiled frames do not consult it: neither backend emits a prologue
+safepoint. JIT-compiled and native recursion instead reaches the guard
+page, where the installed handler reports the same <code>GX0008</code> code and
+exits with the same status the VM uses, naming the faulting address it
+alone knows. Both paths are deterministic and neither corrupts memory.</p>
+<p>Checking the budget in compiled prologues was measured and rejected: an
+opaque runtime call at every function entry blocks inlining, and a
+call-heavy benchmark (recursive <code>fib(40)</code>, <code>--release</code>) went from 0.16 s
+to 0.96 s. The guard page costs nothing until it is hit.</p>
 <p>Because the reservation is generous and commit is lazy, both cheap
 goroutines and deep recursion fall out of the same mechanism: thousands
 of concurrent goroutines stay in the tens of MiB of resident memory,
@@ -2140,8 +2209,8 @@ price is much higher here than in Go:</p>
 <li><strong>Three tiers, one meaning.</strong> A feature must behave identically on the
   bytecode VM, the Cranelift JIT, and the LLVM AOT backend. The VM does
   not use the machine stack for Gossamer frames the way native code does
-  (its frames are heap-backed, and deep recursion is already a clean
-  depth-guarded <code>GX0008</code>, not a hardware overflow). "Grow the stack by
+  (its frames are heap-backed, and deep recursion there is a clean
+  depth-guarded <code>GX0008</code> rather than a hardware overflow). "Grow the stack by
   copying frames" is three different problems across the three tiers,
   and unifying them is awkward.</li>
 </ul>

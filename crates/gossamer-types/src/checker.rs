@@ -5313,10 +5313,7 @@ impl<'a> TypeChecker<'a> {
             "remove" => (vec![mutable, i64_ty], self.result_adt_ty(elem, error_ty)),
             "sort" | "reverse" => (vec![mutable], self.tcx.unit()),
             "fill" => (vec![mutable, elem], self.tcx.unit()),
-            "swap" => (
-                vec![mutable, i64_ty, i64_ty],
-                self.result_adt_ty(unit_ty, error_ty),
-            ),
+            "swap" => (vec![mutable, i64_ty, i64_ty], self.tcx.unit()),
             "slice" => (
                 vec![shared, i64_ty, i64_ty],
                 self.result_adt_ty(vec_result_ty, error_ty),
@@ -9005,7 +9002,8 @@ impl<'a> TypeChecker<'a> {
         match (method, args.len()) {
             (
                 "push" | "clear" | "truncate" | "extend" | "extend_from_slice" | "reserve"
-                | "reserve_exact" | "sort" | "sort_by" | "sort_by_key" | "reverse" | "fill",
+                | "reserve_exact" | "sort" | "sort_by" | "sort_by_key" | "reverse" | "fill"
+                | "swap",
                 _,
             ) => Some(self.tcx.unit()),
             ("insert", 2) => {
@@ -9016,11 +9014,6 @@ impl<'a> TypeChecker<'a> {
             ("remove", 1) => {
                 let error_ty = self.tcx.dyn_error_ty();
                 Some(self.result_adt_ty(elem, error_ty))
-            }
-            ("swap", 2) => {
-                let error_ty = self.tcx.dyn_error_ty();
-                let unit_ty = self.tcx.unit();
-                Some(self.result_adt_ty(unit_ty, error_ty))
             }
             ("capacity" | "len", 0) => Some(self.tcx.int_ty(IntTy::I64)),
             ("iter", 0) => {

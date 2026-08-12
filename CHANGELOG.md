@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.48.1 - Allocation speed, swap contract, float parity
+
+- Restore allocation-bound speed. The heap-profile hook added in front of
+  mimalloc was a real call on every allocation; it now inlines into
+  `__rust_alloc` and costs a predicted branch while disarmed. Allocation-heavy
+  programs were up to 17% slower.
+- `xs.swap(i, j)` returns unit instead of `Result<(), errors::Error>`, so the
+  bare call is a complete statement anywhere its value is discarded, including
+  a loop body's tail. A negative index, or one at or past the end, is a bounds
+  panic on every tier, matching `xs[i] = v`. The declared `Err` was never
+  reached: three of the four execution paths silently left the receiver
+  unchanged instead.
+- Read a one-field struct's field through an index into a format argument.
+  The field name and the struct's field-name list shared a constant-pool slot
+  whenever the struct had exactly one field, and `xs[i].f` panicked on the VM
+  and the JIT.
+- `a * b + c` and `c - a * b` on f64 round twice on the bytecode VM, matching
+  the compiled tiers' separate multiply and add. The VM fused each into a
+  single-rounded `fma`, so any loop accumulating a product into a running
+  total - a velocity update, a dot product, a weighted sum - printed different
+  digits under `gos run` than under `gos build`.
+- Print a `[u8; N]` fixed array with `{:?}` from a `gos build` binary. The
+  formatter read byte-packed storage at one element per 8 bytes and printed
+  garbage integers; element reads were already correct.
+- `pprof::heap_profile` returns sampled allocation stacks from a `gos build`
+  binary instead of a bare header. The sampler climbs out of the global
+  allocator along the frame-pointer chain, and the runtime shims it passes
+  through kept no frame pointer, so every walk recorded nothing. Those shims
+  now carry one; the interpreter and the JIT do not, where it costs double
+  digits on tight loops.
+- The sampler's stack walk checks each frame-pointer link against the running
+  stack's bounds before reading it. A link that passed the plausibility
+  checks but addressed unmapped memory faulted the process.
+
 ## 0.48.0 - Evidence-backed feature status, source migrations, parity walk
 
 - Report what is known about a surface, not what was typed about it.

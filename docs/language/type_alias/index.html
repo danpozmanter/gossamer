@@ -472,6 +472,10 @@
 
 
 
+
+
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -588,6 +592,62 @@
 
 
     Comptime
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../keyword_arguments/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Keyword arguments
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../opaque_nominal_alias/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Opaque nominal aliases
 
 
 
@@ -1944,6 +2004,17 @@
 
 </li>
 
+        <li class="md-nav__item">
+  <a href="#opaque-aliases" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Opaque aliases
+
+    </span>
+  </a>
+
+</li>
+
     </ul>
 
 </nav>
@@ -1993,10 +2064,16 @@ rejected at check time with <code>GT0024</code>:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">type</span> <span class="nc">A</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">B</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="k">type</span> <span class="nc">B</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">A</span><span class="w">      </span><span class="c1">// error[GT0024]: type alias `B` is cyclic - it expands to itself</span>
 </code></pre></div>
-<p>Because aliases are transparent there is no newtype distinction: two
-aliases of the same target compare and convert exactly as the target
-does. Reach for a single-field <code>struct</code> when you want a genuinely
-distinct type.</p>
+<h2 id="opaque-aliases">Opaque aliases<a class="headerlink" href="#opaque-aliases" title="Permanent link">&para;</a></h2>
+<p>Writing <code>new</code> before the target - <code>type UserId = new i64</code> - declares a
+distinct type over the same representation instead of another spelling
+of it. It inherits equality, ordering, hashing and formatting and
+nothing else, converts to and from its representation with <code>.into()</code>,
+and carries its own <code>impl</code>. See
+<a href="../opaque_nominal_alias/">opaque nominal aliases</a>.</p>
+<p>Use a transparent alias to shorten a spelling, an opaque one to make a
+distinction the checker enforces, and a single-field <code>struct</code> when the
+type needs named fields or its own layout.</p>
 
 
 

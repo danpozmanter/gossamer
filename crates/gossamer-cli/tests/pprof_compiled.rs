@@ -132,3 +132,75 @@ fn pprof_profiles_render_the_same_shape_on_every_tier() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// A heap profile of a native binary carries sampled allocation stacks, not
+/// just the format header.
+///
+/// The sampler reaches the allocating code by following the frame-pointer
+/// chain out of the global allocator. The runtime shims it climbs through
+/// are built with `force-frame-pointers`; without that the chain breaks at
+/// the first shim, every walk records nothing, and `heap_profile` renders a
+/// lone header - which is what a header-only assertion accepts.
+#[test]
+fn a_native_heap_profile_carries_allocation_stacks() {
+    let dir = fresh_dir("heap");
+    let src = dir.join("heap.gos");
+    fs::File::create(&src)
+        .expect("create heap probe")
+        .write_all(HEAP_PROBE.as_bytes())
+        .expect("write heap probe");
+
+    let out_dir = dir.join("release");
+    fs::create_dir_all(&out_dir).expect("create out dir");
+    let bin = build_native(&src, true, &out_dir);
+    let out = stdout_of(Command::new(&bin));
+
+    let frames: usize = out
+        .lines()
+        .find_map(|line| line.strip_prefix("frames="))
+        .and_then(|n| n.trim().parse().ok())
+        .unwrap_or_else(|| panic!("probe reported no frame count; got:\n{out}"));
+    assert!(
+        frames > 0,
+        "a heap profile of an allocating program has sampled stacks; got:\n{out}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Allocates well past the sampling interval on one goroutine while another
+/// holds the profile window open, then reports how many stack lines the
+/// rendered profile carries.
+const HEAP_PROBE: &str = r#"use std::pprof
+use std::time
+use std::sync::channel
+
+fn churn(n: i64) -> i64 {
+    let mut total = 0
+    for i in 0..n {
+        let mut v: Vec<i64> = Vec::new()
+        for k in 0..256 { v.push(k + i) }
+        total += v[0]
+    }
+    total
+}
+
+fn profiler(tx: Sender<String>) {
+    let p = pprof::heap_profile(time::Duration::from_millis(300))
+    tx.send(p)
+    tx.close()
+}
+
+fn main() {
+    let (tx, rx) = channel()
+    go profiler(tx)
+    let _ = churn(200000)
+    while let Some(p) = rx.recv() {
+        let mut frames = 0
+        for line in p.split("\n") {
+            if line.starts_with("  ") { frames += 1 }
+        }
+        println!("frames={}", frames)
+    }
+}
+"#;

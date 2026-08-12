@@ -33,7 +33,7 @@ fn push_one(v: &mut Vec<i64>) {
 
 fn swap_ends(v: &mut [i64]) {
     let n = v.len()
-    let _ = v.swap(0, n - 1)
+    v.swap(0, n - 1)
 }
 
 struct Holder {

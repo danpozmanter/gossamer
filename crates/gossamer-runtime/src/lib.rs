@@ -40,11 +40,13 @@ static GLOBAL_ALLOCATOR: SamplingAllocator = SamplingAllocator;
 
 /// mimalloc, with a byte counter in front of it for heap profiles.
 ///
-/// The counter is a relaxed atomic add on the allocation path and
-/// nothing else until sampling is armed, so a program that never asks
-/// for a heap profile pays one add per allocation. Recording a sample
-/// walks the stack into a fixed buffer: the recorder runs inside the
-/// allocator and so must not allocate.
+/// Until sampling is armed the hook is one relaxed load and a
+/// never-taken branch. Every method carries `#[inline]` so that this
+/// wrapper collapses into `__rust_alloc` alongside mimalloc's own
+/// inlined fast path, which is what keeps allocation-bound programs at
+/// the unwrapped allocator's speed. Recording a sample walks the stack
+/// into a fixed buffer: the recorder runs inside the allocator and so
+/// must not allocate.
 #[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
 struct SamplingAllocator;
 
@@ -52,6 +54,7 @@ struct SamplingAllocator;
 // SAFETY: every method forwards to mimalloc, which upholds the
 // `GlobalAlloc` contract; the sampling hook only reads the layout size.
 unsafe impl std::alloc::GlobalAlloc for SamplingAllocator {
+    #[inline]
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
         // SAFETY: the caller upholds `GlobalAlloc::alloc`'s contract.
         let ptr = unsafe { mimalloc::MiMalloc.alloc(layout) };
@@ -61,11 +64,13 @@ unsafe impl std::alloc::GlobalAlloc for SamplingAllocator {
         ptr
     }
 
+    #[inline]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
         // SAFETY: the caller upholds `GlobalAlloc::dealloc`'s contract.
         unsafe { mimalloc::MiMalloc.dealloc(ptr, layout) }
     }
 
+    #[inline]
     unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
         // SAFETY: the caller upholds the contract.
         let ptr = unsafe { mimalloc::MiMalloc.alloc_zeroed(layout) };
@@ -75,6 +80,7 @@ unsafe impl std::alloc::GlobalAlloc for SamplingAllocator {
         ptr
     }
 
+    #[inline]
     unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
         // SAFETY: the caller upholds the contract.
         let out = unsafe { mimalloc::MiMalloc.realloc(ptr, layout, new_size) };

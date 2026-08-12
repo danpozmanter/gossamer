@@ -275,6 +275,12 @@ pub(super) enum ConcatKind {
     /// `[i64; N]` flat-buffer literal; the embedded length is
     /// passed alongside the buffer pointer to the runtime helper.
     ArrI64(i64),
+    /// `[u8; N]` flat buffer. This backend lays a byte array out packed
+    /// rather than one element per slot, so its debug form reads with a
+    /// stride of one. The Cranelift backend keeps whole slots and formats
+    /// the same array through [`ConcatKind::ArrI64`]; each tier renders the
+    /// layout it emitted, and the printed text agrees.
+    ArrU8(i64),
     ArrF64(i64),
     ArrBool(i64),
     ArrChar(i64),

@@ -648,7 +648,7 @@ impl<'a> Builder<'a> {
                     substs,
                 })
             }
-            "gos_rt_vec_insert_safe" | "gos_rt_vec_swap_safe" => {
+            "gos_rt_vec_insert_safe" => {
                 let unit = self.tcx.unit();
                 let error = self.tcx.dyn_error_ty();
                 let substs = gossamer_types::Substs::from_types([unit, error]);
@@ -676,7 +676,7 @@ impl<'a> Builder<'a> {
                     substs,
                 })
             }
-            "gos_rt_vec_insert_at" => self.tcx.unit(),
+            "gos_rt_vec_insert_at" | "gos_rt_vec_swap_safe" => self.tcx.unit(),
             "gos_rt_vec_remove_at" => self.vec_receiver_elem_ty(receiver_ty),
             // `rev()` / `take(n)` / `step_by(s)` copy the receiver -
             // preserve its element type so byte-packed (`Vec<u8>`)

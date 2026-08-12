@@ -70,7 +70,7 @@ fn main() {
 
     // swap.
     let mut sw = #[1, 2, 3]
-    let _ = sw.swap(0, 2)
+    sw.swap(0, 2)
     print!("swapped ")
     for v in sw { print!("{} ", v) }
     println!("")

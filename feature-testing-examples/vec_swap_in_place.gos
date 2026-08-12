@@ -1,0 +1,60 @@
+// `swap` is an indexed write: it yields unit, so the bare call is a complete
+// statement in any discarding position, including a loop body's tail.
+
+fn reverse_in_place(xs: &mut Vec<i64>) {
+    let n = xs.len()
+    for i in 0..(n / 2) { xs.swap(i, n - 1 - i) }
+}
+
+fn bubble(xs: &mut Vec<String>) {
+    let n = xs.len()
+    for i in 0..n {
+        for j in 0..(n - 1 - i) {
+            if xs[j] > xs[j + 1] { xs.swap(j, j + 1) }
+        }
+    }
+}
+
+// Owned locals only, so this body is admissible to the JIT and the swap
+// runs natively as well as through the bytecode VM.
+fn reversed_head(n: i64) -> i64 {
+    let mut xs: Vec<i64> = Vec::with_capacity(n)
+    for i in 0..n { xs.push(i * 3) }
+    for i in 0..(n / 2) { xs.swap(i, n - 1 - i) }
+    xs[0] + xs[n - 1]
+}
+
+fn main() {
+    let mut hot = 0
+    for _ in 0..200 { hot += reversed_head(16) }
+    println!("hot={}", hot)
+
+    let mut ints: Vec<i64> = #[1, 2, 3, 4, 5]
+    reverse_in_place(&mut ints)
+    println!("ints={:?}", ints)
+
+    let mut floats: Vec<f64> = #[1.5, 2.5, 3.5]
+    floats.swap(0, 2)
+    println!("floats={:?}", floats)
+
+    let mut names: Vec<String> = #["pear", "apple", "fig"]
+    bubble(&mut names)
+    println!("names={:?}", names)
+
+    let mut fixed: [i64; 4] = [10, 20, 30, 40]
+    fixed.swap(1, 3)
+    println!("fixed={:?}", fixed)
+
+    let mut bytes: Vec<u8> = #[b'a', b'b', b'c']
+    bytes.swap(0, 2)
+    println!("bytes={:?}", bytes)
+
+    let mut raw: [u8; 4] = [b'w', b'x', b'y', b'z']
+    raw.swap(0, 3)
+    raw.swap(1, 2)
+    println!("raw={:?}", raw)
+
+    // A no-move swap of an index with itself is still an in-bounds write.
+    ints.swap(2, 2)
+    println!("same={:?}", ints)
+}

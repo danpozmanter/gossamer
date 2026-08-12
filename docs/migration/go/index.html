@@ -476,6 +476,10 @@
 
 
 
+
+
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -592,6 +596,62 @@
 
 
     Comptime
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../language/keyword_arguments/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Keyword arguments
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../language/opaque_nominal_alias/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Opaque nominal aliases
 
 
 
@@ -1449,10 +1509,10 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#gossamer-037-syntax-at-a-glance" class="md-nav__link">
+  <a href="#gossamer-047-syntax-at-a-glance" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Gossamer 0.37 Syntax At A Glance
+        Gossamer 0.47 Syntax At A Glance
 
     </span>
   </a>
@@ -1519,6 +1579,17 @@
     <span class="md-ellipsis">
 
         Collections And Pipelines
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#visibility" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Visibility
 
     </span>
   </a>
@@ -2086,10 +2157,10 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#gossamer-037-syntax-at-a-glance" class="md-nav__link">
+  <a href="#gossamer-047-syntax-at-a-glance" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Gossamer 0.37 Syntax At A Glance
+        Gossamer 0.47 Syntax At A Glance
 
     </span>
   </a>
@@ -2156,6 +2227,17 @@
     <span class="md-ellipsis">
 
         Collections And Pipelines
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#visibility" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Visibility
 
     </span>
   </a>
@@ -2314,7 +2396,7 @@ more explicit types and errors.</p>
 </table>
 <p>Entry files may use top-level statements. Items are hoisted, and bare
 statements become the body of an implicit <code>fn main()</code>.</p>
-<h2 id="gossamer-037-syntax-at-a-glance">Gossamer 0.37 Syntax At A Glance<a class="headerlink" href="#gossamer-037-syntax-at-a-glance" title="Permanent link">&para;</a></h2>
+<h2 id="gossamer-047-syntax-at-a-glance">Gossamer 0.47 Syntax At A Glance<a class="headerlink" href="#gossamer-047-syntax-at-a-glance" title="Permanent link">&para;</a></h2>
 <p>Go permits implicit statement termination but still uses commas in multiline
 composite literals. Gossamer permits semicolons only between same-line
 statements and uses a stricter layout rule:
@@ -2493,6 +2575,60 @@ data argument last:</p>
 </code></pre></div>
 <p>The same pipe-friendly shape exists for <code>std::option</code> and
 <code>std::result</code>.</p>
+<h2 id="visibility">Visibility<a class="headerlink" href="#visibility" title="Permanent link">&para;</a></h2>
+<p>Gossamer has three visibilities, and they are declared per item, per method,
+and per struct field.</p>
+<table>
+<thead>
+<tr>
+<th>Annotation</th>
+<th>Reachable from</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>none</td>
+<td>the declaring module and its descendants</td>
+</tr>
+<tr>
+<td><code>pub(package)</code></td>
+<td>every module of the declaring package</td>
+</tr>
+<tr>
+<td><code>pub</code></td>
+<td>anything that depends on the package</td>
+</tr>
+</tbody>
+</table>
+<p>A <strong>package</strong> is the unit of distribution: one <code>project.toml</code>, one project id.
+A <strong>module</strong> is a directory under <code>src/</code>. A module nested inside another is a
+<strong>module descendant</strong>, and visibility flows inward only: a descendant reaches
+its ancestors' private items, never the reverse.</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1">// src/money/mod.gos</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="k">pub</span><span class="w"> </span><span class="k">struct</span> <span class="nc">Amount</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">currency</span>: <span class="nb">String</span><span class="p">,</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">    </span><span class="n">cents</span>: <span class="kt">i64</span><span class="p">,</span><span class="w">                     </span><span class="c1">// private representation</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="p">}</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="k">impl</span><span class="w"> </span><span class="n">Amount</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="k">fn</span> <span class="nf">new</span><span class="p">(</span><span class="n">currency</span>: <span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="n">cents</span>: <span class="kt">i64</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nc">Amount</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="w">        </span><span class="n">Amount</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">currency</span>: <span class="nc">currency</span><span class="p">,</span><span class="w"> </span><span class="n">cents</span>: <span class="nc">cents</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="k">fn</span> <span class="nf">cents</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">cents</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">normalize</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">cents</span><span class="w"> </span><span class="p">}</span><span class="w">   </span><span class="c1">// private helper</span>
+<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="p">}</span>
+<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a>
+<a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a><span class="k">pub</span><span class="p">(</span><span class="n">package</span><span class="p">)</span><span class="w"> </span><span class="k">fn</span> <span class="nf">round_trip</span><span class="p">(</span><span class="n">a</span>: <span class="kp">&amp;</span><span class="nc">Amount</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span><span class="w"> </span><span class="n">a</span><span class="p">.</span><span class="n">normalize</span><span class="p">()</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p>A <code>pub</code> type may keep private methods and private fields, so a struct with any
+private field can only be built by the module that declares it. Importing does
+not widen anything: a <code>use</code> is a spelling convenience, and visibility is
+decided by where the name is used.</p>
+<p>Coming from Go, the biggest change is that visibility is
+declared, not inferred from capitalization. <code>Amount</code> and <code>amount</code> are equally
+public or private depending on the <code>pub</code> you write. Go's package-level
+visibility maps to <code>pub(package)</code>; Go has no equivalent of <code>pub</code>, because a
+Go package's exported surface is exported to everyone.</p>
 <h2 id="common-ports">Common Ports<a class="headerlink" href="#common-ports" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

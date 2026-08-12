@@ -273,26 +273,64 @@ fn interrupted_registers(_context: *mut libc::c_void) -> (usize, usize) {
     (0, 0)
 }
 
+/// `(lo, hi)` bounds of the stack the calling code is running on, cached
+/// per thread.
+///
+/// A goroutine runs on its own allocated stack, so its window comes from
+/// the coroutine guard rather than from the OS thread. That window changes
+/// as goroutines are scheduled onto a worker, so only the OS-thread bounds
+/// - fixed for the life of the thread - are worth caching.
+#[cfg(all(unix, not(miri), not(target_arch = "wasm32")))]
+fn current_stack_bounds() -> Option<(usize, usize)> {
+    thread_local! {
+        static THREAD_STACK: std::cell::Cell<Option<(usize, usize)>> =
+            const { std::cell::Cell::new(None) };
+    }
+    if let Some(window) = gossamer_coro::goroutine_stack_bounds() {
+        return Some(window);
+    }
+    // `Cell<Option<_>>` distinguishes "not yet asked" from "the platform
+    // cannot tell us", so a platform that cannot report bounds is asked
+    // once per thread rather than on every sample.
+    THREAD_STACK.with(|cached| {
+        if let Some(window) = cached.get() {
+            return (window.1 > window.0).then_some(window);
+        }
+        let window = crate::stack_guard::current_thread_stack_bounds();
+        cached.set(Some(window.unwrap_or((0, 0))));
+        window
+    })
+}
+
 /// Walks the frame-pointer chain, appending return addresses.
 ///
-/// Every step is validated: the chain must climb, stay aligned, and move
-/// by a plausible amount. A frame pointer in a function compiled without
-/// one is whatever that function left in the register, so the walk has
-/// to treat it as untrusted input.
+/// Every step is validated against the stack the walk is running on: a
+/// frame pointer in a function compiled without one is whatever that
+/// function left in the register, so every link is untrusted input and
+/// must be proven to address readable stack memory before it is read.
+/// Without bounds the walk cannot be made safe, so it does not run.
 #[cfg(all(unix, not(miri), not(target_arch = "wasm32")))]
 fn walk_frames(mut frame_pointer: usize, sample: &mut RawSample) {
     /// A frame larger than this is a sign the chain is not a chain.
     const MAX_FRAME_BYTES: usize = 1 << 20;
 
+    let Some((lo, hi)) = current_stack_bounds() else {
+        return;
+    };
+    // Both words of the link must lie inside the window.
+    let readable = |fp: usize| {
+        fp != 0
+            && fp.is_multiple_of(std::mem::align_of::<usize>())
+            && fp >= lo
+            && fp.saturating_add(2 * std::mem::size_of::<usize>()) <= hi
+    };
+
     while (sample.len as usize) < MAX_FRAMES {
-        if frame_pointer == 0 || !frame_pointer.is_multiple_of(std::mem::align_of::<usize>()) {
+        if !readable(frame_pointer) {
             return;
         }
-        // SAFETY: the address is aligned and non-null, and a frame
-        // pointer addresses two readable words by the ABI's contract.
-        // A corrupt chain that survives the checks above can still fault,
-        // which is why the walk stops at the first implausible step
-        // rather than trusting an arbitrary depth.
+        // SAFETY: `readable` proved the address is aligned and that both
+        // words it addresses lie inside the running stack's mapped bounds.
         let (saved_fp, return_address) = unsafe {
             let base = frame_pointer as *const usize;
             (base.read_volatile(), base.add(1).read_volatile())
@@ -369,6 +407,11 @@ pub fn drain_heap() -> Vec<RawSample> {
 /// Called from the global allocator, so it must not allocate: doing so
 /// would re-enter the allocator that called it. The frame walk writes
 /// into a fixed array for exactly that reason.
+///
+/// `#[inline]` with the recording body out of line so a disarmed process
+/// pays a relaxed load and a predicted branch inside `__rust_alloc`
+/// rather than a call per allocation.
+#[inline]
 pub fn record_allocation(bytes: usize) {
     if !HEAP_SAMPLING.load(Ordering::Relaxed) {
         return;
@@ -377,6 +420,14 @@ pub fn record_allocation(bytes: usize) {
     if total < HEAP_SAMPLE_BYTES {
         return;
     }
+    capture_heap_sample();
+}
+
+/// Out of line so the walk starts from a frame the ABI guarantees has a
+/// frame pointer. Read inside the inlined caller, `rbp` is whatever
+/// `__rust_alloc` left there, which is not a frame chain.
+#[inline(never)]
+fn capture_heap_sample() {
     HEAP_ACCUMULATOR.store(0, Ordering::Relaxed);
     let mut sample = RawSample::EMPTY;
     walk_frames(current_frame_pointer(), &mut sample);
@@ -391,11 +442,17 @@ pub fn record_allocation(bytes: usize) {
     HEAP_SAMPLES.write(slot, &sample);
 }
 
-/// This frame's frame pointer, as the starting point for a walk.
-// `inline(always)` because an out-of-line call would make this frame the
-// walk's starting point instead of the allocating caller's.
+/// The running frame pointer, as the starting point for a walk.
+///
+/// `inline(always)`: Rust code that keeps no frame pointer of its own also
+/// does not clobber `rbp`, so the register still holds the innermost frame
+/// that does keep one - a compiled Gossamer body, which carries
+/// `"frame-pointer"="all"`. Reading it from an out-of-line frame instead
+/// would read that frame's own `rbp`, which such a function never
+/// establishes, and the walk would start from a register holding
+/// unrelated data.
 #[cfg(all(unix, not(miri), not(target_arch = "wasm32"), target_arch = "x86_64"))]
-#[allow(clippy::inline_always, reason = "the caller's frame is the subject")]
+#[allow(clippy::inline_always, reason = "reads the caller's live register")]
 #[inline(always)]
 fn current_frame_pointer() -> usize {
     let fp: usize;
@@ -431,5 +488,38 @@ mod tests {
         assert_eq!(sample.len, 0);
         walk_frames(1, &mut sample);
         assert_eq!(sample.len, 0, "a misaligned frame pointer is not walked");
+    }
+
+    /// Armed sampling records a stack once the accumulator crosses the
+    /// interval. Guards the split between the inlined arm check and the
+    /// out-of-line recorder: the recorder owns the frame-pointer read, so
+    /// the walk starts from a frame that has one.
+    #[test]
+    fn armed_sampling_records_a_stack_with_frames() {
+        stop_heap();
+        let _ = drain_heap();
+        start_heap();
+        record_allocation(HEAP_SAMPLE_BYTES);
+        record_allocation(HEAP_SAMPLE_BYTES);
+        stop_heap();
+        let samples = drain_heap();
+        assert!(
+            !samples.is_empty(),
+            "an armed sampler records past the interval"
+        );
+        assert!(
+            samples.iter().all(|s| s.len > 0),
+            "every recorded sample carries at least one frame"
+        );
+    }
+
+    /// A disarmed sampler is the default and records nothing, so a program
+    /// that never asks for a heap profile keeps an empty ring.
+    #[test]
+    fn a_disarmed_sampler_records_nothing() {
+        stop_heap();
+        let _ = drain_heap();
+        record_allocation(HEAP_SAMPLE_BYTES * 4);
+        assert!(drain_heap().is_empty());
     }
 }

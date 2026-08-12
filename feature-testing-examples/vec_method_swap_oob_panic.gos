@@ -1,0 +1,11 @@
+// `swap` is an indexed write, so an out-of-range index is a bounds panic on
+// every tier rather than a silent no-op. This must terminate with a GX0005
+// bounds panic and never reach the line after it.
+
+fn main() {
+    let mut xs: Vec<i64> = Vec::from([1, 2, 3])
+    xs.swap(0, 2)
+    println!("in-range={:?}", xs)
+    xs.swap(0, 99)
+    println!("unreachable={:?}", xs)
+}

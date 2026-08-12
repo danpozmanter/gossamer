@@ -704,6 +704,10 @@ pub(crate) enum ConstKey {
     Char(char),
     String(String),
     Variant(String),
+    /// A struct's field-name list, interned as `Value::Array` of names. Its
+    /// own key space keeps a single-field list from sharing a slot with the
+    /// plain string const of that one field's name.
+    FieldNames(Vec<String>),
 }
 
 mod block;

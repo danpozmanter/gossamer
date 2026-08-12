@@ -417,9 +417,12 @@ are callable as methods/free functions and materialize results.
   support `sort`, `reverse`, `swap`, and `fill` without resizing. `%i`
   reports each type's real surface, while `%e` also removes methods that the
   binding's mutability cannot call. Method-call
-  `xs.insert/remove/swap` mutate in place and return `Result`, with an
-  `Err` for an out-of-bounds index. Qualified calls use the same contract:
-  `Vec::insert(&mut xs, i, v)` / `Vec::remove(&mut xs, i)`.
+  `xs.insert/remove` mutate in place and return `Result`, with an
+  `Err` for an out-of-bounds index. `xs.swap(i, j)` is an indexed write:
+  it returns unit and an index outside `[0, len)` panics, exactly as
+  `xs[i] = v` does. Qualified calls use the same contract:
+  `Vec::insert(&mut xs, i, v)` / `Vec::remove(&mut xs, i)` /
+  `Vec::swap(&mut xs, i, j)`.
 - **Tuple** `(A, B, ...)` groups a fixed number of values whose types may
   differ. Read and assign positionally (`t.0`, chained `t.0.1`, `t.0 = v`
   through a `mut` binding), destructure in `let` / `for` / `match` / params,

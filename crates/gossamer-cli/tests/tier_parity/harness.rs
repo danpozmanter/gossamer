@@ -529,6 +529,12 @@ const SPECS: &[Spec] = &[
         allow_nonzero: true,
         ..spec("feature-testing-examples/vec_method_remove_oob_panic.gos")
     },
+    // `swap` is an indexed write, not a resize: an out-of-range index is a
+    // bounds panic on every tier rather than the silent no-op it once was.
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/vec_method_swap_oob_panic.gos")
+    },
     // Integer divide-by-zero panics with GX0005 + exit 101 identically on
     // every tier (the SIGFPE-vs-clean-panic class had no 3-tier gate).
     Spec {
@@ -1059,6 +1065,17 @@ const SPECS: &[Spec] = &[
     // storage (IntArray / FloatVec); the whole Vec surface, plus mixed
     // vec-vs-fixed-array structural `==`, must agree on every tier.
     spec("feature-testing-examples/vec_push_typed_storage.gos"),
+    spec("feature-testing-examples/vec_swap_in_place.gos"),
+    // Whole-program shapes that no single-feature fixture covered: whole-Vec
+    // rebinding across passes, indexed struct-field compound assignment,
+    // pre-sized containers with a Vec-as-queue walk, line-oriented byte
+    // streaming, and index expressions that read through another index.
+    spec("feature-testing-examples/bench_shape_buffer_pingpong.gos"),
+    spec("feature-testing-examples/bench_shape_struct_array_fields.gos"),
+    spec("feature-testing-examples/bench_shape_graph_and_list.gos"),
+    spec("feature-testing-examples/bench_shape_byte_stream.gos"),
+    spec("feature-testing-examples/bench_shape_index_chains.gos"),
+    spec("feature-testing-examples/single_field_struct_field_read.gos"),
     spec("feature-testing-examples/range_non_i64.gos"),
     spec("feature-testing-examples/string_push_char.gos"),
     spec("feature-testing-examples/vec_deque.gos"),

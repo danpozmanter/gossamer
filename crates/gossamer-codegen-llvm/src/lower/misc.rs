@@ -607,6 +607,7 @@ impl<'a> Lowerer<'a> {
                         let n = i64::try_from(len.to_usize()).unwrap_or(0);
                         let elem = *elem;
                         match self.tcx.kind(elem) {
+                            Some(TyKind::Int(gossamer_types::IntTy::U8)) => ConcatKind::ArrU8(n),
                             Some(TyKind::Int(_)) => ConcatKind::ArrI64(n),
                             Some(TyKind::Float(_)) => ConcatKind::ArrF64(n),
                             Some(TyKind::Bool) => ConcatKind::ArrBool(n),

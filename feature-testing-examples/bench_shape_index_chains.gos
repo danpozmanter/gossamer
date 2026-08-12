@@ -1,0 +1,147 @@
+// Index expressions that read through another index, and the retained
+// working sets built from fixed arrays: union-find path halving
+// (`parent[x] = parent[parent[x]]`), a `Vec<u8>` sieve written by stride,
+// fixed byte arrays copied into a kept `Vec<Vec<u8>>`, `Vec<[i64; N]>` rows,
+// and a pair of fixed arrays returned together and read back through `&[f64]`.
+
+fn union_find(n: i64) -> (i64, i64) {
+    let mut parent: Vec<i64> = Vec::with_capacity(n)
+    let mut size: Vec<i64> = Vec::with_capacity(n)
+    for _ in 0..n { parent.push(0); size.push(1) }
+    for i in 0..n { parent[i] = i }
+    let mut components = n
+    for i in 0..(n * 4) {
+        let mut a = (i * 17 + 11) % n
+        while parent[a] != a {
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        }
+        let mut b = (i * 48271 + 23) % n
+        while parent[b] != b {
+            parent[b] = parent[parent[b]]
+            b = parent[b]
+        }
+        if a != b {
+            if size[a] < size[b] {
+                let tmp = a
+                a = b
+                b = tmp
+            }
+            parent[b] = a
+            size[a] += size[b]
+            components -= 1
+        }
+    }
+    let mut checksum = 0
+    for i in 0..n {
+        let mut x = i
+        while parent[x] != x {
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        }
+        checksum = (checksum + (x + 1) * (i + 1)) % 1000000007
+    }
+    (components, checksum)
+}
+
+fn sieve(n: i64) -> (i64, i64) {
+    let mut composite: Vec<u8> = Vec::with_capacity(n + 1)
+    for _ in 0..(n + 1) { composite.push(0u8) }
+    let mut p = 2
+    while p <= n / p {
+        if composite[p] == 0 {
+            let mut m = p * p
+            while m <= n {
+                composite[m] = 1
+                m += p
+            }
+        }
+        p += 1
+    }
+    let mut count = 0
+    let mut sum = 0
+    for i in 2..(n + 1) {
+        if composite[i] == 0 {
+            count += 1
+            sum = (sum + i) % 1000000007
+        }
+    }
+    (count, sum)
+}
+
+fn chunks(count: i64) -> i64 {
+    let mut kept: Vec<Vec<u8>> = Vec::with_capacity(count)
+    let mut checksum = 0
+    for i in 0..count {
+        let mut b = [0u8; 16]
+        b[0] = (i % 256) as u8
+        b[15] = ((i * 31) % 256) as u8
+        checksum += b[0] as i64
+        checksum += b[15] as i64
+        if i == 3 {
+            // A `[u8; N]` is byte-packed, so its debug form reads with a
+            // stride of one where the other fixed arrays read whole slots.
+            let mut head = [0u8; 4]
+            head[0] = b[0]
+            head[1] = b[15]
+            head[2] = 200u8
+            head[3] = 255u8
+            println!("head={:?}", head)
+        }
+        kept.push(b.to_vec())
+    }
+    checksum + kept.len() + kept[3][15] as i64
+}
+
+fn rows(n: i64) -> i64 {
+    let mut kept: Vec<[i64; 6]> = Vec::with_capacity(n)
+    let mut checksum = 0
+    for i in 0..n {
+        let mut row = [0; 6]
+        for j in 0..6 {
+            row[j] = (i * 257 + j) & 65535
+            checksum += row[j]
+        }
+        kept.push(row)
+    }
+    checksum + kept[2][4]
+}
+
+fn gen_pair() -> ([f64; 12], [f64; 3]) {
+    let mut xs: [f64; 12] = #[0.0; 12]
+    let mut ys: [f64; 3] = #[0.0; 3]
+    let mut state = 12345
+    for i in 0..3 {
+        ys[i] = if i < 2 { 1.0 } else { 0.0 }
+        for p in 0..4 {
+            state = (state * 1664525 + 1013904223) % 4294967296
+            xs[i * 4 + p] = ((state >> 8) % 256) as f64 / 255.0
+        }
+    }
+    (xs, ys)
+}
+
+fn score(xs: &[f64], ys: &[f64; 3]) -> f64 {
+    let mut total = 0.0
+    for i in 0..3 {
+        let base = i * 4
+        let mut s = 0.0
+        for p in 0..4 { s += xs[base + p] }
+        total += s * ys[i]
+    }
+    total
+}
+
+fn main() {
+    let (components, checksum) = union_find(64)
+    println!("uf components={} checksum={}", components, checksum)
+
+    let (count, sum) = sieve(200)
+    println!("sieve count={} sum={}", count, sum)
+
+    println!("chunks={}", chunks(8))
+    println!("rows={}", rows(6))
+
+    let (xs, ys) = gen_pair()
+    println!("score={:.6} x0={:.6} x11={:.6}", score(&xs, &ys), xs[0], xs[11])
+}

@@ -146,6 +146,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "examples/map_hashable_keys.gos",
             "feature-testing-examples/aggregate_binding.gos",
             "feature-testing-examples/auto_regions_map_iter.gos",
+            "feature-testing-examples/bench_shape_graph_and_list.gos",
             "feature-testing-examples/btreemap_i64_keys.gos",
             "feature-testing-examples/container_display.gos",
             "feature-testing-examples/early_break_materializers.gos",

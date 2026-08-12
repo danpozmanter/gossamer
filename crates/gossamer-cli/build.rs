@@ -297,6 +297,15 @@ fn build_runtime_into(
     // spelling to request them, so the inner build takes only the
     // user-facing `GOSSAMERFLAGS` override.
     let mut flags: Vec<String> = Vec::new();
+    // The heap sampler runs inside the global allocator and reaches the
+    // Gossamer function that allocated by following the frame-pointer chain
+    // up through these shims. Compiled bodies already carry
+    // `"frame-pointer"="all"`; without the same guarantee here the chain
+    // breaks at the first runtime frame and every heap profile comes back
+    // empty. Scoped to this archive, so the interpreter and the JIT - where
+    // forcing frame pointers costs double digits on tight loops - keep the
+    // register.
+    flags.push("-C force-frame-pointers=yes".to_string());
     if let Ok(extra) = env::var("GOSSAMERFLAGS") {
         if !extra.trim().is_empty() {
             flags.push(extra);

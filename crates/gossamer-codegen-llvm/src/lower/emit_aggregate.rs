@@ -562,6 +562,14 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
             }
+            ConcatKind::ArrU8(n) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_arr_format_u8");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_arr_format_u8(ptr {value}, i64 {n})"
+                )
+                .unwrap();
+            }
             ConcatKind::ArrF64(n) => {
                 declare_rt(&mut self.runtime_refs, "gos_rt_arr_format_f64");
                 writeln!(

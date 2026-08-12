@@ -638,8 +638,8 @@ const ARRAY_SLICE_METHODS: &[BuiltinMethod] = &[
     },
     BuiltinMethod {
         name: "swap",
-        signature: "fn swap(&mut self, a: i64, b: i64) -> Result<(), errors::Error>",
-        doc: "Swaps two existing elements after checking both indices.",
+        signature: "fn swap(&mut self, a: i64, b: i64)",
+        doc: "Swaps two existing elements; an index outside [0, len) panics.",
         snippet: "swap($1, $2)$0",
     },
     BuiltinMethod {

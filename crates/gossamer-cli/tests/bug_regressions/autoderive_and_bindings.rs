@@ -982,16 +982,15 @@ fn main() {
     println!("{} {} {} {}", values[0], values[1], values[2], values[3])
     println!("{}", values.insert(99, 8).is_err())
     println!("{} {} {} {}", values[0], values[1], values[2], values[3])
-    println!("{}", values.swap(0, 3).is_ok())
+    values.swap(0, 3)
     println!("{} {} {} {}", values[0], values[1], values[2], values[3])
-    println!("{}", values.swap(0, 99).is_err())
     println!("{}", values.remove(1).unwrap_or(-1))
     println!("{}", values.remove(99).is_err())
 }
 "#;
     let dir = fresh_dir("vec_insert_result");
     let path = write_source(&dir, "vec_insert_result", src);
-    let expected = "true\n1 9 2 3\ntrue\n1 9 2 3\ntrue\n3 9 2 1\ntrue\n9\ntrue\n";
+    let expected = "true\n1 9 2 3\ntrue\n1 9 2 3\n3 9 2 1\n9\ntrue\n";
 
     let vm = run_vm(&path);
     assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);

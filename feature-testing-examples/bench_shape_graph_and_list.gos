@@ -1,0 +1,83 @@
+// Working-set shapes that graph and list workloads are built from: a
+// pre-sized adjacency `Vec<Vec<i64>>` walked breadth-first through a `Vec`
+// used as a queue with a head index, a pre-sized `Map`, and a recursive enum
+// grown by rebinding in a loop then walked with a borrowed cursor.
+
+use std::collections::Map
+
+enum ListNode {
+    Link(ListNode, i64)
+    End
+}
+
+fn build_graph(n: i64, edges_per_node: i64) -> Vec<Vec<i64>> {
+    let mut graph: Vec<Vec<i64>> = Vec::with_capacity(n)
+    for i in 0..n {
+        let mut neighbors: Vec<i64> = Vec::with_capacity(edges_per_node)
+        for e in 0..edges_per_node { neighbors.push((i * 7 + e * 3 + 1) % n) }
+        graph.push(neighbors)
+    }
+    graph
+}
+
+fn bfs(graph: &[Vec<i64>], start: i64, n: i64) -> i64 {
+    let mut visited: Vec<bool> = Vec::with_capacity(n)
+    for _ in 0..n { visited.push(false) }
+    let mut queue: Vec<i64> = Vec::with_capacity(n)
+    let mut head = 0
+    visited[start] = true
+    queue.push(start)
+    let mut count = 0
+    while head < queue.len() {
+        let node = queue[head]
+        head += 1
+        count += 1
+        for nb in graph[node] {
+            if !visited[nb] {
+                visited[nb] = true
+                queue.push(nb)
+            }
+        }
+    }
+    count
+}
+
+fn list_sum(n: i64) -> i64 {
+    let mut head = ListNode::End
+    for i in 0..n { head = ListNode::Link(head, i) }
+    let mut total = 0
+    let mut cursor = &head
+    loop {
+        match cursor {
+            ListNode::Link(next, value) => {
+                total += value
+                cursor = next
+            }
+            ListNode::End => break
+        }
+    }
+    total
+}
+
+fn main() {
+    let n = 12
+    let graph = build_graph(n, 3)
+    println!("row0={:?} row5={:?}", graph[0], graph[5])
+    println!("bfs0={} bfs7={}", bfs(&graph, 0, n), bfs(&graph, 7, n))
+
+    // A pre-sized map fills without a growth step; probes split hit and miss.
+    let mut m: Map<String, i64> = Map::with_capacity(n)
+    for k in 0..n { m.insert(format!("key-{}", k), (k * 2654435761) & 0xFFFF) }
+    let mut hits = 0
+    let mut acc = 0
+    for k in 0..(2 * n) {
+        let v = m.get_or(format!("key-{}", k), -1)
+        if v >= 0 {
+            hits += 1
+            acc += v
+        }
+    }
+    println!("len={} hits={} acc={}", m.len(), hits, acc)
+
+    println!("list={} empty={}", list_sum(10), list_sum(0))
+}

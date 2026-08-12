@@ -1082,14 +1082,13 @@ impl<'tcx> FnBuilder<'tcx> {
             ConstKey::String(struct_name.clone()),
             Value::String(struct_name.into()),
         );
-        let fields_key = field_names.join("\0");
         let fields_value = Value::Array(Arc::new(
             field_names
                 .iter()
                 .map(|n| Value::String(SmolStr::from(n.clone())))
                 .collect::<Vec<_>>(),
         ));
-        let fields_idx = self.const_idx(ConstKey::String(fields_key), fields_value);
+        let fields_idx = self.const_idx(ConstKey::FieldNames(field_names.clone()), fields_value);
         let dst = self.alloc_reg();
         let wide_idx = u16::try_from(self.wide_ops.len()).expect("wide_ops index overflow");
         self.wide_ops
@@ -1171,14 +1170,13 @@ impl<'tcx> FnBuilder<'tcx> {
             ConstKey::String(struct_name.clone()),
             Value::String(struct_name.into()),
         );
-        let fields_key = field_names.join("\0");
         let fields_value = Value::Array(Arc::new(
             field_names
                 .iter()
                 .map(|name| Value::String(SmolStr::from(name.clone())))
                 .collect(),
         ));
-        let fields_idx = self.const_idx(ConstKey::String(fields_key), fields_value);
+        let fields_idx = self.const_idx(ConstKey::FieldNames(field_names.clone()), fields_value);
         let dst_v = self.alloc_reg();
         let wide_idx = u16::try_from(self.wide_ops.len()).expect("wide_ops index overflow");
         self.wide_ops

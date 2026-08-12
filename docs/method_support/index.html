@@ -476,6 +476,10 @@
 
 
 
+
+
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -592,6 +596,62 @@
 
 
     Comptime
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../language/keyword_arguments/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Keyword arguments
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../language/opaque_nominal_alias/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Opaque nominal aliases
 
 
 
@@ -2771,8 +2831,8 @@ The literal spelling of each container is in
 </tr>
 <tr>
 <td><code>v.swap(i, j)</code></td>
-<td><code>Result&lt;(), errors::Error&gt;</code></td>
-<td>Exchanges two existing elements or returns a bounds error.</td>
+<td><code>()</code></td>
+<td>Exchanges two existing elements; an index outside <code>[0, len)</code> panics.</td>
 </tr>
 <tr>
 <td><code>v.fill(value)</code></td>

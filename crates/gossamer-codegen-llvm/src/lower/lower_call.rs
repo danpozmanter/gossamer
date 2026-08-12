@@ -601,11 +601,10 @@ impl<'a> Lowerer<'a> {
         }
         if name == "gos_rt_vec_swap_safe"
             && args.len() == 3
-            && !crate::emit::target_is_windows()
             && (self.vec_operand_has_word_elem(&args[0])
                 || self.vec_operand_has_byte_elem(&args[0]))
         {
-            self.lower_vec_swap_safe_inline(args, destination, target)?;
+            self.lower_vec_swap_safe_inline(args, target)?;
             return Ok(());
         }
         if name == "gos_rt_vec_swap_i64"

@@ -22,7 +22,7 @@ fn main() {
 
     // Reads, writes, and the whole method surface on the promoted vec.
     v[50] = -1
-    let _ = v.swap(0, 99)
+    v.swap(0, 99)
     println!("after_set v50={} v0={} v99={}", v[50], v[0], v[99])
     println!("contains={} index_of={:?}", v.contains(&-1), v.index_of(&-1))
     println!("first={:?} last={:?}", v.first(), v.last())

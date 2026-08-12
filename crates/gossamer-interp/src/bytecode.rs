@@ -879,22 +879,22 @@ pub enum Op {
         /// Register holding the value to insert.
         value: Reg,
     },
-    /// `dst = receiver.swap(a, b)` with checked indexes.
+    /// `dst = receiver.swap(a, b)`. An index outside `[0, len)` is a bounds
+    /// panic, matching an indexed write.
     VecSwap {
-        /// Register receiving `Ok(())` or `Err(errors::Error)`.
+        /// Register receiving the unit result.
         dst: Reg,
-        /// Register holding the Vec, mutated only on success.
+        /// Register holding the Vec, mutated in place.
         receiver: Reg,
         /// First index.
         a: Reg,
         /// Second index.
         b: Reg,
     },
-    /// `receiver.swap(a, b)` when the `Result` is discarded. Invalid indexes
-    /// leave the receiver unchanged, exactly as constructing and discarding
-    /// `Err` would, without allocating either `Ok` or `Err` on the hot path.
+    /// `receiver.swap(a, b)` in statement position, where the unit result
+    /// needs no register. Bounds are checked as in [`Op::VecSwap`].
     VecSwapDiscard {
-        /// Register holding the Vec, mutated only on success.
+        /// Register holding the Vec, mutated in place.
         receiver: Reg,
         /// First index.
         a: Reg,
@@ -1036,21 +1036,21 @@ pub enum Op {
     ExpF64 { dst_f: Reg, src_f: Reg },
     /// `floats[dst_f] = floats[src_f].ln()`.
     LnF64 { dst_f: Reg, src_f: Reg },
-    /// Fused multiply-add: `floats[dst_f] = floats[a_f] *
-    /// floats[b_f] + floats[c_f]`. Emitted when the compiler
-    /// sees `a * b + c` (or `c + a * b`), which is extremely
-    /// common in vector math (`x + dt * vx`). Saves one op
-    /// per use plus enables a single `fma` or `vfmadd*`
-    /// instruction when a JIT later consumes this bytecode.
+    /// Multiply-add: `floats[dst_f] = floats[a_f] *
+    /// floats[b_f] + floats[c_f]`, rounded twice. Emitted when the
+    /// compiler sees `a * b + c` (or `c + a * b`), which is extremely
+    /// common in vector math (`x + dt * vx`). One dispatch instead of
+    /// two; the arithmetic stays exactly what the source wrote, so the
+    /// value matches the compiled tiers bit for bit.
     MulAddF64 {
         dst_f: Reg,
         a_f: Reg,
         b_f: Reg,
         c_f: Reg,
     },
-    /// Fused multiply-subtract: `floats[dst_f] = floats[c_f] -
-    /// floats[a_f] * floats[b_f]`. Matches the nbody
-    /// inner-loop pattern `vx - dx * mag`.
+    /// Multiply-subtract: `floats[dst_f] = floats[c_f] -
+    /// floats[a_f] * floats[b_f]`, rounded twice like
+    /// [`Op::MulAddF64`]. Matches the `vx - dx * mag` shape.
     MulSubF64 {
         dst_f: Reg,
         a_f: Reg,

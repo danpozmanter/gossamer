@@ -1,0 +1,66 @@
+// Line-oriented byte streaming: a reused `U8Vec` line buffer filled from a
+// source string by wrapping byte offsets, flushed straight to stdout by
+// range, and read back as text. A cumulative `&[(i64, f64)]` table selects
+// each byte in the second pass, the shape a weighted sequence generator uses.
+
+const LINE_LEN: i64 = 12
+
+fn repeat_line(buf: U8Vec, s: &String, target: i64) {
+    let s_len = s.len() as i64
+    let mut pos = 0
+    let mut emitted = 0
+    while emitted < target {
+        let line = min(LINE_LEN, target - emitted)
+        for i in 0..line { buf.set_byte(i, s.byte_at((pos + i) % s_len)) }
+        buf.set_byte(line, 10)
+        buf.write_byte_range_to_stdout(0, line + 1)
+        pos = (pos + line) % s_len
+        emitted += line
+    }
+}
+
+fn make_cumulative(table: &[(i64, f64)]) -> Vec<(i64, f64)> {
+    let mut out: Vec<(i64, f64)> = Vec::new()
+    let mut cp = 0.0
+    for i in 0..table.len() {
+        cp += table[i].1
+        out.push((table[i].0, cp))
+    }
+    out
+}
+
+fn weighted_line(buf: U8Vec, table: &[(i64, f64)], target: i64, state_in: i64) -> i64 {
+    let mut state = state_in
+    let mut emitted = 0
+    while emitted < target {
+        let line = min(LINE_LEN, target - emitted)
+        for i in 0..line {
+            state = (state * 3877 + 29573) % 139968
+            let r = (state as f64) / 139968.0
+            let mut j = 0
+            while table[j].1 < r { j += 1 }
+            buf.set_byte(i, table[j].0)
+        }
+        buf.set_byte(line, 10)
+        buf.write_byte_range_to_stdout(0, line + 1)
+        emitted += line
+    }
+    state
+}
+
+fn main() {
+    let src = "ACGTACGTTGCA" + "GGCCTTAA"
+    let buf = U8Vec::new(LINE_LEN + 1)
+
+    print!(">ONE repeat\n")
+    repeat_line(buf, &src, 30)
+
+    let table = make_cumulative(&[(97, 0.3), (99, 0.2), (103, 0.2), (116, 0.3)])
+    print!(">TWO weighted\n")
+    let state = weighted_line(buf, &table, 24, 42)
+    println!("state={}", state)
+
+    // The same buffer read back as text rather than streamed.
+    for i in 0..5 { buf.set_byte(i, 65 + i) }
+    println!("text={}", buf.to_string(5))
+}

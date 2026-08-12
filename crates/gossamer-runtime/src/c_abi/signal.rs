@@ -735,20 +735,23 @@ pub unsafe extern "C" fn gos_rt_vec_swap_i64(v: *mut GosVec, i: i64, j: i64) {
     });
 }
 
-/// Bounds-checked in-place swap returning `Result<(), errors::Error>`.
+/// Swaps two `Vec` elements. `swap` is an indexed write, so an index
+/// outside `[0, len)` is a bounds panic on every tier, matching `xs[i] = v`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_swap_safe(v: *mut GosVec, i: i64, j: i64) -> i128 {
-    ffi_entry!(0i128, {
-        let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
-        if v.is_null() || i < 0 || i >= len || j < 0 || j >= len {
-            let msg = format!("swap: indices {i} and {j} out of bounds for length {len}");
-            let cs = alloc_cstring(msg.as_bytes());
-            let err = unsafe { gos_rt_error_new(cs) };
-            return unsafe { gos_rt_result_new(1, err as i64) };
+pub unsafe extern "C" fn gos_rt_vec_swap_safe(v: *mut GosVec, i: i64, j: i64) {
+    ffi_entry!((), {
+        if v.is_null() {
+            unsafe { gos_rt_panic_oob(c"vec swap index".as_ptr(), i, 0) };
+        }
+        let len = unsafe { (*v).len };
+        if i < 0 || i >= len {
+            unsafe { gos_rt_panic_oob(c"vec swap index".as_ptr(), i, len) };
+        }
+        if j < 0 || j >= len {
+            unsafe { gos_rt_panic_oob(c"vec swap index".as_ptr(), j, len) };
         }
         unsafe { gos_rt_vec_swap_i64(v, i, j) };
-        unsafe { gos_rt_result_new(0, 0) }
-    })
+    });
 }
 
 #[unsafe(no_mangle)]

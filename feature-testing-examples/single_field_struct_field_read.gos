@@ -1,0 +1,33 @@
+// A one-field struct's field name and its struct's field-name list are
+// distinct constants: reading the field straight into a format argument must
+// find the name, not the list.
+
+struct Weight { v: f64 }
+struct Tag { name: String }
+struct Count { n: i64 }
+
+fn total(ws: &[Weight; 3]) -> f64 {
+    let mut sum = 0.0
+    for i in 0..3 { sum += ws[i].v }
+    sum
+}
+
+fn main() {
+    let ws: [Weight; 3] = [Weight { v: 1.5 }, Weight { v: 2.25 }, Weight { v: 0.25 }]
+    println!("{:.2} {:.2} {:.2}", ws[0].v, ws[1].v, ws[2].v)
+    println!("total={:.2}", total(&ws))
+
+    let single: [Weight; 1] = [Weight { v: 7.5 }]
+    println!("single={:.2} debug={:?}", single[0].v, single[0].v)
+
+    let tags: [Tag; 2] = [Tag { name: "alpha" }, Tag { name: "beta" }]
+    println!("{} {}", tags[0].name, tags[1].name)
+
+    let counts: Vec<Count> = #[Count { n: 3 }, Count { n: 4 }]
+    println!("{} {}", counts[0].n, counts[1].n)
+
+    let mut acc: [Weight; 2] = [Weight { v: 0.0 }, Weight { v: 0.0 }]
+    acc[0].v += 1.25
+    acc[1].v = acc[0].v * 2.0
+    println!("acc={:.2},{:.2}", acc[0].v, acc[1].v)
+}
