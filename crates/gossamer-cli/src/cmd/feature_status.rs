@@ -906,21 +906,30 @@ mod tests {
         assert_eq!(bar.cranelift.as_deref(), Some("fail"));
     }
 
+    /// The JSON row carries the same evidence the table does: the status
+    /// the ledger derives, and tiers only a fixture can put there.
     #[test]
     fn json_output_includes_item_evidence_fields() {
+        let derived = feature_status::derived_status("lang::if", Status::Shipped);
+        let evidence = feature_status::item_evidence("lang::if", derived);
         let mut output = String::new();
-        let evidence = feature_status::item_evidence("lang::if", Status::Shipped);
         output.push_str(&json_string(evidence.status.tag()));
         json_string_array(
             &mut output,
             evidence.supported_tiers.iter().map(|tier| tier.tag()),
         );
-        assert_eq!(output, "\"shipped\"[\"vm\"]");
+        assert_eq!(output, "\"unproven\"[]");
         assert_eq!(
             evidence.doc_path.as_deref(),
             Some("docs_src/language/if.md")
         );
         assert!(!evidence.known_limits.is_empty());
+
+        let covered = feature_status::item_evidence("std::fs::read_to_string", Status::Shipped);
+        let mut tiers = String::new();
+        json_string_array(&mut tiers, covered.supported_tiers.iter().map(|t| t.tag()));
+        assert_eq!(tiers, "[\"vm\",\"cranelift\",\"llvm\"]");
+        assert!(!covered.positive_tests.is_empty());
     }
 
     #[test]
