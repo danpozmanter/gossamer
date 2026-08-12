@@ -27,10 +27,14 @@ fn run(source: &str) -> std::process::Output {
     output
 }
 
+/// `insert` reports an out-of-range index through its `Result` and leaves
+/// the receiver alone; `swap` is an indexed write, so it yields unit and
+/// mutates in place. An out-of-range `swap` is a bounds panic, covered by
+/// `feature-testing-examples/vec_method_swap_oob_panic.gos`.
 #[test]
 fn vec_insert_returns_result_without_replacing_the_receiver() {
     let output = run(
-        "fn main() {\n    let mut values: Vec<i64> = Vec::from([1, 2, 3])\n    println(values.insert(1, 9))\n    println(values)\n    println(values.insert(99, 8).is_err())\n    println(values)\n    println(values.swap(0, 3))\n    println(values)\n    println(values.swap(0, 99).is_err())\n    println(values)\n}\n",
+        "fn main() {\n    let mut values: Vec<i64> = Vec::from([1, 2, 3])\n    println(values.insert(1, 9))\n    println(values)\n    println(values.insert(99, 8).is_err())\n    println(values)\n    values.swap(0, 3)\n    println(values)\n}\n",
     );
     assert!(
         output.status.success(),
@@ -39,7 +43,7 @@ fn vec_insert_returns_result_without_replacing_the_receiver() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "Ok(())\n[1, 9, 2, 3]\ntrue\n[1, 9, 2, 3]\nOk(())\n[3, 9, 2, 1]\ntrue\n[3, 9, 2, 1]\n"
+        "Ok(())\n[1, 9, 2, 3]\ntrue\n[1, 9, 2, 3]\n[3, 9, 2, 1]\n"
     );
 }
 

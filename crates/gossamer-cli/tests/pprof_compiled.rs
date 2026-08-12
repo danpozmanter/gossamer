@@ -140,7 +140,9 @@ fn pprof_profiles_render_the_same_shape_on_every_tier() {
 /// chain out of the global allocator. The runtime shims it climbs through
 /// are built with `force-frame-pointers`; without that the chain breaks at
 /// the first shim, every walk records nothing, and `heap_profile` renders a
-/// lone header - which is what a header-only assertion accepts.
+/// lone header - which is what a header-only assertion accepts. The
+/// recorder owns the innermost link, so a stack of one frame is what a
+/// severed chain also produces: the depth is what proves the walk climbed.
 #[test]
 fn a_native_heap_profile_carries_allocation_stacks() {
     let dir = fresh_dir("heap");
@@ -163,6 +165,16 @@ fn a_native_heap_profile_carries_allocation_stacks() {
     assert!(
         frames > 0,
         "a heap profile of an allocating program has sampled stacks; got:\n{out}"
+    );
+
+    let deepest: usize = out
+        .lines()
+        .find_map(|line| line.strip_prefix("deepest="))
+        .and_then(|n| n.trim().parse().ok())
+        .unwrap_or_else(|| panic!("probe reported no stack depth; got:\n{out}"));
+    assert!(
+        deepest > 1,
+        "the walk climbs past the frame record the recorder owns; got:\n{out}"
     );
 
     let _ = fs::remove_dir_all(&dir);
@@ -197,10 +209,19 @@ fn main() {
     let _ = churn(200000)
     while let Some(p) = rx.recv() {
         let mut frames = 0
+        let mut depth = 0
+        let mut deepest = 0
         for line in p.split("\n") {
-            if line.starts_with("  ") { frames += 1 }
+            if line.starts_with("  ") {
+                frames += 1
+                depth += 1
+                if depth > deepest { deepest = depth }
+            } else {
+                depth = 0
+            }
         }
         println!("frames={}", frames)
+        println!("deepest={}", deepest)
     }
 }
 "#;

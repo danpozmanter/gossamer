@@ -1,11 +1,22 @@
 // `swap` is an indexed write, so an out-of-range index is a bounds panic on
-// every tier rather than a silent no-op. This must terminate with a GX0005
-// bounds panic and never reach the line after it.
+// every tier rather than a silent no-op. The swap sits in a body hot enough
+// to be promoted, so the compiled tiers prove the same bound the bytecode VM
+// does. This must terminate with a GX0005 bounds panic and never reach the
+// line after it.
+
+// Owned locals only, so this body is admissible to the JIT and the swap runs
+// natively as well as through the bytecode VM.
+fn head_after_swap(n: i64, i: i64, j: i64) -> i64 {
+    let mut xs: Vec<i64> = Vec::with_capacity(n)
+    for k in 0..n { xs.push(k + 1) }
+    xs.swap(i, j)
+    xs[0]
+}
 
 fn main() {
-    let mut xs: Vec<i64> = Vec::from([1, 2, 3])
-    xs.swap(0, 2)
-    println!("in-range={:?}", xs)
-    xs.swap(0, 99)
-    println!("unreachable={:?}", xs)
+    let mut hot = 0
+    for _ in 0..200 { hot += head_after_swap(3, 0, 2) }
+    println!("in-range={}", hot)
+    let _ = head_after_swap(3, 0, 99)
+    println!("unreachable")
 }

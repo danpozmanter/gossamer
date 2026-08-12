@@ -57,6 +57,31 @@ fn incompatible_type_error(value: &Value, peer: Option<&Value>, expected: &str) 
     RuntimeError::Type(message)
 }
 
+/// The bounds panic every `swap` opcode raises. One wording across the
+/// general and the flat-register paths, so the same source line reports the
+/// same fault whichever specialization the compiler picked.
+#[cold]
+fn swap_out_of_bounds(a: i64, b: i64, len: usize) -> RuntimeError {
+    RuntimeError::Panic(format!(
+        "swap: indexes {a} and {b} out of bounds for length {len}"
+    ))
+}
+
+/// Element count of a receiver holding the flat-swap invariant, for the
+/// cold path that reports a negative index before the receiver is matched.
+#[cold]
+fn flat_receiver_len(value: &Value) -> usize {
+    match value {
+        Value::Array(values) => values.len(),
+        Value::IntArray(values) => values.len(),
+        Value::ByteArray(values) => values.len(),
+        Value::InlineByteArray(values) => values.len(),
+        Value::ByteVec(values) => values.len(),
+        Value::FloatVec(values) => values.len(),
+        _ => 0,
+    }
+}
+
 #[inline(always)]
 fn checked_integer_arithmetic(
     lhs: i64,
@@ -4246,7 +4271,8 @@ impl Vm {
                     let i_idx = *ints.get_unchecked(i_i as usize);
                     let j_idx = *ints.get_unchecked(j_i as usize);
                     if i_idx < 0 || j_idx < 0 {
-                        return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                        let len = flat_receiver_len(registers.get_unchecked(base as usize));
+                        return Err(swap_out_of_bounds(i_idx, j_idx, len));
                     }
                     let i = i_idx as usize;
                     let j = j_idx as usize;
@@ -4255,35 +4281,35 @@ impl Vm {
                         Value::IntArray(data) => {
                             let values = Arc::make_mut(data);
                             if i >= values.len() || j >= values.len() {
-                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                                return Err(swap_out_of_bounds(i_idx, j_idx, values.len()));
                             }
                             values.swap(i, j);
                         }
                         Value::ByteArray(data) => {
                             let values = Arc::make_mut(data);
                             if i >= values.len() || j >= values.len() {
-                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                                return Err(swap_out_of_bounds(i_idx, j_idx, values.len()));
                             }
                             values.swap(i, j);
                         }
                         Value::InlineByteArray(data) => {
                             let values = Arc::make_mut(data);
                             if i >= values.len() || j >= values.len() {
-                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                                return Err(swap_out_of_bounds(i_idx, j_idx, values.len()));
                             }
                             values.swap(i, j);
                         }
                         Value::ByteVec(data) => {
                             let values = Arc::make_mut(data);
                             if i >= values.len() || j >= values.len() {
-                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                                return Err(swap_out_of_bounds(i_idx, j_idx, values.len()));
                             }
                             values.swap(i, j);
                         }
                         Value::Array(data) => {
                             let values = Arc::make_mut(data);
                             if i >= values.len() || j >= values.len() {
-                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                                return Err(swap_out_of_bounds(i_idx, j_idx, values.len()));
                             }
                             values.swap(i, j);
                         }
@@ -4298,7 +4324,8 @@ impl Vm {
                     let i_idx = *ints.get_unchecked(i_i as usize);
                     let j_idx = *ints.get_unchecked(j_i as usize);
                     if i_idx < 0 || j_idx < 0 {
-                        return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                        let len = flat_receiver_len(registers.get_unchecked(base as usize));
+                        return Err(swap_out_of_bounds(i_idx, j_idx, len));
                     }
                     let i = i_idx as usize;
                     let j = j_idx as usize;
@@ -4310,7 +4337,7 @@ impl Vm {
                     };
                     let v = Arc::make_mut(data);
                     if i >= v.len() || j >= v.len() {
-                        return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                        return Err(swap_out_of_bounds(i_idx, j_idx, v.len()));
                     }
                     v.swap(i, j);
                 },

@@ -11,7 +11,9 @@
   a loop body's tail. A negative index, or one at or past the end, is a bounds
   panic on every tier, matching `xs[i] = v`. The declared `Err` was never
   reached: three of the four execution paths silently left the receiver
-  unchanged instead.
+  unchanged instead. The panic names both indices and the receiver's length
+  whichever specialization ran; the flat-register path reported a bare
+  `index out of bounds`.
 - Read a one-field struct's field through an index into a format argument.
   The field name and the struct's field-name list shared a constant-pool slot
   whenever the struct had exactly one field, and `xs[i].f` panicked on the VM
@@ -33,6 +35,16 @@
 - The sampler's stack walk checks each frame-pointer link against the running
   stack's bounds before reading it. A link that passed the plausibility
   checks but addressed unmapped memory faulted the process.
+- `pprof::heap_profile` records allocation stacks on aarch64, on Windows, and
+  from `gos run`. The recorder started its walk from the frame-pointer
+  register of its calling frame, which is an ordinary general register in code
+  compiled without frame pointers, so the walk began at unrelated data and
+  recorded nothing outside a compiled x86_64 binary. It now establishes a
+  frame record of its own, and Windows walks with the OS unwinder.
+- `pprof::cpu_profile` records stacks on macOS and on aarch64 Linux. The
+  signal handler read the interrupted program counter and frame pointer only
+  from the x86_64 Linux register file, and sampled an empty stack everywhere
+  else.
 
 ## 0.48.0 - Evidence-backed feature status, source migrations, parity walk
 

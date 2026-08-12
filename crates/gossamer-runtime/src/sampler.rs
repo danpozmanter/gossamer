@@ -261,13 +261,65 @@ fn interrupted_registers(context: *mut libc::c_void) -> (usize, usize) {
     )
 }
 
+/// The aarch64 register file names the program counter directly and keeps
+/// the frame pointer in `x29`.
+#[cfg(all(
+    unix,
+    not(miri),
+    not(target_arch = "wasm32"),
+    target_arch = "aarch64",
+    target_os = "linux"
+))]
+fn interrupted_registers(context: *mut libc::c_void) -> (usize, usize) {
+    if context.is_null() {
+        return (0, 0);
+    }
+    // SAFETY: the kernel hands a `ucontext_t` to an SA_SIGINFO handler.
+    let ctx = unsafe { &*(context.cast::<libc::ucontext_t>()) };
+    let machine = &ctx.uc_mcontext;
+    (machine.pc as usize, machine.regs[29] as usize)
+}
+
+/// Darwin reaches the register file through a pointer rather than an
+/// inline struct, and names the thread state per architecture.
+#[cfg(all(
+    not(miri),
+    target_os = "macos",
+    any(target_arch = "aarch64", target_arch = "x86_64")
+))]
+fn interrupted_registers(context: *mut libc::c_void) -> (usize, usize) {
+    if context.is_null() {
+        return (0, 0);
+    }
+    // SAFETY: the kernel hands a `ucontext_t` to an SA_SIGINFO handler;
+    // `uc_mcontext` is checked before it is dereferenced.
+    let ctx = unsafe { &*(context.cast::<libc::ucontext_t>()) };
+    if ctx.uc_mcontext.is_null() {
+        return (0, 0);
+    }
+    // SAFETY: the same handler contract makes `uc_mcontext` a live
+    // `__darwin_mcontext64` for the duration of the handler.
+    let state = unsafe { &(*ctx.uc_mcontext).__ss };
+    #[cfg(target_arch = "aarch64")]
+    {
+        (state.__pc as usize, state.__fp as usize)
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        (state.__rip as usize, state.__rbp as usize)
+    }
+}
+
 /// Other platforms record the frames the walk can reach without the
 /// interrupted register file.
 #[cfg(all(
     unix,
     not(miri),
     not(target_arch = "wasm32"),
-    not(all(target_arch = "x86_64", target_os = "linux"))
+    not(all(
+        any(target_arch = "x86_64", target_arch = "aarch64"),
+        any(target_os = "linux", target_os = "macos")
+    ))
 ))]
 fn interrupted_registers(_context: *mut libc::c_void) -> (usize, usize) {
     (0, 0)
@@ -348,9 +400,6 @@ fn walk_frames(mut frame_pointer: usize, sample: &mut RawSample) {
     }
 }
 
-#[cfg(not(all(unix, not(miri), not(target_arch = "wasm32"))))]
-fn walk_frames(_frame_pointer: usize, _sample: &mut RawSample) {}
-
 /// Bytes allocated between heap samples. Go's default; large enough that
 /// the counter check is lost in allocation cost, small enough that a
 /// profile of a short program is not empty.
@@ -386,14 +435,7 @@ pub fn drain_heap() -> Vec<RawSample> {
     let taken = HEAP_INDEX.swap(0, Ordering::SeqCst).min(CAPACITY);
     let mut out = Vec::with_capacity(taken);
     for slot in 0..taken {
-        // SAFETY: as for `drain` - slots below the published index are
-        // fully written and no recorder is writing them concurrently.
-        let sample = unsafe {
-            (&raw const HEAP_SAMPLES)
-                .cast::<RawSample>()
-                .add(slot)
-                .read()
-        };
+        let sample = HEAP_SAMPLES.read(slot);
         if sample.len > 0 {
             out.push(sample);
         }
@@ -423,14 +465,14 @@ pub fn record_allocation(bytes: usize) {
     capture_heap_sample();
 }
 
-/// Out of line so the walk starts from a frame the ABI guarantees has a
-/// frame pointer. Read inside the inlined caller, `rbp` is whatever
-/// `__rust_alloc` left there, which is not a frame chain.
-#[inline(never)]
-fn capture_heap_sample() {
+/// Clears the accumulator and publishes `sample`, which the platform
+/// recorder has just captured.
+///
+/// The accumulator is cleared whether or not a stack was captured, so a
+/// platform that cannot capture one accounts the next interval from zero
+/// rather than re-entering the recorder on every subsequent allocation.
+fn publish_heap_sample(sample: &RawSample) {
     HEAP_ACCUMULATOR.store(0, Ordering::Relaxed);
-    let mut sample = RawSample::EMPTY;
-    walk_frames(current_frame_pointer(), &mut sample);
     if sample.len == 0 {
         return;
     }
@@ -439,33 +481,100 @@ fn capture_heap_sample() {
         HEAP_INDEX.store(CAPACITY, Ordering::SeqCst);
         return;
     }
-    HEAP_SAMPLES.write(slot, &sample);
+    HEAP_SAMPLES.write(slot, sample);
 }
 
-/// The running frame pointer, as the starting point for a walk.
+/// Establishes one frame record and records the stack above it.
 ///
-/// `inline(always)`: Rust code that keeps no frame pointer of its own also
-/// does not clobber `rbp`, so the register still holds the innermost frame
-/// that does keep one - a compiled Gossamer body, which carries
-/// `"frame-pointer"="all"`. Reading it from an out-of-line frame instead
-/// would read that frame's own `rbp`, which such a function never
-/// establishes, and the walk would start from a register holding
-/// unrelated data.
-#[cfg(all(unix, not(miri), not(target_arch = "wasm32"), target_arch = "x86_64"))]
-#[allow(clippy::inline_always, reason = "reads the caller's live register")]
-#[inline(always)]
-fn current_frame_pointer() -> usize {
-    let fp: usize;
-    // SAFETY: reading the frame-pointer register clobbers nothing.
-    unsafe {
-        std::arch::asm!("mov {}, rbp", out(reg) fp, options(nomem, nostack, preserves_flags));
-    }
-    fp
+/// The frame-pointer register only holds a frame pointer in code compiled
+/// to keep one. The interpreter and the JIT keep it as a general register
+/// (forcing frame pointers there costs double digits on tight loops), so
+/// reading it in the recorder's caller yields whatever that function last
+/// put in it. This shim owns the first link instead: its own record gives
+/// the walk a return address into the allocating frame, and the chain
+/// climbs from there through the frames that do keep a frame pointer, the
+/// runtime archive linked into compiled binaries and Gossamer bodies,
+/// which carry `"frame-pointer"="all"`.
+#[cfg(all(unix, not(miri), target_arch = "x86_64"))]
+#[unsafe(naked)]
+extern "C" fn capture_heap_sample() {
+    core::arch::naked_asm!(
+        "push rbp",
+        "mov rbp, rsp",
+        "mov rdi, rbp",
+        "call {record}",
+        "pop rbp",
+        "ret",
+        record = sym record_from_frame,
+    )
 }
 
-#[cfg(not(all(unix, not(miri), not(target_arch = "wasm32"), target_arch = "x86_64")))]
-fn current_frame_pointer() -> usize {
-    0
+/// The aarch64 frame record has the same shape: the saved frame pointer
+/// at the base and the return address one word above it.
+#[cfg(all(unix, not(miri), target_arch = "aarch64"))]
+#[unsafe(naked)]
+extern "C" fn capture_heap_sample() {
+    core::arch::naked_asm!(
+        "stp x29, x30, [sp, #-16]!",
+        "mov x29, sp",
+        "mov x0, x29",
+        "bl {record}",
+        "ldp x29, x30, [sp], #16",
+        "ret",
+        record = sym record_from_frame,
+    )
+}
+
+/// Walks from the frame record its caller established.
+#[cfg(all(unix, not(miri), any(target_arch = "x86_64", target_arch = "aarch64")))]
+extern "C" fn record_from_frame(frame_pointer: usize) {
+    let mut sample = RawSample::EMPTY;
+    walk_frames(frame_pointer, &mut sample);
+    publish_heap_sample(&sample);
+}
+
+/// Windows walks with the OS unwinder rather than the frame-pointer
+/// chain: `RtlCaptureStackBackTrace` reads the unwind metadata every
+/// Windows binary carries, so it reaches the allocating frame without
+/// requiring the runtime to keep a frame pointer. It allocates nothing,
+/// which is what the allocator-internal caller requires.
+///
+/// `inline(never)` keeps this one frame between the allocating code and
+/// the capture, which is the frame the skip count drops.
+#[cfg(all(windows, not(miri)))]
+#[inline(never)]
+fn capture_heap_sample() {
+    let mut captured: [*mut core::ffi::c_void; MAX_FRAMES] = [std::ptr::null_mut(); MAX_FRAMES];
+    // SAFETY: the OS writes at most `MAX_FRAMES` entries into a buffer we
+    // own; a null hash pointer asks it not to compute one.
+    let depth = unsafe {
+        windows_sys::Win32::System::Diagnostics::Debug::RtlCaptureStackBackTrace(
+            1,
+            MAX_FRAMES as u32,
+            captured.as_mut_ptr(),
+            std::ptr::null_mut(),
+        )
+    };
+    let mut sample = RawSample::EMPTY;
+    sample.len = u8::try_from(depth).unwrap_or(0).min(MAX_FRAMES as u8);
+    for (frame, address) in sample
+        .frames
+        .iter_mut()
+        .zip(&captured[..sample.len as usize])
+    {
+        *frame = *address as usize;
+    }
+    publish_heap_sample(&sample);
+}
+
+/// Platforms with neither a frame record this code can establish nor an
+/// OS unwinder account the bytes and record no stack.
+#[cfg(not(any(
+    all(unix, not(miri), any(target_arch = "x86_64", target_arch = "aarch64")),
+    all(windows, not(miri))
+)))]
+fn capture_heap_sample() {
+    publish_heap_sample(&RawSample::EMPTY);
 }
 
 #[cfg(test)]
@@ -481,6 +590,7 @@ mod tests {
 
     /// The walk treats the chain as untrusted: a null or misaligned
     /// frame pointer ends it rather than dereferencing.
+    #[cfg(all(unix, not(miri), not(target_arch = "wasm32")))]
     #[test]
     fn the_walk_refuses_an_implausible_chain() {
         let mut sample = RawSample::EMPTY;
@@ -491,9 +601,14 @@ mod tests {
     }
 
     /// Armed sampling records a stack once the accumulator crosses the
-    /// interval. Guards the split between the inlined arm check and the
-    /// out-of-line recorder: the recorder owns the frame-pointer read, so
-    /// the walk starts from a frame that has one.
+    /// interval. Holds the recorder to its contract on every platform that
+    /// has one: the frames come from a record the recorder established
+    /// itself, or from the OS unwinder, never from whatever the calling
+    /// frame left in the frame-pointer register.
+    #[cfg(any(
+        all(unix, not(miri), any(target_arch = "x86_64", target_arch = "aarch64")),
+        all(windows, not(miri))
+    ))]
     #[test]
     fn armed_sampling_records_a_stack_with_frames() {
         stop_heap();
