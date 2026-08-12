@@ -373,6 +373,12 @@ pub(crate) fn take_pending_park() -> Option<(Gid, ParkReason)> {
 /// `interest`. Wires the netpoller registration, the waker, the
 /// park, and the cleanup into one call.
 ///
+/// How long a thread-blocking wait sleeps before returning so its caller
+/// can re-check a condition the descriptor cannot report. Two orders of
+/// magnitude longer than the 1 ms poll this replaced, and well inside the
+/// deadlines cancellation tests allow.
+const RECHECK_INTERVAL: Duration = Duration::from_millis(50);
+
 /// Blocks the calling OS thread until `io` is ready, for callers with no
 /// goroutine to park. Uses a poll of its own rather than the shared
 /// scheduler poller, whose readiness is delivered by unparking a
@@ -394,9 +400,13 @@ fn block_thread_on_io<S: mio::event::Source + ?Sized>(
     let mut poll = mio::Poll::new()?;
     let mut events = mio::Events::with_capacity(1);
     poll.registry().register(io, mio::Token(0), mio_interest)?;
-    // A signal can cut the wait short; the caller re-checks readiness and
-    // comes back, so a spurious wake costs one extra syscall.
-    let waited = match poll.poll(&mut events, None) {
+    // Bounded, because callers loop on a condition the descriptor cannot
+    // signal: `accept_ctx` and `read_ctx` re-check their context between
+    // waits, and a wait that only ends on readiness would never let them
+    // observe a cancellation. The bound is the re-check interval, not a
+    // guess at how long readiness takes - readiness still wakes the poll
+    // immediately.
+    let waited = match poll.poll(&mut events, Some(RECHECK_INTERVAL)) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::Interrupted => Ok(()),
         Err(e) => Err(e),

@@ -16,6 +16,7 @@
 
 #![allow(clippy::missing_safety_doc)]
 
+use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// Frames recorded per sample. Deep enough to reach through a recursive
@@ -23,9 +24,14 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 /// signal-safe allocation.
 pub const MAX_FRAMES: usize = 32;
 
-/// Samples held before the buffer wraps. At 100 Hz this is over two
-/// minutes of profiling, and a drain empties it.
-const CAPACITY: usize = 16_384;
+/// Samples held before the buffer stops accepting more. At 100 Hz this
+/// is 40 seconds, and each `cpu_profile` call drains it.
+///
+/// The storage is a zeroed static, so it costs address space rather than
+/// resident memory until a sample is actually written - but two rings at
+/// this size is already about 2 MiB in every binary, which is why it is
+/// sized to a profiling window rather than to the largest one imaginable.
+const CAPACITY: usize = 4_096;
 
 /// One captured stack, as raw return addresses.
 #[derive(Clone, Copy)]
@@ -43,10 +49,61 @@ impl RawSample {
     };
 }
 
-/// The sample ring. A `static mut` rather than a lock: the handler may
-/// interrupt any code, including code holding any lock in the process,
-/// so it may not take one.
-static mut SAMPLES: [RawSample; CAPACITY] = [RawSample::EMPTY; CAPACITY];
+/// Fixed sample storage shared between a recorder and a drainer.
+///
+/// Not a lock: the recorder can be a signal handler, which may interrupt
+/// code holding any lock in the process and so may not take one. Access
+/// is serialized by the paired index instead - a recorder writes only the
+/// slot its `fetch_add` claimed, and a drainer reads only slots below an
+/// index it has swapped to zero.
+struct SampleRing {
+    slots: UnsafeCell<[RawSample; CAPACITY]>,
+}
+
+// SAFETY: the index protocol above gives every access a slot no other
+// thread is touching; the cell only removes the compiler's aliasing
+// assumption, it does not add sharing.
+unsafe impl Sync for SampleRing {}
+
+impl SampleRing {
+    // The array lives in a static, not on a stack: `const fn` initialises
+    // the storage in place.
+    #[allow(
+        clippy::large_stack_arrays,
+        reason = "initialises a static, not a local"
+    )]
+    const fn new() -> Self {
+        Self {
+            slots: UnsafeCell::new([RawSample::EMPTY; CAPACITY]),
+        }
+    }
+
+    /// Writes `sample` into `slot`, which the caller has claimed.
+    fn write(&self, slot: usize, sample: &RawSample) {
+        if slot >= CAPACITY {
+            return;
+        }
+        // SAFETY: `slot` was claimed by the caller's `fetch_add` and is
+        // in bounds, so no other writer addresses it.
+        unsafe {
+            self.slots
+                .get()
+                .cast::<RawSample>()
+                .add(slot)
+                .write(*sample)
+        }
+    }
+
+    /// Reads `slot`, which no recorder is writing.
+    fn read(&self, slot: usize) -> RawSample {
+        // SAFETY: the drainer reset the index before reading, so slots
+        // below `taken` are complete and unclaimed.
+        unsafe { self.slots.get().cast::<RawSample>().add(slot).read() }
+    }
+}
+
+/// The CPU sample ring.
+static SAMPLES: SampleRing = SampleRing::new();
 
 /// Next slot to write. Wraps; a drain reads up to the current index.
 static WRITE_INDEX: AtomicUsize = AtomicUsize::new(0);
@@ -97,12 +154,7 @@ pub fn drain() -> Vec<RawSample> {
     let taken = WRITE_INDEX.swap(0, Ordering::SeqCst).min(CAPACITY);
     let mut out = Vec::with_capacity(taken);
     for slot in 0..taken {
-        // SAFETY: slots below the index the handler published are fully
-        // written, and sampling is stopped or the index reset before a
-        // drain, so no handler is writing these entries concurrently.
-        // Indexed rather than iterated: taking a reference to a `static
-        // mut` a signal handler may write is what the raw pointer avoids.
-        let sample = unsafe { (&raw const SAMPLES).cast::<RawSample>().add(slot).read() };
+        let sample = SAMPLES.read(slot);
         if sample.len > 0 {
             out.push(sample);
         }
@@ -112,16 +164,25 @@ pub fn drain() -> Vec<RawSample> {
 
 #[cfg(all(unix, not(miri), not(target_arch = "wasm32")))]
 fn set_timer(hz: u32) -> std::io::Result<()> {
-    let interval = if hz == 0 {
-        libc::timeval {
-            tv_sec: 0,
-            tv_usec: 0,
-        }
+    // `suseconds_t` is `i64` on Linux and `i32` on Darwin, so the
+    // microsecond count is converted through the platform's own type
+    // rather than a fixed width.
+    let micros: libc::suseconds_t = if hz == 0 {
+        0
     } else {
-        libc::timeval {
-            tv_sec: 0,
-            tv_usec: i64::from(1_000_000 / hz.max(1)),
-        }
+        // Infallible on Linux, where `suseconds_t` is `i64`, which is what
+        // clippy sees here - but it is `i32` on Darwin, where `From<u32>`
+        // does not exist. The fallible form is the one that compiles on
+        // both.
+        #[allow(
+            clippy::unnecessary_fallible_conversions,
+            reason = "suseconds_t is i32 on Darwin, where the infallible conversion is absent"
+        )]
+        libc::suseconds_t::try_from(1_000_000 / hz.max(1)).unwrap_or(10_000)
+    };
+    let interval = libc::timeval {
+        tv_sec: 0,
+        tv_usec: micros,
     };
     let spec = libc::itimerval {
         it_interval: interval,
@@ -187,11 +248,7 @@ extern "C" fn on_sigprof(
         WRITE_INDEX.store(CAPACITY, Ordering::SeqCst);
         return;
     }
-    // SAFETY: `slot` is this handler's exclusive index into the array,
-    // claimed by the atomic increment above, and is in bounds.
-    unsafe {
-        (&raw mut SAMPLES[slot]).write(sample);
-    }
+    SAMPLES.write(slot, &sample);
 }
 
 /// Program counter and frame pointer of the interrupted context.
@@ -278,8 +335,8 @@ static HEAP_SAMPLING: AtomicBool = AtomicBool::new(false);
 /// Bytes allocated since the last heap sample.
 static HEAP_ACCUMULATOR: AtomicUsize = AtomicUsize::new(0);
 
-/// Heap samples, sharing `RawSample`'s shape.
-static mut HEAP_SAMPLES: [RawSample; CAPACITY] = [RawSample::EMPTY; CAPACITY];
+/// The allocation sample ring.
+static HEAP_SAMPLES: SampleRing = SampleRing::new();
 
 /// Next heap slot to write.
 static HEAP_INDEX: AtomicUsize = AtomicUsize::new(0);
@@ -342,11 +399,7 @@ pub fn record_allocation(bytes: usize) {
         HEAP_INDEX.store(CAPACITY, Ordering::SeqCst);
         return;
     }
-    // SAFETY: `slot` is this caller's exclusive index, claimed by the
-    // atomic increment, and is in bounds.
-    unsafe {
-        (&raw mut HEAP_SAMPLES[slot]).write(sample);
-    }
+    HEAP_SAMPLES.write(slot, &sample);
 }
 
 /// This frame's frame pointer, as the starting point for a walk.

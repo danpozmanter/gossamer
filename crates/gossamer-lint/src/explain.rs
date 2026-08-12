@@ -226,6 +226,25 @@ pub fn lint_explanation(id: &str) -> Option<&'static str> {
             `s[i]` is not that byte: indexing counts Unicode scalars, so it\n\
             yields the `char` at character index `i`."
         }
+        "free_form_combinator" => {
+            "One operation with two spellings is one more than a reader, or\n\
+            a model, has to choose between. `iter::map(f, xs)` and\n\
+            `xs.map(f)` mean the same thing; the method form is canonical,\n\
+            and `gos lint --fix` rewrites to it.\n\
+            The free form keeps its place as a `|>` pipeline target, where\n\
+            the piped value fills the last slot - `xs |> iter::map(f)` is\n\
+            not rewritten, because the sequence is not written in the call."
+        }
+        "i64_only_container_family" => {
+            "`std::collections::{queue,stack,deque,heap,ordered_*}` hold\n\
+            `i64` only and return a new container from every mutator, which\n\
+            duplicates `Queue`, `Stack`, `Deque`, `MinHeap`, `BTreeSet`, and\n\
+            `BTreeMap` at a narrower element type.\n\
+            Deliberately not auto-fixable: the two families differ in more\n\
+            than spelling. `peek` answers `0` on an empty container where the\n\
+            type answers `None`, so a mechanical rewrite would keep\n\
+            type-checking and change what an empty container means."
+        }
         _ => return None,
     })
 }

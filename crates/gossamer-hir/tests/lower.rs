@@ -4,14 +4,17 @@ use gossamer_hir::{
     HirBinaryOp, HirExprKind, HirItemKind, HirLiteral, HirPatKind, HirStmtKind, lower_source_file,
 };
 use gossamer_lex::SourceMap;
-use gossamer_parse::parse_source_file;
 use gossamer_resolve::resolve_source_file;
 use gossamer_types::{TyCtxt, typecheck_source_file};
 
 fn lower(source: &str) -> (gossamer_hir::HirProgram, TyCtxt) {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    // The compile/analysis entry, not the raw parser: it folds an entry
+    // file's bare top-level statements into the implicit `fn main`, which
+    // every tier reaches through here. Lowering the raw parse would see no
+    // items at all for a program written without an explicit main.
+    let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
     let mut tcx = TyCtxt::new();
