@@ -90,7 +90,7 @@ impl SampleRing {
                 .get()
                 .cast::<RawSample>()
                 .add(slot)
-                .write(*sample)
+                .write(*sample);
         }
     }
 
@@ -164,25 +164,14 @@ pub fn drain() -> Vec<RawSample> {
 
 #[cfg(all(unix, not(miri), not(target_arch = "wasm32")))]
 fn set_timer(hz: u32) -> std::io::Result<()> {
-    // `suseconds_t` is `i64` on Linux and `i32` on Darwin, so the
-    // microsecond count is converted through the platform's own type
-    // rather than a fixed width.
-    let micros: libc::suseconds_t = if hz == 0 {
-        0
-    } else {
-        // Infallible on Linux, where `suseconds_t` is `i64`, which is what
-        // clippy sees here - but it is `i32` on Darwin, where `From<u32>`
-        // does not exist. The fallible form is the one that compiles on
-        // both.
-        #[allow(
-            clippy::unnecessary_fallible_conversions,
-            reason = "suseconds_t is i32 on Darwin, where the infallible conversion is absent"
-        )]
-        libc::suseconds_t::try_from(1_000_000 / hz.max(1)).unwrap_or(10_000)
-    };
+    // Written without naming `suseconds_t`: it is `i64` on glibc, `i32` on
+    // Darwin, and deprecated on musl. An `i32` holds any microsecond count
+    // this produces (at most 1_000_000), and `into()` widens it to
+    // whichever width the platform's `tv_usec` actually is.
+    let micros: i32 = i32::try_from(1_000_000 / hz.max(1)).unwrap_or(10_000);
     let interval = libc::timeval {
         tv_sec: 0,
-        tv_usec: micros,
+        tv_usec: if hz == 0 { 0 } else { micros }.into(),
     };
     let spec = libc::itimerval {
         it_interval: interval,
