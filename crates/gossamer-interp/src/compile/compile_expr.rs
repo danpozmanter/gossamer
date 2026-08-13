@@ -3346,6 +3346,26 @@ impl<'tcx> FnBuilder<'tcx> {
                 {
                     self.compile_place_store(receiver, dst)?;
                 }
+                // `m.or_insert(k, d).push(v)`: the entry the receiver came
+                // from is where the mutation belongs, so the updated
+                // aggregate goes back under the same key. The compiled tiers
+                // hand back the stored value itself and mutate it in place.
+                HirExprKind::MethodCall {
+                    receiver: map_expr,
+                    name: entry_name,
+                    args: entry_args,
+                } if entry_name.name.as_str() == "or_insert" && entry_args.len() == 2 => {
+                    let map_reg = self.compile_expr(map_expr)?;
+                    let key_reg = self.compile_expr(&entry_args[0])?;
+                    let scratch = self.alloc_reg();
+                    self.emit(Op::MapInsert {
+                        dst: scratch,
+                        map_reg,
+                        key_reg,
+                        value_reg: dst,
+                    });
+                    self.compile_place_store(map_expr, map_reg)?;
+                }
                 _ => {}
             }
         }

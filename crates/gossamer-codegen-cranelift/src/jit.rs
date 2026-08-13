@@ -293,6 +293,33 @@ fn body_uses_unlowerable_local_repr(
     enum_shapes: &HashMap<u32, u32>,
     struct_shapes: &HashMap<u32, u32>,
 ) -> bool {
+    // A reference to a parameter-typed local is an address into this body's
+    // own frame. A generic template hands it to whichever impl the
+    // instantiation selected, and that callee is a separate admission
+    // decision - one that stays on bytecode reads the address from a frame it
+    // does not own. Keep the whole body on bytecode so both sides of the call
+    // agree on where the receiver lives.
+    let borrows_a_parameter_local = body.blocks.iter().any(|block| {
+        block.stmts.iter().any(|stmt| {
+            matches!(
+                &stmt.kind,
+                gossamer_mir::StatementKind::Assign {
+                    rvalue: gossamer_mir::Rvalue::Ref { place, .. },
+                    ..
+                } if place.projection.is_empty()
+                    && body
+                        .locals
+                        .get(place.local.0 as usize)
+                        .is_some_and(|l| matches!(tcx.kind_of(l.ty), TyKind::Param { .. }))
+            )
+        })
+    });
+    if borrows_a_parameter_local {
+        if std::env::var("GOS_JIT_TRACE").is_ok() {
+            eprintln!("jit: parameter-borrow {} stays on bytecode", body.name);
+        }
+        return true;
+    }
     body.locals.iter().enumerate().any(|(idx, l)| {
         let hit = match tcx.kind_of(l.ty) {
             TyKind::Int(gossamer_types::IntTy::I128 | gossamer_types::IntTy::U128) => true,

@@ -166,6 +166,8 @@ feature-testing-examples/inferred_map_dispatch.gos	bytecode-only local
 feature-testing-examples/inline_index_remap.gos	admission gate
 feature-testing-examples/instant_methods.gos	no hot body
 feature-testing-examples/intcode_day2_mut_slice_native.gos	&mut aggregate param
+feature-testing-examples/iter_free_function_contracts.gos	callable local
+feature-testing-examples/iterator_lazy_model.gos	bytecode-only local
 feature-testing-examples/iterator_loop_sources.gos	bytecode-only local
 feature-testing-examples/iterator_param_argument.gos	bytecode-only local
 feature-testing-examples/iterator_trait_user_impl.gos	bytecode-only local

@@ -1536,7 +1536,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "fold",
-        signature: "fn fold<T, U>(f: Fn(U, T) -> U, init: U, items: Vec<T>) -> U",
+        signature: "fn fold<T, U>(init: U, f: Fn(U, T) -> U, items: Vec<T>) -> U",
     },
     StdFunctionSignature {
         module_path: "std::iter",
@@ -1636,7 +1636,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "scan",
-        signature: "fn scan<T, S, U>(f: Fn(S, T) -> (S, Option<U>), state: S, items: Vec<T>) -> Vec<U>",
+        signature: "fn scan<T, S>(init: S, f: Fn(S, T) -> S, items: Vec<T>) -> Vec<S>",
     },
     StdFunctionSignature {
         module_path: "std::iter",

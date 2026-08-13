@@ -1,0 +1,71 @@
+// Iterator transformations stay lazy and answer with another iterator;
+// materialising into a Vec is a written step. A Range answers the same
+// surface, so a pipeline reads the same whichever one starts it.
+//
+// Each shape runs inside a function called often enough to be compiled,
+// so the row compares real native code against the bytecode VM.
+
+fn marks(n: i64) -> String {
+    let r = 0..n
+    let m = r.map(|x| if x % 2 == 0 { "#" } else { " " })
+    m.collect().join("")
+}
+
+fn chained(n: i64) -> String {
+    (0..n).map(|x| x * 2).filter(|x| x % 3 == 0).take(4).collect().join(",")
+}
+
+fn windows(n: i64) -> String {
+    let head = (0..n).take_while(|x| x < 4).count()
+    let tail = (0..n).skip_while(|x| x < 4).count()
+    let paired = (0..n).enumerate().count()
+    format!("{} {} {}", head, tail, paired)
+}
+
+fn strided(n: i64) -> String {
+    let stepped = (0..n).step_by(3).collect().join(",")
+    let middle = (0..n).skip(1).take(3).collect().join(",")
+    format!("{} {}", stepped, middle)
+}
+
+fn terminals(n: i64) -> String {
+    format!("{} {} {}", (0..n).sum(), (0..n).count(), (0..n).any(|x| x > n - 2))
+}
+
+fn materialised(n: i64) -> String {
+    let v = (0..n).map(|x| x + 1).collect()
+    format!("{} {}", v.len(), v.join("-"))
+}
+
+fn main() {
+    let mut last = ""
+    for _ in 0..200 {
+        last = marks(9)
+    }
+    println!("[{}]", last)
+
+    for _ in 0..200 {
+        last = chained(20)
+    }
+    println!("{}", last)
+
+    for _ in 0..200 {
+        last = windows(9)
+    }
+    println!("{}", last)
+
+    for _ in 0..200 {
+        last = strided(9)
+    }
+    println!("{}", last)
+
+    for _ in 0..200 {
+        last = terminals(9)
+    }
+    println!("{}", last)
+
+    for _ in 0..200 {
+        last = materialised(5)
+    }
+    println!("{}", last)
+}

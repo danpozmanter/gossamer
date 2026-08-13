@@ -18,7 +18,7 @@ impl Parser<'_> {
         let mut params = Vec::new();
         while !self.at_close_angle() && !self.at_eof() {
             params.push(self.parse_generic_param());
-            if !self.eat_punct(Punct::Comma) {
+            if !self.eat_list_separator() {
                 break;
             }
         }

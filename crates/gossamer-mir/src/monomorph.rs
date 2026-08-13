@@ -39,6 +39,20 @@ const MAX_MONOMORPHISE_ITERATIONS: u32 = 32;
 /// `map_i64_str` and `each_i64`. Cap at
 /// `MAX_MONOMORPHISE_ITERATIONS` as a runaway guard.
 pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
+    // A method's own body states the receiver type it was lowered with, which
+    // is what says whether a specialised call site has to hand it an address.
+    let receiver_is_ref: HashMap<String, bool> = bodies
+        .iter()
+        .filter(|b| b.arity >= 1 && b.name.contains("::"))
+        .filter_map(|b| {
+            b.locals.get(1).map(|recv| {
+                (
+                    b.name.clone(),
+                    matches!(tcx.kind_of(recv.ty), TyKind::Ref { .. }),
+                )
+            })
+        })
+        .collect();
     let mut emitted: HashSet<String> = HashSet::new();
     let sources: HashMap<u32, usize> = bodies
         .iter()
@@ -71,6 +85,7 @@ pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
             &sources,
             &mut emitted,
             &mut trait_specialised_defs,
+            &receiver_is_ref,
             tcx,
             function_scan_start,
         );
@@ -81,6 +96,7 @@ pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
             &method_bases,
             &mut emitted,
             &mut trait_specialised_methods,
+            &receiver_is_ref,
             tcx,
             method_scan_start,
         );
@@ -127,6 +143,14 @@ pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
                 && !trait_specialised_methods.contains(&b.name)
         });
     }
+    // A `&self` method reads its receiver as an address on every tier, so
+    // every call to one has to hand it an address. A generic template keeps
+    // serving scalar instantiations directly, and its receiver travelled as
+    // the opaque slot value the parameter had; settle the convention here,
+    // where every body - template and copy alike - is in its final form.
+    for body in bodies.iter_mut() {
+        borrow_scalar_receivers_for_ref_methods(body, &receiver_is_ref, tcx);
+    }
     // Resolve every local's type one last time so specialised
     // copies + originals share the resolved (no-Var) state.
     for body in bodies.iter_mut() {
@@ -148,6 +172,7 @@ fn specialise_functions_step(
     sources: &HashMap<u32, usize>,
     emitted: &mut HashSet<String>,
     trait_specialised_defs: &mut HashSet<u32>,
+    receiver_is_ref: &HashMap<String, bool>,
     tcx: &mut TyCtxt,
     scan_start: usize,
 ) -> Vec<Body> {
@@ -181,17 +206,147 @@ fn specialise_functions_step(
             let subst_tys = subst_type_arguments(substs);
             // Do this while locals retain template parameters. The rewrite
             // recognises a parameter receiver and selects the concrete impl.
-            if rewrite_trait_method_calls(&mut copy, substs, tcx) {
+            if rewrite_trait_method_calls(&mut copy, substs, receiver_is_ref, tcx) {
                 trait_specialised_defs.insert(def.local);
             }
             for local in &mut copy.locals {
                 local.ty = subst_param_ty(tcx, local.ty, &subst_tys);
             }
+            repair_generic_element_reads(&mut copy, tcx);
+            borrow_scalar_receivers_for_ref_methods(&mut copy, receiver_is_ref, tcx);
             specialise_call_substs(&mut copy, &subst_tys, tcx);
             specialised.push(copy);
         }
     }
     specialised
+}
+
+/// Repairs a container element read whose element type was a parameter.
+///
+/// The template lowered `xs[i]` for an opaque one-slot parameter, which is the
+/// scalar read. Once the parameter is known to be an aggregate the element
+/// occupies its slot inline and the address of that slot is the value, so the
+/// read has to become the pointer form the concrete lowering emits. Leaving
+/// the scalar read in place hands the callee the element's first bytes where
+/// it expects the element's address.
+///
+/// Mirrors the element-representation predicate in the index/loop lowering:
+/// a struct ADT is address-is-value at any width, and other aggregates are
+/// once they exceed a single slot.
+fn repair_generic_element_reads(copy: &mut Body, tcx: &TyCtxt) {
+    let local_tys: Vec<Ty> = copy.locals.iter().map(|l| l.ty).collect();
+    for block in &mut copy.blocks {
+        let Terminator::Call {
+            callee,
+            destination,
+            ..
+        } = &mut block.terminator
+        else {
+            continue;
+        };
+        let Operand::Const(ConstValue::Str(name)) = callee else {
+            continue;
+        };
+        if name != "gos_rt_vec_get_i64" && name != "gos_rt_vec_get_i64_unchecked" {
+            continue;
+        }
+        if !destination.projection.is_empty() {
+            continue;
+        }
+        let Some(elem_ty) = local_tys.get(destination.local.0 as usize).copied() else {
+            continue;
+        };
+        let is_struct_adt = matches!(
+            tcx.kind_of(elem_ty),
+            TyKind::Adt { def, .. }
+                if def.local < u32::MAX - 16 && tcx.struct_field_tys(*def).is_some()
+        );
+        let is_wide_aggregate = matches!(
+            tcx.kind_of(elem_ty),
+            TyKind::Tuple(_) | TyKind::Adt { .. } | TyKind::Array { .. }
+        ) && tcx.slot_bytes(elem_ty) > 8;
+        if is_struct_adt || is_wide_aggregate {
+            *callee = Operand::Const(ConstValue::Str("gos_rt_vec_get_ptr".to_string()));
+        }
+    }
+}
+
+/// Borrows a receiver whose concrete type turned out to be a scalar for a
+/// method whose impl declares `&self`.
+///
+/// A type parameter is one opaque slot to the template, so the receiver
+/// travels by value. When the parameter resolves to a struct the slot already
+/// holds the address; when it resolves to a scalar the slot holds the value,
+/// and the impl - which declares a reference - reads it as an address. The
+/// declared convention is read off the callee's own body, which states the
+/// receiver type it was lowered with.
+fn borrow_scalar_receivers_for_ref_methods(
+    copy: &mut Body,
+    receiver_is_ref: &HashMap<String, bool>,
+    tcx: &mut TyCtxt,
+) {
+    let local_tys: Vec<Ty> = copy.locals.iter().map(|l| l.ty).collect();
+    let mut work: Vec<(usize, Local, Ty)> = Vec::new();
+    for (block_index, block) in copy.blocks.iter().enumerate() {
+        let Terminator::Call { callee, args, .. } = &block.terminator else {
+            continue;
+        };
+        let Operand::Const(ConstValue::Str(name)) = callee else {
+            continue;
+        };
+        if receiver_is_ref.get(name) != Some(&true) {
+            continue;
+        }
+        let Some(Operand::Copy(recv)) = args.first() else {
+            continue;
+        };
+        if !recv.projection.is_empty() {
+            continue;
+        }
+        let Some(recv_ty) = local_tys.get(recv.local.0 as usize).copied() else {
+            continue;
+        };
+        // Only a receiver still typed as a parameter is settled here. A
+        // template serving scalar instantiations carries the value in that
+        // slot, and lowering could not have chosen the convention because the
+        // concrete type was not yet known. A receiver that already has a
+        // concrete type was lowered against the impl it resolves to, and
+        // overriding it here would break a convention that already holds.
+        if !matches!(tcx.kind_of(recv_ty), TyKind::Param { .. }) {
+            continue;
+        }
+        work.push((block_index, recv.local, recv_ty));
+    }
+    for (block_index, recv_local, recv_ty) in work {
+        let ref_ty = tcx.intern(TyKind::Ref {
+            mutability: Mutbl::Not,
+            inner: recv_ty,
+        });
+        let tmp = Local(u32::try_from(copy.locals.len()).expect("local index fits"));
+        copy.locals.push(crate::ir::LocalDecl {
+            ty: ref_ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        });
+        let span = copy.span;
+        let block = &mut copy.blocks[block_index];
+        block.stmts.push(crate::ir::Statement {
+            kind: StatementKind::Assign {
+                place: Place::local(tmp),
+                rvalue: Rvalue::Ref {
+                    mutable: false,
+                    place: Place::local(recv_local),
+                },
+            },
+            span,
+        });
+        if let Terminator::Call { args, .. } = &mut block.terminator
+            && let Some(first) = args.first_mut()
+        {
+            *first = Operand::Copy(Place::local(tmp));
+        }
+    }
 }
 
 fn substs_are_const_only(substs: &Substs) -> bool {
@@ -229,6 +384,7 @@ fn specialise_methods_step(
     method_bases: &HashMap<String, usize>,
     emitted: &mut HashSet<String>,
     trait_specialised_methods: &mut HashSet<String>,
+    receiver_is_ref: &HashMap<String, bool>,
     tcx: &mut TyCtxt,
     scan_start: usize,
 ) -> (bool, usize) {
@@ -288,13 +444,15 @@ fn specialise_methods_step(
         // through its type parameter, so the same receiver rewrite a generic
         // free function needs applies here. It runs while the locals still
         // carry the template parameter, which is what identifies the receiver.
-        if rewrite_trait_method_calls(&mut copy, &substs, tcx) {
+        if rewrite_trait_method_calls(&mut copy, &substs, receiver_is_ref, tcx) {
             trait_specialised_methods.insert(base_name);
         }
         reference_aggregate_trait_receivers(&mut copy, &subst_tys, tcx);
         for local in &mut copy.locals {
             local.ty = subst_param_ty(tcx, local.ty, &subst_tys);
         }
+        repair_generic_element_reads(&mut copy, tcx);
+        borrow_scalar_receivers_for_ref_methods(&mut copy, receiver_is_ref, tcx);
         specialise_call_substs(&mut copy, &subst_tys, tcx);
         bodies.push(copy);
     }
@@ -438,7 +596,12 @@ fn method_mangled_name(base: &str, substs: &Substs) -> String {
 /// type via `substs`, so rewrite the callee to that type's impl symbol
 /// (`Dog::describe`), which already exists as a real function. The trait
 /// bound checked at the call site guarantees the impl is present.
-fn rewrite_trait_method_calls(copy: &mut Body, substs: &Substs, tcx: &TyCtxt) -> bool {
+fn rewrite_trait_method_calls(
+    copy: &mut Body,
+    substs: &Substs,
+    known_methods: &HashMap<String, bool>,
+    tcx: &TyCtxt,
+) -> bool {
     let subst_tys: Vec<Option<Ty>> = substs
         .as_slice()
         .iter()
@@ -472,8 +635,16 @@ fn rewrite_trait_method_calls(copy: &mut Body, substs: &Substs, tcx: &TyCtxt) ->
             continue;
         };
         if let Some(cname) = adt_name(tcx, *concrete) {
-            *callee = Operand::Const(ConstValue::Str(format!("{cname}::{name}")));
-            rewrote = true;
+            let resolved = format!("{cname}::{name}");
+            // A primitive's trait surface is mostly builtin - `__debug` and
+            // friends have no body of their own - so name one only when the
+            // program actually declares it. A declared type keeps resolving
+            // by name, which is how its derived methods are reached.
+            let primitive_target = !matches!(tcx.kind_of(*concrete), TyKind::Adt { .. });
+            if !primitive_target || known_methods.contains_key(&resolved) {
+                *callee = Operand::Const(ConstValue::Str(resolved));
+                rewrote = true;
+            }
         }
     }
     rewrote
@@ -609,9 +780,18 @@ fn param_index(tcx: &TyCtxt, ty: Ty) -> Option<usize> {
 }
 
 /// Source name of a concrete named type, or `None` for non-ADTs.
+/// Name the impl block for `ty` registers its methods under.
+///
+/// A trait is implementable for a primitive as much as for a declared type,
+/// and such an impl keys its methods by the primitive's spelling. Resolving
+/// only ADTs left a trait call on a parameter that turned out to be `i64`
+/// pointing at the unqualified trait name, which names no body.
 fn adt_name(tcx: &TyCtxt, ty: Ty) -> Option<String> {
     match tcx.kind_of(ty).clone() {
         TyKind::Adt { def, .. } => tcx.def_name(def).map(str::to_string),
+        TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::String => {
+            Some(gossamer_types::printer::render_ty(tcx, ty))
+        }
         _ => None,
     }
 }

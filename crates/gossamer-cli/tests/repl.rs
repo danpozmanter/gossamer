@@ -270,6 +270,33 @@ fn repl_redefines_a_name_whose_range_a_pipeline_consumed() {
     );
 }
 
+/// `%b` observes a binding to report it; observing is not a traversal, so a
+/// consumed iterator still lists its type and value. A written read of the
+/// same binding remains a linearity violation.
+#[test]
+fn repl_lists_a_consumed_iterator_with_its_type_and_value() {
+    let out = run_repl("let r = 0..10\nlet m = r.map(|x| x * 2)\n%b\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("r: Range<i64> = 0..10"),
+        "consumed range must still list its type and value; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("GT0042"),
+        "binding listing must not report a linearity error; stdout: {}",
+        out.stdout
+    );
+
+    let read = run_repl("let r = 0..10\nlet m = r.map(|x| x * 2)\nr\n");
+    assert!(
+        read.stderr.contains("GT0042") || read.stdout.contains("GT0042"),
+        "a written read of the consumed binding must still be rejected; stdout: {} stderr: {}",
+        read.stdout,
+        read.stderr
+    );
+}
+
 #[test]
 fn repl_accepts_trailing_line_comments() {
     let out = run_repl("let a = 1 // comment\na\n");

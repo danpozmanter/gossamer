@@ -511,6 +511,7 @@ impl<'a> Builder<'a> {
         let user_receiver_ref_ty = self
             .struct_name_of(receiver_ty)
             .or_else(|| self.struct_name_from_expr(receiver))
+            .or_else(|| self.primitive_impl_name(receiver_ty))
             .and_then(|name| {
                 self.impl_method_receivers
                     .get(&format!("{name}::{}", method.name))
@@ -524,11 +525,29 @@ impl<'a> Builder<'a> {
             // `lower_place_expr` to succeed silently discarded fluent chains
             // such as `Select::new(...).columns(...).order_by(...)`, leaving
             // the destination aggregate zero-initialised on compiled tiers.
-            let receiver_place = if let Some(place) = self.lower_place_expr(receiver) {
-                place
-            } else {
-                Place::local(self.lower_expr(receiver)?)
-            };
+            // A shared borrow of a primitive needs somewhere to point, not a
+            // particular somewhere: the value is `Copy` and the callee cannot
+            // write through the reference, so a temporary holding the value
+            // observes exactly what the source place would. Reading it into
+            // one keeps the address a plain stack slot whatever the receiver
+            // was written as - a local, an element, a field. A `&mut self`
+            // receiver still borrows the real place, which is what carries
+            // the write back.
+            let declared_is_mut = matches!(
+                self.tcx.kind_of(declared_ref_ty),
+                TyKind::Ref {
+                    mutability: gossamer_types::Mutbl::Mut,
+                    ..
+                }
+            );
+            let receiver_place =
+                if !declared_is_mut && self.primitive_impl_name(receiver_ty).is_some() {
+                    Place::local(self.lower_expr(receiver)?)
+                } else if let Some(place) = self.lower_place_expr(receiver) {
+                    place
+                } else {
+                    Place::local(self.lower_expr(receiver)?)
+                };
             if receiver_place.projection.is_empty()
                 && matches!(
                     self.tcx
@@ -564,6 +583,19 @@ impl<'a> Builder<'a> {
                     inner: receiver_inner,
                 });
                 let receiver_ref = self.fresh(receiver_ref_ty);
+                // A mutable borrow of a scalar place points at a slot the
+                // backend materialises for it, so the place has to be reloaded
+                // from that slot once the callee has written through it.
+                if mutable
+                    && receiver_place.projection.is_empty()
+                    && matches!(
+                        self.tcx.kind_of(receiver_inner),
+                        TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char
+                    )
+                {
+                    self.mut_receiver_reloads
+                        .insert(receiver_ref, receiver_place.local);
+                }
                 self.emit_assign(
                     Place::local(receiver_ref),
                     Rvalue::Ref {
@@ -4739,6 +4771,13 @@ impl<'a> Builder<'a> {
                 self.local_struct.insert(dest, out_struct);
             }
             let next = self.new_block(span);
+            let receiver_reload = arg_operands.first().and_then(|arg| match arg {
+                Operand::Copy(place) if place.projection.is_empty() => self
+                    .mut_receiver_reloads
+                    .remove(&place.local)
+                    .map(|target| (target, place.local)),
+                _ => None,
+            });
             self.terminate(Terminator::Call {
                 callee: Operand::Const(ConstValue::Str(mangled)),
                 args: arg_operands,
@@ -4746,6 +4785,16 @@ impl<'a> Builder<'a> {
                 target: Some(next),
             });
             self.set_current(next);
+            if let Some((target, ref_local)) = receiver_reload {
+                self.emit_assign(
+                    Place::local(target),
+                    Rvalue::Use(Operand::Copy(Place {
+                        local: ref_local,
+                        projection: vec![crate::ir::Projection::Deref],
+                    })),
+                    span,
+                );
+            }
             return Some(dest);
         }
 

@@ -102,10 +102,13 @@ pub fn bundle_path_dependencies_traced(
         let (dep_bundled, dep_spans) = bundle_sibling_modules_traced(&dep_entry, dep_source);
         collect_path_deps(&dep_entry, visited, &mut worklist);
         let mod_name = gossamer_resolve::project_dep_module_name(&dep_id);
+        // The attribute is what tells the resolver this module came from
+        // another package, so a reference to it needs the matching import.
         let header = format!(
-            "\n// auto-bundled dependency: {} ({})\nmod {} {{\n",
+            "\n// auto-bundled dependency: {} ({})\n#[dependency(\"{}\")]\nmod {} {{\n",
             dep_id,
             dep_root.display(),
+            dep_id,
             mod_name
         );
         out.push_str(&header);

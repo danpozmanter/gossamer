@@ -3180,6 +3180,12 @@ impl<'a> Builder<'a> {
                 // returns a local typed `i64`, and `row[1]` then reads
                 // the GosVec `cap` field instead of element 1.
                 TyKind::Vec(_) | TyKind::Slice(_) => elem_unwrapped,
+                // A generic element keeps its parameter so specialisation can
+                // resolve it. Collapsing it to the scalar default here erases
+                // the only record of what the element is, and the copy made
+                // for a concrete instantiation then reads an aggregate element
+                // as its first eight bytes.
+                TyKind::Param { .. } => elem_unwrapped,
                 _ => match self.tcx.kind_of(ty) {
                     TyKind::Int(_) | TyKind::String | TyKind::Bool | TyKind::Float(_) => ty,
                     _ => self.tcx.int_ty(gossamer_types::IntTy::I64),

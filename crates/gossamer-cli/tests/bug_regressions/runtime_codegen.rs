@@ -1207,3 +1207,74 @@ fn aggregate_return_chain_outlives_callee_frame() {
         "release aggregate-return chain mismatch"
     );
 }
+
+#[test]
+fn a_ref_self_method_on_a_primitive_receives_an_address() {
+    // A `&self` impl on a primitive read its receiver as an address while the
+    // call site passed the value, so `*self` dereferenced the value itself.
+    // The receiver is borrowed now, from a local, an element, a loop binding,
+    // and a type parameter that resolved to a primitive alike; `&mut self`
+    // writes back through that borrow.
+    let src = r#"
+trait Doubler { fn twice(&self) -> i64 }
+impl Doubler for i64 { fn twice(&self) -> i64 { *self * 2 } }
+
+trait Bump { fn bump(&mut self) }
+impl Bump for i64 { fn bump(&mut self) { *self += 1 } }
+
+trait Area { fn area(&self) -> i64 }
+struct Square { side: i64 }
+impl Area for Square { fn area(&self) -> i64 { self.side * self.side } }
+
+fn sum_twice<T: Doubler>(items: Vec<T>) -> i64 {
+    let mut total = 0
+    for item in items { total += item.twice() }
+    total
+}
+
+fn first_area<T: Area>(items: Vec<T>) -> i64 { items[0].area() }
+
+fn main() {
+    let x = 5
+    let xs = #[7, 8]
+    let mut m = 1
+    m.bump()
+    let mut loop_total = 0
+    for v in xs { loop_total += v.twice() }
+    println!("local {}", x.twice())
+    println!("element {}", xs[0].twice())
+    println!("loop {}", loop_total)
+    println!("mut {}", m)
+    println!("generic-scalar {}", sum_twice(#[1, 2, 3]))
+    println!("generic-aggregate {}", first_area(#[Square { side: 4 }]))
+}
+"#;
+    let dir = fresh_dir("ref_self_primitive");
+    let path = write_source(&dir, "ref_self_primitive", src);
+    let expected = [
+        "local 10",
+        "element 14",
+        "loop 30",
+        "mut 2",
+        "generic-scalar 12",
+        "generic-aggregate 16",
+    ];
+    let run = run_vm(&path);
+    assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);
+    for line in expected {
+        assert!(run.0.contains(line), "vm: missing `{line}` in {:?}", run.0);
+    }
+    let cl_dir = dir.join("cl");
+    fs::create_dir_all(&cl_dir).unwrap();
+    let bin = build_native(&path, &cl_dir).expect("native build");
+    let native = run_native(&bin);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    for line in expected {
+        assert!(
+            native.0.contains(line),
+            "native: missing `{line}` in {:?}",
+            native.0
+        );
+    }
+}

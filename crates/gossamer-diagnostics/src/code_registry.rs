@@ -589,6 +589,14 @@ pub const REGISTRY: &[(&str, &str)] = &[
             positionally or by name, or declare a default for it.",
     ),
     (
+        "GR0016",
+        "A path named a dependency package that this file does not import.\n\
+            A dependency's module is reached only through the import that\n\
+            names the package it comes from, so `use \"example.com/lib\"`\n\
+            states the provenance the bare path leaves implicit. Add the\n\
+            import, or alias it with `use \"example.com/lib\" as name`.",
+    ),
+    (
         "GT0001",
         "The type checker could not reconcile two types it expected to\n\
                      match. The primary label shows the location of the mismatch;\n\

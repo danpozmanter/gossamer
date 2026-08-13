@@ -11,9 +11,14 @@ See [`SPEC.md`](https://github.com/danpozmanter/gossamer/blob/main/SPEC.md)
 for the full grammar and semantics.
 
 Delimited lists use commas on one line and newlines across multiple lines.
-This rule covers function arguments and parameters, closure parameters, struct
-fields and literals, and enum variants and payload fields. Multiline trailing
-commas are accepted for migration and removed by `gos fmt`.
+This rule covers every delimited list: function arguments and parameters,
+closure parameters, struct fields and literals, enum variants and payload
+fields, tuples and tuple types, `Vec` / array / `Map` / `Set` literals, tuple,
+slice, and struct patterns, generic parameters and arguments, and `use` lists.
+Multiline trailing commas are accepted for migration and removed by `gos fmt`.
+A newline separates elements only where a comma could, so a parenthesised
+expression spanning lines stays that expression rather than becoming a
+one-element tuple.
 
 Statement separators follow the same layout-first principle:
 

@@ -1766,6 +1766,58 @@ fn path_dependency_links_at_run() {
     assert_eq!(out.0.trim(), "hi gos", "stdout: {:?}", out.0);
 }
 
+/// A dependency's module is reached only through the import naming the
+/// package it comes from, so the bare `dep::item` path is rejected.
+#[test]
+fn a_dependency_path_requires_the_matching_import() {
+    let root = fresh_dir("path-dep-needs-import");
+    write_dep_project(
+        &root,
+        "dep",
+        "example.com/dep",
+        "pub fn greet(name: &String) -> String { format!(\"hi {}\", name) }\n",
+    );
+    let app = write_app_project(
+        &root,
+        "dep = { path = \"../dep\" }\n",
+        "fn main() { println!(\"{}\", dep::greet(&\"gos\")) }\n",
+    );
+    let out = project_run_vm(&app);
+    let _ = fs::remove_dir_all(&root);
+    assert_ne!(out.2, Some(0), "bare dependency path must not run");
+    let combined = format!("{}{}", out.0, out.1);
+    assert!(
+        combined.contains("GR0016"),
+        "expected GR0016, got: {combined}"
+    );
+    assert!(
+        combined.contains("example.com/dep"),
+        "diagnostic must name the package id: {combined}"
+    );
+}
+
+/// A renaming alias names the dependency in type position as well as in
+/// value position.
+#[test]
+fn a_dependency_alias_names_a_type_in_an_annotation() {
+    let root = fresh_dir("path-dep-alias-type");
+    write_dep_project(
+        &root,
+        "dep",
+        "example.com/dep",
+        "pub struct Counter { pub n: i64 }\n\nimpl Counter {\n    pub fn new() -> Counter { Counter { n: 7 } }\n    pub fn get(&self) -> i64 { self.n }\n}\n",
+    );
+    let app = write_app_project(
+        &root,
+        "dep = { path = \"../dep\" }\n",
+        "use \"example.com/dep\" as d\n\nfn main() {\n    let c: d::Counter = d::Counter::new()\n    println!(\"{}\", c.get())\n}\n",
+    );
+    let out = project_run_vm(&app);
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert_eq!(out.0.trim(), "7", "stdout: {:?}", out.0);
+}
+
 #[test]
 fn path_dependency_links_at_build() {
     let root = fresh_dir("path-dep-build");

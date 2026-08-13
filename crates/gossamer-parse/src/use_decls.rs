@@ -116,7 +116,7 @@ impl Parser<'_> {
         let mut entries = Vec::new();
         while !self.at_punct(Punct::RBrace) && !self.at_eof() {
             self.parse_use_list_entry(&[], &mut entries);
-            if !self.eat_punct(Punct::Comma) {
+            if !self.eat_list_separator() {
                 break;
             }
         }
@@ -141,7 +141,7 @@ impl Parser<'_> {
                 self.bump();
                 while !self.at_punct(Punct::RBrace) && !self.at_eof() {
                     self.parse_use_list_entry(&nested_prefix, entries);
-                    if !self.eat_punct(Punct::Comma) {
+                    if !self.eat_list_separator() {
                         break;
                     }
                 }

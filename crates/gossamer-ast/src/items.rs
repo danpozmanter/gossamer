@@ -137,6 +137,19 @@ impl Attribute {
     pub fn is_named(&self, name: &str) -> bool {
         self.path.segments.len() == 1 && self.path.segments[0].name.name == name
     }
+
+    /// The contents of `name("...")` with the quotes removed, when this
+    /// attribute is `name` carrying a single string literal argument.
+    #[must_use]
+    pub fn string_argument(&self, name: &str) -> Option<&str> {
+        if !self.is_named(name) {
+            return None;
+        }
+        let tokens = self.tokens.as_deref()?.trim();
+        tokens
+            .strip_prefix('"')
+            .and_then(|rest| rest.strip_suffix('"'))
+    }
 }
 
 /// A single `#[...]` or `#![...]` attribute.

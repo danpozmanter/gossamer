@@ -125,6 +125,12 @@ struct Resolver {
     /// Module whose body is being resolved, outermost segment first.
     /// Empty while resolving the crate root.
     current_module: Vec<String>,
+    /// Inlined dependency packages, keyed by the module name the bundler
+    /// gave them, valued by the project id they are published under. A
+    /// path headed by one of these names requires the matching import.
+    dependency_modules: std::collections::HashMap<String, String>,
+    /// Dependency module names some `use "id"` in this file bound.
+    imported_dependencies: std::collections::HashSet<String>,
     /// Depth of enclosing compiler-synthesized items. Visibility is a
     /// property of source the user wrote, so checks pause inside them.
     synthesized_depth: usize,
@@ -157,6 +163,8 @@ impl Resolver {
             item_homes: std::collections::HashMap::new(),
             module_visibility: std::collections::HashMap::new(),
             current_module: Vec::new(),
+            dependency_modules: std::collections::HashMap::new(),
+            imported_dependencies: std::collections::HashSet::new(),
             synthesized_depth: 0,
             synthesized_scope: std::collections::HashMap::new(),
             ambiguous_variants: std::collections::HashMap::new(),
@@ -260,6 +268,8 @@ impl Resolver {
         // module, which is only registered during item collection -
         // defer the binding until then.
         if let gossamer_ast::UseTarget::Project { id, .. } = &use_decl.target {
+            self.imported_dependencies
+                .insert(project_dep_module_name(id));
             self.deferred_project_uses.push(DeferredProjectUse {
                 alias: name,
                 module_name: project_dep_module_name(id),
@@ -677,6 +687,15 @@ impl Resolver {
             module_path,
             vis,
         );
+        if let Some(id) = item
+            .attrs
+            .outer
+            .iter()
+            .find_map(|attr| attr.string_argument("dependency"))
+        {
+            self.dependency_modules
+                .insert(decl.name.name.clone(), id.to_string());
+        }
         module_path.push(decl.name.name.clone());
         self.module_visibility.insert(module_path.join("::"), vis);
         match &decl.body {
@@ -1358,6 +1377,9 @@ impl Resolver {
             .skip_while(|s| matches!(*s, "super" | "crate" | "self" | "root"))
             .collect();
         if effective.len() > 1 {
+            if let Some(span) = span {
+                self.check_dependency_import(&effective, span);
+            }
             if let Some(resolution) = self.lookup_qualified_type(&written) {
                 if let Some(span) = span {
                     self.check_visibility(resolution, None, span);
@@ -1369,6 +1391,25 @@ impl Resolver {
                     self.resolve_generic_args(&segment.generics);
                 }
                 return;
+            }
+            // A `use "id" as alias` head names the dependency by the alias;
+            // its items register under the module's real name, so the type
+            // side rewrites the head the same way the value side does.
+            if let Some(real) = self.project_alias_modules.get(effective[0]).cloned() {
+                let mut rejoined: Vec<&str> = vec![real.as_str()];
+                rejoined.extend_from_slice(&effective[1..]);
+                if let Some(resolution) = self.lookup_qualified_type(&rejoined) {
+                    if let Some(span) = span {
+                        self.check_visibility(resolution, None, span);
+                    }
+                    if let Some(anchor) = anchor {
+                        self.resolutions.insert(anchor, resolution);
+                    }
+                    for segment in &path.segments {
+                        self.resolve_generic_args(&segment.generics);
+                    }
+                    return;
+                }
             }
         }
         let name = &head.name.name;
@@ -1587,6 +1628,32 @@ impl Resolver {
         self.lookup_value_or_type(&rejoined)
     }
 
+    /// Reports a path whose head names an inlined dependency package that
+    /// this file never imported. The import is what states which package a
+    /// `dep::item` path comes from, so the bare path is rejected outside the
+    /// dependency's own body.
+    fn check_dependency_import(&mut self, effective: &[&str], span: Span) {
+        let Some(head) = effective.first() else {
+            return;
+        };
+        if self.imported_dependencies.contains(*head)
+            || self.project_alias_modules.contains_key(*head)
+            || self.current_module.first().is_some_and(|m| m == *head)
+        {
+            return;
+        }
+        let Some(id) = self.dependency_modules.get(*head).cloned() else {
+            return;
+        };
+        self.emit(
+            ResolveError::DependencyNotImported {
+                module: (*head).to_string(),
+                id,
+            },
+            span,
+        );
+    }
+
     fn resolve_value_path(&mut self, path: &PathExpr, anchor: NodeId, span: Span) {
         let Some(head) = path.segments.first() else {
             return;
@@ -1614,6 +1681,7 @@ impl Resolver {
         // these stay opaque-by-head, matching the historical
         // tree-walker behaviour).
         if effective.len() > 1 {
+            self.check_dependency_import(&effective, span);
             let joined = effective.join("::");
             // `HashSet::new()` names the pre-rename container: report the
             // rename rather than an opaque missing path.

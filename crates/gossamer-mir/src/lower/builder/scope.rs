@@ -275,9 +275,42 @@ impl<'a> Builder<'a> {
     pub(crate) fn terminate(&mut self, terminator: Terminator) {
         if self.current.is_some() {
             let span = self.fn_span;
+            // A `&mut self` call on a scalar receiver borrowed a slot the
+            // backend materialised for it. The callee wrote through that
+            // slot, so the receiver's place is reloaded from it on the way
+            // out - the block the call continues into is this call's own and
+            // still empty, so the reload lands ahead of everything that reads
+            // the receiver again.
+            let reload = match &terminator {
+                Terminator::Call {
+                    args,
+                    target: Some(target),
+                    ..
+                } => match args.first() {
+                    Some(Operand::Copy(place)) if place.projection.is_empty() => self
+                        .mut_receiver_reloads
+                        .remove(&place.local)
+                        .map(|dest| (*target, dest, place.local)),
+                    _ => None,
+                },
+                _ => None,
+            };
             let block = self.current_block();
             block.terminator = terminator;
             let _ = span;
+            if let Some((target, dest, ref_local)) = reload {
+                let stmt = crate::ir::Statement {
+                    kind: crate::ir::StatementKind::Assign {
+                        place: Place::local(dest),
+                        rvalue: Rvalue::Use(Operand::Copy(Place {
+                            local: ref_local,
+                            projection: vec![crate::ir::Projection::Deref],
+                        })),
+                    },
+                    span,
+                };
+                self.blocks[target.0 as usize].stmts.insert(0, stmt);
+            }
         }
         self.current = None;
     }

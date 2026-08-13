@@ -2,7 +2,7 @@
 
 Status: experimental
 
-Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc.
+Sequence adapters: map, filter, fold, zip, enumerate, chain, etc. A `Vec` argument is traversed eagerly; an `Iterator` argument keeps the adapter lazy and answers with another iterator.
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 

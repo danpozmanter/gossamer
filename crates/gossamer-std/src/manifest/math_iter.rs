@@ -390,7 +390,9 @@ pub const MATH_BITS: StdModule = StdModule {
 
 pub const ITER: StdModule = StdModule {
     path: "std::iter",
-    summary: "Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc.",
+    summary: "Sequence adapters: map, filter, fold, zip, enumerate, chain, etc. \
+                A `Vec` argument is traversed eagerly; an `Iterator` argument keeps \
+                the adapter lazy and answers with another iterator.",
     items: &[
         StdItem {
             name: "count",
@@ -450,7 +452,7 @@ pub const ITER: StdModule = StdModule {
         StdItem {
             name: "rev",
             kind: StdItemKind::Function,
-            doc: "Returns a rev copy.",
+            doc: "Returns the elements in reverse order.",
         },
         StdItem {
             name: "dedup",
@@ -460,7 +462,8 @@ pub const ITER: StdModule = StdModule {
         StdItem {
             name: "map",
             kind: StdItemKind::Function,
-            doc: "Applies f to each element, returning a new Vec.",
+            doc: "Applies f to each element. Returns a Vec for a Vec argument, \
+                   and another iterator for an iterator argument.",
         },
         StdItem {
             name: "filter",

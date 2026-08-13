@@ -127,9 +127,15 @@ impl Parser<'_> {
         }
         let mut elements = Vec::new();
         elements.push(self.parse_pattern());
+        // Only a written comma marks the one-element tuple `(p,)`; a newline
+        // separator leaves `(\n p \n)` the parenthesised pattern it reads as.
         let mut saw_comma = false;
-        while self.eat_punct(Punct::Comma) {
-            saw_comma = true;
+        loop {
+            if self.eat_punct(Punct::Comma) {
+                saw_comma = true;
+            } else if !self.newline_before_peek() {
+                break;
+            }
             if self.at_punct(Punct::RParen) {
                 break;
             }
@@ -175,7 +181,7 @@ impl Parser<'_> {
                     prefix.push(pattern);
                 }
             }
-            if !self.eat_punct(Punct::Comma) {
+            if !self.eat_list_separator() {
                 break;
             }
         }
@@ -310,7 +316,7 @@ impl Parser<'_> {
             let mut elements = Vec::new();
             while !self.at_punct(Punct::RParen) && !self.at_eof() {
                 elements.push(self.parse_pattern());
-                if !self.eat_punct(Punct::Comma) {
+                if !self.eat_list_separator() {
                     break;
                 }
             }
@@ -375,7 +381,7 @@ impl Parser<'_> {
                 name: Ident::new(name),
                 pattern,
             });
-            if !self.eat_punct(Punct::Comma) {
+            if !self.eat_list_separator() {
                 break;
             }
         }

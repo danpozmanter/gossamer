@@ -188,6 +188,18 @@ const SPECS: &[Spec] = &[
     // Fan-in, fan-out, pipeline, and many-channel shapes at counts that hold
     // far more workers than the pool starts with.
     spec("feature-testing-examples/concurrency_stress_shapes.gos"),
+    // Lazy adapters answer with an iterator and terminals materialise, from
+    // a Range receiver as much as an Iterator one.
+    spec("feature-testing-examples/iterator_lazy_model.gos"),
+    // A `&self` / `&mut self` impl on a primitive receives an address, from a
+    // local, an element, a loop binding, or a resolved type parameter.
+    spec("feature-testing-examples/trait_impl_primitive_receiver.gos"),
+    // An identity update inside a loop keeps the accumulator and the loop
+    // itself, through plain, `if`, `match`, `Option`, and enum arms.
+    spec("feature-testing-examples/identity_update_in_loop.gos"),
+    // The `std::iter` free functions hand back what they declare, including
+    // the pair-splitting, element-typed, and accumulator-first shapes.
+    spec("feature-testing-examples/iter_free_function_contracts.gos"),
     // The `std::fs` and `std::env` surface a program can rely on regardless
     // of host. Registered here so the CI matrix runs them on Linux x64,
     // Linux arm64, macOS arm64, and Windows x64.

@@ -576,6 +576,19 @@ pub fn copy_propagate(body: &mut Body, tcx: &TyCtxt) {
                 }
             }
         }
+        // `x = x` states nothing. It arises from folding an identity update
+        // (`x += 0`), and every later pass and the backends have to carry a
+        // statement whose destination is also its source. Drop it here, where
+        // the copy shapes are already being canonicalised.
+        block.stmts.retain(|stmt| {
+            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                return true;
+            };
+            let Rvalue::Use(Operand::Copy(source)) = rvalue else {
+                return true;
+            };
+            !(place.is_simple() && source.is_simple() && place.local == source.local)
+        });
     }
 }
 

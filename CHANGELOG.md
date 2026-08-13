@@ -1,12 +1,73 @@
 # Changelog
 
-## 0.48.2 - Iterator rebinding
+## 0.49.0 - Delimited lists, iterator contracts, explicit dependency imports
 
 - A `let` that reuses the name of a consumed iterator or range introduces a
   fresh, unconsumed binding. Consumption tracked the name rather than the
   binding, so shadowing a consumed name reported GT0042 on the new binding for
   the rest of the scope, and a REPL session could not redefine the name at all
   once any pipeline had taken it.
+- `%bindings` lists a consumed iterator with its type and value. Observing a
+  binding to report it is not a traversal; a written read of one stays an
+  error.
+- A newline separates the elements of every delimited list, not a subset.
+  Tuples and tuple types, `Vec` / array / `Map` / `Set` literals, tuple, slice,
+  and struct patterns, generic parameters and arguments, and `use` lists join
+  the forms that already allowed it. `gos fmt` removes multiline commas from
+  parenthesised and map-literal lists, so a formatted multi-line tuple or map
+  no longer parses as anything at all. A newline separates only where a comma
+  could, leaving `(\n a + b \n)` the parenthesised expression it reads as.
+- `%info` states the type an iterator call actually has. `Range::map` and every
+  adapter on a `Range` receiver reported the materialised `Vec` return of the
+  eager catalog row, and `take_while` / `skip_while` reported it on `Iterator`
+  too, while all of them evaluate to `Iterator<T>`. Type checking and the
+  rendered signature now read one lazy-versus-terminal classification.
+- Reaching a dependency's items requires the import that names the package.
+  `intcode::run(..)` resolved with no `use "example.com/intcode"` in the file,
+  leaving the path's provenance unstated; the bare path reports GR0016 with the
+  import to add. Modules of the current project keep the weaker rule.
+- Name a dependency's type through a renaming alias. `use "example.com/dep" as
+  d` reached `d::Item` in expressions but not in a type annotation, where the
+  alias went unresolved.
+- Resolve a project's `[rust-bindings]` from the entry a command names.
+  `gos run path/src/main.gos` took its manifest from the working directory
+  while `gos build` took it from the entry, so the same file compiled natively
+  and was rejected by the front end on the interpreter.
+- Compare a fixture whose output order the scheduler chooses on exit status
+  alone. The tier-parity walk inferred nondeterminism by re-running the
+  reference once, so two runs that happened to agree made a concurrent
+  fixture's equally valid interleaving read as a divergence.
+- Pass the address of a primitive receiver to a `&self` or `&mut self` method
+  the program implements for it. The call site handed over the value, so the
+  body dereferenced the value itself: `i64`, `bool`, and `char` receivers
+  faulted natively, `f64` returned a wrong number, and `&mut self` never wrote
+  back. Receivers reached from a local, an element, a loop binding, and a type
+  parameter that resolved to a primitive all carry an address now.
+- Read an element of a generic container as the element type the instantiation
+  chose. A `Vec<T>` element was read as a single scalar slot whatever `T`
+  became, so a struct element reached a trait method as its first eight bytes.
+- Write a mutation made through `m.or_insert(k, default)` back into the map.
+  The interpreter handed back a copy, so `m.or_insert(k, #[]).push(v)` left the
+  stored value empty while the compiled tiers mutated it in place.
+- Drop an identity update (`x = x`) during MIR canonicalisation. It reached the
+  JIT as a statement whose destination was also its source, and any loop
+  containing one - including every `match` or `if` with an arm that folds to
+  one - exhausted the stack before the program ran.
+- Reject `iter::flatten` over elements that are not sequences, and `iter::unzip`
+  over elements that are not pairs. Both were accepted with an invented element
+  type: `flatten` over a range segfaulted natively, and `unzip` returned
+  different wrong values on each tier.
+- Type `iter::filter_map`, `iter::flat_map`, and `iter::scan` as the lazy
+  adapters they are, and accept an iterator argument for them. Their runtime
+  went lazy under the 2027 edition while the checker still called the result a
+  `Vec`, so the interpreter reported an empty result where the native build
+  reported the real one.
+- Correct the declared argument order of `iter::fold` and `iter::scan`: both
+  take the accumulator first and the data last. The documented order did not
+  compile, and `scan`'s declared closure and result types described neither the
+  runtime nor any call site.
+- Type `iter::empty()` and `iter::unzip(..)` results instead of leaving them
+  unresolved.
 
 ## 0.48.1 - Allocation speed, swap contract, float parity
 

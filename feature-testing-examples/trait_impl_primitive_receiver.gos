@@ -1,0 +1,138 @@
+// A `&self` method reads its receiver as an address. A primitive receiver
+// holds its value in the slot, so the call site has to hand over an address
+// whether the receiver is a local, an element, a loop binding, or a type
+// parameter that resolved to a primitive. `&mut self` writes back through it.
+//
+// Each shape runs inside a function called often enough to be compiled, so
+// the row compares real native code against the bytecode VM.
+
+trait Doubler {
+    fn twice(&self) -> i64
+}
+
+impl Doubler for i64 {
+    fn twice(&self) -> i64 { *self * 2 }
+}
+
+trait Flip {
+    fn flipped(&self) -> bool
+}
+
+impl Flip for bool {
+    fn flipped(&self) -> bool { !*self }
+}
+
+trait Code {
+    fn code(&self) -> i64
+}
+
+impl Code for char {
+    fn code(&self) -> i64 { *self as i64 }
+}
+
+trait Halve {
+    fn halved(&self) -> f64
+}
+
+impl Halve for f64 {
+    fn halved(&self) -> f64 { *self / 2.0 }
+}
+
+trait Bump {
+    fn bump(&mut self)
+}
+
+impl Bump for i64 {
+    fn bump(&mut self) { *self += 1 }
+}
+
+trait Area {
+    fn area(&self) -> i64
+}
+
+struct Square {
+    side: i64
+}
+
+impl Area for Square {
+    fn area(&self) -> i64 { self.side * self.side }
+}
+
+fn from_local(n: i64) -> i64 {
+    let x = n
+    x.twice()
+}
+
+fn from_element(n: i64) -> i64 {
+    let xs = #[n, n + 1]
+    xs[0].twice()
+}
+
+fn from_loop(n: i64) -> i64 {
+    let xs = #[n, n + 1, n + 2]
+    let mut total = 0
+    for x in xs { total += x.twice() }
+    total
+}
+
+fn written_through(n: i64) -> i64 {
+    let mut x = n
+    x.bump()
+    x.bump()
+    x
+}
+
+fn other_primitives(n: i64) -> String {
+    let b = n % 2 == 0
+    let c = 'A'
+    let f = 9.0
+    format!("{} {} {}", b.flipped(), c.code(), f.halved())
+}
+
+// A bound whose parameter resolves to an aggregate: the element is read as
+// its address, and the impl receives that address.
+fn total_area<T: Area>(items: Vec<T>) -> i64 {
+    let mut total = 0
+    for item in items { total += item.area() }
+    total
+}
+
+fn first_area<T: Area>(items: Vec<T>) -> i64 {
+    items[0].area()
+}
+
+// The same bound resolving to a primitive: the element is a value, and the
+// impl still receives an address.
+fn total_twice<T: Doubler>(items: Vec<T>) -> i64 {
+    let mut total = 0
+    for item in items { total += item.twice() }
+    total
+}
+
+fn main() {
+    let mut last = 0
+    for _ in 0..200 { last = from_local(21) }
+    println!("{}", last)
+
+    for _ in 0..200 { last = from_element(5) }
+    println!("{}", last)
+
+    for _ in 0..200 { last = from_loop(1) }
+    println!("{}", last)
+
+    for _ in 0..200 { last = written_through(7) }
+    println!("{}", last)
+
+    let mut text = ""
+    for _ in 0..200 { text = other_primitives(4) }
+    println!("{}", text)
+
+    for _ in 0..200 { last = total_area(#[Square { side: 2 }, Square { side: 3 }]) }
+    println!("{}", last)
+
+    for _ in 0..200 { last = first_area(#[Square { side: 4 }]) }
+    println!("{}", last)
+
+    for _ in 0..200 { last = total_twice(#[1, 2, 3]) }
+    println!("{}", last)
+}

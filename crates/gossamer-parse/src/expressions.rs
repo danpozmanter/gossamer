@@ -1141,7 +1141,8 @@ impl Parser<'_> {
             if self.at_eof() {
                 break;
             }
-            if !self.expect_punct(Punct::Comma, "between map entries") {
+            if !self.eat_list_separator() {
+                self.expect_punct(Punct::Comma, "between map entries");
                 break;
             }
             if self.at_punct(Punct::RBrace) {
@@ -1200,7 +1201,7 @@ impl Parser<'_> {
                 return first.kind;
             }
             let mut elements = vec![first];
-            while p.eat_punct(Punct::Comma) {
+            while p.eat_list_separator() {
                 if p.at_punct(Punct::RParen) {
                     break;
                 }
@@ -1266,7 +1267,7 @@ impl Parser<'_> {
             });
         }
         let mut elements = vec![first];
-        while self.eat_punct(Punct::Comma) {
+        while self.eat_list_separator() {
             if self.at_punct(Punct::RBracket) {
                 break;
             }
@@ -1293,7 +1294,7 @@ impl Parser<'_> {
             });
         }
         let mut elements = vec![first];
-        while self.eat_punct(Punct::Comma) {
+        while self.eat_list_separator() {
             if self.at_punct(Punct::RBracket) {
                 break;
             }
@@ -1308,7 +1309,7 @@ impl Parser<'_> {
             return ExprKind::SetLiteral(Vec::new());
         }
         let mut elements = vec![self.parse_expr_no_assign()];
-        while self.eat_punct(Punct::Comma) {
+        while self.eat_list_separator() {
             if self.at_punct(Punct::RBrace) {
                 break;
             }

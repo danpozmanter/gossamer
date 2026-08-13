@@ -221,6 +221,15 @@ pub enum ResolveError {
         /// `::`-joined path of the module that declares it.
         module: String,
     },
+    /// A path headed by a dependency package's module that the file
+    /// never imported.
+    #[error("`{module}` is a dependency of this project and is not imported here")]
+    DependencyNotImported {
+        /// Module name as written at the head of the path.
+        module: String,
+        /// Project id the dependency is published under.
+        id: String,
+    },
     /// A `mod name;` declaration with no source behind it.
     #[error("no source file for module `{name}`")]
     MissingModuleSource {
@@ -252,6 +261,7 @@ impl ResolveError {
             Self::MissingRequiredArgument { .. } => "missing-required-argument",
             Self::AmbiguousVariant { .. } => "ambiguous-variant",
             Self::NotImported { .. } => "not-imported",
+            Self::DependencyNotImported { .. } => "dependency-not-imported",
             Self::MissingModuleSource { .. } => "missing-module-source",
         }
     }
@@ -283,6 +293,7 @@ impl ResolveError {
             | Self::NonConstantDefault { name }
             | Self::DuplicateImport { name } => name,
             Self::PositionalAfterNamed | Self::MissingRequiredArgument { .. } => return false,
+            Self::DependencyNotImported { module, .. } => module,
             Self::AmbiguousNamedArgument { method, .. } => method,
             Self::UnknownModulePath { path } | Self::RemovedStdItem { path, .. } => path,
             Self::PrivateItem { name, module, .. } => {
@@ -326,6 +337,7 @@ impl ResolveError {
             | Self::NamedArgumentTarget { .. } => "GR0013",
             Self::NonConstantDefault { .. } => "GR0014",
             Self::MissingRequiredArgument { .. } => "GR0015",
+            Self::DependencyNotImported { .. } => "GR0016",
         }
     }
 }
@@ -518,6 +530,11 @@ impl ResolveDiagnostic {
                     "a module's items are reached through a path or an import; add \
                      `use {module}::{name}` to name it directly"
                 )),
+            ResolveError::DependencyNotImported { module, id } => out.with_help(format!(
+                "a dependency's items are reached through the import that names the \
+                 package; add `use \"{id}\"` to this file, or \
+                 `use \"{id}\" as {module}` to choose the name"
+            )),
             ResolveError::MissingModuleSource { name } => out.with_help(format!(
                 "`mod {name};` names a module whose source the build never supplied; \
                  add `{name}.gos` (or `{name}/mod.gos`) beside the entry inside a \

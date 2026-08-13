@@ -18,7 +18,7 @@
         <link rel="prev" href="../design/selfhosting/">
 
 
-        <link rel="next" href="../security/">
+        <link rel="next" href="../compatibility/">
 
 
 
@@ -2136,6 +2136,33 @@
 
 
     <li class="md-nav__item">
+      <a href="../compatibility/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Compatibility
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
       <a href="../security/" class="md-nav__link">
 
 
@@ -2480,8 +2507,12 @@ card:</p>
   <code>fs::read(...)</code>; for a sibling file write <code>use util::add</code> (or spell
   <code>util::add(..)</code> in full). The file layout declares the module, the
   import brings its names in. A bare name some module declares reports
-  GR0011 with the exact <code>use</code> line to add. Primitive and core collection
-  types, variants, macros, and the documented prelude need no import.</li>
+  GR0011 with the exact <code>use</code> line to add. A <code>[dependencies]</code> package is
+  a stronger case: its module is reached ONLY through the import that
+  names the package, so write <code>use "example.com/intcode"</code> (or
+  <code>use "example.com/intcode" as ic</code>) before any <code>intcode::</code> path - a bare
+  one reports GR0016. Primitive and core collection types, variants,
+  macros, and the documented prelude need no import.</li>
 <li><strong>Default to immutable.</strong> <code>let</code> first; <code>let mut</code> only for a binding
   that genuinely changes, kept near a single update site. <code>if</code> /
   <code>match</code> / <code>loop ... break v</code> are expressions - bind their result.</li>
@@ -2632,9 +2663,13 @@ Left-associative, very low precedence.</p>
   starts a NEW statement; for multi-line continuation, end the previous line
   with the operator or parenthesize.</li>
 <li><strong>Delimited lists</strong> use commas on one line and newlines when multiline.
-  This covers function arguments and parameters, closure parameters,
-  struct fields and literals, and enum variants and payload fields.
-  Legacy multiline commas parse, and <code>gos fmt</code> removes them.</li>
+  This covers every delimited list: function arguments and parameters,
+  closure parameters, struct fields and literals, enum variants and payload
+  fields, tuples and tuple types, <code>Vec</code> / array / <code>Map</code> / <code>Set</code> literals,
+  tuple, slice, and struct patterns, generic parameters and arguments, and
+  <code>use</code> lists. Legacy multiline commas parse, and <code>gos fmt</code> removes them.
+  A newline separates elements only where a comma already could, so
+  <code>(\n expr \n)</code> stays a parenthesised expression rather than a 1-tuple.</li>
 <li><strong>Struct construction follows declaration shape</strong>: unit structs use
   <code>Unit</code> or <code>Unit {}</code>, tuple structs use <code>Pair(a, b)</code>, and named structs
   require keyed <code>Point { x: 1, y: 2 }</code> fields. Positional or mixed

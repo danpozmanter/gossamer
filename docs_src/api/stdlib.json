@@ -8593,7 +8593,7 @@
       "id": "std-iter-fold",
       "name": "std::iter::fold",
       "kind": "function",
-      "signature": "fn fold<T, U>(f: Fn(U, T) -> U, init: U, items: Vec<T>) -> U",
+      "signature": "fn fold<T, U>(init: U, f: Fn(U, T) -> U, items: Vec<T>) -> U",
       "description": "Reduces a sequence with an accumulator.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -8632,7 +8632,7 @@
       "name": "std::iter::map",
       "kind": "function",
       "signature": "fn map<T, U>(f: Fn(T) -> U, items: Vec<T>) -> Vec<U>",
-      "description": "Applies f to each element, returning a new Vec.",
+      "description": "Applies f to each element. Returns a Vec for a Vec argument, and another iterator for an iterator argument.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -8955,7 +8955,7 @@
       "name": "std::iter::rev",
       "kind": "function",
       "signature": "fn rev<T>(items: Vec<T>) -> Vec<T>",
-      "description": "Returns a rev copy.",
+      "description": "Returns the elements in reverse order.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -8973,7 +8973,7 @@
       "id": "std-iter-scan",
       "name": "std::iter::scan",
       "kind": "function",
-      "signature": "fn scan<T, S, U>(f: Fn(S, T) -> (S, Option<U>), state: S, items: Vec<T>) -> Vec<U>",
+      "signature": "fn scan<T, S>(init: S, f: Fn(S, T) -> S, items: Vec<T>) -> Vec<S>",
       "description": "Folds while yielding each intermediate accumulator.",
       "lifecycle": "experimental",
       "tier_support": [

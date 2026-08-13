@@ -109,6 +109,7 @@ nav:
       - Goroutine stack model: design/goroutine_stacks.md
       - Self-hosting study: design/selfhosting.md
   - Skill card: skill_card.md
+  - Compatibility: compatibility.md
   - Security: security.md
   - Contributing: contributing.md
 

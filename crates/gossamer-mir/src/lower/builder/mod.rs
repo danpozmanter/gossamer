@@ -86,6 +86,12 @@ pub(crate) struct Builder<'a> {
     /// auto-regioned. See `collect_region_unsafe_fns`.
     pub(crate) region_unsafe: &'a std::collections::HashSet<gossamer_resolve::DefId>,
     pub(crate) local_struct: HashMap<Local, String>,
+    /// Scalar receivers borrowed mutably for a `&mut self` method, keyed by
+    /// the reference local and valued by the place it borrowed. A scalar has
+    /// no machine address of its own on the JIT tier, so the borrow points at
+    /// a materialised slot; reloading the place from that slot after the call
+    /// is what carries the callee's write back.
+    pub(crate) mut_receiver_reloads: HashMap<Local, Local>,
     /// Locals bound to the *address* of a vec slot by a `&mut` for-loop.
     /// The slot of a heap-container element holds a pointer, so a method
     /// call on such a binding loads that pointer before dispatching, while

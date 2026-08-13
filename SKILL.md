@@ -83,8 +83,12 @@ Write clear, low-complexity, concise code.
   `fs::read(...)`; for a sibling file write `use util::add` (or spell
   `util::add(..)` in full). The file layout declares the module, the
   import brings its names in. A bare name some module declares reports
-  GR0011 with the exact `use` line to add. Primitive and core collection
-  types, variants, macros, and the documented prelude need no import.
+  GR0011 with the exact `use` line to add. A `[dependencies]` package is
+  a stronger case: its module is reached ONLY through the import that
+  names the package, so write `use "example.com/intcode"` (or
+  `use "example.com/intcode" as ic`) before any `intcode::` path - a bare
+  one reports GR0016. Primitive and core collection types, variants,
+  macros, and the documented prelude need no import.
 - **Default to immutable.** `let` first; `let mut` only for a binding
   that genuinely changes, kept near a single update site. `if` /
   `match` / `loop ... break v` are expressions - bind their result.
@@ -238,9 +242,13 @@ let n = 3 |> double |> add(10) |> clamp(0, 100)
   starts a NEW statement; for multi-line continuation, end the previous line
   with the operator or parenthesize.
 - **Delimited lists** use commas on one line and newlines when multiline.
-  This covers function arguments and parameters, closure parameters,
-  struct fields and literals, and enum variants and payload fields.
-  Legacy multiline commas parse, and `gos fmt` removes them.
+  This covers every delimited list: function arguments and parameters,
+  closure parameters, struct fields and literals, enum variants and payload
+  fields, tuples and tuple types, `Vec` / array / `Map` / `Set` literals,
+  tuple, slice, and struct patterns, generic parameters and arguments, and
+  `use` lists. Legacy multiline commas parse, and `gos fmt` removes them.
+  A newline separates elements only where a comma already could, so
+  `(\n expr \n)` stays a parenthesised expression rather than a 1-tuple.
 - **Struct construction follows declaration shape**: unit structs use
   `Unit` or `Unit {}`, tuple structs use `Pair(a, b)`, and named structs
   require keyed `Point { x: 1, y: 2 }` fields. Positional or mixed

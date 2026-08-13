@@ -276,12 +276,55 @@ fn multiline_lists_use_newlines_and_tolerate_legacy_commas() {
 }
 
 #[test]
+fn every_delimited_list_accepts_a_newline_separator() {
+    for source in [
+        "fn main() { let t = (\n    1\n    2\n)\n let _ = t }\n",
+        "fn f() -> (\n    i64\n    i64\n) { (1, 2) }\n",
+        "fn main() { let (\n    a\n    b\n) = (1, 2)\n let _ = a + b }\n",
+        "fn main() { let m = {\n    \"a\": 1\n    \"b\": 2\n}\n let _ = m }\n",
+        "fn main() { let s = #{\n    1\n    2\n}\n let _ = s }\n",
+        "fn main() { let v = #[\n    1\n    2\n]\n let _ = v }\n",
+        "fn main() { let a: [i64; 2] = [\n    1\n    2\n]\n let _ = a }\n",
+        "fn main() { let xs = #[1, 2]\n if let [\n    a\n    b\n] = xs { let _ = a + b } }\n",
+        "struct P { x: i64, y: i64 }\nfn main() { let P {\n    x\n    y\n} = P { x: 1, y: 2 }\n let _ = x + y }\n",
+        "use std::{\n    fs\n    env\n}\nfn main() {}\n",
+        "fn f<\n    A\n    B\n>(a: A, b: B) -> i64 { 1 }\n",
+    ] {
+        let mut map = SourceMap::new();
+        let file = map.add_file("newline_delimited.gos", source.to_string());
+        let (_, diags) = parse_source_file(source, file);
+        assert!(diags.is_empty(), "`{source}` produced {diags:?}");
+    }
+}
+
+/// A newline separates list elements; it never turns the parenthesised
+/// forms into one-element aggregates.
+#[test]
+fn a_newline_does_not_create_a_one_element_tuple() {
+    for source in [
+        "fn main() { let x = (\n    1 + 2\n)\n let _ = x + 1 }\n",
+        "fn main() { let (\n    a\n) = 5\n let _ = a + 1 }\n",
+    ] {
+        let mut map = SourceMap::new();
+        let file = map.add_file("paren_newline.gos", source.to_string());
+        let (_, diags) = parse_source_file(source, file);
+        assert!(diags.is_empty(), "`{source}` produced {diags:?}");
+    }
+}
+
+#[test]
 fn same_line_lists_require_commas() {
     for source in [
         "struct Point { x: i64 y: i64 }\n",
         "enum Choice { One Two }\n",
         "fn add(x: i64 y: i64) { }\n",
         "fn main() { add(1 2) }\n",
+        "fn main() { let t = (1 2) }\n",
+        "fn main() { let v = #[1 2] }\n",
+        "fn main() { let a = [1 2] }\n",
+        "fn main() { let s = #{1 2} }\n",
+        "fn main() { let m = {\"a\": 1 \"b\": 2} }\n",
+        "use std::{fs env}\nfn main() {}\n",
     ] {
         let mut map = SourceMap::new();
         let file = map.add_file("comma_lists.gos", source.to_string());

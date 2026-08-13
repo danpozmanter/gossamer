@@ -250,9 +250,17 @@ Unlike Go, Gossamer neither inserts nor accepts `;`. The lexer emits tokens
 verbatim; the parser uses whitespace, newlines, and delimiters as separators.
 
 Delimited lists use commas on one line and newlines across multiple lines.
-This applies to function parameters and arguments, closure parameters, struct
-fields and literals, and enum variants and payload fields. A comma at the end
-of a multiline entry is accepted for migration, but `gos fmt` removes it.
+This applies to every delimited list: function parameters and arguments,
+closure parameters, struct fields and literals, enum variants and payload
+fields, tuples and tuple types, `Vec` / array / `Map` / `Set` literals, tuple,
+slice, and struct patterns, generic parameters and arguments, and `use` lists.
+A comma at the end of a multiline entry is accepted for migration, but
+`gos fmt` removes it.
+
+A newline separates elements only in positions where a comma would, so a
+parenthesised expression spanning lines stays that expression: `(\n a + b \n)`
+is the sum, not a one-element tuple. The one-element tuple is still written
+with its comma, `(a,)`.
 
 One narrow newline rule disambiguates the three operators that are
 also unary prefixes (`&`, `*`, `-`): when one of them appears as the
@@ -1662,6 +1670,14 @@ does not import sibling modules or all module members as bare names.
 The string-literal form is mandatory for any project whose identifier
 contains `.` or `/`, which is every real-world external dependency.
 Identifier-only paths never escape the current project.
+
+A dependency requires its `use` on the same terms as the standard
+library. Writing `math::add(1, 2)` without first importing
+`"example.com/math"` is an error, even though the tool has already
+resolved the package: the import is what records which package a
+`math::` path comes from. Modules of the current project keep the weaker
+rule - a full path such as `util::add(..)` names a sibling module
+without an import, because the file layout already shows where it lives.
 
 There is no side-effect-only `use`. A project's initialisation is
 explicit through an optional `fn init()` per module, run in

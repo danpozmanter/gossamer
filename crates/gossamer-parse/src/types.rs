@@ -78,7 +78,7 @@ impl Parser<'_> {
             return first.kind;
         }
         let mut elements = vec![first];
-        while self.eat_punct(Punct::Comma) {
+        while self.eat_list_separator() {
             if self.at_punct(Punct::RParen) {
                 break;
             }
@@ -139,7 +139,7 @@ impl Parser<'_> {
         let mut params = Vec::new();
         while !self.at_punct(Punct::RParen) && !self.at_eof() {
             params.push(self.parse_type());
-            if !self.eat_punct(Punct::Comma) {
+            if !self.eat_list_separator() {
                 break;
             }
         }
@@ -268,7 +268,7 @@ impl Parser<'_> {
                 }
                 None => args.push(self.parse_generic_arg()),
             }
-            if !self.eat_punct(Punct::Comma) {
+            if !self.eat_list_separator() {
                 break;
             }
         }

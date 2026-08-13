@@ -1389,6 +1389,51 @@ fn xml_escape(s: &str) -> String {
 mod focused_tests {
     use super::*;
 
+    /// The scheduling classifier decides on the source, so its answer is
+    /// the same on every run and on every machine.
+    #[test]
+    fn scheduling_dependence_is_read_from_the_source() {
+        let dir = std::env::temp_dir().join(format!("gos-sched-classify-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let cases: [(&str, &str, bool); 5] = [
+            (
+                "goroutine.gos",
+                "fn main() {\n    for i in 0..8 { go work(i) }\n}\n",
+                true,
+            ),
+            (
+                "spawned.gos",
+                "fn main() {\n    let h = spawn(work)\n    let _ = h.join()\n}\n",
+                true,
+            ),
+            (
+                "selected.gos",
+                "fn main() {\n    select {\n        v = rx.recv() => { let _ = v }\n    }\n}\n",
+                true,
+            ),
+            (
+                "sequential.gos",
+                "fn main() {\n    for i in 0..8 { println!(\"{}\", i) }\n}\n",
+                false,
+            ),
+            (
+                "mentions_go_in_a_comment.gos",
+                "fn main() {\n    // go through each item in order\n    println!(\"1\")\n}\n",
+                false,
+            ),
+        ];
+        for (name, source, expected) in cases {
+            let path = dir.join(name);
+            std::fs::write(&path, source).expect("write fixture");
+            assert_eq!(
+                tier_parity::output_order_depends_on_scheduling(&path),
+                expected,
+                "{name} classified wrongly"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn timeout_units_and_zero_are_checked() {
         assert_eq!(
@@ -1506,7 +1551,7 @@ fn extract_doc_tests(source: &str, display: &str) -> Vec<DocTest> {
 /// the LLVM-compiled binary, capturing per-tier outcomes and
 /// (optionally) writing the JSON sidecar that
 /// `gos feature-status` reads.
-mod tier_parity {
+pub(crate) mod tier_parity {
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -1758,16 +1803,44 @@ mod tier_parity {
         // seed. Confirm it by re-running the reference tier rather than
         // assuming, and pay for the extra run only when the tiers actually
         // disagreed.
-        let mut compare_stdout = true;
-        if parity_outcomes(&observed, true)
-            .iter()
-            .any(|o| o.as_deref() == Some("fail"))
+        // Interleaving is a property of the source, not of a sample: two
+        // runs that happen to agree prove nothing, so a fixture whose
+        // output order is chosen by the scheduler is settled statically and
+        // never rests on a race. Re-running the reference still catches the
+        // sources of movement no signature describes - a timestamp, a
+        // random seed - and is paid for only when the tiers disagreed.
+        let mut compare_stdout = !output_order_depends_on_scheduling(file);
+        if compare_stdout
+            && parity_outcomes(&observed, true)
+                .iter()
+                .any(|o| o.as_deref() == Some("fail"))
             && let Outcome::Ran { stdout, .. } = &observed[0]
             && let Outcome::Ran { stdout: again, .. } = run_vm(file, budget)
         {
             compare_stdout = *stdout == mask_program_path(&again, file);
         }
         parity_outcomes(&observed, compare_stdout)
+    }
+
+    /// Whether the fixture hands the order of its output to the scheduler.
+    ///
+    /// A concurrent fixture's lines are emitted by whichever goroutine runs
+    /// first, so the sequence is one of many correct ones and carries no
+    /// cross-tier information. Matching a concurrency form the fixture does
+    /// not really use only weakens the comparison to exit status, which is
+    /// the conservative direction.
+    pub(crate) fn output_order_depends_on_scheduling(file: &Path) -> bool {
+        let Ok(source) = fs::read_to_string(file) else {
+            return false;
+        };
+        source.lines().any(|line| {
+            let code = line.split("//").next().unwrap_or(line).trim();
+            code == "go" || code.starts_with("go ") || code.contains(" go ") || {
+                ["spawn(", "select {", "select{"]
+                    .iter()
+                    .any(|form| code.contains(form))
+            }
+        })
     }
 
     /// Reduces what each tier did into the per-tier verdicts the sidecar

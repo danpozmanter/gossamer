@@ -80,7 +80,8 @@ pub fn typecheck_source_file_for_repl_inspection(
     tcx: &mut TyCtxt,
 ) -> (TypeTable, Vec<TypeDiagnostic>) {
     let mut checker = TypeChecker::new(tcx, resolutions, Edition::E2026);
-    checker.suppress_borrow_read_conflict = true;
+    checker.suppressed.borrow_read_conflict = true;
+    checker.suppressed.consumed_iterator_read = true;
     checker.run(source)
 }
 
@@ -485,6 +486,24 @@ struct DeferredMutatingReceiver {
     span: Span,
 }
 
+/// Read diagnostics a surrounding operation has already accounted for.
+///
+/// Both describe a read the checker performs on the program's behalf rather
+/// than one the user wrote, so the rule the read would violate does not apply
+/// to it.
+#[derive(Debug, Clone, Copy, Default)]
+struct SuppressedReadChecks {
+    /// Ordinary path-read checks, paused while validating the place of a
+    /// borrow or assignment. Those operations issue their more precise
+    /// conflict diagnostic after the place has been typed.
+    borrow_read_conflict: bool,
+    /// The consumed-iterator read diagnostic. Observing a binding to report
+    /// its type and value is not a traversal, so a REPL inspection program
+    /// reads an already-consumed iterator without violating the source-level
+    /// linearity the check enforces for user code.
+    consumed_iterator_read: bool,
+}
+
 struct TypeChecker<'a> {
     tcx: &'a mut TyCtxt,
     infer: InferCtxt,
@@ -570,10 +589,8 @@ struct TypeChecker<'a> {
     /// advance through a reference yielded by pattern matching while still
     /// rejecting a rebind to storage declared in a shorter-lived scope.
     reference_origins: Vec<HashMap<Box<str>, Box<str>>>,
-    /// Suppresses ordinary path-read checks while validating the place of a
-    /// borrow or assignment. Those operations issue their more precise
-    /// conflict diagnostic after the place has been typed.
-    suppress_borrow_read_conflict: bool,
+    /// Read checks paused for the current context.
+    suppressed: SuppressedReadChecks,
     /// Owned local types that may only reveal a nested reference after
     /// inference has unified a channel, closure, tuple, or container generic.
     deferred_reference_storage: Vec<(Ty, Span, &'static str)>,
@@ -895,7 +912,7 @@ impl<'a> TypeChecker<'a> {
             mutable_borrows: vec![HashMap::new()],
             shared_borrows: vec![HashMap::new()],
             reference_origins: vec![HashMap::new()],
-            suppress_borrow_read_conflict: false,
+            suppressed: SuppressedReadChecks::default(),
             deferred_reference_storage: Vec::new(),
             struct_fields: checker_struct_fields,
             field_homes: HashMap::new(),
@@ -9860,7 +9877,8 @@ impl<'a> TypeChecker<'a> {
             }
             ("iter", "fold" | "scan") => 3,
             ("iter", "take" | "skip" | "step_by" | "chain" | "zip" | "windows" | "chunks") => 2,
-            ("iter", "enumerate" | "rev" | "dedup" | "flatten" | "pairwise") => 1,
+            ("iter", "enumerate" | "rev" | "dedup" | "flatten" | "pairwise" | "unzip") => 1,
+            ("iter", "empty") => 0,
             (
                 "iter",
                 "for_each" | "map" | "filter" | "filter_map" | "flat_map" | "reduce" | "sum_by"
@@ -10274,24 +10292,8 @@ impl<'a> TypeChecker<'a> {
             "iter" => {
                 let eager_alias = name.starts_with("eager_");
                 let name = name.strip_prefix("eager_").unwrap_or(name);
-                let all_tier_lazy = matches!(
-                    name,
-                    "range"
-                        | "range_inclusive"
-                        | "once"
-                        | "repeat"
-                        | "take"
-                        | "skip"
-                        | "step_by"
-                        | "enumerate"
-                        | "chain"
-                        | "zip"
-                        | "map"
-                        | "filter"
-                        | "take_while"
-                        | "skip_while"
-                        | "rev"
-                );
+                let all_tier_lazy = matches!(name, "range" | "range_inclusive" | "once" | "repeat")
+                    || iterator_adapter_is_lazy(name);
                 let edition_lazy_result =
                     self.edition == Edition::E2027 && !eager_alias && all_tier_lazy;
                 let i64_ty = self.tcx.int_ty(IntTy::I64);
@@ -10376,14 +10378,53 @@ impl<'a> TypeChecker<'a> {
                         self.iter_adapter_result_ty(pair, lazy_result)
                     }
                     "flatten" => {
-                        let inner = self
-                            .sequence_elem_ty(elem, span)
-                            .unwrap_or_else(|| self.fresh());
+                        // Flattening needs an element that is itself a
+                        // sequence. A scalar element has no inner type, and
+                        // inventing a fresh one let the call through to a
+                        // runtime that reads the scalar as a sequence header.
+                        let Some(inner) = self.sequence_elem_ty(elem, span) else {
+                            let found = self.render_public_ty(data_ty);
+                            self.emit(
+                                TypeError::TypeMismatch {
+                                    expected: "a sequence of sequences".to_string(),
+                                    found,
+                                },
+                                span,
+                            );
+                            return Some(self.tcx.error_ty());
+                        };
                         self.tcx.intern(TyKind::Vec(inner))
                     }
                     "pairwise" => {
                         let pair = self.tcx.intern(TyKind::Tuple(vec![elem, elem]));
                         self.tcx.intern(TyKind::Vec(pair))
+                    }
+                    "unzip" => {
+                        // Splitting pairs needs pairs. Without an element type
+                        // to take apart the call went through untyped and each
+                        // tier read the missing second slot differently.
+                        let resolved_elem = self.infer.resolve(self.tcx, elem);
+                        let Some([left, right]) =
+                            self.tcx.kind(resolved_elem).and_then(|kind| match kind {
+                                TyKind::Tuple(parts) if parts.len() == 2 => {
+                                    Some([parts[0], parts[1]])
+                                }
+                                _ => None,
+                            })
+                        else {
+                            let found = self.render_public_ty(data_ty);
+                            self.emit(
+                                TypeError::TypeMismatch {
+                                    expected: "a sequence of two-element tuples".to_string(),
+                                    found,
+                                },
+                                span,
+                            );
+                            return Some(self.tcx.error_ty());
+                        };
+                        let lefts = self.tcx.intern(TyKind::Vec(left));
+                        let rights = self.tcx.intern(TyKind::Vec(right));
+                        self.tcx.intern(TyKind::Tuple(vec![lefts, rights]))
                     }
                     "windows" | "chunks" => {
                         self.unify(i64_ty, lead_tys[0], span);
@@ -10519,7 +10560,14 @@ impl<'a> TypeChecker<'a> {
     ) -> Option<Ty> {
         let module = module?;
         match Self::std_combinator_arity(module, name) {
-            Some(arity) if args.len() == arity => {
+            // A source with no data argument stands outside the data-last
+            // shape the rest of this table describes: there is no sequence to
+            // split off, only the element type the call site expects.
+            Some(0) if args.is_empty() => {
+                let elem = self.fresh();
+                Some(self.tcx.intern(TyKind::Vec(elem)))
+            }
+            Some(arity) if arity >= 1 && args.len() == arity => {
                 let (lead, data) = arg_tys.split_at(arity - 1);
                 let lead = lead.to_vec();
                 let span = args.last().map_or(callee.span, |arg| arg.span);
@@ -10670,12 +10718,12 @@ impl<'a> TypeChecker<'a> {
             UnaryOp::RefShared | UnaryOp::RefMut => Expectation::None,
             _ => Expectation::None,
         };
-        let previous_suppression = self.suppress_borrow_read_conflict;
+        let previous_suppression = self.suppressed.borrow_read_conflict;
         if matches!(op, UnaryOp::RefShared | UnaryOp::RefMut) {
-            self.suppress_borrow_read_conflict = true;
+            self.suppressed.borrow_read_conflict = true;
         }
         let operand_ty = self.check_expr_expecting(operand, operand_expected);
-        self.suppress_borrow_read_conflict = previous_suppression;
+        self.suppressed.borrow_read_conflict = previous_suppression;
         let resolved = self.infer.resolve(self.tcx, operand_ty);
         match op {
             UnaryOp::Not => {
@@ -11420,10 +11468,10 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn check_assign(&mut self, place: &Expr, value: &Expr, op: gossamer_ast::AssignOp) -> Ty {
-        let previous_suppression = self.suppress_borrow_read_conflict;
-        self.suppress_borrow_read_conflict = true;
+        let previous_suppression = self.suppressed.borrow_read_conflict;
+        self.suppressed.borrow_read_conflict = true;
         let place_ty = self.check_expr(place);
-        self.suppress_borrow_read_conflict = previous_suppression;
+        self.suppressed.borrow_read_conflict = previous_suppression;
         let name = Self::place_root_name(place).unwrap_or_else(|| "value".to_string());
         if let Some(borrower) = self
             .active_mutable_borrower(&name)
@@ -12845,7 +12893,8 @@ impl<'a> TypeChecker<'a> {
         };
         match resolution {
             Resolution::Local(binding_id) => {
-                if path.segments.len() == 1
+                if !self.suppressed.consumed_iterator_read
+                    && path.segments.len() == 1
                     && let Some(name) = path.segments.first().map(|seg| seg.name.name.as_str())
                     && let Some(operation) = self
                         .consumed_iterators
@@ -12940,7 +12989,7 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn check_path_read_conflict(&mut self, path: &gossamer_ast::PathExpr, span: Span) {
-        if self.suppress_borrow_read_conflict {
+        if self.suppressed.borrow_read_conflict {
             return;
         }
         let [segment] = path.segments.as_slice() else {
@@ -15917,6 +15966,34 @@ pub fn is_iterator_method(name: &str) -> bool {
     ITERATOR_METHODS.contains(&name)
 }
 
+/// Returns whether an iterator method answers with another iterator rather
+/// than materialising a value. A name absent from this list is a terminal:
+/// it ends the pipeline and produces a concrete result. Type checking and
+/// `%info` share this list so a rendered signature cannot drift from the
+/// type the call actually has.
+#[must_use]
+pub fn iterator_adapter_is_lazy(name: &str) -> bool {
+    LAZY_ITERATOR_ADAPTERS.contains(&name)
+}
+
+/// Iterator adapters that answer with another iterator on every tier.
+const LAZY_ITERATOR_ADAPTERS: &[&str] = &[
+    "take",
+    "skip",
+    "step_by",
+    "enumerate",
+    "chain",
+    "zip",
+    "map",
+    "filter",
+    "filter_map",
+    "flat_map",
+    "scan",
+    "take_while",
+    "skip_while",
+    "rev",
+];
+
 /// The `Iterator<T>` method surface available on every execution tier.
 const ITERATOR_METHODS: &[&str] = &[
     "next",
@@ -15928,6 +16005,9 @@ const ITERATOR_METHODS: &[&str] = &[
     "zip",
     "map",
     "filter",
+    "filter_map",
+    "flat_map",
+    "scan",
     "take_while",
     "skip_while",
     "rev",

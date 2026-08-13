@@ -63,7 +63,7 @@
   {"name":"std::strconv","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::strings","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::sync","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
-  {"name":"std::testing","tiers":{"vm":"pass","cranelift":"pass","llvm":"fail"}},
+  {"name":"std::testing","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::thread","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::time","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::trace","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},

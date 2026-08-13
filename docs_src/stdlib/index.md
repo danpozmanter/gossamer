@@ -80,7 +80,7 @@ For receiver methods on built-in types, see [`Methods by type`](../method_suppor
 | [`std::httptest`](httptest.md) | Loopback HTTP fixtures for source integration tests. |
 | [`std::image`](image.md) | Opaque RGBA8 image handles with PNG and JPEG codecs. |
 | [`std::io`](io.md) | Stream-oriented I/O abstractions and process standard streams. |
-| [`std::iter`](iter.md) | Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc. |
+| [`std::iter`](iter.md) | Sequence adapters: map, filter, fold, zip, enumerate, chain, etc. A `Vec` argument is traversed eagerly; an `Iterator` argument keeps the adapter lazy and answers with another iterator. |
 | [`std::jwt`](jwt.md) | RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens. |
 | [`std::lifecycle`](lifecycle.md) | Graceful-shutdown coordinator with signal handling and sd_notify support. |
 | [`std::math`](math.md) | Mathematical constants and f64 functions (Go's math package shape). |

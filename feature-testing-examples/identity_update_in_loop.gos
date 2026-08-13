@@ -1,0 +1,74 @@
+// An identity update (`x += 0`, and the branch arms that fold to one) states
+// nothing about the value. It still has to reach every tier as the same
+// program: the accumulator keeps its value and the loop runs to completion.
+
+fn zero_step(n: i64) -> i64 {
+    let mut total = 0
+    for _ in 0..n { total += 0 }
+    total
+}
+
+fn branch_with_identity_arm(n: i64) -> i64 {
+    let mut total = 0
+    for i in 0..n {
+        if i % 2 == 0 { total += 1 } else { total += 0 }
+    }
+    total
+}
+
+fn match_with_identity_arm(n: i64) -> i64 {
+    let mut total = 0
+    for i in 0..n {
+        match i % 3 {
+            0 => total += 2
+            1 => total += 0
+            _ => total += 1
+        }
+    }
+    total
+}
+
+fn option_match_identity(n: i64) -> i64 {
+    let mut total = 0
+    for i in 0..n {
+        let slot = if i % 2 == 0 { Some(1) } else { None }
+        match slot {
+            Some(v) => total += v
+            None => total += 0
+        }
+    }
+    total
+}
+
+enum Shape {
+    Wide(Vec<String>)
+    Narrow(String)
+    Empty
+}
+
+fn enum_match_identity(n: i64) -> i64 {
+    let mut total = 0
+    for i in 0..n {
+        let shape = if i % 3 > 1 {
+            Shape::Wide(#["a", "b"])
+        } else if i % 3 == 1 {
+            Shape::Narrow("x")
+        } else {
+            Shape::Empty
+        }
+        match shape {
+            Shape::Wide(parts) => total += parts.len()
+            Shape::Narrow(text) => total += text.len()
+            Shape::Empty => total += 0
+        }
+    }
+    total
+}
+
+fn main() {
+    println!("{}", zero_step(30))
+    println!("{}", branch_with_identity_arm(30))
+    println!("{}", match_with_identity_arm(30))
+    println!("{}", option_match_identity(30))
+    println!("{}", enum_match_identity(30))
+}

@@ -3816,27 +3816,20 @@ fn data_last_method_signature(owner: &str, module_path: &str, name: &str) -> Opt
         _ => receiver.ty.to_string(),
     };
     let mut params = vec![format!("self: {receiver_ty}")];
-    if matches!(owner, "Iterator" | "Range") && name == "fold" && leading.len() == 2 {
-        params.push(format!("{}: {}", leading[1].name, leading[1].ty));
-        params.push(format!("{}: {}", leading[0].name, leading[0].ty));
-    } else {
-        params.extend(
-            leading
-                .iter()
-                .map(|param| format!("{}: {}", param.name, param.ty)),
-        );
-    }
-    let return_ty = if owner == "Iterator" {
-        match name {
-            "take" | "skip" | "step_by" | "filter" | "rev" => {
-                shape.return_ty.replacen("Vec<", "Iterator<", 1)
-            }
-            "enumerate" => "Iterator<(i64, T)>".to_string(),
-            "chain" => "Iterator<T>".to_string(),
-            "zip" => "Iterator<(A, B)>".to_string(),
-            "map" => "Iterator<U>".to_string(),
-            _ => shape.return_ty.to_string(),
-        }
+    params.extend(
+        leading
+            .iter()
+            .map(|param| format!("{}: {}", param.name, param.ty)),
+    );
+    // A `Range` receiver answers the same iterator surface as an
+    // `Iterator`, and the eager catalog shape these rows are rendered from
+    // states the materialised return. A lazy adapter hands back another
+    // iterator on both receivers, so the rendered return follows the
+    // classification the type checker applies rather than a list kept here.
+    let return_ty = if matches!(owner, "Iterator" | "Range")
+        && gossamer_types::iterator_adapter_is_lazy(name)
+    {
+        shape.return_ty.replacen("Vec<", "Iterator<", 1)
     } else {
         shape.return_ty.to_string()
     };
@@ -5414,6 +5407,44 @@ mod tests {
         assert!(map.signature.ends_with("-> Iterator<U>"));
         let fold = entries.iter().find(|entry| entry.name == "fold").unwrap();
         assert!(fold.signature.contains("init: U, f: Fn(U, T) -> U"));
+    }
+
+    /// A rendered signature states the type the call actually has: a lazy
+    /// adapter answers with an iterator on both iterator-shaped receivers,
+    /// and a terminal never does.
+    #[test]
+    fn iterator_signatures_state_the_type_the_call_has() {
+        for owner in ["Iterator", "Range"] {
+            let entries = core_method_entries()
+                .into_iter()
+                .filter(|entry| entry.owner == owner)
+                .collect::<Vec<_>>();
+            assert!(!entries.is_empty(), "{owner} has no methods");
+            for entry in &entries {
+                let lazy = gossamer_types::iterator_adapter_is_lazy(&entry.name);
+                // The function's own return is the tail after the last arrow;
+                // an earlier one belongs to a closure parameter.
+                let declared_return = entry
+                    .signature
+                    .rsplit("->")
+                    .next()
+                    .unwrap_or_default()
+                    .trim();
+                let returns_iterator = declared_return.starts_with("Iterator<");
+                assert_eq!(
+                    lazy, returns_iterator,
+                    "{owner}::{} renders `{}`, which disagrees with its \
+                     lazy/terminal classification",
+                    entry.name, entry.signature
+                );
+                assert!(
+                    !(lazy && declared_return.starts_with("Vec<")),
+                    "{owner}::{} renders a materialised return for a lazy adapter: {}",
+                    entry.name,
+                    entry.signature
+                );
+            }
+        }
     }
 
     #[test]

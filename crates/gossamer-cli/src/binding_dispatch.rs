@@ -61,6 +61,23 @@ fn first_subcommand(args: &[OsString]) -> Option<String> {
     None
 }
 
+/// The entry path a runner subcommand was pointed at, when it names one.
+///
+/// A file argument carries its own project: `gos run a/b/src/main.gos`
+/// declares which manifest governs the program regardless of where it was
+/// invoked from, and the bindings that manifest declares are the ones the
+/// runner has to link. Without an argument the nearest project to the
+/// working directory is the subject, as it is for a bare `gos run`.
+fn runner_entry_arg(args: &[OsString]) -> Option<PathBuf> {
+    let mut positionals = args.iter().skip(1).filter(|arg| {
+        let s = arg.to_string_lossy();
+        !s.starts_with('-')
+    });
+    let _subcommand = positionals.next()?;
+    let candidate = PathBuf::from(positionals.next()?);
+    candidate.exists().then_some(candidate)
+}
+
 /// Top-level pre-step: if the current project declares
 /// `[rust-bindings]`, build the runner and `exec` into it. The
 /// runner sets `GOSSAMER_IN_RUNNER=1` so the second pass through
@@ -79,7 +96,10 @@ pub fn dispatch_runner_if_needed(args: &[OsString]) -> DispatchOutcome {
     if !needs_runner_dispatch(args) {
         return DispatchOutcome::InProcess;
     }
-    let project = crate::paths::project_context();
+    let project = match runner_entry_arg(args) {
+        Some(entry) => crate::paths::project_context_for_entry(&entry),
+        None => crate::paths::project_context(),
+    };
     // A present-but-malformed manifest is a hard error, never a
     // silent "no bindings": a bare `id = "name"` used to skip the
     // binding runner here while check/test kept passing, leaving
@@ -320,6 +340,43 @@ mod tests {
 
     fn argv(parts: &[&str]) -> Vec<OsString> {
         parts.iter().map(|s| OsString::from(*s)).collect()
+    }
+
+    /// `gos run path/to/src/main.gos` and `gos build path/to/src/main.gos`
+    /// name the same program, so both take the manifest beside it.
+    #[test]
+    fn the_runner_takes_its_project_from_the_entry_argument() {
+        let root = std::env::temp_dir().join(format!("gos-runner-entry-{}", std::process::id()));
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).expect("scratch project");
+        std::fs::write(src.join("main.gos"), "fn main() {}\n").expect("entry");
+        let entry = src.join("main.gos");
+
+        assert_eq!(
+            runner_entry_arg(&argv(&["gos", "run", entry.to_str().expect("utf-8 path")]))
+                .as_deref(),
+            Some(entry.as_path()),
+        );
+        // A directory argument names its project just as a file does.
+        assert_eq!(
+            runner_entry_arg(&argv(&["gos", "build", root.to_str().expect("utf-8 path")]))
+                .as_deref(),
+            Some(root.as_path()),
+        );
+        // No positional: the working directory's project is the subject.
+        assert_eq!(runner_entry_arg(&argv(&["gos", "run"])), None);
+        // Flags never stand in for the entry.
+        assert_eq!(
+            runner_entry_arg(&argv(&["gos", "build", "--release"])),
+            None
+        );
+        // A positional that names nothing on disk is a program argument.
+        assert_eq!(
+            runner_entry_arg(&argv(&["gos", "run", "no-such-file.gos"])),
+            None
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

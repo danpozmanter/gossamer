@@ -2169,6 +2169,33 @@
 
 
     <li class="md-nav__item">
+      <a href="../compatibility/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Compatibility
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
       <a href="../security/" class="md-nav__link">
 
 
@@ -2479,9 +2506,14 @@
 <p>See <a href="https://github.com/danpozmanter/gossamer/blob/main/SPEC.md"><code>SPEC.md</code></a>
 for the full grammar and semantics.</p>
 <p>Delimited lists use commas on one line and newlines across multiple lines.
-This rule covers function arguments and parameters, closure parameters, struct
-fields and literals, and enum variants and payload fields. Multiline trailing
-commas are accepted for migration and removed by <code>gos fmt</code>.</p>
+This rule covers every delimited list: function arguments and parameters,
+closure parameters, struct fields and literals, enum variants and payload
+fields, tuples and tuple types, <code>Vec</code> / array / <code>Map</code> / <code>Set</code> literals, tuple,
+slice, and struct patterns, generic parameters and arguments, and <code>use</code> lists.
+Multiline trailing commas are accepted for migration and removed by <code>gos fmt</code>.
+A newline separates elements only where a comma could, so a parenthesised
+expression spanning lines stays that expression rather than becoming a
+one-element tuple.</p>
 <p>Statement separators follow the same layout-first principle:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">width</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">6</span><span class="p">;</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="n">height</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">7</span><span class="p">;</span><span class="w"> </span><span class="n">println</span><span class="p">(</span><span class="n">width</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">height</span><span class="p">)</span>
 </code></pre></div>

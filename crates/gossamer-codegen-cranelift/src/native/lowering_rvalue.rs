@@ -998,12 +998,17 @@ pub(super) fn lower_rvalue_into(
                 // already pointer-to-header, so `&x` is the value
                 // itself - no slot needed.
                 let ty = body.local_ty(place.local);
+                // A local still typed as a type parameter belongs to a
+                // template serving scalar instantiations - an aggregate one
+                // is routed to its own specialised copy - so its slot holds a
+                // value and needs the same materialised address a scalar does.
                 let is_addressable_value = matches!(
                     tcx.kind_of(ty),
                     gossamer_types::TyKind::Int(_)
                         | gossamer_types::TyKind::Float(_)
                         | gossamer_types::TyKind::Bool
                         | gossamer_types::TyKind::Char
+                        | gossamer_types::TyKind::Param { .. }
                 ) || (*mutable
                     && matches!(tcx.kind_of(ty), gossamer_types::TyKind::String));
                 if is_addressable_value {

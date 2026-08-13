@@ -89,6 +89,7 @@ impl<'a> Builder<'a> {
             const_inits,
             region_unsafe,
             local_struct: HashMap::new(),
+            mut_receiver_reloads: HashMap::new(),
             slot_ref_locals: std::collections::HashSet::new(),
             local_elem_struct: HashMap::new(),
             local_closure: HashMap::new(),
@@ -174,6 +175,28 @@ impl<'a> Builder<'a> {
             }
             _ => ty,
         }
+    }
+
+    /// Name an `impl Trait for <primitive>` block registers its methods
+    /// under, for a receiver whose type is one of those primitives.
+    ///
+    /// A primitive is not a struct, so it has no entry in `struct_defs`, but a
+    /// user impl on it keys its methods by the spelling the impl was written
+    /// with. The receiver of a `&self` method has to be borrowed at the call
+    /// site the same way a struct receiver is; without a name to look up, the
+    /// declaration is never consulted and the value travels where the body
+    /// expects its address.
+    pub(crate) fn primitive_impl_name(&self, ty: Ty) -> Option<String> {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(cur) {
+            cur = *inner;
+        }
+        matches!(
+            self.tcx.kind_of(cur),
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char
+        )
+        .then(|| gossamer_types::printer::render_ty(self.tcx, cur))
     }
 
     pub(crate) fn struct_name_of(&self, ty: Ty) -> Option<String> {
