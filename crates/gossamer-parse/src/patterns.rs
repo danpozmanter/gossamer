@@ -133,13 +133,22 @@ impl Parser<'_> {
         loop {
             if self.eat_punct(Punct::Comma) {
                 saw_comma = true;
-            } else if !self.newline_before_peek() {
+            } else if self.at_eof() || !self.newline_before_peek() {
+                // A newline is not a token, so it separates elements only
+                // while one could still follow. At the end of input it would
+                // keep asking for another element that never arrives.
                 break;
             }
-            if self.at_punct(Punct::RParen) {
+            if self.at_punct(Punct::RParen) || self.at_eof() {
                 break;
             }
+            let before = self.tokens.checkpoint();
             elements.push(self.parse_pattern());
+            // A pattern that consumed nothing cannot be followed by one that
+            // does; stop rather than collect the same failure forever.
+            if self.tokens.checkpoint() == before {
+                break;
+            }
         }
         self.expect_punct(Punct::RParen, "to close tuple pattern");
         if elements.len() == 1 && !saw_comma {

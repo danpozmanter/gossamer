@@ -581,8 +581,23 @@ fn capture_heap_sample() {
 mod tests {
     use super::*;
 
+    /// The sampler is one process-wide ring, so a test that arms, records, or
+    /// drains it observes every other test doing the same. Hold this while
+    /// touching that state so the arming of one test is never read as the
+    /// recording of another.
+    static SAMPLER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Locks the shared sampler, ignoring poisoning: a failed assertion in one
+    /// test leaves the ring dirty, and the next test resets it anyway.
+    fn sampler_lock() -> std::sync::MutexGuard<'static, ()> {
+        SAMPLER
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     #[test]
     fn draining_an_idle_sampler_yields_nothing() {
+        let _guard = sampler_lock();
         stop();
         let _ = drain();
         assert!(drain().is_empty());
@@ -611,6 +626,7 @@ mod tests {
     ))]
     #[test]
     fn armed_sampling_records_a_stack_with_frames() {
+        let _guard = sampler_lock();
         stop_heap();
         let _ = drain_heap();
         start_heap();
@@ -632,6 +648,7 @@ mod tests {
     /// that never asks for a heap profile keeps an empty ring.
     #[test]
     fn a_disarmed_sampler_records_nothing() {
+        let _guard = sampler_lock();
         stop_heap();
         let _ = drain_heap();
         record_allocation(HEAP_SAMPLE_BYTES * 4);

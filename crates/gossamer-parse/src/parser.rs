@@ -57,6 +57,11 @@ pub struct Parser<'src> {
     /// the call expression so `ExprKind::Call` keeps one shape everywhere.
     pub(crate) named_args:
         std::collections::HashMap<gossamer_ast::NodeId, Vec<gossamer_ast::NamedArg>>,
+    /// Token position at which a newline was last accepted as a list
+    /// separator. A comma is consumed and so always advances the parser; a
+    /// newline is not a token, so accepting the same one twice would let a
+    /// list loop ask for an element that never arrives.
+    pub(crate) newline_separator_at: Option<usize>,
 }
 
 impl<'src> Parser<'src> {
@@ -99,6 +104,7 @@ impl<'src> Parser<'src> {
             recursion_limit_reported: false,
             hoisted_uses: Vec::new(),
             named_args: std::collections::HashMap::new(),
+            newline_separator_at: None,
         }
     }
 
@@ -417,8 +423,29 @@ impl<'src> Parser<'src> {
 
     /// Consumes a comma separator, or accepts an authored newline as the
     /// separator for a multi-line delimited list.
+    ///
+    /// A comma is consumed, so reporting one always advances the parser. A
+    /// newline is not a token and consumes nothing, so it is only a separator
+    /// while an element could still follow: at the end of input there is
+    /// nothing left to separate, and reporting one there would leave a list
+    /// loop asking for another element forever.
     pub(crate) fn eat_list_separator(&mut self) -> bool {
-        self.eat_punct(Punct::Comma) || self.newline_before_peek()
+        if self.eat_punct(Punct::Comma) {
+            self.newline_separator_at = None;
+            return true;
+        }
+        if self.at_eof() || !self.newline_before_peek() {
+            return false;
+        }
+        // One newline separates one pair of elements. Reporting the same one
+        // again would mean the element between them consumed nothing, so the
+        // list has stopped making progress and the delimiter check takes over.
+        let position = self.tokens.checkpoint();
+        if self.newline_separator_at == Some(position) {
+            return false;
+        }
+        self.newline_separator_at = Some(position);
+        true
     }
 
     /// Consumes an optional semicolon after a statement.

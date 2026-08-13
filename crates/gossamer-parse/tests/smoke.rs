@@ -299,6 +299,40 @@ fn every_delimited_list_accepts_a_newline_separator() {
 
 /// A newline separates list elements; it never turns the parenthesised
 /// forms into one-element aggregates.
+/// A newline separates list elements but consumes nothing, so a list loop
+/// has to stop when the element between two of them consumed nothing either.
+/// These inputs end mid-list, where an unguarded loop collects the same
+/// failed element until it exhausts memory.
+#[test]
+fn an_unterminated_list_stops_instead_of_collecting_forever() {
+    for source in [
+        // A parameter pattern that opens a tuple and never closes it.
+        "fn a&(\n ",
+        // A generic list left open at a closing brace.
+        "struct \nenum|+ name\n type< \n}\n",
+        // Nested parentheses truncated at end of input.
+        "((((((((((((((((1))))\n",
+        // Every delimiter shape, opened and abandoned.
+        "fn main() { let t = (1\n",
+        "fn main() { let v = #[1\n",
+        "fn main() { let m = {\"a\": 1\n",
+        "fn main() { let s = #{1\n",
+        "use std::{fs\n",
+        "fn f<A\n",
+        "fn main() { let [a\n",
+    ] {
+        let mut map = SourceMap::new();
+        let file = map.add_file("unterminated.gos", source.to_string());
+        // Reaching this assertion at all is the point: an unguarded list loop
+        // never returns from `parse_source_file`.
+        let (_, diags) = parse_source_file(source, file);
+        assert!(
+            !diags.is_empty(),
+            "`{source}` is not a complete program and must report why"
+        );
+    }
+}
+
 #[test]
 fn a_newline_does_not_create_a_one_element_tuple() {
     for source in [
