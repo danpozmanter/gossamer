@@ -2972,6 +2972,7 @@ impl<'a> Builder<'a> {
                         self.tcx.intern(TyKind::HashMap {
                             key: i64_ty,
                             value: vec_i64,
+                            ordered: false,
                         })
                     };
                     ("gos_rt_iter_group_by_i64", dest)
@@ -2982,6 +2983,7 @@ impl<'a> Builder<'a> {
                         self.tcx.intern(TyKind::HashMap {
                             key: i64_ty,
                             value: i64_ty,
+                            ordered: false,
                         })
                     };
                     ("gos_rt_iter_count_by_i64", dest)

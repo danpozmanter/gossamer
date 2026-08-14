@@ -382,6 +382,7 @@ impl Parser<'_> {
                         ExprKind::MethodCall {
                             receiver: Box::new(lhs),
                             name: name.clone(),
+                            name_span: rhs.span,
                             generics: Vec::new(),
                             args: Vec::new(),
                         },
@@ -741,6 +742,7 @@ impl Parser<'_> {
                 ExprKind::MethodCall {
                     receiver: Box::new(receiver),
                     name,
+                    name_span,
                     generics,
                     args,
                 },
@@ -3306,6 +3308,7 @@ fn strip_recv_call(expr: Expr) -> Expr {
         name,
         generics,
         args,
+        ..
     } = &expr.kind
     {
         if name.name == "recv" && generics.is_empty() && args.is_empty() {
@@ -3324,6 +3327,7 @@ fn strip_send_call(expr: Expr) -> Option<(Expr, Expr)> {
         name,
         generics,
         args,
+        ..
     } = &expr.kind
     {
         if name.name == "send" && generics.is_empty() && args.len() == 1 {

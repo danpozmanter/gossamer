@@ -2175,7 +2175,7 @@ operator and the F#-style combinator surface in <code>std::iter</code> /
 calls so the data flow reads left-to-right; the combinators take
 the data value as the last positional parameter so each call
 threads naturally. (The same combinators are also methods on any
-Vec or range - <code>(1..=10).filter(|n| n % 2 == 0).sum()</code> - so the
+iterator - <code>(1..=10).filter(|n| n % 2 == 0).sum()</code> - so the
 pipe form below is a stylistic choice, not the only spelling.)</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">iter</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">option</span>

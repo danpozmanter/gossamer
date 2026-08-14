@@ -616,11 +616,10 @@ fn bare_manifest_id_is_a_hard_error_for_project_commands() {
 }
 
 #[test]
-fn unbound_binding_module_call_fails_with_gx0002() {
-    // A declared-but-unresolved binding fn (`use brotli` with no
-    // engaged runner) must raise GX0002 when called - never silently
-    // return Unit (which let tests "pass" with zero real coverage)
-    // and never hijack an unrelated builtin sharing the tail name.
+fn unbound_binding_module_import_is_rejected() {
+    // `use brotli` with nothing declaring `brotli` names no module, so it
+    // is reported where it is written. Binding the name anyway would let
+    // a call to it return Unit, and a test suite "pass" with no coverage.
     let dir = env::temp_dir().join(format!("gos-unbound-binding-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
@@ -666,7 +665,7 @@ mod tests {
         "unbound binding call must fail the test run; stdout: {stdout}\nstderr: {stderr}"
     );
     assert!(
-        stdout.contains("GX0002") && stdout.contains("brotli::decode"),
-        "failure must name the unresolved binding; stdout: {stdout}\nstderr: {stderr}"
+        stderr.contains("GR0005") && stderr.contains("brotli"),
+        "failure must name the unresolved import; stdout: {stdout}\nstderr: {stderr}"
     );
 }

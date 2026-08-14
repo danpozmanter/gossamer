@@ -2024,6 +2024,22 @@ pub const STDLIB_MANIFEST_ITEMS: &[&str] = &[
     "iter::count",
     "iter::count_by",
     "iter::dedup",
+    "iter::eager_all",
+    "iter::eager_any",
+    "iter::eager_chain",
+    "iter::eager_collect",
+    "iter::eager_count",
+    "iter::eager_enumerate",
+    "iter::eager_filter",
+    "iter::eager_find",
+    "iter::eager_fold",
+    "iter::eager_map",
+    "iter::eager_range",
+    "iter::eager_range_inclusive",
+    "iter::eager_skip",
+    "iter::eager_sum",
+    "iter::eager_take",
+    "iter::eager_zip",
     "iter::empty",
     "iter::enumerate",
     "iter::filter",
@@ -2597,6 +2613,17 @@ pub fn stdlib_module_item_names(module: &str) -> Vec<&'static str> {
     names.sort_unstable();
     names.dedup();
     names
+}
+
+/// Whether any stdlib module exports `item` under that leaf name. A bare
+/// `use Map` names an item two modules declare, so it has no sole owner
+/// yet still names something real.
+#[must_use]
+pub(crate) fn is_stdlib_item_name(item: &str) -> bool {
+    let suffix = format!("::{item}");
+    STDLIB_MANIFEST_ITEMS
+        .iter()
+        .any(|entry| entry.ends_with(&suffix))
 }
 
 /// The single `std::`-relative module path exporting an item named

@@ -293,7 +293,19 @@ impl Resolver {
         };
         if p.segments.len() == 1 {
             let name = p.segments[0].name.as_str();
-            if crate::stdlib_exports::is_stdlib_module_path_or_namespace(name) {
+            // A stdlib module has to be spelled from its root, and any
+            // other bare name has to name something this file can reach:
+            // a sibling module, a stdlib item, or an external item.
+            // Binding a name nothing declares would hide the typo.
+            if crate::stdlib_exports::is_stdlib_module_path_or_namespace(name)
+                || !(self.local_module_paths.contains(name)
+                    || crate::stdlib_exports::is_stdlib_item_name(name)
+                    || crate::scope::PRELUDE_TYPES.contains(&name)
+                    || crate::external::all_external_module_paths()
+                        .iter()
+                        .any(|path| path == name)
+                    || crate::external::lookup_external_item(name).is_some())
+            {
                 self.emit(
                     ResolveError::UnknownModulePath {
                         path: name.to_string(),

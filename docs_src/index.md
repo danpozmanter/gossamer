@@ -50,12 +50,13 @@ fn main() {
 ## A Script, No Boilerplate
 
 No `fn main`, no ceremony - the file's top-level statements *are* the
-program. Sequence combinators are methods on any Vec or range, so a
-data-processing script reads top to bottom:
+program. A traversal starts at an iterator - a range already is one, and
+a collection answers one from `iter()` - so a data-processing script
+reads top to bottom:
 
 ```gossamer
 let nums = [4, 8, 15, 16, 23, 42]
-println!("sum of evens: {}", nums.filter(|n| n % 2 == 0).sum())
+println!("sum of evens: {}", nums.iter().filter(|n| n % 2 == 0).sum())
 ```
 
 See [Top-level statements](language/top_level_statements.md).

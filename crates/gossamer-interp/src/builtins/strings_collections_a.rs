@@ -1366,7 +1366,9 @@ fn builtin_map_iter(args: &[Value]) -> RuntimeResult<Value> {
                 .collect();
             Ok(Value::Array(Arc::new(out)))
         }
-        Some(other) => Ok(other.clone()),
+        // A sequence answers an iterator, so a combinator downstream of
+        // `iter()` runs when the pipeline is drained rather than here.
+        Some(other) => Ok(crate::stdlib_builtins::iter::lazy_source(other)),
         None => Ok(Value::Unit),
     }
 }

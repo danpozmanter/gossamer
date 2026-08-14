@@ -908,7 +908,7 @@ fn iterator_sum_preserves_usize_result_type() {
     let src = r#"
 fn main() {
     let values: Vec<i64> = Vec::from([9, 18, 27])
-    let total: usize = values.map(|value| value as usize).sum()
+    let total: usize = values.iter().map(|value| value as usize).sum()
     println!("total={}", total)
 }
 "#;

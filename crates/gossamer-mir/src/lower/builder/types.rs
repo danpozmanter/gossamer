@@ -435,7 +435,7 @@ impl<'a> Builder<'a> {
         loop {
             match self.tcx.kind_of(cur) {
                 TyKind::Ref { inner, .. } => cur = *inner,
-                TyKind::HashMap { key, value } => return Some((*key, *value)),
+                TyKind::HashMap { key, value, .. } => return Some((*key, *value)),
                 _ => return None,
             }
         }

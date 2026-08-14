@@ -103,7 +103,7 @@ fn closure_tuple_parameter_destructuring_runs_through_hof() {
     let src = r#"
 fn main() {
     let values = [1, 2, 3, 4]
-    let shifted = values.enumerate().map(|(i, value)| value + i)
+    let shifted = values.iter().enumerate().map(|(i, value)| value + i).collect()
     println!("{:?}", shifted)
 }
 "#;

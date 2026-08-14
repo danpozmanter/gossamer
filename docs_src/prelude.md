@@ -130,7 +130,7 @@ sequence, so it answers the same combinator surface `Iterator` does.
 
 ```gos
 let counted: Range = 0..5
-println!("{:?}", counted.rev().collect())
+println!("{:?}", counted.iter().rev().collect())
 ```
 
 ## Runtime statements

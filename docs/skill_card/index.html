@@ -2543,12 +2543,20 @@ card:</p>
 <li><strong><code>m.inc(k)</code> / <code>m.inc(k, by)</code></strong> for counters; <code>m.or_insert(k,
   default)</code> for get-or-fill (<code>m.or_insert(k, d).method(args)</code> writes
   the mutation back into the stored value). <code>arr.swap(i, j)</code>.</li>
-<li><strong>Method-form sequence combinators</strong> - no import, ranges included:
-  <code>xs.map(f)</code>, <code>filter</code>, <code>sum</code>, <code>min</code>/<code>max</code> (<code>Option&lt;T&gt;</code>), <code>count</code>,
-  <code>any</code>/<code>all</code>, <code>find</code>/<code>position</code>, <code>max_by_key</code>/<code>min_by_key</code>, <code>fold</code>,
-  <code>take</code>, <code>step_by</code>; <code>(1..5).map(|i| i * i).sum()</code>. Data-last <code>iter::</code>
-  free forms exist for <code>|&gt;</code> pipelines. <code>xs.join(sep)</code> Display-joins
-  scalar/String sequences.</li>
+<li><strong>Traversal starts at an iterator.</strong> A <code>Range</code> is already one, so
+  <code>(1..5).map(|i| i * i).sum()</code> reads straight through. A collection is
+  not, so ask it for one: <code>xs.iter().map(f).collect()</code>. Calling <code>map</code>,
+  <code>filter</code>, <code>fold</code>, <code>any</code>, <code>sum</code>, <code>enumerate</code>, <code>rev</code>, or any other
+  traversal directly on a <code>Vec</code> / array / slice / <code>Map</code> / <code>Set</code> is
+  GT0068, and the diagnostic carries the <code>.iter()</code> rewrite. Adapters
+  (<code>map</code>, <code>filter</code>, <code>take</code>, <code>skip</code>, <code>step_by</code>, <code>enumerate</code>, <code>rev</code>,
+  <code>zip</code>, <code>chain</code>, <code>flat_map</code>, ...) answer another iterator and stay
+  lazy; terminals (<code>collect</code>, <code>sum</code>, <code>count</code>, <code>min</code>/<code>max</code>, <code>fold</code>,
+  <code>any</code>/<code>all</code>, <code>find</code>/<code>position</code>, <code>max_by_key</code>, <code>join</code>) end the chain
+  and hand back a value. An iterator is single-use (GT0042) - bind a
+  fresh <code>.iter()</code> per pipeline. Data-last <code>iter::</code> free forms take an
+  iterator too, for <code>|&gt;</code> pipelines. <code>xs.join(sep)</code> Display-joins
+  scalar/String sequences without a traversal.</li>
 <li><strong>Use metadata already returned by an API.</strong> For entries from
   <code>fs::read_dir</code> or <code>fs::walk_dir</code>, inspect <code>entry.is_file</code>,
   <code>entry.is_dir</code>, <code>entry.is_symlink</code>, <code>entry.size</code>, <code>entry.path</code>, and
@@ -2574,6 +2582,8 @@ card:</p>
   Each container has exactly one name: <code>HashMap</code>, <code>HashSet</code>, <code>VecDeque</code>,
   <code>VecQueue</code>, <code>VecStack</code>, <code>BinaryHeap</code>, <code>MaxBinaryHeap</code>, and <code>MinBinaryHeap</code>
   are rejected (GR0006).</li>
+<li><strong><code>Map</code> and <code>BTreeMap</code> are distinct types</strong> over one representation:
+  each constructor answers its own, and neither converts to the other.</li>
 <li><strong>Collection constructors infer</strong>: <code>let mut m = Map::new()</code>,
   <code>let empty: Map&lt;String, i64&gt; = Map::from([])</code>, and
   <code>let map = {"one": 1}</code>. <code>Map::from</code> accepts array pairs, while
@@ -2677,6 +2687,7 @@ Left-associative, very low precedence.</p>
 <li><strong>Imports</strong>: <code>use std::{iter, os, strings}</code>, alias via <code>{Map as
   Scores}</code>; always spell the full path (<code>std::encoding::json</code>, not
   <code>std::json</code>) - paths validate against the std manifest (GR0005).
+  An import that names nothing reports GR0005 where it is written.
   Local modules import the same way: <code>use util::{add, Widget}</code>,
   <code>use deep::nest::Nested</code>, <code>use crate::util::Widget</code>. A path written
   inside a module is anchored at that module, so <code>self::child::item</code>,
@@ -2816,8 +2827,8 @@ are callable as methods/free functions and materialize results.</p>
   <code>#[]</code> for Vec, <code>[]</code> for fixed arrays, <code>{}</code> for <code>Map</code>, and <code>#{}</code> for
   <code>Set</code> or expected <code>BTreeSet</code>; <code>Queue</code>, <code>Stack</code>, <code>Deque</code>, <code>MaxHeap</code>, and
   <code>MinHeap</code> use <code>new()</code> / <code>from([..])</code>. Arrays, slices, and Vec share the
-  implemented slice method surface. Eager collection combinators are Vec
-  methods; arrays and slices use <code>iter()</code> first. Use <code>Stack</code> for a
+  implemented slice method surface, and every one of them reaches
+  traversal through <code>iter()</code>. Use <code>Stack</code> for a
   LIFO-only argument contract instead of a general <code>Vec</code>, <code>Queue</code> for
   FIFO-only behavior, and <code>MinHeap</code> / <code>MaxHeap</code> for explicit priority order.
   Only Vec has the full sequence surface: insert, remove, truncation,

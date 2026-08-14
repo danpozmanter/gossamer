@@ -317,6 +317,111 @@ mod tests {
         assert!(fields.contains_key("range"));
     }
 
+    /// An editor's incremental changes race the server's view of the buffer,
+    /// so a range can arrive inverted, past the end, or mid-character. None of
+    /// those may bring the server down.
+    #[test]
+    fn incremental_changes_survive_out_of_range_edits() {
+        let uri = "file:///edits.gos";
+        let ranges = [
+            (0, 0, 0, 0),
+            (0, 0, 0, 5_000),
+            (5_000, 0, 5_000, 3),
+            (2, 9, 0, 0),
+            (0, 3, 0, 1),
+            (u32::MAX, u32::MAX, u32::MAX, u32::MAX),
+            (1, 2, 1, 2),
+        ];
+        for (start_line, start_char, end_line, end_char) in ranges {
+            let mut state = ServerState::new();
+            state.update(uri, "fn café() { let x = 1 }\nstruct S { f: i64 }\n");
+            let mut change = BTreeMap::new();
+            change.insert(
+                "range".to_string(),
+                super::handle::range_value(start_line, start_char, end_line, end_char),
+            );
+            change.insert("text".to_string(), Value::String("ü".to_string()));
+            state.apply_did_change(uri, &Value::Array(vec![Value::Object(change)]));
+            // The document must still answer requests after a rejected edit.
+            let _ = state.document_symbols(&document_params_value(uri));
+            let _ = state.hover(&locate_params(uri, 0, 4));
+            let _ = state.semantic_tokens(&document_params_value(uri));
+        }
+    }
+
+    /// Every request an editor can send lands on a document the editor may
+    /// have already changed, so a position or a recorded span can point past
+    /// the text or into the middle of a character. None of that may bring the
+    /// server down: a request it cannot answer answers with nothing.
+    #[test]
+    fn every_request_survives_adversarial_documents_and_positions() {
+        let sources = [
+            // Multi-byte characters, so a byte offset can land mid-character.
+            "fn café() { let naïve = \"héllo wörld\"\n let e = naïve }\n",
+            // Combining marks and astral-plane characters.
+            "fn a() { let s = \"e\\u{301}x\" }\nstruct S { f: i64 }\n",
+            "fn b() { let emoji = \"..\" }\n",
+            // Truncated and malformed programs.
+            "fn a&(",
+            "struct \nenum|+ name\n type< \n}\n",
+            "fn main() { let t = (1\n",
+            "impl",
+            "use ",
+            "",
+            "\n\n\n",
+            // A lone carriage return and a stray NUL-adjacent control byte.
+            "fn a() {\r\n let x = 1\r\n}\r\n",
+            "\u{feff}fn bom() { }\n",
+            // A byte-order mark in front of a program that does not parse.
+            "\u{feff}fn a&(",
+            // Deeply nested delimiters, and a very long single line.
+            "fn main() { let x = ((((((((((((((((1)))))))))))))))) }\n",
+            "fn main() { let s = \"................................................\" }\n",
+            // Non-ASCII identifiers, which the language accepts.
+            "fn ünïcödé() { let ß = 1\n let _ = ß }\n",
+            // A trailing lone surrogate-ish escape and an unterminated string.
+            "fn a() { let s = \"unterminated\n",
+            "fn a() { /* unterminated comment\n",
+        ];
+        let positions = [
+            (0, 0),
+            (0, 3),
+            (1, 1),
+            (0, 10_000),
+            (10_000, 0),
+            (u32::MAX, u32::MAX),
+            (2, 7),
+        ];
+        for source in sources {
+            let uri = "file:///adversarial.gos";
+            let mut state = ServerState::new();
+            state.update(uri, source);
+            // Whole-document requests.
+            let _ = state.document_symbols(&document_params_value(uri));
+            let _ = state.semantic_tokens(&document_params_value(uri));
+            let _ = state.inlay_hints(&document_params_value(uri));
+            let _ = state.folding_ranges(&document_params_value(uri));
+            let _ = state.formatting(&document_params_value(uri));
+            let _ = state.workspace_symbols(&super::handle::workspace_symbol_params("a"));
+            let _ = state.workspace_symbols(&super::handle::workspace_symbol_params("café"));
+            for (line, character) in positions {
+                let at = locate_params(uri, line, character);
+                let _ = state.hover(&at);
+                let _ = state.definition(&at);
+                let _ = state.references(&at);
+                let _ = state.completion(&at);
+                let _ = state.signature_help(&at);
+                let _ = state.document_highlight(&at);
+                let _ = state.rename(&super::handle::rename_params(uri, line, character, "renamed"));
+                let _ = state.code_actions(&super::handle::code_action_params(
+                    uri,
+                    super::handle::range_value(line, character, line, character.saturating_add(3)),
+                    vec![],
+                ));
+            }
+        }
+    }
+
     #[test]
     fn document_symbol_emits_top_level_items() {
         let mut state = ServerState::new();

@@ -201,7 +201,7 @@ impl InferCtxt {
             | TyKind::Receiver(elem)
             | TyKind::JoinHandle(elem)
             | TyKind::Ref { inner: elem, .. } => self.default_numeric_vars_in_ty(tcx, elem),
-            TyKind::HashMap { key, value } => {
+            TyKind::HashMap { key, value, .. } => {
                 self.default_numeric_vars_in_ty(tcx, key);
                 self.default_numeric_vars_in_ty(tcx, value);
             }
@@ -446,6 +446,36 @@ impl InferCtxt {
         Ok(())
     }
 
+    /// Unifies two maps. The two spellings name distinct types, so an
+    /// ordered map only unifies with another ordered map.
+    fn unify_maps(
+        &mut self,
+        tcx: &mut TyCtxt,
+        lhs_kind: &TyKind,
+        rhs_kind: &TyKind,
+    ) -> Result<(), UnifyError> {
+        let (
+            TyKind::HashMap {
+                key: ak,
+                value: av,
+                ordered: ao,
+            },
+            TyKind::HashMap {
+                key: bk,
+                value: bv,
+                ordered: bo,
+            },
+        ) = (lhs_kind, rhs_kind)
+        else {
+            return Err(UnifyError::Mismatch);
+        };
+        if ao != bo {
+            return Err(UnifyError::Mismatch);
+        }
+        self.unify(tcx, *ak, *bk)?;
+        self.unify(tcx, *av, *bv)
+    }
+
     fn unify_structural(
         &mut self,
         tcx: &mut TyCtxt,
@@ -470,9 +500,8 @@ impl InferCtxt {
             // in that direction: an adapter chain is not a range, so an
             // expected `Range<T>` keeps rejecting a plain `Iterator<T>`.
             (TyKind::Iterator(a), TyKind::Range(b)) => self.unify(tcx, *a, *b),
-            (TyKind::HashMap { key: ak, value: av }, TyKind::HashMap { key: bk, value: bv }) => {
-                self.unify(tcx, *ak, *bk)?;
-                self.unify(tcx, *av, *bv)
+            (TyKind::HashMap { .. }, TyKind::HashMap { .. }) => {
+                self.unify_maps(tcx, lhs_kind, rhs_kind)
             }
             // Rust-like unsizing coercions are directional: an expected
             // slice reference accepts an array or Vec reference with the
@@ -691,7 +720,7 @@ fn occurs_in_kind(infer: &InferCtxt, tcx: &TyCtxt, vid: TyVid, kind: &TyKind) ->
         | TyKind::Vec(elem)
         | TyKind::Iterator(elem)
         | TyKind::Range(elem) => occurs(infer, tcx, vid, *elem),
-        TyKind::HashMap { key, value } => {
+        TyKind::HashMap { key, value, .. } => {
             occurs(infer, tcx, vid, *key) || occurs(infer, tcx, vid, *value)
         }
         TyKind::Sender(pointee)

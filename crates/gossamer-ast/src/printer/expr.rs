@@ -62,6 +62,7 @@ impl Printer {
                 name,
                 generics,
                 args,
+                ..
             } => self.print_method_call(receiver, name, generics, args),
             ExprKind::FieldAccess { receiver, field } => self.print_field_access(receiver, field),
             ExprKind::Index { base, index } => self.print_index(base, index),

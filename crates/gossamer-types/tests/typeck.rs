@@ -1966,6 +1966,46 @@ fn reusing_pipe_consumed_lazy_iterator_is_rejected() {
     assert!(has_code(&d, "GT0042"), "{d:?}");
 }
 
+/// A collection holds values; traversing them is what an iterator does. The
+/// traversal surface is reached through `.iter()`, so one operation has one
+/// spelling rather than an eager and a lazy one.
+#[test]
+fn a_collection_does_not_answer_the_traversal_surface() {
+    for source in [
+        "fn main() { let xs = #[1, 2, 3]\n let _ = xs.map(|x| x * 2) }\n",
+        "fn main() { let xs = #[1, 2, 3]\n let _ = xs.filter(|x| x > 1) }\n",
+        "fn main() { let xs = #[1, 2, 3]\n let _ = xs.sum() }\n",
+        "fn main() { let xs = #[1, 2, 3]\n let _ = xs.fold(0, |a, x| a + x) }\n",
+        "fn main() { let xs = #[1, 2, 3]\n let _ = xs.rev() }\n",
+        "fn main() { let xs = #[1, 2, 3]\n let _ = xs.count() }\n",
+        "fn main() { let a: [i64; 3] = [1, 2, 3]\n let _ = a.map(|x| x) }\n",
+    ] {
+        let d = diagnostics_for(source);
+        assert!(has_code(&d, "GT0068"), "{source}: {d:?}");
+    }
+}
+
+/// The same operations through `.iter()`, and the collection surface that
+/// describes or mutates rather than traverses, all stay accepted.
+#[test]
+fn the_iterator_surface_and_the_collection_surface_both_still_work() {
+    for source in [
+        "fn main() { let xs = #[1, 2, 3]\n let _ = xs.iter().map(|x| x * 2).collect() }\n",
+        "fn main() { let xs = #[1, 2, 3]\n let _ = xs.iter().sum() }\n",
+        "fn main() { let xs = #[1, 2, 3]\n let _ = xs.iter().rev().collect() }\n",
+        // Collection operations: length, membership, ordering, copying.
+        "fn main() { let xs = #[1, 2, 3]\n let _ = xs.len() }\n",
+        "fn main() { let xs = #[1, 2, 3]\n let _ = xs.contains(2) }\n",
+        "fn main() { let xs = #[1, 2, 3]\n let _ = xs.to_vec() }\n",
+        "fn main() { let mut xs = #[1, 2, 3]\n xs.sort()\n let _ = xs }\n",
+        // `for` still iterates a collection directly.
+        "fn main() { let xs = #[1, 2, 3]\n let mut t = 0\n for x in xs { t += x }\n let _ = t }\n",
+    ] {
+        let d = diagnostics_for(source);
+        assert!(!has_code(&d, "GT0068"), "{source}: {d:?}");
+    }
+}
+
 #[test]
 fn rebinding_a_consumed_iterator_name_starts_a_fresh_binding() {
     for source in [
@@ -3122,7 +3162,7 @@ fn std_iter_skip_while_full_import_and_methods_typecheck() {
          fn main() {\n\
          let xs = #[1, 2, 3, 1]\n\
          let a = skip_while(|x: i64| x < 3, xs)\n\
-         let b = xs.skip_while(|x: i64| x < 3)\n\
+         let b = xs.iter().skip_while(|x: i64| x < 3)\n\
          let c = (1..5).skip_while(|x: i64| x < 3).collect()\n\
          println!(\"{} {} {}\", a.count(), b.count(), c.len())\n\
          }\n",

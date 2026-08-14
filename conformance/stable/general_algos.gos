@@ -1,0 +1,206 @@
+// Miniature general algorithm kernels, sized so the whole file runs in
+// milliseconds: float-heavy n-body integration, power
+// iteration over a generated matrix, permutation search, a linear
+// congruential sequence over a weighted alphabet, a recursive-enum tree,
+// k-mer counting over a String, and a dense dot product.
+
+struct Body {
+    x: f64
+    y: f64
+    vx: f64
+    vy: f64
+    mass: f64
+}
+
+enum Tree {
+    Node(Box<Tree>, Box<Tree>)
+    Leaf
+}
+
+fn nbody_energy(steps: i64) -> f64 {
+    let mut bodies = #[
+        Body { x: 0.0, y: 0.0, vx: 0.0, vy: 0.0, mass: 4.0 }
+        Body { x: 1.0, y: 0.0, vx: 0.0, vy: 0.5, mass: 1.0 }
+        Body { x: 0.0, y: 2.0, vx: -0.25, vy: 0.0, mass: 2.0 }
+    ]
+    let dt = 0.01
+    for _ in 0..steps {
+        for i in 0..bodies.len() {
+            for j in i + 1..bodies.len() {
+                let dx = bodies[i].x - bodies[j].x
+                let dy = bodies[i].y - bodies[j].y
+                let d2 = dx * dx + dy * dy + 0.25
+                let mag = dt / (d2 * d2.sqrt())
+                bodies[i].vx -= dx * bodies[j].mass * mag
+                bodies[i].vy -= dy * bodies[j].mass * mag
+                bodies[j].vx += dx * bodies[i].mass * mag
+                bodies[j].vy += dy * bodies[i].mass * mag
+            }
+        }
+        for i in 0..bodies.len() {
+            bodies[i].x += dt * bodies[i].vx
+            bodies[i].y += dt * bodies[i].vy
+        }
+    }
+    let mut energy = 0.0
+    for b in bodies {
+        energy += 0.5 * b.mass * (b.vx * b.vx + b.vy * b.vy)
+    }
+    energy
+}
+
+fn matrix_cell(i: i64, j: i64) -> f64 {
+    let s = i + j
+    1.0 / ((s * (s + 1) / 2 + i + 1) as f64)
+}
+
+fn spectral_norm(n: i64, rounds: i64) -> f64 {
+    let mut u = #[1.0; 8]
+    let mut v = #[0.0; 8]
+    for _ in 0..rounds {
+        for i in 0..n {
+            let mut acc = 0.0
+            for j in 0..n {
+                acc += matrix_cell(i, j) * u[j]
+            }
+            v[i] = acc
+        }
+        for i in 0..n {
+            let mut acc = 0.0
+            for j in 0..n {
+                acc += matrix_cell(j, i) * v[j]
+            }
+            u[i] = acc
+        }
+    }
+    let mut vv = 0.0
+    let mut vu = 0.0
+    for i in 0..n {
+        vv += v[i] * v[i]
+        vu += u[i] * v[i]
+    }
+    (vu / vv).sqrt()
+}
+
+fn fannkuch_max(n: i64) -> i64 {
+    let mut perm = #[0; 7]
+    let mut count = #[0; 7]
+    for i in 0..n {
+        perm[i] = i
+    }
+    let mut best = 0
+    let mut r = n
+    loop {
+        while r > 1 {
+            count[r - 1] = r
+            r -= 1
+        }
+        let mut work = perm.to_vec()
+        let mut flips = 0
+        while work[0] != 0 {
+            let k = work[0]
+            let mut i = 0
+            let mut j = k
+            while i < j {
+                work.swap(i, j)
+                i += 1
+                j -= 1
+            }
+            flips += 1
+        }
+        best = max(best, flips)
+        let mut done = false
+        while r < n {
+            let first = perm[0]
+            for i in 0..r {
+                perm[i] = perm[i + 1]
+            }
+            perm[r] = first
+            count[r] -= 1
+            if count[r] > 0 {
+                break
+            }
+            r += 1
+            if r == n {
+                done = true
+            }
+        }
+        if done {
+            break
+        }
+    }
+    best
+}
+
+fn fasta(n: i64) -> String {
+    let alphabet = "acgt"
+    let weights = #[0.30, 0.20, 0.20, 0.30]
+    let mut seed = 42
+    let mut out = ""
+    for _ in 0..n {
+        seed = (seed * 3877 + 29573) % 139968
+        let probability = (seed as f64) / 139968.0
+        let mut running = 0.0
+        let mut pick = 3
+        for i in 0..weights.len() {
+            running += weights[i]
+            if probability < running {
+                pick = i
+                break
+            }
+        }
+        out += alphabet[pick].to_string()
+    }
+    out
+}
+
+fn build_tree(depth: i64) -> Tree {
+    if depth == 0 {
+        return Tree::Leaf
+    }
+    Tree::Node(build_tree(depth - 1), build_tree(depth - 1))
+}
+
+fn count_nodes(t: &Tree) -> i64 {
+    match t {
+        Tree::Leaf => 1
+        Tree::Node(l, r) => 1 + count_nodes(l) + count_nodes(r)
+    }
+}
+
+fn kmer_checksum(dna: &String, k: i64) -> i64 {
+    let mut counts = Map::new()
+    for start in 0..dna.len() - k + 1 {
+        counts.inc(dna.substring(start, start + k))
+    }
+    let mut checksum = 0
+    for (kmer, seen) in counts.iter() {
+        checksum += seen * kmer.len()
+    }
+    checksum
+}
+
+fn dot_layer(inputs: &[f64], weights: &[f64]) -> f64 {
+    let mut acc = 0.0
+    for i in 0..inputs.len() {
+        acc += inputs[i] * weights[i]
+    }
+    acc
+}
+
+fn main() {
+    println!("nbody {:.6}", nbody_energy(64))
+    println!("spectral {:.6}", spectral_norm(8, 4))
+    println!("fannkuch {}", fannkuch_max(7))
+    println!("fasta {}", fasta(24))
+
+    let tree = build_tree(8)
+    println!("trees {}", count_nodes(&tree))
+
+    let dna = fasta(64)
+    println!("kmers {}", kmer_checksum(&dna, 3))
+
+    let inputs = #[0.5, -0.25, 0.75, 1.0]
+    let weights = #[1.5, 2.0, -0.5, 0.25]
+    println!("slp {:.6}", dot_layer(&inputs, &weights))
+}

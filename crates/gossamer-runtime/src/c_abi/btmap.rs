@@ -152,6 +152,111 @@ pub unsafe extern "C" fn gos_rt_vec_format_adt(
     })
 }
 
+/// Renders a `Vec` whose elements are described by the descriptor at `desc`
+/// inside `tags`, so a nested element shape renders through the same walk.
+///
+/// # Safety
+/// `v` is a live `GosVec` and `tags` addresses a descriptor at `desc`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_format_desc(
+    v: *const GosVec,
+    tags: *const u8,
+    desc: i64,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if v.is_null() || tags.is_null() {
+            return alloc_cstring(b"[]");
+        }
+        let vec = unsafe { &*v };
+        let mut out = String::with_capacity(2 + (vec.len as usize) * 16);
+        out.push('[');
+        for i in 0..vec.len {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            let slot = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
+            let mut cursor = desc as usize;
+            unsafe { crate::c_abi::map::render_desc_value(&mut out, slot, tags, &mut cursor) };
+        }
+        out.push(']');
+        alloc_cstring(out.as_bytes())
+    })
+}
+
+/// Renders a map-elem `Vec` as `[{k: v}, …]`. Each element is a `GosMap`
+/// handle word, rendered by the same formatter a bare `{:?}` on the map uses.
+///
+/// # Safety
+/// `v` is a live `GosVec` whose elements are `GosMap` handles.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_format_map(v: *const GosVec) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if v.is_null() {
+            return alloc_cstring(b"[]");
+        }
+        let vec = unsafe { &*v };
+        let mut out = String::with_capacity(2 + (vec.len as usize) * 16);
+        out.push('[');
+        for i in 0..vec.len {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            let slot = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
+            let word = unsafe { (slot as *const usize).read_unaligned() };
+            let rendered =
+                unsafe { crate::c_abi::gos_rt_map_format(std::ptr::with_exposed_provenance(word)) };
+            if !rendered.is_null() {
+                out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(rendered) });
+            }
+        }
+        out.push(']');
+        alloc_cstring(out.as_bytes())
+    })
+}
+
+/// Renders a tuple-elem `Vec` as `[(a, b), …]`. Each element occupies the
+/// Vec's element stride as a flat slot buffer, rendered through the same
+/// per-element tag array `gos_rt_tuple_format` takes.
+///
+/// # Safety
+/// `v` is a live `GosVec` whose elements are tuple slot buffers, and `tags`
+/// addresses at least the tag bytes those `n` elements describe.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_format_tuple(
+    v: *const GosVec,
+    n: i64,
+    tags: *const u8,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if v.is_null() || tags.is_null() || n <= 0 {
+            return alloc_cstring(b"[]");
+        }
+        let vec = unsafe { &*v };
+        let mut out = String::with_capacity(2 + (vec.len as usize) * 16);
+        out.push('[');
+        for i in 0..vec.len {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            let slot = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
+            let mut slot_cursor = 0usize;
+            let mut tag_cursor = 0usize;
+            unsafe {
+                crate::c_abi::map::render_tuple_elements(
+                    &mut out,
+                    slot.cast::<i64>(),
+                    tags,
+                    n as usize,
+                    &mut slot_cursor,
+                    &mut tag_cursor,
+                );
+            }
+        }
+        out.push(']');
+        alloc_cstring(out.as_bytes())
+    })
+}
+
 /// Renders a `String`-elem `Vec` as `[s0, s1, …]`. Each element
 /// in the Vec is a NUL-terminated `*const c_char`; we read it as
 /// an 8-byte word and dereference. Returns a fresh String

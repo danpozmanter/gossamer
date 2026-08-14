@@ -200,6 +200,9 @@ const SPECS: &[Spec] = &[
     // The `std::iter` free functions hand back what they declare, including
     // the pair-splitting, element-typed, and accumulator-first shapes.
     spec("feature-testing-examples/iter_free_function_contracts.gos"),
+    // `iter()` answers with an iterator on every collection that offers one;
+    // `to_vec` is the spelling that materialises.
+    spec("feature-testing-examples/collection_iter_contracts.gos"),
     // The `std::fs` and `std::env` surface a program can rely on regardless
     // of host. Registered here so the CI matrix runs them on Linux x64,
     // Linux arm64, macOS arm64, and Windows x64.

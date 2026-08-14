@@ -28,20 +28,20 @@ fn main() {
     let mut shapes = #[Rect(3, 4), Square(5), Rect(1, 1)]
 
     // Discriminant read through a by-reference closure param.
-    println!("{}", shapes.map(|s| tag(&s)).join(" "))
+    println!("{}", shapes.iter().map(|s| tag(&s)).collect().join(" "))
     // Payload read - a slot address would decode as arm 0 with junk fields.
-    println!("{}", shapes.map(|s| area(&s)).join(" "))
+    println!("{}", shapes.iter().map(|s| area(&s)).collect().join(" "))
     // Explicitly by-value closure param.
-    println!("{}", shapes.map(|s: Shape| area(&s)).join(" "))
+    println!("{}", shapes.iter().map(|s: Shape| area(&s)).collect().join(" "))
 
-    shapes.for_each(|s| println!("each {}", area(&s)))
+    shapes.iter().for_each(|s| println!("each {}", area(&s)))
 
     // In-place keyed sort: the comparator takes the handle by word.
     shapes.sort_by_key(|s| area(&s))
-    println!("sorted {}", shapes.map(|s| area(&s)).join(" "))
+    println!("sorted {}", shapes.iter().map(|s| area(&s)).collect().join(" "))
 
     shapes.sort_by_key_desc(|s| area(&s))
-    println!("desc {}", shapes.map(|s| area(&s)).join(" "))
+    println!("desc {}", shapes.iter().map(|s| area(&s)).collect().join(" "))
 
     let biggest = shapes |> iter::max_by_key(|s| area(&s))
     if let Some(s) = biggest {
@@ -54,5 +54,5 @@ fn main() {
 
     // Non-mutating free form returns a fresh Vec of the same handles.
     let ordered = shapes |> iter::sort_by_key(|s| area(&s))
-    println!("free {}", ordered.map(|s| area(&s)).join(" "))
+    println!("free {}", ordered.iter().map(|s| area(&s)).collect().join(" "))
 }

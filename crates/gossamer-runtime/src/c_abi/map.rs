@@ -1581,7 +1581,155 @@ pub unsafe extern "C" fn gos_rt_map_clear(m: *mut GosMap) {
 ///
 /// A nested tuple's elements are flattened into the parent's slot
 /// buffer, so slot and tag positions advance independently.
-unsafe fn render_tuple_elements(
+/// Renders one value word per the tuple tag encoding. Container tags read
+/// the word as a handle; a tag with no handle shape renders as an integer.
+pub(crate) unsafe fn render_tagged_word(out: &mut String, word: i64, tag: u8) {
+    match tag {
+        2 => out.push_str(&crate::builtins::format_float_debug(f64::from_bits(
+            word as u64,
+        ))),
+        3 => out.push_str(crate::builtins::format_bool(word & 1 != 0)),
+        4 => {
+            if let Some(c) = char::from_u32(word as u32) {
+                out.push(c);
+            }
+        }
+        5 => {
+            let sp: *const c_char = std::ptr::with_exposed_provenance(word as usize);
+            if !sp.is_null() {
+                out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(sp) });
+            }
+        }
+        6 => {
+            let vp = std::ptr::with_exposed_provenance(word as usize);
+            let rendered = unsafe { crate::c_abi::gos_rt_vec_format_i64(vp) };
+            if !rendered.is_null() {
+                out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(rendered) });
+            }
+        }
+        7 => {
+            let mp = std::ptr::with_exposed_provenance(word as usize);
+            let rendered = unsafe { gos_rt_map_format(mp) };
+            if !rendered.is_null() {
+                out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(rendered) });
+            }
+        }
+        _ => out.push_str(&crate::builtins::format_int(word)),
+    }
+}
+
+/// Advances `cursor` past one descriptor without rendering it.
+unsafe fn skip_desc(tags: *const u8, cursor: &mut usize) {
+    let tag = unsafe { *tags.add(*cursor) };
+    *cursor += 1;
+    match tag {
+        TUPLE_TAG_NESTED => {
+            let arity = unsafe { *tags.add(*cursor) } as usize;
+            *cursor += 1;
+            for _ in 0..arity {
+                unsafe { skip_desc(tags, cursor) };
+            }
+        }
+        gossamer_abi::DESC_VEC => unsafe { skip_desc(tags, cursor) },
+        gossamer_abi::DESC_MAP => unsafe {
+            skip_desc(tags, cursor);
+            skip_desc(tags, cursor);
+        },
+        gossamer_abi::DESC_SET_I64 | gossamer_abi::DESC_SET_STR => *cursor += 1,
+        _ => {}
+    }
+}
+
+/// Renders the value at `slot` per the descriptor at `cursor`, advancing the
+/// cursor past that descriptor. A container descriptor reads the slot as a
+/// handle and renders its elements through the descriptor that follows, so a
+/// nested shape needs no formatter of its own.
+pub(crate) unsafe fn render_desc_value(
+    out: &mut String,
+    slot: *const u8,
+    tags: *const u8,
+    cursor: &mut usize,
+) {
+    let tag = unsafe { *tags.add(*cursor) };
+    match tag {
+        TUPLE_TAG_NESTED => {
+            *cursor += 1;
+            let arity = unsafe { *tags.add(*cursor) } as usize;
+            *cursor += 1;
+            let mut slot_cursor = 0usize;
+            unsafe {
+                render_tuple_elements(
+                    out,
+                    slot.cast::<i64>(),
+                    tags,
+                    arity,
+                    &mut slot_cursor,
+                    cursor,
+                );
+            }
+        }
+        gossamer_abi::DESC_VEC => {
+            *cursor += 1;
+            let word = unsafe { (slot as *const i64).read_unaligned() };
+            let v: *const crate::c_abi::GosVec = std::ptr::with_exposed_provenance(word as usize);
+            let elem_desc = *cursor;
+            out.push('[');
+            if !v.is_null() {
+                let vec = unsafe { &*v };
+                for i in 0..vec.len {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    let elem = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
+                    let mut c = elem_desc;
+                    unsafe { render_desc_value(out, elem, tags, &mut c) };
+                }
+            }
+            out.push(']');
+            unsafe { skip_desc(tags, cursor) };
+        }
+        gossamer_abi::DESC_MAP => {
+            *cursor += 1;
+            let word = unsafe { (slot as *const i64).read_unaligned() };
+            let m: *const GosMap = std::ptr::with_exposed_provenance(word as usize);
+            let key_desc = *cursor;
+            unsafe { skip_desc(tags, cursor) };
+            let val_desc = *cursor;
+            unsafe { skip_desc(tags, cursor) };
+            let rendered =
+                unsafe { gos_rt_map_format_desc(m, tags, key_desc as i64, val_desc as i64) };
+            if rendered.is_null() {
+                out.push_str("{}");
+            } else {
+                out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(rendered) });
+            }
+        }
+        gossamer_abi::DESC_SET_I64 | gossamer_abi::DESC_SET_STR => {
+            *cursor += 1;
+            let ordered = i32::from(unsafe { *tags.add(*cursor) });
+            *cursor += 1;
+            let word = unsafe { (slot as *const i64).read_unaligned() };
+            let handle = std::ptr::with_exposed_provenance(word as usize);
+            let rendered = if tag == gossamer_abi::DESC_SET_I64 {
+                unsafe { crate::c_abi::gos_rt_set_format_i64(handle, ordered) }
+            } else {
+                unsafe { crate::c_abi::gos_rt_set_format_string(handle, ordered) }
+            };
+            if rendered.is_null() {
+                out.push_str("#{}");
+            } else {
+                out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(rendered) });
+            }
+        }
+        _ => {
+            *cursor += 1;
+            let word = unsafe { (slot as *const i64).read_unaligned() };
+            unsafe { render_tagged_word(out, word, tag) };
+        }
+    }
+}
+
+pub(crate) unsafe fn render_tuple_elements(
     out: &mut String,
     p: *const i64,
     tags: *const u8,
@@ -2027,6 +2175,122 @@ unsafe fn vec_str_self_enum_eq(a_word: i64, b_word: i64, desc: *const i64) -> bo
 /// string-valued maps here.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
+    unsafe { gos_rt_map_format_tagged(m, 0, std::ptr::null(), 0) }
+}
+
+/// Renders one map value word. An aggregate tag reads the word as the address
+/// of the value's slot buffer: `9` renders it through the derived `fmt` in
+/// `aux`, and `8` through the `aux_n` tuple tags `aux` addresses.
+unsafe fn render_map_value(out: &mut String, word: i64, val_tag: i64, aux: *const u8, aux_n: i64) {
+    if aux.is_null() {
+        unsafe { render_tagged_word(out, word, val_tag as u8) };
+        return;
+    }
+    if val_tag == i64::from(gossamer_abi::DEBUG_PAYLOAD_ADT) {
+        let slots: *const u8 = std::ptr::with_exposed_provenance(word as usize);
+        out.push_str(&unsafe { crate::c_abi::vec::adt_fmt_string(slots, aux.cast()) });
+        return;
+    }
+    if val_tag == i64::from(TUPLE_TAG_NESTED) {
+        let slots: *const i64 = std::ptr::with_exposed_provenance(word as usize);
+        let mut slot_cursor = 0usize;
+        let mut tag_cursor = 0usize;
+        unsafe {
+            render_tuple_elements(
+                out,
+                slots,
+                aux,
+                aux_n as usize,
+                &mut slot_cursor,
+                &mut tag_cursor,
+            );
+        }
+        return;
+    }
+    unsafe { render_tagged_word(out, word, val_tag as u8) };
+}
+
+/// Renders a `GosMap` whose keys and values are described by the descriptors
+/// at `key_desc` and `val_desc` inside `tags`, so a nested container value
+/// renders through the same walk rather than needing its own entry point.
+///
+/// # Safety
+/// `m` is a live `GosMap`, and `tags` addresses descriptors at both offsets.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_format_desc(
+    m: *const GosMap,
+    tags: *const u8,
+    key_desc: i64,
+    val_desc: i64,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if m.is_null() || tags.is_null() {
+            return alloc_cstring(b"{}");
+        }
+        let entries = unsafe { map_word_entries(m) };
+        let mut out = String::from("{");
+        let mut first = true;
+        for (string_key, key, value) in entries {
+            if first {
+                first = false;
+            } else {
+                out.push_str(", ");
+            }
+            if let Some(bytes) = string_key {
+                out.push_str(&format!("{:?}", String::from_utf8_lossy(&bytes)));
+            } else {
+                let mut c = key_desc as usize;
+                let slot = std::ptr::from_ref(&key).cast::<u8>();
+                unsafe { render_desc_value(&mut out, slot, tags, &mut c) };
+            }
+            out.push_str(": ");
+            let mut c = val_desc as usize;
+            let slot = std::ptr::from_ref(&value).cast::<u8>();
+            unsafe { render_desc_value(&mut out, slot, tags, &mut c) };
+        }
+        out.push('}');
+        alloc_cstring(out.as_bytes())
+    })
+}
+
+/// Key/value words of a map in deterministic key order. A string key travels
+/// as its own bytes; shapes whose values are not single words yield nothing.
+unsafe fn map_word_entries(m: *const GosMap) -> Vec<(Option<Vec<u8>>, i64, i64)> {
+    let map = unsafe { &*m };
+    let storage = map.storage.lock();
+    match &*storage {
+        MapStorage::I64I64(inner) => {
+            let mut out: Vec<(Option<Vec<u8>>, i64, i64)> =
+                inner.iter().map(|(k, v)| (None, *k, *v)).collect();
+            out.sort_unstable_by_key(|(_, k, _)| *k);
+            out
+        }
+        MapStorage::StrI64(inner) => {
+            let mut out: Vec<(Option<Vec<u8>>, i64, i64)> = inner
+                .iter()
+                .map(|(k, v)| (Some(k.as_ref().to_vec()), 0, *v))
+                .collect();
+            out.sort_by(|a, b| a.0.cmp(&b.0));
+            out
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Renders a `GosMap` whose values carry `val_tag`, the tuple tag encoding:
+/// a container tag reads the stored word as a handle rather than as the
+/// integer it would otherwise print as. Tag `0` is the scalar rendering
+/// [`gos_rt_map_format`] performs.
+///
+/// # Safety
+/// `m` is a live `GosMap` whose value words match `val_tag`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_format_tagged(
+    m: *const GosMap,
+    val_tag: i64,
+    aux: *const u8,
+    aux_n: i64,
+) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if m.is_null() {
             return alloc_cstring(b"{}");
@@ -2064,11 +2328,13 @@ pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
                 let mut entries: Vec<(i64, i64)> = inner.iter().map(|(k, v)| (*k, *v)).collect();
                 entries.sort_unstable_by_key(|(k, _)| *k);
                 for (k, v) in entries {
+                    let mut value = String::new();
+                    unsafe { render_map_value(&mut value, v, val_tag, aux, aux_n) };
                     push_entry(
                         &mut out,
                         &mut first,
                         &crate::builtins::format_int(k),
-                        &crate::builtins::format_int(v),
+                        &value,
                     );
                 }
             }
@@ -2078,7 +2344,9 @@ pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
                 entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
                 for (k, v) in entries {
                     let key = quote_key(k);
-                    push_entry(&mut out, &mut first, &key, &crate::builtins::format_int(v));
+                    let mut value = String::new();
+                    unsafe { render_map_value(&mut value, v, val_tag, aux, aux_n) };
+                    push_entry(&mut out, &mut first, &key, &value);
                 }
             }
             MapStorage::StrStr(inner) => {

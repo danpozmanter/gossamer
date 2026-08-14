@@ -403,6 +403,22 @@ fn container_format_symbol(def_local: u32) -> Option<&'static str> {
 /// kind comes from the constructor or from the inserts against it, the
 /// same evidence the LLVM planner reads.
 fn container_handle_print_kind(body: &Body, local: Local) -> Option<PrintKind> {
+    container_handle_print_kind_seen(body, local, &mut Vec::new())
+}
+
+/// The copy chain this walks is a graph, not a tree: MIR may assign a local
+/// from itself, and two locals may be assigned from each other. `seen` records
+/// the locals already on the current walk so a cycle ends the search instead
+/// of following it forever.
+fn container_handle_print_kind_seen(
+    body: &Body,
+    local: Local,
+    seen: &mut Vec<Local>,
+) -> Option<PrintKind> {
+    if seen.contains(&local) {
+        return None;
+    }
+    seen.push(local);
     let mut set_ordered = None;
     let mut set_symbol = None;
     for block in &body.blocks {
@@ -412,7 +428,7 @@ fn container_handle_print_kind(body: &Body, local: Local) -> Option<PrintKind> {
                 && place.projection.is_empty()
                 && let Rvalue::Use(Operand::Copy(src)) = rvalue
                 && src.projection.is_empty()
-                && let Some(kind) = container_handle_print_kind(body, src.local)
+                && let Some(kind) = container_handle_print_kind_seen(body, src.local, seen)
             {
                 return Some(kind);
             }
@@ -635,7 +651,7 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                     _ => PrintKind::Unsupported("Vec"),
                 },
                 TyKind::Iterator(_) | TyKind::Range(_) => PrintKind::Unsupported("iterator"),
-                TyKind::HashMap { key, value } => {
+                TyKind::HashMap { key, value, .. } => {
                     if map_kv_supported(tcx, *key) && map_kv_supported(tcx, *value) {
                         PrintKind::Map
                     } else {

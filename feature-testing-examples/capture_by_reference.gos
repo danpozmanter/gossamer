@@ -64,11 +64,11 @@ fn main() {
 
     // Combinators run the closure against the captured binding.
     let mut seen: Vec<i64> = #[]
-    let doubled = #[1, 2, 3].map(|x| {
+    let doubled = #[1, 2, 3].iter().map(|x| {
         seen.push(x)
         x * 2
     })
-    println!("combinator {} {}", seen.len(), doubled.len())
+    println!("combinator {} {}", seen.len(), doubled.count())
 
     // A closure outliving the frame that built it keeps its capture
     // alive across calls.

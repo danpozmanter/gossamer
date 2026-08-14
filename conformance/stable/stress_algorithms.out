@@ -1,0 +1,13 @@
+array-sum 3990
+ast-rewrite 168
+dijkstra 227
+edit-distance 6
+gc-trees 112
+graph-bfs 4600
+grid-stencil 237.656250
+hash-join 240
+json-serde 224
+matmul 2268
+prime-sieve 95
+radix-sort 13 527 988
+union-find 1

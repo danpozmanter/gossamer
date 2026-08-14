@@ -2257,7 +2257,7 @@ counting does work the program does not need. Inside an arena:</p>
 <h2 id="automatic-arenas-no-annotation-needed">Automatic arenas (no annotation needed)<a class="headerlink" href="#automatic-arenas-no-annotation-needed" title="Permanent link">&para;</a></h2>
 <p>You often do not have to write <code>arena { }</code> at all. The compiler runs a
 conservative escape analysis over every loop body - <code>while</code>, <code>for</code>
-(<code>for i in a..b</code>, <code>for x in xs</code>, <code>for (i, x) in xs.enumerate()</code>,
+(<code>for i in a..b</code>, <code>for x in xs</code>, <code>for (i, x) in xs.iter().enumerate()</code>,
 <code>for (k, v) in m.iter()</code>), and bare <code>loop</code> alike - and when it can prove
 that everything the body allocates dies at the
 iteration boundary, it wraps the body in an arena for you. Idiomatic

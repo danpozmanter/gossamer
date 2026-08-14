@@ -2550,7 +2550,7 @@ compile time.</p>
 <p><code>Range</code> is the type of a <code>0..n</code> bound: iterator state over a bounded integer
 sequence, so it answers the same combinator surface <code>Iterator</code> does.</p>
 <div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">counted</span>: <span class="nc">Range</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="o">..</span><span class="mi">5</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">counted</span><span class="p">.</span><span class="n">rev</span><span class="p">().</span><span class="n">collect</span><span class="p">())</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">counted</span><span class="p">.</span><span class="n">iter</span><span class="p">().</span><span class="n">rev</span><span class="p">().</span><span class="n">collect</span><span class="p">())</span>
 </code></pre></div>
 <h2 id="runtime-statements">Runtime statements<a class="headerlink" href="#runtime-statements" title="Permanent link">&para;</a></h2>
 <table>

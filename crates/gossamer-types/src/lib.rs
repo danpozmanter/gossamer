@@ -151,13 +151,17 @@ pub fn erase_nominal(tcx: &mut TyCtxt, ty: Ty) -> Ty {
                 tcx.intern(TyKind::Array { elem: mapped, len })
             }
         }
-        TyKind::HashMap { key, value } => {
+        TyKind::HashMap { key, value, .. } => {
             let k = erase_nominal(tcx, key);
             let v = erase_nominal(tcx, value);
             if k == key && v == value {
                 ty
             } else {
-                tcx.intern(TyKind::HashMap { key: k, value: v })
+                tcx.intern(TyKind::HashMap {
+                    key: k,
+                    value: v,
+                    ordered: false,
+                })
             }
         }
         TyKind::Ref { mutability, inner } => {

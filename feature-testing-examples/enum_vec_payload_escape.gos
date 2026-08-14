@@ -28,7 +28,7 @@ fn direct() -> Node {
 fn main() {
     let out = make()
     match &out {
-        Node::Call(args) => println!("call len = {} sum = {}", args.len(), args.sum())
+        Node::Call(args) => println!("call len = {} sum = {}", args.len(), args.iter().sum())
         _ => println!("not a call")
     }
     let d = direct()

@@ -9,14 +9,14 @@ fn main() {
     println!("{}", match words.first() { Some(x) => x, None => "?" })
     println!("{}", match words.last() { Some(x) => x, None => "?" })
     println!("{}", words.join("-"))
-    let rev = words.to_vec().rev()
+    let rev = words.to_vec().iter().rev().collect()
     println!("{}|{}", rev[0], rev[3])
 
     let nums = #[10, 20, 30, 20]
     println!("{}", nums.contains(20))
     println!("{}", match nums.index_of(30) { Some(i) => i, None => -1 })
     println!("{}", nums.count_of(20))
-    let nrev = nums.to_vec().rev()
+    let nrev = nums.to_vec().iter().rev().collect()
     println!("{}|{}", nrev[0], nrev[3])
 }
 

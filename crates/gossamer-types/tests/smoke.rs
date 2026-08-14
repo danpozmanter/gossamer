@@ -75,8 +75,15 @@ fn ref_types_and_collections_render_correctly() {
     let map = tcx.intern(TyKind::HashMap {
         key: string,
         value: i32_,
+        ordered: false,
     });
     assert_eq!(render_ty(&tcx, map), "Map<String, i32>");
+    let ordered = tcx.intern(TyKind::HashMap {
+        key: string,
+        value: i32_,
+        ordered: true,
+    });
+    assert_eq!(render_ty(&tcx, ordered), "BTreeMap<String, i32>");
 }
 
 #[test]

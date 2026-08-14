@@ -219,7 +219,7 @@ impl ScopeStack {
     }
 }
 
-const PRELUDE_TYPES: &[&str] = &[
+pub(crate) const PRELUDE_TYPES: &[&str] = &[
     "str", "Result", "Option", "Vec", "Map", "Set", "BTreeSet", "BTreeMap", "Deque", "Queue",
     "Stack", "MaxHeap", "MinHeap", "Iterator", "Box", "Arc", "Rc", "Weak", "Range", "Sender",
     "Receiver",

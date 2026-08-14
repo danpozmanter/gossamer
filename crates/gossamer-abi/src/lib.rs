@@ -24,6 +24,25 @@ pub const TUPLE_TAG_NESTED: u8 = 8;
 /// through the payload type's derived `fmt`, whose address travels alongside
 /// the tag in `gos_rt_debug_option_fmt` / `gos_rt_debug_result_fmt`.
 pub const DEBUG_PAYLOAD_ADT: u8 = 9;
+/// Payload kind for a tuple: the word is its slot buffer and the companion
+/// pointer addresses a tag stream opening with the nested marker and arity.
+pub const DEBUG_PAYLOAD_TUPLE: u8 = 11;
+
+/// Descriptor tag for a `Vec` / slice: the slot holds its handle and the
+/// element's own descriptor follows this byte.
+pub const DESC_VEC: u8 = 12;
+/// Descriptor tag for a map: the slot holds its handle and the key's
+/// descriptor follows this byte, then the value's.
+pub const DESC_MAP: u8 = 13;
+/// Descriptor tag for an `i64`-element set; the next byte is `1` for the
+/// ordered spelling.
+pub const DESC_SET_I64: u8 = 14;
+/// Descriptor tag for a `String`-element set; the next byte is `1` for the
+/// ordered spelling.
+pub const DESC_SET_STR: u8 = 15;
+/// Payload kind rendering an `Option` / `Result` payload through the
+/// descriptor stream the companion pointer addresses.
+pub const DEBUG_PAYLOAD_DESC: u8 = 12;
 
 pub use registry::{REGISTRY, all_llvm_declarations, lookup};
 pub use types::{AbiSig, AbiType, RuntimeEntry, Tier};

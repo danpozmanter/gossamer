@@ -131,7 +131,6 @@ pub const DAY_ONE_LINTS: &[&str] = &[
     "self_assignment",
     "todo_macro",
     // Style: one canonical spelling per construct.
-    "free_form_combinator",
     "i64_only_container_family",
     // Batch 2 (breadth push).
     "bool_literal_in_condition",
@@ -272,7 +271,6 @@ pub fn lint_code(id: &str) -> Code {
         "empty_loop" => Code("GL0050"),
         "fill_loop" => Code("GL0051"),
         "substring_byte_scan" => Code("GL0052"),
-        "free_form_combinator" => Code("GL0053"),
         "i64_only_container_family" => Code("GL0054"),
         _ => Code("GL9999"),
     }

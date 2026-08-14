@@ -259,12 +259,16 @@ pub enum TyKind {
     /// reader wrote. Lowering never sees it: [`crate::normalize_for_lowering`]
     /// maps it to `Iterator` at the boundary into HIR.
     Range(Ty),
-    /// `HashMap<K, V>` - built-in hash map.
+    /// `Map<K, V>` / `BTreeMap<K, V>` - the built-in map. The two
+    /// spellings name distinct types over one representation, so a value
+    /// carries which container it is.
     HashMap {
         /// Key type.
         key: Ty,
         /// Value type.
         value: Ty,
+        /// True for the `BTreeMap` spelling.
+        ordered: bool,
     },
     /// `Sender<T>` - channel send endpoint.
     Sender(Ty),

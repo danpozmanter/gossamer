@@ -272,6 +272,20 @@ pub(super) enum ConcatKind {
     /// `bool` is true when `fmt` takes the element's slot address (a struct)
     /// rather than the element word itself (an inline enum).
     VecAdt(String, bool),
+    /// Map-elem Vec.
+    VecMap,
+    /// Vec whose elements are described by a descriptor stream.
+    VecDesc(Vec<u8>),
+    /// Map described by one stream holding the key descriptor then the value's.
+    MapDesc(Vec<u8>, usize),
+    /// Tuple-elem Vec: the per-element tag bytes and the tuple's arity.
+    VecTuple(Vec<u8>, usize),
+    /// Map whose values carry the given tuple tag (`0` for scalars).
+    MapTagged(u8),
+    /// Map whose values are aggregates rendered by a derived `fmt`.
+    MapAdt(String),
+    /// Map whose values are tuples: the per-element tag bytes and the arity.
+    MapTuple(Vec<u8>, usize),
     /// `[i64; N]` flat-buffer literal; the embedded length is
     /// passed alongside the buffer pointer to the runtime helper.
     ArrI64(i64),
@@ -312,6 +326,8 @@ pub(super) enum ConcatKind {
     /// `HashSet<T>` / `BTreeSet<T>` with String elements. The bool is true
     /// for `BTreeSet`, which only changes the display prefix.
     SetString(bool),
+    /// Set whose aggregate elements render through a descriptor stream.
+    SetDesc(Vec<u8>, bool),
     /// A container handle - `Deque` / `Queue` / `Stack` / `MaxHeap` /
     /// `MinHeap` - rendered by the named runtime shim, which owns the one
     /// text form every tier prints.
@@ -334,6 +350,11 @@ pub(super) enum DebugPayload {
     /// An aggregate payload: the word is the address of its slot buffer and
     /// the `String` names the type's derived `fmt`.
     Fmt(String),
+    /// A tuple payload: the word is its slot buffer and the bytes are a tag
+    /// stream opening with the nested marker and the tuple's arity.
+    Tuple(Vec<u8>),
+    /// A payload rendered through a recursive descriptor stream.
+    Desc(Vec<u8>),
 }
 
 impl DebugPayload {
@@ -342,6 +363,8 @@ impl DebugPayload {
         match self {
             Self::Tag(t) => *t,
             Self::Fmt(_) => gossamer_abi::DEBUG_PAYLOAD_ADT,
+            Self::Tuple(_) => gossamer_abi::DEBUG_PAYLOAD_TUPLE,
+            Self::Desc(_) => gossamer_abi::DEBUG_PAYLOAD_DESC,
         }
     }
 }

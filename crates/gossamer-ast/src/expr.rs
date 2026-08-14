@@ -55,6 +55,9 @@ pub enum ExprKind {
         receiver: Box<Expr>,
         /// Method name.
         name: Ident,
+        /// Source range of the method name, so a diagnostic about the method
+        /// points at it rather than at the receiver it hangs off.
+        name_span: Span,
         /// Turbofish generic arguments.
         generics: Vec<GenericArg>,
         /// Call arguments.

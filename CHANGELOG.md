@@ -1,5 +1,89 @@
 # Changelog
 
+## 0.50.0 - Iterators/collections, codegen cycle safety, silent errors, fixes
+
+- Reject a traversal called straight on a collection. `Vec`, fixed arrays,
+  slices, `Map`, `Set`, `BTreeSet`, and `BTreeMap` accepted `map`, `filter`,
+  `fold`, `enumerate`, `rev`, and the rest of the traversal surface directly,
+  so one name meant an eager collection walk on a container and a lazy adapter
+  on a range. Traversal now starts at `iter()`, and GT0068 carries the rewrite.
+- Answer an iterator from `iter()` on every collection and run the pipeline
+  when it is drained. A combinator behind `iter()` ran eagerly on the bytecode
+  VM and lazily once compiled, so a closure with a side effect saw a different
+  number of calls per tier. `to_vec` remains the spelling that materialises and
+  `collect` ends a pipeline; code that indexed or assigned the old `Vec` result
+  names one of those instead.
+- Resolve a closure parameter from the sequence it traverses. An unannotated
+  parameter left the mapped element unresolved, and it settled as `i64`: a
+  `Vec<String>` built through `map` printed its elements as pointer values on
+  the compiled tiers.
+- Answer with the element's own type from `sum` and `product`. A sequence of
+  `f64` or `usize` reported `i64`, and the compiled tiers truncated the result.
+- Accept an iterator wherever an `iter::` free function takes a sequence, and
+  drain a lazy argument through the caller. The sixteen functions without a
+  lazy adapter took only a materialised sequence, and `chunks`, `windows`,
+  `dedup`, `flatten`, `pairwise`, `rev`, `partition`, and `chunk_by` answered
+  empty when handed a pipeline carrying a closure.
+- Track single use of an iterator in edition 2026. Consuming one twice reported
+  GT0042 only under edition 2027, so the same program silently read an
+  exhausted iterator on the default edition.
+- Answer lazily from `enumerate` in every edition. It materialised its input,
+  so an index over a long or unbounded source built the whole sequence first.
+- Reverse a bounded range in constant time. `rev` collected the range and
+  reversed the result, so `(0..50000000).rev().take(3)` allocated fifty million
+  elements to read three; it is now position arithmetic over the same state.
+- Build a `String` from a `char` or a `bool` through `to_string`. The receiver
+  was passed along as though it were already a String, so a JIT-compiled body
+  returning one faulted.
+- Point a diagnostic about a method at the method. The span named the
+  receiver, so a chain written across lines underlined a line that did not
+  contain the method the message named.
+- Finish the rewrite a traversal diagnostic suggests. Following its help
+  produced an iterator where the code went on to index a collection, so the
+  help now names the `.collect()` that ends the pipeline.
+- Report an import that names nothing. A single-segment `use` bound the name
+  whatever it named, so a typo surfaced as a missing value much later.
+- Answer `BTreeMap` from the `BTreeMap` constructors. Both map spellings
+  interned as one type, so annotations, diagnostics, and REPL bindings reported
+  `Map` for either; the two are now distinct types over one representation.
+- Render a tuple-element `Vec` and a container-valued `Map` with `{:?}` on the
+  native backend. Both shapes printed on the VM and refused to compile.
+- Render every nested collection shape with `{:?}` on the native backend. A
+  container inside a container - a `Vec` of tuples, a map whose values are
+  Vecs, maps, tuples, or structs, a `Vec` of maps or sets, a nested `Vec` at
+  any depth - printed on the VM and refused to compile, because the renderer
+  named shapes from a flat tag rather than walking the type. One recursive
+  descriptor now drives all of them.
+- Render a `Result` whose error is `errors::Error` with `{:?}`. The error arm
+  of nearly every fallible signature had no rendering plan, so debug-printing
+  such a `Result` refused to compile whatever its `Ok` payload was.
+- Render an `Option` or `Result` carrying a tuple or a nested container.
+- Render a set whose elements are tuples or structs. It printed as empty on
+  the native backend because the formatter read the scalar storage.
+- Build a map literal whose values are `Vec`s, maps, tuples, or structs. The
+  literal lowered through an entry array that could only carry scalar and
+  `String` values, so `{1: #[2, 3]}` refused to compile.
+- Add miniature general-algorithm, throughput, and allocation-shape kernels to
+  the release conformance fixtures, expanding algorithm and data structure
+  coverage in tests.
+- Lower a body whose copy graph contains a cycle. The print planner recovers a
+  container's element kind by walking `Copy` assignments back to the
+  constructor, and followed a local assigned from itself - or two assigned from
+  each other - until the stack was gone. Canonicalisation removes the
+  self-assignment that produced one, and the walk now ends at a repeat either
+  way.
+- Iterate a fixed array on the compiled tiers. A fixed array lives inline in its
+  slots rather than behind a heap header, and `iter()` handed that inline address
+  to the handle-taking iterator helper, which read the elements as a header and
+  faulted natively.
+- Keep the language server up on a document it cannot parse or a position it
+  cannot resolve. A leading byte-order mark left the recorded user length three
+  bytes longer than the stored text, so any request touching the document
+  panicked.
+- Offer a receiver's methods in the REPL when the cursor sits straight after
+  the dot. Completion required at least one character after it, so `x.` and Tab
+  answered with nothing.
+
 ## 0.49.0 - Delimited lists, iterator contracts, explicit dependency imports
 
 - A `let` that reuses the name of a consumed iterator or range introduces a

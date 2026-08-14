@@ -1,0 +1,69 @@
+// `iter()` starts a pipeline on every collection that offers one, so it
+// answers with an iterator rather than a materialised copy. `to_vec` is the
+// spelling that materialises.
+
+use std::collections::{BTreeMap, BTreeSet, Map, Set}
+
+fn from_vec(n: i64) -> i64 {
+    let values = #[n, n + 1, n + 2]
+    values.iter().count()
+}
+
+fn from_set(n: i64) -> i64 {
+    let values = #{ n, n + 10, n + 20 }
+    let mut total = 0
+    for value in values.iter() { total += value }
+    total
+}
+
+fn from_map(n: i64) -> i64 {
+    let entries = { "a": n, "b": n + 1 }
+    let mut total = 0
+    for (key, value) in entries.iter() { total += key.len() + value }
+    total
+}
+
+fn from_btree_set(n: i64) -> String {
+    let ordered: BTreeSet<i64> = #{ n + 2, n, n + 1 }
+    ordered.iter().collect().join(",")
+}
+
+fn from_btree_map(n: i64) -> i64 {
+    let ordered: BTreeMap<i64, i64> = { n: n + 1 }
+    ordered.iter().count()
+}
+
+fn from_array(n: i64) -> String {
+    let fixed: [i64; 3] = [n, n + 1, n + 2]
+    fixed.iter().map(|v| v * 2).collect().join(",")
+}
+
+fn set_snapshot_is_a_vec(n: i64) -> i64 {
+    let values = #{ n, n + 1 }
+    values.to_vec().len()
+}
+
+fn main() {
+    let mut total = 0
+    for _ in 0..200 { total = from_vec(1) }
+    println!("vec {}", total)
+
+    for _ in 0..200 { total = from_set(5) }
+    println!("set {}", total)
+
+    for _ in 0..200 { total = from_map(3) }
+    println!("map {}", total)
+
+    let mut text = ""
+    for _ in 0..200 { text = from_btree_set(1) }
+    println!("btreeset {}", text)
+
+    for _ in 0..200 { total = from_btree_map(4) }
+    println!("btreemap {}", total)
+
+    for _ in 0..200 { text = from_array(2) }
+    println!("array {}", text)
+
+    for _ in 0..200 { total = set_snapshot_is_a_vec(7) }
+    println!("to_vec {}", total)
+}

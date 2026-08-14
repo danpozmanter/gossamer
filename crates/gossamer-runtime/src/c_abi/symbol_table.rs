@@ -2519,6 +2519,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_map_format as *const u8,
         ),
         (
+            "gos_rt_map_format_tagged",
+            crate::c_abi::gos_rt_map_format_tagged as *const u8,
+        ),
+        (
             "gos_rt_map_free",
             crate::c_abi::gos_rt_map_free as *const u8,
         ),
@@ -4212,6 +4216,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_btree_set_new as *const u8,
         ),
         (
+            "gos_rt_set_format_desc",
+            crate::c_abi::gos_rt_set_format_desc as *const u8,
+        ),
+        (
             "gos_rt_set_format_i64",
             crate::c_abi::gos_rt_set_format_i64 as *const u8,
         ),
@@ -5528,6 +5536,22 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_tuple_format",
             crate::c_abi::gos_rt_tuple_format as *const u8,
+        ),
+        (
+            "gos_rt_map_format_desc",
+            crate::c_abi::gos_rt_map_format_desc as *const u8,
+        ),
+        (
+            "gos_rt_vec_format_desc",
+            crate::c_abi::gos_rt_vec_format_desc as *const u8,
+        ),
+        (
+            "gos_rt_vec_format_map",
+            crate::c_abi::gos_rt_vec_format_map as *const u8,
+        ),
+        (
+            "gos_rt_vec_format_tuple",
+            crate::c_abi::gos_rt_vec_format_tuple as *const u8,
         ),
         (
             "gos_rt_tuple_cmp",

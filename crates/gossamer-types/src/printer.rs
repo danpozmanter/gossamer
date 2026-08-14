@@ -66,7 +66,14 @@ fn write_kind(tcx: &TyCtxt, kind: &TyKind, out: &mut String) {
         TyKind::Vec(elem) => write_named(tcx, "Vec", &[*elem], out),
         TyKind::Iterator(elem) => write_named(tcx, "Iterator", &[*elem], out),
         TyKind::Range(elem) => write_named(tcx, "Range", &[*elem], out),
-        TyKind::HashMap { key, value } => write_named(tcx, "Map", &[*key, *value], out),
+        TyKind::HashMap {
+            key,
+            value,
+            ordered,
+        } => {
+            let name = if *ordered { "BTreeMap" } else { "Map" };
+            write_named(tcx, name, &[*key, *value], out);
+        }
         TyKind::Sender(elem) => write_named(tcx, "Sender", &[*elem], out),
         TyKind::Receiver(elem) => write_named(tcx, "Receiver", &[*elem], out),
         TyKind::JoinHandle(elem) => write_named(tcx, "JoinHandle", &[*elem], out),

@@ -155,6 +155,17 @@ pub fn typecheck_source_file_with_lazy_iterators(
 /// guard and keeps adversarial input that survives parsing from
 /// blowing the C stack inside [`TypeChecker::check_expr`].
 const RECURSION_LIMIT: u32 = 256;
+/// The parts of a method call that identify the call itself, as opposed to
+/// the receiver and arguments it is applied to.
+struct MethodCallSite<'a> {
+    call_id: NodeId,
+    method: &'a str,
+    /// Source range of the method name, so a diagnostic about the method
+    /// points at it rather than at the receiver.
+    name_span: Span,
+    generics: &'a [AstGenericArg],
+}
+
 const HASH_SET_DEF_LOCAL: u32 = u32::MAX - 7;
 const VALIDATE_ERRORS_DEF_LOCAL: u32 = u32::MAX - 9;
 const VALIDATE_FIELD_ERROR_DEF_LOCAL: u32 = u32::MAX - 10;
@@ -1601,7 +1612,11 @@ impl<'a> TypeChecker<'a> {
                     self.tcx.intern(TyKind::Vec(new))
                 }
             }
-            TyKind::HashMap { key, value } => {
+            TyKind::HashMap {
+                key,
+                value,
+                ordered,
+            } => {
                 let new_k = self.subst_generics_in_ty(key, substs, const_substs);
                 let new_v = self.subst_generics_in_ty(value, substs, const_substs);
                 if new_k == key && new_v == value {
@@ -1610,6 +1625,7 @@ impl<'a> TypeChecker<'a> {
                     self.tcx.intern(TyKind::HashMap {
                         key: new_k,
                         value: new_v,
+                        ordered,
                     })
                 }
             }
@@ -1741,6 +1757,20 @@ impl<'a> TypeChecker<'a> {
         crate::Substs::from_args(new_args)
     }
 
+    /// Deep-resolves a map's key and value, keeping which map it is.
+    fn deep_resolve_map(&mut self, resolved: Ty, key: Ty, value: Ty, ordered: bool) -> Ty {
+        let k = self.deep_resolve(key);
+        let v = self.deep_resolve(value);
+        if k == key && v == value {
+            return resolved;
+        }
+        self.tcx.intern(TyKind::HashMap {
+            key: k,
+            value: v,
+            ordered,
+        })
+    }
+
     fn deep_resolve(&mut self, ty: Ty) -> Ty {
         let resolved = self.infer.resolve(self.tcx, ty);
         match self.tcx.kind_of(resolved).clone() {
@@ -1845,15 +1875,11 @@ impl<'a> TypeChecker<'a> {
                     self.tcx.intern(TyKind::Tuple(new))
                 }
             }
-            TyKind::HashMap { key, value } => {
-                let k = self.deep_resolve(key);
-                let v = self.deep_resolve(value);
-                if k == key && v == value {
-                    resolved
-                } else {
-                    self.tcx.intern(TyKind::HashMap { key: k, value: v })
-                }
-            }
+            TyKind::HashMap {
+                key,
+                value,
+                ordered,
+            } => self.deep_resolve_map(resolved, key, value, ordered),
             _ => resolved,
         }
     }
@@ -3574,7 +3600,7 @@ impl<'a> TypeChecker<'a> {
             | TyKind::Receiver(elem)
             | TyKind::JoinHandle(elem) => self.ty_contains_reference(*elem),
             TyKind::Tuple(items) => items.iter().any(|item| self.ty_contains_reference(*item)),
-            TyKind::HashMap { key, value } => {
+            TyKind::HashMap { key, value, .. } => {
                 self.ty_contains_reference(*key) || self.ty_contains_reference(*value)
             }
             TyKind::Adt { substs, .. } | TyKind::FnDef { substs, .. } => substs
@@ -4067,10 +4093,20 @@ impl<'a> TypeChecker<'a> {
             ExprKind::MethodCall {
                 receiver,
                 name,
+                name_span,
                 generics,
                 args,
-                ..
-            } => self.check_method_call(expr.id, &name.name, generics, receiver, args, expected),
+            } => self.check_method_call(
+                MethodCallSite {
+                    call_id: expr.id,
+                    method: &name.name,
+                    name_span: *name_span,
+                    generics,
+                },
+                receiver,
+                args,
+                expected,
+            ),
             ExprKind::FieldAccess { receiver, field } => {
                 let receiver_ty = self.check_expr(receiver);
                 match field {
@@ -4636,19 +4672,72 @@ impl<'a> TypeChecker<'a> {
         }
         let callee_ty = self.check_expr(callee);
         let arg_expectations = self.call_arg_expectations(callee, callee_ty, args.len(), expected);
-        let arg_tys: Vec<Ty> = args
-            .iter()
-            .enumerate()
-            .map(|(i, a)| {
-                let exp = arg_expectations
-                    .as_ref()
-                    .and_then(|exps| exps.get(i).copied())
-                    .unwrap_or(Expectation::None);
-                self.check_expr_expecting(a, exp)
-            })
-            .collect();
+        let arg_tys: Vec<Ty> = match self.data_last_combinator_arg_tys(callee, args) {
+            Some(tys) => tys,
+            None => args
+                .iter()
+                .enumerate()
+                .map(|(i, a)| {
+                    let exp = arg_expectations
+                        .as_ref()
+                        .and_then(|exps| exps.get(i).copied())
+                        .unwrap_or(Expectation::None);
+                    self.check_expr_expecting(a, exp)
+                })
+                .collect(),
+        };
         self.check_mutating_qualified_call(callee, args);
         self.check_call_inner(callee, args, callee_ty, &arg_tys, expected)
+    }
+
+    /// Argument types for a data-last `iter::` combinator, checked with the
+    /// sequence argument first. The element type it yields binds the leading
+    /// closure's parameter, so a projection out of that parameter resolves
+    /// while the closure body is checked. Returns `None` for every other
+    /// call, which keeps source-order checking.
+    fn data_last_combinator_arg_tys(&mut self, callee: &Expr, args: &[Expr]) -> Option<Vec<Ty>> {
+        if args.len() < 2 {
+            return None;
+        }
+        let ExprKind::Path(path) = &callee.kind else {
+            return None;
+        };
+        let names = self.resolved_value_path_names(callee.id, path);
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let (module, last) = names.split_at(names.len().saturating_sub(1));
+        let name = last.first().copied()?;
+        if combinator_module_name(module)? != "iter"
+            || Self::std_combinator_arity("iter", name)? != args.len()
+        {
+            return None;
+        }
+        let data_index = args.len() - 1;
+        let data_ty = self.check_expr_expecting(&args[data_index], Expectation::None);
+        let elem = match self.tcx.kind(self.infer.resolve(self.tcx, data_ty)) {
+            Some(
+                TyKind::Vec(elem)
+                | TyKind::Slice(elem)
+                | TyKind::Array { elem, .. }
+                | TyKind::Iterator(elem),
+            ) => *elem,
+            _ => return None,
+        };
+        let mut arg_tys = vec![data_ty; args.len()];
+        for (i, arg) in args.iter().enumerate().take(data_index) {
+            let expectation = match &arg.kind {
+                ExprKind::Closure { params, .. } if params.len() == 1 => {
+                    let output = self.fresh();
+                    let sig = FnSig {
+                        inputs: vec![elem],
+                        output,
+                    };
+                    Expectation::HasType(self.tcx.intern(TyKind::FnPtr(sig)))
+                }
+                _ => Expectation::None,
+            };
+            arg_tys[i] = self.check_expr_expecting(arg, expectation);
+        }
+        Some(arg_tys)
     }
 
     /// Per-argument expectations for a call, derived (in priority
@@ -6050,12 +6139,20 @@ impl<'a> TypeChecker<'a> {
             "Map" => {
                 let key = self.fresh();
                 let value = self.fresh();
-                Some(self.tcx.intern(TyKind::HashMap { key, value }))
+                Some(self.tcx.intern(TyKind::HashMap {
+                    key,
+                    value,
+                    ordered: false,
+                }))
             }
             "BTreeMap" => {
                 let key = self.fresh();
                 let value = self.fresh();
-                Some(self.tcx.intern(TyKind::HashMap { key, value }))
+                Some(self.tcx.intern(TyKind::HashMap {
+                    key,
+                    value,
+                    ordered: true,
+                }))
             }
             "Set" | "BTreeSet" => {
                 let elem = self.fresh();
@@ -6143,7 +6240,7 @@ impl<'a> TypeChecker<'a> {
                         Some(TyKind::Var(_)) => {
                             let target = self.expectation_target(expected)?;
                             match self.tcx.kind(target) {
-                                Some(TyKind::HashMap { key, value }) => (*key, *value),
+                                Some(TyKind::HashMap { key, value, .. }) => (*key, *value),
                                 _ => return None,
                             }
                         }
@@ -6160,7 +6257,11 @@ impl<'a> TypeChecker<'a> {
                     );
                     return Some(self.fresh());
                 };
-                Some(self.tcx.intern(TyKind::HashMap { key, value }))
+                Some(self.tcx.intern(TyKind::HashMap {
+                    key,
+                    value,
+                    ordered: owner == "BTreeMap",
+                }))
             }
             _ => None,
         }
@@ -7611,7 +7712,12 @@ impl<'a> TypeChecker<'a> {
             }
         }
         let elem = match self.tcx.kind(resolved) {
-            Some(TyKind::Vec(elem) | TyKind::Slice(elem) | TyKind::Array { elem, .. }) => *elem,
+            Some(
+                TyKind::Vec(elem)
+                | TyKind::Slice(elem)
+                | TyKind::Array { elem, .. }
+                | TyKind::Iterator(elem),
+            ) => *elem,
             _ => return None,
         };
         match method {
@@ -7630,17 +7736,21 @@ impl<'a> TypeChecker<'a> {
     )]
     fn check_method_call(
         &mut self,
-        call_id: NodeId,
-        method: &str,
-        generics: &[AstGenericArg],
+        site: MethodCallSite<'_>,
         receiver: &Expr,
         args: &[Expr],
         expected: Expectation,
     ) -> Ty {
+        let MethodCallSite {
+            call_id,
+            method,
+            name_span,
+            generics,
+        } = site;
         self.check_overlapping_mutable_call_args(args);
         let receiver_expected = self.method_receiver_expectation(method, receiver, expected);
         let receiver_ty = self.check_expr_expecting(receiver, receiver_expected);
-        if self.reject_invalid_non_vec_sequence_method(receiver_ty, method, args, receiver.span) {
+        if self.reject_invalid_non_vec_sequence_method(receiver_ty, method, args, name_span) {
             return self.tcx.error_ty();
         }
         self.check_mutating_method_receiver(receiver, receiver_ty, method);
@@ -7759,8 +7869,7 @@ impl<'a> TypeChecker<'a> {
         if let Some(ty) = self.vec_method_ret(method, args, &arg_tys, resolved, receiver.span) {
             return ty;
         }
-        if let Some(ty) = self.seq_combinator_method_ret(method, &arg_tys, resolved, receiver.span)
-        {
+        if let Some(ty) = self.seq_combinator_method_ret(method, &arg_tys, resolved, name_span) {
             self.mark_consumed_iterator_expr(method, receiver, resolved);
             return ty;
         }
@@ -7943,6 +8052,25 @@ impl<'a> TypeChecker<'a> {
     /// Builds the GT0002 diagnostic for `method` on `resolved`, carrying
     /// the receiver's method surface so the reader gets a did-you-mean.
     fn unresolved_method(&self, ty: String, method: &str, resolved: Ty) -> TypeError {
+        // A traversal named on a collection is not a typo, so it gets the
+        // message that says where the traversal surface lives rather than a
+        // did-you-mean over the collection's own methods.
+        if COLLECTION_TRAVERSAL_METHODS.contains(&method)
+            && matches!(
+                self.tcx.kind(resolved),
+                Some(
+                    TyKind::Vec(_)
+                        | TyKind::Slice(_)
+                        | TyKind::Array { .. }
+                        | TyKind::HashMap { .. }
+                )
+            )
+        {
+            return TypeError::TraversalOnCollection {
+                method: method.to_string(),
+                found: ty,
+            };
+        }
         TypeError::UnresolvedMethod {
             ty,
             name: method.to_string(),
@@ -8436,9 +8564,14 @@ impl<'a> TypeChecker<'a> {
             Some(TyKind::Range(elem)) => {
                 format!("Range<{}>", self.render_public_ty(elem))
             }
-            Some(TyKind::HashMap { key, value }) => {
+            Some(TyKind::HashMap {
+                key,
+                value,
+                ordered,
+            }) => {
                 format!(
-                    "Map<{}, {}>",
+                    "{}<{}, {}>",
+                    if ordered { "BTreeMap" } else { "Map" },
                     self.render_public_ty(key),
                     self.render_public_ty(value)
                 )
@@ -8821,8 +8954,10 @@ impl<'a> TypeChecker<'a> {
         match method {
             // New sets - same element type as the receiver.
             "union" | "intersection" | "difference" | "symmetric_difference" => Some(resolved),
-            // Snapshot to a Vec of the element type.
-            "to_vec" | "iter" => Some(self.tcx.intern(TyKind::Vec(elem))),
+            // `to_vec` snapshots into a Vec; `iter` starts a pipeline, and
+            // answers with an iterator the way every other sequence does.
+            "to_vec" => Some(self.tcx.intern(TyKind::Vec(elem))),
+            "iter" => Some(self.tcx.intern(TyKind::Iterator(elem))),
             "insert" | "remove" | "contains" | "is_empty" | "is_subset" | "is_superset"
             | "is_disjoint" => Some(self.tcx.bool_ty()),
             "len" => Some(self.tcx.int_ty(IntTy::I64)),
@@ -8852,7 +8987,23 @@ impl<'a> TypeChecker<'a> {
                 }
                 return self.std_combinator_ty("iter", method, arg_tys, resolved, span);
             }
-            Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. }) => {}
+            Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. }) => {
+                // A collection contains values; it does not traverse them.
+                // Traversal is what an iterator is for, so the sequence
+                // combinators are reached through `.iter()` rather than
+                // answered twice, once eagerly here and once lazily there.
+                if COLLECTION_TRAVERSAL_METHODS.contains(&method) {
+                    let found = self.render_public_ty(resolved);
+                    self.emit(
+                        TypeError::TraversalOnCollection {
+                            method: method.to_string(),
+                            found,
+                        },
+                        span,
+                    );
+                    return Some(self.tcx.error_ty());
+                }
+            }
             _ => return None,
         }
         match (method, arg_tys.len()) {
@@ -8900,7 +9051,7 @@ impl<'a> TypeChecker<'a> {
         span: Span,
     ) -> Option<Ty> {
         let (key, value) = match self.tcx.kind(resolved) {
-            Some(TyKind::HashMap { key, value }) => (*key, *value),
+            Some(TyKind::HashMap { key, value, .. }) => (*key, *value),
             _ => return None,
         };
         // `set` is json's field-update helper, not a map method; the
@@ -8941,10 +9092,10 @@ impl<'a> TypeChecker<'a> {
             self.unify(value_peeled, arg_peeled, span);
         }
         match method {
-            // `m.iter()` yields `(K, V)` pairs.
+            // `m.iter()` yields `(K, V)` pairs, lazily like any other `iter`.
             "iter" => {
                 let pair = self.tcx.intern(TyKind::Tuple(vec![key, value]));
-                Some(self.tcx.intern(TyKind::Vec(pair)))
+                Some(self.tcx.intern(TyKind::Iterator(pair)))
             }
             "keys" => {
                 let key = self.peel_refs(key);
@@ -9053,7 +9204,11 @@ impl<'a> TypeChecker<'a> {
                 }
                 Some(self.option_adt_ty(elem))
             }
-            ("collect" | "rev" | "dedup" | "to_vec", 0) => Some(self.tcx.intern(TyKind::Vec(elem))),
+            // `dedup` and `to_vec` describe the collection: one removes
+            // adjacent repeats in place, the other copies. `collect` and `rev`
+            // are traversals and belong to the iterator, so they fall through
+            // to the collection-traversal rejection.
+            ("dedup" | "to_vec", 0) => Some(self.tcx.intern(TyKind::Vec(elem))),
             ("index_of", 1) => {
                 let i = self.tcx.int_ty(IntTy::I64);
                 Some(self.option_adt_ty(i))
@@ -10314,7 +10469,12 @@ impl<'a> TypeChecker<'a> {
                     self.tcx.kind_of(self.infer.resolve(self.tcx, data_ty)),
                     TyKind::Iterator(_) | TyKind::Range(_)
                 );
-                let lazy_result = edition_lazy_result || data_is_iterator;
+                // `enumerate` pairs an index with each element as it is
+                // asked for, so it answers an iterator whatever it is
+                // handed, in every edition.
+                let lazy_result = edition_lazy_result
+                    || data_is_iterator
+                    || (!eager_alias && matches!(name, "enumerate"));
                 let iterator_terminal = matches!(
                     name,
                     "fold" | "any" | "all" | "find" | "count" | "sum" | "collect"
@@ -10350,10 +10510,19 @@ impl<'a> TypeChecker<'a> {
                 let ty = match name {
                     "collect" => self.tcx.intern(TyKind::Vec(elem)),
                     "count" => i64_ty,
-                    "sum" | "product" => match self.tcx.kind(elem) {
-                        Some(TyKind::Float(float)) => self.tcx.float_ty(*float),
-                        _ => i64_ty,
-                    },
+                    // The sum of a sequence has its element's type.
+                    "sum" | "product" => {
+                        let elem = self.infer.resolve(self.tcx, elem);
+                        match self.tcx.kind(elem) {
+                            Some(TyKind::Float(float)) => self.tcx.float_ty(*float),
+                            Some(TyKind::Int(int)) => self.tcx.int_ty(*int),
+                            // An element the receiver has not pinned yet
+                            // settles together with the sum rather than
+                            // fixing the result to `i64` here.
+                            Some(TyKind::Var(_)) => elem,
+                            _ => i64_ty,
+                        }
+                    }
                     "min" | "max" => self.option_adt_ty(elem),
                     "take" | "skip" | "step_by" => {
                         self.unify(i64_ty, lead_tys[0], span);
@@ -10529,12 +10698,20 @@ impl<'a> TypeChecker<'a> {
                     "chunk_by" => {
                         let key = self.callable_output(lead_tys[0], &[elem], span);
                         let value = self.tcx.intern(TyKind::Vec(elem));
-                        self.tcx.intern(TyKind::HashMap { key, value })
+                        self.tcx.intern(TyKind::HashMap {
+                            key,
+                            value,
+                            ordered: false,
+                        })
                     }
                     "count_by" => {
                         let key = self.callable_output(lead_tys[0], &[elem], span);
                         let value = self.tcx.int_ty(IntTy::I64);
-                        self.tcx.intern(TyKind::HashMap { key, value })
+                        self.tcx.intern(TyKind::HashMap {
+                            key,
+                            value,
+                            ordered: false,
+                        })
                     }
                     _ => return None,
                 };
@@ -10572,7 +10749,10 @@ impl<'a> TypeChecker<'a> {
                 let lead = lead.to_vec();
                 let span = args.last().map_or(callee.span, |arg| arg.span);
                 let ty = self.std_combinator_ty(module, name, &lead, data[0], span);
-                if module == "iter" && self.edition == Edition::E2027 && ty.is_some() {
+                // An iterator is consumed by the adapter that takes it in
+                // every edition: reading it again yields nothing, so the
+                // second read is reported rather than silently empty.
+                if module == "iter" && ty.is_some() {
                     self.mark_consumed_iterator_args(name, args, arg_tys);
                 }
                 // A rowed option/result combinator at full arity whose
@@ -11227,7 +11407,7 @@ impl<'a> TypeChecker<'a> {
                     if let Some(ret) =
                         self.std_combinator_ty(comb, last, &lead_tys, lhs_ty, lhs.span)
                     {
-                        if comb == "iter" && self.edition == Edition::E2027 {
+                        if comb == "iter" {
                             self.mark_consumed_iterator_args(last, lead_args, &lead_tys);
                             self.mark_consumed_iterator_expr(last, lhs, lhs_ty);
                         }
@@ -12632,14 +12812,21 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn check_map_literal(&mut self, entries: &[Expr], expected: Expectation) -> Ty {
-        let expected_pair =
+        // A brace literal builds whichever map the call site expects, the way
+        // `#{..}` builds a `Set` or the `BTreeSet` an expectation names.
+        let expected_map =
             self.expectation_target(expected)
                 .and_then(|target| match self.tcx.kind(target) {
-                    Some(TyKind::HashMap { key, value }) => Some((*key, *value)),
+                    Some(TyKind::HashMap {
+                        key,
+                        value,
+                        ordered,
+                    }) => Some((*key, *value, *ordered)),
                     _ => None,
                 });
+        let ordered = expected_map.is_some_and(|(_, _, ordered)| ordered);
         let (mut key_ty, mut value_ty) =
-            expected_pair.unwrap_or_else(|| (self.fresh(), self.fresh()));
+            expected_map.map_or_else(|| (self.fresh(), self.fresh()), |(k, v, _)| (k, v));
 
         for entry in entries {
             let ExprKind::Tuple(parts) = &entry.kind else {
@@ -12668,7 +12855,7 @@ impl<'a> TypeChecker<'a> {
             };
             let got_key = self.check_expr_expecting(key, expected.rewrap(key_ty));
             let got_value = self.check_expr_expecting(value, expected.rewrap(value_ty));
-            if expected_pair.is_some() && expected.unifies() {
+            if expected_map.is_some() && expected.unifies() {
                 self.unify(key_ty, got_key, key.span);
                 self.unify(value_ty, got_value, value.span);
             } else {
@@ -12695,6 +12882,7 @@ impl<'a> TypeChecker<'a> {
         self.tcx.intern(TyKind::HashMap {
             key: key_ty,
             value: value_ty,
+            ordered,
         })
     }
 
@@ -13535,7 +13723,11 @@ impl<'a> TypeChecker<'a> {
                 let tys = substs.types();
                 let key = tys.first().copied().unwrap_or_else(|| self.fresh());
                 let value = tys.get(1).copied().unwrap_or_else(|| self.fresh());
-                return self.tcx.intern(TyKind::HashMap { key, value });
+                return self.tcx.intern(TyKind::HashMap {
+                    key,
+                    value,
+                    ordered: false,
+                });
             }
             // `HashSet<T>` / `BTreeSet<T>` are opaque i64 handles at
             // runtime with no dedicated `TyKind`. Resolving the annotation to
@@ -13563,7 +13755,11 @@ impl<'a> TypeChecker<'a> {
                 let tys = substs.types();
                 let key = tys.first().copied().unwrap_or_else(|| self.fresh());
                 let value = tys.get(1).copied().unwrap_or_else(|| self.fresh());
-                return self.tcx.intern(TyKind::HashMap { key, value });
+                return self.tcx.intern(TyKind::HashMap {
+                    key,
+                    value,
+                    ordered: true,
+                });
             }
             // Phase 1 `VecDeque` is an opaque i64 ring-buffer handle. Resolve
             // the annotation to the named sentinel Adt so method dispatch can
@@ -15370,7 +15566,7 @@ fn expr_tree_has_reference(expr: &Expr, table: &TypeTable, tcx: &TyCtxt) -> bool
             | TyKind::Receiver(elem)
             | TyKind::JoinHandle(elem) => contains(tcx, *elem),
             TyKind::Tuple(items) => items.iter().any(|item| contains(tcx, *item)),
-            TyKind::HashMap { key, value } => contains(tcx, *key) || contains(tcx, *value),
+            TyKind::HashMap { key, value, .. } => contains(tcx, *key) || contains(tcx, *value),
             TyKind::Adt { substs, .. } | TyKind::FnDef { substs, .. } => {
                 substs.types().iter().any(|item| contains(tcx, *item))
             }
@@ -15461,7 +15657,9 @@ fn kind_is_concrete(checker: &TypeChecker<'_>, kind: &TyKind) -> bool {
         | TyKind::JoinHandle(elem)
         | TyKind::Nominal { repr: elem, .. }
         | TyKind::Ref { inner: elem, .. } => checker.is_concrete(*elem),
-        TyKind::HashMap { key, value } => checker.is_concrete(*key) && checker.is_concrete(*value),
+        TyKind::HashMap { key, value, .. } => {
+            checker.is_concrete(*key) && checker.is_concrete(*value)
+        }
         TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
             sig.inputs.iter().all(|t| checker.is_concrete(*t)) && checker.is_concrete(sig.output)
         }
@@ -15976,6 +16174,53 @@ pub fn iterator_adapter_is_lazy(name: &str) -> bool {
     LAZY_ITERATOR_ADAPTERS.contains(&name)
 }
 
+/// Methods that traverse a sequence rather than describe or mutate it. A
+/// collection does not answer these: `xs.iter()` starts the traversal and the
+/// iterator answers them from there. Kept apart from the collection surface so
+/// one operation has one spelling instead of an eager and a lazy one.
+const COLLECTION_TRAVERSAL_METHODS: &[&str] = &[
+    "map",
+    "filter",
+    "filter_map",
+    "flat_map",
+    "scan",
+    "take",
+    "take_while",
+    "skip",
+    "skip_while",
+    "step_by",
+    "enumerate",
+    "zip",
+    "chain",
+    "rev",
+    "flatten",
+    "pairwise",
+    "fold",
+    "reduce",
+    "for_each",
+    "sum",
+    "sum_by",
+    "product",
+    "product_by",
+    "min",
+    "max",
+    "min_by",
+    "max_by",
+    "min_by_key",
+    "max_by_key",
+    "any",
+    "all",
+    "find",
+    "find_map",
+    "position",
+    "count",
+    "collect",
+    "partition",
+    "unzip",
+    "chunk_by",
+    "count_by",
+];
+
 /// Iterator adapters that answer with another iterator on every tier.
 const LAZY_ITERATOR_ADAPTERS: &[&str] = &[
     "take",
@@ -16026,6 +16271,25 @@ const ITERATOR_METHODS: &[&str] = &[
     "any",
     "all",
     "find",
+    // Terminals and eager-only operations. An iterator argument is legal for
+    // these too: the eager ones drain it first, which is what a sequence
+    // operation over an iterator has to do anyway.
+    "find_map",
+    "for_each",
+    "position",
+    "reduce",
+    "partition",
+    "unzip",
+    "sort_by",
+    "sort_by_key",
+    "min_by",
+    "min_by_key",
+    "max_by",
+    "max_by_key",
+    "sum_by",
+    "product_by",
+    "chunk_by",
+    "count_by",
 ];
 
 /// Best-effort human-readable name for a call's callee expression,

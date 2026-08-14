@@ -355,6 +355,7 @@ fn build_string_map_capacity_main() -> (Body, TyCtxt) {
     let map_ty = tcx.intern(TyKind::HashMap {
         key: string_ty,
         value: i64_ty,
+        ordered: false,
     });
     let body = Body {
         name: "main".to_string(),

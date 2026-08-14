@@ -13,7 +13,7 @@ fn main() {
     right.insert(Point { x: 3, y: 4 })
     right.insert(Point { x: 5, y: 6 })
     let shared = left.intersection(right)
-    let point = shared.iter()[0]
+    let point = shared.to_vec()[0]
     println!("len={} x={} y={}", shared.len(), point.x, point.y)
 
     let mut steps: Map<Point, i64> = Map::new()

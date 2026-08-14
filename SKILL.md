@@ -119,12 +119,20 @@ Write clear, low-complexity, concise code.
 - **`m.inc(k)` / `m.inc(k, by)`** for counters; `m.or_insert(k,
   default)` for get-or-fill (`m.or_insert(k, d).method(args)` writes
   the mutation back into the stored value). `arr.swap(i, j)`.
-- **Method-form sequence combinators** - no import, ranges included:
-  `xs.map(f)`, `filter`, `sum`, `min`/`max` (`Option<T>`), `count`,
-  `any`/`all`, `find`/`position`, `max_by_key`/`min_by_key`, `fold`,
-  `take`, `step_by`; `(1..5).map(|i| i * i).sum()`. Data-last `iter::`
-  free forms exist for `|>` pipelines. `xs.join(sep)` Display-joins
-  scalar/String sequences.
+- **Traversal starts at an iterator.** A `Range` is already one, so
+  `(1..5).map(|i| i * i).sum()` reads straight through. A collection is
+  not, so ask it for one: `xs.iter().map(f).collect()`. Calling `map`,
+  `filter`, `fold`, `any`, `sum`, `enumerate`, `rev`, or any other
+  traversal directly on a `Vec` / array / slice / `Map` / `Set` is
+  GT0068, and the diagnostic carries the `.iter()` rewrite. Adapters
+  (`map`, `filter`, `take`, `skip`, `step_by`, `enumerate`, `rev`,
+  `zip`, `chain`, `flat_map`, ...) answer another iterator and stay
+  lazy; terminals (`collect`, `sum`, `count`, `min`/`max`, `fold`,
+  `any`/`all`, `find`/`position`, `max_by_key`, `join`) end the chain
+  and hand back a value. An iterator is single-use (GT0042) - bind a
+  fresh `.iter()` per pipeline. Data-last `iter::` free forms take an
+  iterator too, for `|>` pipelines. `xs.join(sep)` Display-joins
+  scalar/String sequences without a traversal.
 - **Use metadata already returned by an API.** For entries from
   `fs::read_dir` or `fs::walk_dir`, inspect `entry.is_file`,
   `entry.is_dir`, `entry.is_symlink`, `entry.size`, `entry.path`, and
@@ -150,6 +158,8 @@ Write clear, low-complexity, concise code.
   Each container has exactly one name: `HashMap`, `HashSet`, `VecDeque`,
   `VecQueue`, `VecStack`, `BinaryHeap`, `MaxBinaryHeap`, and `MinBinaryHeap`
   are rejected (GR0006).
+- **`Map` and `BTreeMap` are distinct types** over one representation:
+  each constructor answers its own, and neither converts to the other.
 - **Collection constructors infer**: `let mut m = Map::new()`,
   `let empty: Map<String, i64> = Map::from([])`, and
   `let map = {"one": 1}`. `Map::from` accepts array pairs, while
@@ -165,6 +175,8 @@ Write clear, low-complexity, concise code.
   byte offset `i` for any non-ASCII string.
 - **Format captures walk field paths**: `println!("{name}:
   {a.balance} {t.0} {o.inner.hits} {a.balance:>8} {f.0:.2}")`.
+  `{:?}` renders any nesting of collections, tuples, structs, enums,
+  `Option`, and `Result` identically on every tier.
 - **Range binds looser than arithmetic, tighter than `|>`**:
   `i * i..n` is `(i * i)..n`; `0..n |> iter::sum` pipes the range.
 - **Recursive enums work directly**: `enum List { Cons(i64,
@@ -256,6 +268,7 @@ let n = 3 |> double |> add(10) |> clamp(0, 100)
 - **Imports**: `use std::{iter, os, strings}`, alias via `{Map as
   Scores}`; always spell the full path (`std::encoding::json`, not
   `std::json`) - paths validate against the std manifest (GR0005).
+  An import that names nothing reports GR0005 where it is written.
   Local modules import the same way: `use util::{add, Widget}`,
   `use deep::nest::Nested`, `use crate::util::Widget`. A path written
   inside a module is anchored at that module, so `self::child::item`,
@@ -410,8 +423,8 @@ are callable as methods/free functions and materialize results.
   `#[]` for Vec, `[]` for fixed arrays, `{}` for `Map`, and `#{}` for
   `Set` or expected `BTreeSet`; `Queue`, `Stack`, `Deque`, `MaxHeap`, and
   `MinHeap` use `new()` / `from([..])`. Arrays, slices, and Vec share the
-  implemented slice method surface. Eager collection combinators are Vec
-  methods; arrays and slices use `iter()` first. Use `Stack` for a
+  implemented slice method surface, and every one of them reaches
+  traversal through `iter()`. Use `Stack` for a
   LIFO-only argument contract instead of a general `Vec`, `Queue` for
   FIFO-only behavior, and `MinHeap` / `MaxHeap` for explicit priority order.
   Only Vec has the full sequence surface: insert, remove, truncation,

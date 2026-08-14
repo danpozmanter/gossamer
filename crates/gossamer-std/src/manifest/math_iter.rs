@@ -435,6 +435,118 @@ pub const ITER: StdModule = StdModule {
             doc: "Pairs elements from two sequences.",
         },
         StdItem {
+            name: "eager_all",
+            kind: StdItemKind::Function,
+            doc: "Eager `all`: materialises rather than staying lazy, whatever the \
+                   edition's default. The migration spelling for code that needs \
+                   the eager shape explicitly.",
+        },
+        StdItem {
+            name: "eager_any",
+            kind: StdItemKind::Function,
+            doc: "Eager `any`: materialises rather than staying lazy, whatever the \
+                   edition's default. The migration spelling for code that needs \
+                   the eager shape explicitly.",
+        },
+        StdItem {
+            name: "eager_chain",
+            kind: StdItemKind::Function,
+            doc: "Eager `chain`: materialises rather than staying lazy, whatever the \
+                   edition's default. The migration spelling for code that needs \
+                   the eager shape explicitly.",
+        },
+        StdItem {
+            name: "eager_collect",
+            kind: StdItemKind::Function,
+            doc: "Eager `collect`: materialises rather than staying lazy, whatever the \
+                   edition's default. The migration spelling for code that needs \
+                   the eager shape explicitly.",
+        },
+        StdItem {
+            name: "eager_count",
+            kind: StdItemKind::Function,
+            doc: "Eager `count`: materialises rather than staying lazy, whatever the \
+                   edition's default. The migration spelling for code that needs \
+                   the eager shape explicitly.",
+        },
+        StdItem {
+            name: "eager_enumerate",
+            kind: StdItemKind::Function,
+            doc: "Eager `enumerate`: materialises rather than staying lazy, whatever the \
+                   edition's default. The migration spelling for code that needs \
+                   the eager shape explicitly.",
+        },
+        StdItem {
+            name: "eager_filter",
+            kind: StdItemKind::Function,
+            doc: "Eager `filter`: materialises rather than staying lazy, whatever the \
+                   edition's default. The migration spelling for code that needs \
+                   the eager shape explicitly.",
+        },
+        StdItem {
+            name: "eager_find",
+            kind: StdItemKind::Function,
+            doc: "Eager `find`: materialises rather than staying lazy, whatever the \
+                   edition's default. The migration spelling for code that needs \
+                   the eager shape explicitly.",
+        },
+        StdItem {
+            name: "eager_fold",
+            kind: StdItemKind::Function,
+            doc: "Eager `fold`: materialises rather than staying lazy, whatever the \
+                   edition's default. The migration spelling for code that needs \
+                   the eager shape explicitly.",
+        },
+        StdItem {
+            name: "eager_map",
+            kind: StdItemKind::Function,
+            doc: "Eager `map`: materialises rather than staying lazy, whatever the \
+                   edition's default. The migration spelling for code that needs \
+                   the eager shape explicitly.",
+        },
+        StdItem {
+            name: "eager_range",
+            kind: StdItemKind::Function,
+            doc: "Eager `range`: materialises rather than staying lazy, whatever the \
+                   edition's default. The migration spelling for code that needs \
+                   the eager shape explicitly.",
+        },
+        StdItem {
+            name: "eager_range_inclusive",
+            kind: StdItemKind::Function,
+            doc: "Eager `range_inclusive`: materialises rather than staying lazy, whatever the \
+                   edition's default. The migration spelling for code that needs \
+                   the eager shape explicitly.",
+        },
+        StdItem {
+            name: "eager_skip",
+            kind: StdItemKind::Function,
+            doc: "Eager `skip`: materialises rather than staying lazy, whatever the \
+                   edition's default. The migration spelling for code that needs \
+                   the eager shape explicitly.",
+        },
+        StdItem {
+            name: "eager_sum",
+            kind: StdItemKind::Function,
+            doc: "Eager `sum`: materialises rather than staying lazy, whatever the \
+                   edition's default. The migration spelling for code that needs \
+                   the eager shape explicitly.",
+        },
+        StdItem {
+            name: "eager_take",
+            kind: StdItemKind::Function,
+            doc: "Eager `take`: materialises rather than staying lazy, whatever the \
+                   edition's default. The migration spelling for code that needs \
+                   the eager shape explicitly.",
+        },
+        StdItem {
+            name: "eager_zip",
+            kind: StdItemKind::Function,
+            doc: "Eager `zip`: materialises rather than staying lazy, whatever the \
+                   edition's default. The migration spelling for code that needs \
+                   the eager shape explicitly.",
+        },
+        StdItem {
             name: "enumerate",
             kind: StdItemKind::Function,
             doc: "Pairs each element with its index.",

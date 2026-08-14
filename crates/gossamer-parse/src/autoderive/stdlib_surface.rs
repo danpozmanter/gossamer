@@ -464,6 +464,7 @@ impl SbkBuilder {
             SbkExprKind::MethodCall {
                 receiver,
                 name: gossamer_ast::Ident::new("sort_by"),
+                name_span: span,
                 generics: Vec::new(),
                 args: vec![comparator],
             },

@@ -1114,7 +1114,7 @@ fn main() -> Result<(), errors::Error> {
     println!("count_of 3 = {}", bytes.count_of(&3))
     println!("contains 9 = {}", bytes.contains(&9))
     println!("contains 8 = {}", bytes.contains(&8))
-    let r = bytes.rev()
+    let r = bytes.iter().rev().collect()
     println!("rev = {} {} {} {} {}", r[0], r[1], r[2], r[3], r[4])
     if let Some(p) = bytes.pop() {
         println!("pop = {}", p)

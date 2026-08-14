@@ -1032,6 +1032,13 @@ pub const REGISTRY: &[(&str, &str)] = &[
             `unwrap_or(..)` - and iterate that.",
     ),
     (
+        "GT0068",
+        "A traversal method was named on a collection. A collection holds\n\
+            values; traversing them is what an iterator does, so the sequence\n\
+            combinators are reached through `.iter()`. Write `xs.iter().map(f)`\n\
+            rather than `xs.map(f)`; `for x in xs` still iterates directly.",
+    ),
+    (
         "GX0001",
         "An operation received a value of an incompatible type. The\n\
                      diagnostic names the type that was required and the type\n\

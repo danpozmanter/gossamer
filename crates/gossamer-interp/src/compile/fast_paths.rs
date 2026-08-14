@@ -2154,7 +2154,6 @@ impl<'tcx> FnBuilder<'tcx> {
         // compiled tiers lower to. A stateful `impl Iterator` receiver
         // (`(&mut __for_iter).next()`) keeps the `next()` protocol.
         let lazy_source = self.receiver_is_lazy_iterator(next_recv)
-            && !self.receiver_is_materialized_iterator(next_recv)
             && !collection_iter_method
             && !concrete_enumerate_method
             && !matches!(
@@ -2320,9 +2319,7 @@ impl<'tcx> FnBuilder<'tcx> {
             // indexable array. Materialise the whole enumerate expression
             // once instead of falling into the generic `next()` desugar,
             // which reconstructs the iterator every trip and repeats item 0.
-            if self.receiver_is_lazy_iterator(vec_expr)
-                && !self.receiver_is_materialized_iterator(vec_expr)
-            {
+            if self.receiver_is_lazy_iterator(vec_expr) {
                 return Ok(None);
             }
             next_recv

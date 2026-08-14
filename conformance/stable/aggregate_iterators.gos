@@ -15,15 +15,15 @@ fn main() {
         Item { name: "washer", qty: 2 },
     ]
 
-    println!("total={}", items.map(|i| i.qty).sum())
-    println!("names={}", items.map(|i| i.name).join(","))
-    println!("first={}", items.map(|i| i.name)[0])
+    println!("total={}", items.iter().map(|i| i.qty).sum())
+    println!("names={}", items.iter().map(|i| i.name).collect().join(","))
+    println!("first={}", items.iter().map(|i| i.name).collect()[0])
 
-    match items.max_by_key(|i| i.qty) {
+    match items.iter().max_by_key(|i| i.qty) {
         Some(top) => println!("top={} {}", top.name, top.qty),
         None => println!("top=none"),
     }
-    match items.min_by_key(|i| i.qty) {
+    match items.iter().min_by_key(|i| i.qty) {
         Some(low) => println!("low={} {}", low.name, low.qty),
         None => println!("low=none"),
     }
@@ -43,7 +43,7 @@ fn main() {
         keys += p.0
     }
     println!("keys={keys}")
-    println!("words={}", pairs.map(|p| p.1).join("|"))
+    println!("words={}", pairs.iter().map(|p| p.1).collect().join("|"))
 
     let nested = #[#[1, 2], #[3], #[4, 5, 6]]
     let mut flat = 0
@@ -53,6 +53,6 @@ fn main() {
     println!("flat={flat}")
 
     let words = #["delta", "alpha", "charlie"]
-    println!("long={}", words.filter(|w| w.len() > 5).count())
-    println!("joined={}", words.map(|w| w.to_uppercase()).join("-"))
+    println!("long={}", words.iter().filter(|w| w.len() > 5).count())
+    println!("joined={}", words.iter().map(|w| w.to_uppercase()).collect().join("-"))
 }

@@ -11,7 +11,7 @@ operator and the F#-style combinator surface in `std::iter` /
 calls so the data flow reads left-to-right; the combinators take
 the data value as the last positional parameter so each call
 threads naturally. (The same combinators are also methods on any
-Vec or range - `(1..=10).filter(|n| n % 2 == 0).sum()` - so the
+iterator - `(1..=10).filter(|n| n % 2 == 0).sum()` - so the
 pipe form below is a stylistic choice, not the only spelling.)
 
 ```gossamer

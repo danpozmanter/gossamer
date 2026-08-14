@@ -1,0 +1,365 @@
+// Miniature stand-ins for the throughput stress kernels: dense array
+// reduction, expression-tree rewriting, shortest paths over a heap, dynamic
+// programming, reference-counted tree churn, breadth-first search over a
+// queue, a stencil sweep, a hash join, typed serde, matrix multiplication,
+// a sieve, a radix sort, and union-find.
+
+use std::collections::{MinHeap, Queue}
+
+struct Record {
+    id: i64
+    name: String
+    score: f64
+}
+
+enum Expr {
+    Lit(i64)
+    Add(Box<Expr>, Box<Expr>)
+    Mul(Box<Expr>, Box<Expr>)
+}
+
+enum Node {
+    Branch(Box<Node>, Box<Node>)
+    Empty
+}
+
+fn array_sum(n: i64) -> i64 {
+    let mut xs = #[0; 0]
+    for i in 0..n {
+        xs.push(i * 3 % 17)
+    }
+    let mut total = 0
+    for x in xs {
+        total += x
+    }
+    total
+}
+
+// Constant folding: a node whose operands are both literals collapses.
+fn fold(e: &Expr) -> Expr {
+    match e {
+        Expr::Lit(v) => Expr::Lit(v)
+        Expr::Add(l, r) => {
+            let lf = fold(l)
+            let rf = fold(r)
+            match (lf, rf) {
+                (Expr::Lit(a), Expr::Lit(b)) => Expr::Lit(a + b)
+                (a, b) => Expr::Add(a, b)
+            }
+        }
+        Expr::Mul(l, r) => {
+            let lf = fold(l)
+            let rf = fold(r)
+            match (lf, rf) {
+                (Expr::Lit(a), Expr::Lit(b)) => Expr::Lit(a * b)
+                (a, b) => Expr::Mul(a, b)
+            }
+        }
+    }
+}
+
+fn build_expr(depth: i64) -> Expr {
+    if depth == 0 {
+        return Expr::Lit(depth + 2)
+    }
+    if depth % 2 == 0 {
+        return Expr::Add(build_expr(depth - 1), Expr::Lit(depth))
+    }
+    Expr::Mul(build_expr(depth - 1), Expr::Lit(2))
+}
+
+fn expr_value(e: &Expr) -> i64 {
+    match e {
+        Expr::Lit(v) => v
+        Expr::Add(l, r) => expr_value(l) + expr_value(r)
+        Expr::Mul(l, r) => expr_value(l) * expr_value(r)
+    }
+}
+
+fn dijkstra(n: i64, source: i64) -> i64 {
+    let mut adjacency = #[]
+    for i in 0..n {
+        let mut edges = #[]
+        edges.push((i + 1) % n)
+        edges.push((i + 3) % n)
+        adjacency.push(edges)
+    }
+    let mut dist = #[-1; 0]
+    for _ in 0..n {
+        dist.push(-1)
+    }
+    // A `MinHeap` orders `i64` keys, so a frontier entry packs its cost
+    // above the node index and unpacks on the way out.
+    let mut frontier = MinHeap::new()
+    frontier.push(source)
+    while let Some(entry) = frontier.pop() {
+        let cost = entry / n
+        let node = entry % n
+        if dist[node] >= 0 {
+            continue
+        }
+        dist[node] = cost
+        for next in adjacency[node] {
+            if dist[next] < 0 {
+                frontier.push((cost + 1 + next % 3) * n + next)
+            }
+        }
+    }
+    let mut total = 0
+    for d in dist {
+        total += d
+    }
+    total
+}
+
+fn edit_distance(a: &String, b: &String) -> i64 {
+    let rows = a.len() + 1
+    let cols = b.len() + 1
+    let mut prev = #[0; 0]
+    for j in 0..cols {
+        prev.push(j)
+    }
+    for i in 1..rows {
+        let mut cur = #[i]
+        for j in 1..cols {
+            let substitution = if a[i - 1] == b[j - 1] { 0 } else { 1 }
+            cur.push(min(
+                min(prev[j] + 1, cur[j - 1] + 1)
+                prev[j - 1] + substitution
+            ))
+        }
+        prev = cur
+    }
+    prev[cols - 1]
+}
+
+fn build_node(depth: i64) -> Node {
+    if depth == 0 {
+        return Node::Empty
+    }
+    Node::Branch(build_node(depth - 1), build_node(depth - 1))
+}
+
+fn node_depth(n: &Node) -> i64 {
+    match n {
+        Node::Empty => 0
+        Node::Branch(l, _) => 1 + node_depth(l)
+    }
+}
+
+// Repeated build-and-drop exercises reference-counted reclamation.
+fn tree_churn(rounds: i64, depth: i64) -> i64 {
+    let mut total = 0
+    for _ in 0..rounds {
+        let tree = build_node(depth)
+        total += node_depth(&tree)
+    }
+    total
+}
+
+fn graph_bfs(n: i64) -> i64 {
+    let mut seen = #{}
+    let mut pending = Queue::new()
+    pending.push(0)
+    seen.insert(0)
+    let mut order = 0
+    let mut step = 1
+    while let Some(node) = pending.pop() {
+        order += node * step
+        step += 1
+        for next in #[(node * 2 + 1) % n, (node * 2 + 2) % n] {
+            if !seen.contains(next) {
+                seen.insert(next)
+                pending.push(next)
+            }
+        }
+    }
+    order
+}
+
+fn grid_stencil(size: i64, steps: i64) -> f64 {
+    let mut grid = #[]
+    for i in 0..size {
+        let mut row = #[]
+        for j in 0..size {
+            row.push(((i * size + j) % 7) as f64)
+        }
+        grid.push(row)
+    }
+    for _ in 0..steps {
+        let mut next = #[]
+        for i in 0..size {
+            let mut row = #[]
+            for j in 0..size {
+                if i == 0 || j == 0 || i == size - 1 || j == size - 1 {
+                    row.push(grid[i][j])
+                } else {
+                    row.push(
+                        (grid[i - 1][j] + grid[i + 1][j] + grid[i][j - 1] + grid[i][j + 1]) / 4.0
+                    )
+                }
+            }
+            next.push(row)
+        }
+        grid = next
+    }
+    let mut total = 0.0
+    for row in grid {
+        for cell in row {
+            total += cell
+        }
+    }
+    total
+}
+
+fn hash_join(left: i64, right: i64) -> i64 {
+    let mut index = Map::new()
+    for i in 0..left {
+        index.or_insert(i % 5, #[]).push(i)
+    }
+    let mut matched = 0
+    for j in 0..right {
+        if let Some(bucket) = index.get(j % 7) {
+            matched += bucket.len()
+        }
+    }
+    matched
+}
+
+fn json_round_trip(n: i64) -> i64 {
+    let mut total = 0
+    for i in 0..n {
+        let record = Record {
+            id: i
+            name: format!("row-{}", i)
+            score: (i as f64) * 1.5
+        }
+        let encoded = to_json::<Record>(&record).unwrap()
+        let decoded = from_json::<Record>(&encoded).unwrap()
+        total += decoded.id + decoded.name.len() + (decoded.score as i64)
+    }
+    total
+}
+
+fn matmul(n: i64) -> i64 {
+    let mut a = #[]
+    let mut b = #[]
+    for i in 0..n {
+        let mut row_a = #[]
+        let mut row_b = #[]
+        for j in 0..n {
+            row_a.push((i + j) % 5)
+            row_b.push((i * j) % 3)
+        }
+        a.push(row_a)
+        b.push(row_b)
+    }
+    let mut total = 0
+    for i in 0..n {
+        for j in 0..n {
+            let mut acc = 0
+            for k in 0..n {
+                acc += a[i][k] * b[k][j]
+            }
+            total += acc
+        }
+    }
+    total
+}
+
+fn prime_sieve(limit: i64) -> i64 {
+    let mut composite = #[false; 0]
+    for _ in 0..limit + 1 {
+        composite.push(false)
+    }
+    let mut count = 0
+    for candidate in 2..limit + 1 {
+        if !composite[candidate] {
+            count += 1
+            let mut multiple = candidate * candidate
+            while multiple <= limit {
+                composite[multiple] = true
+                multiple += candidate
+            }
+        }
+    }
+    count
+}
+
+fn radix_sort(values: Vec<i64>) -> Vec<i64> {
+    let mut current = values
+    let mut place = 1
+    for _ in 0..4 {
+        let mut buckets = #[]
+        for _ in 0..10 {
+            buckets.push(#[])
+        }
+        for v in current {
+            buckets[v / place % 10].push(v)
+        }
+        let mut next = #[]
+        for bucket in buckets {
+            for v in bucket {
+                next.push(v)
+            }
+        }
+        current = next
+        place *= 10
+    }
+    current
+}
+
+fn union_find(n: i64) -> i64 {
+    let mut parent = #[]
+    for i in 0..n {
+        parent.push(i)
+    }
+    for i in 0..n {
+        let mut a = i
+        while parent[a] != a {
+            a = parent[a]
+        }
+        let mut b = (i * 2 + 1) % n
+        while parent[b] != b {
+            b = parent[b]
+        }
+        if a != b {
+            parent[a] = b
+        }
+    }
+    let mut roots = #{}
+    for i in 0..n {
+        let mut r = i
+        while parent[r] != r {
+            r = parent[r]
+        }
+        roots.insert(r)
+    }
+    roots.len()
+}
+
+fn main() {
+    println!("array-sum {}", array_sum(500))
+
+    let folded = fold(&build_expr(9))
+    println!("ast-rewrite {}", expr_value(&folded))
+
+    println!("dijkstra {}", dijkstra(32, 0))
+    println!("edit-distance {}", edit_distance(&"kitten sitting", &"sitting kitten"))
+    println!("gc-trees {}", tree_churn(16, 7))
+    println!("graph-bfs {}", graph_bfs(24))
+    println!("grid-stencil {:.6}", grid_stencil(9, 3))
+    println!("hash-join {}", hash_join(40, 40))
+    println!("json-serde {}", json_round_trip(12))
+    println!("matmul {}", matmul(12))
+    println!("prime-sieve {}", prime_sieve(500))
+
+    let mut unsorted = #[]
+    for i in 0..40 {
+        unsorted.push((i * 7919 + 13) % 1000)
+    }
+    let sorted = radix_sort(unsorted)
+    println!("radix-sort {} {} {}", sorted[0], sorted[20], sorted[39])
+
+    println!("union-find {}", union_find(32))
+}

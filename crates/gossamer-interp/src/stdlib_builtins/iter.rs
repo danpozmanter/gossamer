@@ -146,6 +146,10 @@ enum LazyIterState {
         start_open: bool,
         end_open: bool,
         finished: bool,
+        /// Walks from `current` down to `end` instead of up. `rev` over a
+        /// bounded range is position arithmetic, so it reverses without
+        /// materialising the elements it would otherwise have to buffer.
+        descending: bool,
     },
     Once {
         item: Option<Value>,
@@ -326,6 +330,7 @@ fn fork_lazy_state(state: &LazyIterState) -> Value {
             start_open,
             end_open,
             finished,
+            descending,
         } => new_lazy_iter(LazyIterState::Range {
             current: *current,
             end: *end,
@@ -333,6 +338,7 @@ fn fork_lazy_state(state: &LazyIterState) -> Value {
             start_open: *start_open,
             end_open: *end_open,
             finished: *finished,
+            descending: *descending,
         }),
         LazyIterState::Once { item } => new_lazy_iter(LazyIterState::Once { item: item.clone() }),
         LazyIterState::Repeat { item, remaining } => new_lazy_iter(LazyIterState::Repeat {
@@ -439,6 +445,7 @@ pub(crate) fn new_range_iter(
         start_open,
         end_open,
         finished: false,
+        descending: false,
     })
 }
 
@@ -552,7 +559,7 @@ impl Drop for LazyStateGuard {
     }
 }
 
-fn lazy_source(value: &Value) -> Value {
+pub(crate) fn lazy_source(value: &Value) -> Value {
     match value {
         Value::LazyIter(_) => value.clone(),
         Value::Array(items) => {
@@ -772,9 +779,27 @@ fn lazy_next(
             inclusive,
             end_open,
             finished,
+            descending,
             ..
         } => {
-            if *end_open {
+            if *descending {
+                // `current` holds the next value to yield and walks down to
+                // `end`, which is the last one. Written as the arm's value
+                // rather than an early return: the caller writes the advanced
+                // state back after the match, and returning here would drop it.
+                let done = *finished || *current < *end;
+                if done {
+                    Ok(None)
+                } else {
+                    let out = *current;
+                    if out == *end {
+                        *finished = true;
+                    } else {
+                        *current = current.saturating_sub(1);
+                    }
+                    Ok(Some(Value::Int(out)))
+                }
+            } else if *end_open {
                 if cfg!(debug_assertions) && *current == i64::MAX {
                     Err(crate::value::RuntimeError::Panic(
                         "attempt to add with overflow in open integer range".to_string(),
@@ -1037,6 +1062,83 @@ fn drain_iter_with_dispatch(
     Ok(out)
 }
 
+/// Reads a sequence argument. A lazy source is drained through the caller's
+/// dispatch, so a pipeline carrying a Gossamer closure yields its elements.
+fn seq_arg(dispatch: &mut dyn NativeDispatch, value: &Value) -> RuntimeResult<Vec<Value>> {
+    if matches!(value, Value::LazyIter(_)) {
+        return drain_iter_with_dispatch(value, dispatch);
+    }
+    Ok(collect_array(value))
+}
+
+/// Materialises every lazy argument so an eager combinator sees its elements.
+/// Advancing a lazy iterator can run a Gossamer closure, which needs the
+/// caller's dispatch, so an eager entry point reaches its input through here.
+fn drained_args(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Vec<Value>> {
+    let mut out = Vec::with_capacity(args.len());
+    for arg in args {
+        if matches!(arg, Value::LazyIter(_)) {
+            out.push(Value::Array(Arc::new(drain_iter_with_dispatch(
+                arg, dispatch,
+            )?)));
+        } else {
+            out.push(arg.clone());
+        }
+    }
+    Ok(out)
+}
+
+/// Wraps eager sequence entry points so their input is drained first.
+macro_rules! eager_seq_natives {
+    ($($native:ident => $plain:path),* $(,)?) => {
+        $(
+            fn $native(
+                dispatch: &mut dyn NativeDispatch,
+                args: &[Value],
+            ) -> RuntimeResult<Value> {
+                $plain(&drained_args(dispatch, args)?)
+            }
+        )*
+    };
+}
+
+eager_seq_natives! {
+    native_iter_flatten => builtin_iter_flatten,
+    native_iter_dedup => builtin_iter_dedup,
+    native_iter_unzip => builtin_iter_unzip,
+    native_iter_windows => builtin_iter_windows,
+    native_iter_pairwise => builtin_iter_pairwise,
+    native_iter_chunks => builtin_iter_chunks,
+    native_iterator_flatten_method => builtin_iter_flatten,
+    native_iterator_dedup_method => builtin_iter_dedup,
+    native_iterator_pairwise_method => builtin_iter_pairwise,
+}
+
+/// Reversing a bounded range is position arithmetic, so that shape reaches
+/// the entry point undrained.
+fn native_iter_reversed(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(Value::LazyIter(id)) = args.first()
+        && lazy_range_bounds(*id).is_some()
+    {
+        return builtin_iter_reversed(args);
+    }
+    builtin_iter_reversed(&drained_args(dispatch, args)?)
+}
+
+fn native_iterator_windows_method(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    builtin_iter_windows(&rotate_receiver_last(&drained_args(dispatch, args)?))
+}
+
+fn native_iterator_chunks_method(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    builtin_iter_chunks(&rotate_receiver_last(&drained_args(dispatch, args)?))
+}
+
 pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
     // Register only qualified `iter::*` names to avoid shadowing built-in
     // method dispatch (Option::map, Result::filter, Vec::any, etc.).
@@ -1052,16 +1154,9 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("zip", builtin_iter_zip),
         ("enumerate", builtin_iter_enumerate),
         ("chain", builtin_iter_chain),
-        ("flatten", builtin_iter_flatten),
-        ("rev", builtin_iter_reversed),
-        ("dedup", builtin_iter_dedup),
         ("range", builtin_iter_range),
         ("range_inclusive", builtin_iter_range_inclusive),
         ("repeat", builtin_iter_repeat),
-        ("unzip", builtin_iter_unzip),
-        ("windows", builtin_iter_windows),
-        ("pairwise", builtin_iter_pairwise),
-        ("chunks", builtin_iter_chunks),
     ];
     for (short, call) in static_entries {
         let qualified: &'static str = Box::leak(format!("iter::{short}").into_boxed_str());
@@ -1076,12 +1171,12 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("eager_collect", builtin_iter_collect),
         ("eager_count", builtin_iter_count),
         ("eager_enumerate", builtin_iter_eager_enumerate),
-        ("eager_range", builtin_iter_eager_range),
-        ("eager_range_inclusive", builtin_iter_eager_range_inclusive),
         ("eager_skip", builtin_iter_eager_skip),
         ("eager_sum", builtin_iter_sum),
         ("eager_take", builtin_iter_eager_take),
         ("eager_zip", builtin_iter_eager_zip),
+        ("eager_range", builtin_iter_eager_range),
+        ("eager_range_inclusive", builtin_iter_eager_range_inclusive),
     ];
     for (short, call) in eager_static_aliases {
         let qualified: &'static str = Box::leak(format!("iter::{short}").into_boxed_str());
@@ -1122,6 +1217,13 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("max_by_key", native_iter_max_by_key),
         ("chunk_by", native_iter_chunk_by),
         ("count_by", native_iter_count_by),
+        ("flatten", native_iter_flatten),
+        ("rev", native_iter_reversed),
+        ("dedup", native_iter_dedup),
+        ("unzip", native_iter_unzip),
+        ("windows", native_iter_windows),
+        ("pairwise", native_iter_pairwise),
+        ("chunks", native_iter_chunks),
     ];
     for (short, call) in native_entries {
         let qualified: &'static str = Box::leak(format!("iter::{short}").into_boxed_str());
@@ -1218,6 +1320,12 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("product", native_vec_product_method as NativeCall),
         ("min", native_vec_min_method as NativeCall),
         ("max", native_vec_max_method as NativeCall),
+        ("flatten", native_iterator_flatten_method as NativeCall),
+        ("rev", native_iter_reversed as NativeCall),
+        ("dedup", native_iterator_dedup_method as NativeCall),
+        ("windows", native_iterator_windows_method as NativeCall),
+        ("pairwise", native_iterator_pairwise_method as NativeCall),
+        ("chunks", native_iterator_chunks_method as NativeCall),
     ] {
         let qualified: &'static str = Box::leak(format!("Iterator::{short}").into_boxed_str());
         globals.push((qualified, Value::native(qualified, call)));
@@ -1232,12 +1340,6 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ),
         ("chain", builtin_iterator_chain_method as BuiltinFnPub),
         ("zip", builtin_iterator_zip_method as BuiltinFnPub),
-        ("flatten", builtin_iterator_flatten_method as BuiltinFnPub),
-        ("rev", builtin_iterator_rev_method as BuiltinFnPub),
-        ("dedup", builtin_iterator_dedup_method as BuiltinFnPub),
-        ("windows", builtin_iterator_windows_method as BuiltinFnPub),
-        ("pairwise", builtin_iterator_pairwise_method as BuiltinFnPub),
-        ("chunks", builtin_iterator_chunks_method as BuiltinFnPub),
     ] {
         let qualified: &'static str = Box::leak(format!("Iterator::{short}").into_boxed_str());
         globals.push((qualified, crate::builtins::builtin_pub(qualified, call)));
@@ -1321,7 +1423,7 @@ pub(crate) fn native_vec_count_method(
     if args.len() <= 1 {
         return native_iter_count(dispatch, args);
     }
-    let xs = collect_array(args.first().unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.first().unwrap_or(&Value::Unit))?;
     let f = args.get(1).cloned().unwrap_or(Value::Unit);
     let mut n = 0i64;
     for x in xs {
@@ -1592,19 +1694,10 @@ pub(crate) fn builtin_iter_enumerate(args: &[Value]) -> RuntimeResult<Value> {
     // `.enumerate()` into a lazy iterator makes the bytecode `for` protocol
     // re-create the source on every pull, repeatedly yielding index zero.
     // Preserve laziness only when the caller already supplied an iterator.
-    if matches!(args.first(), Some(Value::LazyIter(_))) {
-        return Ok(new_lazy_iter(LazyIterState::Enumerate {
-            upstream: lazy_source(args.first().unwrap_or(&Value::Unit)),
-            index: 0,
-        }));
-    }
-    let xs = collect_array(args.first().unwrap_or(&Value::Unit));
-    let enumerated: Vec<Value> = xs
-        .into_iter()
-        .enumerate()
-        .map(|(i, x)| Value::Tuple(Arc::from(vec![Value::Int(i as i64), x])))
-        .collect();
-    Ok(Value::Array(Arc::new(enumerated)))
+    Ok(new_lazy_iter(LazyIterState::Enumerate {
+        upstream: lazy_source(args.first().unwrap_or(&Value::Unit)),
+        index: 0,
+    }))
 }
 
 fn builtin_iter_eager_enumerate(args: &[Value]) -> RuntimeResult<Value> {
@@ -1647,6 +1740,43 @@ pub(crate) fn builtin_iter_flatten(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_iter_reversed(args: &[Value]) -> RuntimeResult<Value> {
     let source = args.first().unwrap_or(&Value::Unit);
+    // A bounded range reverses by arithmetic: the last value becomes the first
+    // and the walk counts down. Snapshotting it would materialise every
+    // element to hand back a cursor the range already describes, so
+    // `(0..n).rev().take(3)` would pay for n of them to yield three.
+    if let Value::LazyIter(id) = source
+        && let Some((current, end, inclusive, start_open, end_open)) = lazy_range_bounds(*id)
+        && !start_open
+        && !end_open
+    {
+        let last = if inclusive {
+            end
+        } else {
+            end.saturating_sub(1)
+        };
+        // An empty range stays empty rather than walking backwards past itself.
+        if last < current {
+            return Ok(new_lazy_iter(LazyIterState::Range {
+                current: 0,
+                end: 0,
+                inclusive: false,
+                start_open: false,
+                end_open: false,
+                finished: true,
+                descending: true,
+            }));
+        }
+        discard_lazy_value(source);
+        return Ok(new_lazy_iter(LazyIterState::Range {
+            current: last,
+            end: current,
+            inclusive: false,
+            start_open: false,
+            end_open: false,
+            finished: false,
+            descending: true,
+        }));
+    }
     // Reversal needs every element, so the snapshot is unavoidable; the
     // result still has to answer `next()` when the source did, or the
     // `Iterator<T>` the checker gave it has no cursor to advance.
@@ -1809,7 +1939,7 @@ pub(crate) fn native_iter_for_each(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let f = args.first().cloned().unwrap_or(Value::Unit);
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     for x in xs {
         dispatch.call_value(&f, vec![x])?;
     }
@@ -1835,7 +1965,7 @@ fn native_iter_eager_map(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let f = args.first().cloned().unwrap_or(Value::Unit);
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     let mut out = Vec::with_capacity(xs.len());
     for x in xs {
         out.push(dispatch.call_value(&f, vec![x])?);
@@ -1862,7 +1992,7 @@ fn native_iter_eager_filter(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let p = args.first().cloned().unwrap_or(Value::Unit);
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     let mut out = Vec::new();
     for x in xs {
         if let Value::Bool(true) = dispatch.call_value(&p, vec![x.clone()])? {
@@ -1883,7 +2013,7 @@ pub(crate) fn native_iter_filter_map(
             upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
         }));
     }
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     let mut out = Vec::new();
     for x in xs {
         if let Some(v) = some_payload(&dispatch.call_value(&f, vec![x])?) {
@@ -1904,7 +2034,7 @@ pub(crate) fn native_iter_fold(
     let values = if matches!(source, Value::LazyIter(_)) {
         drain_iter_with_dispatch(source, dispatch)?
     } else {
-        collect_array(source)
+        seq_arg(dispatch, source)?
     };
     for value in values {
         acc = dispatch.call_value(&f, vec![acc, value])?;
@@ -1917,7 +2047,7 @@ pub(crate) fn native_iter_reduce(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let f = args.first().cloned().unwrap_or(Value::Unit);
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     let mut iter = xs.into_iter();
     let Some(first) = iter.next() else {
         return Ok(none_variant());
@@ -1943,7 +2073,7 @@ pub(crate) fn native_iter_scan(
             upstream: lazy_source(args.get(2).unwrap_or(&Value::Unit)),
         }));
     }
-    let xs = collect_array(args.get(2).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(2).unwrap_or(&Value::Unit))?;
     let mut out = Vec::with_capacity(xs.len());
     for x in xs {
         acc = dispatch.call_value(&f, vec![acc.clone(), x])?;
@@ -1957,7 +2087,7 @@ pub(crate) fn native_iter_sum_by(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let f = args.first().cloned().unwrap_or(Value::Unit);
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     let mut int_sum: i64 = 0;
     let mut float_sum: f64 = 0.0;
     let mut is_float = false;
@@ -1986,7 +2116,7 @@ pub(crate) fn native_iter_product_by(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let f = args.first().cloned().unwrap_or(Value::Unit);
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     let mut int_prod: i64 = 1;
     let mut float_prod: f64 = 1.0;
     let mut is_float = false;
@@ -2015,7 +2145,7 @@ pub(crate) fn native_iter_any(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let p = args.first().cloned().unwrap_or(Value::Unit);
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     for x in xs {
         if matches!(dispatch.call_value(&p, vec![x])?, Value::Bool(true)) {
             return Ok(Value::Bool(true));
@@ -2029,7 +2159,7 @@ pub(crate) fn native_iter_all(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let p = args.first().cloned().unwrap_or(Value::Unit);
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     for x in xs {
         if !matches!(dispatch.call_value(&p, vec![x])?, Value::Bool(true)) {
             return Ok(Value::Bool(false));
@@ -2043,7 +2173,7 @@ pub(crate) fn native_iter_find(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let p = args.first().cloned().unwrap_or(Value::Unit);
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     for x in xs {
         if matches!(dispatch.call_value(&p, vec![x.clone()])?, Value::Bool(true)) {
             return Ok(some_variant(x));
@@ -2057,7 +2187,7 @@ pub(crate) fn native_iter_position(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let p = args.first().cloned().unwrap_or(Value::Unit);
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     for (i, x) in xs.into_iter().enumerate() {
         if matches!(dispatch.call_value(&p, vec![x])?, Value::Bool(true)) {
             return Ok(some_variant(Value::Int(i as i64)));
@@ -2071,7 +2201,7 @@ pub(crate) fn native_iter_find_map(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let f = args.first().cloned().unwrap_or(Value::Unit);
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     for x in xs {
         let r = dispatch.call_value(&f, vec![x])?;
         if let Some(v) = some_payload(&r) {
@@ -2093,7 +2223,7 @@ pub(crate) fn native_iter_take_while(
             done: false,
         }));
     }
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     let mut out = Vec::new();
     for x in xs {
         if matches!(dispatch.call_value(&p, vec![x.clone()])?, Value::Bool(true)) {
@@ -2117,7 +2247,7 @@ pub(crate) fn native_iter_skip_while(
             skipping: true,
         }));
     }
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     let mut out = Vec::new();
     let mut dropping = true;
     for x in xs {
@@ -2135,7 +2265,7 @@ pub(crate) fn native_iter_partition(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let p = args.first().cloned().unwrap_or(Value::Unit);
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     let mut yes = Vec::new();
     let mut no = Vec::new();
     for x in xs {
@@ -2156,7 +2286,7 @@ pub(crate) fn native_iter_sort_by(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let cmp = args.first().cloned().unwrap_or(Value::Unit);
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     let mut out = xs;
     let mut error: Option<crate::value::RuntimeError> = None;
     out.sort_by(|a, b| {
@@ -2187,7 +2317,7 @@ pub(crate) fn native_iter_sort_by_key(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let key = args.first().cloned().unwrap_or(Value::Unit);
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     let mut keyed: Vec<(Value, Value)> = Vec::with_capacity(xs.len());
     for x in xs {
         let k = dispatch.call_value(&key, vec![x.clone()])?;
@@ -2204,7 +2334,7 @@ pub(crate) fn native_iter_min_by(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let cmp = args.first().cloned().unwrap_or(Value::Unit);
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     let mut iter = xs.into_iter();
     let Some(mut best) = iter.next() else {
         return Ok(none_variant());
@@ -2225,7 +2355,7 @@ pub(crate) fn native_iter_max_by(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let cmp = args.first().cloned().unwrap_or(Value::Unit);
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     let mut iter = xs.into_iter();
     let Some(mut best) = iter.next() else {
         return Ok(none_variant());
@@ -2246,7 +2376,7 @@ pub(crate) fn native_iter_min_by_key(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let key = args.first().cloned().unwrap_or(Value::Unit);
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     let mut iter = xs.into_iter();
     let Some(mut best) = iter.next() else {
         return Ok(none_variant());
@@ -2267,7 +2397,7 @@ pub(crate) fn native_iter_max_by_key(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let key = args.first().cloned().unwrap_or(Value::Unit);
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     let mut iter = xs.into_iter();
     let Some(mut best) = iter.next() else {
         return Ok(none_variant());
@@ -2288,7 +2418,7 @@ pub(crate) fn native_iter_chunk_by(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let key = args.first().cloned().unwrap_or(Value::Unit);
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     let mut groups: rustc_hash::FxHashMap<MapKey, Vec<Value>> = rustc_hash::FxHashMap::default();
     for x in xs {
         let k = dispatch.call_value(&key, vec![x.clone()])?;
@@ -2306,7 +2436,7 @@ pub(crate) fn native_iter_count_by(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let key = args.first().cloned().unwrap_or(Value::Unit);
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     let mut counts: rustc_hash::FxHashMap<MapKey, i64> = rustc_hash::FxHashMap::default();
     let mut all_int_keys = true;
     for x in xs {
@@ -2346,11 +2476,11 @@ pub(crate) fn native_iter_flat_map(
             current: None,
         }));
     }
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
+    let xs = seq_arg(dispatch, args.get(1).unwrap_or(&Value::Unit))?;
     let mut out = Vec::new();
     for x in xs {
         let result = dispatch.call_value(&f, vec![x])?;
-        out.extend(collect_array(&result));
+        out.extend(seq_arg(dispatch, &result)?);
     }
     Ok(Value::Array(Arc::new(out)))
 }

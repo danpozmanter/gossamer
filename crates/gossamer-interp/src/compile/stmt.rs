@@ -76,26 +76,13 @@ impl<'tcx> FnBuilder<'tcx> {
         }
     }
 
-    /// `true` when `init` walks a temporary sequence - an array or Vec
-    /// literal, optionally through `iter()` / `enumerate()`. The value is an
+    /// `true` when `init` is a temporary sequence literal. The value is an
     /// indexable snapshot, so the for-loop's `&mut` binding is driven by index
     /// rather than by the `next()` cursor protocol, which such a value does
-    /// not carry.
+    /// not carry. `iter()` and the adapters past it answer iterator state,
+    /// which carries the cursor and is driven through it.
     fn init_is_sequence_snapshot(init: &HirExpr) -> bool {
-        let mut cur = init;
-        loop {
-            match &cur.kind {
-                HirExprKind::Array(_) => return true,
-                HirExprKind::MethodCall {
-                    receiver,
-                    name,
-                    args,
-                } if args.is_empty() && matches!(name.name.as_str(), "iter" | "enumerate") => {
-                    cur = receiver;
-                }
-                _ => return false,
-            }
-        }
+        matches!(&init.kind, HirExprKind::Array(_))
     }
 
     fn record_uint_display_init(&mut self, init: &HirExpr, reg: Reg) {
@@ -215,9 +202,6 @@ impl<'tcx> FnBuilder<'tcx> {
                             Some(TyKind::Iterator(_))
                         ) {
                             self.lazy_iterator_locals.insert(typed.reg);
-                            if self.init_is_materialized_iterator(init) {
-                                self.materialized_iter_locals.insert(typed.reg);
-                            }
                         }
                         self.record_uint_display_init(init, typed.reg);
                         self.bind_local(&name.name, typed);

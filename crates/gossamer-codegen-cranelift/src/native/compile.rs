@@ -977,6 +977,60 @@ mod win64_abi_tests {
         }
     }
 
+    /// The print planner recovers a container's element kind by walking the
+    /// copy graph back to the constructor. That graph may contain a cycle - a
+    /// local assigned from itself, or two assigned from each other - and the
+    /// walk has to end rather than follow it forever.
+    #[test]
+    fn a_cyclic_copy_graph_does_not_trap_the_print_planner() {
+        let mut tcx = TyCtxt::new();
+        let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+        let mut map = SourceMap::new();
+        let file = map.add_file("copy-cycle.gos", "");
+        let span = gossamer_lex::Span::new(file, 0, 0);
+        let decl = |ty| LocalDecl {
+            ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        };
+        let assign_from = |dst: u32, src: u32| gossamer_mir::Statement {
+            kind: StatementKind::Assign {
+                place: Place::local(Local(dst)),
+                rvalue: Rvalue::Use(Operand::Copy(Place::local(Local(src)))),
+            },
+            span,
+        };
+        let body = Body {
+            name: "main".to_string(),
+            def: None,
+            arity: 0,
+            locals: vec![decl(i64_ty), decl(i64_ty), decl(i64_ty)],
+            blocks: vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    // A local assigned from itself, and a two-local cycle.
+                    assign_from(1, 1),
+                    assign_from(2, 1),
+                    assign_from(1, 2),
+                ],
+                terminator: Terminator::Return,
+                span,
+            }],
+            span,
+        };
+        // Reaching the assertion is the point: an unguarded walk never returns.
+        let kind = crate::native::operand::operand_print_kind(
+            &body,
+            &tcx,
+            &Operand::Copy(Place::local(Local(1))),
+        );
+        assert!(
+            matches!(kind, crate::native::operand::PrintKind::Int),
+            "a cyclic copy graph names no container, so the local prints as its integer"
+        );
+    }
+
     #[test]
     fn i128_carrier_call_lowers_for_the_win64_abi() {
         let mut tcx = TyCtxt::new();

@@ -137,6 +137,11 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
     // `gos check` / `gos run` resolve reads as an unresolved name in the
     // editor. The bundle appends, so every span in the open buffer is
     // unchanged.
+    // The source map strips a leading byte-order mark so spans and
+    // diagnostic columns share one basis with the rest of the toolchain.
+    // Measure the editor's text after the same strip, or every length
+    // derived here describes three bytes the stored source does not have.
+    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
     let bundled = bundle_project_unit(uri, source);
     let augmented = gossamer_parse::autoderive::augment_source(&bundled);
     let user_len = u32::try_from(source.len()).unwrap_or(u32::MAX);

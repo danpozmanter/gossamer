@@ -903,7 +903,7 @@ impl<'a> Lowerer<'a> {
                 .locals
                 .get(destination.local.0 as usize)
                 .and_then(|decl| match self.tcx.kind_of(decl.ty) {
-                    TyKind::HashMap { key, value } => self.hashmap_storage_kinds(*key, *value),
+                    TyKind::HashMap { key, value, .. } => self.hashmap_storage_kinds(*key, *value),
                     _ => None,
                 })
             {
@@ -939,7 +939,7 @@ impl<'a> Lowerer<'a> {
                 .locals
                 .get(destination.local.0 as usize)
                 .and_then(|decl| match self.tcx.kind_of(decl.ty) {
-                    TyKind::HashMap { key, value } => {
+                    TyKind::HashMap { key, value, .. } => {
                         let kind = |ty| match self.tcx.kind_of(ty) {
                             TyKind::Int(_) => Some(0),
                             TyKind::String => Some(1),
@@ -1100,6 +1100,14 @@ impl<'a> Lowerer<'a> {
             "  {map} = call ptr @gos_rt_map_new_with_capacity_typed(i32 {key_kind}, i32 {val_kind}, i64 {count})"
         )
         .unwrap();
+        if self.hashmap_value_is_vec(*val_ty) {
+            declare_rt(&mut self.runtime_refs, "gos_rt_map_set_vec_values");
+            writeln!(
+                self.out,
+                "  call void @gos_rt_map_set_vec_values(ptr {map})"
+            )
+            .unwrap();
+        }
         let base = match arg {
             Operand::Copy(place) => self.lower_place_address(place),
             Operand::Const(_) | Operand::FnRef { .. } => {
@@ -1163,8 +1171,20 @@ impl<'a> Lowerer<'a> {
             {
                 Some(2)
             }
+            // Any other container rides as the handle word its
+            // constructor answered, the way `insert` stores one.
+            Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::HashMap { .. }) => Some(0),
             _ => None,
         }
+    }
+
+    /// True when a map value is a `Vec` handle, so the map owns one Vec
+    /// share per entry and releases it when an entry or the map dies.
+    fn hashmap_value_is_vec(&self, ty: Ty) -> bool {
+        matches!(
+            self.tcx.kind(self.unwrap_ref(ty)),
+            Some(TyKind::Vec(_) | TyKind::Slice(_))
+        )
     }
 
     fn load_hashmap_from_slot(
@@ -1193,6 +1213,14 @@ impl<'a> Lowerer<'a> {
                 writeln!(self.out, "  {value} = load ptr, ptr {slot}").unwrap();
                 Ok(LoweredMapSlot {
                     llvm_ty: "ptr",
+                    value,
+                })
+            }
+            Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::HashMap { .. }) => {
+                let value = self.fresh();
+                writeln!(self.out, "  {value} = load i64, ptr {slot}").unwrap();
+                Ok(LoweredMapSlot {
+                    llvm_ty: "i64",
                     value,
                 })
             }

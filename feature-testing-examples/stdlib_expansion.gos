@@ -62,7 +62,7 @@ fn main() {
         Some(v) => println!("last = {}", v)
         None => println!("last = none")
     }
-    let rev = nums.rev()
+    let rev = nums.iter().rev().collect()
     println!("rev[0] = {}", rev[0])
     println!("contains 30 = {}", nums.contains(&30))
     println!("contains 99 = {}", nums.contains(&99))

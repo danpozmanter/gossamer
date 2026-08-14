@@ -564,7 +564,6 @@ pub(crate) struct FnBuilder<'tcx> {
     /// Registers holding an `Iterator<T>` that is a materialized
     /// sequence - a collection's `iter()` / `enumerate()` result - rather
     /// than a live cursor such as a range. A loop drives these by index.
-    pub(crate) materialized_iter_locals: std::collections::HashSet<Reg>,
     /// Registers bound to a `flag::Set` handle (`flag::Set::new(...)`),
     /// so a chained `set.duration(...)` is recognised as constructing a
     /// duration-flag cell rather than calling a same-named user method.

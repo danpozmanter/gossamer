@@ -1305,7 +1305,7 @@ impl<'a> Builder<'a> {
             let key_kind = self.hash_map_key_kind(recv_ty_local);
             if std::env::var("GOS_DEBUG_FALLBACK").is_ok() {
                 let (key_dbg, val_dbg) = match self.tcx.kind_of(recv_ty_local) {
-                    gossamer_types::TyKind::HashMap { key, value } => (
+                    gossamer_types::TyKind::HashMap { key, value, .. } => (
                         format!("{:?}", self.tcx.kind_of(*key)),
                         format!("{:?}", self.tcx.kind_of(*value)),
                     ),
@@ -1967,6 +1967,10 @@ impl<'a> Builder<'a> {
                     match &receiver_kind_flat {
                         TyKind::Int(_) => Some("gos_rt_i64_to_str"),
                         TyKind::Float(_) => Some("gos_rt_f64_to_str"),
+                        // A `char` is a scalar Unicode value, so its String
+                        // form is built rather than reinterpreted.
+                        TyKind::Char => Some("gos_rt_char_to_str"),
+                        TyKind::Bool => Some("gos_rt_bool_to_str"),
                         _ => Some(""),
                     }
                 }
@@ -2458,6 +2462,11 @@ impl<'a> Builder<'a> {
                 {
                     Some("")
                 }
+                // A fixed array lives inline in its slots rather than behind a
+                // `*mut GosVec` header, so the handle-taking iterator helper
+                // would read those slots as one. Take the eager sequence path,
+                // which reads the elements at their real width.
+                TyKind::Array { .. } => Some(""),
                 _ => Some("gos_rt_arr_iter"),
             },
             "collect" | "to_vec" => match &receiver_kind_flat {

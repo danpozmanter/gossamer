@@ -57,7 +57,8 @@ dispatch-table additions.
 `Vec<T>` is the only owned growable sequence. `[T; N]`, `&[T]`, and `&mut [T]`
 share only the non-resizing methods listed below. Mutable arrays and slices may
 reorder or replace existing elements, but cannot change their length or
-capacity. Iterator combinators are used through `.iter()` on arrays and slices.
+capacity. A traversal starts at an iterator, so every collection reaches
+`map` / `filter` / `fold` and the rest through `.iter()`.
 The literal spelling of each container is in
 [Collection literals](collection_literals.md).
 
@@ -65,7 +66,7 @@ The literal spelling of each container is in
 |---|---|
 | `[T; N]`, `&[T; N]`, `&[T]` | `len`, `is_empty`, `slice`, `first`, `last`, `get`, `contains`, `index_of`, `count_of`, `windows`, `chunks`, `join`, `to_vec`, `iter`; fixed arrays also have value-preserving `clone` |
 | `&mut [T; N]`, `&mut [T]` | Shared methods plus in-place `sort`, `sort_by`, `sort_by_key`, `reverse`, `swap`, and `fill` |
-| `Vec<T>`, `&Vec<T>`, `&mut Vec<T>` | Shared methods plus eager combinators, resizing, and capacity operations |
+| `Vec<T>`, `&Vec<T>`, `&mut Vec<T>` | Shared methods plus resizing and capacity operations |
 
 | Method | Returns | Notes |
 |---|---|---|
@@ -80,22 +81,22 @@ The literal spelling of each container is in
 | `v.capacity()` | `i64` | Returns allocated element capacity. |
 | `v.len()` | `i64` | |
 | `v.is_empty()` | `bool` | |
-| `v.iter()` | `Iter<T>` | Lazy iterator. |
-| `v.filter(pred)` | `Vec<T>` | Elements where `pred` holds. |
-| `v.map(f)` | `Vec<U>` | Transform every element. |
-| `v.sum()` | `T` | Numeric sum; `0` for empty. |
-| `v.min()` / `v.max()` | `Option<T>` | `None` for empty. |
-| `v.count(pred)` | `i64` | Elements where `pred` holds. |
-| `v.any(pred)` / `v.all(pred)` | `bool` | Short-circuiting. |
-| `v.find(pred)` | `Option<T>` | First match; `v.position(pred)` returns its index. |
-| `v.fold(init, f)` | `U` | Left fold: `f(acc, x)` per element. |
-| `v.max_by_key(f)` / `v.min_by_key(f)` | `Option<T>` | Extremum by derived key. |
-| `v.take(n)` | `Vec<T>` | First `n` elements (fewer if short). |
-| `v.step_by(n)` | `Vec<T>` | Every `n`-th element, starting at index 0. |
-| `v.join(sep)` | `String` | Scalar / `String` elements joined with `sep`. |
+| `v.iter()` | `Iterator<T>` | Starts a traversal; the adapters below hang off it. |
+| `v.iter().filter(pred)` | `Iterator<T>` | Elements where `pred` holds. |
+| `v.iter().map(f)` | `Iterator<U>` | Transform every element. |
+| `v.iter().sum()` | `T` | Sum in the element's own type; `0` for empty. |
+| `v.iter().min()` / `.max()` | `Option<T>` | `None` for empty. |
+| `v.iter().count()` | `i64` | Elements the pipeline yields. |
+| `v.iter().any(pred)` / `.all(pred)` | `bool` | Short-circuiting. |
+| `v.iter().find(pred)` | `Option<T>` | First match; `.position(pred)` returns its index. |
+| `v.iter().fold(init, f)` | `U` | Left fold: `f(acc, x)` per element. |
+| `v.iter().max_by_key(f)` / `.min_by_key(f)` | `Option<T>` | Extremum by derived key. |
+| `v.iter().take(n)` | `Iterator<T>` | First `n` elements (fewer if short). |
+| `v.iter().step_by(n)` | `Iterator<T>` | Every `n`-th element, starting at index 0. |
+| `v.join(sep)` | `String` | Scalar / `String` elements joined with `sep`; no traversal. |
 | `v.first()` / `v.last()` | `Option<T>` | |
 | `v.insert(i, item)` / `v.remove(i)` | `Result<_, errors::Error>` | Bounds-checked mutation helpers. |
-| `v.rev()` | `Vec<T>` | Non-mutating; `v.reverse()` is in-place. |
+| `v.iter().rev()` | `Iterator<T>` | Non-mutating; `v.reverse()` is in-place. |
 | `v.contains(&x)` | `bool` | `v.index_of(&x)` returns `Option<i64>`, `v.count_of(&x)` the tally. |
 | `v.sort()` / `v.sort_by(cmp)` / `v.sort_by_key(f)` | `()` | In-place; `Reverse(k)` keys give descending order. |
 | `v.swap(i, j)` | `()` | Exchanges two existing elements; an index outside `[0, len)` panics. |
@@ -114,15 +115,16 @@ The literal spelling of each container is in
 | `m.inc(k)` / `m.inc(k, by)` | `()` | Increment an `i64` counter, inserting `0` first if absent. |
 | `m.or_insert(k, default)` | `V` | Value for `k`, inserting `default` first when absent; works for aggregate values (structs, tuples) too. |
 | `m.len()` | `i64` | |
-| `m.iter()` | `Vec<(K, V)>` | Pairs in key order. A struct, tuple, or array key is rebuilt from the map's own key layout, so a bound key sees the value that was inserted. |
+| `m.iter()` | `Iterator<(K, V)>` | Pairs in key order. A struct, tuple, or array key is rebuilt from the map's own key layout, so a bound key sees the value that was inserted. |
 | `m.values()` | `Vec<V>` | Values in key order, for every key type. |
 | `m.keys()` | `Vec<K>` | Scalar and `String` keys only. A struct, tuple, or array key is rejected at check time; use `for (key, value) in m.iter()`. |
 | `m.is_empty()` / `m.clear()` | `bool` / `()` | Empty test and in-place removal of all entries. |
 
 ## BTreeMap
 
-BTreeMap uses the same typed map runtime as Map, with key-sorted user-facing
-iteration.
+`BTreeMap` and `Map` are distinct types over one representation: a
+constructor answers its own, and neither converts to the other. BTreeMap
+iterates in key order.
 
 | Method | Returns | Notes |
 |---|---|---|
@@ -135,7 +137,7 @@ iteration.
 | `m.contains(k)` / `m.contains_key(k)` | `bool` | Key-membership test. |
 | `m.len()` | `i64` | |
 | `m.is_empty()` / `m.clear()` | `bool` / `()` | Empty test and in-place removal of all entries. |
-| `m.iter()` | `Vec<(K, V)>` | Yields pairs in ascending key order, for every key and value pairing. |
+| `m.iter()` | `Iterator<(K, V)>` | Yields pairs in ascending key order, for every key and value pairing. |
 | `m.keys()` / `m.values()` | `Vec<K>` / `Vec<V>` | Snapshots keys or values in key order. |
 
 ## Set
@@ -147,6 +149,7 @@ iteration.
 | `s.remove(v)` | `bool` | Deletes the value and reports whether it was present. |
 | `s.len()` | `i64` | |
 | `s.clear()` | `()` | Removes all values. |
+| `s.iter()` | `Iterator<T>` | Starts a traversal over the values. |
 | `s.to_vec()` | `Vec<T>` | Materialises the set values. |
 | `s.union(other)` | `Set<T>` | Set union. |
 | `s.intersection(other)` | `Set<T>` | Shared values. |

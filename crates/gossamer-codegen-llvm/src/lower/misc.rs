@@ -659,6 +659,21 @@ impl<'a> Lowerer<'a> {
                                     Some(TyKind::Int(_)) => ConcatKind::VecVecI64,
                                     Some(TyKind::Float(_)) => ConcatKind::VecVecF64,
                                     Some(TyKind::String) => ConcatKind::VecVecString,
+                                    _ => self
+                                        .value_descriptor(elem)
+                                        .map_or(ConcatKind::Unsupported, ConcatKind::VecDesc),
+                                }
+                            }
+                            Some(TyKind::HashMap { .. }) => ConcatKind::VecMap,
+                            Some(TyKind::Tuple(nested)) => {
+                                let arity = nested.len();
+                                match self.tuple_elem_tags(elem) {
+                                    // The element's own tags start with the
+                                    // nested marker; the renderer wants the
+                                    // per-field tags directly.
+                                    Some(tags) if arity > 0 && tags.len() > 2 => {
+                                        ConcatKind::VecTuple(tags[2..].to_vec(), arity)
+                                    }
                                     _ => ConcatKind::Unsupported,
                                 }
                             }
@@ -666,7 +681,9 @@ impl<'a> Lowerer<'a> {
                                 Some(sym) => {
                                     ConcatKind::VecAdt(sym, self.adt_fmt_takes_slot_address(elem))
                                 }
-                                None => ConcatKind::Unsupported,
+                                None => self
+                                    .value_descriptor(elem)
+                                    .map_or(ConcatKind::Unsupported, ConcatKind::VecDesc),
                             },
                         }
                     }
@@ -685,27 +702,43 @@ impl<'a> Lowerer<'a> {
                     }
                     // Scalar-keyed, scalar/string-valued HashMap:
                     // route through `gos_rt_map_format`.
-                    Some(TyKind::HashMap { key, value }) => {
-                        if self.map_kv_supported(*key) && self.map_kv_supported(*value) {
+                    Some(TyKind::HashMap { key, value, .. }) => {
+                        if !self.map_kv_supported(*key) {
+                            ConcatKind::Unsupported
+                        } else if self.map_kv_supported(*value) {
                             ConcatKind::Map
                         } else {
-                            ConcatKind::Unsupported
+                            // A container value is stored as a handle word,
+                            // so its tag tells the renderer to read it as one;
+                            // an aggregate value is a slot buffer the derived
+                            // `fmt` or the tuple tags render.
+                            match self.tuple_elem_tag(*value) {
+                                Some(tag) => ConcatKind::MapTagged(tag),
+                                None => self.map_aggregate_value_kind(*key, *value),
+                            }
                         }
                     }
                     Some(TyKind::Adt { def, substs }) if matches!(def.local, n if n == u32::MAX - 7 || n == u32::MAX - 18) =>
                     {
                         let is_btree = def.local == u32::MAX - 18;
-                        match substs.types().first().and_then(|elem| {
-                            match self.tcx.kind(self.unwrap_ref(*elem)) {
+                        let elem = substs.types().first().copied();
+                        let scalar =
+                            elem.and_then(|elem| match self.tcx.kind(self.unwrap_ref(elem)) {
                                 Some(TyKind::Int(i)) if int_width(*i) == 64 => {
                                     Some(ConcatKind::SetI64(is_btree))
                                 }
                                 Some(TyKind::String) => Some(ConcatKind::SetString(is_btree)),
                                 _ => None,
-                            }
-                        }) {
+                            });
+                        match scalar {
                             Some(kind) => kind,
-                            None => ConcatKind::Unsupported,
+                            // An aggregate element is stored as its slot
+                            // bytes, which its descriptor renders.
+                            None => elem
+                                .and_then(|elem| self.value_descriptor(elem))
+                                .map_or(ConcatKind::Unsupported, |desc| {
+                                    ConcatKind::SetDesc(desc, is_btree)
+                                }),
                         }
                     }
                     // `{:?}` of an `Option<T>` / `Result<T, E>` with scalar /
@@ -848,6 +881,16 @@ impl<'a> Lowerer<'a> {
                     match name.as_str() {
                         "gos_rt_set_insert_i64" => elem_kind = Some(ConcatKind::SetI64(is_btree)),
                         "gos_rt_set_insert" => elem_kind = Some(ConcatKind::SetString(is_btree)),
+                        // An aggregate element is stored as its slot bytes;
+                        // the inserted operand names the type whose descriptor
+                        // renders them.
+                        "gos_rt_set_insert_skey" => {
+                            if let Some(Operand::Copy(place)) = args.get(1)
+                                && let Some(desc) = self.value_descriptor(self.place_leaf_ty(place))
+                            {
+                                elem_kind = Some(ConcatKind::SetDesc(desc, is_btree));
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -900,7 +943,14 @@ impl<'a> Lowerer<'a> {
         if let Some(tag) = self.debug_payload_kind(ty) {
             return Some(DebugPayload::Tag(tag));
         }
-        self.adt_debug_fmt_symbol(ty).map(DebugPayload::Fmt)
+        if let Some(sym) = self.adt_debug_fmt_symbol(ty) {
+            return Some(DebugPayload::Fmt(sym));
+        }
+        // A tuple payload carries its own self-describing tag stream.
+        if let Some(TyKind::Tuple(_)) = self.tcx.kind(self.unwrap_ref(ty)) {
+            return self.tuple_elem_tags(ty).map(DebugPayload::Tuple);
+        }
+        self.value_descriptor(ty).map(DebugPayload::Desc)
     }
 
     /// Maps an `Option` / `Result` payload type to the `gos_rt_debug_*`
@@ -920,6 +970,9 @@ impl<'a> Lowerer<'a> {
             Some(TyKind::String) => Some(5),
             // A parsed document renders through its own display helper.
             Some(TyKind::JsonValue) => Some(8),
+            // `errors::Error` is the error arm of nearly every fallible
+            // signature, so a `Result` carrying one renders like the rest.
+            Some(TyKind::DynError) => Some(10),
             // A `Vec` payload is rendered by the same formatter a bare
             // `{:?}` of that vec uses; the slot carries its pointer.
             Some(TyKind::Vec(elem) | TyKind::Slice(elem)) => {
@@ -943,6 +996,77 @@ impl<'a> Lowerer<'a> {
     /// Tags describing `elem` in a `gos_rt_tuple_format` stream: one byte
     /// for a scalar, or the `8, count, <nested tags…>` form for a nested
     /// tuple whose slots are flattened into the parent's buffer.
+    /// Rendering plan for a map value the tag encoding cannot name: a struct
+    /// or enum through its derived `fmt`, a tuple through its element tags.
+    fn map_aggregate_value_kind(&self, key: Ty, value: Ty) -> ConcatKind {
+        if let Some(sym) = self.adt_debug_fmt_symbol(value) {
+            return ConcatKind::MapAdt(sym);
+        }
+        if let Some(TyKind::Tuple(nested)) = self.tcx.kind(self.unwrap_ref(value)) {
+            let arity = nested.len();
+            if let Some(tags) = self.tuple_elem_tags(value)
+                && arity > 0
+                && tags.len() > 2
+            {
+                return ConcatKind::MapTuple(tags[2..].to_vec(), arity);
+            }
+        }
+        match (self.value_descriptor(key), self.value_descriptor(value)) {
+            (Some(mut stream), Some(val)) => {
+                let val_at = stream.len();
+                stream.extend(val);
+                ConcatKind::MapDesc(stream, val_at)
+            }
+            _ => ConcatKind::Unsupported,
+        }
+    }
+
+    /// Recursive rendering descriptor for `ty`: the scalar tags a tuple stream
+    /// already uses, plus container tags whose element descriptors follow. A
+    /// shape with no descriptor - anything needing a derived `fmt` - is `None`.
+    pub(crate) fn value_descriptor(&self, ty: Ty) -> Option<Vec<u8>> {
+        let ty = self.unwrap_ref(ty);
+        match self.tcx.kind(ty) {
+            Some(TyKind::Tuple(elems)) => {
+                let elems: Vec<Ty> = elems.clone();
+                if elems.is_empty() || elems.len() > usize::from(u8::MAX) {
+                    return None;
+                }
+                let mut out = vec![gossamer_abi::TUPLE_TAG_NESTED, elems.len() as u8];
+                for e in &elems {
+                    out.extend(self.value_descriptor(*e)?);
+                }
+                Some(out)
+            }
+            Some(TyKind::Vec(elem) | TyKind::Slice(elem)) => {
+                let elem = *elem;
+                let mut out = vec![gossamer_abi::DESC_VEC];
+                out.extend(self.value_descriptor(elem)?);
+                Some(out)
+            }
+            Some(TyKind::HashMap { key, value, .. }) => {
+                let (key, value) = (*key, *value);
+                let mut out = vec![gossamer_abi::DESC_MAP];
+                out.extend(self.value_descriptor(key)?);
+                out.extend(self.value_descriptor(value)?);
+                Some(out)
+            }
+            Some(TyKind::Adt { def, substs }) if matches!(def.local, n if n == u32::MAX - 7 || n == u32::MAX - 18) =>
+            {
+                let ordered = u8::from(def.local == u32::MAX - 18);
+                let elem = self.unwrap_ref(*substs.types().first()?);
+                match self.tcx.kind(elem) {
+                    Some(TyKind::Int(_) | TyKind::Bool | TyKind::Char) => {
+                        Some(vec![gossamer_abi::DESC_SET_I64, ordered])
+                    }
+                    Some(TyKind::String) => Some(vec![gossamer_abi::DESC_SET_STR, ordered]),
+                    _ => None,
+                }
+            }
+            _ => self.tuple_elem_tag(ty).map(|tag| vec![tag]),
+        }
+    }
+
     pub(crate) fn tuple_elem_tags(&self, elem: Ty) -> Option<Vec<u8>> {
         if let Some(TyKind::Tuple(nested)) = self.tcx.kind(self.unwrap_ref(elem)) {
             let nested: Vec<Ty> = nested.clone();
@@ -971,7 +1095,7 @@ impl<'a> Lowerer<'a> {
             {
                 Some(6)
             }
-            Some(TyKind::HashMap { key, value })
+            Some(TyKind::HashMap { key, value, .. })
                 if self.map_kv_supported(*key) && self.map_kv_supported(*value) =>
             {
                 Some(7)

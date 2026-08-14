@@ -774,14 +774,14 @@ fn lifted_iter_map_closure_param_keeps_string_type() {
 fn lifted_closure_destructures_tuple_parameter_before_body() {
     let source = "fn main() {\n\
                   let values = #[1, 2, 3, 4]\n\
-                  let shifted = values.enumerate().map(|(i, value)| value + i)\n\
+                  let shifted = values.iter().enumerate().map(|(i, value)| value + i)\n\
                   let _ = shifted\n\
                   }\n";
     let (bodies, _) = build_with_lift(source);
     let main = bodies.iter().find(|b| b.name == "main").expect("main");
     let names = call_names(main);
     assert!(
-        names.iter().any(|name| name == "gos_rt_iter_enumerate_i64"),
+        names.iter().any(|name| name == "gos_rt_lazy_iter_enumerate_i64"),
         "method-form enumerate must lower through the typed runtime shim: {names:?}"
     );
     assert!(
@@ -810,8 +810,9 @@ fn lifted_closure_destructures_tuple_parameter_before_body() {
 fn native_lowers_chunks_and_tuple_get_method_forms() {
     let source = "fn main() {\n\
                   let input = \"0222112222120000\"\n\
-                  let layers = input.chars().chunks(4)\n\
+                  let layers = input.chars().iter().chunks(4)\n\
                   let min_layer_idx = layers\n\
+                  .iter()\n\
                   .map(|layer| layer.count_of('0'))\n\
                   .enumerate()\n\
                   .min_by_key(|t| t.1)\n\
@@ -819,7 +820,7 @@ fn native_lowers_chunks_and_tuple_get_method_forms() {
                   .get(0)\n\
                   .unwrap()\n\
                   let pixels = (0..4).map(|idx| \"#\")\n\
-                  pixels.chunks(2).map(|chunk| chunk.join(\"\")).for_each(println)\n\
+                  pixels.chunks(2).iter().map(|chunk| chunk.join(\"\")).for_each(println)\n\
                   let _ = min_layer_idx\n\
                   }\n";
     let (bodies, _) = build_with_lift(source);
@@ -1540,13 +1541,13 @@ const COMBINATOR_MATRIX: &[(&str, &str, &str)] = &[
     ),
     (
         "iter::collect",
-        "use std::iter\nfn main() { let xs = iter::collect(#[1, 2])\nlet _ = xs }",
-        "gos_rt_vec_clone",
+        "use std::iter\nfn main() { let xs = iter::collect(#[1, 2].iter())\nlet _ = xs }",
+        "gos_rt_lazy_iter_collect_i64",
     ),
     (
         "Vec::collect",
-        "fn main() { let xs = Vec::from([1, 2]).collect()\nlet _ = xs }",
-        "gos_rt_vec_clone",
+        "fn main() { let xs = Vec::from([1, 2]).iter().collect()\nlet _ = xs }",
+        "gos_rt_lazy_iter_collect_i64",
     ),
     (
         "iter::once",

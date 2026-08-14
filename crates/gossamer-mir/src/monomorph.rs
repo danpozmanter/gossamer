@@ -517,7 +517,7 @@ fn register_struct_instantiations(bodies: &[Body], tcx: &mut TyCtxt) {
             | TyKind::JoinHandle(inner) => stack.push(inner),
             TyKind::Array { elem, .. } => stack.push(elem),
             TyKind::Tuple(elems) => stack.extend(elems),
-            TyKind::HashMap { key, value } => {
+            TyKind::HashMap { key, value, .. } => {
                 stack.push(key);
                 stack.push(value);
             }
@@ -538,7 +538,7 @@ fn ty_contains_param(tcx: &TyCtxt, ty: Ty) -> bool {
         | TyKind::JoinHandle(inner) => ty_contains_param(tcx, *inner),
         TyKind::Array { elem, .. } => ty_contains_param(tcx, *elem),
         TyKind::Tuple(elems) => elems.iter().any(|t| ty_contains_param(tcx, *t)),
-        TyKind::HashMap { key, value } => {
+        TyKind::HashMap { key, value, .. } => {
             ty_contains_param(tcx, *key) || ty_contains_param(tcx, *value)
         }
         TyKind::Adt { substs, .. } | TyKind::Alias { substs, .. } => {
@@ -889,10 +889,18 @@ fn subst_param_ty(tcx: &mut TyCtxt, ty: Ty, subst_tys: &[Option<Ty>]) -> Ty {
                 .collect();
             tcx.intern(TyKind::Tuple(elems))
         }
-        TyKind::HashMap { key, value } => {
+        TyKind::HashMap {
+            key,
+            value,
+            ordered,
+        } => {
             let key = subst_param_ty(tcx, key, subst_tys);
             let value = subst_param_ty(tcx, value, subst_tys);
-            tcx.intern(TyKind::HashMap { key, value })
+            tcx.intern(TyKind::HashMap {
+                key,
+                value,
+                ordered,
+            })
         }
         TyKind::Adt { def, substs } => {
             let new_args = substs

@@ -1,0 +1,176 @@
+// Miniature stand-ins for the allocation-shape benchmarks: byte buffers held
+// as chunks, an interning pool, a hash index, adjacency lists, a recursive
+// tree, a flat integer buffer, row-major matrix storage, and a linked list
+// built from a recursive enum. Each shape reports a value derived from every
+// element it allocated, so a reclamation bug shows up as a wrong number
+// rather than as a silent pass.
+
+enum ListNode {
+    Cons(i64, Box<ListNode>)
+    Nil
+}
+
+enum Tree {
+    Node(i64, Box<Tree>, Box<Tree>)
+    Leaf
+}
+
+// Byte offsets, not character offsets: `as_bytes` and `byte_len` share one
+// index space and `len` counts scalars.
+fn byte_chunks(text: &String, chunk: i64) -> i64 {
+    let bytes = text.as_bytes()
+    let mut chunks = #[]
+    let mut start = 0
+    while start < bytes.len() {
+        let stop = min(start + chunk, bytes.len())
+        let mut piece = #[]
+        for i in start..stop {
+            piece.push(bytes[i])
+        }
+        chunks.push(piece)
+        start += chunk
+    }
+    let mut total = 0
+    for piece in chunks {
+        for b in piece {
+            total += b as i64
+        }
+    }
+    total * chunks.len()
+}
+
+fn string_pool(rounds: i64) -> i64 {
+    let mut pool = Map::new()
+    let mut ids = #[]
+    for i in 0..rounds {
+        let word = format!("w{}", i % 16)
+        let next = pool.len()
+        ids.push(pool.or_insert(word, next))
+    }
+    let mut checksum = pool.len()
+    for id in ids {
+        checksum += id
+    }
+    checksum
+}
+
+fn hash_index(entries: i64) -> i64 {
+    let mut index = Map::new()
+    for i in 0..entries {
+        index.insert(format!("key-{}", i), i * i % 251)
+    }
+    let mut found = 0
+    for i in 0..entries {
+        if let Some(v) = index.get(format!("key-{}", i)) {
+            found += v
+        }
+    }
+    found + index.len()
+}
+
+fn graph_adjacency(nodes: i64, degree: i64) -> i64 {
+    let mut adjacency = #[]
+    for i in 0..nodes {
+        let mut edges = #[]
+        for d in 1..degree + 1 {
+            edges.push((i + d * d) % nodes)
+        }
+        adjacency.push(edges)
+    }
+    let mut reachable = #{}
+    for edges in adjacency {
+        for target in edges {
+            reachable.insert(target)
+        }
+    }
+    reachable.len() * adjacency.len()
+}
+
+fn build_tree(depth: i64, label: i64) -> Tree {
+    if depth == 0 {
+        return Tree::Leaf
+    }
+    Tree::Node(
+        label
+        build_tree(depth - 1, label * 2)
+        build_tree(depth - 1, label * 2 + 1)
+    )
+}
+
+fn tree_sum(t: &Tree) -> i64 {
+    match t {
+        Tree::Leaf => 0
+        Tree::Node(v, l, r) => v + tree_sum(l) + tree_sum(r)
+    }
+}
+
+fn int_buffer(len: i64, passes: i64) -> i64 {
+    let mut buffer = #[]
+    for i in 0..len {
+        buffer.push(i)
+    }
+    for _ in 0..passes {
+        for i in 0..buffer.len() {
+            buffer[i] = (buffer[i] * 2 + 1) % 1009
+        }
+    }
+    let mut total = 0
+    for v in buffer {
+        total += v
+    }
+    total
+}
+
+fn matrix_rows(rows: i64, cols: i64) -> i64 {
+    let mut matrix = #[]
+    for i in 0..rows {
+        let mut row = #[]
+        for j in 0..cols {
+            row.push((i * cols + j) % 13)
+        }
+        matrix.push(row)
+    }
+    let mut trace = 0
+    for i in 0..min(rows, cols) {
+        trace += matrix[i][i]
+    }
+    let mut edge = 0
+    for j in 0..cols {
+        edge += matrix[rows - 1][j]
+    }
+    trace * 1000 + edge
+}
+
+fn build_list(len: i64) -> ListNode {
+    let mut list = ListNode::Nil
+    let mut i = len
+    while i > 0 {
+        list = ListNode::Cons(i, list)
+        i -= 1
+    }
+    list
+}
+
+fn list_sum(list: &ListNode) -> i64 {
+    let mut total = 0
+    let mut cursor = list
+    while let ListNode::Cons(value, rest) = cursor {
+        total += value
+        cursor = rest
+    }
+    total
+}
+
+fn main() {
+    println!("byte-chunks {}", byte_chunks(&"the quick brown fox jumps", 4))
+    println!("string-pool {}", string_pool(64))
+    println!("hash-index {}", hash_index(64))
+    println!("graph-adjacency {}", graph_adjacency(24, 3))
+
+    let tree = build_tree(8, 1)
+    println!("tree-sum {}", tree_sum(&tree))
+
+    println!("int-buffer {}", int_buffer(128, 3))
+    println!("matrix-rows {}", matrix_rows(16, 12))
+    println!("linked-list {}", list_sum(&build_list(256)))
+}

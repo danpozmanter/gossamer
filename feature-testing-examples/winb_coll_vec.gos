@@ -48,7 +48,7 @@ fn main() {
 
     // rev (non-mutating) then original unchanged.
     let r: Vec<i64> = Vec::from([1, 2, 3, 4])
-    let rr = r.rev()
+    let rr = r.iter().rev().collect()
     print!("rev ")
     for v in rr { print!("{} ", v) }
     println!("")

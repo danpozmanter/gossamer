@@ -313,7 +313,7 @@ fn main() {
     for i in 0..3 {
         Amp::run(&mut amps[i], i + 10)
     }
-    println!("all={}", amps.all(|amp| Amp::is_halted(amp)))
+    println!("all={}", amps.iter().all(|amp| Amp::is_halted(amp)))
     println!("outputs={} {} {}", amps[0].output, amps[1].output, amps[2].output)
     println!("memory={} {}", amps[0].memory[0], amps[1].memory[0])
 }
@@ -355,7 +355,7 @@ fn main() {
     for i in 0..3 {
         Amp::run(&mut amps[i], i + 10)
     }
-    println!("all={}", amps.all(|amp| amp.is_halted()))
+    println!("all={}", amps.iter().all(|amp| amp.is_halted()))
     println!("outputs={} {} {}", amps[0].output, amps[1].output, amps[2].output)
     println!("memory={} {}", amps[0].memory[0], amps[1].memory[0])
 }

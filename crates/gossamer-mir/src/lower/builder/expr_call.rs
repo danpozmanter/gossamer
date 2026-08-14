@@ -66,7 +66,7 @@ impl<'a> Builder<'a> {
             | TyKind::JoinHandle(inner) => self.ty_mentions_param(*inner),
             TyKind::Array { elem, .. } => self.ty_mentions_param(*elem),
             TyKind::Tuple(elems) => elems.iter().any(|e| self.ty_mentions_param(*e)),
-            TyKind::HashMap { key, value } => {
+            TyKind::HashMap { key, value, .. } => {
                 self.ty_mentions_param(*key) || self.ty_mentions_param(*value)
             }
             TyKind::Adt { substs, .. } | TyKind::Alias { substs, .. } => {
@@ -113,10 +113,18 @@ impl<'a> Builder<'a> {
                     .collect();
                 self.tcx.intern(TyKind::Tuple(elems))
             }
-            TyKind::HashMap { key, value } => {
+            TyKind::HashMap {
+                key,
+                value,
+                ordered,
+            } => {
                 let key = self.subst_params_with(key, subst);
                 let value = self.subst_params_with(value, subst);
-                self.tcx.intern(TyKind::HashMap { key, value })
+                self.tcx.intern(TyKind::HashMap {
+                    key,
+                    value,
+                    ordered,
+                })
             }
             TyKind::Adt { def, substs } => {
                 let new_args = substs

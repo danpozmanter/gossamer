@@ -266,18 +266,23 @@ fn collection_methods_do_not_leak_eager_vec_combinators_into_arrays_or_slices() 
         assert_rejected(
             &format!("array {method}"),
             &format!("let values = [1, 2, 3]\nvalues.{method}"),
-            "no method named",
+            "is a collection",
         );
         assert_rejected(
             &format!("slice {method}"),
             &format!("let storage = #[1, 2, 3]\nlet values: &[i64] = &storage\nvalues.{method}"),
-            "no method named",
+            "is a collection",
         );
     }
 
     assert_accepted(
-        "Vec eager combinators remain Vec methods",
-        "let values = #[1, 2, 3]\nlet _sum = values.sum()\nlet _head = values.take(2)",
+        "sequence combinators are reached through iter()",
+        "let values = #[1, 2, 3]\nlet _sum = values.iter().sum()\nlet _head = values.iter().take(2)",
+    );
+    assert_rejected(
+        "Vec traversal without iter()",
+        "let values = #[1, 2, 3]\nvalues.sum()",
+        "is a collection",
     );
     assert_accepted(
         "fixed array clone preserves its fixed type",

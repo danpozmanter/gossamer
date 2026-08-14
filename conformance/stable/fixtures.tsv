@@ -15,3 +15,6 @@ struct_keyed_maps.gos	struct_keyed_maps.out
 debug_nested.gos	debug_nested.out
 embedded_nul_strings.gos	embedded_nul_strings.out
 weak_references.gos	weak_references.out
+general_algos.gos	general_algos.out
+stress_algorithms.gos	stress_algorithms.out
+memory_shapes.gos	memory_shapes.out

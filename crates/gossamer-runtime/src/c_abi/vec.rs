@@ -2096,6 +2096,43 @@ fn debug_payload_string_with(payload: i64, kind: i64, fmt: *const std::ffi::c_vo
         let slots: *const u8 = std::ptr::with_exposed_provenance(payload as usize);
         return unsafe { adt_fmt_string(slots, fmt) };
     }
+    // A tuple payload is its slot buffer, and `fmt` addresses a tag stream
+    // that opens with the nested marker and the tuple's arity.
+    if kind == i64::from(gossamer_abi::DEBUG_PAYLOAD_TUPLE) {
+        let slots: *const i64 = std::ptr::with_exposed_provenance(payload as usize);
+        let tags: *const u8 = fmt.cast();
+        if slots.is_null() || tags.is_null() {
+            return String::new();
+        }
+        let arity = unsafe { *tags.add(1) } as usize;
+        let mut out = String::new();
+        let mut slot_cursor = 0usize;
+        let mut tag_cursor = 2usize;
+        unsafe {
+            crate::c_abi::map::render_tuple_elements(
+                &mut out,
+                slots,
+                tags,
+                arity,
+                &mut slot_cursor,
+                &mut tag_cursor,
+            );
+        }
+        return out;
+    }
+    // A descriptor payload renders through the recursive walk, so a nested
+    // container needs no formatter of its own.
+    if kind == i64::from(gossamer_abi::DEBUG_PAYLOAD_DESC) {
+        let tags: *const u8 = fmt.cast();
+        if tags.is_null() {
+            return String::new();
+        }
+        let mut out = String::new();
+        let mut cursor = 0usize;
+        let slot = std::ptr::from_ref(&payload).cast::<u8>();
+        unsafe { crate::c_abi::map::render_desc_value(&mut out, slot, tags, &mut cursor) };
+        return out;
+    }
     debug_payload_string(payload, kind)
 }
 
@@ -2124,6 +2161,13 @@ fn debug_payload_string(payload: i64, kind: i64) -> String {
         7 => unsafe { take_rt_string(super::btmap::gos_rt_vec_format_string(vec_ptr(payload))) },
         8 => unsafe {
             take_rt_string(crate::c_abi::gos_rt_json_display(
+                std::ptr::with_exposed_provenance(payload as usize),
+            ))
+        },
+        // An error payload renders as the colon-joined cause chain, the way
+        // a bare `{}` on the error does.
+        10 => unsafe {
+            take_rt_string(crate::c_abi::gos_rt_error_display(
                 std::ptr::with_exposed_provenance(payload as usize),
             ))
         },

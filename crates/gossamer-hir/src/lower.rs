@@ -2309,13 +2309,127 @@ impl Lowerer<'_> {
         }
     }
 
+    /// `true` when a map value is a by-value aggregate. Such a value lives in
+    /// the entry array as inline slots rather than as one word, so the literal
+    /// is built by inserting each pair instead of from the array.
+    fn map_value_is_aggregate(&self, map_ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        let Some(TyKind::HashMap { value, .. }) = self.tcx.kind(map_ty) else {
+            return false;
+        };
+        matches!(
+            self.tcx.kind(*value),
+            Some(TyKind::Tuple(_) | TyKind::Adt { .. })
+        )
+    }
+
+    /// Builds `{ let mut m = Map::new(); m.insert(k, v); ...; m }` for a map
+    /// whose values are aggregates.
+    fn lower_map_literal_by_insert(
+        &mut self,
+        entries: &[AstExpr],
+        span: Span,
+        map_ty: Ty,
+    ) -> HirExprKind {
+        let name = Ident::new("__gos_map_literal");
+        let ctor = HirExpr {
+            id: self.fresh(),
+            span,
+            ty: map_ty,
+            kind: HirExprKind::Call {
+                callee: Box::new(HirExpr {
+                    id: self.fresh(),
+                    span,
+                    ty: self.error_ty(),
+                    kind: HirExprKind::Path {
+                        segments: vec![Ident::new("Map"), Ident::new("new")],
+                        def: None,
+                    },
+                }),
+                args: Vec::new(),
+            },
+        };
+        let mut stmts = vec![HirStmt {
+            id: self.fresh(),
+            span,
+            kind: HirStmtKind::Let {
+                pattern: HirPat {
+                    id: self.fresh(),
+                    span,
+                    ty: map_ty,
+                    kind: HirPatKind::Binding {
+                        name: name.clone(),
+                        mutable: true,
+                    },
+                },
+                ty: map_ty,
+                init: Some(ctor),
+            },
+        }];
+        for entry in entries {
+            let AstExprKind::Tuple(parts) = &entry.kind else {
+                continue;
+            };
+            let [key, value] = parts.as_slice() else {
+                continue;
+            };
+            let receiver = HirExpr {
+                id: self.fresh(),
+                span,
+                ty: map_ty,
+                kind: HirExprKind::Path {
+                    segments: vec![name.clone()],
+                    def: None,
+                },
+            };
+            let call = HirExpr {
+                id: self.fresh(),
+                span,
+                ty: self.tcx.unit(),
+                kind: HirExprKind::MethodCall {
+                    receiver: Box::new(receiver),
+                    name: Ident::new("insert"),
+                    args: vec![self.lower_expr(key), self.lower_expr(value)],
+                },
+            };
+            stmts.push(HirStmt {
+                id: self.fresh(),
+                span,
+                kind: HirStmtKind::Expr {
+                    expr: call,
+                    has_semi: true,
+                },
+            });
+        }
+        let tail = HirExpr {
+            id: self.fresh(),
+            span,
+            ty: map_ty,
+            kind: HirExprKind::Path {
+                segments: vec![name],
+                def: None,
+            },
+        };
+        HirExprKind::Block(HirBlock {
+            id: self.fresh(),
+            span,
+            ty: map_ty,
+            stmts,
+            tail: Some(Box::new(tail)),
+            is_comptime: false,
+        })
+    }
+
     fn lower_map_literal(&mut self, entries: &[AstExpr], span: Span, map_ty: Ty) -> HirExprKind {
         use gossamer_types::{ArrayLen, TyKind};
 
+        if !entries.is_empty() && self.map_value_is_aggregate(map_ty) {
+            return self.lower_map_literal_by_insert(entries, span, map_ty);
+        }
         let lowered_entries: Vec<HirExpr> = entries.iter().map(|e| self.lower_expr(e)).collect();
         let pair_ty = lowered_entries.first().map_or_else(
             || match self.tcx.kind(map_ty) {
-                Some(TyKind::HashMap { key, value }) => {
+                Some(TyKind::HashMap { key, value, .. }) => {
                     self.tcx.intern(TyKind::Tuple(vec![*key, *value]))
                 }
                 _ => self.error_ty(),

@@ -50,7 +50,7 @@ println!("single: {:?}", single)
 
 // `enumerate` and map iteration both hand back tuples.
 let words = #["alpha", "beta"]
-for (index, word) in words.enumerate() {
+for (index, word) in words.iter().enumerate() {
     println!("enumerated: {index} {word}")
 }
 

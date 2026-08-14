@@ -250,6 +250,44 @@ pub unsafe extern "C" fn gos_rt_set_format_i64(s: *const GosSet, ordered: i32) -
     })
 }
 
+/// Renders a set whose elements are aggregates, each stored as its canonical
+/// slot bytes and rendered through the descriptor `tags` addresses.
+///
+/// # Safety
+/// `s` is a live `GosSet` and `tags` addresses a descriptor for its elements.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_format_desc(
+    s: *const GosSet,
+    ordered: i32,
+    tags: *const u8,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let mut out = String::from(set_format_prefix(ordered));
+        out.push_str(" {");
+        if !s.is_null() && !tags.is_null() {
+            let set = unsafe { &*s };
+            let mut entries: Vec<&Box<[u8]>> = set.struct_inner.values().collect();
+            entries.sort_unstable();
+            for (index, slots) in entries.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                let mut cursor = 0usize;
+                unsafe {
+                    crate::c_abi::map::render_desc_value(
+                        &mut out,
+                        slots.as_ptr(),
+                        tags,
+                        &mut cursor,
+                    );
+                }
+            }
+        }
+        out.push('}');
+        crate::c_abi::string::alloc_cstring(out.as_bytes())
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_format_string(s: *const GosSet, ordered: i32) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {

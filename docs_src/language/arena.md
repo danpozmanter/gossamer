@@ -38,7 +38,7 @@ counting does work the program does not need. Inside an arena:
 
 You often do not have to write `arena { }` at all. The compiler runs a
 conservative escape analysis over every loop body - `while`, `for`
-(`for i in a..b`, `for x in xs`, `for (i, x) in xs.enumerate()`,
+(`for i in a..b`, `for x in xs`, `for (i, x) in xs.iter().enumerate()`,
 `for (k, v) in m.iter()`), and bare `loop` alike - and when it can prove
 that everything the body allocates dies at the
 iteration boundary, it wraps the body in an arena for you. Idiomatic

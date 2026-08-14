@@ -452,7 +452,7 @@ fn main() {
     let pairs = iter::zip([1, 2, 3], [4, 5, 6])
     println!("{}", pairs.len())
     let indexed = iter::enumerate([10, 20, 30])
-    println!("{}", indexed.len())
+    println!("{}", indexed.count())
 }
 "#,
         "3\n3",

@@ -248,6 +248,7 @@ impl Scan<'_> {
                 receiver,
                 name,
                 args,
+                ..
             } => {
                 // A mutator on a parameter-rooted receiver may stash an
                 // argument into a caller-owned structure → escape.

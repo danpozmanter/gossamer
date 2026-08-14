@@ -103,7 +103,16 @@ println(typed.len())
 ```
 
 Annotate an empty map when later code does not give the checker enough key and
-value information.
+value information. A `BTreeMap<K, V>` annotation makes the same literal build
+an ordered map:
+
+```gos
+let ordered: BTreeMap<i64, i64> = {2: 20, 1: 10}
+println(ordered.len())
+```
+
+`Map` and `BTreeMap` are distinct types over one representation, so neither
+converts to the other.
 
 ## Set And BTreeSet
 

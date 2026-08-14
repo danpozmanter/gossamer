@@ -10,12 +10,12 @@ fn main() {
         println!("literal {x}")
     }
 
-    for (index, label) in #["a", "b"].enumerate() {
+    for (index, label) in #["a", "b"].iter().enumerate() {
         println!("literal enumerate {index} {label}")
     }
 
     let words = #["c", "d"]
-    for (index, label) in words.enumerate() {
+    for (index, label) in words.iter().enumerate() {
         println!("binding enumerate {index} {label}")
     }
 
@@ -33,7 +33,7 @@ fn main() {
     // loop's own source.
     let smallest = numbers.iter().min().unwrap_or(0)
     println!("smallest {smallest}")
-    for (index, label) in words.enumerate() {
+    for (index, label) in words.iter().enumerate() {
         println!("after iter {index} {label}")
     }
 }
@@ -45,7 +45,7 @@ mod iterator_loop_sources_tests {
     #[test]
     fn a_literal_enumerate_yields_each_element_once() {
         let mut seen = 0
-        for (index, _label) in #["a", "b"].enumerate() {
+        for (index, _label) in #["a", "b"].iter().enumerate() {
             seen += index + 1
         }
         let _ = testing::check_eq(&seen, &3, "0+1 then 1+1")

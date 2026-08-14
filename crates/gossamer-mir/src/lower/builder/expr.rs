@@ -214,6 +214,7 @@ impl<'a> Builder<'a> {
                 receiver,
                 name,
                 args,
+                ..
             } => self.lower_method_call(receiver, name, args, expr.ty, expr.span),
             HirExprKind::Go(inner) => {
                 let go_span = expr.span;

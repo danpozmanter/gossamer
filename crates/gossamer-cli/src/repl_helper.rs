@@ -156,9 +156,9 @@ fn complete_at(
 ) -> (usize, Vec<String>) {
     let start = word_start(line, pos);
     let word = &line[start..pos];
-    if word.is_empty() {
-        return (start, Vec::new());
-    }
+    // A cursor sitting straight after the dot has no word yet, and that is
+    // exactly when the whole method surface is worth offering. Only the
+    // keyword and module completions below need something to match against.
     if start > 0
         && line.as_bytes()[start - 1] == b'.'
         && let Some(receiver_start) = receiver_start(line, start - 1)
@@ -172,6 +172,9 @@ fn complete_at(
                 .map(str::to_string)
                 .collect(),
         );
+    }
+    if word.is_empty() {
+        return (start, Vec::new());
     }
     let mut out: Vec<String> = Vec::new();
     if !word.contains(':') {
@@ -396,6 +399,36 @@ impl Highlighter for GosReplHelper {
 mod repl_helper_tests {
     use super::{GosReplHelper, complete_at, continuation_indent, incomplete_reason};
     use std::collections::HashMap;
+
+    /// A cursor sitting straight after the dot is the moment the whole method
+    /// surface is worth offering, so an empty prefix lists every method the
+    /// receiver has rather than nothing.
+    #[test]
+    fn a_bare_dot_offers_the_receivers_methods() {
+        let mut owners = HashMap::new();
+        owners.insert("x".to_string(), "String".to_string());
+        let (start, candidates) = complete_at("x.", 2, &owners);
+        assert_eq!(start, 2, "the replacement begins after the dot");
+        assert!(
+            !candidates.is_empty(),
+            "a bare dot on a String binding offers its methods"
+        );
+        assert!(
+            candidates.iter().any(|m| m == "len"),
+            "String methods are offered: {candidates:?}"
+        );
+        // A prefix after the dot still narrows the same surface.
+        let (narrow_start, narrowed) = complete_at("x.le", 4, &owners);
+        assert_eq!(narrow_start, 2);
+        assert!(narrowed.iter().any(|m| m == "len"), "{narrowed:?}");
+        assert!(
+            narrowed.len() < candidates.len(),
+            "a prefix narrows the candidate list"
+        );
+        // An unknown receiver still completes nothing rather than guessing.
+        let (_, unknown) = complete_at("zzz.", 4, &owners);
+        assert!(unknown.is_empty(), "{unknown:?}");
+    }
 
     #[test]
     fn keyword_prefix_completes() {

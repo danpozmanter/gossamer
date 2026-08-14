@@ -10,7 +10,7 @@ fn main() {
     let words: Vec<String> = Vec::from(["alpha", "beta", "gamma"])
 
     // Type-guarded Vec method on a chained temporary.
-    println!("{}", words.rev().first().unwrap())
+    println!("{}", words.iter().rev().collect().first().unwrap())
 
     // first / last unwrap on a [String] literal.
     println!("{}", words.first().unwrap())
@@ -32,7 +32,7 @@ fn main() {
     for part in "a-b-c".splitn(2, "-") {
         println!("p={}", part)
     }
-    for w in words.rev() {
+    for w in words.iter().rev().collect() {
         println!("r={}", w)
     }
     for w in "x y".split(" ").to_vec() {
@@ -41,8 +41,8 @@ fn main() {
 
     // Numeric element type is preserved (not forced to String).
     let nums: Vec<i64> = Vec::from([10, 20, 30])
-    println!("{}", nums.rev().first().unwrap())
-    for n in nums.rev() {
+    println!("{}", nums.iter().rev().collect().first().unwrap())
+    for n in nums.iter().rev().collect() {
         println!("n={}", n)
     }
 

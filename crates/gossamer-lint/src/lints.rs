@@ -35,7 +35,6 @@ pub(crate) fn run_lint(id: &str, sf: &SourceFile, src: &str) -> Vec<Finding> {
         "double_negation" => lint_double_negation(sf),
         "self_assignment" => lint_self_assignment(sf),
         "todo_macro" => lint_todo_macro(sf),
-        "free_form_combinator" => lint_free_form_combinator(sf, src),
         "i64_only_container_family" => lint_i64_only_container_family(sf),
         "bool_literal_in_condition" => lint_bool_literal_in_condition(sf),
         "let_and_return" => lint_let_and_return(sf),
@@ -838,28 +837,6 @@ fn path_eq(a: &Expr, b: &Expr) -> bool {
         }
         _ => false,
     }
-}
-
-/// A data-last `iter::` call written out in full where the method form
-/// says the same thing.
-///
-/// One operation with two spellings is one more than a reader, or a
-/// model, should have to choose between. The free form keeps its place
-/// as a `|>` pipeline target, which this does not touch - the migration
-/// that shares this rule refuses a piped call too.
-fn lint_free_form_combinator(sf: &SourceFile, src: &str) -> Vec<Finding> {
-    let mut fixes = Vec::new();
-    crate::migrate::method_form_combinator_fixes(sf, src, &mut fixes);
-    fixes
-        .into_iter()
-        .map(|fix| {
-            (
-                fix.span,
-                "this combinator has a canonical method form".to_string(),
-                Some(format!("write it as `{}`", fix.replacement)),
-            )
-        })
-        .collect()
 }
 
 /// The i64-only re-bind container modules, which duplicate a general

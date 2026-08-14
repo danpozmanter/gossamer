@@ -924,7 +924,7 @@ pub(super) fn lower_intrinsic_call_collections(
                 .locals
                 .get(destination.local.0 as usize)
                 .and_then(|decl| match tcx.kind_of(decl.ty) {
-                    TyKind::HashMap { key, value } => {
+                    TyKind::HashMap { key, value, .. } => {
                         let kind = |ty| match tcx.kind_of(ty) {
                             TyKind::Int(_) => Some(0),
                             TyKind::String => Some(1),
@@ -1087,7 +1087,7 @@ pub(super) fn lower_intrinsic_call_collections(
                 .locals
                 .get(destination.local.0 as usize)
                 .and_then(|decl| match tcx.kind_of(decl.ty) {
-                    TyKind::HashMap { key, value } => {
+                    TyKind::HashMap { key, value, .. } => {
                         let kind = |ty| match tcx.kind_of(ty) {
                             TyKind::Int(_) => Some(0),
                             TyKind::String => Some(1),

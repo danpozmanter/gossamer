@@ -2603,17 +2603,17 @@ fn repl_iter_receiver_methods_pipe_dotdot_and_range_index_work() {
     let out = run_repl(
         "use std::iter\n\
          let a: Vec<i64> = Vec::from([1, 2, 3, 4, 5])\n\
-         a.skip(2)\n\
-         a.enumerate()\n\
-         a.zip(0..).collect()\n\
+         a.iter().skip(2).collect()\n\
+         a.iter().enumerate().collect()\n\
+         a.iter().zip(0..).collect()\n\
          a |> iter::zip(..) |> $.collect()\n\
          a[..2]\n\
-         Vec::from([1, 1, 2, 2]).dedup()\n\
-         a.windows(2)\n\
-         a.chunks(2)\n\
-         a.pairwise()\n\
-         Vec::from([Vec::from([1, 2]), Vec::from([3])]).flatten()\n\
-         a.rev()\n",
+         Vec::from([1, 1, 2, 2]).iter().dedup()\n\
+         a.iter().windows(2)\n\
+         a.iter().chunks(2)\n\
+         a.iter().pairwise()\n\
+         Vec::from([Vec::from([1, 2]), Vec::from([3])]).iter().flatten()\n\
+         a.iter().rev().collect()\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
@@ -3423,7 +3423,7 @@ fn repl_preserves_vec_bindings_across_all_supported_mutating_loops() {
         "let mut by_ref = Vec::from([1, 2])\n\
          for value in &mut by_ref { *value += 1 }\n\
          let mut by_enumerate = Vec::from([1, 2])\n\
-         for (i, _) in by_enumerate.enumerate() { by_enumerate[i] += 1 }\n\
+         for (i, _) in by_enumerate.iter().enumerate() { by_enumerate[i] += 1 }\n\
          let mut by_range = Vec::from([1, 2])\n\
          for i in 0..by_range.len() { by_range[i] += 1 }\n\
          let mut by_array = Vec::from([1, 2])\n\

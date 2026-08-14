@@ -2677,7 +2677,8 @@ dispatch-table additions.</p>
 <p><code>Vec&lt;T&gt;</code> is the only owned growable sequence. <code>[T; N]</code>, <code>&amp;[T]</code>, and <code>&amp;mut [T]</code>
 share only the non-resizing methods listed below. Mutable arrays and slices may
 reorder or replace existing elements, but cannot change their length or
-capacity. Iterator combinators are used through <code>.iter()</code> on arrays and slices.
+capacity. A traversal starts at an iterator, so every collection reaches
+<code>map</code> / <code>filter</code> / <code>fold</code> and the rest through <code>.iter()</code>.
 The literal spelling of each container is in
 <a href="../collection_literals/">Collection literals</a>.</p>
 <table>
@@ -2698,7 +2699,7 @@ The literal spelling of each container is in
 </tr>
 <tr>
 <td><code>Vec&lt;T&gt;</code>, <code>&amp;Vec&lt;T&gt;</code>, <code>&amp;mut Vec&lt;T&gt;</code></td>
-<td>Shared methods plus eager combinators, resizing, and capacity operations</td>
+<td>Shared methods plus resizing and capacity operations</td>
 </tr>
 </tbody>
 </table>
@@ -2768,68 +2769,68 @@ The literal spelling of each container is in
 </tr>
 <tr>
 <td><code>v.iter()</code></td>
-<td><code>Iter&lt;T&gt;</code></td>
-<td>Lazy iterator.</td>
+<td><code>Iterator&lt;T&gt;</code></td>
+<td>Starts a traversal; the adapters below hang off it.</td>
 </tr>
 <tr>
-<td><code>v.filter(pred)</code></td>
-<td><code>Vec&lt;T&gt;</code></td>
+<td><code>v.iter().filter(pred)</code></td>
+<td><code>Iterator&lt;T&gt;</code></td>
 <td>Elements where <code>pred</code> holds.</td>
 </tr>
 <tr>
-<td><code>v.map(f)</code></td>
-<td><code>Vec&lt;U&gt;</code></td>
+<td><code>v.iter().map(f)</code></td>
+<td><code>Iterator&lt;U&gt;</code></td>
 <td>Transform every element.</td>
 </tr>
 <tr>
-<td><code>v.sum()</code></td>
+<td><code>v.iter().sum()</code></td>
 <td><code>T</code></td>
-<td>Numeric sum; <code>0</code> for empty.</td>
+<td>Sum in the element's own type; <code>0</code> for empty.</td>
 </tr>
 <tr>
-<td><code>v.min()</code> / <code>v.max()</code></td>
+<td><code>v.iter().min()</code> / <code>.max()</code></td>
 <td><code>Option&lt;T&gt;</code></td>
 <td><code>None</code> for empty.</td>
 </tr>
 <tr>
-<td><code>v.count(pred)</code></td>
+<td><code>v.iter().count()</code></td>
 <td><code>i64</code></td>
-<td>Elements where <code>pred</code> holds.</td>
+<td>Elements the pipeline yields.</td>
 </tr>
 <tr>
-<td><code>v.any(pred)</code> / <code>v.all(pred)</code></td>
+<td><code>v.iter().any(pred)</code> / <code>.all(pred)</code></td>
 <td><code>bool</code></td>
 <td>Short-circuiting.</td>
 </tr>
 <tr>
-<td><code>v.find(pred)</code></td>
+<td><code>v.iter().find(pred)</code></td>
 <td><code>Option&lt;T&gt;</code></td>
-<td>First match; <code>v.position(pred)</code> returns its index.</td>
+<td>First match; <code>.position(pred)</code> returns its index.</td>
 </tr>
 <tr>
-<td><code>v.fold(init, f)</code></td>
+<td><code>v.iter().fold(init, f)</code></td>
 <td><code>U</code></td>
 <td>Left fold: <code>f(acc, x)</code> per element.</td>
 </tr>
 <tr>
-<td><code>v.max_by_key(f)</code> / <code>v.min_by_key(f)</code></td>
+<td><code>v.iter().max_by_key(f)</code> / <code>.min_by_key(f)</code></td>
 <td><code>Option&lt;T&gt;</code></td>
 <td>Extremum by derived key.</td>
 </tr>
 <tr>
-<td><code>v.take(n)</code></td>
-<td><code>Vec&lt;T&gt;</code></td>
+<td><code>v.iter().take(n)</code></td>
+<td><code>Iterator&lt;T&gt;</code></td>
 <td>First <code>n</code> elements (fewer if short).</td>
 </tr>
 <tr>
-<td><code>v.step_by(n)</code></td>
-<td><code>Vec&lt;T&gt;</code></td>
+<td><code>v.iter().step_by(n)</code></td>
+<td><code>Iterator&lt;T&gt;</code></td>
 <td>Every <code>n</code>-th element, starting at index 0.</td>
 </tr>
 <tr>
 <td><code>v.join(sep)</code></td>
 <td><code>String</code></td>
-<td>Scalar / <code>String</code> elements joined with <code>sep</code>.</td>
+<td>Scalar / <code>String</code> elements joined with <code>sep</code>; no traversal.</td>
 </tr>
 <tr>
 <td><code>v.first()</code> / <code>v.last()</code></td>
@@ -2842,8 +2843,8 @@ The literal spelling of each container is in
 <td>Bounds-checked mutation helpers.</td>
 </tr>
 <tr>
-<td><code>v.rev()</code></td>
-<td><code>Vec&lt;T&gt;</code></td>
+<td><code>v.iter().rev()</code></td>
+<td><code>Iterator&lt;T&gt;</code></td>
 <td>Non-mutating; <code>v.reverse()</code> is in-place.</td>
 </tr>
 <tr>
@@ -2925,7 +2926,7 @@ The literal spelling of each container is in
 </tr>
 <tr>
 <td><code>m.iter()</code></td>
-<td><code>Vec&lt;(K, V)&gt;</code></td>
+<td><code>Iterator&lt;(K, V)&gt;</code></td>
 <td>Pairs in key order. A struct, tuple, or array key is rebuilt from the map's own key layout, so a bound key sees the value that was inserted.</td>
 </tr>
 <tr>
@@ -2946,8 +2947,9 @@ The literal spelling of each container is in
 </tbody>
 </table>
 <h2 id="btreemap">BTreeMap<a class="headerlink" href="#btreemap" title="Permanent link">&para;</a></h2>
-<p>BTreeMap uses the same typed map runtime as Map, with key-sorted user-facing
-iteration.</p>
+<p><code>BTreeMap</code> and <code>Map</code> are distinct types over one representation: a
+constructor answers its own, and neither converts to the other. BTreeMap
+iterates in key order.</p>
 <table>
 <thead>
 <tr>
@@ -3004,7 +3006,7 @@ iteration.</p>
 </tr>
 <tr>
 <td><code>m.iter()</code></td>
-<td><code>Vec&lt;(K, V)&gt;</code></td>
+<td><code>Iterator&lt;(K, V)&gt;</code></td>
 <td>Yields pairs in ascending key order, for every key and value pairing.</td>
 </tr>
 <tr>
@@ -3048,6 +3050,11 @@ iteration.</p>
 <td><code>s.clear()</code></td>
 <td><code>()</code></td>
 <td>Removes all values.</td>
+</tr>
+<tr>
+<td><code>s.iter()</code></td>
+<td><code>Iterator&lt;T&gt;</code></td>
+<td>Starts a traversal over the values.</td>
 </tr>
 <tr>
 <td><code>s.to_vec()</code></td>

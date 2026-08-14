@@ -32,6 +32,16 @@ fn terminals(n: i64) -> String {
     format!("{} {} {}", (0..n).sum(), (0..n).count(), (0..n).any(|x| x > n - 2))
 }
 
+// Reversing a bounded range is position arithmetic, so only the values a
+// downstream `take` asks for are produced.
+fn reversed(n: i64) -> String {
+    (0..n).rev().take(3).collect().join(",")
+}
+
+fn reversed_inclusive(n: i64) -> String {
+    (0..=n).rev().collect().join(",")
+}
+
 fn materialised(n: i64) -> String {
     let v = (0..n).map(|x| x + 1).collect()
     format!("{} {}", v.len(), v.join("-"))
@@ -61,6 +71,16 @@ fn main() {
 
     for _ in 0..200 {
         last = terminals(9)
+    }
+    println!("{}", last)
+
+    for _ in 0..200 {
+        last = reversed(1000000)
+    }
+    println!("{}", last)
+
+    for _ in 0..200 {
+        last = reversed_inclusive(4)
     }
     println!("{}", last)
 

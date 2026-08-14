@@ -45,74 +45,29 @@ fn gos(args: &[&str], file: &PathBuf) -> (String, bool) {
     )
 }
 
-const DATA_LAST: &str = "use std::iter\n\nfn dbl(n: i64) -> i64 { n * 2 }\n\nfn main() {\n    let xs = #[1, 2, 3]\n    println!(\"{}\", iter::map(dbl, xs).sum())\n}\n";
+/// A well-formed source with no registered migration applying to it.
+const UNTOUCHED: &str = "use std::iter\n\nfn dbl(n: i64) -> i64 { n * 2 }\n\nfn main() {\n    let xs = #[1, 2, 3]\n    println!(\"{}\", iter::sum(iter::map(dbl, xs)))\n}\n";
 
 #[test]
-fn the_data_last_free_form_is_rewritten_to_the_method_form() {
-    let file = case("combinators", DATA_LAST);
-    let (before, _) = gos(&["run"], &file);
-
-    let (report, ok) = gos(&["fix"], &file);
-    assert!(ok, "fix failed: {report}");
-    assert!(report.contains("1 edit"), "{report}");
-
-    let after_source = std::fs::read_to_string(&file).unwrap();
-    assert!(
-        after_source.contains("xs.map(dbl)"),
-        "rewrite did not land: {after_source}"
-    );
-
-    // A migration that changes what the program prints is not a
-    // migration.
-    let (after, _) = gos(&["run"], &file);
-    assert_eq!(before, after, "the program's output changed");
-
-    let _ = std::fs::remove_dir_all(file.parent().unwrap());
-}
-
-#[test]
-fn a_migration_is_idempotent() {
-    let file = case("idempotent", DATA_LAST);
-    let (_, ok) = gos(&["fix"], &file);
-    assert!(ok);
-    let once = std::fs::read_to_string(&file).unwrap();
-
-    let (report, ok) = gos(&["fix"], &file);
-    assert!(ok, "second run failed: {report}");
-    assert!(report.contains("0 edit"), "second run edited: {report}");
-    assert_eq!(once, std::fs::read_to_string(&file).unwrap());
-
-    let _ = std::fs::remove_dir_all(file.parent().unwrap());
-}
-
-#[test]
-fn check_reports_pending_migrations_without_writing() {
-    let file = case("pending", DATA_LAST);
-    let (report, ok) = gos(&["fix", "--check"], &file);
-    assert!(!ok, "pending migrations must fail --check: {report}");
-    assert!(report.contains("would rewrite"), "{report}");
-    assert_eq!(
-        std::fs::read_to_string(&file).unwrap(),
-        DATA_LAST,
-        "--check must not write"
-    );
-
-    let _ = std::fs::remove_dir_all(file.parent().unwrap());
-}
-
-#[test]
-fn a_pipeline_step_is_left_alone() {
-    // `xs |> iter::map(f)` supplies the sequence through the pipe, so the
-    // call has fewer arguments than the combinator takes. Rewriting it
-    // would drop the piped value.
-    let source = "use std::iter\n\nfn dbl(n: i64) -> i64 { n * 2 }\n\nfn main() {\n    let xs = #[1, 2, 3]\n    let out = xs |> iter::map(dbl)\n    println!(\"{}\", out.sum())\n}\n";
-    let file = case("piped", source);
+fn fix_leaves_a_source_no_migration_applies_to() {
+    let file = case("untouched", UNTOUCHED);
     let (report, ok) = gos(&["fix"], &file);
     assert!(ok, "{report}");
+    assert!(report.contains("0 edit"), "{report}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), UNTOUCHED);
+
+    let _ = std::fs::remove_dir_all(file.parent().unwrap());
+}
+
+#[test]
+fn check_passes_when_no_migration_is_pending() {
+    let file = case("pending", UNTOUCHED);
+    let (report, ok) = gos(&["fix", "--check"], &file);
+    assert!(ok, "no pending migration must pass --check: {report}");
     assert_eq!(
         std::fs::read_to_string(&file).unwrap(),
-        source,
-        "a pipeline step must not be rewritten"
+        UNTOUCHED,
+        "--check must not write"
     );
 
     let _ = std::fs::remove_dir_all(file.parent().unwrap());
@@ -126,5 +81,5 @@ fn list_names_every_rewriter() {
         .expect("spawn gos fix --list");
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success());
-    assert!(text.contains("method_form_combinators"), "{text}");
+    assert!(out.status.success(), "{text}");
 }

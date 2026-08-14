@@ -1605,7 +1605,7 @@ fn jit_local_ty_needs_bytecode_inner(
         // map whose value is a struct or carries heap children needs the
         // per-entry ownership the VM applies when it hands a value back, which
         // the native entry points do not reproduce.
-        TyKind::HashMap { key, value } => {
+        TyKind::HashMap { key, value, .. } => {
             !jit_map_component_ok(tcx, *key) || !jit_map_component_ok(tcx, *value)
         }
         // Options, other tagged standard-library carriers, and opaque handles
@@ -3232,6 +3232,7 @@ mod promotion_report_tests {
         let map_ty = tcx.intern(TyKind::HashMap {
             key: i64_ty,
             value: i64_ty,
+            ordered: false,
         });
         let bodies = vec![
             body("z_hot", i64_ty, true),
@@ -3318,6 +3319,7 @@ mod promotion_report_tests {
         let map_ty = tcx.intern(TyKind::HashMap {
             key: i64_ty,
             value: i64_ty,
+            ordered: false,
         });
         let mut caller = body("caller", i64_ty, true);
         let span = caller.span;

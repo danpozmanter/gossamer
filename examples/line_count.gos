@@ -9,7 +9,7 @@
  */
 
 fn count_newlines(text: String) -> i64 {
-    text.as_bytes().count(|b| b == b'\n')
+    text.as_bytes().iter().count(|b| b == b'\n')
 }
 
 let sample = "alpha\nbeta\ngamma\ndelta\n"

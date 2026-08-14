@@ -24,7 +24,7 @@ fn keep_i64(xs: Vec<i64>, pred: Fn(i64) -> bool) -> Vec<i64> {
 fn main() {
     let xs = Vec::from([1, 2, 3, 4])
     println!("{}", apply_i64(inc, 41))
-    println!("{:?}", xs.map(double))
+    println!("{:?}", xs.iter().map(double).collect())
     println!("{:?}", keep_i64(xs, is_even))
-    println!("{}", xs.fold(0, add))
+    println!("{}", xs.iter().fold(0, add))
 }

@@ -5399,8 +5399,10 @@ mod tests {
             .iter()
             .map(|entry| entry.name.as_str())
             .collect::<std::collections::BTreeSet<_>>();
-        for unavailable in ["for_each", "position", "max_by_key"] {
-            assert!(!names.contains(unavailable));
+        // An iterator answers the whole sequence surface, including the
+        // terminals and the eager-only operations, which drain it first.
+        for available in ["for_each", "position", "max_by_key"] {
+            assert!(names.contains(available), "{available} is missing");
         }
         let map = entries.iter().find(|entry| entry.name == "map").unwrap();
         assert!(map.signature.contains("self: Iterator<T>"));

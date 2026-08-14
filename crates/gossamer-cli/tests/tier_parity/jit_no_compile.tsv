@@ -166,6 +166,7 @@ feature-testing-examples/inferred_map_dispatch.gos	bytecode-only local
 feature-testing-examples/inline_index_remap.gos	admission gate
 feature-testing-examples/instant_methods.gos	no hot body
 feature-testing-examples/intcode_day2_mut_slice_native.gos	&mut aggregate param
+feature-testing-examples/iter_extra.gos	bytecode-only local
 feature-testing-examples/iter_free_function_contracts.gos	callable local
 feature-testing-examples/iterator_lazy_model.gos	bytecode-only local
 feature-testing-examples/iterator_loop_sources.gos	bytecode-only local
@@ -323,6 +324,7 @@ feature-testing-examples/structural_comparison.gos	callable local
 feature-testing-examples/sync_extra.gos	callable local
 feature-testing-examples/sync_map_demo.gos	no hot body
 feature-testing-examples/sync_rwlock.gos	no hot body
+feature-testing-examples/temporary_method_dispatch.gos	bytecode-only local
 feature-testing-examples/temporary_wrap.gos	no hot body
 feature-testing-examples/time_civil.gos	no hot body
 feature-testing-examples/time_param_dispatch.gos	no hot body

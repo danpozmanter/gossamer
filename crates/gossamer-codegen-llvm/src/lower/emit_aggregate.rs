@@ -530,6 +530,72 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
             }
+            ConcatKind::MapTagged(tag) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_map_format_tagged");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_map_format_tagged(ptr {value}, i64 {tag}, ptr null, i64 0)"
+                )
+                .unwrap();
+            }
+            ConcatKind::MapAdt(ref fmt) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_map_format_tagged");
+                let adt = i64::from(gossamer_abi::DEBUG_PAYLOAD_ADT);
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_map_format_tagged(ptr {value}, i64 {adt}, ptr @\"{fmt}\", i64 0)"
+                )
+                .unwrap();
+            }
+            ConcatKind::MapTuple(ref tags, arity) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_map_format_tagged");
+                let tag_str: String = tags.iter().map(|&b| b as char).collect();
+                let (tags_global, _) = self.strings.borrow_mut().intern(&tag_str);
+                let nested = i64::from(gossamer_abi::TUPLE_TAG_NESTED);
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_map_format_tagged(ptr {value}, i64 {nested}, ptr {tags_global}, i64 {arity})"
+                )
+                .unwrap();
+            }
+            ConcatKind::VecDesc(ref desc) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_desc");
+                let stream: String = desc.iter().map(|&b| b as char).collect();
+                let (global, _) = self.strings.borrow_mut().intern(&stream);
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_vec_format_desc(ptr {value}, ptr {global}, i64 0)"
+                )
+                .unwrap();
+            }
+            ConcatKind::MapDesc(ref desc, val_at) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_map_format_desc");
+                let stream: String = desc.iter().map(|&b| b as char).collect();
+                let (global, _) = self.strings.borrow_mut().intern(&stream);
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_map_format_desc(ptr {value}, ptr {global}, i64 0, i64 {val_at})"
+                )
+                .unwrap();
+            }
+            ConcatKind::VecMap => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_map");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_vec_format_map(ptr {value})"
+                )
+                .unwrap();
+            }
+            ConcatKind::VecTuple(ref tags, arity) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_tuple");
+                let tag_str: String = tags.iter().map(|&b| b as char).collect();
+                let (tags_global, _) = self.strings.borrow_mut().intern(&tag_str);
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_vec_format_tuple(ptr {value}, i64 {arity}, ptr {tags_global})"
+                )
+                .unwrap();
+            }
             ConcatKind::VecVecI64 => {
                 declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_vec_i64");
                 writeln!(
@@ -674,6 +740,17 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
             }
+            ConcatKind::SetDesc(ref desc, is_btree) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_set_format_desc");
+                let ordered = i32::from(is_btree);
+                let stream: String = desc.iter().map(|&b| b as char).collect();
+                let (global, _) = self.strings.borrow_mut().intern(&stream);
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_set_format_desc(ptr {value}, i32 {ordered}, ptr {global})"
+                )
+                .unwrap();
+            }
             ConcatKind::SetString(is_btree) => {
                 declare_rt(&mut self.runtime_refs, "gos_rt_set_format_string");
                 let ordered = i32::from(is_btree);
@@ -700,11 +777,12 @@ impl<'a> Lowerer<'a> {
                         )
                         .unwrap();
                     }
-                    DebugPayload::Fmt(fmt) => {
+                    DebugPayload::Fmt(_) | DebugPayload::Tuple(_) | DebugPayload::Desc(_) => {
                         declare_rt(&mut self.runtime_refs, "gos_rt_debug_option_fmt");
+                        let operand = self.debug_fmt_operand(payload);
                         writeln!(
                             self.out,
-                            "  {dest} = call ptr @gos_rt_debug_option_fmt({opt_arg}, i64 {tag}, ptr @\"{fmt}\")"
+                            "  {dest} = call ptr @gos_rt_debug_option_fmt({opt_arg}, i64 {tag}, ptr {operand})"
                         )
                         .unwrap();
                     }
@@ -724,8 +802,8 @@ impl<'a> Lowerer<'a> {
                     }
                     _ => {
                         declare_rt(&mut self.runtime_refs, "gos_rt_debug_result_fmt");
-                        let ok_fmt = Self::debug_fmt_operand(ok);
-                        let err_fmt = Self::debug_fmt_operand(err);
+                        let ok_fmt = self.debug_fmt_operand(ok);
+                        let err_fmt = self.debug_fmt_operand(err);
                         writeln!(
                             self.out,
                             "  {dest} = call ptr @gos_rt_debug_result_fmt({res_arg}, i64 {ok_tag}, i64 {err_tag}, ptr {ok_fmt}, ptr {err_fmt})"
@@ -741,10 +819,15 @@ impl<'a> Lowerer<'a> {
 
     /// The `ptr` operand naming a payload's derived `fmt`, or `null` for a
     /// payload the runtime renders from its tag alone.
-    fn debug_fmt_operand(payload: &DebugPayload) -> String {
+    fn debug_fmt_operand(&mut self, payload: &DebugPayload) -> String {
         match payload {
             DebugPayload::Tag(_) => "null".to_string(),
             DebugPayload::Fmt(sym) => format!("@\"{sym}\""),
+            DebugPayload::Tuple(tags) | DebugPayload::Desc(tags) => {
+                let stream: String = tags.iter().map(|&b| b as char).collect();
+                let (global, _) = self.strings.borrow_mut().intern(&stream);
+                global
+            }
         }
     }
 
@@ -760,7 +843,10 @@ impl<'a> Lowerer<'a> {
     ) -> Result<String, BuildError> {
         match kind {
             ConcatKind::Tuple => self.emit_tuple_format(arg, value),
-            ConcatKind::SetI64(_) | ConcatKind::SetString(_) | ConcatKind::HandleFormat(_) => {
+            ConcatKind::SetI64(_)
+            | ConcatKind::SetString(_)
+            | ConcatKind::SetDesc(..)
+            | ConcatKind::HandleFormat(_) => {
                 let ptr = self.coerce_llvm_value(value, &self.operand_llvm_ty(arg), "ptr");
                 Ok(self.emit_aggregate_format(kind, &ptr))
             }

@@ -12,18 +12,18 @@ fn main() {
         println!("{v:.2}")
     }
 
-    println!("sum={:.3}", xs.sum())
-    println!("scaled={:.4}", xs.map(|x| x * 0.5).sum())
-    println!("kept={:.4}", xs.filter(|x| x > 2.0).sum())
+    println!("sum={:.3}", xs.iter().sum())
+    println!("scaled={:.4}", xs.iter().map(|x| x * 0.5).sum())
+    println!("kept={:.4}", xs.iter().filter(|x| x > 2.0).sum())
 
     let big = xs |> iter::filter(|x| x > 2.0) |> iter::count
     println!("big={big}")
 
-    match xs.max() {
+    match xs.iter().max() {
         Some(m) => println!("max={m:.2}"),
         None => println!("max=none"),
     }
-    match xs.min() {
+    match xs.iter().min() {
         Some(m) => println!("min={m:.2}"),
         None => println!("min=none"),
     }
