@@ -16266,6 +16266,25 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-time-sleep-ctx",
+      "name": "std::time::sleep_ctx",
+      "kind": "function",
+      "signature": "fn sleep_ctx(ctx: &context::Context, ms: i64) -> bool",
+      "description": "Sleeps unless the context fires first; false when it cancelled the wait.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdtime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-time-unix-ms",
       "name": "std::time::unix_ms",
       "kind": "function",

@@ -33,6 +33,10 @@
 - Wake a goroutine parked on a context deadline instead of reporting a
   deadlock. A program blocked on `ctx.done_chan().recv()` has a timer left
   to act, so it is waiting rather than stuck.
+- Decide a deadlock report from counts that all describe one state. A waiter
+  drops its count a step before it retires the readiness that woke it, and
+  the two were read either side of that step, so a busy pipeline of
+  goroutines could stop with "all goroutines are asleep - deadlock!".
 - Write through a by-reference parameter that carries an aggregate. A call
   site copied the argument defensively, which is right for a by-value
   parameter and wrong for `&mut`, so a callee's writes to an array, struct,

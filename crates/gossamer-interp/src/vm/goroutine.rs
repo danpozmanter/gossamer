@@ -179,6 +179,7 @@ impl GoroutinePool {
                             // shutdown after all user output is printed.
                             let _inner = p.inner.lock();
                             let prev = p.outstanding.fetch_sub(1, Ordering::AcqRel);
+                            note_progress();
                             if prev == 1 {
                                 // Last in-flight task settled -
                                 // wake any drain() waiter.
@@ -217,6 +218,7 @@ impl GoroutinePool {
         // `drain()`, so a drain cannot observe an empty program while a
         // concurrent goroutine spawn is about to enqueue work.
         pool.outstanding.fetch_add(1, Ordering::AcqRel);
+        note_progress();
         inner.queue.push_back(task);
         drop(inner);
         pool.cv.notify_one();
@@ -395,6 +397,36 @@ pub fn adjust_pending_handoffs(ready: bool) {
     } else {
         PENDING_HANDOFFS.fetch_sub(1, Ordering::AcqRel);
     }
+    note_progress();
+}
+
+/// Advances every time one of the deadlock inputs changes: a waiter leaves
+/// its wait, a channel's readiness moves, or the outstanding set changes.
+static PROGRESS_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// Records that a deadlock input has moved.
+fn note_progress() {
+    PROGRESS_EPOCH.fetch_add(1, Ordering::AcqRel);
+}
+
+/// Whether the sampled counts describe a state nothing left in the program
+/// can move: every participant inside a channel wait, no channel holding a
+/// handoff, and no channel able to complete one.
+///
+/// `epoch` is the [`PROGRESS_EPOCH`] reading taken before the counts. A
+/// different reading here means a waiter left, a readiness moved, or the
+/// outstanding set changed while the counts were being read, so they describe
+/// separate states and the caller waits rather than reporting.
+fn reads_as_terminal(
+    waiting: u64,
+    participants: u64,
+    epoch: u64,
+    can_progress: impl FnOnce() -> bool,
+) -> bool {
+    waiting >= participants
+        && PENDING_HANDOFFS.load(Ordering::Acquire) == 0
+        && !can_progress()
+        && PROGRESS_EPOCH.load(Ordering::Acquire) == epoch
 }
 
 /// Marks its thread as suspended in a channel wait for as long as it lives.
@@ -424,6 +456,12 @@ impl ChannelWait {
     /// among that channel's waiters, so a handoff this caller completes is
     /// visible to the readiness count.
     pub(crate) fn enter(can_progress: impl FnOnce() -> bool) -> Option<Self> {
+        // Sampled before the counts: a waiter drops its count one step ahead
+        // of retiring the readiness that woke it, so counts read across such a
+        // step belong to two different states. `reads_as_terminal` compares
+        // this reading again at the end and stands only on a window nothing
+        // moved in.
+        let epoch = PROGRESS_EPOCH.load(Ordering::Acquire);
         let waiting = CHANNEL_WAITERS.fetch_add(1, Ordering::AcqRel) + 1;
         // The program's participants are every outstanding goroutine plus
         // `main` while it is still running. All of them waiting on channels
@@ -431,9 +469,7 @@ impl ChannelWait {
         // value, so waiting longer cannot change the answer.
         let main_returned = MAIN_RETURNED.load(Ordering::Acquire);
         let participants = outstanding_goroutines() + u64::from(!main_returned);
-        let stuck = waiting as u64 >= participants
-            && PENDING_HANDOFFS.load(Ordering::Acquire) == 0
-            && !can_progress();
+        let stuck = reads_as_terminal(waiting as u64, participants, epoch, can_progress);
         // Past `main`, the remaining goroutines are abandoned rather than
         // reported: a compiled binary exits the same way, with the same
         // status and the same output.
@@ -480,6 +516,7 @@ impl Drop for ChannelWait {
             STUCK_WAITERS.fetch_sub(1, Ordering::AcqRel);
         }
         CHANNEL_WAITERS.fetch_sub(1, Ordering::AcqRel);
+        note_progress();
     }
 }
 
@@ -489,6 +526,33 @@ mod tests {
     use std::sync::atomic::AtomicBool;
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
+
+    /// The counts a report rests on are read one at a time, so a program that
+    /// moved between two of them was never in the state they add up to.
+    #[test]
+    fn counts_read_across_a_change_do_not_read_as_terminal() {
+        let stale = PROGRESS_EPOCH.load(Ordering::Acquire);
+        note_progress();
+        assert!(
+            !reads_as_terminal(u64::MAX, 0, stale, || false),
+            "a wait whose counts span a change is not a program with nothing left to run"
+        );
+    }
+
+    /// The reading is what makes a quiet window quiet: with it unchanged, the
+    /// counts are one state and a program with every participant parked and
+    /// nothing to hand over is reported.
+    #[test]
+    fn quiet_counts_read_as_terminal() {
+        let epoch = PROGRESS_EPOCH.load(Ordering::Acquire);
+        let quiet_handoffs = PENDING_HANDOFFS.load(Ordering::Acquire) == 0;
+        let terminal = reads_as_terminal(u64::MAX, 0, epoch, || false);
+        assert_eq!(
+            terminal,
+            quiet_handoffs && PROGRESS_EPOCH.load(Ordering::Acquire) == epoch,
+            "a window nothing moved in decides on its counts alone"
+        );
+    }
 
     /// A task that blocks holds its worker, so a pool that could not grow
     /// would never start the task whose completion releases it.
