@@ -1026,6 +1026,11 @@ impl Lowerer<'_> {
                         None => {}
                     }
                 }
+                // A map or set traverses eagerly, and the compiled tiers reach
+                // that walk through the iterator its `iter()` answers.
+                if let Some(kind) = self.desugar_keyed_traversal(expr, receiver, name, args) {
+                    return kind;
+                }
                 HirExprKind::MethodCall {
                     receiver: Box::new(self.lower_expr(receiver)),
                     name: name.clone(),
@@ -1285,7 +1290,8 @@ impl Lowerer<'_> {
             Some(gossamer_types::TyKind::String)
         ) {
             let char_ty = self.tcx.char_ty();
-            let collection_ty = self.tcx.intern(gossamer_types::TyKind::Vec(char_ty));
+            // `chars()` answers a cursor, and the loop drives it.
+            let collection_ty = self.tcx.intern(gossamer_types::TyKind::Iterator(char_ty));
             iter_expr = HirExpr {
                 id: self.fresh(),
                 span: iter_expr.span,
@@ -2417,6 +2423,75 @@ impl Lowerer<'_> {
             stmts,
             tail: Some(Box::new(tail)),
             is_comptime: false,
+        })
+    }
+
+    /// Rewrites a traversal on a map or set into the walk over the iterator
+    /// its `iter()` answers, materialising with `collect()` when the traversal
+    /// yields a sequence. Returns `None` for every other receiver.
+    fn desugar_keyed_traversal(
+        &mut self,
+        expr: &AstExpr,
+        receiver: &AstExpr,
+        name: &Ident,
+        args: &[AstExpr],
+    ) -> Option<HirExprKind> {
+        use gossamer_types::TyKind;
+
+        if !gossamer_types::is_collection_traversal_method(name.name.as_str())
+            || name.name == "iter"
+        {
+            return None;
+        }
+        let recv_ty = self.ty_of(receiver.id);
+        // The element a walk sees: a map yields its key/value pair, a set its
+        // value.
+        let elem = match self.tcx.kind(recv_ty) {
+            Some(TyKind::HashMap { key, value, .. }) => {
+                let (key, value) = (*key, *value);
+                self.tcx.intern(TyKind::Tuple(vec![key, value]))
+            }
+            Some(TyKind::Adt { def, substs })
+                if def.local == u32::MAX - 7 || def.local == u32::MAX - 18 =>
+            {
+                *substs.types().first()?
+            }
+            _ => return None,
+        };
+        let span = expr.span;
+        let out_ty = self.ty_of(expr.id);
+        let lowered_receiver = self.lower_expr(receiver);
+        let cursor = HirExpr {
+            id: self.fresh(),
+            span,
+            ty: self.tcx.intern(TyKind::Iterator(elem)),
+            kind: HirExprKind::MethodCall {
+                receiver: Box::new(lowered_receiver),
+                name: Ident::new("iter"),
+                args: Vec::new(),
+            },
+        };
+        let walked = HirExprKind::MethodCall {
+            receiver: Box::new(cursor),
+            name: name.clone(),
+            args: args.iter().map(|a| self.lower_expr(a)).collect(),
+        };
+        // An adapter answers another iterator, so a sequence result is
+        // materialised the way the eager spelling promises.
+        let out_elem = match self.tcx.kind(out_ty) {
+            Some(TyKind::Vec(out_elem)) => *out_elem,
+            _ => return Some(walked),
+        };
+        let inner = HirExpr {
+            id: self.fresh(),
+            span,
+            ty: self.tcx.intern(TyKind::Iterator(out_elem)),
+            kind: walked,
+        };
+        Some(HirExprKind::MethodCall {
+            receiver: Box::new(inner),
+            name: Ident::new("collect"),
+            args: Vec::new(),
         })
     }
 

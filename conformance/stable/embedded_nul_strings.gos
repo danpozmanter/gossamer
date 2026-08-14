@@ -17,7 +17,7 @@ fn main() {
     }
     println!("nuls={nuls} sum={sum}")
 
-    println!("chars={}", s.chars().iter().count())
+    println!("chars={}", s.chars().count())
     println!("eq_self={}", s == "ab\0cd")
     println!("eq_prefix={}", s == "ab")
     println!("contains={}", s.contains("\0c"))

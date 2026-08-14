@@ -569,14 +569,6 @@ pub enum TypeError {
         /// What the value is, used to pick the help text.
         class: NotDisplayableClass,
     },
-    /// A traversal method named on a collection rather than on an iterator.
-    #[error("`{found}` is a collection, so it does not answer `{method}`")]
-    TraversalOnCollection {
-        /// Method as written.
-        method: String,
-        /// Rendered receiver type.
-        found: String,
-    },
     /// A lazy iterator state was used after an adapter or terminal consumed it.
     #[error("iterator `{name}` was already consumed by `{operation}`")]
     IteratorStateConsumed {
@@ -844,7 +836,6 @@ impl TypeError {
             Self::StdFnValueUnsupported { .. } => "std-fn-value-unsupported",
             Self::IteratorStateFormatted => "iterator-state-formatted",
             Self::ValueNotDisplayable { .. } => "value-not-displayable",
-            Self::TraversalOnCollection { .. } => "traversal-on-collection",
             Self::IteratorStateConsumed { .. } => "iterator-state-consumed",
             Self::JsonNotSerializable { .. } => "json-not-serializable",
             Self::CallArityMismatch { .. } => "call-arity-mismatch",
@@ -926,7 +917,6 @@ impl TypeError {
             Self::PrivateMethod { .. } => "GT0063",
             Self::PrivateField { .. } => "GT0065",
             Self::IteratorStateConsumed { .. } => "GT0042",
-            Self::TraversalOnCollection { .. } => "GT0068",
             Self::JsonNotSerializable { .. } => "GT0016",
             Self::TraitBoundNotSatisfied { .. } => "GT0017",
             Self::MethodNotOnBound { .. } | Self::OperatorNotOnBound { .. } => "GT0056",
@@ -1467,17 +1457,6 @@ impl TypeDiagnostic {
             }
             TypeError::ValueNotDisplayable { ty, class } => {
                 out = value_not_displayable_diagnostic(out, ty, *class);
-            }
-            TypeError::TraversalOnCollection { method, found } => {
-                out = out
-                    .with_note(format!(
-                        "`{found}` holds values; traversing them is what an iterator does"
-                    ))
-                    .with_help(format!(
-                        "start the traversal with `.iter()`, as in `xs.iter().{method}(..)`, \
-                         and end it with `.collect()` where a collection is wanted back; \
-                         `for x in xs` still iterates a collection directly"
-                    ));
             }
             TypeError::IteratorStateConsumed { name, operation } => {
                 out = out

@@ -462,9 +462,7 @@ pub(crate) fn builtin_strings_to_upper(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_strings_chars(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    Ok(Value::Array(Arc::new(
-        text.chars().map(Value::Char).collect(),
-    )))
+    Ok(crate::stdlib_builtins::iter::char_cursor(text, false))
 }
 
 pub(crate) fn builtin_strings_bytes(args: &[Value]) -> RuntimeResult<Value> {

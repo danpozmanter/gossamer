@@ -350,6 +350,14 @@ pub(crate) fn collect_array(v: &Value) -> Vec<Value> {
         Value::ByteArray(bytes) => bytes.iter().map(|b| Value::Int(i64::from(*b))).collect(),
         Value::InlineByteArray(bytes) => bytes.iter().map(|&b| Value::Int(i64::from(b))).collect(),
         Value::ByteVec(bytes) => bytes.iter().map(|&b| Value::Int(i64::from(b))).collect(),
+        // A map or set holds its values, so a traversal over one sees the
+        // same elements its `iter()` yields, in the same order.
+        Value::Map(_) | Value::IntMap(_) | Value::StrIntMap(_) => {
+            crate::stdlib_builtins::iter::materialized_keyed_elements(v)
+        }
+        _ if crate::stdlib_builtins::set::set_snapshot(v).is_some() => {
+            crate::stdlib_builtins::set::set_snapshot(v).unwrap_or_default()
+        }
         _ => Vec::new(),
     }
 }

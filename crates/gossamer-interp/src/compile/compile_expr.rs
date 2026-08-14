@@ -3115,6 +3115,14 @@ impl<'tcx> FnBuilder<'tcx> {
                 self.tcx.kind(resolved_receiver_ty),
                 Some(TyKind::HashMap { .. })
             );
+        // A traversal on a map or set answers eagerly from that container's own
+        // surface; the bare name would reach the variant or Vec builtin.
+        let traversal_owner = match self.tcx.kind(resolved_receiver_ty) {
+            _ if !gossamer_types::is_collection_traversal_method(name.name.as_str()) => None,
+            Some(TyKind::Adt { def, .. }) if def.local == HASH_SET_DEF_LOCAL => Some("Set"),
+            Some(TyKind::Adt { def, .. }) if def.local == BTREE_SET_DEF_LOCAL => Some("BTreeSet"),
+            _ => None,
+        };
         let qualified_collection_method = match self.tcx.kind(resolved_receiver_ty) {
             Some(TyKind::Adt { def, .. })
                 if matches!(def.local, HASH_SET_DEF_LOCAL | BTREE_SET_DEF_LOCAL)
@@ -3287,10 +3295,13 @@ impl<'tcx> FnBuilder<'tcx> {
                 _ => &name.name,
             }
         } else {
-            qualified_collection_method
-                .as_deref()
-                .or(user_impl_method.as_deref())
-                .unwrap_or(&name.name)
+            match traversal_owner {
+                Some(owner) => format!("{owner}::{}", name.name).leak(),
+                None => qualified_collection_method
+                    .as_deref()
+                    .or(user_impl_method.as_deref())
+                    .unwrap_or(&name.name),
+            }
         };
         let name_idx = self.global_idx(dispatch_name);
         let dst = self.alloc_reg();

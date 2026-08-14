@@ -1966,23 +1966,34 @@ fn reusing_pipe_consumed_lazy_iterator_is_rejected() {
     assert!(has_code(&d, "GT0042"), "{d:?}");
 }
 
-/// A collection holds values; traversing them is what an iterator does. The
-/// traversal surface is reached through `.iter()`, so one operation has one
-/// spelling rather than an eager and a lazy one.
+/// A collection already holds its values, so it traverses them eagerly.
+/// `iter()` is how a caller asks for the lazy walk instead.
 #[test]
-fn a_collection_does_not_answer_the_traversal_surface() {
+fn a_collection_traverses_its_own_values() {
     for source in [
         "fn main() { let xs = #[1, 2, 3]\n let _ = xs.map(|x| x * 2) }\n",
         "fn main() { let xs = #[1, 2, 3]\n let _ = xs.filter(|x| x > 1) }\n",
         "fn main() { let xs = #[1, 2, 3]\n let _ = xs.sum() }\n",
         "fn main() { let xs = #[1, 2, 3]\n let _ = xs.fold(0, |a, x| a + x) }\n",
         "fn main() { let xs = #[1, 2, 3]\n let _ = xs.rev() }\n",
-        "fn main() { let xs = #[1, 2, 3]\n let _ = xs.count() }\n",
         "fn main() { let a: [i64; 3] = [1, 2, 3]\n let _ = a.map(|x| x) }\n",
+        "fn main() { let s = #{1, 2, 3}\n let _ = s.map(|x| x * 2) }\n",
+        "fn main() { let s = #{1, 2, 3}\n let _ = s.filter(|x| x > 1) }\n",
     ] {
         let d = diagnostics_for(source);
-        assert!(has_code(&d, "GT0068"), "{source}: {d:?}");
+        assert!(d.is_empty(), "{source}: {d:?}");
     }
+}
+
+/// A traversal answers eagerly on the collection and lazily through `iter()`,
+/// so the two spellings differ in when the work runs, not in what they mean.
+#[test]
+fn a_traversal_is_eager_on_a_collection_and_lazy_through_iter() {
+    let eager =
+        "fn main() { let xs = #[1, 2, 3]\n let v: Vec<i64> = xs.map(|x| x * 2)\n let _ = v }\n";
+    assert!(diagnostics_for(eager).is_empty());
+    let lazy = "fn main() { let xs = #[1, 2, 3]\n let it: Iterator<i64> = xs.iter().map(|x| x * 2)\n let _ = it }\n";
+    assert!(diagnostics_for(lazy).is_empty());
 }
 
 /// The same operations through `.iter()`, and the collection surface that
@@ -2002,7 +2013,7 @@ fn the_iterator_surface_and_the_collection_surface_both_still_work() {
         "fn main() { let xs = #[1, 2, 3]\n let mut t = 0\n for x in xs { t += x }\n let _ = t }\n",
     ] {
         let d = diagnostics_for(source);
-        assert!(!has_code(&d, "GT0068"), "{source}: {d:?}");
+        assert!(d.is_empty(), "{source}: {d:?}");
     }
 }
 

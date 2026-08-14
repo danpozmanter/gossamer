@@ -107,7 +107,7 @@ Write clear, low-complexity, concise code.
   in m.iter()`, `let (tx, rx) = channel()`.
 - **`for x in xs`** over collections - no `.iter()`, no `*x`.
   Bare `String` iteration yields Unicode `char` values; use `.bytes()`
-  for UTF-8 bytes. An omitted range start begins at zero (`..3` yields
+  for UTF-8 bytes; `s.chars()` is a cursor, so `.collect()` materialises it. An omitted range start begins at zero (`..3` yields
   `0`, `1`, `2`). A range can also be stored and consumed later:
   `let a = 0..3`, then `for i in a { println(i) }`. A `Result` or
   `Option` is NOT iterable (GT0067): a fallible API like
@@ -125,12 +125,13 @@ Write clear, low-complexity, concise code.
 - **`m.inc(k)` / `m.inc(k, by)`** for counters; `m.or_insert(k,
   default)` for get-or-fill (`m.or_insert(k, d).method(args)` writes
   the mutation back into the stored value). `arr.swap(i, j)`.
-- **Traversal starts at an iterator.** A `Range` is already one, so
-  `(1..5).map(|i| i * i).sum()` reads straight through. A collection is
-  not, so ask it for one: `xs.iter().map(f).collect()`. Calling `map`,
-  `filter`, `fold`, `any`, `sum`, `enumerate`, `rev`, or any other
-  traversal directly on a `Vec` / array / slice / `Map` / `Set` is
-  GT0068, and the diagnostic carries the `.iter()` rewrite. Adapters
+- **A collection traverses eagerly; `iter()` makes it lazy.** `xs.map(f)`
+  on a `Vec`, array, slice, or `Set` walks the values it already holds and
+  answers a `Vec`. `xs.iter()` answers an `Iterator`, for when you do not
+  want the whole sequence in memory: `xs.iter().map(f).take(3).collect()`
+  produces three elements' worth of work. A `Range` is already an iterator,
+  so `(1..5).map(|i| i * i).sum()` reads straight through. A `Map` hands
+  over its pairs with `iter()` (lazy) or `to_vec()` (eager). Adapters
   (`map`, `filter`, `take`, `skip`, `step_by`, `enumerate`, `rev`,
   `zip`, `chain`, `flat_map`, ...) answer another iterator and stay
   lazy; terminals (`collect`, `sum`, `count`, `min`/`max`, `fold`,

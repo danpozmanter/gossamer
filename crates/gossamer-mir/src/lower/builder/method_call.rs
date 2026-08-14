@@ -676,6 +676,10 @@ impl<'a> Builder<'a> {
     pub(crate) fn lazy_iter_elem_family(&self, elem: Ty) -> Option<LazyElemFamily> {
         match self.tcx.kind_of(elem) {
             TyKind::Int(gossamer_types::IntTy::I64) => Some(LazyElemFamily::Word),
+            // A `char` occupies a word slot like an `i64`, so the same
+            // element family reads it. A narrower integer is packed at its
+            // own width and is not one.
+            TyKind::Char => Some(LazyElemFamily::Word),
             TyKind::String => Some(LazyElemFamily::Ptr),
             TyKind::Float(gossamer_types::FloatTy::F64) => Some(LazyElemFamily::Float),
             TyKind::Tuple(fields)
@@ -705,9 +709,15 @@ impl<'a> Builder<'a> {
     /// element, which the single-slot borrow cannot address. Such a sequence
     /// stays on the eager surface, where the element is read at its real width.
     pub(crate) fn lazy_iter_borrowable_elem(&self, elem: Ty) -> bool {
+        // A borrowed source reads each element from a word-wide slot, so only
+        // elements a sequence stores that way qualify. A narrower integer or a
+        // `char` is packed at its own width in the buffer, and reading it as a
+        // word would take the neighbouring bytes with it.
         matches!(
-            self.lazy_iter_elem_family(elem),
-            Some(family) if family != LazyElemFamily::PairWord
+            self.tcx.kind_of(elem),
+            TyKind::Int(gossamer_types::IntTy::I64)
+                | TyKind::String
+                | TyKind::Float(gossamer_types::FloatTy::F64)
         )
     }
 
@@ -2338,7 +2348,10 @@ impl<'a> Builder<'a> {
             // a `char`. Gated on a String receiver: a user struct
             // with its own `chars` method falls through to user
             // dispatch.
-            "chars" if matches!(&receiver_kind_flat, TyKind::String) => Some("gos_rt_str_chars"),
+            // A String's `chars()` answers a cursor over the text.
+            "chars" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_lazy_iter_str_chars")
+            }
             // `is_empty` collapses to `len(self) == 0`. Route to
             // a small helper that delegates to the right `len`
             // backend for the receiver kind.

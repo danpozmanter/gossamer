@@ -250,39 +250,32 @@ fn slices_and_arrays_reject_every_vec_only_operation() {
 }
 
 #[test]
-fn collection_methods_do_not_leak_eager_vec_combinators_into_arrays_or_slices() {
+fn every_sequence_traverses_its_own_values() {
+    // A sequence already holds its values, so a traversal answers on it
+    // directly; `iter()` is the lazy walk, not a precondition for traversing.
     for method in [
         "sum()",
         "take(2)",
         "filter(|value| value > 1)",
         "fold(0, |a, b| a + b)",
     ] {
-        assert!(
-            !rust_accepts(&format!(
-                "let values = [1_i64, 2, 3]; let _ = values.{method};"
-            )),
-            "Rust unexpectedly accepted array.{method}"
-        );
-        assert_rejected(
+        assert_accepted(
             &format!("array {method}"),
             &format!("let values = [1, 2, 3]\nvalues.{method}"),
-            "is a collection",
         );
-        assert_rejected(
+        assert_accepted(
             &format!("slice {method}"),
             &format!("let storage = #[1, 2, 3]\nlet values: &[i64] = &storage\nvalues.{method}"),
-            "is a collection",
+        );
+        assert_accepted(
+            &format!("vec {method}"),
+            &format!("let values = #[1, 2, 3]\nvalues.{method}"),
         );
     }
 
     assert_accepted(
-        "sequence combinators are reached through iter()",
+        "the lazy walk stays available through iter()",
         "let values = #[1, 2, 3]\nlet _sum = values.iter().sum()\nlet _head = values.iter().take(2)",
-    );
-    assert_rejected(
-        "Vec traversal without iter()",
-        "let values = #[1, 2, 3]\nvalues.sum()",
-        "is a collection",
     );
     assert_accepted(
         "fixed array clone preserves its fixed type",

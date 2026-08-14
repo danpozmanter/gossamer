@@ -34,7 +34,7 @@ fn main() {
     println!("literal_len={}", literal.len())
     println!("built_len={}", built.len())
     println!("byte_len={}", literal.byte_len())
-    println!("chars={}", literal.chars().len())
+    println!("chars={}", literal.chars().count())
     println!("bytes={}", literal.bytes().len())
     println!("byte_at={} {}", literal.byte_at(3), literal.byte_at(7))
 
@@ -47,20 +47,20 @@ fn main() {
     println!("fnv={}", fnv::hash_string(literal))
 
     // Encodings render every byte, including the NULs.
-    println!("base64={}", base64::encode(literal.bytes()))
-    println!("hex={}", hex::encode(literal.bytes()))
-    println!("hex_built={}", hex::encode(built.bytes()))
+    println!("base64={}", base64::encode(literal.as_bytes()))
+    println!("hex={}", hex::encode(literal.as_bytes()))
+    println!("hex_built={}", hex::encode(built.as_bytes()))
 
     // `strings` operations keep the bytes on both sides of a NUL.
-    println!("upper={}", hex::encode(strings::to_uppercase(literal).bytes()))
-    println!("replace={}", hex::encode(strings::replace(literal, "two", "2").bytes()))
+    println!("upper={}", hex::encode(strings::to_uppercase(literal).as_bytes()))
+    println!("replace={}", hex::encode(strings::replace(literal, "two", "2").as_bytes()))
     println!("split_parts={}", literal.split(nul()).len())
     println!("split_lens={} {}", literal.split(nul())[0].len(), literal.split(nul())[2].len())
-    println!("join={}", hex::encode(#["a", "b"].join(nul()).bytes()))
+    println!("join={}", hex::encode(#["a", "b"].join(nul()).as_bytes()))
     println!("find={}", literal.find("three"))
-    println!("substring={}", hex::encode(literal.substring(0, 5).bytes()))
-    println!("slice={}", hex::encode(literal.slice(4, 9).unwrap_or("").bytes()))
-    println!("truncate={}", { let mut t = literal; t.truncate(7); hex::encode(t.bytes()) })
+    println!("substring={}", hex::encode(literal.substring(0, 5).as_bytes()))
+    println!("slice={}", hex::encode(literal.slice(4, 9).unwrap_or("").as_bytes()))
+    println!("truncate={}", { let mut t = literal; t.truncate(7); hex::encode(t.as_bytes()) })
     println!("repeat_len={}", literal.repeat(2).len())
     println!("concat_len={}", (literal + built).len())
     println!("append_len={}", { let mut a = "q"; a += nul(); a.len() })
@@ -93,7 +93,7 @@ fn main() {
 
     // File round-trip: the bytes written must be the bytes read back.
     let target = path::join(&env::temp_dir(), &"gossamer_test_nul_in_strings.bin")
-    match fs::write(target, literal.bytes()) {
+    match fs::write(target, literal.as_bytes()) {
         Ok(_) => match fs::read_to_string(target) {
             Ok(back) => println!("file={} {}", back.len(), sha256::hex(back))
             Err(e) => println!("file_read_error={}", e)

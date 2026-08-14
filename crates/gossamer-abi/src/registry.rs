@@ -712,6 +712,8 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_lazy_iter_repeat_i64", (I64, I64) -> Ptr, Both, "Lazy Iterator<i64> repeating a value n times."),
     rt!("gos_rt_lazy_iter_skip_i64", (I64, Ptr) -> Ptr, Both, "Lazy skip over Iterator<i64>."),
     rt!("gos_rt_lazy_iter_step_by_i64", (I64, Ptr) -> Ptr, Both, "Lazy step_by over Iterator<i64>."),
+    rt!("gos_rt_lazy_iter_str_bytes", (Ptr) -> Ptr, Both, "Create a lazy Iterator<u8> cursor over a String's UTF-8 bytes."),
+    rt!("gos_rt_lazy_iter_str_chars", (Ptr) -> Ptr, Both, "Create a lazy Iterator<char> cursor over a String's Unicode scalars."),
     rt!("gos_rt_lazy_iter_sum_f64", (Ptr) -> F64, Both, "Consume and sum a lazy Iterator<f64>."),
     rt!("gos_rt_lazy_iter_sum_i64", (Ptr) -> I64, Both, "Consume and sum a lazy Iterator<i64>."),
     rt!("gos_rt_lazy_iter_take_i64", (I64, Ptr) -> Ptr, Both, "Lazy take over Iterator<i64>."),

@@ -1328,7 +1328,7 @@ fn builtin_map_values(args: &[Value]) -> RuntimeResult<Value> {
 /// For non-map receivers (`Array`, `IntArray`, `FloatVec`, etc.)
 /// returns the receiver unchanged so `arr.iter()` continues to work
 /// as a no-op pass-through to the for-loop.
-fn builtin_map_iter(args: &[Value]) -> RuntimeResult<Value> {
+pub(crate) fn builtin_map_iter(args: &[Value]) -> RuntimeResult<Value> {
     // Sort by key on every call so `BTreeMap` users get deterministic
     // iteration order. The VM uses one runtime value shape for both
     // `HashMap` and `BTreeMap`, so sorting unifies observed order across

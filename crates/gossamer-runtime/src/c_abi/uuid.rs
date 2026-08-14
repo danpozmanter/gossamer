@@ -696,6 +696,68 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_repeat_i64(value: i64, n: i64) -> *mut
     })
 }
 
+/// Walks a String's Unicode scalars from an owned copy of its text. The
+/// cursor keeps the text and a byte position rather than one slot per scalar,
+/// so the walk costs the text once instead of eight bytes per character.
+struct StrScalars {
+    text: String,
+    byte_index: usize,
+}
+
+impl Iterator for StrScalars {
+    type Item = i64;
+
+    fn next(&mut self) -> Option<i64> {
+        let c = self.text[self.byte_index..].chars().next()?;
+        self.byte_index += c.len_utf8();
+        Some(i64::from(u32::from(c)))
+    }
+}
+
+/// Walks a String's UTF-8 bytes from an owned copy of its text.
+struct StrBytes {
+    text: String,
+    index: usize,
+}
+
+impl Iterator for StrBytes {
+    type Item = i64;
+
+    fn next(&mut self) -> Option<i64> {
+        let byte = *self.text.as_bytes().get(self.index)?;
+        self.index += 1;
+        Some(i64::from(byte))
+    }
+}
+
+/// Lazy cursor over a String's Unicode scalars, each yielded as its code
+/// point.
+///
+/// # Safety
+/// `s` is a live NUL-terminated string pointer or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_str_chars(s: *const c_char) -> *mut GosLazyIterI64 {
+    ffi_entry!(std::ptr::null_mut(), {
+        let text = unsafe { crate::c_abi::gos_str_arg_string(s) };
+        lazy_i64(StrScalars {
+            text,
+            byte_index: 0,
+        })
+    })
+}
+
+/// Lazy cursor over a String's UTF-8 bytes.
+///
+/// # Safety
+/// `s` is a live NUL-terminated string pointer or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_str_bytes(s: *const c_char) -> *mut GosLazyIterI64 {
+    ffi_entry!(std::ptr::null_mut(), {
+        let text = unsafe { crate::c_abi::gos_str_arg_string(s) };
+        lazy_i64(StrBytes { text, index: 0 })
+    })
+}
+
 /// Lazy single-item i64 iterator.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_lazy_iter_once_i64(value: i64) -> *mut GosLazyIterI64 {

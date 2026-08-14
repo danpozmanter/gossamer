@@ -2,17 +2,19 @@
 
 ## 0.50.0 - Iterators/collections, codegen cycle safety, silent errors, fixes
 
-- Reject a traversal called straight on a collection. `Vec`, fixed arrays,
-  slices, `Map`, `Set`, `BTreeSet`, and `BTreeMap` accepted `map`, `filter`,
-  `fold`, `enumerate`, `rev`, and the rest of the traversal surface directly,
-  so one name meant an eager collection walk on a container and a lazy adapter
-  on a range. Traversal now starts at `iter()`, and GT0068 carries the rewrite.
+- Separate a collection's traversal from an iterator's by when the work runs,
+  not by whether it is allowed. A `Vec`, fixed array, slice, `Set`, or
+  `BTreeSet`, `Map`, or `BTreeMap` traverses the values it already holds -
+  `xs.map(f)` answers a `Vec`, and a map's element is its `(K, V)` pair - and
+  `iter()` answers the lazy walk for when the whole sequence should not be
+  held at once, ended by `collect()`. Every container gains the traversal
+  surface only `Vec` used to have, so one operation reads the same on all of
+  them.
 - Answer an iterator from `iter()` on every collection and run the pipeline
   when it is drained. A combinator behind `iter()` ran eagerly on the bytecode
   VM and lazily once compiled, so a closure with a side effect saw a different
-  number of calls per tier. `to_vec` remains the spelling that materialises and
-  `collect` ends a pipeline; code that indexed or assigned the old `Vec` result
-  names one of those instead.
+  number of calls per tier. `collect` ends a pipeline; code that indexed or
+  assigned the old `Vec` result calls it.
 - Resolve a closure parameter from the sequence it traverses. An unannotated
   parameter left the mapped element unresolved, and it settled as `i64`: a
   `Vec<String>` built through `map` printed its elements as pointer values on
@@ -35,6 +37,11 @@
 - Build a `String` from a `char` or a `bool` through `to_string`. The receiver
   was passed along as though it were already a String, so a JIT-compiled body
   returning one faulted.
+- Walk a String's scalars from a cursor. `chars()` answers an iterator that
+  holds the text and a position rather than a slot per scalar, so counting the
+  scalars of a four-million-character String costs under a megabyte where it
+  used to cost thirty-one. `collect()` materialises them when a sequence is
+  wanted.
 - Point a diagnostic about a method at the method. The span named the
   receiver, so a chain written across lines underlined a line that did not
   contain the method the message named.

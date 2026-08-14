@@ -5559,7 +5559,9 @@ mod tests {
             }
         }
 
-        for name in ["push", "pop", "capacity", "reserve", "map", "fold", "sum"] {
+        // Resizing and capacity stay Vec-only; a traversal reads the values
+        // any sequence already holds, so it is on arrays and slices too.
+        for name in ["push", "pop", "capacity", "reserve"] {
             assert!(
                 catalog
                     .iter()
@@ -5572,6 +5574,17 @@ mod tests {
                 }),
                 "{name} leaked from Vec into Array or Slice"
             );
+        }
+
+        for name in ["map", "fold", "sum"] {
+            for owner in ["Vec", "Array", "Slice"] {
+                assert!(
+                    catalog
+                        .iter()
+                        .any(|entry| entry.owner == owner && entry.name == name),
+                    "{owner} is missing {name}"
+                );
+            }
         }
 
         let array_clone = catalog

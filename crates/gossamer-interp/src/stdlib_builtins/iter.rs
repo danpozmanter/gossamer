@@ -121,6 +121,14 @@ thread_local! {
 
 #[derive(Debug, Clone)]
 enum LazyIterState {
+    /// A cursor over a String's encoded text: the position is the whole
+    /// state, so walking a String costs the text rather than a slot per
+    /// scalar.
+    Chars {
+        text: Arc<str>,
+        byte_index: usize,
+        bytes: bool,
+    },
     Array {
         items: Arc<Vec<Value>>,
         source_id: usize,
@@ -281,6 +289,15 @@ fn fork_lazy_value(value: &Value) -> Value {
 
 fn fork_lazy_state(state: &LazyIterState) -> Value {
     match state {
+        LazyIterState::Chars {
+            text,
+            byte_index,
+            bytes,
+        } => new_lazy_iter(LazyIterState::Chars {
+            text: Arc::clone(text),
+            byte_index: *byte_index,
+            bytes: *bytes,
+        }),
         LazyIterState::Array {
             items,
             source_id,
@@ -544,8 +561,11 @@ fn discard_lazy_state(state: LazyIterState) {
         LazyIterState::Array { source_id, .. }
         | LazyIterState::IntArray { source_id, .. }
         | LazyIterState::FloatVec { source_id, .. } => release_lazy_vec_source(source_id),
-        LazyIterState::Range { .. } | LazyIterState::Once { .. } | LazyIterState::Repeat { .. } => {
-        }
+        // A cursor over text owns only its position and a share of the text.
+        LazyIterState::Chars { .. }
+        | LazyIterState::Range { .. }
+        | LazyIterState::Once { .. }
+        | LazyIterState::Repeat { .. } => {}
     }
 }
 
@@ -725,6 +745,25 @@ fn lazy_next(
     };
     let mut guard = LazyStateGuard(Some(state));
     let result = match guard.0.as_mut().expect("lazy iterator state guard") {
+        LazyIterState::Chars {
+            text,
+            byte_index,
+            bytes,
+        } => {
+            // A byte walk steps one byte at a time, so its position is not a
+            // char boundary and the text is read as bytes.
+            if *bytes {
+                Ok(text.as_bytes().get(*byte_index).map(|b| {
+                    *byte_index += 1;
+                    Value::Int(i64::from(*b))
+                }))
+            } else {
+                Ok(text[*byte_index..].chars().next().map(|c| {
+                    *byte_index += c.len_utf8();
+                    Value::Char(c)
+                }))
+            }
+        }
         LazyIterState::Array {
             items,
             source_id,
@@ -1034,6 +1073,28 @@ pub(crate) fn lazy_iter_next_value(source: &Value) -> RuntimeResult<Option<Value
     lazy_next(source, &mut dispatch)
 }
 
+/// Elements a map or set traversal sees: the same values, in the same order,
+/// that its `iter()` yields.
+pub(crate) fn materialized_keyed_elements(value: &Value) -> Vec<Value> {
+    let Ok(materialized) = crate::builtins::builtin_map_iter(std::slice::from_ref(value)) else {
+        return Vec::new();
+    };
+    match materialized {
+        Value::Array(items) => items.as_ref().clone(),
+        other => drain_lazy_iter(&other).unwrap_or_default(),
+    }
+}
+
+/// A cursor over `text`, yielding its bytes when `bytes` is set and its
+/// Unicode scalars otherwise.
+pub(crate) fn char_cursor(text: &str, bytes: bool) -> Value {
+    new_lazy_iter(LazyIterState::Chars {
+        text: Arc::from(text),
+        byte_index: 0,
+        bytes,
+    })
+}
+
 pub(crate) fn drain_lazy_iter(value: &Value) -> Option<Vec<Value>> {
     drain_lazy_iter_result(value).ok().flatten()
 }
@@ -1269,8 +1330,10 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("max", builtin_iter_max),
     ];
     for (short, call) in vec_builtin_entries {
-        let qualified: &'static str = Box::leak(format!("Vec::{short}").into_boxed_str());
-        globals.push((qualified, crate::builtins::builtin_pub(qualified, *call)));
+        for owner in ["Vec", "Set", "BTreeSet", "Map", "BTreeMap"] {
+            let qualified: &'static str = Box::leak(format!("{owner}::{short}").into_boxed_str());
+            globals.push((qualified, crate::builtins::builtin_pub(qualified, *call)));
+        }
     }
 
     // Closure-taking combinators in method form: the receiver leads the
@@ -1292,8 +1355,10 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("count", native_vec_count_method),
     ];
     for (short, call) in vec_native_entries {
-        let qualified: &'static str = Box::leak(format!("Vec::{short}").into_boxed_str());
-        globals.push((qualified, Value::native(qualified, *call)));
+        for owner in ["Vec", "Set", "BTreeSet", "Map", "BTreeMap"] {
+            let qualified: &'static str = Box::leak(format!("{owner}::{short}").into_boxed_str());
+            globals.push((qualified, Value::native(qualified, *call)));
+        }
     }
 
     // Lazy iterator method calls use receiver-first syntax, while the

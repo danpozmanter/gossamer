@@ -5538,6 +5538,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_tuple_format as *const u8,
         ),
         (
+            "gos_rt_lazy_iter_str_bytes",
+            crate::c_abi::gos_rt_lazy_iter_str_bytes as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_str_chars",
+            crate::c_abi::gos_rt_lazy_iter_str_chars as *const u8,
+        ),
+        (
             "gos_rt_map_format_desc",
             crate::c_abi::gos_rt_map_format_desc as *const u8,
         ),

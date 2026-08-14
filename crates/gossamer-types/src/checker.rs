@@ -334,6 +334,51 @@ const SEQUENCE_COMBINATOR_METHODS: &[&str] = &[
 
 /// The `Set` and `BTreeSet` method surface.
 const SET_METHODS: &[&str] = &[
+    "map",
+    "filter",
+    "filter_map",
+    "flat_map",
+    "for_each",
+    "fold",
+    "reduce",
+    "any",
+    "all",
+    "find",
+    "position",
+    "count",
+    "sum",
+    "product",
+    "min",
+    "max",
+    "min_by",
+    "max_by",
+    "min_by_key",
+    "max_by_key",
+    "sort_by",
+    "sort_by_key",
+    "take",
+    "skip",
+    "step_by",
+    "enumerate",
+    "rev",
+    "dedup",
+    "chain",
+    "zip",
+    "partition",
+    "chunk_by",
+    "count_by",
+    "sum_by",
+    "product_by",
+    "take_while",
+    "skip_while",
+    "find_map",
+    "scan",
+    "windows",
+    "chunks",
+    "pairwise",
+    "flatten",
+    "collect",
+    "join",
     "insert",
     "remove",
     "contains",
@@ -7718,7 +7763,12 @@ impl<'a> TypeChecker<'a> {
                 | TyKind::Array { elem, .. }
                 | TyKind::Iterator(elem),
             ) => *elem,
-            _ => return None,
+            // A map hands the closure its key/value pair, a set its value.
+            Some(TyKind::HashMap { key, value, .. }) => {
+                let (key, value) = (*key, *value);
+                self.tcx.intern(TyKind::Tuple(vec![key, value]))
+            }
+            _ => self.set_elem_ty(resolved).map(|(_owner, elem)| elem)?,
         };
         match method {
             "sort_by" | "min_by" | "max_by" => Some(vec![elem, elem]),
@@ -8055,22 +8105,6 @@ impl<'a> TypeChecker<'a> {
         // A traversal named on a collection is not a typo, so it gets the
         // message that says where the traversal surface lives rather than a
         // did-you-mean over the collection's own methods.
-        if COLLECTION_TRAVERSAL_METHODS.contains(&method)
-            && matches!(
-                self.tcx.kind(resolved),
-                Some(
-                    TyKind::Vec(_)
-                        | TyKind::Slice(_)
-                        | TyKind::Array { .. }
-                        | TyKind::HashMap { .. }
-                )
-            )
-        {
-            return TypeError::TraversalOnCollection {
-                method: method.to_string(),
-                found: ty,
-            };
-        }
         TypeError::UnresolvedMethod {
             ty,
             name: method.to_string(),
@@ -8979,6 +9013,22 @@ impl<'a> TypeChecker<'a> {
         resolved: Ty,
         span: Span,
     ) -> Option<Ty> {
+        // A map or set holds its values, so a traversal on one answers eagerly
+        // with a sequence, the way one on a Vec does. A map's element is its
+        // key/value pair.
+        if COLLECTION_TRAVERSAL_METHODS.contains(&method) {
+            let elem = match self.tcx.kind(resolved) {
+                Some(TyKind::HashMap { key, value, .. }) => {
+                    let (key, value) = (*key, *value);
+                    Some(self.tcx.intern(TyKind::Tuple(vec![key, value])))
+                }
+                _ => self.set_elem_ty(resolved).map(|(_owner, elem)| elem),
+            };
+            if let Some(elem) = elem {
+                let seq = self.tcx.intern(TyKind::Vec(elem));
+                return self.std_combinator_ty("iter", method, arg_tys, seq, span);
+            }
+        }
         match self.tcx.kind(resolved) {
             Some(TyKind::Iterator(_) | TyKind::Range(_)) => {
                 let arity = Self::std_combinator_arity("iter", method)?;
@@ -8987,23 +9037,10 @@ impl<'a> TypeChecker<'a> {
                 }
                 return self.std_combinator_ty("iter", method, arg_tys, resolved, span);
             }
-            Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. }) => {
-                // A collection contains values; it does not traverse them.
-                // Traversal is what an iterator is for, so the sequence
-                // combinators are reached through `.iter()` rather than
-                // answered twice, once eagerly here and once lazily there.
-                if COLLECTION_TRAVERSAL_METHODS.contains(&method) {
-                    let found = self.render_public_ty(resolved);
-                    self.emit(
-                        TypeError::TraversalOnCollection {
-                            method: method.to_string(),
-                            found,
-                        },
-                        span,
-                    );
-                    return Some(self.tcx.error_ty());
-                }
-            }
+            // A collection already holds its values, so traversing it answers
+            // eagerly with a materialised result. `iter()` is how a caller
+            // asks for the lazy walk that never holds the whole sequence.
+            Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. }) => {}
             _ => return None,
         }
         match (method, arg_tys.len()) {
@@ -9092,7 +9129,8 @@ impl<'a> TypeChecker<'a> {
             self.unify(value_peeled, arg_peeled, span);
         }
         match method {
-            // `m.iter()` yields `(K, V)` pairs, lazily like any other `iter`.
+            // `m.iter()` yields `(K, V)` pairs, lazily like any other `iter`;
+            // `collect` on that walk is how they are materialised.
             "iter" => {
                 let pair = self.tcx.intern(TyKind::Tuple(vec![key, value]));
                 Some(self.tcx.intern(TyKind::Iterator(pair)))
@@ -9323,9 +9361,12 @@ impl<'a> TypeChecker<'a> {
                 let s = self.tcx.string_ty();
                 self.tcx.intern(TyKind::Vec(s))
             }
+            // A cursor over the encoded text: walking a String holds the
+            // text and a position, not a slot per scalar. `collect`
+            // materialises, and `as_bytes` is the owned byte sequence.
             "chars" => {
                 let c = self.tcx.intern(TyKind::Char);
-                self.tcx.intern(TyKind::Vec(c))
+                self.tcx.intern(TyKind::Iterator(c))
             }
             "bytes" => {
                 let u8_ty = self.tcx.int_ty(IntTy::U8);
@@ -16060,7 +16101,7 @@ const VEC_ONLY_SEQUENCE_METHODS: &[&str] = &[
 /// and iterator APIs.
 #[must_use]
 pub fn is_slice_sequence_method(name: &str) -> bool {
-    SLICE_SEQUENCE_METHODS.contains(&name)
+    SLICE_SEQUENCE_METHODS.contains(&name) || COLLECTION_TRAVERSAL_METHODS.contains(&name)
 }
 
 /// The slice method surface shared by slices, arrays, and `Vec`.
@@ -16123,7 +16164,7 @@ const TUPLE_METHODS: &[&str] = &[
 /// would read as a silent no-op.
 #[must_use]
 pub fn is_map_method(name: &str) -> bool {
-    MAP_METHODS.contains(&name)
+    MAP_METHODS.contains(&name) || COLLECTION_TRAVERSAL_METHODS.contains(&name)
 }
 
 /// The `Map` method surface shared by discovery, type checking, and the
@@ -16178,6 +16219,12 @@ pub fn iterator_adapter_is_lazy(name: &str) -> bool {
 /// collection does not answer these: `xs.iter()` starts the traversal and the
 /// iterator answers them from there. Kept apart from the collection surface so
 /// one operation has one spelling instead of an eager and a lazy one.
+/// Whether `name` traverses a collection's elements.
+#[must_use]
+pub fn is_collection_traversal_method(name: &str) -> bool {
+    COLLECTION_TRAVERSAL_METHODS.contains(&name)
+}
+
 const COLLECTION_TRAVERSAL_METHODS: &[&str] = &[
     "map",
     "filter",

@@ -629,38 +629,47 @@ fn repl_explain_lists_all_available_methods() {
     );
 }
 
+/// Asserts a `%e` listing offers every name in `present` and none in `absent`.
+fn assert_surface(stdout: &str, owner: &str, present: &[&str], absent: &[&str]) {
+    for name in present {
+        assert!(stdout.contains(name), "{owner} is missing {name}: {stdout}");
+    }
+    for name in absent {
+        assert!(!stdout.contains(name), "{owner} exposed {name}: {stdout}");
+    }
+}
+
 #[test]
 fn repl_sequence_help_respects_type_and_receiver_capability() {
     let array = run_repl("let a: [i64; 3] = #[1, 2, 3]\n%e a\n");
     assert!(array.success, "stderr: {}", array.stderr);
     assert!(array.stdout.contains("a.len<T>(self: &[T; N])"));
     assert!(array.stdout.contains("a.clone<T, const N: i64>"));
-    for unavailable in ["a.push", "a.capacity", "a.map", "a.sort", "a.swap"] {
-        assert!(
-            !array.stdout.contains(unavailable),
-            "immutable fixed array exposed {unavailable}: {}",
-            array.stdout
-        );
-    }
+    // A traversal reads values a fixed array already holds, so `map` is on it;
+    // resizing and in-place mutation are not.
+    assert_surface(
+        &array.stdout,
+        "immutable fixed array",
+        &["a.map"],
+        &["a.push", "a.capacity", "a.sort", "a.swap"],
+    );
 
     let shared_slice =
         run_repl("let storage: [i64; 3] = #[1, 2, 3]\nlet values: &[i64] = &storage\n%e values\n");
     assert!(shared_slice.success, "stderr: {}", shared_slice.stderr);
     assert!(shared_slice.stdout.contains("values.len<T>(self: &[T])"));
-    for unavailable in [
-        "values.clone",
-        "values.push",
-        "values.capacity",
-        "values.map",
-        "values.sort",
-        "values.swap",
-    ] {
-        assert!(
-            !shared_slice.stdout.contains(unavailable),
-            "shared slice exposed {unavailable}: {}",
-            shared_slice.stdout
-        );
-    }
+    assert_surface(
+        &shared_slice.stdout,
+        "shared slice",
+        &["values.map"],
+        &[
+            "values.clone",
+            "values.push",
+            "values.capacity",
+            "values.sort",
+            "values.swap",
+        ],
+    );
 
     let mutable_slice = run_repl(
         "let mut storage: [i64; 3] = #[1, 2, 3]\nlet values: &mut [i64] = &mut storage\n%e values\n",
@@ -676,18 +685,12 @@ fn repl_sequence_help_respects_type_and_receiver_capability() {
             .stdout
             .contains("values.swap<T>(self: &mut [T]")
     );
-    for unavailable in [
-        "values.push",
-        "values.capacity",
-        "values.map",
-        "values.clone",
-    ] {
-        assert!(
-            !mutable_slice.stdout.contains(unavailable),
-            "mutable slice exposed {unavailable}: {}",
-            mutable_slice.stdout
-        );
-    }
+    assert_surface(
+        &mutable_slice.stdout,
+        "mutable slice",
+        &["values.map"],
+        &["values.push", "values.capacity", "values.clone"],
+    );
 
     let immutable_vec = run_repl("let values: Vec<i64> = Vec::from([1, 2, 3])\n%e values\n");
     assert!(immutable_vec.success, "stderr: {}", immutable_vec.stderr);
@@ -1286,7 +1289,7 @@ fn repl_uses_repr_for_results_and_display_for_explicit_printing() {
          x\n\
          println(x)\n\
          #[x, \"ok\"]\n\
-         \"ab\".chars()\n\
+         \"ab\".chars().collect()\n\
          \"ab\".bytes()\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
@@ -2199,8 +2202,8 @@ fn repl_hash_set_bindings_show_and_iterate_stored_structs() {
         out.stdout
     );
     assert!(
-        out.stderr.contains("no method named `map`"),
-        "direct Set.map should be rejected: {}",
+        !out.stderr.contains("no method named `map`"),
+        "a set traverses its own values: {}",
         out.stderr
     );
 }

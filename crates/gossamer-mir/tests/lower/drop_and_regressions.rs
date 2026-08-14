@@ -810,7 +810,7 @@ fn lifted_closure_destructures_tuple_parameter_before_body() {
 fn native_lowers_chunks_and_tuple_get_method_forms() {
     let source = "fn main() {\n\
                   let input = \"0222112222120000\"\n\
-                  let layers = input.chars().iter().chunks(4)\n\
+                  let layers = input.chars().chunks(4)\n\
                   let min_layer_idx = layers\n\
                   .iter()\n\
                   .map(|layer| layer.count_of('0'))\n\
