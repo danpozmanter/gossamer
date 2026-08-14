@@ -3375,6 +3375,11 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::time",
+        name: "sleep_ctx",
+        signature: "fn sleep_ctx(ctx: &context::Context, ms: i64) -> bool",
+    },
+    StdFunctionSignature {
+        module_path: "std::time",
         name: "unix_ms",
         signature: "fn unix_ms() -> i64",
     },

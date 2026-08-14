@@ -62,6 +62,21 @@ pub enum JitKind {
     /// A 2-element tuple RETURN of scalars / heap enums; payload is the
     /// per-element decode kind. Return-only.
     TupleReturn([TupleElem; 2]),
+    /// `[T; N]` over a scalar element as a pointer to a flat block of `N`
+    /// 8-byte slots; payloads are the element count and slot encoding.
+    ArrayBlockPtr(u32, ArrayElem),
+}
+
+/// Mirrors `gossamer_codegen_cranelift::ArrayElem` so the shared dispatch
+/// code in `jit_call` type-checks on wasm; no instance is ever constructed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ArrayElem {
+    /// A signed 64-bit integer slot.
+    I64,
+    /// An IEEE-754 double stored as its bit pattern.
+    F64,
+    /// A Unicode scalar stored as its code point.
+    Char,
 }
 
 /// Mirrors `gossamer_codegen_cranelift::TupleElem` so the shared dispatch

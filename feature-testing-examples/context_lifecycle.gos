@@ -1,0 +1,47 @@
+// Context cancellation reaches descendants, survives repetition, and is
+// inherited by a child minted under an already-cancelled parent. A cancelled
+// context's done channel reports readiness, a deadline cancels on its own,
+// and a cancellation-aware receive answers `None` once its context fires.
+
+use std::context
+use std::sync::channel
+
+fn produce(tx: Sender<i64>, value: i64) {
+    tx.send(value)
+    tx.close()
+}
+
+fn main() {
+    let root = context::Context::background()
+    let parent = context::Context::with_cancel(&root)
+    let child = context::Context::with_cancel(&parent)
+    println!("fresh {} {} {}", root.is_cancelled(), parent.is_cancelled(), child.is_cancelled())
+
+    parent.cancel()
+    println!("cancelled {} {} {}", root.is_cancelled(), parent.is_cancelled(), child.is_cancelled())
+
+    let late = context::Context::with_cancel(&parent)
+    println!("late-child {}", late.is_cancelled())
+
+    parent.cancel()
+    println!("repeat {}", parent.is_cancelled())
+    println!("done-chan {:?}", parent.done_chan().recv())
+
+    let timed = context::Context::with_timeout(&root, 20)
+    println!("timed-fresh {}", timed.is_cancelled())
+    println!("timed-chan {:?}", timed.done_chan().recv())
+    println!("timed-after {}", timed.is_cancelled())
+
+    let live = context::Context::with_cancel(&root)
+    let (tx, rx) = channel()
+    go produce(tx, 7)
+    println!("recv-live {:?}", rx.recv_ctx(&live))
+
+    let dead = context::Context::with_cancel(&root)
+    dead.cancel()
+    let (tx2, rx2) = channel::<i64>()
+    go produce(tx2, 9)
+    println!("recv-cancelled {:?}", rx2.recv_ctx(&dead))
+
+    println!("root {}", root.is_cancelled())
+}

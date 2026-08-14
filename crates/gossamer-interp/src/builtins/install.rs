@@ -488,6 +488,7 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
             ("now", builtin_time_now),
             ("now_ms", builtin_time_now_ms),
             ("sleep", builtin_time_sleep),
+            ("sleep_ctx", builtin_time_sleep_ctx),
             ("format_rfc3339", builtin_time_format_rfc3339),
             ("parse_rfc3339", builtin_time_parse_rfc3339),
         ],
@@ -2001,6 +2002,10 @@ fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push((
         "WaitGroup::wait",
         builtin("WaitGroup::wait", builtin_waitgroup_wait),
+    ));
+    globals.push((
+        "WaitGroup::wait_ctx",
+        builtin("WaitGroup::wait_ctx", builtin_waitgroup_wait_ctx),
     ));
 
     // O(log n) Lehmer LCG affine-transform jump-ahead.

@@ -53,6 +53,60 @@ static CTX_REGISTRY: LazyLock<parking_lot::Mutex<StdHashMap<i64, Arc<CtxNode>>>>
     LazyLock::new(|| parking_lot::Mutex::new(StdHashMap::new()));
 static NEXT_ID: AtomicI64 = AtomicI64::new(1);
 
+/// Deadlines waiting to fire, earliest last so the timer thread pops the back.
+/// One thread serves every context: a deadline costs an entry here rather than
+/// a thread parked on a sleep.
+static DEADLINES: LazyLock<parking_lot::Mutex<Vec<(Instant, i64)>>> =
+    LazyLock::new(|| parking_lot::Mutex::new(Vec::new()));
+static DEADLINE_WAKE: LazyLock<parking_lot::Condvar> = LazyLock::new(parking_lot::Condvar::new);
+static TIMER_THREAD: std::sync::Once = std::sync::Once::new();
+
+/// Registers `id` to be cancelled at `deadline`, starting the shared timer
+/// thread on first use.
+fn schedule_deadline(deadline: Instant, id: i64) {
+    {
+        let mut queue = DEADLINES.lock();
+        queue.push((deadline, id));
+        // Latest first, so the earliest deadline is the last element.
+        queue.sort_unstable_by_key(|entry| std::cmp::Reverse(entry.0));
+    }
+    TIMER_THREAD.call_once(|| {
+        // A daemon thread: nothing joins it, and it exits with the process,
+        // the same lifecycle the goroutine workers already have.
+        let _ = std::thread::Builder::new()
+            .name("gossamer-ctx-timer".to_string())
+            .spawn(run_deadline_timer);
+    });
+    DEADLINE_WAKE.notify_all();
+}
+
+/// Whether any context deadline is still waiting to fire. A pending deadline
+/// is an actor outside the goroutine set that will close a done channel, so
+/// a program blocked on one is waiting rather than deadlocked.
+pub(crate) fn deadline_pending() -> bool {
+    !DEADLINES.lock().is_empty()
+}
+
+/// Cancels each context as its deadline arrives, sleeping until the earliest
+/// one and waking early whenever a nearer deadline is registered.
+fn run_deadline_timer() {
+    loop {
+        let mut queue = DEADLINES.lock();
+        let Some(&(earliest, id)) = queue.last() else {
+            DEADLINE_WAKE.wait(&mut queue);
+            continue;
+        };
+        let now = Instant::now();
+        if earliest > now {
+            DEADLINE_WAKE.wait_for(&mut queue, earliest - now);
+            continue;
+        }
+        queue.pop();
+        drop(queue);
+        cancel_node(id);
+    }
+}
+
 pub(crate) fn install_context(globals: &mut Vec<(&'static str, Value)>) {
     let entries: &[(&str, BuiltinFnPub)] = &[
         ("Context::background", builtin_ctx_background),
@@ -113,15 +167,15 @@ fn alloc_node(deadline: Option<Instant>, parent: Option<i64>) -> Value {
         if let Some(p) = node_of(pid) {
             p.children.lock().push(id);
         }
+        // A parent that finished cancelling before this link was made
+        // never reaches the child through its own walk, so the child
+        // takes the ancestry's state at birth.
+        if node_is_cancelled(pid) {
+            cancel_node(id);
+        }
     }
     if let Some(deadline) = deadline {
-        std::thread::spawn(move || {
-            let now = Instant::now();
-            if deadline > now {
-                std::thread::sleep(deadline - now);
-            }
-            cancel_node(id);
-        });
+        schedule_deadline(deadline, id);
     }
     ctx_handle(id)
 }
@@ -150,17 +204,31 @@ pub(crate) fn builtin_ctx_with_timeout(args: &[Value]) -> RuntimeResult<Value> {
     Ok(alloc_node(Some(deadline), parent))
 }
 
+/// Cancels `id` and every descendant. The walk carries its own stack so a deep
+/// context chain costs heap rather than call frames, and each child list is
+/// copied out before its node is cancelled so the tree lock is never held
+/// across the cancel of a child. Each cancelled node is then retired from
+/// the registry, and the walk's root from its parent's child list, so a
+/// long-lived parent's list stays proportional to the children still live
+/// under it.
 fn cancel_node(id: i64) {
-    let Some(node) = node_of(id) else {
-        return;
-    };
-    node.cancelled.store(true, Ordering::Release);
-    // Closing the done channel makes the node's `select` recv arm
-    // ready; idempotent, so a repeated cancel is harmless.
-    let _ = node.chan.close();
-    let kids: Vec<i64> = node.children.lock().clone();
-    for k in kids {
-        cancel_node(k);
+    if let Some(node) = node_of(id)
+        && let Some(parent) = node.parent.and_then(node_of)
+    {
+        parent.children.lock().retain(|child| *child != id);
+    }
+    let mut pending = vec![id];
+    while let Some(current) = pending.pop() {
+        let Some(node) = node_of(current) else {
+            continue;
+        };
+        node.cancelled.store(true, Ordering::Release);
+        // Closing the done channel makes the node's `select` recv arm
+        // ready; idempotent, so a repeated cancel is harmless.
+        let _ = node.chan.close();
+        let kids: Vec<i64> = node.children.lock().clone();
+        pending.extend(kids);
+        CTX_REGISTRY.lock().remove(&current);
     }
 }
 
@@ -171,19 +239,27 @@ pub(crate) fn builtin_ctx_cancel(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Unit)
 }
 
+/// Whether `id` or any ancestor is cancelled or past its deadline. The
+/// chain is walked iteratively so ancestry depth costs heap rather than
+/// call frames, and an id the registry no longer holds names a context
+/// whose cancellation already ran.
 fn node_is_cancelled(id: i64) -> bool {
-    let Some(node) = node_of(id) else {
-        return false;
-    };
-    if node.cancelled.load(Ordering::Acquire) {
-        return true;
-    }
-    if let Some(deadline) = node.deadline {
-        if Instant::now() >= deadline {
+    let mut current = Some(id);
+    while let Some(node_id) = current {
+        let Some(node) = node_of(node_id) else {
+            return true;
+        };
+        if node.cancelled.load(Ordering::Acquire) {
             return true;
         }
+        if let Some(deadline) = node.deadline
+            && Instant::now() >= deadline
+        {
+            return true;
+        }
+        current = node.parent;
     }
-    node.parent.is_some_and(node_is_cancelled)
+    false
 }
 
 /// Returns whether a VM `Context` value has been cancelled or timed out.
@@ -209,6 +285,12 @@ pub(crate) fn builtin_ctx_done(args: &[Value]) -> RuntimeResult<Value> {
 pub(crate) fn builtin_ctx_done_chan(args: &[Value]) -> RuntimeResult<Value> {
     match args.first().and_then(ctx_id_of).and_then(node_of) {
         Some(node) => Ok(Value::Channel(node.chan.clone())),
-        None => Ok(Value::Channel(Channel::new())),
+        // A context whose cancellation already ran reports exactly one
+        // thing through this channel: readiness. A closed channel is that.
+        None => {
+            let chan = Channel::new();
+            let _ = chan.close();
+            Ok(Value::Channel(chan))
+        }
     }
 }

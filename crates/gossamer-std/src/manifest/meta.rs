@@ -371,6 +371,11 @@ pub const TIME: StdModule = StdModule {
             doc: "Suspends the current goroutine for `Duration`.",
         },
         StdItem {
+            name: "sleep_ctx",
+            kind: StdItemKind::Function,
+            doc: "Sleeps unless the context fires first; false when it cancelled the wait.",
+        },
+        StdItem {
             name: "now",
             kind: StdItemKind::Function,
             doc: "Returns the current monotonic `Instant`.",

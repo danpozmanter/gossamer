@@ -637,6 +637,26 @@ pub(crate) fn lower_program_full(
                 intrinsics.sret_slots_by_def.insert(def.local, slots);
             }
         }
+        // Which parameters name the caller's storage rather than take a copy
+        // of it. A reference is erased from the argument operand by the time
+        // a call reaches this backend, so the callee's own signature is what
+        // says whether its writes have to be visible to the caller.
+        let ref_params: Vec<bool> = (1..=body.arity)
+            .map(|idx| {
+                matches!(
+                    tcx.kind_of(body.local_ty(Local(idx))),
+                    gossamer_types::TyKind::Ref { .. }
+                )
+            })
+            .collect();
+        if ref_params.iter().any(|by_ref| *by_ref) {
+            intrinsics
+                .ref_params_by_name
+                .insert(body.name.clone(), ref_params.clone());
+            if let Some(def) = body.def {
+                intrinsics.ref_params_by_def.insert(def.local, ref_params);
+            }
+        }
     }
 
     // N9-B: Pre-declare every runtime symbol the codegen may reference

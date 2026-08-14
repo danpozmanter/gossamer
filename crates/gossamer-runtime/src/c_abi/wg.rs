@@ -41,6 +41,10 @@ pub struct GosWaitGroup {
     /// observes that the waiter sees everything the done-callers
     /// did before signalling.
     last_done: AtomicI64,
+    /// Goroutines parked in `wait`. A `done` that drops the counter to zero
+    /// drains this list and unparks each one, so a waiter never holds a
+    /// scheduler carrier while the fan-out runs.
+    parked_waiters: parking_lot::Mutex<Vec<crate::sched::Gid>>,
 }
 
 #[unsafe(no_mangle)]
@@ -51,8 +55,17 @@ pub unsafe extern "C" fn gos_rt_wg_new() -> *mut GosWaitGroup {
             cv: parking_lot::Condvar::new(),
             error: AtomicI64::new(0),
             last_done: AtomicI64::new(-1),
+            parked_waiters: parking_lot::Mutex::new(Vec::new()),
         }))
     })
+}
+
+/// Releases every goroutine parked in `wait`. Called with the counter at zero.
+fn wake_parked_waiters(wg: &GosWaitGroup) {
+    let waiters: Vec<crate::sched::Gid> = std::mem::take(&mut *wg.parked_waiters.lock());
+    for gid in waiters {
+        crate::sched_global::scheduler().unpark(gid);
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -70,6 +83,7 @@ pub unsafe extern "C" fn gos_rt_wg_add(wg: *mut GosWaitGroup, n: i64) -> i64 {
             }
             if v <= 0 {
                 wg.cv.notify_all();
+                wake_parked_waiters(wg);
             }
             v
         } else {
@@ -94,6 +108,7 @@ pub unsafe extern "C" fn gos_rt_wg_done(wg: *mut GosWaitGroup) -> i64 {
         }
         if value <= 0 {
             wg.cv.notify_all();
+            wake_parked_waiters(wg);
         }
         drop(c);
         wg.last_done
@@ -109,16 +124,98 @@ pub unsafe extern "C" fn gos_rt_wg_wait(wg: *mut GosWaitGroup) {
             return;
         }
         let wg = unsafe { &*wg };
-        let mut c = wg.counter.lock();
-        while *c > 0 {
-            wg.cv.wait(&mut c);
+        // A goroutine gives its carrier back while it waits: it registers for
+        // the zero-crossing wakeup, suspends, and re-checks the counter on
+        // every resume. An OS thread that is not a goroutine has no carrier to
+        // release and keeps the condvar.
+        if gossamer_coro::in_goroutine() {
+            loop {
+                let c = wg.counter.lock();
+                if *c <= 0 {
+                    break;
+                }
+                let mut parked_as = None;
+                let mut guard = Some(c);
+                crate::sched_global::park(crate::sched::ParkReason::Sync, |parker| {
+                    parked_as = Some(parker.gid);
+                    wg.parked_waiters.lock().push(parker.gid);
+                    drop(guard.take());
+                });
+                if let Some(g) = parked_as {
+                    wg.parked_waiters.lock().retain(|x| *x != g);
+                }
+            }
+        } else {
+            let mut c = wg.counter.lock();
+            while *c > 0 {
+                wg.cv.wait(&mut c);
+            }
+            drop(c);
         }
-        drop(c);
         let from = wg.last_done.load(Ordering::Acquire);
         if from >= 0 {
             crate::race::record_sync(u32::try_from(from).unwrap_or(0), crate::race::current_gid());
         }
     });
+}
+
+/// `wg.wait_ctx(ctx)` - waits for the counter to reach zero unless the
+/// context fires first. Returns `1` when the group completed and `0` when
+/// the context cancelled the wait.
+///
+/// # Safety
+/// `ctx_handle` is an opaque context handle, or null for an uncancellable
+/// wait.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_wg_wait_ctx(wg: *mut GosWaitGroup, ctx_handle: *const u8) -> i64 {
+    ffi_entry!(0, {
+        if wg.is_null() {
+            return 1;
+        }
+        let addr = ctx_handle as usize;
+        if addr == 0 {
+            unsafe { gos_rt_wg_wait(wg) };
+            return 1;
+        }
+        let wg = unsafe { &*wg };
+        let cancelled = || super::context::addr_is_cancelled(addr);
+        loop {
+            if *wg.counter.lock() <= 0 {
+                return 1;
+            }
+            if cancelled() {
+                return 0;
+            }
+            if !gossamer_coro::in_goroutine() {
+                // An OS thread has no carrier to release, so it re-checks
+                // both conditions on the group's own wakeup cadence.
+                let mut c = wg.counter.lock();
+                if *c > 0 {
+                    wg.cv.wait_for(&mut c, std::time::Duration::from_millis(50));
+                }
+                continue;
+            }
+            // The counter reaching zero and the context cancelling both
+            // unpark this goroutine, so whichever happens first resumes it
+            // and the loop re-reads which one it was.
+            let c = wg.counter.lock();
+            if *c <= 0 {
+                return 1;
+            }
+            let mut parked_as = None;
+            let mut guard = Some(c);
+            crate::sched_global::park(crate::sched::ParkReason::Sync, |parker| {
+                parked_as = Some(parker.gid);
+                wg.parked_waiters.lock().push(parker.gid);
+                super::context::register_waiter(addr, parker.gid);
+                drop(guard.take());
+            });
+            if let Some(g) = parked_as {
+                wg.parked_waiters.lock().retain(|x| *x != g);
+                super::context::deregister_waiter(addr, g);
+            }
+        }
+    })
 }
 
 /// Returns the sticky misuse bitmask: 0 = ok, 1 = underflow seen,

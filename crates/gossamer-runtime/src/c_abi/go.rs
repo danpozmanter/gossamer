@@ -359,6 +359,52 @@ pub unsafe extern "C" fn gos_rt_sleep_ns(ns: i64) {
     });
 }
 
+/// `time::sleep_ctx(ctx, ms)` - sleeps for `ms` milliseconds unless the
+/// context fires first. Returns `1` when the full duration elapsed and `0`
+/// when the context cancelled the wait. A cancelled context returns `0`
+/// without sleeping.
+///
+/// # Safety
+/// `ctx_handle` is an opaque context handle, or null for an uncancellable
+/// sleep.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sleep_ms_ctx(ctx_handle: *const u8, ms: i64) -> i64 {
+    ffi_entry!(0, {
+        if ms < 0 {
+            unsafe {
+                super::gos_rt_panic(c"time::sleep_ctx: duration_ms must be non-negative".as_ptr());
+            };
+        }
+        let addr = ctx_handle as usize;
+        let cancelled = || super::context::addr_is_cancelled(addr);
+        if cancelled() {
+            return 0;
+        }
+        if addr == 0 {
+            unsafe { gos_rt_sleep_ms(ms) };
+            return 1;
+        }
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_millis(ms.max(0) as u64);
+        // Cancelling unparks every goroutine registered on the node, so the
+        // sleep resumes on whichever of the two arrives first and re-parks
+        // for the remainder when it was neither.
+        while std::time::Instant::now() < deadline {
+            if cancelled() {
+                return 0;
+            }
+            if let Some(gid) = crate::sched_global::current_gid() {
+                super::context::register_waiter(addr, gid);
+            }
+            crate::sched_global::sleep_until(deadline);
+            if let Some(gid) = crate::sched_global::current_gid() {
+                super::context::deregister_waiter(addr, gid);
+            }
+        }
+        i64::from(!cancelled())
+    })
+}
+
 /// `time::sleep(ms: i64)` - the millisecond-units variant
 /// surfaced to Gossamer code. The bytecode VM uses
 /// `Duration::from_millis(ms)`; this helper gives the cranelift

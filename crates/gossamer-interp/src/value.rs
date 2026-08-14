@@ -2263,6 +2263,19 @@ fn any_channel_can_progress(holding: &ChannelInner) -> bool {
     false
 }
 
+/// Wakes every goroutine parked on a channel so each re-evaluates whether
+/// the program can still make progress. Called once when `main` returns:
+/// the set of participants shrinks at that moment, and a waiter parked
+/// before it can only learn so by being given a chance to look again.
+pub fn wake_all_channel_waiters() {
+    let live = LIVE_CHANNELS.lock();
+    for weak in live.iter() {
+        if let Some(inner) = weak.upgrade() {
+            inner.cv.notify_all();
+        }
+    }
+}
+
 /// The deadlock report: every participant is waiting on a channel, so the
 /// value the operation waits for can never arrive.
 #[must_use]
@@ -2487,7 +2500,9 @@ impl Channel {
                 self.wake_select_waiters(&guard);
             }
             let Some(_waiting) = crate::vm::goroutine::ChannelWait::enter(|| {
-                guard.has_ready_waiter() || any_channel_can_progress(&self.inner)
+                guard.has_ready_waiter()
+                    || any_channel_can_progress(&self.inner)
+                    || crate::stdlib_builtins::context::deadline_pending()
             }) else {
                 break RecvOutcome::Deadlocked;
             };

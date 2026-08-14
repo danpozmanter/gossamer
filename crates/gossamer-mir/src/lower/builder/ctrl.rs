@@ -2883,7 +2883,44 @@ impl<'a> Builder<'a> {
             && !matches!(for_loop.iter_expr.kind, HirExprKind::Range { .. })
             && !collection_iter_method
         {
-            let iter_local = self.lower_expr(for_loop.iter_expr)?;
+            // Lazy iterator state carries its own position and yields one
+            // element per pull, so a bound cursor is advanced through the
+            // generic loop's `next()` protocol rather than read out in full.
+            // The bound shape is a local (or `&mut` of one), whose
+            // re-evaluation in the match scrutinee is a register read.
+            let bound_state = match &for_loop.iter_expr.kind {
+                HirExprKind::Path { .. } => true,
+                HirExprKind::Unary {
+                    op: gossamer_hir::HirUnaryOp::RefShared | gossamer_hir::HirUnaryOp::RefMut,
+                    operand,
+                    ..
+                } => matches!(operand.kind, HirExprKind::Path { .. }),
+                _ => false,
+            };
+            let drivable = matches!(
+                self.lazy_iter_elem_family(elem_ty),
+                Some(
+                    crate::lower::builder::method_call::LazyElemFamily::Word
+                        | crate::lower::builder::method_call::LazyElemFamily::Ptr
+                        | crate::lower::builder::method_call::LazyElemFamily::Float
+                )
+            );
+            if bound_state && drivable {
+                return None;
+            }
+            // A pair element has no `next` shim to advance through, so its
+            // elements are read out once and walked in the buffer that holds
+            // them. The collect shim takes the state handle, so a `&mut`
+            // wrapper is peeled to the local that holds it.
+            let handle_expr = match &for_loop.iter_expr.kind {
+                HirExprKind::Unary {
+                    op: gossamer_hir::HirUnaryOp::RefShared | gossamer_hir::HirUnaryOp::RefMut,
+                    operand,
+                    ..
+                } => operand.as_ref(),
+                _ => for_loop.iter_expr,
+            };
+            let iter_local = self.lower_expr(handle_expr)?;
             let vec_ty = self.tcx.intern(TyKind::Vec(elem_ty));
             let helper = self.lazy_collect_symbol(elem_ty);
             let vec_local = self.emit_combinator_call(

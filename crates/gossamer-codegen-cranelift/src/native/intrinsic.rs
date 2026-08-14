@@ -176,6 +176,13 @@ pub(super) struct IntrinsicContext {
     /// The same as [`Self::sret_slots_by_name`] but keyed by def-local id, for
     /// `Operand::FnRef { def }` callees that resolve by their `DefId`.
     pub(super) sret_slots_by_def: HashMap<u32, u32>,
+    /// Parameter positions a body takes by reference, keyed by mangled /
+    /// plain name. A call site consults this before defensively copying an
+    /// aggregate argument: a by-reference parameter names the caller's own
+    /// storage, so the callee's writes must land there.
+    pub(super) ref_params_by_name: HashMap<String, Vec<bool>>,
+    /// The same as [`Self::ref_params_by_name`] but keyed by def-local id.
+    pub(super) ref_params_by_def: HashMap<u32, Vec<bool>>,
     /// Per-function: the cranelift element type of stack-allocated
     /// aggregates rooted at each local. Populated when lowering
     /// `Rvalue::Aggregate` / `Rvalue::Repeat`, consumed by
@@ -251,6 +258,8 @@ impl IntrinsicContext {
             functions_by_def: HashMap::new(),
             sret_slots_by_name: HashMap::new(),
             sret_slots_by_def: HashMap::new(),
+            ref_params_by_name: HashMap::new(),
+            ref_params_by_def: HashMap::new(),
             elem_cl_ty: HashMap::new(),
             elem_slots: HashMap::new(),
             local_slots: HashMap::new(),

@@ -9,10 +9,24 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 /// Called by the CLI entrypoint after `main` returns so spawned work
 /// has a chance to land before the process exits.
 pub fn join_outstanding_goroutines() {
+    MAIN_RETURNED.store(true, Ordering::Release);
+    crate::value::wake_all_channel_waiters();
     if let Some(pool) = POOL.get() {
         pool.drain();
     }
 }
+
+/// Set once `main` has returned and the process is draining spawned work.
+/// From that point the program's participants are the outstanding
+/// goroutines alone, so a program is stuck as soon as all of them are
+/// waiting on channels that can hand nothing over.
+static MAIN_RETURNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Goroutines parked in a channel wait that nothing left in the program can
+/// satisfy. Draining stops once every outstanding goroutine is counted here:
+/// waiting longer cannot change the answer, and the process leaves them
+/// parked exactly as a compiled binary does.
+static STUCK_WAITERS: AtomicU64 = AtomicU64::new(0);
 
 /// Goroutine task: a closure to run on a pool worker.
 type GoroutineTask = Box<dyn FnOnce() + Send + 'static>;
@@ -275,9 +289,19 @@ impl GoroutinePool {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn drain(&self) {
         let mut inner = self.inner.lock();
-        while self.outstanding.load(Ordering::Acquire) > 0 {
+        loop {
+            let outstanding = self.outstanding.load(Ordering::Acquire);
+            if outstanding == 0 || STUCK_WAITERS.load(Ordering::Acquire) >= outstanding {
+                return;
+            }
             self.drain_cv.wait(&mut inner);
         }
+    }
+
+    /// Wakes a drain that is waiting on progress this pool can no longer make.
+    fn notify_drain(&self) {
+        let _inner = self.inner.lock();
+        self.drain_cv.notify_all();
     }
 
     /// wasm runs goroutines eagerly to completion in `spawn`, so there
@@ -374,7 +398,10 @@ pub fn adjust_pending_handoffs(ready: bool) {
 }
 
 /// Marks its thread as suspended in a channel wait for as long as it lives.
-pub(crate) struct ChannelWait;
+pub(crate) struct ChannelWait {
+    /// Whether this wait was counted among the waits nothing can satisfy.
+    stuck: bool,
+}
 
 impl ChannelWait {
     /// Enters a channel wait, reporting a deadlock when doing so leaves
@@ -398,15 +425,26 @@ impl ChannelWait {
     /// visible to the readiness count.
     pub(crate) fn enter(can_progress: impl FnOnce() -> bool) -> Option<Self> {
         let waiting = CHANNEL_WAITERS.fetch_add(1, Ordering::AcqRel) + 1;
-        // Reported only with no goroutine left to run: the caller is then the
-        // whole program, and a channel that can hand nothing over will never
-        // be able to. With a goroutine still live the counts are read while
-        // it is free to change them, and a deadlock claimed over a state
-        // still being written would end a working program - so that case
-        // waits, exactly as it did before this check existed.
-        let alone = outstanding_goroutines() == 0;
-        if alone && waiting >= 1 && PENDING_HANDOFFS.load(Ordering::Acquire) == 0 && !can_progress()
-        {
+        // The program's participants are every outstanding goroutine plus
+        // `main` while it is still running. All of them waiting on channels
+        // that can hand nothing over means nothing is left to deliver a
+        // value, so waiting longer cannot change the answer.
+        let main_returned = MAIN_RETURNED.load(Ordering::Acquire);
+        let participants = outstanding_goroutines() + u64::from(!main_returned);
+        let stuck = waiting as u64 >= participants
+            && PENDING_HANDOFFS.load(Ordering::Acquire) == 0
+            && !can_progress();
+        // Past `main`, the remaining goroutines are abandoned rather than
+        // reported: a compiled binary exits the same way, with the same
+        // status and the same output.
+        if stuck && main_returned {
+            STUCK_WAITERS.fetch_add(1, Ordering::AcqRel);
+            if let Some(pool) = POOL.get() {
+                pool.notify_drain();
+            }
+            return Some(Self { stuck: true });
+        }
+        if stuck {
             CHANNEL_WAITERS.fetch_sub(1, Ordering::AcqRel);
             // A deadlock is a property of the whole program, not of the
             // goroutine that happens to notice. Ending only this goroutine
@@ -418,7 +456,7 @@ impl ChannelWait {
             }
             return None;
         }
-        Some(Self)
+        Some(Self { stuck: false })
     }
 }
 
@@ -438,6 +476,9 @@ fn report_fatal_deadlock() -> ! {
 
 impl Drop for ChannelWait {
     fn drop(&mut self) {
+        if self.stuck {
+            STUCK_WAITERS.fetch_sub(1, Ordering::AcqRel);
+        }
         CHANNEL_WAITERS.fetch_sub(1, Ordering::AcqRel);
     }
 }

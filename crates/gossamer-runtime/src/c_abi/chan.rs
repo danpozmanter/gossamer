@@ -547,29 +547,85 @@ pub unsafe extern "C" fn gos_rt_chan_recv_ctx_option(
     ctx_handle: *const u8,
 ) -> i128 {
     ffi_entry!(0i128, {
-        if ctx_handle.is_null() {
-            return unsafe { gos_rt_chan_recv_option(c) };
+        let (disc, payload) = unsafe { chan_recv_ctx_core(c, ctx_handle) };
+        crate::c_abi::vec::pack_result(disc, payload)
+    })
+}
+
+/// The same cancellation-aware receive as [`gos_rt_chan_recv_ctx_option`],
+/// reporting through the status-plus-out-pointer convention of
+/// [`gos_rt_chan_recv`]: `1` with the value stored through `out`, or `0`
+/// for a closed channel or a cancelled context. A backend whose calling
+/// convention for a two-word return is not under its own control reaches
+/// the same receive through this shape.
+///
+/// # Safety
+/// `out` must be writable for 8 bytes when non-null; `c` and `ctx_handle`
+/// carry the same requirements as [`gos_rt_chan_recv_ctx_option`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_chan_recv_ctx(
+    c: *mut GosChan,
+    ctx_handle: *const u8,
+    out: *mut i64,
+) -> i32 {
+    ffi_entry!(0, {
+        let (disc, payload) = unsafe { chan_recv_ctx_core(c, ctx_handle) };
+        if disc == 0 {
+            if !out.is_null() {
+                unsafe { out.write(payload) };
+            }
+            1
+        } else {
+            0
         }
-        let (Some(register), Some(deregister), Some(is_cancelled)) = (
-            ctx_register_hook(),
-            ctx_deregister_hook(),
-            ctx_is_cancelled_hook(),
-        ) else {
-            return unsafe { gos_rt_chan_recv_option(c) };
+    })
+}
+
+/// Receives with cancellation, answering `(disc, payload)` where `disc` is
+/// `0` for a value and `1` for a closed channel or a cancelled context.
+unsafe fn chan_recv_ctx_core(c: *mut GosChan, ctx_handle: *const u8) -> (i64, i64) {
+    {
+        if ctx_handle.is_null() {
+            let packed = unsafe { gos_rt_chan_recv_option(c) };
+            return (
+                (packed & 0xFFFF_FFFF_FFFF_FFFF) as u64 as i64,
+                ((packed >> 64) as u64) as i64,
+            );
+        }
+        // Hooks carry contexts owned by a Rust caller. A handle a compiled
+        // program minted is a node in this runtime's own registry, which the
+        // fallbacks consult directly, so both kinds of context cancel a
+        // receive through the same loop below.
+        let addr = ctx_handle as usize;
+        let register: Box<dyn Fn(*const u8, u32)> = match ctx_register_hook() {
+            Some(hook) => Box::new(move |h, g| unsafe { hook(h, g) }),
+            None => Box::new(move |_, g| {
+                super::context::register_waiter(addr, crate::sched::Gid(g));
+            }),
+        };
+        let deregister: Box<dyn Fn(*const u8, u32)> = match ctx_deregister_hook() {
+            Some(hook) => Box::new(move |h, g| unsafe { hook(h, g) }),
+            None => Box::new(move |_, g| {
+                super::context::deregister_waiter(addr, crate::sched::Gid(g));
+            }),
+        };
+        let is_cancelled: Box<dyn Fn(*const u8) -> i32> = match ctx_is_cancelled_hook() {
+            Some(hook) => Box::new(move |h| unsafe { hook(h) }),
+            None => Box::new(move |_| i32::from(super::context::addr_is_cancelled(addr))),
         };
         // Check before parking: an already-cancelled context
         // short-circuits without touching the channel.
-        if unsafe { is_cancelled(ctx_handle) } != 0 {
-            return crate::c_abi::vec::pack_result(1, 0);
+        if is_cancelled(ctx_handle) != 0 {
+            return (1, 0);
         }
         if c.is_null() {
-            return crate::c_abi::vec::pack_result(1, 0);
+            return (1, 0);
         }
         let chan = unsafe { &*c };
         let bytes_len = chan.elem_bytes as usize;
         let gid = crate::sched_global::current_gid();
         if let Some(g) = gid {
-            unsafe { register(ctx_handle, g.as_u32()) };
+            register(ctx_handle, g.as_u32());
         }
         // Inline the recv loop with cancel polling on both the
         // goroutine park path and the OS-thread condvar path. The
@@ -613,7 +669,7 @@ pub unsafe extern "C" fn gos_rt_chan_recv_ctx_option(
                 if let Some(g) = parked_as {
                     chan.parked_recv.lock().retain(|x| *x != g);
                 }
-                if unsafe { is_cancelled(ctx_handle) } != 0 {
+                if is_cancelled(ctx_handle) != 0 {
                     break (1i64, 0i64);
                 }
             } else {
@@ -622,16 +678,16 @@ pub unsafe extern "C" fn gos_rt_chan_recv_ctx_option(
                     .wait_for(&mut guard, std::time::Duration::from_millis(50));
                 chan.recv_waiters.fetch_sub(1, Ordering::AcqRel);
                 drop(guard);
-                if unsafe { is_cancelled(ctx_handle) } != 0 {
+                if is_cancelled(ctx_handle) != 0 {
                     break (1i64, 0i64);
                 }
             }
         };
         if let Some(g) = gid {
-            unsafe { deregister(ctx_handle, g.as_u32()) };
+            deregister(ctx_handle, g.as_u32());
         }
-        crate::c_abi::vec::pack_result(result_disc, result_payload)
-    })
+        (result_disc, result_payload)
+    }
 }
 
 fn storage_len(storage: &ChanStorage) -> usize {

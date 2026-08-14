@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.50.1 - Loop, concurrency, REPL doc fixes
+
+- Drive a `for` loop over a lazy iterator through its cursor. The loop read
+  every element into a `Vec` first and walked that, so `for c in s.chars()`
+  over a four-million-character String held eighty megabytes for a walk that
+  needs fourteen; the loop now binds the cursor once and advances it in
+  place. An element the runtime cannot hand out one at a time keeps the
+  buffered walk.
+- Park a goroutine waiting on a `WaitGroup` instead of blocking its worker.
+  A wait held its scheduler thread, so a group with more waiters than
+  workers never finished; waiters now park and the counter reaching zero
+  wakes them.
+- Reclaim a context node once its cancellation runs. Node state moved to a
+  registry the handle resolves through, so a cancelled context and its
+  descendants are freed rather than held for the life of the process, and a
+  node's done channel is minted only for a context that selects on it.
+- Serve every context deadline from the scheduler's timer wheel. A deadline
+  cost an OS thread parked on a sleep, one per context.
+- Walk the cancel and the is-cancelled chains iteratively, so context depth
+  costs heap rather than call frames.
+- Cancel a receive on a context a compiled program minted. The
+  cancellation-aware receive consulted only the hooks a Rust caller
+  installs, so `rx.recv_ctx(&ctx)` ignored cancellation in a built binary.
+- Type `recv_ctx` as `Option<T>`. Its result was typed as the element, so
+  the compiled tiers stored the discriminant and dropped the payload,
+  answering `Some(0)` for every received value.
+- Stop waiting at exit for goroutines that cannot proceed. `gos run` joined
+  outstanding goroutines unconditionally, so a program whose spawned work
+  parked forever never exited, while the same program built with
+  `gos build` returned.
+- Wake a goroutine parked on a context deadline instead of reporting a
+  deadlock. A program blocked on `ctx.done_chan().recv()` has a timer left
+  to act, so it is waiting rather than stuck.
+- Write through a by-reference parameter that carries an aggregate. A call
+  site copied the argument defensively, which is right for a by-value
+  parameter and wrong for `&mut`, so a callee's writes to an array, struct,
+  or tuple were discarded at every call site the caller did not inline.
+- Promote a body taking a fixed-array parameter. `[T; N]` over `i64`, `f64`,
+  or `char` had no boundary shape, so a hot function taking one stayed on the
+  interpreter and kept its callers there with it.
+- Add `time::sleep_ctx(ctx, ms)` and `wg.wait_ctx(ctx)`, which end their wait
+  when the context fires and report whether they completed. Cancellation was
+  reachable only from a channel receive, so no other wait could be cut short.
+- Report the argument count a sequence method takes when a call supplies a
+  different one, instead of reporting the method as missing.
+- Answer `Iterator` for `iter()` in REPL help on `Map`, `BTreeMap`, `Set`,
+  and `BTreeSet`, which still described the eager `Vec` result.
+
 ## 0.50.0 - Iterators/collections, codegen cycle safety, silent errors, fixes
 
 - Separate a collection's traversal from an iterator's by when the work runs,

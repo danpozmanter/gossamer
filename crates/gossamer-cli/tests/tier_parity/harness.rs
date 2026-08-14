@@ -164,6 +164,23 @@ const SPECS: &[Spec] = &[
     // Every goroutine blocks at some point here; a pending handoff is
     // progress, so none of it reads as a deadlock.
     spec("feature-testing-examples/channel_progress_not_deadlock.gos"),
+    // Waiters outnumber the scheduler's workers, so the group only
+    // completes if a wait parks its goroutine instead of holding a worker.
+    spec("feature-testing-examples/waitgroup_many_waiters.gos"),
+    // A by-reference parameter reaches the caller's own storage from every
+    // call site, while a by-value one still takes its own copy.
+    spec("feature-testing-examples/mut_ref_aggregate_args.gos"),
+    // A fixed-array parameter is a flat block of slots on every tier, so a
+    // promoted body indexes it the same way the interpreter does and a
+    // `&mut` one writes through to the caller's array.
+    spec("feature-testing-examples/fixed_array_params.gos"),
+    // A cancelled context ends a sleep and a group wait at once, and each
+    // reports which of the two outcomes it saw.
+    spec("feature-testing-examples/context_aware_waits.gos"),
+    // Cancellation, inheritance, deadlines, done-channel readiness, and a
+    // cancellation-aware receive answer the same on every tier, whether the
+    // context node lives in the interpreter's registry or the runtime's.
+    spec("feature-testing-examples/context_lifecycle.gos"),
     // Reflection over a struct, a tuple struct, an enum, and a generic type
     // at two instantiations, all folded during compilation.
     spec("feature-testing-examples/typeinfo_enums_and_generics.gos"),

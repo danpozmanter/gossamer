@@ -2731,6 +2731,7 @@ impl<'a> Builder<'a> {
             "add" => Some("gos_rt_wg_add"),
             "done" => Some("gos_rt_wg_done"),
             "wait" => Some("gos_rt_wg_wait"),
+            "wait_ctx" => Some("gos_rt_wg_wait_ctx"),
             "load" => Some("gos_rt_atomic_i64_load"),
             "store" => Some("gos_rt_atomic_i64_store"),
             "fetch_add" => Some("gos_rt_atomic_i64_fetch_add"),
@@ -3574,6 +3575,7 @@ impl<'a> Builder<'a> {
             "gos_rt_validate_errors_is_empty"
             | "gos_rt_ctx_is_cancelled"
             | "gos_rt_atomic_bool_load"
+            | "gos_rt_wg_wait_ctx"
             | "gos_rt_ctx_done" => self.tcx.bool_ty(),
             "gos_rt_ctx_cancelled" => {
                 let i = self.tcx.int_ty(gossamer_types::IntTy::I64);

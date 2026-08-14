@@ -65,12 +65,10 @@ const KNOWN_UNUSED_RUNTIME_SYMBOLS: &[&str] = &[
     // such unresolved externs but Windows isn't.
     "gos_rt_callback_invoke",
     // Cross-crate context-cancellation hooks. Installed by
-    // `gossamer-std::context` at first use and called by the
-    // context-aware runtime entry points. The user-facing
-    // language surface (`rx.recv_ctx(&ctx)`) is not yet wired
-    // through the MIR dispatch tables; until it lands, these
-    // entry points are reachable only from Rust callers.
-    // Tracked in `~/dev/contexts/gos/latest.md`.
+    // `gossamer-std::context` at first use and called from Rust
+    // callers; the LLVM tier reaches the cancellation-aware receive
+    // through `gos_rt_chan_recv_ctx` instead, so this two-word
+    // return shape has no generated reference of its own.
     "gos_rt_chan_recv_ctx_option",
     "gos_rt_install_ctx_hooks",
     // Branch-coverage hooks. Codegen for `gos test --coverage` is

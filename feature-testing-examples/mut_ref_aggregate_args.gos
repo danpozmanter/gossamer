@@ -1,0 +1,60 @@
+// A by-reference parameter names the caller's own storage, so a callee's
+// writes are visible after the call however many such call sites a body
+// holds. A by-value parameter takes a copy, so the caller's value is
+// untouched. Both hold for arrays, structs, and tuples.
+
+struct Counter {
+    hits: i64
+    misses: i64
+}
+
+fn fill(xs: &mut [i64; 4]) -> i64 {
+    for i in ..4 {
+        xs[i] = 99
+    }
+    xs[0]
+}
+
+fn leave(xs: [i64; 4]) -> i64 {
+    let mut copy = xs
+    copy[0] = 1234
+    copy[0]
+}
+
+fn record(counter: &mut Counter) {
+    counter.hits += 1
+    counter.misses += 2
+}
+
+fn main() {
+    // More call sites than a body inlines, so the later ones are real calls.
+    let mut a0 = [0, 0, 0, 0]
+    let mut a1 = [1, 1, 1, 1]
+    let mut a2 = [2, 2, 2, 2]
+    let mut a3 = [3, 3, 3, 3]
+    let mut a4 = [4, 4, 4, 4]
+    let mut a5 = [5, 5, 5, 5]
+    let mut a6 = [6, 6, 6, 6]
+    let mut a7 = [7, 7, 7, 7]
+    let _ = fill(&mut a0)
+    let _ = fill(&mut a1)
+    let _ = fill(&mut a2)
+    let _ = fill(&mut a3)
+    let _ = fill(&mut a4)
+    let _ = fill(&mut a5)
+    let _ = fill(&mut a6)
+    let _ = fill(&mut a7)
+    println!(
+        "filled {} {} {} {} {} {} {} {}"
+        a0[0], a1[0], a2[0], a3[0], a4[0], a5[0], a6[0], a7[0]
+    )
+
+    let untouched = [8, 8, 8, 8]
+    println!("by-value {} {}", leave(untouched), untouched[0])
+
+    let mut counter = Counter { hits: 0, misses: 0 }
+    for _ in 0..8 {
+        record(&mut counter)
+    }
+    println!("counter {} {}", counter.hits, counter.misses)
+}

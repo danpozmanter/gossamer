@@ -1,0 +1,118 @@
+// Fixed-array parameters cross the JIT boundary as a flat block of slots,
+// so a hot function taking `[T; N]` promotes like its `Vec` twin for every
+// scalar element type. By-value parameters leave the caller's array
+// untouched; `&mut` ones write through.
+
+fn sum4(xs: [i64; 4]) -> i64 {
+    let mut total = 0
+    for i in ..4 {
+        total += xs[i]
+    }
+    total
+}
+
+fn bump(xs: &mut [i64; 4]) {
+    for i in ..4 {
+        xs[i] += 10
+    }
+}
+
+fn rotate3(xs: &mut [i64; 3]) {
+    let head = xs[0]
+    xs[0] = xs[1]
+    xs[1] = xs[2]
+    xs[2] = head
+}
+
+fn copy_is_private(xs: [i64; 4]) -> i64 {
+    let mut local = xs
+    local[0] = 999
+    local[0] + xs[0]
+}
+
+fn scale(xs: [f64; 4]) -> f64 {
+    let mut total = 0.0
+    for i in ..4 {
+        total += xs[i] * 2.0
+    }
+    total
+}
+
+fn count_set(flags: [bool; 4]) -> i64 {
+    let mut set = 0
+    for i in ..4 {
+        if flags[i] {
+            set += 1
+        }
+    }
+    set
+}
+
+fn code_sum(letters: [char; 4]) -> i64 {
+    let mut total = 0
+    for i in ..4 {
+        total += letters[i] as i64
+    }
+    total
+}
+
+fn invert(flags: &mut [bool; 4]) {
+    for i in ..4 {
+        flags[i] = !flags[i]
+    }
+}
+
+fn main() {
+    let base = [1, 2, 3, 4]
+    let mut total = 0
+    for _ in 0..2000 {
+        total += sum4(base)
+    }
+    println!("sum {}", total)
+
+    let mut bumped = [1, 2, 3, 4]
+    for _ in 0..2000 {
+        bump(&mut bumped)
+    }
+    println!("bumped {} {} {} {}", bumped[0], bumped[1], bumped[2], bumped[3])
+
+    let mut rotated = [7, 8, 9]
+    for _ in 0..2000 {
+        rotate3(&mut rotated)
+    }
+    println!("rotated {} {} {}", rotated[0], rotated[1], rotated[2])
+
+    let mut private = 0
+    for _ in 0..2000 {
+        private = copy_is_private(base)
+    }
+    println!("private {}", private)
+    println!("source {} {} {} {}", base[0], base[1], base[2], base[3])
+
+    let reals = [1.5, 2.5, 3.5, 4.5]
+    let mut scaled = 0.0
+    for _ in 0..2000 {
+        scaled = scale(reals)
+    }
+    println!("scaled {:.1}", scaled)
+
+    let flags = [true, false, true, true]
+    let mut set = 0
+    for _ in 0..2000 {
+        set = count_set(flags)
+    }
+    println!("set {}", set)
+
+    let letters = ['g', 'o', 's', '!']
+    let mut codes = 0
+    for _ in 0..2000 {
+        codes = code_sum(letters)
+    }
+    println!("codes {}", codes)
+
+    let mut toggled = [true, false, true, false]
+    for _ in 0..2001 {
+        invert(&mut toggled)
+    }
+    println!("toggled {} {} {} {}", toggled[0], toggled[1], toggled[2], toggled[3])
+}

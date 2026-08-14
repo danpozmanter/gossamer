@@ -1,0 +1,25 @@
+// More goroutines wait on one group than the scheduler has workers. A wait
+// parks its goroutine rather than holding its worker, so every waiter is
+// released when the counter reaches zero.
+
+use std::sync::{WaitGroup, channel}
+
+fn waiter(wg: WaitGroup, done: Sender<i64>) {
+    wg.wait()
+    done.send(1)
+}
+
+fn main() {
+    let wg = WaitGroup::new()
+    let (tx, rx) = channel()
+    wg.add(1)
+    for _ in 0..48 {
+        go waiter(wg, tx)
+    }
+    wg.done()
+    let mut seen = 0
+    while seen < 48 {
+        if let Some(_v) = rx.recv() { seen += 1 }
+    }
+    println!("waiters {}", seen)
+}

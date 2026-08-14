@@ -346,6 +346,36 @@ fn builtin_time_now_ms(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Int(ms))
 }
 
+/// `time::sleep_ctx(ctx, ms)` - sleeps unless the context fires first,
+/// answering whether the full duration elapsed. The wait is split into short
+/// steps so a cancellation raised while sleeping is observed promptly.
+fn builtin_time_sleep_ctx(args: &[Value]) -> RuntimeResult<Value> {
+    let ms = args.get(1).and_then(value_to_int).unwrap_or(0);
+    if ms < 0 {
+        return Err(RuntimeError::Type(
+            "time::sleep_ctx: duration_ms must be non-negative".to_string(),
+        ));
+    }
+    let Some(ctx) = args.first() else {
+        return Ok(Value::Bool(true));
+    };
+    let cancelled = || crate::stdlib_builtins::context::value_is_cancelled(ctx);
+    if cancelled() {
+        return Ok(Value::Bool(false));
+    }
+    let ms = u64::try_from(ms)
+        .map_err(|_| RuntimeError::Type("time::sleep_ctx: duration_ms is too large".to_string()))?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+    while std::time::Instant::now() < deadline {
+        if cancelled() {
+            return Ok(Value::Bool(false));
+        }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        std::thread::sleep(remaining.min(std::time::Duration::from_millis(5)));
+    }
+    Ok(Value::Bool(!cancelled()))
+}
+
 fn builtin_time_sleep(args: &[Value]) -> RuntimeResult<Value> {
     let ms = args.first().and_then(value_to_int).unwrap_or(0);
     if ms < 0 {

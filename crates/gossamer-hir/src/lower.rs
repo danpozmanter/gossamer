@@ -1322,7 +1322,28 @@ impl Lowerer<'_> {
         // iter shapes (ranges, arrays, vecs), the MIR fast paths
         // walk the receiver expression directly, so we keep the
         // inline shape that those detectors recognise.
-        let needs_state_binding = self.iter_needs_state_binding(iter_ty)
+        // Lazy iterator state is a cursor: it must be bound once and advanced,
+        // since re-evaluating the expression that built it would hand the loop
+        // a fresh cursor on every turn. A syntactic range keeps its counted
+        // inline loop, and a bare `.iter()` keeps the indexed walk over its
+        // source collection - both shapes the fast paths recognise by syntax.
+        // A String cursor is the shape the loop can advance in place: it
+        // yields one scalar at a time from a source it does not have to hold.
+        // Every other pipeline keeps the walk it had, because an adapter
+        // chain has no advancing shim of its own and would spin on a cursor
+        // that never moves.
+        let string_cursor_tail = matches!(
+            &iter_expr.kind,
+            HirExprKind::MethodCall { name, args, .. }
+                if matches!(name.name.as_str(), "chars" | "bytes") && args.is_empty()
+        );
+        let lazy_state_route = string_cursor_tail
+            && matches!(
+                self.tcx.kind(iter_ty),
+                Some(gossamer_types::TyKind::Iterator(elem)) if self.lazy_elem_is_drivable(*elem)
+            );
+        let needs_state_binding = lazy_state_route
+            || self.iter_needs_state_binding(iter_ty)
             || Self::iter_expr_is_temporary_sequence(&iter_expr);
         if needs_state_binding {
             return self.lower_for_user_iter(pattern, iter_expr, body, label, span);
@@ -1543,6 +1564,24 @@ impl Lowerer<'_> {
     /// take the state path; ranges / arrays / vecs / slices /
     /// `HashMap`s stay inline so the MIR fast-paths can recognise
     /// the receiver expression directly.
+    /// Whether the lazy iterator runtime can hand this element out one at a
+    /// time. Only an element it carries in a single 8-byte slot has an
+    /// advancing shim, so binding the cursor is worth it exactly for those;
+    /// every other element reaches the loop through the buffered walk over
+    /// the expression that produced it.
+    fn lazy_elem_is_drivable(&self, elem: gossamer_types::Ty) -> bool {
+        use gossamer_types::TyKind;
+        matches!(
+            self.tcx.kind(elem),
+            Some(
+                TyKind::Int(gossamer_types::IntTy::I64)
+                    | TyKind::Char
+                    | TyKind::String
+                    | TyKind::Float(gossamer_types::FloatTy::F64)
+            )
+        )
+    }
+
     fn iter_needs_state_binding(&self, ty: gossamer_types::Ty) -> bool {
         use gossamer_types::TyKind;
         let mut cur = ty;

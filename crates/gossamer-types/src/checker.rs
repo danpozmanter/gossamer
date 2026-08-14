@@ -7549,7 +7549,7 @@ impl<'a> TypeChecker<'a> {
             resolved = self.infer.resolve(self.tcx, *inner);
         }
         match self.tcx.kind(resolved) {
-            Some(TyKind::Receiver(elem)) if matches!(method, "recv" | "try_recv") => {
+            Some(TyKind::Receiver(elem)) if matches!(method, "recv" | "try_recv" | "recv_ctx") => {
                 let elem = *elem;
                 for arg in args {
                     self.check_expr(arg);
@@ -7811,6 +7811,15 @@ impl<'a> TypeChecker<'a> {
         }
         if let Some(ty) = self.reject_method_on_receiver(receiver_ty, method, args, receiver.span) {
             return ty;
+        }
+        // `wg.wait_ctx(ctx)` answers whether the group completed. A sync
+        // handle's receiver stays an inference variable by design, so the
+        // name carries the return type; no other receiver declares it.
+        if method == "wait_ctx" && args.len() == 1 {
+            for arg in args {
+                self.check_expr(arg);
+            }
+            return self.tcx.bool_ty();
         }
         if let Some(ty) = self.check_channel_method(method, receiver_ty, args) {
             return ty;
@@ -8102,13 +8111,41 @@ impl<'a> TypeChecker<'a> {
     /// Builds the GT0002 diagnostic for `method` on `resolved`, carrying
     /// the receiver's method surface so the reader gets a did-you-mean.
     fn unresolved_method(&self, ty: String, method: &str, resolved: Ty) -> TypeError {
-        // A traversal named on a collection is not a typo, so it gets the
-        // message that says where the traversal surface lives rather than a
-        // did-you-mean over the collection's own methods.
         TypeError::UnresolvedMethod {
             ty,
             name: method.to_string(),
             available: self.known_method_names(resolved),
+        }
+    }
+
+    /// The diagnostic for a method call that did not resolve, given how many
+    /// arguments it was written with. A name the receiver does declare failed
+    /// on its argument count rather than its spelling, so it reports the count
+    /// the method takes instead of claiming the method does not exist.
+    fn unresolved_method_call(
+        &self,
+        ty: String,
+        method: &str,
+        resolved: Ty,
+        found_args: usize,
+    ) -> TypeError {
+        let available = self.known_method_names(resolved);
+        if available.iter().any(|name| name == method)
+            && let Some(expected) = (0..=8).find(|arity| {
+                self.method_arg_sigs
+                    .contains_key(&(method.to_string(), *arity))
+            })
+        {
+            return TypeError::CallArityMismatch {
+                callee: method.to_string(),
+                expected,
+                found: found_args,
+            };
+        }
+        TypeError::UnresolvedMethod {
+            ty,
+            name: method.to_string(),
+            available,
         }
     }
 
@@ -8561,7 +8598,7 @@ impl<'a> TypeChecker<'a> {
             self.check_expr(arg);
         }
         let ty = self.render_public_ty(resolved);
-        let error = self.unresolved_method(ty, method, resolved);
+        let error = self.unresolved_method_call(ty, method, resolved, args.len());
         self.emit(error, span);
         true
     }
@@ -9149,6 +9186,49 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Whether the `Vec` surface accepts `name` at `arity` arguments. Used to
+    /// name the count a method takes when a call supplies a different one.
+    fn vec_method_arity_exists(name: &str, arity: usize) -> bool {
+        matches!(
+            (name, arity),
+            (
+                "join"
+                    | "take"
+                    | "skip"
+                    | "step_by"
+                    | "chunks"
+                    | "windows"
+                    | "get"
+                    | "contains"
+                    | "index_of"
+                    | "count_of"
+                    | "insert"
+                    | "remove",
+                1
+            ) | ("slice", 2)
+        )
+    }
+
+    /// Reports the argument count `name` takes when the receiver declares it
+    /// but no arity accepted `found`. `None` leaves the call to the caller's
+    /// ordinary unresolved-method path.
+    fn sequence_arity_mismatch(&mut self, name: &str, found: usize, span: Span) -> Option<Ty> {
+        if !is_slice_sequence_method(name) && !is_vec_only_sequence_method(name) {
+            return None;
+        }
+        let expected =
+            (0..=8).find(|arity| *arity != found && Self::vec_method_arity_exists(name, *arity))?;
+        self.emit(
+            TypeError::CallArityMismatch {
+                callee: name.to_string(),
+                expected,
+                found,
+            },
+            span,
+        );
+        Some(self.tcx.error_ty())
+    }
+
     /// Return type of a method on a `Vec` / slice / fixed-array receiver
     /// whose result is a function of the element type. Without this the
     /// checker falls through to a fresh `Var`, so a chained `.first()` /
@@ -9337,7 +9417,10 @@ impl<'a> TypeChecker<'a> {
                 }
                 Some(self.tcx.intern(TyKind::Vec(elem)))
             }
-            _ => None,
+            // A name this receiver does declare, written with an argument
+            // count no arm accepts, failed on its arity rather than its
+            // spelling.
+            (name, found) => self.sequence_arity_mismatch(name, found, span),
         }
     }
 

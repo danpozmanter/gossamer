@@ -619,6 +619,24 @@ fn maybe_push_sret_slot(
     Ok(())
 }
 
+/// Whether the callee takes parameter `idx` by reference. Such a parameter
+/// names the caller's own storage, so an aggregate argument reaches it as an
+/// address rather than through the by-value copy every other aggregate
+/// argument gets.
+fn callee_param_is_by_ref(callee: &Operand, intrinsics: &IntrinsicContext, idx: usize) -> bool {
+    let params = match callee {
+        Operand::Const(ConstValue::Str(name)) => intrinsics.ref_params_by_name.get(name),
+        Operand::FnRef { def, substs } => {
+            let mangled = (!substs.is_empty()).then(|| gossamer_mir::mangled_name(*def, substs));
+            mangled
+                .and_then(|name| intrinsics.ref_params_by_name.get(&name))
+                .or_else(|| intrinsics.ref_params_by_def.get(&def.local))
+        }
+        _ => None,
+    };
+    params.is_some_and(|by_ref| by_ref.get(idx).copied().unwrap_or(false))
+}
+
 /// Resolves the callee's sret return-slot count for a `Call` terminator,
 /// mirroring [`resolve_callee`]'s key lookup so the size matches the exact body
 /// the call resolves to. `name_hint` is the literal name for a `Const(Str)`
@@ -2002,7 +2020,9 @@ pub(super) fn lower_terminator(
                 // loop allocated gigabytes per second through it. A
                 // very large aggregate keeps the heap path rather
                 // than risking frame overflow.
-                if let Some(slots) = operand_aggregate_slots(body, tcx, op) {
+                if let Some(slots) = operand_aggregate_slots(body, tcx, op)
+                    .filter(|_| !callee_param_is_by_ref(callee, intrinsics, idx))
+                {
                     if slots <= 4096 {
                         let ptr_ty = module.target_config().pointer_type();
                         let slot = builder.create_sized_stack_slot(StackSlotData::new(

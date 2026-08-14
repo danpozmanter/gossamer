@@ -2900,6 +2900,7 @@ impl<'a> Builder<'a> {
             // monotonic/now shims already existed in the runtime;
             // these arms route the language-level calls to them.
             "time::sleep" => ("gos_rt_sleep_ms", self.tcx.unit()),
+            "time::sleep_ctx" => ("gos_rt_sleep_ms_ctx", self.tcx.bool_ty()),
             "time::now" | "time::unix_ms" => (
                 "gos_rt_time_now_ms",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),

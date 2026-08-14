@@ -602,7 +602,14 @@ pub fn report_deadlock_if_stuck(op: &str) {
     // Goroutines are not the only actors: an embedder's thread, a blocking
     // worker, or a test can hold the other end, and none of them is a live
     // goroutine. A second waiter means someone else is positioned to act.
-    if globals.scheduler.live_goroutines() == 0 && CHANNEL_WAITERS.load(Ordering::Acquire) == 1 {
+    // A registered waker is an actor outside the goroutine set that is
+    // still positioned to act: a context deadline in the timer wheel, an
+    // I/O readiness registration, a blocking-pool completion. Any of them
+    // can close or fill the channel this caller waits on.
+    if globals.scheduler.live_goroutines() == 0
+        && CHANNEL_WAITERS.load(Ordering::Acquire) == 1
+        && globals.wakers.lock().is_empty()
+    {
         report_fatal_deadlock(op);
     }
 }

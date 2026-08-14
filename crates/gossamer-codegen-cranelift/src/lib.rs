@@ -29,7 +29,7 @@ pub mod native_symbols;
 
 pub use emit::{FunctionText, Module, emit_function, emit_module};
 pub use jit::{
-    JitArtifact, JitBodyDecision, JitFn, JitKind, TupleElem, compile_to_jit,
+    ArrayElem, JitArtifact, JitBodyDecision, JitFn, JitKind, TupleElem, compile_to_jit,
     compile_to_jit_for_promotion, compile_to_jit_for_promotion_owned, has_worthy_jit_body,
     jit_compile_body_names, jit_compile_body_names_for_trigger, jit_eager_loop_bodies,
     jit_entry_body_names, jit_entry_body_names_with_admitted, jit_promotion_report,

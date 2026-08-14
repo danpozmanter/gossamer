@@ -997,7 +997,7 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         owner: "Map",
         name: "iter",
         kind: "method",
-        signature: "fn iter<K, V>(self: Map<K, V>) -> Vec<(K, V)>",
+        signature: "fn iter<K, V>(self: Map<K, V>) -> Iterator<(K, V)>",
         doc: "Returns key-value pairs.",
     },
     CoreMethodHelp {
@@ -1109,7 +1109,7 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         owner: "BTreeMap",
         name: "iter",
         kind: "method",
-        signature: "fn iter<K, V>(self: BTreeMap<K, V>) -> Vec<(K, V)>",
+        signature: "fn iter<K, V>(self: BTreeMap<K, V>) -> Iterator<(K, V)>",
         doc: "Returns key-value pairs in key order.",
     },
     CoreMethodHelp {
@@ -1207,7 +1207,7 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         owner: "Set",
         name: "iter",
         kind: "method",
-        signature: "fn iter<T>(self: Set<T>) -> Vec<T>",
+        signature: "fn iter<T>(self: Set<T>) -> Iterator<T>",
         doc: "Returns a deterministic snapshot suitable for iterator methods.",
     },
     CoreMethodHelp {
@@ -1326,7 +1326,7 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         owner: "BTreeSet",
         name: "iter",
         kind: "method",
-        signature: "fn iter<T>(self: BTreeSet<T>) -> Vec<T>",
+        signature: "fn iter<T>(self: BTreeSet<T>) -> Iterator<T>",
         doc: "Returns a deterministic snapshot suitable for iterator methods.",
     },
     CoreMethodHelp {

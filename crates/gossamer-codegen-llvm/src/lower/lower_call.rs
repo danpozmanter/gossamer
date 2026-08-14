@@ -758,28 +758,55 @@ impl<'a> Lowerer<'a> {
         // LLVM's control. This is especially important on non-x86_64 targets
         // where a closed recv misread as `Some` turns drain loops into
         // infinite loops.
-        if matches!(
+        // The cancellation-aware receive carries a context handle alongside
+        // the channel and reaches the same status-plus-out-pointer runtime
+        // call, so it repacks here through the identical sequence.
+        let ctx_recv = name.as_str() == "gos_rt_chan_recv_ctx_option" && args.len() == 2;
+        if (matches!(
             name.as_str(),
             "gos_rt_chan_recv_option" | "gos_rt_chan_try_recv_option"
         ) && args.len() == 1
+            || ctx_recv)
             && render_ty(self.tcx, self.body.local_ty(destination.local)) == "i128"
         {
             let chan = self.lower_operand(&args[0])?;
+            let ctx = if ctx_recv {
+                let handle = self.lower_operand(&args[1])?;
+                // A context handle travels as an integer in the body; the
+                // runtime takes it as an opaque pointer.
+                if render_ty(self.tcx, self.operand_ty(&args[1])) == "ptr" {
+                    Some(handle)
+                } else {
+                    let as_ptr = self.fresh();
+                    writeln!(self.out, "  {as_ptr} = inttoptr i64 {handle} to ptr").unwrap();
+                    Some(as_ptr)
+                }
+            } else {
+                None
+            };
             let out_slot = self.fresh();
             writeln!(self.out, "  {out_slot} = alloca i64").unwrap();
             writeln!(self.out, "  store i64 0, ptr {out_slot}").unwrap();
-            let status_fn = if name == "gos_rt_chan_recv_option" {
-                "gos_rt_chan_recv"
-            } else {
-                "gos_rt_chan_try_recv"
+            let status_fn = match name.as_str() {
+                "gos_rt_chan_recv_option" => "gos_rt_chan_recv",
+                "gos_rt_chan_recv_ctx_option" => "gos_rt_chan_recv_ctx",
+                _ => "gos_rt_chan_try_recv",
             };
             declare_rt(&mut self.runtime_refs, status_fn);
             let status = self.fresh();
-            writeln!(
-                self.out,
-                "  {status} = call i32 @\"{status_fn}\"(ptr {chan}, ptr {out_slot})"
-            )
-            .unwrap();
+            if let Some(ctx) = ctx {
+                writeln!(
+                    self.out,
+                    "  {status} = call i32 @\"{status_fn}\"(ptr {chan}, ptr {ctx}, ptr {out_slot})"
+                )
+                .unwrap();
+            } else {
+                writeln!(
+                    self.out,
+                    "  {status} = call i32 @\"{status_fn}\"(ptr {chan}, ptr {out_slot})"
+                )
+                .unwrap();
+            }
             let status_i64 = self.fresh();
             writeln!(self.out, "  {status_i64} = sext i32 {status} to i64").unwrap();
             let disc = self.fresh();

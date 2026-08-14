@@ -4338,6 +4338,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_sleep_ms as *const u8,
         ),
         (
+            "gos_rt_sleep_ms_ctx",
+            crate::c_abi::gos_rt_sleep_ms_ctx as *const u8,
+        ),
+        (
             "gos_rt_sleep_ns",
             crate::c_abi::gos_rt_sleep_ns as *const u8,
         ),
@@ -6195,6 +6199,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         ),
         ("gos_rt_wg_new", crate::c_abi::gos_rt_wg_new as *const u8),
         ("gos_rt_wg_wait", crate::c_abi::gos_rt_wg_wait as *const u8),
+        (
+            "gos_rt_wg_wait_ctx",
+            crate::c_abi::gos_rt_wg_wait_ctx as *const u8,
+        ),
+        (
+            "gos_rt_chan_recv_ctx",
+            crate::c_abi::gos_rt_chan_recv_ctx as *const u8,
+        ),
         (
             "gos_rt_ws_accept",
             crate::c_abi::gos_rt_ws_accept as *const u8,

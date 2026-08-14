@@ -24,13 +24,19 @@
 //! arm is always ready. A deadline (`with_timeout`) actively closes the
 //! done channel through the normal cancel walk.
 //!
-//! The handle is an opaque heap `Box<GosCtx>` carried as an `i64` on
-//! compiled tiers; it leaks at process exit like the other runtime
-//! handles. Parent / child links are stored as `usize` (not raw
-//! pointers) so the struct is `Send + Sync` without an `unsafe impl`;
-//! the pointee outlives every handle because none are ever freed.
+//! Node state lives in a process-global registry keyed by the node's
+//! address, and the handle a compiled tier carries as an `i64` is that
+//! address. Every operation resolves the address through the registry
+//! and holds an `Arc` for the length of the call, so a node stays alive
+//! while it is in use and is reclaimed once cancellation removes it and
+//! the last in-flight operation returns. Parent / child links are the
+//! same addresses, which keeps the struct `Send + Sync` without an
+//! `unsafe impl` and makes a link to a reclaimed node resolve as
+//! cancelled rather than dangle.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
@@ -45,64 +51,126 @@ pub struct GosCtx {
     parent: usize,
     /// Child node addresses; `cancel` walks these depth-first.
     children: Mutex<Vec<usize>>,
-    /// Address of this node's "done" channel as `usize`. `cancel`
-    /// closes it so a `select { _ = ctx.done_chan().recv() => … }`
-    /// arm becomes ready (closed-channel select readiness). Stored
-    /// as `usize` (not a raw pointer) so `GosCtx` stays `Send + Sync`
-    /// without an `unsafe impl`; the channel is leaked like the node.
-    chan: usize,
+    /// Address of this node's "done" channel as `usize`, or `0` until
+    /// one is asked for. A channel outlives every node that could hold
+    /// it, so it is minted only for a context that actually selects on
+    /// cancellation. Stored as `usize` (not a raw pointer) so `GosCtx`
+    /// stays `Send + Sync` without an `unsafe impl`.
+    chan: Mutex<usize>,
+    /// Goroutines parked in a cancellation-aware wait on this context.
+    /// Cancelling unparks them so each re-checks its own condition.
+    parked_waiters: Mutex<Vec<crate::sched::Gid>>,
 }
 
-fn ctx_at<'a>(addr: usize) -> Option<&'a GosCtx> {
-    if addr == 0 {
-        None
-    } else {
-        // SAFETY: `addr` came from `Box::into_raw`; the node is leaked
-        // (never freed), so the reference is valid for the process
-        // lifetime.
-        Some(unsafe { &*(addr as *const GosCtx) })
+/// Records `gid` as parked on `addr`, so cancelling that context wakes it.
+pub(crate) fn register_waiter(addr: usize, gid: crate::sched::Gid) {
+    if let Some(node) = ctx_at(addr) {
+        node.parked_waiters.lock().push(gid);
     }
 }
 
+/// Drops `gid` from `addr`'s parked set.
+pub(crate) fn deregister_waiter(addr: usize, gid: crate::sched::Gid) {
+    if let Some(node) = ctx_at(addr) {
+        node.parked_waiters.lock().retain(|x| *x != gid);
+    }
+}
+
+/// Whether the context at `addr` is cancelled or past its deadline. The
+/// cancellation-aware runtime entry points consult this for handles minted
+/// by a compiled program, which reach the runtime's own node registry.
+pub(crate) fn addr_is_cancelled(addr: usize) -> bool {
+    addr != 0 && node_is_cancelled(addr)
+}
+
+/// The channel handed to `done_chan()` for a context whose cancellation
+/// already ran. It is born closed, so a recv arm on it is ready at once -
+/// the only thing a cancelled context's done channel ever reports.
+static RETIRED_CHAN: LazyLock<usize> = LazyLock::new(|| {
+    // SAFETY: `gos_rt_chan_new` returns a freshly boxed `GosChan` or null
+    // on allocation failure; both are valid `usize` addresses.
+    let chan = unsafe { super::chan::gos_rt_chan_new(8, 0) };
+    if !chan.is_null() {
+        // SAFETY: `chan` was just allocated and is non-null here.
+        super::chan::chan_close_idempotent(unsafe { &*chan });
+    }
+    chan as usize
+});
+
+/// Live nodes by address. An address absent here names a context whose
+/// cancellation already ran.
+static NODES: LazyLock<Mutex<HashMap<usize, Arc<GosCtx>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn ctx_at(addr: usize) -> Option<Arc<GosCtx>> {
+    if addr == 0 {
+        return None;
+    }
+    NODES.lock().get(&addr).cloned()
+}
+
 fn alloc_ctx(deadline: Option<Instant>, parent: usize) -> *mut GosCtx {
-    // Every context carries an i64-element "done" channel. The cancel
-    // walk closes it, making the channel's `select` recv arm ready.
-    // SAFETY: `gos_rt_chan_new` returns a freshly boxed `GosChan` or
-    // null on allocation failure; both are valid `usize` addresses.
-    let chan = unsafe { super::chan::gos_rt_chan_new(8, 0) } as usize;
-    let child = Box::into_raw(Box::new(GosCtx {
+    let node = Arc::new(GosCtx {
         cancelled: AtomicBool::new(false),
         deadline,
         parent,
         children: Mutex::new(Vec::new()),
-        chan,
-    }));
+        chan: Mutex::new(0),
+        parked_waiters: Mutex::new(Vec::new()),
+    });
+    let child = Arc::as_ptr(&node).cast_mut();
+    let addr = child as usize;
+    NODES.lock().insert(addr, node);
     if let Some(p) = ctx_at(parent) {
-        p.children.lock().push(child as usize);
+        p.children.lock().push(addr);
+    }
+    // A parent that finished cancelling before this link was made never
+    // reaches the child through its own walk, so the child takes the
+    // ancestry's state at birth.
+    if parent != 0 && node_is_cancelled(parent) {
+        cancel_node(addr);
     }
     if let Some(deadline) = deadline {
-        let addr = child as usize;
-        std::thread::spawn(move || {
-            let now = Instant::now();
-            if deadline > now {
-                std::thread::sleep(deadline - now);
-            }
-            cancel_node(addr);
-        });
+        // The deadline rides the scheduler's timer wheel: the netpoller already
+        // wakes on the earliest one, so a context costs an entry there rather
+        // than an OS thread parked on a sleep.
+        let gid = crate::sched_global::add_timer(deadline);
+        crate::sched_global::register_waker(gid, Box::new(move || cancel_node(addr)));
     }
     child
 }
 
-/// Closes the node's done channel idempotently. Called by the cancel
-/// walk so a `select` recv arm on the channel becomes ready.
+/// Closes the node's done channel idempotently, if one was ever minted.
+/// A node cancelled before anything asked for its channel records the
+/// cancellation in `cancelled`, and `done_chan_of` mints the channel
+/// closed when it is finally asked for.
 fn close_done_chan(node: &GosCtx) {
-    if node.chan == 0 {
+    let chan = *node.chan.lock();
+    if chan == 0 {
         return;
     }
-    // SAFETY: `node.chan` came from `gos_rt_chan_new` (leaked, never
-    // freed), so the pointer is valid for the process lifetime.
-    let chan = unsafe { &*(node.chan as *const GosChan) };
+    // SAFETY: the address came from `gos_rt_chan_new`; channels are
+    // never freed, so the pointer is valid for the process lifetime.
+    let chan = unsafe { &*(chan as *const GosChan) };
     super::chan::chan_close_idempotent(chan);
+}
+
+/// The node's done channel, minting one on first use. A channel for a
+/// context already cancelled is born closed, so a `select` recv arm on
+/// it is ready immediately.
+fn done_chan_of(node: &GosCtx) -> *mut GosChan {
+    let mut slot = node.chan.lock();
+    if *slot == 0 {
+        // SAFETY: `gos_rt_chan_new` returns a freshly boxed `GosChan` or
+        // null on allocation failure; both are valid `usize` addresses.
+        let fresh = unsafe { super::chan::gos_rt_chan_new(8, 0) };
+        *slot = fresh as usize;
+        if !fresh.is_null() && node.cancelled.load(Ordering::Acquire) {
+            // SAFETY: `fresh` was just allocated and is non-null here.
+            super::chan::chan_close_idempotent(unsafe { &*fresh });
+        }
+    }
+    *slot as *mut GosChan
 }
 
 /// `context::Context::background()` - a root context, never cancelled,
@@ -130,15 +198,32 @@ pub unsafe extern "C" fn gos_rt_ctx_with_timeout(parent: *mut GosCtx, millis: i6
     })
 }
 
+/// Cancels `addr` and every descendant, then retires each from the
+/// registry. The walk carries its own stack so a deep context chain
+/// costs heap rather than call frames, and each child list is copied
+/// out before its node is cancelled so the tree lock is never held
+/// across the cancel of a child. Retiring the root of the walk from its
+/// parent's child list keeps a long-lived parent's list proportional to
+/// the children still live under it.
 fn cancel_node(addr: usize) {
-    let Some(node) = ctx_at(addr) else {
-        return;
-    };
-    node.cancelled.store(true, Ordering::Release);
-    close_done_chan(node);
-    let kids: Vec<usize> = node.children.lock().clone();
-    for k in kids {
-        cancel_node(k);
+    if let Some(node) = ctx_at(addr)
+        && let Some(parent) = ctx_at(node.parent)
+    {
+        parent.children.lock().retain(|child| *child != addr);
+    }
+    let mut pending = vec![addr];
+    while let Some(current) = pending.pop() {
+        let Some(node) = ctx_at(current) else {
+            continue;
+        };
+        node.cancelled.store(true, Ordering::Release);
+        close_done_chan(&node);
+        for gid in std::mem::take(&mut *node.parked_waiters.lock()) {
+            crate::sched_global::scheduler().unpark(gid);
+        }
+        let kids: Vec<usize> = node.children.lock().clone();
+        pending.extend(kids);
+        NODES.lock().remove(&current);
     }
 }
 
@@ -152,19 +237,27 @@ pub unsafe extern "C" fn gos_rt_ctx_cancel(ctx: *mut GosCtx) {
     });
 }
 
+/// Whether `addr` or any ancestor is cancelled or past its deadline. The
+/// chain is walked iteratively so ancestry depth costs heap rather than
+/// call frames, and an address the registry no longer holds names a
+/// context whose cancellation already ran.
 fn node_is_cancelled(addr: usize) -> bool {
-    let Some(node) = ctx_at(addr) else {
-        return false;
-    };
-    if node.cancelled.load(Ordering::Acquire) {
-        return true;
-    }
-    if let Some(deadline) = node.deadline {
-        if Instant::now() >= deadline {
+    let mut current = addr;
+    while current != 0 {
+        let Some(node) = ctx_at(current) else {
+            return true;
+        };
+        if node.cancelled.load(Ordering::Acquire) {
             return true;
         }
+        if let Some(deadline) = node.deadline
+            && Instant::now() >= deadline
+        {
+            return true;
+        }
+        current = node.parent;
     }
-    node_is_cancelled(node.parent)
+    false
 }
 
 /// `ctx.is_cancelled()` - `1` when this context (or an ancestor) is
@@ -201,8 +294,8 @@ pub unsafe extern "C" fn gos_rt_ctx_done(ctx: *mut GosCtx) -> i64 {
 pub unsafe extern "C" fn gos_rt_ctx_cancelled(ctx: *mut GosCtx) -> *mut GosChan {
     ffi_entry!(std::ptr::null_mut(), {
         let Some(node) = ctx_at(ctx as usize) else {
-            return std::ptr::null_mut();
+            return *RETIRED_CHAN as *mut GosChan;
         };
-        node.chan as *mut GosChan
+        done_chan_of(&node)
     })
 }

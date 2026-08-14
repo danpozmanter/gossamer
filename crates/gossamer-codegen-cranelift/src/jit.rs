@@ -25,6 +25,19 @@ use gossamer_types::{ArrayLen, Ty, TyCtxt, TyKind};
 use crate::jit_memory::NativeCodeHeap;
 use crate::native::{FailedBody, build_native_isa, lower_program_serial};
 
+/// Encoding of one slot in a fixed-array parameter's flat block. Every
+/// class occupies a full 8-byte slot; they differ in how the trampoline
+/// writes a VM value into it and reads one back out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ArrayElem {
+    /// A signed 64-bit integer, written as itself.
+    I64,
+    /// An IEEE-754 double, written as its bit pattern.
+    F64,
+    /// A Unicode scalar, written as its `u32` code point.
+    Char,
+}
+
 /// Cranelift register class for one parameter or return slot of a
 /// JIT-compiled body. Used by the dispatch trampoline to pick the
 /// right marshalling shape per slot.
@@ -79,6 +92,16 @@ pub enum JitKind {
     /// argument and reads that block after the body returns. Integer register
     /// class.
     StructPtr(u32),
+    /// A fixed array of a scalar element (`[i64; N]`, `[f64; N]`,
+    /// `[bool; N]`, `[char; N]`) crossing the boundary as a pointer to a
+    /// flat block of `N` 8-byte slots - element `i` at byte offset
+    /// `i * 8`, no header, the layout the compiled tier indexes with a
+    /// static stride. The payloads are the element count, which is part of
+    /// the type so the block needs no length word, and the element's class,
+    /// which says how each slot is encoded. The trampoline builds a fresh
+    /// block from the VM array, passes its pointer, and reclaims the block
+    /// once the body returns. Parameter-only. Integer register class.
+    ArrayBlockPtr(u32, ArrayElem),
     /// A `String` crossing the boundary as the runtime's native
     /// `*mut c_char` cstring pointer (the flat-ABI shape the codegen
     /// uses). The trampoline builds a fresh owned cstring from the VM
@@ -1854,7 +1877,29 @@ fn body_kinds(
         enum_shapes,
         struct_shapes,
     )?;
+    // A flat array block is an inbound marshalling shape only: a returned
+    // one would have to outlive the body with no owner to free it.
+    if matches!(returns, JitKind::ArrayBlockPtr(..)) {
+        return None;
+    }
     Some((params, returns))
+}
+
+/// The slot encoding for a fixed array's element, or `None` when the
+/// element is not one the flat block can carry.
+///
+/// Only an element the compiled tier strides a full 8-byte slot for
+/// belongs here: the block hands the body one slot per element, so an
+/// element it addresses at a narrower stride would read and write the
+/// wrong bytes. `bool` packs to a single byte and is excluded for that
+/// reason, as is every narrower integer.
+fn array_elem_class(tcx: &TyCtxt, elem: Ty) -> Option<ArrayElem> {
+    match tcx.kind_of(elem) {
+        TyKind::Int(gossamer_types::IntTy::I64) => Some(ArrayElem::I64),
+        TyKind::Float(gossamer_types::FloatTy::F64) => Some(ArrayElem::F64),
+        TyKind::Char => Some(ArrayElem::Char),
+        _ => None,
+    }
 }
 
 /// True when `ty` is the 2-tuple `(i64, f64)` - the element shape the
@@ -1962,6 +2007,16 @@ fn ty_to_kind(
         // so the body sees the same `*mut c_char` / `*mut GosVec` shape
         // the AOT tier passes (zero in-body conversion).
         TyKind::String => Some(JitKind::NativeStr),
+        // `[T; N]` over a scalar element: a flat block of N slots, distinct
+        // from the `Vec` / slice spellings above - the compiled tier indexes
+        // it by static stride against a statically known length, with no
+        // `GosVec` header in front of the elements.
+        TyKind::Array { elem, len } if array_elem_class(tcx, *elem).is_some() => {
+            let class = array_elem_class(tcx, *elem)?;
+            u32::try_from(len.to_usize())
+                .ok()
+                .map(|n| JitKind::ArrayBlockPtr(n, class))
+        }
         // `[i64]` / `[f64]` / `[(i64, f64)]` slices marshal identically to the
         // `Vec<...>` spelling - the runtime object is the same `*mut GosVec` - so
         // the idiomatic slice-param helper (`fn f(xs: &[i64])`) promotes just

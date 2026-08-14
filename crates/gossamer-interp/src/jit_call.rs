@@ -39,9 +39,9 @@ use std::mem;
 use std::sync::Arc;
 
 #[cfg(target_arch = "wasm32")]
-use crate::jit_stub::{JitFn, JitKind, TupleElem};
+use crate::jit_stub::{ArrayElem, JitFn, JitKind, TupleElem};
 #[cfg(not(target_arch = "wasm32"))]
-use gossamer_codegen_cranelift::{JitFn, JitKind, TupleElem};
+use gossamer_codegen_cranelift::{ArrayElem, JitFn, JitKind, TupleElem};
 use gossamer_runtime::c_abi as rt;
 
 use crate::value::{
@@ -841,6 +841,53 @@ impl Drop for NativeStructBacking {
     }
 }
 
+/// Encodes one VM value into its 8-byte slot, or `None` when the value does
+/// not match the element class the parameter's type declares.
+fn array_slot_word(value: &Value, class: ArrayElem) -> Option<i64> {
+    match (class, value) {
+        (ArrayElem::I64, Value::Int(n)) => Some(*n),
+        (ArrayElem::I64, Value::Uint(u)) => Some(*u as i64),
+        (ArrayElem::F64, Value::Float(f)) => Some(f.to_bits() as i64),
+        (ArrayElem::F64, Value::Int(n)) => Some((*n as f64).to_bits() as i64),
+        (ArrayElem::Char, Value::Char(c)) => Some(i64::from(u32::from(*c))),
+        _ => None,
+    }
+}
+
+/// Builds a flat block of `len` 8-byte slots from a VM array value - the
+/// layout the compiled tier indexes by static stride. Declines any value
+/// whose length or element shape does not match the parameter's type.
+fn build_native_array_block(value: &Value, len: u32, class: ArrayElem) -> Option<Box<[i64]>> {
+    let len = len as usize;
+    let slots: Box<[i64]> = match value {
+        Value::IntArray(values) if values.len() == len && class == ArrayElem::I64 => values
+            .iter()
+            .copied()
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+        Value::FloatVec(values) if values.len() == len && class == ArrayElem::F64 => values
+            .iter()
+            .map(|f| f.to_bits() as i64)
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+        Value::FloatArray(values) if values.data.len() == len && class == ArrayElem::F64 => values
+            .data
+            .iter()
+            .map(|f| f.to_bits() as i64)
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+        Value::Array(values) if values.len() == len => {
+            let mut slots = Vec::with_capacity(len);
+            for element in values.iter() {
+                slots.push(array_slot_word(element, class)?);
+            }
+            slots.into_boxed_slice()
+        }
+        _ => return None,
+    };
+    Some(slots)
+}
+
 /// Marshals a supported `Value::Struct` into a freshly allocated flat
 /// field-slot block (the compiled-tier struct layout: one 8-byte slot per
 /// field, field `i` at byte offset `i * 8`, NO RC header). String fields are
@@ -1028,6 +1075,34 @@ fn read_native_error(ptr: i64) -> Value {
 /// params, so a body returning its own param frees exactly once).
 fn native_ptr_to_value(kind: JitKind, ptr: i64) -> Value {
     match kind {
+        // A flat block of exactly `len` slots: the length is part of the
+        // parameter's type, so it is read from the kind rather than from
+        // the block, which carries no header.
+        JitKind::ArrayBlockPtr(len, class) => {
+            if ptr == 0 {
+                return Value::Array(Arc::new(Vec::new()));
+            }
+            // SAFETY: `ptr` addresses a block this call built with exactly
+            // `len` initialised slots, live until the call returns.
+            let slots = unsafe { std::slice::from_raw_parts(ptr as *const i64, len as usize) };
+            if class == ArrayElem::I64 {
+                return Value::IntArray(Arc::new(slots.to_vec()));
+            }
+            let elements = slots
+                .iter()
+                .map(|word| match class {
+                    ArrayElem::I64 => Value::Int(*word),
+                    ArrayElem::F64 => Value::Float(f64::from_bits(*word as u64)),
+                    ArrayElem::Char => Value::Char(
+                        u32::try_from(*word)
+                            .ok()
+                            .and_then(char::from_u32)
+                            .unwrap_or('\0'),
+                    ),
+                })
+                .collect::<Vec<_>>();
+            Value::Array(Arc::new(elements))
+        }
         JitKind::NativeVecI64 => {
             if ptr == 0 {
                 return Value::IntArray(Arc::new(Vec::new()));
@@ -1572,6 +1647,9 @@ macro_rules! call_through {
             // Struct returns are canonicalized to I64 in `prepare` and decoded
             // from their caller-owned sret block by `invoke_prepared_native`.
             JitKind::StructPtr(_) => unreachable!("struct returns are decoded in invoke_prepared_native"),
+            // A flat array block is a parameter-only shape; `body_kinds`
+            // keeps a body returning one on bytecode.
+            JitKind::ArrayBlockPtr(..) => unreachable!("array blocks are parameter-only"),
             // A tuple return is canonicalised to `I64` in `prepare` and decoded
             // in `invoke_prepared_native`; the stub only ever sees the `I64`.
             JitKind::TupleReturn(_) => {
@@ -3060,6 +3138,7 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
                     | JitKind::NativeVecVecI64
                     | JitKind::U8VecHandle
                     | JitKind::StructPtr(_)
+                    | JitKind::ArrayBlockPtr(..)
             )
         });
     Some(Prepared {
@@ -3187,6 +3266,7 @@ pub(crate) fn invoke_prepared(p: &Prepared, args: &[Value], graph_cache: &GraphC
                 | JitKind::NativeVecVecI64
                 | JitKind::U8VecHandle
                 | JitKind::StructPtr(_)
+                | JitKind::ArrayBlockPtr(..)
                 | JitKind::ResultEnumPtr(_)
                 | JitKind::ResultNativeStr
                 | JitKind::TupleReturn(_),
@@ -3279,6 +3359,9 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value], graph_cache: &GraphCache
     // pointer recorded in `natives`). They are freed when this Vec drops
     // at function exit, after write-back has read any `&mut self` mutation.
     let mut struct_backings: Vec<NativeStructBacking> = Vec::new();
+    // Each block stays owned here for the length of the call and is
+    // reclaimed with this vector once the body returns.
+    let mut array_backings: Vec<Box<[i64]>> = Vec::new();
     // Native enum trees marshalled in for `EnumPtr` `Value::Variant` params:
     // `(native ptr, shape index)`. The trampoline owns each end to end and
     // frees it with `free_native_enum` after the call (the body only borrows
@@ -3390,6 +3473,25 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value], graph_cache: &GraphCache
                     return Dispatch::Fallback;
                 }
             },
+            JitKind::ArrayBlockPtr(len, class) => {
+                // Unwrap a `&mut` write-back cell so the block is built from
+                // its inner array; recording the cell flows element writes
+                // back into the caller's binding.
+                let (inner, cell) = match value {
+                    Value::MutCell(c) => (c.lock().clone(), Some(c.clone())),
+                    other => (other.clone(), None),
+                };
+                let Some(mut backing) = build_native_array_block(&inner, *len, *class) else {
+                    free_in_flight(&natives, &built_enums, &str_cells);
+                    return Dispatch::Fallback;
+                };
+                let ptr = backing.as_mut_ptr() as i64;
+                array_backings.push(backing);
+                // The block is owned by `array_backings`, so `free_natives`
+                // leaves it alone; the entry exists for the write-back.
+                natives.push((*kind, ptr, cell));
+                Slot::I(ptr)
+            }
             JitKind::StructPtr(idx) => {
                 let Some(shape) = native_struct_shape(*idx) else {
                     free_in_flight(&natives, &built_enums, &str_cells);

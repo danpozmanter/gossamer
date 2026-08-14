@@ -925,6 +925,36 @@ fn builtin_waitgroup_wait(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Unit)
 }
 
+/// `wg.wait_ctx(ctx)` - waits for the counter to reach zero unless the
+/// context fires first, answering which of the two happened. The wait is
+/// split into short steps so a cancellation raised while waiting is
+/// observed promptly.
+fn builtin_waitgroup_wait_ctx(args: &[Value]) -> RuntimeResult<Value> {
+    let handle = args
+        .first()
+        .and_then(|v| struct_handle(v, "WaitGroup"))
+        .ok_or_else(|| {
+            RuntimeError::Type("WaitGroup::wait_ctx: receiver must be WaitGroup".to_string())
+        })?;
+    let cell = wg_lookup(handle).ok_or_else(|| {
+        RuntimeError::Type("WaitGroup::wait_ctx: stale WaitGroup handle".to_string())
+    })?;
+    let Some(ctx) = args.get(1) else {
+        return Ok(Value::Bool(true));
+    };
+    loop {
+        let mut count = cell.counter.lock();
+        if *count <= 0 {
+            return Ok(Value::Bool(true));
+        }
+        if crate::stdlib_builtins::context::value_is_cancelled(ctx) {
+            return Ok(Value::Bool(false));
+        }
+        cell.cond
+            .wait_for(&mut count, std::time::Duration::from_millis(5));
+    }
+}
+
 fn builtin_lcg_jump(args: &[Value]) -> RuntimeResult<Value> {
     let state = arg_int(args, 0).unwrap_or(0);
     let ia = arg_int(args, 1).unwrap_or(0);
