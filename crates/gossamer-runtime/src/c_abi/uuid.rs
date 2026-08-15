@@ -320,6 +320,37 @@ pub mod lazy_elem_class {
     pub const WORD: u8 = 0;
     /// SSE register: the element's 64 float bits.
     pub const FLOAT: u8 = 1;
+    /// Integer register holding the address of an element whose storage is
+    /// wider than one slot. The element stays in the source buffer the state
+    /// keeps alive, so a consumer reads it through the address rather than
+    /// from the slot.
+    pub const AGGR: u8 = 2;
+}
+
+/// What a lazy handle's slots mean: their ABI class, plus - for the aggregate
+/// class - the width and ownership kind of the element each address points at,
+/// so a terminal can rebuild storage of the same shape.
+#[derive(Clone, Copy)]
+pub struct LazyElemTag {
+    class: u8,
+    elem_bytes: u32,
+    elem_kind: u8,
+    /// The vec the addresses point into, for the aggregate class, as an
+    /// exposed address. A terminal that rebuilds storage reads the element
+    /// layout from it, so a copied slot's pointer-bearing fields get the new
+    /// container's share. Zero when no single source backs the stream.
+    source: usize,
+}
+
+impl LazyElemTag {
+    const fn scalar(class: u8) -> Self {
+        Self {
+            class,
+            elem_bytes: 0,
+            elem_kind: 0,
+            source: 0,
+        }
+    }
 }
 
 /// Opaque lazy `Iterator<i64>` state used by 2027 native iterator lowering.
@@ -328,7 +359,7 @@ pub mod lazy_elem_class {
 /// handle; adapters carry it forward unchanged.
 pub struct GosLazyIterI64 {
     inner: Box<dyn Iterator<Item = i64>>,
-    class: u8,
+    tag: LazyElemTag,
 }
 
 /// Opaque lazy `Iterator<(i64, i64)>` state used by enumerate and zip.
@@ -381,15 +412,23 @@ impl Drop for BorrowedGosVecI64 {
     }
 }
 
-/// Wrap an element source as a lazy handle tagged with its ABI class.
-fn lazy_classed<I>(class: u8, iter: I) -> *mut GosLazyIterI64
+/// Wrap an element source as a lazy handle carrying `tag`.
+fn lazy_tagged<I>(tag: LazyElemTag, iter: I) -> *mut GosLazyIterI64
 where
     I: Iterator<Item = i64> + 'static,
 {
     Box::into_raw(Box::new(GosLazyIterI64 {
         inner: Box::new(iter),
-        class,
+        tag,
     }))
+}
+
+/// Wrap an element source as a lazy handle tagged with its ABI class.
+fn lazy_classed<I>(class: u8, iter: I) -> *mut GosLazyIterI64
+where
+    I: Iterator<Item = i64> + 'static,
+{
+    lazy_tagged(LazyElemTag::scalar(class), iter)
 }
 
 fn lazy_i64<I>(iter: I) -> *mut GosLazyIterI64
@@ -450,15 +489,37 @@ where
 /// Consume a lazy handle, yielding its element source and ABI-class tag.
 /// Adapters that neither read nor produce element values use this so the
 /// class survives the chain unchanged.
-unsafe fn take_lazy_tagged(iter: *mut GosLazyIterI64) -> (Box<dyn Iterator<Item = i64>>, u8) {
+unsafe fn take_lazy_tagged(
+    iter: *mut GosLazyIterI64,
+) -> (Box<dyn Iterator<Item = i64>>, LazyElemTag) {
     if iter.is_null() {
-        (Box::new(std::iter::empty()), lazy_elem_class::WORD)
+        (
+            Box::new(std::iter::empty()),
+            LazyElemTag::scalar(lazy_elem_class::WORD),
+        )
     } else {
         // SAFETY: lazy iterator helpers are linear; consuming a helper
         // argument transfers ownership of the opaque state to this function.
         let state = unsafe { Box::from_raw(iter) };
-        (state.inner, state.class)
+        (state.inner, state.tag)
     }
+}
+
+/// Consume a handle whose slots are integer-register words: an element value
+/// or - for the aggregate class - an element's address. Both reach a callback
+/// the same way; only a float slot would be read in the wrong register file,
+/// so that is what this rejects.
+unsafe fn take_lazy_word(
+    iter: *mut GosLazyIterI64,
+) -> (Box<dyn Iterator<Item = i64>>, LazyElemTag) {
+    // SAFETY: same linear-ownership contract as `take_lazy_tagged`.
+    let (inner, tag) = unsafe { take_lazy_tagged(iter) };
+    debug_assert_ne!(
+        tag.class,
+        lazy_elem_class::FLOAT,
+        "lazy iterator element class mismatch: handle carries floats, consumer reads words"
+    );
+    (inner, tag)
 }
 
 /// Consume a lazy handle whose elements this helper reads as `want`.
@@ -468,10 +529,11 @@ unsafe fn take_lazy_tagged(iter: *mut GosLazyIterI64) -> (Box<dyn Iterator<Item 
 /// consumer meet.
 unsafe fn take_lazy_as(iter: *mut GosLazyIterI64, want: u8) -> Box<dyn Iterator<Item = i64>> {
     // SAFETY: same linear-ownership contract as `take_lazy_tagged`.
-    let (inner, class) = unsafe { take_lazy_tagged(iter) };
+    let (inner, tag) = unsafe { take_lazy_tagged(iter) };
     debug_assert_eq!(
-        class, want,
-        "lazy iterator element class mismatch: handle carries {class}, consumer reads {want}"
+        tag.class, want,
+        "lazy iterator element class mismatch: handle carries {}, consumer reads {want}",
+        tag.class
     );
     inner
 }
@@ -675,6 +737,132 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_from_vec_i64(source: *mut GosVec) -> *
     })
 }
 
+/// Lazy borrowed source over a `Vec<T>` whose element is wider than one slot.
+/// Each pull yields the address of the element's storage inside the retained
+/// source, which is the same shape a callback over an eager multi-slot
+/// sequence receives.
+struct BorrowedGosVecAggr {
+    source: *mut GosVec,
+    generation: u64,
+    mutation_generation: u64,
+    len: i64,
+    cap: i64,
+    index: i64,
+}
+
+impl Iterator for BorrowedGosVecAggr {
+    type Item = i64;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.source.is_null() || self.index >= self.len {
+            return None;
+        }
+        // SAFETY: construction retains the source header until this state is
+        // dropped, so the buffer the addresses point into stays live.
+        let source = unsafe { &*self.source };
+        if source.generation != self.generation
+            || source.mutation_generation != self.mutation_generation
+            || source.len != self.len
+            || source.cap != self.cap
+        {
+            const MESSAGE: &[u8] =
+                b"borrowed Vec source was structurally mutated during iteration\0";
+            // SAFETY: MESSAGE is a static, nul-terminated C string.
+            unsafe { crate::c_abi::panic::gos_rt_panic(MESSAGE.as_ptr().cast()) };
+            return None;
+        }
+        // SAFETY: `index` is in `[0, len)` against this same live header.
+        let slot = unsafe { crate::c_abi::signal::gos_rt_vec_get_ptr(self.source, self.index) };
+        self.index += 1;
+        Some(slot as i64)
+    }
+}
+
+impl Drop for BorrowedGosVecAggr {
+    fn drop(&mut self) {
+        // SAFETY: construction retained exactly one source share.
+        unsafe { crate::c_abi::map::gos_rt_vec_free(self.source) };
+    }
+}
+
+/// Borrow `source` as a lazy stream of element addresses.
+///
+/// This is the multi-slot counterpart of [`gos_rt_lazy_iter_from_vec_i64`]:
+/// the element stays where it is and its address rides the slot, so an element
+/// of any width reaches a callback without being packed into one.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_from_vec_aggr(
+    source: *mut GosVec,
+) -> *mut GosLazyIterI64 {
+    ffi_entry!(std::ptr::null_mut(), {
+        if source.is_null() {
+            return lazy_classed(lazy_elem_class::AGGR, std::iter::empty());
+        }
+        // SAFETY: the caller supplies a live GosVec header.
+        let header = unsafe { &*source };
+        let tag = LazyElemTag {
+            class: lazy_elem_class::AGGR,
+            elem_bytes: header.elem_bytes,
+            elem_kind: header.elem_kind,
+            source: source.expose_provenance(),
+        };
+        // SAFETY: retaining the header gives the iterator state its own share
+        // until `BorrowedGosVecAggr::drop`.
+        unsafe { gos_rt_vec_retain(source) };
+        lazy_tagged(
+            tag,
+            BorrowedGosVecAggr {
+                source,
+                generation: header.generation,
+                mutation_generation: header.mutation_generation,
+                len: header.len,
+                cap: header.cap,
+                index: 0,
+            },
+        )
+    })
+}
+
+/// Consume a lazy stream of element addresses into a `GosVec` of the same
+/// element shape, copying each element out whole and minting the container's
+/// share of any pointer-bearing field.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_lazy_iter_collect_aggr(iter: *mut GosLazyIterI64) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let (upstream, tag) = unsafe { take_lazy_tagged(iter) };
+        debug_assert_eq!(
+            tag.class,
+            lazy_elem_class::AGGR,
+            "lazy aggregate collect reads a handle of another class"
+        );
+        let out = unsafe {
+            crate::c_abi::vec::gos_rt_vec_with_capacity_typed(tag.elem_bytes, 0, tag.elem_kind)
+        };
+        let mut upstream = upstream;
+        for slot in upstream.by_ref() {
+            let addr: *const u8 = std::ptr::with_exposed_provenance(slot as usize);
+            if addr.is_null() {
+                continue;
+            }
+            // SAFETY: every yielded address points at one element of a live
+            // source whose width is the one the output vec was built with.
+            unsafe { gos_rt_vec_push(out, addr) };
+        }
+        // The copied slots are raw copies of the source's, so any
+        // pointer-bearing field needs the output's own share. Done while the
+        // upstream state - and with it the source's retained share - is still
+        // alive, so the layout it describes is still there to read.
+        if tag.source != 0 {
+            let source: *const GosVec = std::ptr::with_exposed_provenance(tag.source);
+            // SAFETY: the source header is retained by the upstream state,
+            // which is dropped only after this call.
+            unsafe { crate::c_abi::vec::vec_share_owned_elements(source, out) };
+        }
+        drop(upstream);
+        out
+    })
+}
+
 /// Lazy borrowed source over a `Vec<f64>`, tagged so the float terminals read
 /// each slot as a double. Same borrow contract as the word-slot form.
 #[unsafe(no_mangle)]
@@ -775,8 +963,8 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_take_i64(
             unsafe { gos_rt_panic(c"iter::take: count must be non-negative".as_ptr()) };
         }
         let n = usize::try_from(n).unwrap_or(0);
-        let (upstream, class) = unsafe { take_lazy_tagged(iter) };
-        lazy_classed(class, upstream.take(n))
+        let (upstream, tag) = unsafe { take_lazy_tagged(iter) };
+        lazy_tagged(tag, upstream.take(n))
     })
 }
 
@@ -791,8 +979,8 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_step_by_i64(
             unsafe { gos_rt_panic(c"iter::step_by: step must be positive".as_ptr()) };
         }
         let step = usize::try_from(step).unwrap_or(1);
-        let (upstream, class) = unsafe { take_lazy_tagged(iter) };
-        lazy_classed(class, upstream.step_by(step))
+        let (upstream, tag) = unsafe { take_lazy_tagged(iter) };
+        lazy_tagged(tag, upstream.step_by(step))
     })
 }
 
@@ -807,8 +995,8 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_skip_i64(
             unsafe { gos_rt_panic(c"iter::skip: count must be non-negative".as_ptr()) };
         }
         let n = usize::try_from(n).unwrap_or(0);
-        let (upstream, class) = unsafe { take_lazy_tagged(iter) };
-        lazy_classed(class, upstream.skip(n))
+        let (upstream, tag) = unsafe { take_lazy_tagged(iter) };
+        lazy_tagged(tag, upstream.skip(n))
     })
 }
 
@@ -819,13 +1007,15 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_chain_i64(
     second: *mut GosLazyIterI64,
 ) -> *mut GosLazyIterI64 {
     ffi_entry!(std::ptr::null_mut(), {
-        let (first, class) = unsafe { take_lazy_tagged(first) };
-        let (second, second_class) = unsafe { take_lazy_tagged(second) };
+        let (first, tag) = unsafe { take_lazy_tagged(first) };
+        let (second, second_tag) = unsafe { take_lazy_tagged(second) };
+        let second_class = second_tag.class;
+        let class = tag.class;
         debug_assert_eq!(
             class, second_class,
             "iter::chain joins two element classes: {class} and {second_class}"
         );
-        lazy_classed(class, first.chain(second))
+        lazy_tagged(tag, first.chain(second))
     })
 }
 
@@ -864,7 +1054,7 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_map_i64(
     iter: *mut GosLazyIterI64,
 ) -> *mut GosLazyIterI64 {
     ffi_entry!(std::ptr::null_mut(), {
-        let upstream = unsafe { take_lazy_i64(iter) };
+        let (upstream, _tag) = unsafe { take_lazy_word(iter) };
         if env.is_null() {
             return lazy_i64(std::iter::empty());
         }
@@ -885,7 +1075,7 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_filter_i64(
     iter: *mut GosLazyIterI64,
 ) -> *mut GosLazyIterI64 {
     ffi_entry!(std::ptr::null_mut(), {
-        let upstream = unsafe { take_lazy_i64(iter) };
+        let (upstream, tag) = unsafe { take_lazy_word(iter) };
         if env.is_null() {
             return lazy_i64(std::iter::empty());
         }
@@ -895,7 +1085,7 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_filter_i64(
             return lazy_i64(std::iter::empty());
         }
         let p: PredFn = unsafe { std::mem::transmute(fn_addr_raw) };
-        lazy_i64(upstream.filter(move |x| unsafe { p(env, *x) }))
+        lazy_tagged(tag, upstream.filter(move |x| unsafe { p(env, *x) }))
     })
 }
 
@@ -1000,7 +1190,7 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_fold_i64(
         }
         let f: FoldFn = unsafe { std::mem::transmute(fn_addr_raw) };
         let mut acc = init;
-        for x in unsafe { take_lazy_i64(iter) } {
+        for x in unsafe { take_lazy_word(iter) }.0 {
             acc = unsafe { f(env, acc, x) };
         }
         acc
@@ -1023,7 +1213,7 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_any_i64(
             return 0;
         }
         let p: PredFn = unsafe { std::mem::transmute(fn_addr_raw) };
-        for x in unsafe { take_lazy_i64(iter) } {
+        for x in unsafe { take_lazy_word(iter) }.0 {
             if unsafe { p(env, x) } {
                 return 1;
             }
@@ -1048,7 +1238,7 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_all_i64(
             return 1;
         }
         let p: PredFn = unsafe { std::mem::transmute(fn_addr_raw) };
-        for x in unsafe { take_lazy_i64(iter) } {
+        for x in unsafe { take_lazy_word(iter) }.0 {
             if !unsafe { p(env, x) } {
                 return 0;
             }
@@ -1075,7 +1265,7 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_find_i64(
             return gos_rt_result_new(1, 0);
         }
         let p: PredFn = unsafe { std::mem::transmute(fn_addr_raw) };
-        for x in unsafe { take_lazy_i64(iter) } {
+        for x in unsafe { take_lazy_word(iter) }.0 {
             if unsafe { p(env, x) } {
                 return gos_rt_result_new(0, x);
             }
@@ -1116,7 +1306,7 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_next_f64(iter: *mut GosLazyIterI64) ->
         // the state in place.
         let state = unsafe { &mut *iter };
         debug_assert_eq!(
-            state.class,
+            state.tag.class,
             lazy_elem_class::FLOAT,
             "lazy iterator element class mismatch on next()"
         );

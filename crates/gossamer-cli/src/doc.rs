@@ -147,19 +147,26 @@ pub(crate) fn cmd_doc_std(query: &str) -> Result<()> {
                 "- {} {}::{} - {}",
                 item_kind_tag(item.kind),
                 module.path,
-                item.name,
+                item.call_name(),
                 item.doc
             );
         }
         return Ok(());
     }
 
+    // A macro is listed and called as `name!`, so that spelling resolves too.
+    let query = query
+        .strip_suffix('!')
+        .map_or(query, |base| match registry::item(base) {
+            Some((_, item)) if matches!(item.kind, registry::StdItemKind::Macro) => base,
+            _ => query,
+        });
     if let Some((module, item)) = registry::item(query) {
         println!(
             "# {} {}::{}",
             item_kind_tag(item.kind),
             module.path,
-            item.name
+            item.call_name()
         );
         println!("{}", item.doc);
         return Ok(());

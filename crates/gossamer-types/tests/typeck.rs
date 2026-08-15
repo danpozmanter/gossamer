@@ -2456,6 +2456,32 @@ fn strings_join_is_not_a_string_method() {
 }
 
 #[test]
+fn sequence_combinator_with_no_arguments_reports_its_parameter_count() {
+    // The receiver does have `map`; what it does not have is a nullary one.
+    let d = diagnostics_for("fn main() { let xs = #[1, 2]\n let _ = xs.map() }\n");
+    assert!(
+        d.iter().any(|x| matches!(
+            &x.error,
+            TypeError::CallArityMismatch { callee, expected, found }
+                if callee == "map" && *expected == 1 && *found == 0
+        )),
+        "a combinator called with the wrong count reports the count: {d:?}"
+    );
+}
+
+#[test]
+fn sequence_method_the_receiver_lacks_still_reports_as_unknown() {
+    let d = diagnostics_for("fn main() { let xs = #[1, 2]\n let _ = xs.nope() }\n");
+    assert!(
+        d.iter().any(|x| matches!(
+            &x.error,
+            TypeError::UnresolvedMethod { name, .. } if name == "nope"
+        )),
+        "a name the receiver does not declare is still unknown: {d:?}"
+    );
+}
+
+#[test]
 fn strings_free_fn_accepts_string_and_char_patterns() {
     // A real string needle, a `char` needle, and a `char` pad all type
     // cleanly - the validation must not reject the legitimate shapes.

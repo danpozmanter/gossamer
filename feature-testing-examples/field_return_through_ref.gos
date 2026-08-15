@@ -1,0 +1,86 @@
+// A `&self` method that returns a heap field by value: the caller receives a
+// share of the field the receiver keeps, so the extract mints one through the
+// reference exactly as it does off an owned base. Every accessor here is
+// called in a loop that also grows or replaces the field, so a share that was
+// never minted shows up as a reclaimed buffer written through on the next
+// iteration rather than as a wrong count on the first.
+
+struct Store {
+    rows: Vec<i64>
+    label: String
+    tags: Vec<String>
+}
+
+impl Store {
+    fn new() -> Self {
+        Store { rows: #[], label: "store", tags: #["first"] }
+    }
+
+    fn rows(&self) -> Vec<i64> {
+        self.rows
+    }
+
+    fn label(&self) -> String {
+        self.label
+    }
+
+    fn tags(&self) -> Vec<String> {
+        self.tags
+    }
+
+    fn grow(&mut self, n: i64) {
+        for i in 0..n {
+            self.rows.push(i)
+        }
+    }
+}
+
+// A free function taking the aggregate by shared reference reaches the same
+// field through the same projection.
+fn rows_of(s: &Store) -> Vec<i64> {
+    s.rows
+}
+
+fn label_of(s: &Store) -> String {
+    s.label
+}
+
+// A `&mut` receiver returning a field by value takes its share the same way.
+fn drain_label(s: &mut Store) -> String {
+    s.label
+}
+
+fn main() {
+    let mut store = Store::new()
+    let mut rows_seen = 0
+    let mut label_len = 0
+    let mut tags_seen = 0
+    for _ in 0..64 {
+        store.grow(8)
+        let rows = store.rows()
+        let label = store.label()
+        let tags = store.tags()
+        rows_seen += rows.len()
+        label_len += label.len()
+        tags_seen += tags.len()
+    }
+    println!("rows_seen {}", rows_seen)
+    println!("label_len {}", label_len)
+    println!("tags_seen {}", tags_seen)
+
+    let mut free_rows = 0
+    let mut free_labels = 0
+    for _ in 0..64 {
+        store.grow(1)
+        free_rows += rows_of(&store).len()
+        free_labels += label_of(&store).len()
+        free_labels += drain_label(&mut store).len()
+    }
+    println!("free_rows {}", free_rows)
+    println!("free_labels {}", free_labels)
+
+    store.tags.push("second")
+    let tags = store.tags()
+    println!("tags {} {} {}", tags.len(), tags[0], tags[1])
+    println!("final {} {} {}", store.rows.len(), store.label.len(), store.tags.len())
+}

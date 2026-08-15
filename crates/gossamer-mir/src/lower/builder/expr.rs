@@ -1986,14 +1986,29 @@ impl<'a> Builder<'a> {
     /// stream: one byte for a scalar, or the `8, count, <nested tags…>`
     /// form for a nested tuple, whose slots are flattened into the
     /// parent's buffer. `None` when any leaf is not slot-comparable.
+    /// Field types of a value stored inline as a run of slots - a tuple, or a
+    /// struct, which lays its fields out the same way. `None` for anything
+    /// else, including an enum, whose payload is not a plain field run.
+    pub(crate) fn inline_field_tys(&self, ty: Ty) -> Option<Vec<Ty>> {
+        use gossamer_types::TyKind;
+        match self.tcx.kind_of(ty) {
+            TyKind::Tuple(elems) => Some(elems.clone()),
+            TyKind::Adt { def, .. }
+                if def.local < u32::MAX - 16 && !self.tcx.is_inline_enum_ty(ty) =>
+            {
+                self.tcx.struct_field_tys(*def).map(<[Ty]>::to_vec)
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn tuple_stream_tags(&self, ty: Ty) -> Option<Vec<u8>> {
         use gossamer_types::TyKind;
         let mut peeled = ty;
         while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
             peeled = *inner;
         }
-        if let TyKind::Tuple(elems) = self.tcx.kind_of(peeled) {
-            let elems: Vec<Ty> = elems.clone();
+        if let Some(elems) = self.inline_field_tys(peeled) {
             if elems.is_empty() || elems.len() > usize::from(u8::MAX) {
                 return None;
             }
@@ -2014,10 +2029,7 @@ impl<'a> Builder<'a> {
         while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
             peeled = *inner;
         }
-        let TyKind::Tuple(elems) = self.tcx.kind_of(peeled) else {
-            return None;
-        };
-        let elems: Vec<Ty> = elems.clone();
+        let elems = self.inline_field_tys(peeled)?;
         if elems.is_empty() {
             return None;
         }

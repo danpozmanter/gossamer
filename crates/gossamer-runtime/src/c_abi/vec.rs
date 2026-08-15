@@ -1277,6 +1277,24 @@ pub unsafe extern "C" fn gos_rt_vec_new(elem_bytes: u32) -> *mut GosVec {
     })
 }
 
+/// The header tag for a requested element kind.
+///
+/// An inline-aggregate kind describes elements whose heap children are
+/// described by the vec's metadata carrier rather than by the tag, and the
+/// carrier is attached after the elements are in place (see
+/// [`vec_set_slot_children`]). Such a request builds the storage untagged and
+/// is not a mistake; a tag outside the set is.
+fn header_elem_kind(requested: u8, site: &str) -> u8 {
+    match requested {
+        vec_elem_kind::AGGR_GUARDED | vec_elem_kind::AGGR_OWNED => vec_elem_kind::PRIMITIVE,
+        kind if kind <= vec_elem_kind::ERROR => kind,
+        other => {
+            eprintln!("{site}: unknown elem_kind {other}; falling back to PRIMITIVE");
+            vec_elem_kind::PRIMITIVE
+        }
+    }
+}
+
 /// `gos_rt_vec_new`-like constructor that records the element kind
 /// in the header so `gos_rt_vec_free` can deep-free pointer-bearing
 /// payloads. `elem_kind` must be a value from [`vec_elem_kind`];
@@ -1285,14 +1303,7 @@ pub unsafe extern "C" fn gos_rt_vec_new(elem_bytes: u32) -> *mut GosVec {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_new_typed(elem_bytes: u32, elem_kind: u8) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
-        let kind = if elem_kind > vec_elem_kind::ERROR {
-            eprintln!(
-                "gos_rt_vec_new_typed: unknown elem_kind {elem_kind}; falling back to PRIMITIVE"
-            );
-            vec_elem_kind::PRIMITIVE
-        } else {
-            elem_kind
-        };
+        let kind = header_elem_kind(elem_kind, "gos_rt_vec_new_typed");
         unsafe {
             alloc_vec_header(GosVec {
                 len: 0,
@@ -1431,14 +1442,7 @@ pub unsafe extern "C" fn gos_rt_vec_with_capacity_typed(
     elem_kind: u8,
 ) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
-        let kind = if elem_kind > vec_elem_kind::ERROR {
-            eprintln!(
-                "gos_rt_vec_with_capacity_typed: unknown elem_kind {elem_kind}; falling back to PRIMITIVE"
-            );
-            vec_elem_kind::PRIMITIVE
-        } else {
-            elem_kind
-        };
+        let kind = header_elem_kind(elem_kind, "gos_rt_vec_with_capacity_typed");
         unsafe { alloc_vec_with_capacity(elem_bytes, kind, cap) }
     })
 }

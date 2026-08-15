@@ -2168,6 +2168,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_lazy_iter_from_vec_f64 as *const u8,
         ),
         (
+            "gos_rt_lazy_iter_from_vec_aggr",
+            crate::c_abi::gos_rt_lazy_iter_from_vec_aggr as *const u8,
+        ),
+        (
+            "gos_rt_lazy_iter_collect_aggr",
+            crate::c_abi::gos_rt_lazy_iter_collect_aggr as *const u8,
+        ),
+        (
             "gos_rt_lazy_iter_map_f64",
             crate::c_abi::gos_rt_lazy_iter_map_f64 as *const u8,
         ),

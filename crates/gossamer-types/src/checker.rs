@@ -7890,7 +7890,7 @@ impl<'a> TypeChecker<'a> {
         if self.reject_collection_method_arity(resolved, method, args.len(), receiver.span) {
             return self.tcx.error_ty();
         }
-        if self.reject_unknown_deque_method(resolved, method, receiver.span) {
+        if self.reject_unknown_deque_method(resolved, method, args.len(), receiver.span) {
             return self.tcx.error_ty();
         }
         if let Some(ty) =
@@ -7935,7 +7935,7 @@ impl<'a> TypeChecker<'a> {
         if let Some(ty) = self.set_method_ret(method, resolved) {
             return ty;
         }
-        if self.reject_unknown_set_method(resolved, method, receiver.span) {
+        if self.reject_unknown_set_method(resolved, method, args.len(), receiver.span) {
             return self.tcx.error_ty();
         }
         if let Some(ty) = self.map_method_ret(method, args, &arg_tys, resolved, receiver.span) {
@@ -7962,7 +7962,8 @@ impl<'a> TypeChecker<'a> {
         {
             return self.tcx.json_value_ty();
         }
-        if method != "clone" && self.reject_unknown_sequence_method(resolved, method, receiver.span)
+        if method != "clone"
+            && self.reject_unknown_sequence_method(resolved, method, args.len(), receiver.span)
         {
             return self.tcx.error_ty();
         }
@@ -8130,11 +8131,20 @@ impl<'a> TypeChecker<'a> {
         found_args: usize,
     ) -> TypeError {
         let available = self.known_method_names(resolved);
+        // A declared method's parameters come from its signature; a built-in
+        // sequence or iterator combinator has no `FnDecl`, so its count comes
+        // from the same table the combinator's own typing reads (total arity,
+        // receiver included).
         if available.iter().any(|name| name == method)
-            && let Some(expected) = (0..=8).find(|arity| {
-                self.method_arg_sigs
-                    .contains_key(&(method.to_string(), *arity))
-            })
+            && let Some(expected) = (0..=8)
+                .find(|arity| {
+                    self.method_arg_sigs
+                        .contains_key(&(method.to_string(), *arity))
+                })
+                .or_else(|| {
+                    Self::std_combinator_arity("iter", method).and_then(|a| a.checked_sub(1))
+                })
+                .filter(|expected| *expected != found_args)
         {
             return TypeError::CallArityMismatch {
                 callee: method.to_string(),
@@ -8149,7 +8159,13 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn reject_unknown_sequence_method(&mut self, resolved: Ty, method: &str, span: Span) -> bool {
+    fn reject_unknown_sequence_method(
+        &mut self,
+        resolved: Ty,
+        method: &str,
+        found_args: usize,
+        span: Span,
+    ) -> bool {
         if !matches!(
             self.tcx.kind(resolved),
             Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. })
@@ -8157,12 +8173,18 @@ impl<'a> TypeChecker<'a> {
             return false;
         }
         let ty = self.render_public_ty(resolved);
-        let error = self.unresolved_method(ty, method, resolved);
+        let error = self.unresolved_method_call(ty, method, resolved, found_args);
         self.emit(error, span);
         true
     }
 
-    fn reject_unknown_set_method(&mut self, resolved: Ty, method: &str, span: Span) -> bool {
+    fn reject_unknown_set_method(
+        &mut self,
+        resolved: Ty,
+        method: &str,
+        found_args: usize,
+        span: Span,
+    ) -> bool {
         let is_hash_set = matches!(
             self.tcx.kind(resolved),
             Some(TyKind::Adt { def, .. }) if matches!(def.local, HASH_SET_DEF_LOCAL | BTREE_SET_DEF_LOCAL)
@@ -8171,12 +8193,18 @@ impl<'a> TypeChecker<'a> {
             return false;
         }
         let ty = self.render_public_ty(resolved);
-        let error = self.unresolved_method(ty, method, resolved);
+        let error = self.unresolved_method_call(ty, method, resolved, found_args);
         self.emit(error, span);
         true
     }
 
-    fn reject_unknown_deque_method(&mut self, resolved: Ty, method: &str, span: Span) -> bool {
+    fn reject_unknown_deque_method(
+        &mut self,
+        resolved: Ty,
+        method: &str,
+        found_args: usize,
+        span: Span,
+    ) -> bool {
         let is_vec_deque = matches!(
             self.tcx.kind(resolved),
             Some(TyKind::Adt { def, .. })
@@ -8189,7 +8217,7 @@ impl<'a> TypeChecker<'a> {
             return false;
         }
         let ty = self.render_public_ty(resolved);
-        let error = self.unresolved_method(ty, method, resolved);
+        let error = self.unresolved_method_call(ty, method, resolved, found_args);
         self.emit(error, span);
         true
     }

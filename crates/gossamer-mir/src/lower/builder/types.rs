@@ -96,6 +96,7 @@ impl<'a> Builder<'a> {
             local_fn_name: HashMap::new(),
             local_runtime_kind: HashMap::new(),
             local_binary_heap_min_i64: std::collections::HashSet::new(),
+            local_aggr_iter: std::collections::HashSet::new(),
             local_define_layout: HashMap::new(),
             param_locals: std::collections::HashSet::new(),
             loop_stack: Vec::new(),
@@ -1713,6 +1714,22 @@ impl<'a> Builder<'a> {
         match self.tcx.kind(ty) {
             Some(gossamer_types::TyKind::FnDef { substs, .. }) => substs.clone(),
             _ => gossamer_types::Substs::new(),
+        }
+    }
+
+    /// Element type of a sequence or iterator type, peeling a reference.
+    pub(crate) fn sequence_elem_ty_of(&self, ty: Ty) -> Option<Ty> {
+        use gossamer_types::TyKind;
+        let mut peeled = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
+            peeled = *inner;
+        }
+        match self.tcx.kind_of(peeled) {
+            TyKind::Array { elem, .. }
+            | TyKind::Slice(elem)
+            | TyKind::Vec(elem)
+            | TyKind::Iterator(elem) => Some(*elem),
+            _ => None,
         }
     }
 

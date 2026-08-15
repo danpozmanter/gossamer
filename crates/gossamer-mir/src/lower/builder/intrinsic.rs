@@ -974,17 +974,17 @@ impl<'a> Builder<'a> {
         match (joined, args.len()) {
             // Non-closure constructors / accessors.
             ("iter::collect", 1) => {
-                let (v, lazy) = self.lower_iter_seq_arg(&args[0])?;
+                let (v, lazy) = self.lower_iter_seq_arg_raw(&args[0])?;
                 if let Some(family) = lazy {
                     let elem = match self.tcx.kind_of(self.locals[v.0 as usize].ty) {
                         TyKind::Iterator(elem) => *elem,
                         _ => i64_ty,
                     };
                     let dest_ty = self.tcx.intern(TyKind::Vec(elem));
-                    let helper = if family == LazyElemFamily::PairWord {
-                        "gos_rt_lazy_iter_collect_pair_i64"
-                    } else {
-                        "gos_rt_lazy_iter_collect_i64"
+                    let helper = match family {
+                        LazyElemFamily::PairWord => "gos_rt_lazy_iter_collect_pair_i64",
+                        LazyElemFamily::Aggr => "gos_rt_lazy_iter_collect_aggr",
+                        _ => "gos_rt_lazy_iter_collect_i64",
                     };
                     return Some(self.emit_combinator_call(
                         helper,
@@ -1006,7 +1006,7 @@ impl<'a> Builder<'a> {
                 ))
             }
             ("iter::count", 1) => {
-                let (v, lazy) = self.lower_iter_seq_arg(&args[0])?;
+                let (v, lazy) = self.lower_iter_seq_arg_raw(&args[0])?;
                 if let Some(family) = lazy {
                     let helper = if family == LazyElemFamily::PairWord {
                         "gos_rt_lazy_iter_count_pair_i64"
@@ -1181,7 +1181,14 @@ impl<'a> Builder<'a> {
             // scalar forms (`min(a, b)`) are handled separately; only the
             // single Vec/array argument reaches here.
             ("iter::min" | "min" | "math::min", 1) => {
-                if let Some(family) = self.lazy_iter_source_family(args[0].ty) {
+                let (wide_elem, wide_abi) = self.iter_elem_abi(args[0].ty);
+                if wide_abi == ElemAbi::Ptr
+                    && let Some(local) =
+                        self.lower_minmax_wide_elem(&args[0], wide_elem, ty, false, span)
+                {
+                    return Some(local);
+                }
+                if let Some(family) = self.lazy_iter_source_family_word(args[0].ty) {
                     let (iter, lazy) = self.lower_iter_seq_arg(&args[0])?;
                     if lazy.is_some() {
                         let helper =
@@ -1208,7 +1215,14 @@ impl<'a> Builder<'a> {
                 )
             }
             ("iter::max" | "max" | "math::max", 1) => {
-                if let Some(family) = self.lazy_iter_source_family(args[0].ty) {
+                let (wide_elem, wide_abi) = self.iter_elem_abi(args[0].ty);
+                if wide_abi == ElemAbi::Ptr
+                    && let Some(local) =
+                        self.lower_minmax_wide_elem(&args[0], wide_elem, ty, true, span)
+                {
+                    return Some(local);
+                }
+                if let Some(family) = self.lazy_iter_source_family_word(args[0].ty) {
                     let (iter, lazy) = self.lower_iter_seq_arg(&args[0])?;
                     if lazy.is_some() {
                         let helper =
@@ -1345,7 +1359,7 @@ impl<'a> Builder<'a> {
             ("iter::take", 2) => {
                 let n = self.lower_expr(&args[0])?;
                 if self.lazy_iter_ty_family(ty).is_some()
-                    && let Some(iter) = self.lower_lazy_iter_source(&args[1])
+                    && let Some(iter) = self.lower_lazy_iter_source_aggr(&args[1])
                 {
                     let dest = self.fresh(ty);
                     let next = self.new_block(span);
@@ -1361,6 +1375,7 @@ impl<'a> Builder<'a> {
                         target: Some(next),
                     });
                     self.set_current(next);
+                    self.propagate_aggr_state(iter, dest);
                     return Some(dest);
                 }
                 let v = self.lower_iter_vec_arg(&args[1])?;
@@ -1382,7 +1397,7 @@ impl<'a> Builder<'a> {
             ("iter::step_by", 2) => {
                 let step = self.lower_expr(&args[0])?;
                 if self.lazy_iter_ty_family(ty).is_some()
-                    && let Some(iter) = self.lower_lazy_iter_source(&args[1])
+                    && let Some(iter) = self.lower_lazy_iter_source_aggr(&args[1])
                 {
                     let dest = self.fresh(ty);
                     let next = self.new_block(span);
@@ -1398,6 +1413,7 @@ impl<'a> Builder<'a> {
                         target: Some(next),
                     });
                     self.set_current(next);
+                    self.propagate_aggr_state(iter, dest);
                     return Some(dest);
                 }
                 let v = self.lower_iter_vec_arg(&args[1])?;
@@ -1419,7 +1435,7 @@ impl<'a> Builder<'a> {
             ("iter::skip", 2) => {
                 let n = self.lower_expr(&args[0])?;
                 if self.lazy_iter_ty_family(ty).is_some()
-                    && let Some(iter) = self.lower_lazy_iter_source(&args[1])
+                    && let Some(iter) = self.lower_lazy_iter_source_aggr(&args[1])
                 {
                     let dest = self.fresh(ty);
                     let next = self.new_block(span);
@@ -1435,6 +1451,7 @@ impl<'a> Builder<'a> {
                         target: Some(next),
                     });
                     self.set_current(next);
+                    self.propagate_aggr_state(iter, dest);
                     return Some(dest);
                 }
                 let v = self.lower_iter_vec_arg(&args[1])?;
@@ -1486,6 +1503,21 @@ impl<'a> Builder<'a> {
                         span,
                     ));
                 }
+                // The word-slot reversal moves one slot per element, which
+                // for a wider element reorders its fields rather than the
+                // elements; the vec form moves each element whole.
+                let (_, rev_abi) = self.iter_elem_abi(args[0].ty);
+                if rev_abi == ElemAbi::Ptr {
+                    let source = self.lower_iter_vec_arg(&args[0])?;
+                    let elem = self.sequence_elem_ty_of(self.locals[source.0 as usize].ty);
+                    let dest_ty = elem.map_or(ty, |elem| self.tcx.intern(TyKind::Vec(elem)));
+                    return Some(self.emit_combinator_call(
+                        "gos_rt_vec_reversed",
+                        vec![Operand::Copy(Place::local(source))],
+                        dest_ty,
+                        span,
+                    ));
+                }
                 self.lower_iter_simple_vec_in_vec_out("gos_rt_iter_reversed_i64", args, ty, span)
             }
             ("iter::chain", 2) => {
@@ -1511,6 +1543,31 @@ impl<'a> Builder<'a> {
                 }
                 let a = self.lower_iter_vec_arg(&args[0])?;
                 let b = self.lower_iter_vec_arg(&args[1])?;
+                // The word-slot concatenation copies one slot per element; a
+                // wider element is copied whole by the vec form, which also
+                // gives the result its own share of each element's children.
+                let (_, chain_abi) = self.iter_elem_abi(args[0].ty);
+                if chain_abi == ElemAbi::Ptr {
+                    let elem = self.sequence_elem_ty_of(self.locals[a.0 as usize].ty);
+                    let dest_ty = elem.map_or(ty, |elem| self.tcx.intern(TyKind::Vec(elem)));
+                    let joined_local = self.emit_combinator_call(
+                        "gos_rt_vec_clone",
+                        vec![Operand::Copy(Place::local(a))],
+                        dest_ty,
+                        span,
+                    );
+                    let unit_ty = self.tcx.unit();
+                    let _ = self.emit_combinator_call(
+                        "gos_rt_vec_extend",
+                        vec![
+                            Operand::Copy(Place::local(joined_local)),
+                            Operand::Copy(Place::local(b)),
+                        ],
+                        unit_ty,
+                        span,
+                    );
+                    return Some(joined_local);
+                }
                 let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
                 let dest = self.fresh(vec_i64);
                 let next = self.new_block(span);
@@ -1557,6 +1614,13 @@ impl<'a> Builder<'a> {
                     return Some(dest);
                 }
                 let vec_local = self.lower_iter_vec_arg(&args[0])?;
+                // A wide element does not fit the word slot the pair helper
+                // writes, so the pairs are built element by element, each one
+                // carrying the element itself.
+                let (wide_elem, wide_abi) = self.iter_elem_abi(args[0].ty);
+                if wide_abi == ElemAbi::Ptr {
+                    return Some(self.lower_enumerate_wide_elem(vec_local, wide_elem, span));
+                }
                 let pair = self.tcx.intern(TyKind::Tuple(vec![i64_ty, i64_ty]));
                 let dest_ty = self.tcx.intern(TyKind::Vec(pair));
                 Some(self.emit_combinator_call(
@@ -1721,7 +1785,7 @@ impl<'a> Builder<'a> {
                     };
                     let closure_local =
                         self.lower_iter_closure(&args[0], &[in_ty], out_ty, span)?;
-                    let iter_local = self.lower_lazy_iter_source(&args[1])?;
+                    let iter_local = self.lower_lazy_iter_source_aggr(&args[1])?;
                     let dest = self.fresh(ty);
                     let next = self.new_block(span);
                     self.terminate(Terminator::Call {
@@ -1782,7 +1846,7 @@ impl<'a> Builder<'a> {
                         format!("gos_rt_lazy_iter_filter_{}", source.word_or_float_suffix());
                     let closure_local =
                         self.lower_iter_closure(&args[0], &[in_ty], bool_ty, span)?;
-                    let iter_local = self.lower_lazy_iter_source(&args[1])?;
+                    let iter_local = self.lower_lazy_iter_source_aggr(&args[1])?;
                     let dest = self.fresh(ty);
                     let next = self.new_block(span);
                     self.terminate(Terminator::Call {
@@ -1795,6 +1859,7 @@ impl<'a> Builder<'a> {
                         target: Some(next),
                     });
                     self.set_current(next);
+                    self.propagate_aggr_state(iter_local, dest);
                     return Some(dest);
                 }
                 let helper = match in_abi {
@@ -1838,7 +1903,7 @@ impl<'a> Builder<'a> {
                         (_, LazyElemFamily::Float) => "gos_rt_lazy_iter_fold_word_f64",
                         _ => "gos_rt_lazy_iter_fold_i64",
                     };
-                    let iter_local = self.lower_lazy_iter_source(&args[2])?;
+                    let iter_local = self.lower_lazy_iter_source_aggr(&args[2])?;
                     let dest = self.fresh(acc_ty);
                     let next = self.new_block(span);
                     self.terminate(Terminator::Call {
@@ -1916,7 +1981,7 @@ impl<'a> Builder<'a> {
                     let helper = format!("gos_rt_lazy_iter_any_{}", source.word_or_float_suffix());
                     let closure_local =
                         self.lower_iter_closure(&args[0], &[elem_ty], bool_ty, span)?;
-                    let iter_local = self.lower_lazy_iter_source(&args[1])?;
+                    let iter_local = self.lower_lazy_iter_source_aggr(&args[1])?;
                     let dest = self.fresh(bool_ty);
                     let next = self.new_block(span);
                     self.terminate(Terminator::Call {
@@ -1965,7 +2030,7 @@ impl<'a> Builder<'a> {
                     let helper = format!("gos_rt_lazy_iter_all_{}", source.word_or_float_suffix());
                     let closure_local =
                         self.lower_iter_closure(&args[0], &[elem_ty], bool_ty, span)?;
-                    let iter_local = self.lower_lazy_iter_source(&args[1])?;
+                    let iter_local = self.lower_lazy_iter_source_aggr(&args[1])?;
                     let dest = self.fresh(bool_ty);
                     let next = self.new_block(span);
                     self.terminate(Terminator::Call {
@@ -2013,6 +2078,12 @@ impl<'a> Builder<'a> {
                 // so it keeps the eager word-slot path only when its slots fit
                 // a word; the combinator surface rejects the rest upstream.
                 let closure_local = self.lower_iter_closure(&args[0], &[elem_ty], bool_ty, span)?;
+                // A wide element is searched over its own storage: the matches
+                // are kept as elements of that shape, and the first of them
+                // becomes the payload the way `Some(kept[0])` builds one.
+                if elem_abi == ElemAbi::Ptr {
+                    return self.lower_find_wide_elem(closure_local, &args[1], elem_ty, ty, span);
+                }
                 if let Some(source) = self.lazy_iter_ty_family(args[1].ty) {
                     let helper = format!("gos_rt_lazy_iter_find_{}", source.word_or_float_suffix());
                     let iter_local = self.lower_lazy_iter_source(&args[1])?;
@@ -2823,7 +2894,7 @@ impl<'a> Builder<'a> {
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
                 // A struct element reaches the predicate by slot address; see
                 // `iter::any`.
-                let ptr_elem_ty = self.iter_struct_elem_ty(vec_local);
+                let ptr_elem_ty = self.iter_wide_elem_ty(vec_local);
                 let closure_inputs = ptr_elem_ty.map_or_else(|| vec![i64_ty], |elem| vec![elem]);
                 let closure = self.lower_iter_closure(&args[0], &closure_inputs, bool_ty, span)?;
                 let helper = if ptr_elem_ty.is_some() {
@@ -3219,18 +3290,19 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// Element type of an iterated sequence local when that element is a user
-    /// struct, which a combinator's callback receives by slot address rather
-    /// than as a loaded word.
-    fn iter_struct_elem_ty(&self, vec_local: Local) -> Option<Ty> {
+    /// Element type of an iterated sequence local when that element is wider
+    /// than one slot, which a combinator's callback receives by slot address
+    /// rather than as a loaded word.
+    fn iter_wide_elem_ty(&self, vec_local: Local) -> Option<Ty> {
         use gossamer_types::TyKind;
         let elem = match self.tcx.kind_of(self.locals[vec_local.0 as usize].ty) {
             TyKind::Vec(elem) | TyKind::Slice(elem) => *elem,
             _ => return None,
         };
-        self.struct_name_of(elem)
-            .is_some_and(|name| self.struct_defs.values().any(|sn| sn == &name))
-            .then_some(elem)
+        // What decides the callback's shape is the element's width, not
+        // whether it was written as a struct: a tuple of that width is stored
+        // and reached exactly the same way.
+        self.aggr_lazy_elem(elem).then_some(elem)
     }
 
     /// True when the iterated sequence's elements are `f64`, whose slot bits a
@@ -3285,6 +3357,17 @@ impl<'a> Builder<'a> {
     /// Runtime symbol that drains iterator state into a `Vec` of `elem`.
     /// A two-`i64` tuple element rides its own shim because the snapshot
     /// stores pairs rather than scalar slots.
+    /// Collect helper for the state `local` holds. An element wider than one
+    /// slot reaches a terminal either as a pair of words or as an address, and
+    /// only the producing site knows which, so the marker decides before the
+    /// element type does.
+    pub(crate) fn lazy_collect_symbol_for(&mut self, local: Local, elem: Ty) -> &'static str {
+        if self.local_aggr_iter.contains(&local) {
+            return "gos_rt_lazy_iter_collect_aggr";
+        }
+        self.lazy_collect_symbol(elem)
+    }
+
     pub(crate) fn lazy_collect_symbol(&mut self, elem: Ty) -> &'static str {
         use gossamer_types::TyKind;
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
@@ -3317,8 +3400,35 @@ impl<'a> Builder<'a> {
             | TyKind::Array { elem, .. } => *elem,
             _ => return None,
         };
-        self.lazy_iter_elem_family(elem)
-            .filter(|family| *family != LazyElemFamily::PairWord)
+        match self.lazy_iter_elem_family(elem) {
+            // The pair state is built by `zip` / `enumerate`, never borrowed
+            // from a sequence, so a pair-shaped element borrows through the
+            // address form like any other multi-slot element.
+            Some(LazyElemFamily::PairWord) | None => {
+                self.aggr_lazy_elem(elem).then_some(LazyElemFamily::Aggr)
+            }
+            family => family,
+        }
+    }
+
+    /// Source family for a combinator that reads each slot as an element
+    /// value: an address-carrying stream is not one, so such a source stays on
+    /// the eager surface where the element is read at its real width.
+    pub(crate) fn lazy_iter_source_family_word(&self, arg_ty: Ty) -> Option<LazyElemFamily> {
+        self.lazy_iter_source_family(arg_ty)
+            .filter(|family| *family != LazyElemFamily::Aggr)
+    }
+
+    /// Whether a sequence of `elem` can be borrowed as a stream of element
+    /// addresses: the element is stored inline, wider than the word slot a
+    /// value-carrying stream reads, and its own storage is what a consumer
+    /// reads through.
+    pub(crate) fn aggr_lazy_elem(&self, elem: Ty) -> bool {
+        use gossamer_types::TyKind;
+        matches!(
+            self.tcx.kind_of(elem),
+            TyKind::Tuple(_) | TyKind::Adt { .. }
+        ) && self.elem_bytes_of(elem) > 8
     }
 
     /// Result type for an adapter that answered eagerly. A surface type of
@@ -3339,7 +3449,419 @@ impl<'a> Builder<'a> {
     /// whether a value is an iterator handle or a `GosVec`, so every consumer
     /// asks this rather than re-deriving the producer's choice from types.
     pub(crate) fn lowered_lazy_family(&self, local: Local) -> Option<LazyElemFamily> {
+        if self.local_aggr_iter.contains(&local) {
+            return Some(LazyElemFamily::Aggr);
+        }
         self.lazy_iter_ty_family(self.locals[local.0 as usize].ty)
+    }
+
+    /// Wraps a materialised `Vec<(K, V)>` of map entries as lazy iterator
+    /// state, so `m.iter()` answers the cursor its type names. `None` when the
+    /// entry shape has no lazy state to carry it, leaving the caller with the
+    /// vec it already built.
+    pub(crate) fn entries_cursor(&mut self, entries: Local, span: Span) -> Option<Local> {
+        let (handle, _family) = self.borrow_lazy_state(entries, span, true)?;
+        Some(handle)
+    }
+
+    /// `xs.enumerate()` where the element is wider than one slot.
+    ///
+    /// The pair helper writes an index and one slot per element, which for a
+    /// wider element keeps only its first field. Walking the source and
+    /// building each `(index, element)` pair here gives every pair the
+    /// element's own width.
+    fn lower_enumerate_wide_elem(&mut self, source: Local, elem_ty: Ty, span: Span) -> Local {
+        use gossamer_types::TyKind;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let bool_ty = self.tcx.bool_ty();
+        let pair_ty = self.tcx.intern(TyKind::Tuple(vec![i64_ty, elem_ty]));
+        let out_ty = self.tcx.intern(TyKind::Vec(pair_ty));
+        let _ = self.ensure_aggr_copy_meta(pair_ty);
+        let elem_bytes = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(elem_bytes),
+            Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(
+                self.type_slot_bytes(pair_ty).max(1),
+            )))),
+            span,
+        );
+        let len = self.emit_combinator_call(
+            "gos_rt_vec_len",
+            vec![Operand::Copy(Place::local(source))],
+            i64_ty,
+            span,
+        );
+        let out = self.emit_combinator_call(
+            "gos_rt_vec_with_capacity",
+            vec![
+                Operand::Copy(Place::local(elem_bytes)),
+                Operand::Copy(Place::local(len)),
+            ],
+            out_ty,
+            span,
+        );
+        let index = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(index),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+        let header = self.new_block(span);
+        let body = self.new_block(span);
+        let exit = self.new_block(span);
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(header);
+        let more = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(more),
+            Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(index)),
+                rhs: Operand::Copy(Place::local(len)),
+            },
+            span,
+        );
+        self.terminate(Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(more)),
+            arms: vec![(0, exit)],
+            default: body,
+        });
+
+        self.set_current(body);
+        let ref_ty = self.tcx.intern(TyKind::Ref {
+            mutability: gossamer_types::Mutbl::Not,
+            inner: elem_ty,
+        });
+        let slot = self.emit_combinator_call(
+            "gos_rt_vec_get_ptr",
+            vec![
+                Operand::Copy(Place::local(source)),
+                Operand::Copy(Place::local(index)),
+            ],
+            ref_ty,
+            span,
+        );
+        let mut slot_place = Place::local(slot);
+        slot_place.projection.push(crate::ir::Projection::Deref);
+        let element = self.fresh(elem_ty);
+        self.emit_assign(
+            Place::local(element),
+            Rvalue::Use(Operand::Copy(slot_place)),
+            span,
+        );
+        let pair = self.fresh(pair_ty);
+        self.emit_assign(
+            Place::local(pair),
+            Rvalue::Aggregate {
+                kind: crate::ir::AggregateKind::Tuple,
+                operands: vec![
+                    Operand::Copy(Place::local(index)),
+                    Operand::Copy(Place::local(element)),
+                ],
+            },
+            span,
+        );
+        let unit_ty = self.tcx.unit();
+        let _ = self.emit_combinator_call(
+            "gos_rt_vec_push",
+            vec![
+                Operand::Copy(Place::local(out)),
+                Operand::Copy(Place::local(pair)),
+            ],
+            unit_ty,
+            span,
+        );
+        let one = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(one),
+            Rvalue::Use(Operand::Const(ConstValue::Int(1))),
+            span,
+        );
+        let next_index = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(next_index),
+            Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(index)),
+                rhs: Operand::Copy(Place::local(one)),
+            },
+            span,
+        );
+        self.emit_assign(
+            Place::local(index),
+            Rvalue::Use(Operand::Copy(Place::local(next_index))),
+            span,
+        );
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(exit);
+        out
+    }
+
+    /// `xs.min()` / `xs.max()` where the element is wider than one slot.
+    ///
+    /// The word-slot terminals compare the first slot of each element, which
+    /// is one field of it. Ordering a copy structurally - the comparison
+    /// `sort` already uses - puts the answer at a known end, and the element
+    /// there becomes the payload.
+    fn lower_minmax_wide_elem(
+        &mut self,
+        seq_arg: &HirExpr,
+        elem_ty: Ty,
+        ty: Ty,
+        want_max: bool,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::TyKind;
+        let (count, tags) = self.tuple_element_stream(elem_ty)?;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let vec_local = self.lower_iter_vec_arg(seq_arg)?;
+        let vec_ty = self.tcx.intern(TyKind::Vec(elem_ty));
+        // The caller's order is its own; the ordering runs on a copy.
+        let sorted = self.emit_combinator_call(
+            "gos_rt_vec_clone",
+            vec![Operand::Copy(Place::local(vec_local))],
+            vec_ty,
+            span,
+        );
+        let count_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(count_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(
+                i128::try_from(count).unwrap_or(0),
+            ))),
+            span,
+        );
+        let tag_text: String = tags.iter().map(|&b| b as char).collect();
+        let string_ty = self.tcx.string_ty();
+        let tags_local = self.fresh(string_ty);
+        self.emit_assign(
+            Place::local(tags_local),
+            Rvalue::Use(Operand::Const(ConstValue::Str(tag_text))),
+            span,
+        );
+        let unit_ty = self.tcx.unit();
+        let _ = self.emit_combinator_call(
+            "gos_rt_vec_sort_tuple",
+            vec![
+                Operand::Copy(Place::local(sorted)),
+                Operand::Copy(Place::local(count_local)),
+                Operand::Copy(Place::local(tags_local)),
+            ],
+            unit_ty,
+            span,
+        );
+        let index = self.fresh(i64_ty);
+        if want_max {
+            let len = self.emit_combinator_call(
+                "gos_rt_vec_len",
+                vec![Operand::Copy(Place::local(sorted))],
+                i64_ty,
+                span,
+            );
+            let one = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(one),
+                Rvalue::Use(Operand::Const(ConstValue::Int(1))),
+                span,
+            );
+            self.emit_assign(
+                Place::local(index),
+                Rvalue::BinaryOp {
+                    op: BinOp::Sub,
+                    lhs: Operand::Copy(Place::local(len)),
+                    rhs: Operand::Copy(Place::local(one)),
+                },
+                span,
+            );
+        } else {
+            self.emit_assign(
+                Place::local(index),
+                Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                span,
+            );
+        }
+        Some(self.option_from_vec_element(sorted, index, elem_ty, ty, span))
+    }
+
+    /// `xs.find(p)` where the element is wider than one slot.
+    ///
+    /// The word-slot form carries the found element in the `Option` payload
+    /// itself, which an element of this width has no room for. Keeping the
+    /// matches first gives storage of the element's own shape to answer from,
+    /// and the payload is then minted exactly as a `Some(elem)` in source is:
+    /// a heap copy the drop pass reclaims.
+    fn lower_find_wide_elem(
+        &mut self,
+        closure_local: Local,
+        seq_arg: &HirExpr,
+        elem_ty: Ty,
+        ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::TyKind;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let bool_ty = self.tcx.bool_ty();
+        let vec_local = self.lower_iter_vec_arg(seq_arg)?;
+        let kept_ty = self.tcx.intern(TyKind::Vec(elem_ty));
+        let kept = self.emit_combinator_call(
+            "gos_rt_iter_filter_ptr",
+            vec![
+                Operand::Copy(Place::local(closure_local)),
+                Operand::Copy(Place::local(vec_local)),
+            ],
+            kept_ty,
+            span,
+        );
+        let zero = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(zero),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+        let _ = bool_ty;
+        Some(self.option_from_vec_element(kept, zero, elem_ty, ty, span))
+    }
+
+    /// `Some(v[index])` when `v` has an element to answer with, `None`
+    /// otherwise, for an element wider than one slot.
+    ///
+    /// The payload is minted the way a `Some(elem)` written in source is: the
+    /// backend heap-copies the element and the guarded layout registered here
+    /// is what reclaims it, so the answer outlives the storage it was read
+    /// from.
+    fn option_from_vec_element(
+        &mut self,
+        vec_local: Local,
+        index: Local,
+        elem_ty: Ty,
+        ty: Ty,
+        span: Span,
+    ) -> Local {
+        use gossamer_types::TyKind;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let bool_ty = self.tcx.bool_ty();
+        let len = self.emit_combinator_call(
+            "gos_rt_vec_len",
+            vec![Operand::Copy(Place::local(vec_local))],
+            i64_ty,
+            span,
+        );
+        let found = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(found),
+            Rvalue::BinaryOp {
+                op: BinOp::Gt,
+                lhs: Operand::Copy(Place::local(len)),
+                rhs: Operand::Copy(Place::local(index)),
+            },
+            span,
+        );
+        let kept = vec_local;
+        let zero = index;
+        let rty = self.result_repr_ty(ty);
+        let dest = self.fresh(rty);
+        let some_block = self.new_block(span);
+        let none_block = self.new_block(span);
+        let join = self.new_block(span);
+        self.terminate(Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(found)),
+            arms: vec![(0, none_block)],
+            default: some_block,
+        });
+
+        self.set_current(some_block);
+        let ref_ty = self.tcx.intern(TyKind::Ref {
+            mutability: gossamer_types::Mutbl::Not,
+            inner: elem_ty,
+        });
+        let slot = self.emit_combinator_call(
+            "gos_rt_vec_get_ptr",
+            vec![
+                Operand::Copy(Place::local(kept)),
+                Operand::Copy(Place::local(zero)),
+            ],
+            ref_ty,
+            span,
+        );
+        let mut slot_place = Place::local(slot);
+        slot_place.projection.push(crate::ir::Projection::Deref);
+        let payload = self.fresh(elem_ty);
+        self.emit_assign(
+            Place::local(payload),
+            Rvalue::Use(Operand::Copy(slot_place)),
+            span,
+        );
+        // The payload outlives the vec it was read from, so the backend's
+        // heap copy needs this element's guarded layout to reclaim it.
+        let _ = self.ensure_aggr_copy_meta(elem_ty);
+        let some_disc = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(some_disc),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+        self.emit_assign(
+            Place::local(dest),
+            Rvalue::CallIntrinsic {
+                name: "gos_rt_result_new",
+                args: vec![
+                    Operand::Copy(Place::local(some_disc)),
+                    Operand::Copy(Place::local(payload)),
+                ],
+            },
+            span,
+        );
+        self.terminate(Terminator::Goto { target: join });
+
+        self.set_current(none_block);
+        let none_disc = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(none_disc),
+            Rvalue::Use(Operand::Const(ConstValue::Int(1))),
+            span,
+        );
+        self.emit_assign(
+            Place::local(dest),
+            Rvalue::CallIntrinsic {
+                name: "gos_rt_result_new",
+                args: vec![
+                    Operand::Copy(Place::local(none_disc)),
+                    Operand::Copy(Place::local(zero)),
+                ],
+            },
+            span,
+        );
+        self.terminate(Terminator::Goto { target: join });
+
+        self.set_current(join);
+        dest
+    }
+
+    /// Carries the address-carrying marker from an adapter's upstream state to
+    /// the state it produced, for an adapter that hands its slots through
+    /// unchanged.
+    fn propagate_aggr_state(&mut self, upstream: Local, dest: Local) {
+        if self.local_aggr_iter.contains(&upstream) {
+            self.local_aggr_iter.insert(dest);
+        }
+    }
+
+    /// Drains address-carrying state into a `Vec` of its elements, so a
+    /// consumer that reads elements at their real width has storage to read.
+    fn drain_aggr_state(&mut self, state: Local, span: Span) -> Local {
+        use gossamer_types::TyKind;
+        let elem = self
+            .sequence_elem_ty_of(self.locals[state.0 as usize].ty)
+            .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64));
+        let vec_ty = self.tcx.intern(TyKind::Vec(elem));
+        self.emit_combinator_call(
+            "gos_rt_lazy_iter_collect_aggr",
+            vec![Operand::Copy(Place::local(state))],
+            vec_ty,
+            span,
+        )
     }
 
     /// Lowers a combinator's sequence argument once, reporting whether the
@@ -3349,6 +3871,23 @@ impl<'a> Builder<'a> {
     /// the caller decides between the lazy and the eager surface from the
     /// family this reports.
     pub(crate) fn lower_iter_seq_arg(
+        &mut self,
+        arg: &HirExpr,
+    ) -> Option<(Local, Option<LazyElemFamily>)> {
+        let (local, family) = self.lower_iter_seq_arg_raw(arg)?;
+        // Address-carrying state reaches only the arms that pass slots to a
+        // callback; everywhere else it is drained first, so a consumer never
+        // reads an address as an element.
+        if family == Some(LazyElemFamily::Aggr) {
+            let drained = self.drain_aggr_state(local, arg.span);
+            return Some((drained, None));
+        }
+        Some((local, family))
+    }
+
+    /// Like [`Self::lower_iter_seq_arg`], keeping address-carrying state as
+    /// state for a caller that hands each slot to a callback.
+    pub(crate) fn lower_iter_seq_arg_raw(
         &mut self,
         arg: &HirExpr,
     ) -> Option<(Local, Option<LazyElemFamily>)> {
@@ -3365,21 +3904,32 @@ impl<'a> Builder<'a> {
 
     /// Borrows a lowered `GosVec` as lazy state tagged with its own element
     /// family, or returns `None` when the elements are too wide for the slot.
-    fn borrow_lazy_state(&mut self, source: Local, span: Span) -> Option<(Local, LazyElemFamily)> {
+    fn borrow_lazy_state(
+        &mut self,
+        source: Local,
+        span: Span,
+        allow_aggr: bool,
+    ) -> Option<(Local, LazyElemFamily)> {
         use gossamer_types::TyKind;
         let family = self.lazy_iter_source_family(self.locals[source.0 as usize].ty)?;
-        // The pair state is built by `zip` / `enumerate`, never borrowed from
-        // a sequence, so a pair source stays on the eager surface.
-        if family == LazyElemFamily::PairWord {
+        // An address-carrying stream is only for a consumer that hands each
+        // slot to a callback; every other one reads elements at their real
+        // width from storage, which is the eager surface.
+        if family == LazyElemFamily::Aggr && !allow_aggr {
             return None;
         }
+        let source_elem = self.sequence_elem_ty_of(self.locals[source.0 as usize].ty);
         let elem_ty = match family {
             LazyElemFamily::Float => self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            // The address rides the slot, but what the consumer reads through
+            // it is the element, so the state names the element type.
+            LazyElemFamily::Aggr => source_elem?,
             _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
         };
         let iter_ty = self.tcx.intern(TyKind::Iterator(elem_ty));
         let helper = match family {
             LazyElemFamily::Float => "gos_rt_lazy_iter_from_vec_f64",
+            LazyElemFamily::Aggr => "gos_rt_lazy_iter_from_vec_aggr",
             _ => "gos_rt_lazy_iter_from_vec_i64",
         };
         let handle = self.emit_combinator_call(
@@ -3388,6 +3938,9 @@ impl<'a> Builder<'a> {
             iter_ty,
             span,
         );
+        if family == LazyElemFamily::Aggr {
+            self.local_aggr_iter.insert(handle);
+        }
         Some((handle, family))
     }
 
@@ -3400,11 +3953,25 @@ impl<'a> Builder<'a> {
     /// the handle the adapter receives is tagged with the class its elements
     /// really have.
     fn lower_lazy_iter_source(&mut self, arg: &HirExpr) -> Option<Local> {
-        let (local, family) = self.lower_iter_seq_arg(arg)?;
-        if family.is_some() {
+        self.lower_lazy_iter_source_classed(arg, false)
+    }
+
+    /// Lowers a lazy source for a combinator that hands each slot to a
+    /// callback, so a multi-slot element can ride the stream as its address.
+    fn lower_lazy_iter_source_aggr(&mut self, arg: &HirExpr) -> Option<Local> {
+        self.lower_lazy_iter_source_classed(arg, true)
+    }
+
+    fn lower_lazy_iter_source_classed(&mut self, arg: &HirExpr, allow_aggr: bool) -> Option<Local> {
+        let (local, family) = self.lower_iter_seq_arg_raw(arg)?;
+        if let Some(family) = family {
+            if family == LazyElemFamily::Aggr && !allow_aggr {
+                return None;
+            }
             return Some(local);
         }
-        self.borrow_lazy_state(local, arg.span).map(|(h, _)| h)
+        self.borrow_lazy_state(local, arg.span, allow_aggr)
+            .map(|(h, _)| h)
     }
 
     pub(crate) fn try_lower_for_hashmap_iter(

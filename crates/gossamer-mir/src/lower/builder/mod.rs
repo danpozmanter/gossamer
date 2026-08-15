@@ -118,6 +118,11 @@ pub(crate) struct Builder<'a> {
     /// Erased heap handles that must dispatch to min-heap runtime helpers
     /// even though the handle ABI is still a `GosVec<i64>`.
     pub(crate) local_binary_heap_min_i64: std::collections::HashSet<Local>,
+    /// Lazy iterator-state locals whose slots hold the address of each
+    /// element rather than its value. The state's type names the element, and
+    /// an element wider than one slot can be either this or the dedicated pair
+    /// state, so which one a local holds is recorded where it is built.
+    pub(crate) local_aggr_iter: std::collections::HashSet<Local>,
     /// Per-local field layout for synthesised aggregates produced by
     /// the declarative `flag::define(...)` lowering. Maps the result
     /// local to a `Vec<(long_name, cell_kind)>` indexed by field

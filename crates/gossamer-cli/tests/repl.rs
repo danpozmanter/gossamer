@@ -3046,6 +3046,27 @@ fn repl_question_mark_rejects_invalid_contexts_before_execution() {
 }
 
 #[test]
+fn repl_lists_a_stdlib_macro_by_its_calling_form() {
+    let out = run_repl("%info fmt\n%info println!\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("std::fmt::println! [macro]"),
+        "a macro is listed as it is called; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("std::fmt::println [macro]"),
+        "the bare spelling is not a form source can call; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.matches("std::fmt::println! [macro]").count() >= 2,
+        "the calling form searches back to the same item; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_meta_help_covers_every_builtin_macro_and_prelude_assertion() {
     let mut input = String::new();
     for builtin in gossamer_parse::builtin_macros::BUILTIN_MACROS {

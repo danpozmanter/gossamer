@@ -64,6 +64,11 @@ pub(crate) enum LazyElemFamily {
     Ptr,
     /// Two `i64` fields on the dedicated pair state `zip` / `enumerate` build.
     PairWord,
+    /// The address of an element whose storage is wider than one slot. The
+    /// element stays in the source buffer the state keeps alive, so a callback
+    /// reads it through the address - the same shape the eager multi-slot
+    /// surface passes.
+    Aggr,
 }
 
 impl LazyElemFamily {
@@ -73,7 +78,7 @@ impl LazyElemFamily {
     pub(crate) fn word_or_float_suffix(self) -> &'static str {
         match self {
             Self::Float => "f64",
-            Self::Word | Self::Ptr | Self::PairWord => "i64",
+            Self::Word | Self::Ptr | Self::PairWord | Self::Aggr => "i64",
         }
     }
 }
@@ -1132,11 +1137,13 @@ impl<'a> Builder<'a> {
                 recv_ty_for_kind = *inner;
             }
             if matches!(self.tcx.kind_of(recv_ty_for_kind), TyKind::HashMap { .. }) {
-                return MethodLowering::Handled(self.materialize_hashmap_entries(
-                    receiver,
-                    recv_ty_for_kind,
-                    span,
-                ));
+                let entries = self.materialize_hashmap_entries(receiver, recv_ty_for_kind, span);
+                // The pairs are read out under the map's lock, and the cursor
+                // over them is what `iter()` answers: the value carries its own
+                // position, so a downstream adapter runs per element pulled
+                // rather than over the whole snapshot.
+                let cursor = entries.and_then(|entries| self.entries_cursor(entries, span));
+                return MethodLowering::Handled(cursor.or(entries));
             }
         }
         MethodLowering::Pass
@@ -4950,6 +4957,7 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> MethodLowering {
         let joined: Option<&str> = match (method.name.as_str(), args.len()) {
+            ("chain", 1) => Some("iter::chain"),
             ("map", 1) => Some("iter::map"),
             ("filter", 1) => Some("iter::filter"),
             ("take_while", 1) => Some("iter::take_while"),
@@ -5006,7 +5014,19 @@ impl<'a> Builder<'a> {
         {
             return MethodLowering::Pass;
         }
-        let mut reordered: Vec<HirExpr> = args.to_vec();
+        // The data-last free forms take the sequence in the last slot, which
+        // is why the receiver goes there. `chain` reads its two sequences in
+        // order, and the one written first in `xs.chain(ys)` is the receiver.
+        let mut reordered: Vec<HirExpr> = if method.name.as_str() == "chain" {
+            let mut ordered = vec![receiver.clone()];
+            ordered.extend(args.iter().cloned());
+            return match self.try_lower_iter_call("iter::chain", &ordered, ty, span) {
+                Some(dest) => MethodLowering::Handled(Some(dest)),
+                None => MethodLowering::Pass,
+            };
+        } else {
+            args.to_vec()
+        };
         reordered.push(receiver.clone());
         // `xs.count(f)` - the accepted-element count: `iter::filter`
         // then a length read of the filtered vec. The filter's

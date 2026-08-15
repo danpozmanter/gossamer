@@ -691,6 +691,8 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_lazy_iter_fold_i64", (I64, Ptr, Ptr) -> I64, Both, "Consume and fold a lazy Iterator<i64>."),
     rt!("gos_rt_lazy_iter_fold_word_f64", (I64, Ptr, Ptr) -> I64, Both, "Consume and fold a lazy Iterator<f64> with an i64 accumulator."),
     rt!("gos_rt_lazy_iter_from_vec_f64", (Ptr) -> Ptr, Both, "Create a retained borrowed lazy Iterator<f64> source from a GosVec."),
+    rt!("gos_rt_lazy_iter_from_vec_aggr", (Ptr) -> Ptr, Both, "Create a retained borrowed lazy iterator over a GosVec whose elements are wider than one slot, yielding each element's address."),
+    rt!("gos_rt_lazy_iter_collect_aggr", (Ptr) -> Ptr, Both, "Consume a lazy stream of element addresses into a Vec of the same element shape."),
     rt!("gos_rt_lazy_iter_from_vec_i64", (Ptr) -> Ptr, Both, "Create a retained borrowed lazy Iterator<i64> source from a GosVec."),
     rt!("gos_rt_lazy_iter_map_f64", (Ptr, Ptr) -> Ptr, Both, "Lazy map over Iterator<f64> producing f64."),
     rt!("gos_rt_lazy_iter_map_f64_word", (Ptr, Ptr) -> Ptr, Both, "Lazy map over Iterator<f64> producing i64."),

@@ -1081,9 +1081,10 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_lazy_iter_map_i64" | "gos_rt_lazy_iter_filter_i64" => {
             (&[ptr_ty, ptr_ty], Some(ptr_ty))
         }
-        "gos_rt_lazy_iter_collect_i64" | "gos_rt_lazy_iter_collect_pair_i64" => {
-            (&[ptr_ty], Some(ptr_ty))
-        }
+        "gos_rt_lazy_iter_collect_i64"
+        | "gos_rt_lazy_iter_collect_pair_i64"
+        | "gos_rt_lazy_iter_collect_aggr"
+        | "gos_rt_lazy_iter_from_vec_aggr" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_lazy_iter_count_i64"
         | "gos_rt_lazy_iter_count_pair_i64"
         | "gos_rt_lazy_iter_sum_i64"

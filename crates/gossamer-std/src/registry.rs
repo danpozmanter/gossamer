@@ -31,6 +31,24 @@ pub struct StdItem {
     pub doc: &'static str,
 }
 
+impl StdItem {
+    /// The item spelled the way source calls it: a macro carries its `!`,
+    /// so a listing names the form a reader can type.
+    #[must_use]
+    pub fn call_name(&self) -> String {
+        call_name(self.name, self.kind)
+    }
+}
+
+/// The call form of `name` for an item of `kind`.
+#[must_use]
+pub fn call_name(name: &str, kind: StdItemKind) -> String {
+    match kind {
+        StdItemKind::Macro => format!("{name}!"),
+        _ => name.to_string(),
+    }
+}
+
 /// Fully-qualified item metadata derived from the stdlib manifest.
 ///
 /// This is the item-level contract used by docs/audit tooling. The

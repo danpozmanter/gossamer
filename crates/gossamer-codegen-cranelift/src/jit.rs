@@ -2705,6 +2705,8 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_lazy_iter_map_i64" => rt::gos_rt_lazy_iter_map_i64,
         "gos_rt_lazy_iter_filter_i64" => rt::gos_rt_lazy_iter_filter_i64,
         "gos_rt_lazy_iter_collect_i64" => rt::gos_rt_lazy_iter_collect_i64,
+        "gos_rt_lazy_iter_collect_aggr" => rt::gos_rt_lazy_iter_collect_aggr,
+        "gos_rt_lazy_iter_from_vec_aggr" => rt::gos_rt_lazy_iter_from_vec_aggr,
         "gos_rt_lazy_iter_collect_pair_i64" => rt::gos_rt_lazy_iter_collect_pair_i64,
         "gos_rt_lazy_iter_count_i64" => rt::gos_rt_lazy_iter_count_i64,
         "gos_rt_lazy_iter_count_pair_i64" => rt::gos_rt_lazy_iter_count_pair_i64,

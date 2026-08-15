@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.50.1 - Loop, concurrency, REPL doc fixes
+## 0.50.1 - Lazy collections, native/JIT crash, and diagnostic fixes
 
 - Drive a `for` loop over a lazy iterator through its cursor. The loop read
   every element into a `Vec` first and walked that, so `for c in s.chars()`
@@ -33,6 +33,36 @@
 - Wake a goroutine parked on a context deadline instead of reporting a
   deadlock. A program blocked on `ctx.done_chan().recv()` has a timer left
   to act, so it is waiting rather than stuck.
+- Walk a sequence of tuples or structs through a cursor on the compiled
+  tiers. An element wider than one slot had no lazy state to ride, so
+  `pairs.iter().map(f).take(3)` ran `f` over every element in a built binary
+  while the VM ran it three times; the element's address now rides the cursor
+  and the chain runs per element pulled.
+- Answer `m.iter()` with a cursor over the map's pairs, so a chain off it
+  runs per pair pulled rather than over the whole snapshot, and an
+  iterator-typed binding shows as the cursor it is in the REPL.
+- Answer `min`, `max`, `find`, `position`, `rev`, `chain`, and `enumerate`
+  at the element's own width on the compiled tiers. Each read one slot per
+  element, so over a tuple or struct they compared, moved, or returned one
+  field of it: `pairs.min()` answered the first field, `rev` rebuilt the
+  sequence from a single slot, and `enumerate` truncated the last element.
+- Order a struct element by its whole value on the compiled tiers. A struct
+  laid out as a run of fields had no structural comparison, so `xs.sort()`
+  ordered each slot on its own and rebuilt the elements from fields that
+  belonged to different ones.
+- Lower `xs.chain(ys)` as the sequence concatenation it is. The method name
+  reached the error-chain helper on the compiled tiers, which read the
+  sequence as an error and faulted.
+- Retain a heap field returned by value through a reference. A `&self`
+  method handing back a `Vec` or `String` field minted no share for the
+  caller, so the receiver's own buffer was reclaimed while it still pointed
+  at it and the next write through it corrupted the heap.
+- Report the parameter count when a method exists but was called with the
+  wrong number of arguments. A sequence, set, or deque receiver reported the
+  method as missing instead, sending the reader after a spelling that was
+  already right.
+- Name a macro by its calling form in `%info` listings and `gos doc`, and
+  resolve that spelling back to the item.
 - Decide a deadlock report from counts that all describe one state. A waiter
   drops its count a step before it retires the readiness that woke it, and
   the two were read either side of that step, so a busy pipeline of

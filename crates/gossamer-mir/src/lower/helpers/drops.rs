@@ -141,6 +141,17 @@ fn is_self_consuming_append(name: &str) -> bool {
     )
 }
 
+/// The type a place of type `ty` projects through: the referent for a
+/// `&`/`&mut`, and `ty` itself otherwise. A field projection reads the same
+/// field either way, so a rule keyed on the aggregate's fields resolves the
+/// base through this.
+fn pointee_of(tcx: &TyCtxt, ty: Ty) -> Ty {
+    match tcx.kind_of(ty) {
+        gossamer_types::TyKind::Ref { inner, .. } => *inner,
+        _ => ty,
+    }
+}
+
 pub(crate) fn aggregate_rc_field_paths(tcx: &TyCtxt, ty: Ty) -> AggFieldPaths {
     fn recursable(tcx: &TyCtxt, ty: Ty) -> bool {
         use gossamer_types::TyKind;
@@ -1597,6 +1608,12 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // reference to the field value, so retain it. Added after move-elision
     // filtering so it always fires - Y still owns its own copy of the field
     // and releases it when Y dies.
+    //
+    // `Y` may be a `&`/`&mut` parameter: `fn tags(&self) -> Vec<String> {
+    // self.tags }` projects the field straight off the reference, and the
+    // value the caller receives is a share of the referent's field just as it
+    // is when the base is owned. The referent keeps its own, so the fields
+    // are read through the pointee type.
     for (block_idx, block) in body.blocks.iter().enumerate() {
         for (stmt_idx, stmt) in block.stmts.iter().enumerate() {
             if let StatementKind::Assign { place, rvalue } = &stmt.kind
@@ -1606,7 +1623,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 && src.projection.len() == 1
                 && let crate::ir::Projection::Field(fidx) = src.projection[0]
                 && (src.local.0 as usize) < n_locals
-                && agg_rc_fields(body.locals[src.local.0 as usize].ty)
+                && agg_rc_fields(pointee_of(tcx, body.locals[src.local.0 as usize].ty))
                     .iter()
                     .any(|(path, _)| path.as_slice() == [fidx])
             {

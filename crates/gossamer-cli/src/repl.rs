@@ -2317,6 +2317,13 @@ impl ReplValueType {
 }
 
 fn render_repl_binding_value(value: &gossamer_interp::Value, ty: &ReplValueType) -> String {
+    // An iterator is a cursor over a sequence it has not walked, so it shows
+    // as one whatever the state behind it is: printing the elements would
+    // claim a walk the binding has not made, and reading them is what `%b`
+    // must not do to a single-use value.
+    if ty.rendered.starts_with("Iterator<") {
+        return "<iterator>".to_string();
+    }
     let mut rendered = render_repl_value(value);
     // A Vec prints in its own spelling; a fixed array is the bare bracket
     // form, which `render_repl_value` already produces.
@@ -3550,7 +3557,7 @@ fn push_item_match(out: &mut String, module: &StdModule, item: &StdItem, details
         .unwrap_or_default();
     push_catalog_match(
         out,
-        &format!("{}::{}", module.path, item.name),
+        &format!("{}::{}", module.path, item.call_name()),
         item_kind_label(item.kind),
         &signature,
         item.doc,
@@ -4233,12 +4240,17 @@ fn core_namespace_matches(owner: &str, query: &str) -> bool {
 }
 
 fn item_query_matches(module: &StdModule, item: &StdItem, query: &str) -> bool {
-    if symbol_query_matches(item.name, query) {
+    // A listing names a macro the way it is called, so the same spelling is
+    // what a reader searches back with.
+    let names = [item.name.to_string(), item.call_name()];
+    if names.iter().any(|name| symbol_query_matches(name, query)) {
         return true;
     }
-    module_aliases(module.path)
-        .iter()
-        .any(|alias| symbol_query_matches(&format!("{alias}::{}", item.name), query))
+    module_aliases(module.path).iter().any(|alias| {
+        names
+            .iter()
+            .any(|name| symbol_query_matches(&format!("{alias}::{name}"), query))
+    })
 }
 
 fn core_method_query_matches(method: &CoreMethodEntry, query: &str) -> bool {

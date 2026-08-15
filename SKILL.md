@@ -124,8 +124,11 @@ Write clear, low-complexity, concise code.
   answers a `Vec`. `xs.iter()` answers an `Iterator`, for when you do not
   want the whole sequence in memory: `xs.iter().map(f).take(3).collect()`
   produces three elements' worth of work. A `Range` is already an iterator,
-  so `(1..5).map(|i| i * i).sum()` reads straight through. A `Map` hands
-  over its pairs with `iter()` (lazy) or `to_vec()` (eager). Adapters
+  so `(1..5).map(|i| i * i).sum()` reads straight through. The element's
+  shape does not change that: a sequence of tuples or structs walks through
+  the same cursor a sequence of scalars does. A `Map` hands over its pairs
+  with `iter()` (a cursor, over pairs read under the map's lock) or
+  `to_vec()` (eager). Adapters
   (`map`, `filter`, `take`, `skip`, `step_by`, `enumerate`, `rev`,
   `zip`, `chain`, `flat_map`, ...) answer another iterator and stay
   lazy; terminals (`collect`, `sum`, `count`, `min`/`max`, `fold`,
@@ -450,7 +453,8 @@ are callable as methods/free functions and materialize results.
   `%e <binding>` lists a tuple's elements. Tuple structs are the named
   variant and are fully usable.
 - `std::collections`: `Vec`, `Map` (any hashable key by value;
-  `iter()` yields `[(K, V)]`, `keys`, `values`, `Map::pop`),
+  `iter()` is a cursor over its `(K, V)` pairs, `keys`, `values`,
+  `Map::pop`),
   `Set` / `BTreeSet` (`#{...}` literals and full set algebra), `BTreeMap` (sorted; `String` or `i64`
   keys), `Deque`, `Queue`, `Stack`. A separate i64-only `queue`/`stack`/`deque`/
   `heap`/`ordered_*` family is functional re-bind style

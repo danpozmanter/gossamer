@@ -723,6 +723,14 @@ const SPECS: &[Spec] = &[
     // drop pass's Vec-field teardown plus the Cranelift single-slot-aggregate
     // and struct-update (`..base` projected operand) lowering.
     spec("feature-testing-examples/struct_vec_field.gos"),
+    // A `&self` / `&mut self` method returning a heap field by value: the
+    // caller's share is minted through the reference, so the receiver's own
+    // buffer survives the caller's release and the next iteration's growth.
+    spec("feature-testing-examples/field_return_through_ref.gos"),
+    // A sequence or map whose element is wider than one slot walks through a
+    // cursor that carries the element's address, so a chain runs per element
+    // pulled and a terminal rebuilds storage of the element's own shape.
+    spec("feature-testing-examples/lazy_iter_aggregate_elements.gos"),
     // Nested vectors: build `Vec<Vec<i64>>` by push and an `[[i64]]` literal,
     // double-index `a[i][j]`, iterate an inner row via the outer index, mutate
     // an inner element and grow an inner row, and drop the whole structure.

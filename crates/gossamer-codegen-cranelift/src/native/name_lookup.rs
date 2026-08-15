@@ -797,6 +797,8 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_lazy_iter_map_i64" => Some("gos_rt_lazy_iter_map_i64"),
         "gos_rt_lazy_iter_filter_i64" => Some("gos_rt_lazy_iter_filter_i64"),
         "gos_rt_lazy_iter_collect_i64" => Some("gos_rt_lazy_iter_collect_i64"),
+        "gos_rt_lazy_iter_collect_aggr" => Some("gos_rt_lazy_iter_collect_aggr"),
+        "gos_rt_lazy_iter_from_vec_aggr" => Some("gos_rt_lazy_iter_from_vec_aggr"),
         "gos_rt_lazy_iter_collect_pair_i64" => Some("gos_rt_lazy_iter_collect_pair_i64"),
         "gos_rt_lazy_iter_count_i64" => Some("gos_rt_lazy_iter_count_i64"),
         "gos_rt_lazy_iter_count_pair_i64" => Some("gos_rt_lazy_iter_count_pair_i64"),
