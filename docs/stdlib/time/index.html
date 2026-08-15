@@ -476,6 +476,10 @@
 
 
 
+
+
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -584,6 +588,34 @@
 
 
     <li class="md-nav__item">
+      <a href="../../language/cohort/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Cohorts
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
       <a href="../../language/comptime/" class="md-nav__link">
 
 
@@ -648,6 +680,34 @@
 
 
     Opaque nominal aliases
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../language/triple_quoted_string/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Triple-quoted strings
 
 
 
@@ -2110,8 +2170,8 @@
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs"><code>now</code></a></td>
-<td><code>fn now() -&gt; time::Instant</code></td>
-<td>Returns the current monotonic <code>Instant</code>.</td>
+<td><code>fn now() -&gt; i64</code></td>
+<td>Wall-clock milliseconds since the Unix epoch; <code>Instant::now()</code> reads the monotonic clock.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs"><code>now_ms</code></a></td>

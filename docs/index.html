@@ -580,6 +580,10 @@
 
 
 
+
+
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -688,6 +692,34 @@
 
 
     <li class="md-nav__item">
+      <a href="language/cohort/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Cohorts
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
       <a href="language/comptime/" class="md-nav__link">
 
 
@@ -752,6 +784,34 @@
 
 
     Opaque nominal aliases
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="language/triple_quoted_string/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Triple-quoted strings
 
 
 
@@ -2224,11 +2284,10 @@ wrapper: bare statements at file scope become the body of an implicit
 </code></pre></div>
 <h2 id="a-script-no-boilerplate">A Script, No Boilerplate<a class="headerlink" href="#a-script-no-boilerplate" title="Permanent link">&para;</a></h2>
 <p>No <code>fn main</code>, no ceremony - the file's top-level statements <em>are</em> the
-program. A traversal starts at an iterator - a range already is one, and
-a collection answers one from <code>iter()</code> - so a data-processing script
-reads top to bottom:</p>
+program. A collection traverses the values it already holds, so a
+data-processing script reads top to bottom:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">nums</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span><span class="w"> </span><span class="mi">15</span><span class="p">,</span><span class="w"> </span><span class="mi">16</span><span class="p">,</span><span class="w"> </span><span class="mi">23</span><span class="p">,</span><span class="w"> </span><span class="mi">42</span><span class="p">]</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;sum of evens: {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">nums</span><span class="p">.</span><span class="n">iter</span><span class="p">().</span><span class="n">filter</span><span class="p">(</span><span class="o">|</span><span class="n">n</span><span class="o">|</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">).</span><span class="n">sum</span><span class="p">())</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;sum of evens: {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">nums</span><span class="p">.</span><span class="n">filter</span><span class="p">(</span><span class="o">|</span><span class="n">n</span><span class="o">|</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">).</span><span class="n">sum</span><span class="p">())</span>
 </code></pre></div>
 <p>See <a href="language/top_level_statements/">Top-level statements</a>.</p>
 <h2 id="why-gossamer">Why Gossamer<a class="headerlink" href="#why-gossamer" title="Permanent link">&para;</a></h2>

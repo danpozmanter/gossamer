@@ -480,6 +480,10 @@
 
 
 
+
+
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -588,6 +592,34 @@
 
 
     <li class="md-nav__item">
+      <a href="../language/cohort/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Cohorts
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
       <a href="../language/comptime/" class="md-nav__link">
 
 
@@ -652,6 +684,34 @@
 
 
     Opaque nominal aliases
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../language/triple_quoted_string/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Triple-quoted strings
 
 
 
@@ -2525,7 +2585,7 @@ card:</p>
   in m.iter()</code>, <code>let (tx, rx) = channel()</code>.</li>
 <li><strong><code>for x in xs</code></strong> over collections - no <code>.iter()</code>, no <code>*x</code>.
   Bare <code>String</code> iteration yields Unicode <code>char</code> values; use <code>.bytes()</code>
-  for UTF-8 bytes. An omitted range start begins at zero (<code>..3</code> yields
+  for UTF-8 bytes; <code>s.chars()</code> is a cursor, so <code>.collect()</code> materialises it. An omitted range start begins at zero (<code>..3</code> yields
   <code>0</code>, <code>1</code>, <code>2</code>). A range can also be stored and consumed later:
   <code>let a = 0..3</code>, then <code>for i in a { println(i) }</code>. A <code>Result</code> or
   <code>Option</code> is NOT iterable (GT0067): a fallible API like
@@ -2543,12 +2603,24 @@ card:</p>
 <li><strong><code>m.inc(k)</code> / <code>m.inc(k, by)</code></strong> for counters; <code>m.or_insert(k,
   default)</code> for get-or-fill (<code>m.or_insert(k, d).method(args)</code> writes
   the mutation back into the stored value). <code>arr.swap(i, j)</code>.</li>
-<li><strong>Traversal starts at an iterator.</strong> A <code>Range</code> is already one, so
-  <code>(1..5).map(|i| i * i).sum()</code> reads straight through. A collection is
-  not, so ask it for one: <code>xs.iter().map(f).collect()</code>. Calling <code>map</code>,
-  <code>filter</code>, <code>fold</code>, <code>any</code>, <code>sum</code>, <code>enumerate</code>, <code>rev</code>, or any other
-  traversal directly on a <code>Vec</code> / array / slice / <code>Map</code> / <code>Set</code> is
-  GT0068, and the diagnostic carries the <code>.iter()</code> rewrite. Adapters
+<li><strong><code>collect()</code> belongs to the iterator; <code>to_vec()</code> converts a
+  collection.</strong> <code>collect</code> is how an <code>Iterator</code> (a <code>Range</code> included) ends a
+  chain, and it is not on a collection that already holds its values.
+  <code>to_vec</code> copies a borrowed or fixed-length sequence - an array, a slice,
+  a <code>Set</code>, a <code>BTreeSet</code> - into an owned <code>Vec</code>, so neither is written on a
+  <code>Vec</code>, which is already both. For the same reason a <code>String</code> has no
+  <code>to_string</code>: use <code>clone</code> for a copy, and <code>to_string</code> only to convert
+  something else into text.</li>
+<li><strong>A collection traverses eagerly; <code>iter()</code> makes it lazy.</strong> <code>xs.map(f)</code>
+  on a <code>Vec</code>, array, slice, or <code>Set</code> walks the values it already holds and
+  answers a <code>Vec</code>. <code>xs.iter()</code> answers an <code>Iterator</code>, for when you do not
+  want the whole sequence in memory: <code>xs.iter().map(f).take(3).collect()</code>
+  produces three elements' worth of work. A <code>Range</code> is already an iterator,
+  so <code>(1..5).map(|i| i * i).sum()</code> reads straight through. The element's
+  shape does not change that: a sequence of tuples or structs walks through
+  the same cursor a sequence of scalars does. A <code>Map</code> hands over its pairs
+  with <code>iter()</code> (a cursor, over pairs read under the map's lock);
+  <code>m.iter().collect()</code> materialises them. Adapters
   (<code>map</code>, <code>filter</code>, <code>take</code>, <code>skip</code>, <code>step_by</code>, <code>enumerate</code>, <code>rev</code>,
   <code>zip</code>, <code>chain</code>, <code>flat_map</code>, ...) answer another iterator and stay
   lazy; terminals (<code>collect</code>, <code>sum</code>, <code>count</code>, <code>min</code>/<code>max</code>, <code>fold</code>,
@@ -2557,6 +2629,17 @@ card:</p>
   fresh <code>.iter()</code> per pipeline. Data-last <code>iter::</code> free forms take an
   iterator too, for <code>|&gt;</code> pipelines. <code>xs.join(sep)</code> Display-joins
   scalar/String sequences without a traversal.</li>
+<li><strong>A callback has two shorthands.</strong> A std free function named in
+  value position IS the closure that calls it, so <code>xs.map(math::abs)</code>
+  and <code>xs.map(base64::encode)</code> need no <code>|v|</code> (a variadic like
+  <code>fmt::format</code> has no fixed parameter list and reports GT0015 - write
+  that closure). A <code>$</code>-headed projection in an argument is the closure
+  over that argument: <code>xs.map($.abs)</code> is <code>xs.map(|v| v.abs())</code>,
+  <code>$.len()</code> calls with arguments, and <code>$.0</code> / <code>$[i]</code> project. <code>$.name</code>
+  is the nullary METHOD call, exactly as in a pipe step, so read a
+  struct field with the closure instead: <code>people.map(|p| p.name)</code>. A
+  bare <code>$</code> argument keeps its pipe meaning - it selects the slot the
+  piped value lands in.</li>
 <li><strong>Use metadata already returned by an API.</strong> For entries from
   <code>fs::read_dir</code> or <code>fs::walk_dir</code>, inspect <code>entry.is_file</code>,
   <code>entry.is_dir</code>, <code>entry.is_symlink</code>, <code>entry.size</code>, <code>entry.path</code>, and
@@ -2598,7 +2681,9 @@ card:</p>
   per-step <code>substring</code>. Do not mix the two: <code>s[i]</code> is not the byte at
   byte offset <code>i</code> for any non-ASCII string.</li>
 <li><strong>Format captures walk field paths</strong>: <code>println!("{name}:
-  {a.balance} {t.0} {o.inner.hits} {a.balance:&gt;8} {f.0:.2}")</code>.</li>
+  {a.balance} {t.0} {o.inner.hits} {a.balance:&gt;8} {f.0:.2}")</code>.
+  <code>{:?}</code> renders any nesting of collections, tuples, structs, enums,
+  <code>Option</code>, and <code>Result</code> identically on every tier.</li>
 <li><strong>Range binds looser than arithmetic, tighter than <code>|&gt;</code></strong>:
   <code>i * i..n</code> is <code>(i * i)..n</code>; <code>0..n |&gt; iter::sum</code> pipes the range.</li>
 <li><strong>Recursive enums work directly</strong>: <code>enum List { Cons(i64,
@@ -2630,8 +2715,11 @@ card:</p>
 <li><strong><code>Result&lt;T, E&gt;</code> + <code>?</code></strong> for fallibility; panic only for invariant
   violations. Exhaustive <code>match</code> - no <code>_ =&gt;</code> unless every unmatched
   case genuinely means the same thing.</li>
-<li><strong>Goroutines + channels</strong> for async work; <code>sync::Mutex</code> only when
-  shared memory is simpler.</li>
+<li><strong>Goroutines under a <code>cohort { }</code></strong> for concurrent work: <code>spawn</code>
+  inside the block, which joins every child on every exit path and
+  reports the first failure. <code>go expr</code> is the detached escape hatch.
+  Channels carry values; <code>sync::Mutex</code> only when shared memory is
+  simpler.</li>
 <li><strong><code>arena { ... }</code></strong> for object graphs that die together:
   bump-allocated, freed wholesale at every exit. Nothing allocated
   inside may be referenced after the block - statically enforced
@@ -2639,6 +2727,13 @@ card:</p>
 <li><strong>Bare numeric literals</strong> - <code>0</code>, <code>1.5</code>, never <code>0i64</code>; suffix only
   with no contextual hint. String literals are already <code>String</code> - no
   <code>.to_string()</code>; <code>&amp;"foo"</code> borrows where <code>&amp;String</code>/<code>&amp;str</code> is expected.</li>
+<li><strong><code>"""</code> strings dedent themselves</strong> - the body starts on the line
+  after the opening delimiter, and the indentation it shares with the
+  closing <code>"""</code> is stripped from every line, so embedded HTML or SQL
+  keeps the shape of the code around it. Escapes work as in <code>"..."</code> and
+  decode after the strip; only whitespace may follow the opening <code>"""</code>
+  (GP0033). <code>gos fmt</code> moves the body with the line that opens it, so
+  re-indenting the statement re-indents the block.</li>
 <li><strong>Fixed macro set</strong> - everything else <code>name!(..)</code> is a parse error
   (no user macros): <code>println!</code> <code>print!</code> <code>eprintln!</code> <code>eprint!</code>
   <code>format!</code> <code>panic!</code> (Rust <code>{}</code> / <code>{name}</code> / <code>{:spec}</code> formatting:
@@ -2658,6 +2753,8 @@ Left-associative, very low precedence.</p>
   <code>$[i]</code>, and bare <code>$</code> (identity) work. One direct <code>$</code> also selects an
   argument slot: <code>x |&gt; f($, k)</code> is <code>f(x, k)</code>.</li>
 <li>Closure steps thread the value into the last slot too.</li>
+<li>A <code>$</code> inside a step's ARGUMENT belongs to that argument's callback,
+  not to the pipe: <code>xs |&gt; $.map($.abs)</code> maps <code>|v| v.abs()</code> over <code>xs</code>.</li>
 </ul>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">double</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">add</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">100</span><span class="p">)</span>
 </code></pre></div>
@@ -2780,23 +2877,51 @@ refuses the call and prints the call stack, while JIT-compiled and
 native frames reach the installed stack guard, which names the faulting
 address. Neither corrupts memory.</p>
 <h2 id="9-concurrency">9. Concurrency<a class="headerlink" href="#9-concurrency" title="Permanent link">&para;</a></h2>
-<p><code>go expr</code> is fire-and-forget; <code>spawn(f)</code> returns a <code>JoinHandle&lt;T&gt;</code>
-(<code>handle.join()</code> -&gt; <code>Result&lt;T, String&gt;</code>). Typed channels: <code>recv()</code>
-blocks until a value or every sender is gone; producers <code>close()</code>.</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">sync</span>::<span class="n">channel</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="k">fn</span> <span class="nf">produce</span><span class="p">(</span><span class="n">tx</span>: <span class="nc">Sender</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="n">tx</span><span class="p">.</span><span class="n">send</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span><span class="w"> </span><span class="n">tx</span><span class="p">.</span><span class="n">send</span><span class="p">(</span><span class="mi">2</span><span class="p">);</span><span class="w"> </span><span class="n">tx</span><span class="p">.</span><span class="n">send</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="n">tx</span><span class="p">.</span><span class="n">close</span><span class="p">()</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="p">}</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="p">(</span><span class="n">tx</span><span class="p">,</span><span class="w"> </span><span class="n">rx</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">channel</span><span class="p">()</span>
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="n">go</span><span class="w"> </span><span class="n">produce</span><span class="p">(</span><span class="n">tx</span><span class="p">)</span>
-<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">total</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span>
-<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">    </span><span class="k">while</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="nb">Some</span><span class="p">(</span><span class="n">v</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rx</span><span class="p">.</span><span class="n">recv</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">total</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="p">}</span>
-<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;total: {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">total</span><span class="p">)</span>
-<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="p">}</span>
+<p><strong><code>cohort { }</code> is the default shape.</strong> The block owns every goroutine
+<code>spawn</code>ed inside it and cannot be left until each has finished, so a
+child cannot outlive it. Its value is <code>Result&lt;(), errors::Error&gt;</code>: the
+first child failure (lowest spawn index, never completion order) cancels
+its siblings and becomes the block's <code>Err</code>, so <code>cohort { .. }?</code> reads
+like any fallible call. <code>main</code> runs inside an implicit root cohort, so a
+spawned goroutine never outlives the program and a failure nobody joined
+is reported on stderr at exit instead of vanishing.</p>
+<p><code>spawn(f)</code> returns a <code>JoinHandle&lt;T&gt;</code> (<code>handle.join()</code> -&gt;
+<code>Result&lt;T, String&gt;</code>) and attaches to the enclosing cohort. <code>go expr</code> is
+the detached form, for work that should outlive the block; a <code>go</code> inside
+a cohort is <code>GL0053</code>. Typed channels: <code>recv()</code> blocks until a value or
+every sender is gone; producers <code>close()</code>.</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">fn</span> <span class="nf">gather</span><span class="p">()</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="n">errors</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">    </span><span class="n">cohort</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">        </span><span class="kd">let</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">spawn</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="n">fetch</span><span class="p">(</span><span class="s">&quot;one&quot;</span><span class="p">))</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">        </span><span class="kd">let</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">spawn</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="n">fetch</span><span class="p">(</span><span class="s">&quot;two&quot;</span><span class="p">))</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">        </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{} {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="p">.</span><span class="n">join</span><span class="p">()</span><span class="o">??</span><span class="p">,</span><span class="w"> </span><span class="n">b</span><span class="p">.</span><span class="n">join</span><span class="p">()</span><span class="o">??</span><span class="p">)</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="p">}</span>
+</code></pre></div>
+<p>Header settings: <code>cohort(policy: Policy::CollectAll)</code> runs every child
+and reports all failures, <code>Policy::Race</code> stops at the first success (the
+losers are cancelled, not rolled back), <code>cohort(timeout: 500)</code> bounds the
+block in milliseconds, and <code>cohort(context: Context::Isolated)</code> gives
+each child its own OS thread - what synchronous Rust FFI and
+never-yielding CPU-bound work need. Cancellation is cooperative and
+never a kill: a cancelled <code>recv</code> answers <code>None</code> exactly as a closed
+channel does, a <code>sleep</code> returns early, and the child leaves through its
+own exit path with its <code>defer</code> frames running in order. Pure computation
+is not a cancellation point - poll <code>runtime::cohort_cancelled()</code>.</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">sync</span>::<span class="n">channel</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">fn</span> <span class="nf">produce</span><span class="p">(</span><span class="n">tx</span>: <span class="nc">Sender</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="n">tx</span><span class="p">.</span><span class="n">send</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span><span class="w"> </span><span class="n">tx</span><span class="p">.</span><span class="n">send</span><span class="p">(</span><span class="mi">2</span><span class="p">);</span><span class="w"> </span><span class="n">tx</span><span class="p">.</span><span class="n">send</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="n">tx</span><span class="p">.</span><span class="n">close</span><span class="p">()</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="p">}</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="p">(</span><span class="n">tx</span><span class="p">,</span><span class="w"> </span><span class="n">rx</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">channel</span><span class="p">()</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">    </span><span class="n">go</span><span class="w"> </span><span class="n">produce</span><span class="p">(</span><span class="n">tx</span><span class="p">)</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">total</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">    </span><span class="k">while</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="nb">Some</span><span class="p">(</span><span class="n">v</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rx</span><span class="p">.</span><span class="n">recv</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">total</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;total: {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">total</span><span class="p">)</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="p">}</span>
 </code></pre></div>
 <p><code>select { x = rx_a.recv() =&gt; .., default =&gt; .. }</code> multiplexes (arms
 poll in source order; <code>default</code> makes it non-blocking). One-shot
@@ -2804,7 +2929,8 @@ timer: <code>time::after(d) -&gt; Receiver</code> as a select timeout arm.
 <code>std::sync</code> also has <code>Mutex</code>, <code>RwLock</code>, atomics, <code>Once</code>, <code>WaitGroup</code>,
 <code>Barrier</code>, and <code>Map</code> (concurrent string-&gt;string). <code>std::thread</code>
 provides scheduling hints and CPU introspection only: user code has no
-OS-thread spawn API. Use <code>go expr</code> or <code>spawn(f)</code> for concurrency.</p>
+OS-thread spawn API. Use <code>cohort { }</code> with <code>spawn(f)</code>, or <code>go expr</code> when
+the work is genuinely detached.</p>
 <p><strong>Closures</strong>: <code>|x: T| body</code>; capture is automatic (no <code>move</code>).
 Use <code>Fn(args) -&gt; ret</code> for callback parameters. Plain <code>fn(args) -&gt; ret</code>
 is a raw pointer shape; bare named functions coerce to <code>Fn(...) -&gt; ...</code>
@@ -2853,7 +2979,8 @@ are callable as methods/free functions and materialize results.</p>
   <code>%e &lt;binding&gt;</code> lists a tuple's elements. Tuple structs are the named
   variant and are fully usable.</li>
 <li><code>std::collections</code>: <code>Vec</code>, <code>Map</code> (any hashable key by value;
-  <code>iter()</code> yields <code>[(K, V)]</code>, <code>keys</code>, <code>values</code>, <code>Map::pop</code>),
+  <code>iter()</code> is a cursor over its <code>(K, V)</code> pairs, <code>keys</code>, <code>values</code>,
+  <code>Map::pop</code>),
   <code>Set</code> / <code>BTreeSet</code> (<code>#{...}</code> literals and full set algebra), <code>BTreeMap</code> (sorted; <code>String</code> or <code>i64</code>
   keys), <code>Deque</code>, <code>Queue</code>, <code>Stack</code>. A separate i64-only <code>queue</code>/<code>stack</code>/<code>deque</code>/
   <code>heap</code>/<code>ordered_*</code> family is functional re-bind style
@@ -2875,12 +3002,12 @@ multiple <code>mod tests</code> across bundled siblings collide (GR0003).
 <code>assert(cond[, msg])</code> / <code>assert_eq(a, b[, msg])</code> are prelude
 builtins; <code>std::testing::check*</code> record without panicking. <code>gos
 test</code> also compiles and runs fenced code in doc comments.</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="cp">#[cfg(test)]</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="k">mod</span> <span class="nn">arith_tests</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">testing</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="cp">#[test]</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">add_adds</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="n">_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">testing</span>::<span class="n">check_eq</span><span class="p">(</span><span class="o">&amp;</span><span class="k">super</span>::<span class="n">add</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">),</span><span class="w"> </span><span class="o">&amp;</span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;2+3&quot;</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="p">}</span>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="cp">#[cfg(test)]</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="k">mod</span> <span class="nn">arith_tests</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">testing</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="cp">#[test]</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">add_adds</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="n">_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">testing</span>::<span class="n">check_eq</span><span class="p">(</span><span class="o">&amp;</span><span class="k">super</span>::<span class="n">add</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">),</span><span class="w"> </span><span class="o">&amp;</span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;2+3&quot;</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="p">}</span>
 </code></pre></div>
 <h2 id="12-stdlib-map">12. Stdlib map<a class="headerlink" href="#12-stdlib-map" title="Permanent link">&para;</a></h2>
 <p>Full path spelling is validated (GR0005); discover signatures with
@@ -2937,21 +3064,21 @@ test</code> also compiles and runs fenced code in doc comments.</p>
   <code>go tool pprof</code> text form, <code>execution_trace(millis)</code> as Chrome trace
   JSON, <code>route(path, query)</code> for <code>/debug/pprof/...</code>).</li>
 </ul>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">http</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">http</span>::<span class="n">router</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">r</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">router</span>::<span class="n">Router</span>::<span class="n">new</span><span class="p">()</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="cp">$</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;/&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">handler_fn</span><span class="p">)</span>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="cp">$</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;/ping&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">|</span><span class="n">_r</span><span class="o">|</span><span class="w"> </span><span class="nb">Ok</span><span class="p">(</span><span class="n">http</span>::<span class="n">Response</span>::<span class="n">text</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ok&quot;</span><span class="p">)))</span>
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="n">http</span>::<span class="n">serve</span><span class="p">(</span><span class="s">&quot;0.0.0.0:8080&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">)</span><span class="o">?</span>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">http</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">http</span>::<span class="n">router</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">r</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">router</span>::<span class="n">Router</span>::<span class="n">new</span><span class="p">()</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="cp">$</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;/&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">handler_fn</span><span class="p">)</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="cp">$</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;/ping&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">|</span><span class="n">_r</span><span class="o">|</span><span class="w"> </span><span class="nb">Ok</span><span class="p">(</span><span class="n">http</span>::<span class="n">Response</span>::<span class="n">text</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ok&quot;</span><span class="p">)))</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="n">http</span>::<span class="n">serve</span><span class="p">(</span><span class="s">&quot;0.0.0.0:8080&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
 <h2 id="13-project-layout">13. Project layout<a class="headerlink" href="#13-project-layout" title="Permanent link">&para;</a></h2>
-<div class="language-text highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>project.toml       # [project] id/version; [dependencies]; optional
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>                   # entry = &quot;src/app.gos&quot;; [rust-bindings] for
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>                   # native Rust crates (gos bindgen skeletons)
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>src/main.gos       # binary entry (lib.gos for libraries;
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>                   # subdir/mod.gos for module `subdir`)
-<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>tests/             # integration tests
+<div class="language-text highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>project.toml       # [project] id/version; [dependencies]; optional
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>                   # entry = &quot;src/app.gos&quot;; [rust-bindings] for
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>                   # native Rust crates (gos bindgen skeletons)
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>src/main.gos       # binary entry (lib.gos for libraries;
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>                   # subdir/mod.gos for module `subdir`)
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>tests/             # integration tests
 </code></pre></div>
 <p>A multi-package checkout uses <code>[workspace] members = ["packages/*"]</code>
 at the root (<code>gos new ID --template workspace</code>). Only the resolved
@@ -2983,7 +3110,9 @@ before <code>FILE</code>.</p>
 <p>The REPL starts with <code>gos &lt;version&gt; REPL [&lt;architecture&gt;-&lt;os&gt;]</code> and uses the
 <code>&gt;&gt;&gt;</code> prompt. Expression output is the value only, with no numbered markers.
 Binding and declaration progress is quiet unless <code>-v</code> is enabled. <code>%help</code>
-lists commands. <code>%info</code>/<code>%i</code> searches public symbols and shows item help,
+lists commands. <code>%info</code>/<code>%i</code> searches public symbols and the session, showing
+item help plus a type's fields, implemented traits, and methods (and a trait's
+implementors); <code>%explain</code>/<code>%e</code> answers the same for a binding in receiver form;
 <code>%bindings</code>/<code>%b</code>, <code>%declarations</code>/<code>%d</code>, and <code>%history</code>/<code>%h</code> inspect
 the session, <code>%reset</code>/<code>%r</code> clears it, and <code>%quit</code>/<code>%q</code> exits. Up/down cycles
 history; Enter continues until braces close; Ctrl-D also exits. Meta-command

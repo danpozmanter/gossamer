@@ -480,6 +480,10 @@
 
 
 
+
+
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -588,6 +592,34 @@
 
 
     <li class="md-nav__item">
+      <a href="../../language/cohort/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Cohorts
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
       <a href="../../language/comptime/" class="md-nav__link">
 
 
@@ -652,6 +684,34 @@
 
 
     Opaque nominal aliases
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../language/triple_quoted_string/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Triple-quoted strings
 
 
 
@@ -1547,6 +1607,17 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#gp0033" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GP0033
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#gp0034" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -1668,6 +1739,17 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#gr0017" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GR0017
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#gt0001" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -1738,17 +1820,6 @@
     <span class="md-ellipsis">
 
         GT0045
-
-    </span>
-  </a>
-
-</li>
-
-        <li class="md-nav__item">
-  <a href="#gk0001" class="md-nav__link">
-    <span class="md-ellipsis">
-
-        GK0001
 
     </span>
   </a>
@@ -2976,6 +3047,17 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#gp0033" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GP0033
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#gp0034" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -3097,6 +3179,17 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#gr0017" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GR0017
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#gt0001" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -3167,17 +3260,6 @@
     <span class="md-ellipsis">
 
         GT0045
-
-    </span>
-  </a>
-
-</li>
-
-        <li class="md-nav__item">
-  <a href="#gk0001" class="md-nav__link">
-    <span class="md-ellipsis">
-
-        GK0001
 
     </span>
   </a>
@@ -3381,6 +3463,11 @@ version. This page is auto-generated from the catalogue in
 <td>removed collection literal</td>
 </tr>
 <tr>
+<td><a href="#gp0033"><code>GP0033</code></a></td>
+<td>Parser</td>
+<td>text after a triple-quote opener</td>
+</tr>
+<tr>
 <td><a href="#gp0034"><code>GP0034</code></a></td>
 <td>Parser</td>
 <td>missing item type</td>
@@ -3436,6 +3523,11 @@ version. This page is auto-generated from the catalogue in
 <td>unknown stdlib item</td>
 </tr>
 <tr>
+<td><a href="#gr0017"><code>GR0017</code></a></td>
+<td>Resolver</td>
+<td>break or continue with no loop</td>
+</tr>
+<tr>
 <td><a href="#gt0001"><code>GT0001</code></a></td>
 <td>Types</td>
 <td>type mismatch</td>
@@ -3469,11 +3561,6 @@ version. This page is auto-generated from the catalogue in
 <td><a href="#gt0045"><code>GT0045</code></a></td>
 <td>Types</td>
 <td>question mark not supported here</td>
-</tr>
-<tr>
-<td><a href="#gk0001"><code>GK0001</code></a></td>
-<td>Package manager</td>
-<td>manifest parse error</td>
 </tr>
 </tbody>
 </table>
@@ -3573,6 +3660,9 @@ version. This page is auto-generated from the catalogue in
 <h2 id="gp0032"><code>GP0032</code> <a id="gp0032"></a><a class="headerlink" href="#gp0032" title="Permanent link">&para;</a></h2>
 <p><strong>Parser</strong> - removed collection literal</p>
 <p>A bracket spelling that used to build a container is no longer syntax. Construct the container through its type: <code>Type::new()</code> or <code>Type::from([a, b, c])</code>.</p>
+<h2 id="gp0033"><code>GP0033</code> <a id="gp0033"></a><a class="headerlink" href="#gp0033" title="Permanent link">&para;</a></h2>
+<p><strong>Parser</strong> - text after a triple-quote opener</p>
+<p>A multi-line <code>"""</code> literal carried text on the same line as its opening delimiter. The body starts on the next line, and the indentation it shares with the closing <code>"""</code> is stripped from every line.</p>
 <h2 id="gp0034"><code>GP0034</code> <a id="gp0034"></a><a class="headerlink" href="#gp0034" title="Permanent link">&para;</a></h2>
 <p><strong>Parser</strong> - missing item type</p>
 <p>A <code>const</code> or <code>static</code> item was declared without a type annotation. These items are never inferred from their initialiser, so the type is written after the name: <code>const EPS: f64 = 1e-12</code>.</p>
@@ -3606,6 +3696,9 @@ version. This page is auto-generated from the catalogue in
 <h2 id="gr0007"><code>GR0007</code> <a id="gr0007"></a><a class="headerlink" href="#gr0007" title="Permanent link">&para;</a></h2>
 <p><strong>Resolve</strong> - unknown stdlib item</p>
 <p>The <code>use</code> names a module that exists but an item that module does not export. Check the item spelling; <code>gos doc std::&lt;module&gt;</code> lists every name a module exports.</p>
+<h2 id="gr0017"><code>GR0017</code> <a id="gr0017"></a><a class="headerlink" href="#gr0017" title="Permanent link">&para;</a></h2>
+<p><strong>Resolver</strong> - break or continue with no loop</p>
+<p>A <code>break</code> or <code>continue</code> has no loop to act on: either none encloses it, or the label it names is not carried by any enclosing loop. A closure body is a separate function, so a loop outside it is not a target.</p>
 <h2 id="gt0001"><code>GT0001</code> <a id="gt0001"></a><a class="headerlink" href="#gt0001" title="Permanent link">&para;</a></h2>
 <p><strong>Types</strong> - type mismatch</p>
 <p>The type checker could not reconcile two types it expected to match. The primary label shows the location of the mismatch; the <code>note:</code> line names the conflicting types.</p>
@@ -3627,9 +3720,6 @@ version. This page is auto-generated from the catalogue in
 <h2 id="gt0045"><code>GT0045</code> <a id="gt0045"></a><a class="headerlink" href="#gt0045" title="Permanent link">&para;</a></h2>
 <p><strong>Types</strong> - question mark not supported here</p>
 <p>The <code>?</code> operator can only unwrap <code>Result</code> inside a <code>Result</code>-returning function or <code>Option</code> inside an <code>Option</code>-returning function.</p>
-<h2 id="gk0001"><code>GK0001</code> <a id="gk0001"></a><a class="headerlink" href="#gk0001" title="Permanent link">&para;</a></h2>
-<p><strong>Package manager</strong> - manifest parse error</p>
-<p>The package manifest (<code>gos.toml</code>) could not be parsed. Check the TOML syntax and required fields.</p>
 
 
 

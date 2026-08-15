@@ -482,6 +482,10 @@
 
 
 
+
+
+
+
     <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
 
 
@@ -590,6 +594,34 @@
 
 
     <li class="md-nav__item">
+      <a href="cohort/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Cohorts
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
       <a href="comptime/" class="md-nav__link">
 
 
@@ -654,6 +686,34 @@
 
 
     Opaque nominal aliases
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="triple_quoted_string/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Triple-quoted strings
 
 
 
@@ -2116,7 +2176,15 @@
 </tr>
 <tr>
 <td><a href="go/"><code>lang::go</code></a></td>
-<td>Goroutine spawn.</td>
+<td>Goroutine spawn, detached.</td>
+</tr>
+<tr>
+<td><a href="cohort/"><code>lang::cohort</code></a></td>
+<td>Structured concurrency: <code>cohort { }</code> owns the goroutines <code>spawn</code>ed inside it, joins them on every exit path, and reports the first failure as its <code>Result</code>.</td>
+</tr>
+<tr>
+<td><a href="triple_quoted_string/"><code>lang::triple_quoted_string</code></a></td>
+<td><code>"""</code> string literal whose body is dedented by the indentation it shares with its closing delimiter; <code>gos fmt</code> moves the block with the line that opens it.</td>
 </tr>
 <tr>
 <td><a href="select/"><code>lang::select</code></a></td>

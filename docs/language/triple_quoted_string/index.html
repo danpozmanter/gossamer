@@ -12,9 +12,13 @@
         <meta name="author" content="Gossamer contributors">
 
 
-        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/stdlib/sort/">
+        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/language/triple_quoted_string/">
 
 
+        <link rel="prev" href="../opaque_nominal_alias/">
+
+
+        <link rel="next" href="../tuples/">
 
 
 
@@ -25,7 +29,7 @@
 
 
 
-        <title>std::sort - Gossamer</title>
+        <title>Triple-quoted strings - Gossamer</title>
 
 
 
@@ -78,7 +82,7 @@
     <div data-md-component="skip">
 
 
-        <a href="#stdsort" class="md-skip">
+        <a href="#langtriple_quoted_string" class="md-skip">
           Skip to content
         </a>
 
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
 
-              std::sort
+              Triple-quoted strings
 
           </span>
         </div>
@@ -480,15 +484,17 @@
 
 
 
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+
+
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
 
 
 
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" checked>
 
 
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
 
 
 
@@ -512,7 +518,7 @@
 
           </div>
 
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_8">
             <span class="md-nav__icon md-icon"></span>
 
@@ -532,7 +538,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../language/top_level_statements/" class="md-nav__link">
+      <a href="../top_level_statements/" class="md-nav__link">
 
 
 
@@ -560,7 +566,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../language/arena/" class="md-nav__link">
+      <a href="../arena/" class="md-nav__link">
 
 
 
@@ -588,7 +594,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../language/cohort/" class="md-nav__link">
+      <a href="../cohort/" class="md-nav__link">
 
 
 
@@ -616,7 +622,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../language/comptime/" class="md-nav__link">
+      <a href="../comptime/" class="md-nav__link">
 
 
 
@@ -644,7 +650,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../language/keyword_arguments/" class="md-nav__link">
+      <a href="../keyword_arguments/" class="md-nav__link">
 
 
 
@@ -672,7 +678,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../language/opaque_nominal_alias/" class="md-nav__link">
+      <a href="../opaque_nominal_alias/" class="md-nav__link">
 
 
 
@@ -699,8 +705,35 @@
 
 
 
-    <li class="md-nav__item">
-      <a href="../../language/triple_quoted_string/" class="md-nav__link">
+
+
+    <li class="md-nav__item md-nav__item--active">
+
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+
+
+
+
+
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Triple-quoted strings
+
+
+
+  </span>
+
+
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+
+      <a href="./" class="md-nav__link md-nav__link--active">
 
 
 
@@ -716,6 +749,70 @@
 
 
       </a>
+
+
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+
+
+
+
+
+
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+
+        <li class="md-nav__item">
+  <a href="#why" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Why
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#rules" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Rules
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#values-with-and-without-a-trailing-newline" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Values with and without a trailing newline
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gos-fmt" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        gos fmt
+
+    </span>
+  </a>
+
+</li>
+
+    </ul>
+
+</nav>
+
     </li>
 
 
@@ -728,7 +825,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../language/tuples/" class="md-nav__link">
+      <a href="../tuples/" class="md-nav__link">
 
 
 
@@ -850,7 +947,7 @@
 
 
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../../stdlib/" class="md-nav__link ">
 
 
 
@@ -894,7 +991,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../stdlib/" class="md-nav__link">
 
 
 
@@ -978,7 +1075,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../collection_patterns/" class="md-nav__link">
+      <a href="../../stdlib/collection_patterns/" class="md-nav__link">
 
 
 
@@ -2063,6 +2160,58 @@
 
 
 
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+
+        <li class="md-nav__item">
+  <a href="#why" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Why
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#rules" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Rules
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#values-with-and-without-a-trailing-newline" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Values with and without a trailing newline
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gos-fmt" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        gos fmt
+
+    </span>
+  </a>
+
+</li>
+
+    </ul>
+
 </nav>
                   </div>
                 </div>
@@ -2078,9 +2227,87 @@
 
 
 
-<h1 id="stdsort"><code>std::sort</code><a class="headerlink" href="#stdsort" title="Permanent link">&para;</a></h1>
-<p>Status: experimental</p>
-<p>Explicit stable ordering and sorted-sequence search, the deliberate counterpart to Vec's unstable inherent <code>sort</code>.</p>
+<h1 id="langtriple_quoted_string"><code>lang::triple_quoted_string</code><a class="headerlink" href="#langtriple_quoted_string" title="Permanent link">&para;</a></h1>
+<p><code>"""</code> string literal whose body is dedented by the indentation it shares with its closing delimiter; <code>gos fmt</code> moves the block with the line that opens it.</p>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<p>A triple-quoted literal writes multi-line text at the indentation of the
+code around it. The body starts on the line after the opening <code>"""</code>, and
+the indentation it shares with the closing <code>"""</code> is stripped from every
+line.</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">fn</span> <span class="nf">page</span><span class="p">()</span><span class="w"> </span>-&gt; <span class="nb">String</span> <span class="p">{</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">    </span><span class="s">&quot;&quot;&quot;</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="s">    &lt;html&gt;</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="s">        &lt;body&gt;</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="s">            &lt;h1&gt;Hello&lt;/h1&gt;</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="s">        &lt;/body&gt;</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="s">    &lt;/html&gt;</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="s">    &quot;&quot;&quot;</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>page()</code> answers five lines with <code>&lt;html&gt;</code> at column zero and <code>&lt;h1&gt;</code>
+indented eight spaces. The four spaces every line shares with the
+closing delimiter are layout, not content.</p>
+<h2 id="why">Why<a class="headerlink" href="#why" title="Permanent link">&para;</a></h2>
+<p>An ordinary string literal already spans lines, but its indentation is
+part of its value, so embedding HTML, SQL, or JSON means un-indenting
+the body to column zero and losing the shape of the enclosing function:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">text</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;&lt;html&gt;</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="s">    &lt;body&gt;</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="s">&lt;/html&gt;&quot;</span>
+</code></pre></div>
+<p>The triple-quoted form keeps the block where it belongs and lets <code>gos
+fmt</code> move it as a unit.</p>
+<h2 id="rules">Rules<a class="headerlink" href="#rules" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>The opening line carries only the delimiter.</strong> Whitespace may follow
+  the opening <code>"""</code>; anything else is <code>GP0033</code>. The newline after the
+  delimiter is not part of the value.</li>
+<li><strong>The closing line sets the measure.</strong> When the closing <code>"""</code> sits on
+  a line of its own, that line contributes its whitespace to the
+  indentation measure and the newline before it is not part of the
+  value. Put content immediately before the closing delimiter and the
+  last line simply has no trailing newline.</li>
+<li><strong>The measure is the shared prefix.</strong> It is the longest
+  leading-whitespace prefix common to every non-blank content line and
+  to the closing delimiter's line, compared as text, so a body indented
+  with tabs and a delimiter indented with spaces share nothing and
+  nothing is stripped.</li>
+<li><strong>A whitespace-only line becomes an empty line.</strong></li>
+<li><strong>Escapes decode after the strip.</strong> <code>\n</code>, <code>\t</code>, <code>\\</code>, <code>\"</code>, <code>\0</code>,
+  <code>\xNN</code>, and <code>\u{...}</code> mean what they mean in <code>"..."</code>, and a <code>\n</code>
+  written in the body is a newline escape rather than a line break.
+  Because the strip runs first, an escape can never shift the measure.</li>
+<li><strong><code>"""abc"""</code> on one line</strong> takes its body verbatim, with no strip.
+  It is the short way to write a string containing <code>"</code>.</li>
+</ul>
+<h2 id="values-with-and-without-a-trailing-newline">Values with and without a trailing newline<a class="headerlink" href="#values-with-and-without-a-trailing-newline" title="Permanent link">&para;</a></h2>
+<p>Both are expressible. The newline before a closing delimiter on its own
+line is not part of the value, so a trailing newline is written as a
+blank line:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">no_newline</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;&quot;&quot;</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="s">one</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="s">&quot;&quot;&quot;</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">with_newline</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;&quot;&quot;</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="s">one</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="s">&quot;&quot;&quot;</span>
+</code></pre></div>
+<h2 id="gos-fmt"><code>gos fmt</code><a class="headerlink" href="#gos-fmt" title="Permanent link">&para;</a></h2>
+<p>The formatter moves a triple-quoted body with the line that opens it.
+Indent the statement one level further and the body, the relative
+indentation inside it, and the closing delimiter all follow:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">text</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;&quot;&quot;</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="s">    body</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="s">    &quot;&quot;&quot;</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="p">}</span>
+</code></pre></div>
+<p>Relative indentation inside the block is preserved exactly, so the
+literal's value never changes. The formatter's no-destruction gate
+compares such a literal by the contents it decodes to rather than by the
+text that spells it, so a re-indent that would alter the value is
+refused rather than written.</p>
 
 
 

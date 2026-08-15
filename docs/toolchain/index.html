@@ -480,6 +480,10 @@
 
 
 
+
+
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -588,6 +592,34 @@
 
 
     <li class="md-nav__item">
+      <a href="../language/cohort/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Cohorts
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
       <a href="../language/comptime/" class="md-nav__link">
 
 
@@ -652,6 +684,34 @@
 
 
     Opaque nominal aliases
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../language/triple_quoted_string/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Triple-quoted strings
 
 
 
@@ -2555,9 +2615,14 @@ It starts with <code>gos &lt;version&gt; REPL [&lt;architecture&gt;-&lt;os&gt;]<
   lists the active set.</li>
 <li><code>%help</code> lists REPL commands.</li>
 <li><code>%info [pattern]</code> (<code>%i</code>) searches the public language and standard-library
-  catalog. <code>%explain NAME</code> (<code>%e</code>) inspects a persistent binding and filters
-  methods by its type and mutability. Add <code>--details</code> for descriptions and
-  examples.</li>
+  catalog and the current session. A type reports its fields, the traits
+  implemented for it, and its methods, each tagged with the trait it came from
+  or <code>[inherent]</code>; a trait reports its methods and the types implementing it. A
+  session <code>impl</code> on a builtin type adds to that type's catalog entry rather
+  than replacing it. <code>%explain NAME</code> (<code>%e</code>) inspects a persistent binding,
+  showing the same fields and traits with methods in receiver form, and filters
+  the catalog methods by the binding's type and mutability. Add <code>--details</code> for
+  descriptions and examples.</li>
 <li><code>%bindings [pattern]</code> (<code>%b</code>), <code>%declarations [pattern]</code> (<code>%d</code>), and
   <code>%history [regex]</code> (<code>%h</code>) show persistent bindings, declarations, and input
   history. <code>%bindings</code> filters binding names, and <code>%declarations</code> filters

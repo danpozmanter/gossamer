@@ -14252,6 +14252,101 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-runtime-cohort-cancel",
+      "name": "std::runtime::cohort_cancel",
+      "kind": "function",
+      "signature": "fn cohort_cancel() -> ()",
+      "description": "Cancels the running goroutine's cohort, winding its siblings down without failing it.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdruntime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-runtime-cohort-cancelled",
+      "name": "std::runtime::cohort_cancelled",
+      "kind": "function",
+      "signature": "fn cohort_cancelled() -> bool",
+      "description": "Whether the running goroutine's cohort has been cancelled. A CPU-bound child polls this to cooperate at a point of its own choosing.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdruntime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-runtime-cohort-join",
+      "name": "std::runtime::cohort_join",
+      "kind": "function",
+      "signature": "fn cohort_join() -> Result<(), errors::Error>",
+      "description": "Waits for every child of the running goroutine's cohort and answers `Result<(), errors::Error>`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdruntime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-runtime-cohort-pop",
+      "name": "std::runtime::cohort_pop",
+      "kind": "function",
+      "signature": "fn cohort_pop() -> ()",
+      "description": "Closes the running goroutine's cohort, cancelling and joining anything still running.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdruntime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-runtime-cohort-push",
+      "name": "std::runtime::cohort_push",
+      "kind": "function",
+      "signature": "fn cohort_push(policy: i64, timeout_ms: i64, context: i64) -> ()",
+      "description": "Opens a cohort on the running goroutine. Written `cohort { }` in source; the block desugars to this plus `cohort_join` and a deferred `cohort_pop`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdruntime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-runtime-collect-cycles",
       "name": "std::runtime::collect_cycles",
       "kind": "function",
@@ -16252,6 +16347,25 @@
       "kind": "function",
       "signature": "fn sleep(ms: i64) -> ()",
       "description": "Suspends the current goroutine for `Duration`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdtime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-time-sleep-ctx",
+      "name": "std::time::sleep_ctx",
+      "kind": "function",
+      "signature": "fn sleep_ctx(ctx: &context::Context, ms: i64) -> bool",
+      "description": "Sleeps unless the context fires first; false when it cancelled the wait.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",

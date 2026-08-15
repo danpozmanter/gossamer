@@ -480,6 +480,10 @@
 
 
 
+
+
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -588,6 +592,34 @@
 
 
     <li class="md-nav__item">
+      <a href="../language/cohort/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Cohorts
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
       <a href="../language/comptime/" class="md-nav__link">
 
 
@@ -652,6 +684,34 @@
 
 
     Opaque nominal aliases
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../language/triple_quoted_string/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Triple-quoted strings
 
 
 
@@ -2627,11 +2687,6 @@ dispatch-table additions.</p>
 <td>Uppercase; Unicode-aware.</td>
 </tr>
 <tr>
-<td><code>s.to_string()</code></td>
-<td><code>String</code></td>
-<td>No-op clone for <code>&amp;str</code>/<code>String</code>.</td>
-</tr>
-<tr>
 <td><code>s.clone()</code></td>
 <td><code>String</code></td>
 <td></td>
@@ -2677,8 +2732,13 @@ dispatch-table additions.</p>
 <p><code>Vec&lt;T&gt;</code> is the only owned growable sequence. <code>[T; N]</code>, <code>&amp;[T]</code>, and <code>&amp;mut [T]</code>
 share only the non-resizing methods listed below. Mutable arrays and slices may
 reorder or replace existing elements, but cannot change their length or
-capacity. A traversal starts at an iterator, so every collection reaches
-<code>map</code> / <code>filter</code> / <code>fold</code> and the rest through <code>.iter()</code>.
+capacity. Every collection - <code>Vec</code>, fixed arrays, slices, <code>Set</code>, <code>BTreeSet</code>,
+<code>Map</code>, <code>BTreeMap</code> - traverses the values it holds, so <code>map</code> / <code>filter</code> / <code>fold</code>
+answer eagerly on it; <code>iter()</code> is how a caller asks for the lazy walk that
+never holds the whole sequence, and <code>collect()</code> ends one. <code>collect</code> belongs
+to the iterator, so it is not written on a collection that already holds its
+values; <code>to_vec</code> is the conversion a borrowed or fixed-length sequence
+carries, so a <code>Vec</code> has neither.
 The literal spelling of each container is in
 <a href="../collection_literals/">Collection literals</a>.</p>
 <table>
@@ -2770,61 +2830,61 @@ The literal spelling of each container is in
 <tr>
 <td><code>v.iter()</code></td>
 <td><code>Iterator&lt;T&gt;</code></td>
-<td>Starts a traversal; the adapters below hang off it.</td>
+<td>Lazy walk; adapters on it run only as a terminal pulls.</td>
 </tr>
 <tr>
-<td><code>v.iter().filter(pred)</code></td>
-<td><code>Iterator&lt;T&gt;</code></td>
+<td><code>v.filter(pred)</code></td>
+<td><code>Vec&lt;T&gt;</code></td>
 <td>Elements where <code>pred</code> holds.</td>
 </tr>
 <tr>
-<td><code>v.iter().map(f)</code></td>
-<td><code>Iterator&lt;U&gt;</code></td>
+<td><code>v.map(f)</code></td>
+<td><code>Vec&lt;U&gt;</code></td>
 <td>Transform every element.</td>
 </tr>
 <tr>
-<td><code>v.iter().sum()</code></td>
+<td><code>v.sum()</code></td>
 <td><code>T</code></td>
 <td>Sum in the element's own type; <code>0</code> for empty.</td>
 </tr>
 <tr>
-<td><code>v.iter().min()</code> / <code>.max()</code></td>
+<td><code>v.min()</code> / <code>v.max()</code></td>
 <td><code>Option&lt;T&gt;</code></td>
 <td><code>None</code> for empty.</td>
 </tr>
 <tr>
-<td><code>v.iter().count()</code></td>
+<td><code>v.count()</code></td>
 <td><code>i64</code></td>
-<td>Elements the pipeline yields.</td>
+<td>Element count.</td>
 </tr>
 <tr>
-<td><code>v.iter().any(pred)</code> / <code>.all(pred)</code></td>
+<td><code>v.any(pred)</code> / <code>v.all(pred)</code></td>
 <td><code>bool</code></td>
 <td>Short-circuiting.</td>
 </tr>
 <tr>
-<td><code>v.iter().find(pred)</code></td>
+<td><code>v.find(pred)</code></td>
 <td><code>Option&lt;T&gt;</code></td>
-<td>First match; <code>.position(pred)</code> returns its index.</td>
+<td>First match; <code>v.position(pred)</code> returns its index.</td>
 </tr>
 <tr>
-<td><code>v.iter().fold(init, f)</code></td>
+<td><code>v.fold(init, f)</code></td>
 <td><code>U</code></td>
 <td>Left fold: <code>f(acc, x)</code> per element.</td>
 </tr>
 <tr>
-<td><code>v.iter().max_by_key(f)</code> / <code>.min_by_key(f)</code></td>
+<td><code>v.max_by_key(f)</code> / <code>v.min_by_key(f)</code></td>
 <td><code>Option&lt;T&gt;</code></td>
 <td>Extremum by derived key.</td>
 </tr>
 <tr>
-<td><code>v.iter().take(n)</code></td>
-<td><code>Iterator&lt;T&gt;</code></td>
+<td><code>v.take(n)</code></td>
+<td><code>Vec&lt;T&gt;</code></td>
 <td>First <code>n</code> elements (fewer if short).</td>
 </tr>
 <tr>
-<td><code>v.iter().step_by(n)</code></td>
-<td><code>Iterator&lt;T&gt;</code></td>
+<td><code>v.step_by(n)</code></td>
+<td><code>Vec&lt;T&gt;</code></td>
 <td>Every <code>n</code>-th element, starting at index 0.</td>
 </tr>
 <tr>
@@ -2843,8 +2903,8 @@ The literal spelling of each container is in
 <td>Bounds-checked mutation helpers.</td>
 </tr>
 <tr>
-<td><code>v.iter().rev()</code></td>
-<td><code>Iterator&lt;T&gt;</code></td>
+<td><code>v.rev()</code></td>
+<td><code>Vec&lt;T&gt;</code></td>
 <td>Non-mutating; <code>v.reverse()</code> is in-place.</td>
 </tr>
 <tr>
@@ -2927,7 +2987,7 @@ The literal spelling of each container is in
 <tr>
 <td><code>m.iter()</code></td>
 <td><code>Iterator&lt;(K, V)&gt;</code></td>
-<td>Pairs in key order. A struct, tuple, or array key is rebuilt from the map's own key layout, so a bound key sees the value that was inserted.</td>
+<td>Lazy pairs in key order; <code>m.iter().collect()</code> materialises them and <code>m.map(f)</code> traverses eagerly. A struct, tuple, or array key is rebuilt from the map's own key layout, so a bound key sees the value that was inserted.</td>
 </tr>
 <tr>
 <td><code>m.values()</code></td>
@@ -3054,7 +3114,7 @@ iterates in key order.</p>
 <tr>
 <td><code>s.iter()</code></td>
 <td><code>Iterator&lt;T&gt;</code></td>
-<td>Starts a traversal over the values.</td>
+<td>Lazy walk over the values; <code>s.map(f)</code> / <code>s.filter(p)</code> answer eagerly.</td>
 </tr>
 <tr>
 <td><code>s.to_vec()</code></td>
