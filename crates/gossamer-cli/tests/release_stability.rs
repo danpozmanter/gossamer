@@ -1212,10 +1212,11 @@ fn main() {
 }
 
 #[test]
-fn release_rejects_untabled_std_fn_value_with_gt0015() {
-    // `strings::repeat` is not in the std-fn-value table, so it
-    // cannot be passed as a first-class value: the compiled tiers
-    // have no symbol to take the address of.
+fn release_rejects_std_fn_value_of_the_wrong_arity() {
+    // A std function named in value position becomes the closure that
+    // calls it, so `strings::repeat` is usable as a value - but it takes
+    // two parameters where `map_err` hands its callback one, and that
+    // count is checked here rather than at run time.
     assert_release_build_rejects(
         "reject_std_fn_value",
         r#"
@@ -1227,7 +1228,24 @@ fn main() {
     if let Err(e) = m { println!("{}", e) }
 }
 "#,
-        "GT0015",
+        "GT0001",
+    );
+}
+
+#[test]
+fn release_accepts_a_std_fn_of_matching_arity_as_a_value() {
+    // The whole point of the rewrite: a std function the old table did
+    // not list now works as a value on the compiled tiers.
+    assert_release_stdout_eq(
+        "accept_std_fn_value",
+        r#"
+use std::math
+
+fn main() {
+    println!("{:?}", #[1.0, -2.0].map(math::abs))
+}
+"#,
+        "[1.0, 2.0]\n",
     );
 }
 

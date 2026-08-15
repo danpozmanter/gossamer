@@ -197,13 +197,13 @@ struct Bag {
 }
 
 fn build() -> Result<Bag, errors::Error> {
-    let mut v: Vec<String> = Vec::from([]).to_vec()
-    v.push("hello world".to_string())
-    Ok(Bag { content: "ok".to_string(), count: 1, items: v })
+    let mut v: Vec<String> = Vec::from([])
+    v.push("hello world")
+    Ok(Bag { content: "ok", count: 1, items: v })
 }
 
 fn main() {
-    let r = build().unwrap_or(Bag { content: "".to_string(), count: 0, items: [].to_vec() })
+    let r = build().unwrap_or(Bag { content: "", count: 0, items: [].to_vec() })
     let k: i64 = 0
     println!("len={}", r.items[k].len())
 }
@@ -221,8 +221,8 @@ struct Bag {
 }
 
 fn build() -> Result<Bag, errors::Error> {
-    let mut v: Vec<String> = Vec::from([]).to_vec()
-    v.push("hi there".to_string())
+    let mut v: Vec<String> = Vec::from([])
+    v.push("hi there")
     Ok(Bag { items: v })
 }
 

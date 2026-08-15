@@ -93,9 +93,9 @@ fn find_note_json(id: i64) -> Option<String> {
     for note in seed_notes() {
         if note.id == id {
             return Some(format!(
-                "{{\"id\":{},\"body\":\"{}\"}}",
-                note.id,
-                escape_json(&note.body),
+                "{{\"id\":{},\"body\":\"{}\"}}"
+                note.id
+                escape_json(&note.body)
             ))
         }
     }
@@ -178,7 +178,7 @@ fn show_note(r: http::Request) -> Result<http::Response, http::Error> {
         Some(id) => match find_note_json(id) {
             Some(json) => Ok(http::Response::json(200, json))
             None => Ok(http::Response::text(404, "not found"))
-        },
+        }
         None => Ok(http::Response::text(400, "bad id"))
     }
 }

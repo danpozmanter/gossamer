@@ -264,6 +264,7 @@ impl Parser<'_> {
             | TokenKind::FloatLit
             | TokenKind::StringLit
             | TokenKind::RawStringLit { .. }
+            | TokenKind::TripleStringLit
             | TokenKind::CharLit
             | TokenKind::ByteLit
             | TokenKind::Keyword(Keyword::True | Keyword::False) => {
@@ -905,7 +906,64 @@ impl Parser<'_> {
     /// Parses a call's argument list, returning the arguments as written
     /// alongside any `name = value` labels.
     pub(crate) fn parse_labelled_call_args(&mut self) -> (Vec<Expr>, Vec<gossamer_ast::NamedArg>) {
-        self.parse_arg_list(true)
+        let (mut args, labels) = self.parse_arg_list(true);
+        for arg in &mut args {
+            self.expand_placeholder_closure(arg);
+        }
+        (args, labels)
+    }
+
+    /// Rewrites a `$`-headed argument into the one-parameter closure it
+    /// abbreviates: `xs.map($.abs)` is `xs.map(|v| v.abs())`.
+    ///
+    /// `$` carries the same meaning it has in a pipe step - the value
+    /// stands where `$` is written, and `$.name` with no parentheses is
+    /// a nullary method call rather than a field read. A bare `$`
+    /// argument is left alone: that spelling already selects which
+    /// parameter of the call a pipe threads its value into.
+    fn expand_placeholder_closure(&mut self, arg: &mut Expr) {
+        if !placeholder_heads_projection(arg) {
+            return;
+        }
+        let span = arg.span;
+        let name = PLACEHOLDER_CLOSURE_PARAM.to_string();
+        rebind_placeholder_head(arg, &name);
+        if let ExprKind::FieldAccess { receiver, field } = &arg.kind
+            && let (ExprKind::Path(p), FieldSelector::Named(method)) = (&receiver.kind, field)
+            && p.segments.len() == 1
+            && p.segments[0].name.name == name
+        {
+            let receiver = receiver.clone();
+            let method = method.clone();
+            arg.kind = ExprKind::MethodCall {
+                receiver,
+                name: method,
+                name_span: span,
+                generics: Vec::new(),
+                args: Vec::new(),
+            };
+        }
+        // The body keeps its own node id; `arg`'s stays with the closure
+        // that now sits in its place, so no two nodes share an id.
+        let body_kind = std::mem::replace(&mut arg.kind, ExprKind::Error);
+        let body = Box::new(Expr::new(self.alloc_id(), span, body_kind));
+        let param = ClosureParam {
+            pattern: Pattern::new(
+                self.alloc_id(),
+                span,
+                PatternKind::Ident {
+                    mutability: gossamer_ast::Mutability::Immutable,
+                    name: Ident::new(&name),
+                    subpattern: None,
+                },
+            ),
+            ty: None,
+        };
+        arg.kind = ExprKind::Closure {
+            params: vec![param],
+            ret: None,
+            body,
+        };
     }
 
     fn parse_arg_list(&mut self, allow_labels: bool) -> (Vec<Expr>, Vec<gossamer_ast::NamedArg>) {
@@ -978,6 +1036,29 @@ impl Parser<'_> {
         Some((name, span))
     }
 
+    /// The keyword-introduced block forms in expression position:
+    /// `unsafe`, `comptime`, and the contextual `cohort`. The last is
+    /// an expression rather than a statement, as `arena` is, because its
+    /// `Result` can be bound or propagated with `?`.
+    fn parse_contextual_block(&mut self) -> Option<ExprKind> {
+        if self.at_keyword(Keyword::Unsafe) {
+            self.bump();
+            self.expect_punct(Punct::LBrace, "to open `unsafe` block");
+            return Some(ExprKind::Unsafe(self.parse_block_body()));
+        }
+        if self.at_keyword(Keyword::Comptime) {
+            self.bump();
+            self.expect_punct(Punct::LBrace, "to open `comptime` block");
+            let mut block = self.parse_block_body();
+            block.kind = gossamer_ast::BlockKind::Comptime;
+            return Some(ExprKind::Block(block));
+        }
+        if self.at_cohort_block() {
+            return Some(self.parse_cohort_expr());
+        }
+        None
+    }
+
     fn parse_primary(&mut self) -> Expr {
         let start_span = self.peek_span();
         let kind = self.parse_primary_kind();
@@ -1031,18 +1112,6 @@ impl Parser<'_> {
         if self.at_keyword(Keyword::For) {
             return self.parse_for_expr(None);
         }
-        if self.at_keyword(Keyword::Unsafe) {
-            self.bump();
-            self.expect_punct(Punct::LBrace, "to open `unsafe` block");
-            return ExprKind::Unsafe(self.parse_block_body());
-        }
-        if self.at_keyword(Keyword::Comptime) {
-            self.bump();
-            self.expect_punct(Punct::LBrace, "to open `comptime` block");
-            let mut block = self.parse_block_body();
-            block.is_comptime = true;
-            return ExprKind::Block(block);
-        }
         if self.at_keyword(Keyword::Return) {
             self.bump();
             if !is_expression_start(self) || at_block_end(self) {
@@ -1064,6 +1133,9 @@ impl Parser<'_> {
         }
         if self.at_keyword(Keyword::Select) {
             return self.parse_select_expr();
+        }
+        if let Some(kind) = self.parse_contextual_block() {
+            return kind;
         }
         if self.at_punct(Punct::Pipe) || self.at_punct(Punct::PipePipe) {
             return self.parse_closure_expr();
@@ -1584,8 +1656,7 @@ impl Parser<'_> {
             stmts: vec![let_stmt],
             tail: Some(Box::new(acc)),
             synthetic: true,
-            is_arena: false,
-            is_comptime: false,
+            kind: gossamer_ast::BlockKind::Plain,
         };
         Expr::new(self.alloc_id(), span, ExprKind::Block(block))
     }
@@ -1627,8 +1698,7 @@ impl Parser<'_> {
             stmts: Vec::new(),
             tail: Some(Box::new(expr)),
             synthetic: true,
-            is_arena: false,
-            is_comptime: false,
+            kind: gossamer_ast::BlockKind::Plain,
         };
         Expr::new(self.alloc_id(), span, ExprKind::Block(block))
     }
@@ -1761,8 +1831,7 @@ impl Parser<'_> {
             stmts: Vec::new(),
             tail: Some(Box::new(acc)),
             synthetic: true,
-            is_arena: false,
-            is_comptime: false,
+            kind: gossamer_ast::BlockKind::Plain,
         };
         let loop_body = Expr::new(self.alloc_id(), body_span, ExprKind::Block(loop_body_block));
         ExprKind::Loop {
@@ -2028,6 +2097,7 @@ impl Parser<'_> {
                 | TokenKind::FloatLit
                 | TokenKind::StringLit
                 | TokenKind::RawStringLit { .. }
+                | TokenKind::TripleStringLit
                 | TokenKind::CharLit
                 | TokenKind::ByteLit
                 | TokenKind::ByteStringLit
@@ -2336,8 +2406,7 @@ impl Parser<'_> {
             stmts: vec![let_stmt, print_stmt],
             tail: Some(Box::new(tail)),
             synthetic: true,
-            is_arena: false,
-            is_comptime: false,
+            kind: gossamer_ast::BlockKind::Plain,
         };
         ExprKind::Block(block)
     }
@@ -2671,8 +2740,7 @@ impl Parser<'_> {
             stmts,
             tail,
             synthetic: false,
-            is_arena: false,
-            is_comptime: false,
+            kind: gossamer_ast::BlockKind::Plain,
         }
     }
 
@@ -2692,6 +2760,14 @@ impl Parser<'_> {
                 Some(Literal::String(string_literal_value(
                     self.slice(token.span),
                 )))
+            }
+            TokenKind::TripleStringLit => {
+                self.bump();
+                let text = self.slice(token.span);
+                if gossamer_lex::triple_string(text).opening_line_text {
+                    self.record(ParseError::TripleStringOpeningLine, token.span);
+                }
+                Some(Literal::String(string_literal_value(text)))
             }
             TokenKind::RawStringLit { hashes } => {
                 self.bump();
@@ -2839,6 +2915,7 @@ pub(crate) fn is_expression_start(parser: &Parser<'_>) -> bool {
         | TokenKind::FloatLit
         | TokenKind::StringLit
         | TokenKind::RawStringLit { .. }
+        | TokenKind::TripleStringLit
         | TokenKind::CharLit
         | TokenKind::ByteLit
         | TokenKind::ByteStringLit
@@ -2911,6 +2988,50 @@ fn is_pipe_placeholder(path: &PathExpr) -> bool {
     path.segments.len() == 1
         && (path.segments[0].name.name == PIPE_PLACEHOLDER || path.segments[0].name.name == "_")
         && path.segments[0].generics.is_empty()
+}
+
+/// Parameter the placeholder-closure shorthand binds. `$` is
+/// punctuation, so this name cannot collide with one the author wrote.
+pub(crate) const PLACEHOLDER_CLOSURE_PARAM: &str = "__gos_ph";
+
+/// True when `expr` projects out of a leading `$`: `$.name`,
+/// `$.name(a)`, `$.0`, `$[i]`, and any chain of those. A bare `$` is
+/// not a projection - it keeps its pipe-argument meaning.
+fn placeholder_heads_projection(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::MethodCall { receiver, .. } | ExprKind::FieldAccess { receiver, .. } => {
+            placeholder_chain_head(receiver)
+        }
+        ExprKind::Index { base, .. } => placeholder_chain_head(base),
+        _ => false,
+    }
+}
+
+/// True when the receiver/base chain of `expr` bottoms out at `$`.
+fn placeholder_chain_head(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::MethodCall { receiver, .. } | ExprKind::FieldAccess { receiver, .. } => {
+            placeholder_chain_head(receiver)
+        }
+        ExprKind::Index { base, .. } => placeholder_chain_head(base),
+        ExprKind::Path(path) => is_pipe_placeholder(path),
+        _ => false,
+    }
+}
+
+/// Renames the `$` at the head of `expr`'s receiver/base chain to
+/// `name`, so the chain reads through the closure's parameter.
+fn rebind_placeholder_head(expr: &mut Expr, name: &str) {
+    match &mut expr.kind {
+        ExprKind::MethodCall { receiver, .. } | ExprKind::FieldAccess { receiver, .. } => {
+            rebind_placeholder_head(receiver, name);
+        }
+        ExprKind::Index { base, .. } => rebind_placeholder_head(base, name),
+        ExprKind::Path(path) if is_pipe_placeholder(path) => {
+            *path = PathExpr::single(name.to_string());
+        }
+        _ => {}
+    }
 }
 
 /// True if `path` is a bare `_`, the placeholder spelling used before `$`.
@@ -3581,5 +3702,86 @@ mod tests {
             panic!("expected inner binary expression");
         };
         assert_eq!(inner_op, BinaryOp::Mul);
+    }
+
+    /// The single argument of `xs.map(..)` in `source`.
+    fn mapped_argument(source: &str) -> gossamer_ast::Expr {
+        let expression = parse_expr_for_test(source);
+        let ExprKind::MethodCall { mut args, .. } = expression.kind else {
+            panic!("expected a method call");
+        };
+        assert_eq!(args.len(), 1, "expected one argument");
+        args.pop().expect("one argument")
+    }
+
+    #[test]
+    fn a_placeholder_projection_argument_becomes_a_closure() {
+        let arg = mapped_argument("xs.map($.abs)");
+        let ExprKind::Closure { params, body, .. } = arg.kind else {
+            panic!("expected a closure");
+        };
+        assert_eq!(params.len(), 1);
+        assert!(
+            matches!(body.kind, ExprKind::MethodCall { ref args, .. } if args.is_empty()),
+            "`$.name` is the nullary method call: {:?}",
+            body.kind
+        );
+        assert_ne!(arg.id, body.id, "closure and body must not share a node id");
+    }
+
+    #[test]
+    fn a_placeholder_index_and_tuple_projection_stay_projections() {
+        for source in ["xs.map($[1])", "xs.map($.0)"] {
+            let arg = mapped_argument(source);
+            let ExprKind::Closure { body, .. } = arg.kind else {
+                panic!("expected a closure for {source}");
+            };
+            assert!(
+                matches!(
+                    body.kind,
+                    ExprKind::Index { .. } | ExprKind::FieldAccess { .. }
+                ),
+                "{source} should keep its projection: {:?}",
+                body.kind
+            );
+        }
+    }
+
+    #[test]
+    fn a_bare_placeholder_argument_keeps_its_pipe_meaning() {
+        let expression = parse_expr_for_test("x |> f($, 2)");
+        let ExprKind::Call { args, .. } = expression.kind else {
+            panic!("expected the piped call: {:?}", expression.kind);
+        };
+        assert!(
+            !args
+                .iter()
+                .any(|a| matches!(a.kind, ExprKind::Closure { .. })),
+            "a bare `$` selects the piped slot rather than opening a closure"
+        );
+    }
+
+    #[test]
+    fn a_pipe_receiver_placeholder_is_not_a_closure() {
+        let expression = parse_expr_for_test("xs |> $.map($.abs)");
+        let ExprKind::MethodCall { receiver, args, .. } = expression.kind else {
+            panic!("expected the piped method call: {:?}", expression.kind);
+        };
+        assert!(
+            matches!(receiver.kind, ExprKind::Path(ref p) if p.segments[0].name.name == "xs"),
+            "the outer `$` takes the piped value: {:?}",
+            receiver.kind
+        );
+        assert!(
+            matches!(args[0].kind, ExprKind::Closure { .. }),
+            "the inner `$` opens the callback: {:?}",
+            args[0].kind
+        );
+    }
+
+    #[test]
+    fn an_argument_without_a_placeholder_is_untouched() {
+        let arg = mapped_argument("xs.map(helper)");
+        assert!(matches!(arg.kind, ExprKind::Path(_)), "{:?}", arg.kind);
     }
 }

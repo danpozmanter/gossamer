@@ -11,6 +11,7 @@
 /// Compile-time source augmentation for derives, serde helpers, and rewrites.
 pub mod autoderive;
 pub mod builtin_macros;
+mod cohort;
 mod diagnostic;
 mod entry_main;
 mod expressions;

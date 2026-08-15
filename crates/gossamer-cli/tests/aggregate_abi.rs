@@ -378,11 +378,11 @@ fn parse_dim(s: String) -> Result<Parsed, errors::Error> {
 }
 
 fn main() {
-    match parse_dim("10x20".to_string()) {
+    match parse_dim("10x20") {
         Ok(p) => println!("ok w={} h={}", p.width, p.height),
         Err(e) => println!("err {}", e.message()),
     }
-    match parse_dim("garbage".to_string()) {
+    match parse_dim("garbage") {
         Ok(p) => println!("ok w={} h={}", p.width, p.height),
         Err(e) => println!("err {}", e.message()),
     }
@@ -402,7 +402,7 @@ fn struct_update_base_with_scalar_and_string_fields() {
 struct Outer { label: String, tag: String, n: i64, m: i64 }
 
 fn main() {
-    let base = Outer { label: "alpha".to_string(), tag: "first".to_string(), n: 42, m: 17 }
+    let base = Outer { label: "alpha", tag: "first", n: 42, m: 17 }
     let updated = Outer { label: base.label, tag: base.tag, n: 99, m: base.m }
     println!("label={} tag={}", updated.label, updated.tag)
     println!("n={} m={}", updated.n, updated.m)
@@ -422,7 +422,7 @@ struct Inner { tag: String, count: i64 }
 struct Outer { inner: Inner, label: String, n: i64 }
 
 fn main() {
-    let base = Outer { inner: Inner { tag: "first".to_string(), count: 7 }, label: "alpha".to_string(), n: 42 }
+    let base = Outer { inner: Inner { tag: "first", count: 7 }, label: "alpha", n: 42 }
     let updated = Outer { inner: base.inner, label: base.label, n: 99 }
     println!("inner.tag={} inner.count={}", updated.inner.tag, updated.inner.count)
     println!("label={} n={}", updated.label, updated.n)
@@ -447,7 +447,7 @@ struct Inner { x: i64, y: i64 }
 struct Outer { inner: Inner, tag: String }
 
 fn main() {
-    let o = Outer { inner: Inner { x: 100, y: 200 }, tag: "t".to_string() }
+    let o = Outer { inner: Inner { x: 100, y: 200 }, tag: "t" }
     println!("{} {} {}", o.inner.x, o.inner.y, o.tag)
 }
 "#;
@@ -461,7 +461,7 @@ struct Inner { x: i64, y: i64 }
 struct Outer { inner: Inner, tag: String }
 
 fn main() {
-    let mut o = Outer { inner: Inner { x: 1, y: 2 }, tag: "t".to_string() }
+    let mut o = Outer { inner: Inner { x: 1, y: 2 }, tag: "t" }
     o.inner.x = 100
     o.inner.y = 200
     println!("{} {} {}", o.inner.x, o.inner.y, o.tag)

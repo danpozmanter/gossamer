@@ -20,7 +20,7 @@ fn main() {
     let path = temp_path("lifecycle.txt")
 
     // Create
-    match fs::write(path, "line one\nline two\nline three\n".to_string().as_bytes()) {
+    match fs::write(path, "line one\nline two\nline three\n".as_bytes()) {
         Ok(_) => println!("write ok")
         Err(e) => { println!("write error: {}", e)
             return }
@@ -40,7 +40,7 @@ fn main() {
     }
 
     // Overwrite
-    match fs::write(path, "replaced content".to_string().as_bytes()) {
+    match fs::write(path, "replaced content".as_bytes()) {
         Ok(_) => println!("overwrite ok")
         Err(e) => println!("overwrite error: {}", e)
     }
@@ -98,7 +98,7 @@ mod tests {
         let path = "/tmp/gossamer_test_exists.txt"
         let _ = fs::remove_file(path)
         let _ = testing::check(!fs::exists(path), "not present initially")
-        let _ = fs::write(path, "x".to_string().as_bytes())
+        let _ = fs::write(path, "x".as_bytes())
         let _ = testing::check(fs::exists(path), "present after write")
         let _ = fs::remove_file(path)
         let _ = testing::check(!fs::exists(path), "gone after remove")
@@ -107,8 +107,8 @@ mod tests {
     #[test]
     fn overwrite_replaces_content() {
         let path = "/tmp/gossamer_test_overwrite.txt"
-        let _ = fs::write(path, "first".to_string().as_bytes())
-        let _ = fs::write(path, "second".to_string().as_bytes())
+        let _ = fs::write(path, "first".as_bytes())
+        let _ = fs::write(path, "second".as_bytes())
         match fs::read_to_string(path) {
             Ok(s) => { let _ = testing::check_eq(&s, &"second", "overwritten")
             }

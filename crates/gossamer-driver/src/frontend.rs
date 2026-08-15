@@ -24,7 +24,7 @@ use gossamer_pkg::Edition;
 use gossamer_resolve::resolve_source_file;
 use gossamer_types::{
     ExhaustivenessError, TyCtxt, check_arena_escapes, check_exhaustiveness,
-    typecheck_source_file_with_edition,
+    normalize_caller_side_spellings, typecheck_source_file_with_edition,
 };
 use std::time::{Duration, Instant};
 
@@ -150,7 +150,7 @@ pub fn check_frontend_with_edition(
     // Labelled and defaulted arguments are a caller-side spelling. Rewriting
     // them into declared order here means the checker, HIR, and every tier's
     // codegen only ever see a positional call.
-    let named_arg_diags = gossamer_resolve::resolve_named_arguments(&mut sf, &resolutions);
+    let named_arg_diags = normalize_caller_side_spellings(&mut sf, &resolutions);
     let in_scope = collect_top_level_names(&sf);
     diagnostics.extend(
         named_arg_diags

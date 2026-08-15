@@ -95,15 +95,6 @@ pub const STD_FN_VALUES: &[StdFnValue] = &[
     },
 ];
 
-/// Std modules whose free functions the VM exposes as builtin values.
-/// An unresolved lowercase path under one of these heads, used in a
-/// value position, is a std-fn-as-value - supported when tabled,
-/// GT0015 otherwise.
-const STD_VALUE_MODULES: &[&str] = &[
-    "errors", "strings", "strconv", "math", "path", "utf8", "unicode", "sort", "fs", "os", "time",
-    "env", "iter", "option", "result",
-];
-
 /// Table entry for `path` (canonical `module::name`, no `std::`
 /// prefix), or `None` when the fn is not supported as a value.
 #[must_use]
@@ -119,24 +110,24 @@ pub fn rt_symbol_for_std_fn(joined: &str) -> Option<&'static str> {
     std_fn_value(canonical).map(|e| e.rt_symbol)
 }
 
-/// Whether `segments` names a std-module free function shape: a
-/// multi-segment all-lowercase path whose head module carries
-/// builtin function values on the VM.
+/// Whether `segments` names a free function the stdlib exports: a
+/// module-qualified, all-lowercase path the manifest lists. A leading
+/// capital is a type, so `Map::new` is an associated function rather
+/// than a free one and is not this shape.
 #[must_use]
-pub fn is_std_fn_value_shape(segments: &[&str]) -> bool {
+pub fn is_std_free_fn_path(segments: &[&str]) -> bool {
     let stripped: &[&str] = match segments {
         ["std", rest @ ..] => rest,
         other => other,
     };
-    let [module, rest @ ..] = stripped else {
-        return false;
-    };
-    if rest.is_empty() || !STD_VALUE_MODULES.contains(module) {
+    if stripped.len() < 2
+        || !stripped
+            .iter()
+            .all(|seg| seg.chars().next().is_some_and(char::is_lowercase))
+    {
         return false;
     }
-    stripped
-        .iter()
-        .all(|seg| seg.chars().next().is_some_and(char::is_lowercase))
+    gossamer_resolve::is_stdlib_item_path(&stripped.join("::"))
 }
 
 #[cfg(test)]
@@ -170,10 +161,12 @@ mod tests {
 
     #[test]
     fn shape_check_rejects_consts_and_user_paths() {
-        assert!(is_std_fn_value_shape(&["errors", "new"]));
-        assert!(is_std_fn_value_shape(&["std", "strings", "to_uppercase"]));
-        assert!(!is_std_fn_value_shape(&["math", "PI"]));
-        assert!(!is_std_fn_value_shape(&["mymod", "helper"]));
-        assert!(!is_std_fn_value_shape(&["errors"]));
+        assert!(is_std_free_fn_path(&["errors", "new"]));
+        assert!(is_std_free_fn_path(&["std", "strings", "to_uppercase"]));
+        assert!(is_std_free_fn_path(&["encoding", "base64", "encode"]));
+        assert!(!is_std_free_fn_path(&["math", "PI"]));
+        assert!(!is_std_free_fn_path(&["mymod", "helper"]));
+        assert!(!is_std_free_fn_path(&["errors"]));
+        assert!(!is_std_free_fn_path(&["Map", "new"]));
     }
 }

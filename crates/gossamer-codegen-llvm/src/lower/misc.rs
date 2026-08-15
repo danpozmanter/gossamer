@@ -973,6 +973,9 @@ impl<'a> Lowerer<'a> {
             // `errors::Error` is the error arm of nearly every fallible
             // signature, so a `Result` carrying one renders like the rest.
             Some(TyKind::DynError) => Some(10),
+            // `Result<(), E>` is the shape of every fallible routine that
+            // reports only success or failure; its Ok arm renders `()`.
+            Some(TyKind::Unit) => Some(i64::from(gossamer_abi::DEBUG_PAYLOAD_UNIT) as u8),
             // A `Vec` payload is rendered by the same formatter a bare
             // `{:?}` of that vec uses; the slot carries its pointer.
             Some(TyKind::Vec(elem) | TyKind::Slice(elem)) => {
@@ -1063,6 +1066,28 @@ impl<'a> Lowerer<'a> {
                     _ => None,
                 }
             }
+            // A nested `Result` / `Option` is carried as a pointer to its
+            // two words, so the renderer needs the arms' own descriptors
+            // to read whichever one the discriminant selects.
+            Some(TyKind::Adt { def, substs })
+                if def.local == u32::MAX || def.local == u32::MAX - 1 =>
+            {
+                let is_option = def.local == u32::MAX - 1;
+                let tys = substs.types();
+                let mut out = vec![if is_option {
+                    gossamer_abi::DESC_OPTION
+                } else {
+                    gossamer_abi::DESC_RESULT
+                }];
+                out.extend(self.value_descriptor(*tys.first()?)?);
+                if !is_option {
+                    out.extend(self.value_descriptor(*tys.get(1)?)?);
+                }
+                Some(out)
+            }
+            // `errors::Error` is the Err arm of nearly every fallible
+            // signature, so a descriptor walk has to be able to name it.
+            Some(TyKind::DynError) => Some(vec![gossamer_abi::DESC_ERROR]),
             _ => self.tuple_elem_tag(ty).map(|tag| vec![tag]),
         }
     }
@@ -1245,6 +1270,13 @@ impl<'a> Lowerer<'a> {
     /// float-width permutations the variant-stub path needs.
     pub(crate) fn coerce_llvm_value(&mut self, value: &str, from_ty: &str, to_ty: &str) -> String {
         if from_ty == to_ty {
+            return value.to_string();
+        }
+        // Nothing converts to `void`: it is legal only as a function
+        // result, and a unit destination stores nothing at all. Hand the
+        // value back untouched so the caller's store - which skips a
+        // unit slot - has something well-formed to name.
+        if to_ty == "void" {
             return value.to_string();
         }
         let tmp = self.fresh();

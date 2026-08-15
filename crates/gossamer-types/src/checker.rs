@@ -377,7 +377,6 @@ const SET_METHODS: &[&str] = &[
     "chunks",
     "pairwise",
     "flatten",
-    "collect",
     "join",
     "insert",
     "remove",
@@ -896,6 +895,11 @@ struct TypeChecker<'a> {
     /// that own it. Lets [`Self::maybe_reject_unknown_adt_method`] reject
     /// `b.label()` when `label` belongs to a different type than `b`.
     user_method_owners: HashMap<String, std::collections::HashSet<String>>,
+    /// Every free function this file declares, by name. A scalar has no
+    /// method surface of its own, so `x.f()` on one is the free call
+    /// `f(x)`; the name has to belong to something for that to mean
+    /// anything.
+    user_fn_names: std::collections::HashSet<String>,
     /// For each `(owner identity, method)`, the module the `impl` was
     /// written in and whether the method is `pub`. A method without
     /// `pub` is nameable only from that module, matching the resolver's
@@ -1025,6 +1029,7 @@ impl<'a> TypeChecker<'a> {
             import_targets: HashMap::new(),
             user_type_decls: std::collections::HashSet::new(),
             user_method_owners: HashMap::new(),
+            user_fn_names: std::collections::HashSet::new(),
             method_homes: HashMap::new(),
             current_module: Vec::new(),
             trait_own_methods: HashMap::new(),
@@ -2928,6 +2933,7 @@ impl<'a> TypeChecker<'a> {
                             opaque: true,
                             declared: Vec::new(),
                             field_span: None,
+                            method_of_same_name: false,
                         });
                     };
                     for (name, ty) in &fields {
@@ -2952,11 +2958,62 @@ impl<'a> TypeChecker<'a> {
                         opaque: false,
                         declared: fields.iter().map(|(name, _)| name.clone()).collect(),
                         field_span: None,
+                        method_of_same_name: self.has_method_named(cur, field_name),
+                    });
+                }
+                // A scalar, a text value, and a sequence carry no named
+                // fields at all, so the read has no type to answer with
+                // and every tier faults on it at run time.
+                TyKind::Int(_)
+                | TyKind::Float(_)
+                | TyKind::Bool
+                | TyKind::Char
+                | TyKind::String
+                | TyKind::Vec(_)
+                | TyKind::Slice(_)
+                | TyKind::Array { .. } => {
+                    return Err(TypeError::UnknownField {
+                        ty: self.render_public_ty(cur),
+                        field: field_name.to_string(),
+                        opaque: false,
+                        declared: Vec::new(),
+                        field_span: None,
+                        method_of_same_name: self.has_method_named(cur, field_name),
+                    });
+                }
+                // A variable constrained to a numeric family can only
+                // ever be a scalar, whatever width it settles on.
+                TyKind::Var(_)
+                    if self.infer.is_float_literal_var(self.tcx, cur)
+                        || self.infer.is_integer_constrained_var(self.tcx, cur) =>
+                {
+                    return Err(TypeError::UnknownField {
+                        ty: self.render_public_ty(cur),
+                        field: field_name.to_string(),
+                        opaque: false,
+                        declared: Vec::new(),
+                        field_span: None,
+                        method_of_same_name: self.has_method_named(cur, field_name),
                     });
                 }
                 _ => return Ok(self.fresh()),
             }
         }
+    }
+
+    /// Whether `resolved` answers a method spelled `name` - the
+    /// difference between a misspelled field and a call missing its
+    /// parentheses.
+    fn has_method_named(&mut self, resolved: Ty, name: &str) -> bool {
+        if self.known_method_names(resolved).iter().any(|m| m == name) {
+            return true;
+        }
+        let numeric = matches!(
+            self.tcx.kind(resolved),
+            Some(TyKind::Int(_) | TyKind::Float(_))
+        ) || self.infer.is_float_literal_var(self.tcx, resolved)
+            || self.infer.is_integer_constrained_var(self.tcx, resolved);
+        numeric && crate::stdlib_signatures::function_shape_for_path(&["math"], name).is_some()
     }
 
     /// The names an `impl` block's methods register under: the identity
@@ -3233,6 +3290,7 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn register_fn_sig(&mut self, node: NodeId, decl: &FnDecl, span: Span) {
+        self.user_fn_names.insert(decl.name.name.clone());
         let sig = self.fn_sig_of(decl);
         if let Some(def) = self.resolutions.definition_of(node) {
             self.fn_sigs.insert(def, sig);
@@ -4560,6 +4618,7 @@ impl<'a> TypeChecker<'a> {
                             .map(|(field_name, _)| field_name.clone())
                             .collect(),
                         field_span: None,
+                        method_of_same_name: false,
                     },
                     span,
                 );
@@ -6861,6 +6920,18 @@ impl<'a> TypeChecker<'a> {
             | "sync::channel_unbounded"
             | "std::sync::channel"
             | "std::sync::channel_unbounded" => self.channel_tuple_ty(),
+            // `spawn(f) -> JoinHandle<T>`, T being the callable's return
+            // type. Typing the call itself is what lets `spawn(f).join()`
+            // resolve without binding the handle first: the method arm
+            // that lowers `join` keys on the receiver's static type.
+            "spawn" if arg_tys.len() == 1 => {
+                let elem = match self.tcx.kind_of(arg_tys[0]).clone() {
+                    TyKind::FnTrait(sig) | TyKind::FnPtr(sig) => sig.output,
+                    TyKind::Var(_) => self.fresh(),
+                    _ => return None,
+                };
+                self.tcx.intern(TyKind::JoinHandle(elem))
+            }
             "Some" => {
                 let payload = arg_tys.first().copied().unwrap_or_else(|| self.fresh());
                 self.option_adt_ty(payload)
@@ -7564,6 +7635,15 @@ impl<'a> TypeChecker<'a> {
                 }
                 Some(self.option_adt_ty(elem))
             }
+            // `join` on a `JoinHandle<T>` yields `Result<T, String>`: the
+            // goroutine's value, or the message it panicked with. Pinning
+            // it here is what lets `handle.join()?` propagate, and what
+            // gives the binding `T`'s real shape rather than a bare word.
+            Some(TyKind::JoinHandle(elem)) if method == "join" && args.is_empty() => {
+                let elem = *elem;
+                let message = self.tcx.string_ty();
+                Some(self.result_adt_ty(elem, message))
+            }
             Some(TyKind::Sender(elem)) if matches!(method, "send" | "try_send") => {
                 let elem = *elem;
                 for arg in args {
@@ -8005,16 +8085,123 @@ impl<'a> TypeChecker<'a> {
         ) {
             return ty;
         }
+        self.check_unsurfaced_method(call_id, method, resolved, args, arg_count, receiver.span)
+    }
+
+    /// Types a call the surfaced-receiver arms did not claim: the `math`
+    /// surface reached on a scalar, then the reports for a name no
+    /// receiver of this type answers. A fresh variable is the historical
+    /// fallback for a receiver the checker has no surface for at all.
+    fn check_unsurfaced_method(
+        &mut self,
+        call_id: NodeId,
+        method: &str,
+        resolved: Ty,
+        args: &[Expr],
+        arg_count: usize,
+        span: Span,
+    ) -> Ty {
+        if let Some(ty) = self.check_numeric_receiver_method(method, resolved, arg_count) {
+            return ty;
+        }
         if let Some(name) = self.payload_adt_method_owner(resolved)
             && !matches!(method, "clone")
         {
             let error = self.unresolved_method(name.to_string(), method, resolved);
-            self.emit(error, receiver.span);
+            self.emit(error, span);
             return self.tcx.error_ty();
         }
-        self.check_method_arity(call_id, resolved, method, args, receiver.span);
-        self.maybe_reject_unknown_adt_method(resolved, method, receiver.span);
+        self.check_method_arity(call_id, resolved, method, args, span);
+        self.maybe_reject_unknown_adt_method(resolved, method, span);
+        if self.reject_unknown_scalar_method(resolved, method, span) {
+            return self.tcx.error_ty();
+        }
         self.fresh()
+    }
+
+    /// Rejects `x.nowhere()` on a scalar receiver. A scalar carries no
+    /// methods, so the call is the free call `nowhere(x)` - and a name
+    /// nothing in the program or the stdlib declares can only fail at
+    /// run time.
+    fn reject_unknown_scalar_method(&mut self, resolved: Ty, method: &str, span: Span) -> bool {
+        if !matches!(
+            self.tcx.kind(resolved),
+            Some(TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char)
+        ) {
+            return false;
+        }
+        let declared = self.user_fn_names.contains(method)
+            || self.user_method_owners.contains_key(method)
+            || gossamer_resolve::is_prelude_value(method)
+            || crate::stdlib_signatures::STD_FUNCTION_SIGNATURES
+                .iter()
+                .any(|sig| sig.name == method)
+            // The conversions and derived-trait methods every value
+            // answers, which no signature row describes.
+            || matches!(
+                method,
+                "clone"
+                    | "cmp"
+                    | "eq"
+                    | "fmt"
+                    | "hash"
+                    | "into"
+                    | "to_string"
+                    | "try_into"
+                    | "wrapping_add"
+                    | "wrapping_mul"
+            );
+        if declared {
+            return false;
+        }
+        let ty = self.render_public_ty(resolved);
+        let error = self.unresolved_method(ty, method, resolved);
+        self.emit(error, span);
+        true
+    }
+
+    /// Types `x.sqrt()`, `(-2).abs()`, `a.pow(b)` and the rest of the
+    /// `math` surface reached in method position on a numeric receiver.
+    ///
+    /// The receiver is the function's first argument, so the arity and
+    /// the answer both come from the `math` signature row. `abs`, `min`,
+    /// `max`, and `clamp` answer in the receiver's own type; every other
+    /// row computes in floating point whatever it was handed.
+    fn check_numeric_receiver_method(
+        &mut self,
+        method: &str,
+        resolved: Ty,
+        arg_count: usize,
+    ) -> Option<Ty> {
+        // An unsuffixed literal's width is pinned at the end of
+        // inference, so a numeric receiver reached from one is still a
+        // variable here - constrained to a family, which is all this
+        // needs to answer in.
+        let receiver_is_float = match self.tcx.kind(resolved) {
+            Some(TyKind::Float(_)) => true,
+            Some(TyKind::Int(_)) => false,
+            Some(TyKind::Var(_)) => {
+                if self.infer.is_float_literal_var(self.tcx, resolved) {
+                    true
+                } else if self.infer.is_integer_constrained_var(self.tcx, resolved) {
+                    false
+                } else {
+                    return None;
+                }
+            }
+            _ => return None,
+        };
+        let shape = crate::stdlib_signatures::function_shape_for_path(&["math"], method)?;
+        if shape.params.len() != arg_count + 1 {
+            return None;
+        }
+        if shape.return_ty == "bool" {
+            return Some(self.tcx.bool_ty());
+        }
+        if receiver_is_float || matches!(method, "abs" | "min" | "max" | "clamp") {
+            return Some(resolved);
+        }
+        Some(self.tcx.float_ty(FloatTy::F64))
     }
 
     #[allow(
@@ -8079,10 +8266,13 @@ impl<'a> TypeChecker<'a> {
     fn known_method_names(&self, resolved: Ty) -> Vec<String> {
         let names: Vec<&str> = match self.tcx.kind(resolved) {
             Some(TyKind::String) => STRING_METHODS.to_vec(),
+            // `to_vec` converts a borrowed or fixed sequence into an owned
+            // one, so it is not among a Vec's own names.
             Some(TyKind::Vec(_)) => SLICE_SEQUENCE_METHODS
                 .iter()
                 .chain(VEC_ONLY_SEQUENCE_METHODS)
                 .chain(SEQUENCE_COMBINATOR_METHODS)
+                .filter(|name| **name != "to_vec")
                 .copied()
                 .collect(),
             Some(TyKind::Slice(_)) => SLICE_SEQUENCE_METHODS.to_vec(),
@@ -8146,7 +8336,19 @@ impl<'a> TypeChecker<'a> {
             ty,
             name: method.to_string(),
             available: self.known_method_names(resolved),
+            field_of_same_name: self.adt_declares_field(resolved, method),
         }
+    }
+
+    /// Whether the struct `resolved` names declares a field called
+    /// `name`, which a call spelling would have missed.
+    fn adt_declares_field(&self, resolved: Ty, name: &str) -> bool {
+        let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved) else {
+            return false;
+        };
+        self.struct_fields
+            .get(def)
+            .is_some_and(|fields| fields.iter().any(|(field, _)| field == name))
     }
 
     /// The diagnostic for a method call that did not resolve, given how many
@@ -8186,6 +8388,7 @@ impl<'a> TypeChecker<'a> {
             ty,
             name: method.to_string(),
             available,
+            field_of_same_name: self.adt_declares_field(resolved, method),
         }
     }
 
@@ -9512,11 +9715,17 @@ impl<'a> TypeChecker<'a> {
                 }
                 Some(self.option_adt_ty(elem))
             }
-            // `dedup` and `to_vec` describe the collection: one removes
-            // adjacent repeats in place, the other copies. `collect` and `rev`
-            // are traversals and belong to the iterator, so they fall through
-            // to the collection-traversal rejection.
-            ("dedup" | "to_vec", 0) => Some(self.tcx.intern(TyKind::Vec(elem))),
+            // `dedup` describes the collection: it removes adjacent repeats
+            // in place. `collect` and `rev` are traversals and belong to the
+            // iterator, so they fall through to the collection-traversal
+            // rejection.
+            ("dedup", 0) => Some(self.tcx.intern(TyKind::Vec(elem))),
+            // `to_vec` copies a borrowed or fixed-length sequence into an
+            // owned one. A `Vec` is already that, so it does not carry the
+            // conversion to itself.
+            ("to_vec", 0) if !matches!(self.tcx.kind(resolved), Some(TyKind::Vec(_))) => {
+                Some(self.tcx.intern(TyKind::Vec(elem)))
+            }
             ("index_of", 1) => {
                 let i = self.tcx.int_ty(IntTy::I64);
                 Some(self.option_adt_ty(i))
@@ -9590,6 +9799,7 @@ impl<'a> TypeChecker<'a> {
                             ty,
                             name: "join".to_string(),
                             available: Vec::new(),
+                            field_of_same_name: false,
                         },
                         span,
                     );
@@ -9666,7 +9876,7 @@ impl<'a> TypeChecker<'a> {
             "contains" | "contains_any" | "contains_rune" | "starts_with" | "ends_with"
             | "equal_fold" | "is_empty" => self.tcx.bool_ty(),
             "len" | "count" | "byte_at" | "byte_len" => self.tcx.int_ty(IntTy::I64),
-            "clone" | "to_string" => self.tcx.string_ty(),
+            "clone" => self.tcx.string_ty(),
             "clear" | "truncate" | "push" | "push_str" | "push_char" | "push_byte" => {
                 self.tcx.unit()
             }
@@ -9968,6 +10178,7 @@ impl<'a> TypeChecker<'a> {
                 ty: name,
                 name: method.to_string(),
                 available,
+                field_of_same_name: false,
             },
             span,
         );
@@ -10538,20 +10749,12 @@ impl<'a> TypeChecker<'a> {
         let resolved = self.infer.resolve(self.tcx, callable_ty);
         match self.tcx.kind(resolved).cloned() {
             Some(TyKind::FnPtr(sig) | TyKind::FnTrait(sig)) => {
-                if sig.inputs.len() == inputs.len() {
-                    for (have, want) in sig.inputs.iter().zip(inputs) {
-                        self.unify(*have, *want, span);
-                    }
-                }
+                self.check_callable_arity(&sig, inputs, resolved, span);
                 sig.output
             }
             Some(TyKind::FnDef { def, .. }) => match self.fn_sigs.get(&def).cloned() {
                 Some(sig) => {
-                    if sig.inputs.len() == inputs.len() {
-                        for (have, want) in sig.inputs.iter().zip(inputs) {
-                            self.unify(*have, *want, span);
-                        }
-                    }
+                    self.check_callable_arity(&sig, inputs, resolved, span);
                     sig.output
                 }
                 None => self.fresh(),
@@ -10562,11 +10765,49 @@ impl<'a> TypeChecker<'a> {
                     inputs: inputs.to_vec(),
                     output,
                 }));
-                self.unify(resolved, shaped, span);
+                // `unify` reads its first argument as the expected type: the
+                // callable shape this slot declares, not what was passed.
+                self.unify(shaped, resolved, span);
+                output
+            }
+            // A callback slot given something that plainly cannot be called.
+            // Left unreported, the call reached a runtime that read the
+            // argument as a name and failed with an unrelated message.
+            Some(kind) if is_plainly_not_callable(&kind) => {
+                let output = self.fresh();
+                let shaped = self.tcx.intern(TyKind::FnPtr(FnSig {
+                    inputs: inputs.to_vec(),
+                    output,
+                }));
+                let expected = self.render_public_ty(shaped);
+                let found = self.render_public_ty(resolved);
+                self.emit(TypeError::TypeMismatch { expected, found }, span);
                 output
             }
             _ => self.fresh(),
         }
+    }
+
+    /// Unifies a callable's declared parameters with the slot's, and
+    /// reports a callable whose parameter count does not match.
+    ///
+    /// A silent skip let a callback of the wrong arity reach a runtime
+    /// that raised an argument-count error with no source position.
+    fn check_callable_arity(&mut self, sig: &FnSig, inputs: &[Ty], actual: Ty, span: Span) {
+        if sig.inputs.len() == inputs.len() {
+            for (have, want) in sig.inputs.iter().zip(inputs) {
+                self.unify(*have, *want, span);
+            }
+            return;
+        }
+        let output = self.fresh();
+        let shaped = self.tcx.intern(TyKind::FnPtr(FnSig {
+            inputs: inputs.to_vec(),
+            output,
+        }));
+        let expected = self.render_public_ty(shaped);
+        let found = self.render_public_ty(actual);
+        self.emit(TypeError::TypeMismatch { expected, found }, span);
     }
 
     /// Unifies `var` with `fallback` when it is still an unresolved
@@ -13009,7 +13250,12 @@ impl<'a> TypeChecker<'a> {
         } else {
             Expectation::None
         };
+        // `return` inside the body leaves the CLOSURE, not the function
+        // the closure was written in, so the body is checked against the
+        // closure's own output type.
+        let prev_ret = self.current_fn_ret.replace(output);
         let body_ty = self.check_expr_expecting(body, body_expected);
+        self.current_fn_ret = prev_ret;
         self.unify(output, body_ty, body.span);
         if expr_mentions_any_name(body, &outer_references) {
             self.emit(
@@ -13615,7 +13861,7 @@ impl<'a> TypeChecker<'a> {
             return self.tcx.intern(TyKind::FnPtr(FnSig { inputs, output }));
         }
         if !self.callee_path_nodes.contains(&node)
-            && crate::std_fn_values::is_std_fn_value_shape(&segments)
+            && crate::std_fn_values::is_std_free_fn_path(&segments)
         {
             self.emit(TypeError::StdFnValueUnsupported { path: joined }, span);
             return self.tcx.error_ty();
@@ -15301,6 +15547,7 @@ fn with_field_span(error: TypeError, span: Option<Span>) -> TypeError {
             field,
             opaque,
             declared,
+            method_of_same_name,
             ..
         } => TypeError::UnknownField {
             ty,
@@ -15308,6 +15555,7 @@ fn with_field_span(error: TypeError, span: Option<Span>) -> TypeError {
             opaque,
             declared,
             field_span: span,
+            method_of_same_name,
         },
         other => other,
     }
@@ -16557,7 +16805,6 @@ const COLLECTION_TRAVERSAL_METHODS: &[&str] = &[
     "find_map",
     "position",
     "count",
-    "collect",
     "partition",
     "unzip",
     "chunk_by",
@@ -16963,6 +17210,53 @@ fn stdlib_handle_def_offset(tail: &str) -> Option<u32> {
         "Response" => 5,
         _ => return None,
     })
+}
+
+/// A type parameter or trait object may still carry an `Fn` bound this
+/// pass does not model, so only the concrete non-callable shapes are
+/// listed here.
+fn is_plainly_not_callable(kind: &TyKind) -> bool {
+    matches!(
+        kind,
+        TyKind::Bool
+            | TyKind::Char
+            | TyKind::Int(_)
+            | TyKind::Float(_)
+            | TyKind::String
+            | TyKind::Unit
+            | TyKind::Vec(_)
+            | TyKind::Slice(_)
+            | TyKind::Array { .. }
+            | TyKind::Tuple(_)
+            | TyKind::HashMap { .. }
+            | TyKind::Range(..)
+    )
+}
+
+/// An owner this does not model answers `true`, so a surface it has no
+/// table for keeps whatever the runtime registered.
+#[must_use]
+pub fn core_type_accepts_method(owner: &str, name: &str) -> bool {
+    // Equality, ordering, hashing, formatting, and copying are derived for
+    // every type, so no per-owner table lists them.
+    if AUTOMATIC_METHODS.contains(&name) {
+        return true;
+    }
+    match owner {
+        "Iterator" | "Range" => is_iterator_method(name),
+        "Map" | "BTreeMap" => is_map_method(name),
+        "Set" | "BTreeSet" => SET_METHODS.contains(&name),
+        "Vec" => {
+            is_slice_sequence_method(name)
+                || is_vec_only_sequence_method(name)
+                || SEQUENCE_COMBINATOR_METHODS.contains(&name)
+        }
+        "Slice" => is_slice_sequence_method(name),
+        "Array" => is_array_sequence_method(name),
+        "String" => STRING_METHODS.contains(&name),
+        "Tuple" => is_tuple_method(name),
+        _ => true,
+    }
 }
 
 #[cfg(test)]

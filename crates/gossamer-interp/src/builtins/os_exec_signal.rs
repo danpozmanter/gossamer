@@ -376,17 +376,7 @@ fn builtin_time_sleep_ctx(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Bool(!cancelled()))
 }
 
-fn builtin_time_sleep(args: &[Value]) -> RuntimeResult<Value> {
-    let ms = args.first().and_then(value_to_int).unwrap_or(0);
-    if ms < 0 {
-        return Err(RuntimeError::Type(
-            "time::sleep: duration_ms must be non-negative".to_string(),
-        ));
-    }
-    let duration = time_std::Duration::from_millis(u64::try_from(ms).unwrap_or(0));
-    time_std::sleep(duration);
-    Ok(Value::Unit)
-}
+
 
 fn builtin_pprof_cpu_profile(args: &[Value]) -> RuntimeResult<Value> {
     let ms = args.first().and_then(value_to_int).unwrap_or(0);

@@ -5,13 +5,13 @@
 // reads the same on the bytecode VM, the JIT, and the AOT binary.
 
 struct Record {
-    id: i64,
-    name: String,
+    id: i64
+    name: String
 }
 
 enum Link {
-    End,
-    Step(i64),
+    End
+    Step(i64)
 }
 
 // The strong binding dies with this frame, so the returned weak is dead.
@@ -27,8 +27,8 @@ fn orphan_link() -> Weak<Link> {
 
 fn describe(w: Weak<Record>) -> String {
     match w.upgrade() {
-        Some(r) => format!("{}:{}", r.id, r.name),
-        None => "dead",
+        Some(r) => format!("{}:{}", r.id, r.name)
+        None => "dead"
     }
 }
 
@@ -50,16 +50,16 @@ fn main() {
     let ws = step.downgrade()
     match ws.upgrade() {
         Some(l) => match l {
-            Link::End => println!("link=end"),
-            Link::Step(n) => println!("link={n}"),
-        },
-        None => println!("link=dead"),
+            Link::End => println!("link=end")
+            Link::Step(n) => println!("link={n}")
+        }
+        None => println!("link=dead")
     }
     let _hold_step = step
 
     match orphan_link().upgrade() {
-        Some(_) => println!("orphan_link=alive"),
-        None => println!("orphan_link=dead"),
+        Some(_) => println!("orphan_link=alive")
+        None => println!("orphan_link=dead")
     }
 
     let mut alive = 0

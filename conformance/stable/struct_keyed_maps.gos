@@ -5,8 +5,8 @@
 use std::collections::{Map, Set}
 
 struct Cell {
-    row: i64,
-    col: i64,
+    row: i64
+    col: i64
 }
 
 fn main() {
@@ -17,12 +17,12 @@ fn main() {
     println!("len={}", grid.len())
 
     match grid.get(&Cell { row: 1, col: 2 }) {
-        Some(v) => println!("hit={v}"),
-        None => println!("hit=miss"),
+        Some(v) => println!("hit={v}")
+        None => println!("hit=miss")
     }
     match grid.get(&Cell { row: 9, col: 9 }) {
-        Some(v) => println!("absent={v}"),
-        None => println!("absent=miss"),
+        Some(v) => println!("absent={v}")
+        None => println!("absent=miss")
     }
     println!("rebound={}", grid.get(&Cell { row: 0, col: 0 }).unwrap_or("none"))
     println!("contains={}", grid.contains_key(&Cell { row: 0, col: 0 }))
@@ -43,8 +43,8 @@ fn main() {
     tally.insert((1, 1), 4)
     println!("tally_len={}", tally.len())
     match tally.get(&(2, 3)) {
-        Some(v) => println!("tally_hit={v}"),
-        None => println!("tally_hit=miss"),
+        Some(v) => println!("tally_hit={v}")
+        None => println!("tally_hit=miss")
     }
     let mut tally_total = 0
     for (_, v) in tally.iter() {

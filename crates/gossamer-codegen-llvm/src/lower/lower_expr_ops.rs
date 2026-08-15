@@ -1079,6 +1079,12 @@ impl<'a> Lowerer<'a> {
             writeln!(self.out, "  {i} = ptrtoint ptr {arg_v} to i64").unwrap();
             writeln!(self.out, "  {d} = bitcast i64 {i} to double").unwrap();
             d
+        } else if arg_llvm.starts_with('i') {
+            // An integer argument computes in floating point, the way
+            // `3.sqrt()` reads: widen it rather than reinterpret it.
+            let d = self.fresh();
+            writeln!(self.out, "  {d} = sitofp {arg_llvm} {arg_v} to double").unwrap();
+            d
         } else {
             arg_v
         };

@@ -42,7 +42,6 @@ dispatch-table additions.
 | `s.split(delim)` | `Vec<String>` | Splits on every delimiter occurrence. |
 | `s.to_lowercase()` | `String` | Lowercase; Unicode-aware. (`to_lowercase` is not a method.) |
 | `s.to_uppercase()` | `String` | Uppercase; Unicode-aware. |
-| `s.to_string()` | `String` | No-op clone for `&str`/`String`. |
 | `s.clone()` | `String` | |
 | `s.as_bytes()` | `Vec<u8>` | Materializes the UTF-8 bytes. This is an intentional divergence from Rust's borrowed `&[u8]` result because the current cross-tier string ABI does not expose a stable borrowed byte view. |
 | `s.parse<T>()` / `s.parse::<T>()` | `Result<T, errors::Error>` | Parses into the expected result type, such as `let n: i64 = s.parse()?`. |
@@ -60,7 +59,10 @@ reorder or replace existing elements, but cannot change their length or
 capacity. Every collection - `Vec`, fixed arrays, slices, `Set`, `BTreeSet`,
 `Map`, `BTreeMap` - traverses the values it holds, so `map` / `filter` / `fold`
 answer eagerly on it; `iter()` is how a caller asks for the lazy walk that
-never holds the whole sequence, and `collect()` ends one.
+never holds the whole sequence, and `collect()` ends one. `collect` belongs
+to the iterator, so it is not written on a collection that already holds its
+values; `to_vec` is the conversion a borrowed or fixed-length sequence
+carries, so a `Vec` has neither.
 The literal spelling of each container is in
 [Collection literals](collection_literals.md).
 

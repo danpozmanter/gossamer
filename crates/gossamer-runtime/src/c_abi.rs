@@ -159,6 +159,7 @@ pub mod bytes_builder;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod bzip2_codec;
 pub mod chan;
+pub mod cohort;
 pub mod combinator;
 pub mod concat;
 pub mod container_heap;

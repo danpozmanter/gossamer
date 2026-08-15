@@ -4,20 +4,20 @@
 // formatter down to the punctuation.
 
 struct Point {
-    x: i64,
-    y: i64,
+    x: i64
+    y: i64
 }
 
 #[derive(Debug)]
 struct Tagged {
-    label: String,
-    point: Point,
+    label: String
+    point: Point
 }
 
 enum Shape {
-    Dot,
-    Line(i64, i64),
-    Box { w: i64, h: i64 },
+    Dot
+    Line(i64, i64)
+    Box { w: i64, h: i64 }
 }
 
 fn main() {

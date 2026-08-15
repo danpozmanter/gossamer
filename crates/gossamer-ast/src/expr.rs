@@ -372,18 +372,33 @@ pub struct Block {
     /// Lints must not attribute these to the user.
     #[serde(default)]
     pub synthetic: bool,
-    /// True for the block desugared from an `arena { }` statement. The
-    /// front-end runs the arena-escape check (GM0003) only on these, so
-    /// the checked surface stays distinct from the raw
-    /// `runtime::arena_push()` / `arena_pop()` primitive.
+    /// Which construct this block came from. The three markers are
+    /// mutually exclusive - a block is desugared from exactly one of
+    /// them, or from none.
     #[serde(default)]
-    pub is_arena: bool,
-    /// True for the block spelled `comptime { ... }`. The comptime fold
-    /// pass evaluates these on the bytecode VM during compilation and
-    /// splices the resulting literal back into the source, so every tier
-    /// sees a constant rather than the original computation.
-    #[serde(default)]
-    pub is_comptime: bool,
+    pub kind: BlockKind,
+}
+
+/// The construct a block was desugared from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum BlockKind {
+    /// An ordinary `{ }` block.
+    #[default]
+    Plain,
+    /// Desugared from an `arena { }` statement. The front-end runs the
+    /// arena-escape check (GM0003) only on these, so the checked surface
+    /// stays distinct from the raw `runtime::arena_push()` / `arena_pop()`
+    /// primitive.
+    Arena,
+    /// Desugared from a `cohort { }`. The lint pass reads it to find a
+    /// detached `go` inside a cohort, which keeps that check off
+    /// hand-written `runtime::cohort_push()` calls.
+    Cohort,
+    /// Spelled `comptime { ... }`. The comptime fold pass evaluates these
+    /// on the bytecode VM during compilation and splices the resulting
+    /// literal back into the source, so every tier sees a constant rather
+    /// than the original computation.
+    Comptime,
 }
 
 impl Block {
@@ -395,9 +410,26 @@ impl Block {
             stmts: Vec::new(),
             tail: None,
             synthetic: true,
-            is_arena: false,
-            is_comptime: false,
+            kind: BlockKind::Plain,
         }
+    }
+
+    /// Whether this block came from an `arena { }` statement.
+    #[must_use]
+    pub fn is_arena(&self) -> bool {
+        self.kind == BlockKind::Arena
+    }
+
+    /// Whether this block came from a `cohort { }`.
+    #[must_use]
+    pub fn is_cohort(&self) -> bool {
+        self.kind == BlockKind::Cohort
+    }
+
+    /// Whether this block was spelled `comptime { ... }`.
+    #[must_use]
+    pub fn is_comptime(&self) -> bool {
+        self.kind == BlockKind::Comptime
     }
 }
 

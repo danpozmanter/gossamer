@@ -812,10 +812,10 @@ fn __gos_http_session_encrypted(key: Vec<u8>) -> __gos_http_session_Store {
 }
 fn __gos_http_session_seal(key: &[u8], data: &String) -> Result<String, errors::Error> {
     let pt = data.as_bytes()
-    let mac = crypto::hmac::sha256_mac(key.to_vec(), pt.to_vec())
+    let mac = crypto::hmac::sha256_mac(key.to_vec(), pt)
     let nonce = __gos_http_first12(&mac)
     let empty: Vec<u8> = Vec::from([])
-    let ct = crypto::aead::aes_256_gcm_seal(key.to_vec(), nonce.to_vec(), pt.to_vec(), empty)?
+    let ct = crypto::aead::aes_256_gcm_seal(key.to_vec(), nonce, pt, empty)?
     Ok(encoding::hex::encode(&nonce) + "." + &encoding::hex::encode(&ct))
 }
 fn __gos_http_session_open(key: &[u8], cookie: &String) -> Result<String, errors::Error> {

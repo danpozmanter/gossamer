@@ -224,7 +224,7 @@ fn main() {
         tag: "string_concat",
         source: r#"
 fn greet(name: String) -> String { format!("hi {}", name) }
-fn main() { println!("{}", greet("world".to_string())) }
+fn main() { println!("{}", greet("world")) }
 "#,
         expect: &[("greet", 2)],
     },
@@ -356,10 +356,10 @@ fn main() { println!("{}", ladder(10)) }
         tag: "if_chain_branches",
         source: r#"
 fn grade(n: i64) -> String {
-    if n >= 90 { "A".to_string() }
-    else if n >= 80 { "B".to_string() }
-    else if n >= 70 { "C".to_string() }
-    else { "F".to_string() }
+    if n >= 90 { "A" }
+    else if n >= 80 { "B" }
+    else if n >= 70 { "C" }
+    else { "F" }
 }
 fn main() {
     println!("{}", grade(95))
@@ -395,8 +395,8 @@ fn first_char_code(s: String) -> i64 {
     if s.len() == 0 { 0 } else { s.byte_at(0) }
 }
 fn main() {
-    println!("{}", first_char_code("hi".to_string()))
-    println!("{}", first_char_code("".to_string()))
+    println!("{}", first_char_code("hi"))
+    println!("{}", first_char_code(""))
 }
 "#,
         expect: &[("first_char_code", 2)],

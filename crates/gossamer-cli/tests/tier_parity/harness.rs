@@ -150,7 +150,22 @@ const SPECS: &[Spec] = &[
         ],
         ..spec("examples/cli_args.gos")
     },
+    spec("feature-testing-examples/triple_quoted_strings.gos"),
+    // Callback shorthands: a std free function named in value position
+    // and a `$`-headed projection both stand for the closure that calls
+    // them, so every tier sees the same closure.
+    spec("feature-testing-examples/callback_shorthands.gos"),
+    // A closure capture keeps the type of the value it holds, whatever
+    // expression reaches it and whatever the closure returns. The env
+    // slot is reference-counted by that type on the compiled tiers.
+    spec("feature-testing-examples/closure_capture_types.gos"),
     spec("feature-testing-examples/unit_main_goroutine_drain.gos"),
+    // Structured concurrency. Both fixtures print only after the cohort
+    // they describe has finished, so their transcripts are determined
+    // even though the work inside them is concurrent.
+    spec("feature-testing-examples/cohort_basics.gos"),
+    spec("feature-testing-examples/cohort_cancel.gos"),
+    spec("examples/structured_concurrency.gos"),
     spec("feature-testing-examples/jit_map_local_promotion.gos"),
     spec("feature-testing-examples/string_append_self_consuming.gos"),
     // A `Vec<String>` membership result computed beside a range-`for` in
@@ -1252,6 +1267,10 @@ const SPECS: &[Spec] = &[
     Spec {
         skip_all: Some("rejected at check: the impl omits a required associated type"),
         ..spec("feature-testing-examples/assoc_missing_impl_item.gos")
+    },
+    Spec {
+        skip_all: Some("rejected at check: the `break` label names no enclosing loop"),
+        ..spec("feature-testing-examples/break_unknown_label.gos")
     },
     // Element-typed combinator surfaces: the element's own class decides the
     // runtime helper, the callback's register classes, and the terminal's

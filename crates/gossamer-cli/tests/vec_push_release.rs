@@ -162,7 +162,7 @@ fn assert_three_tier_stdout(tag: &str, source: &str, expected: &str) {
 
 #[test]
 fn empty_vec_push_then_index_works_in_all_tiers() {
-    // The smallest repro - `let mut v: Vec<i64> = Vec::from([]).to_vec();
+    // The smallest repro - `let mut v: Vec<i64> = Vec::from([]);
     // v.push(42); v[0]`. The empty-vec path used to allocate a
     // zero-cap `GosVec` whose backing buffer was null; the
     // first push grew it but the LLVM tier passed the i64
@@ -170,7 +170,7 @@ fn empty_vec_push_then_index_works_in_all_tiers() {
     // memcpy crashed at `si_addr=42`.
     let src = r#"
 fn main() {
-    let mut v: Vec<i64> = Vec::from([]).to_vec()
+    let mut v: Vec<i64> = Vec::from([])
     v.push(42)
     println!("v[0]={}", v[0])
 }
@@ -247,9 +247,9 @@ fn vec_push_string_then_index_works_in_all_tiers() {
     // i64 cast loses the pointer's bytes.
     let src = r#"
 fn main() {
-    let mut v: Vec<String> = Vec::from([]).to_vec()
-    v.push("hello".to_string())
-    v.push("world".to_string())
+    let mut v: Vec<String> = Vec::from([])
+    v.push("hello")
+    v.push("world")
     println!("{},{}", v[0], v[1])
 }
 "#;
@@ -274,7 +274,7 @@ fn render(ids: &[String]) -> String {
 }
 
 fn main() {
-    let mut v: Vec<String> = Vec::from([]).to_vec()
+    let mut v: Vec<String> = Vec::from([])
     let mut i: i64 = 0
     while i < 5 {
         v.push(format!("item_{}", i))

@@ -55,7 +55,7 @@ fn await_ready(url: &String) {
 fn main() {
     let root = doc_root()
     let _ = fs::create_dir_all(root)
-    let _ = fs::write(path::join(&root, &"hello.txt"), "static file ok".to_string().as_bytes())
+    let _ = fs::write(path::join(&root, &"hello.txt"), "static file ok".as_bytes())
 
     go serve_files(root)
     await_ready(&"http://127.0.0.1:23890/hello.txt")

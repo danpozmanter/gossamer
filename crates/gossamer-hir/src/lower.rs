@@ -2808,7 +2808,7 @@ impl Lowerer<'_> {
             stmts,
             tail,
             ty,
-            is_comptime: block.is_comptime,
+            is_comptime: block.is_comptime(),
         }
     }
 

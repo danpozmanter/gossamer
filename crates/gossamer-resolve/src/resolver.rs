@@ -92,6 +92,12 @@ struct Resolver {
     resolutions: Resolutions,
     diagnostics: Vec<ResolveDiagnostic>,
     scopes: ScopeStack,
+    /// Loops enclosing the expression being resolved, innermost last,
+    /// each holding its label when it carries one. A `break` or
+    /// `continue` needs a non-empty stack, and a labelled one needs a
+    /// matching entry. Reset across a closure body, which is a separate
+    /// function: a loop outside it is not a target.
+    loops: Vec<Option<String>>,
     defs: DefIdGenerator,
     deferred_project_uses: Vec<DeferredProjectUse>,
     /// Path each imported name is bound to, so a repeated import of the
@@ -153,6 +159,7 @@ impl Resolver {
             resolutions: Resolutions::new(),
             diagnostics: Vec::new(),
             scopes: ScopeStack::with_prelude(),
+            loops: Vec::new(),
             defs: DefIdGenerator::new(),
             deferred_project_uses: Vec::new(),
             imported_targets: std::collections::HashMap::new(),
@@ -1504,27 +1511,34 @@ impl Resolver {
                 else_branch,
             } => self.resolve_if(condition, then_branch, else_branch.as_deref()),
             ExprKind::Match { scrutinee, arms } => self.resolve_match(scrutinee, arms),
-            ExprKind::Loop { body, .. } => self.resolve_expr(body),
+            ExprKind::Loop { label, body } => self.resolve_loop_body(label.as_ref(), body),
             ExprKind::While {
-                condition, body, ..
+                label,
+                condition,
+                body,
             } => {
                 self.resolve_expr(condition);
-                self.resolve_expr(body);
+                self.resolve_loop_body(label.as_ref(), body);
             }
             ExprKind::For {
+                label,
                 pattern,
                 iter,
                 body,
-                ..
-            } => self.resolve_for(pattern, iter, body),
+            } => self.resolve_for(label.as_ref(), pattern, iter, body),
             ExprKind::Block(block) | ExprKind::Unsafe(block) => self.resolve_block(block),
             ExprKind::Closure { params, ret, body } => {
                 self.resolve_closure(params, ret.as_ref(), body);
             }
-            ExprKind::Return(value) | ExprKind::Break { value, .. } => {
+            ExprKind::Return(value) => self.resolve_optional_expr(value.as_deref()),
+            ExprKind::Break { label, value } => {
                 self.resolve_optional_expr(value.as_deref());
+                self.check_loop_target("break", label.as_ref(), expr.span);
             }
-            ExprKind::Continue { .. } | ExprKind::MacroCall(_) => {}
+            ExprKind::Continue { label } => {
+                self.check_loop_target("continue", label.as_ref(), expr.span);
+            }
+            ExprKind::MacroCall(_) => {}
             ExprKind::Tuple(elems) | ExprKind::MapLiteral(elems) | ExprKind::SetLiteral(elems) => {
                 self.resolve_exprs(elems);
             }
@@ -1572,12 +1586,62 @@ impl Resolver {
         }
     }
 
-    fn resolve_for(&mut self, pattern: &Pattern, iter: &Expr, body: &Expr) {
+    fn resolve_for(
+        &mut self,
+        label: Option<&gossamer_ast::Label>,
+        pattern: &Pattern,
+        iter: &Expr,
+        body: &Expr,
+    ) {
         self.resolve_expr(iter);
         self.scopes.push();
         self.bind_pattern(pattern);
-        self.resolve_expr(body);
+        self.resolve_loop_body(label, body);
         self.scopes.pop();
+    }
+
+    /// Resolves a loop body with that loop pushed as a `break` target.
+    fn resolve_loop_body(&mut self, label: Option<&gossamer_ast::Label>, body: &Expr) {
+        self.loops.push(label.map(|label| label.name.clone()));
+        self.resolve_expr(body);
+        self.loops.pop();
+    }
+
+    /// Reports a `break` / `continue` with no loop to leave, or one
+    /// naming a label no enclosing loop carries.
+    fn check_loop_target(
+        &mut self,
+        keyword: &str,
+        label: Option<&gossamer_ast::Label>,
+        span: Span,
+    ) {
+        match label {
+            None if self.loops.is_empty() => self.emit(
+                ResolveError::LoopControlOutsideLoop {
+                    keyword: keyword.to_string(),
+                },
+                span,
+            ),
+            None => {}
+            Some(label) => {
+                if self
+                    .loops
+                    .iter()
+                    .any(|enclosing| enclosing.as_deref() == Some(label.name.as_str()))
+                {
+                    return;
+                }
+                let in_scope = self.loops.iter().flatten().cloned().collect();
+                self.emit(
+                    ResolveError::UnknownLoopLabel {
+                        keyword: keyword.to_string(),
+                        label: label.name.clone(),
+                        in_scope,
+                    },
+                    span,
+                );
+            }
+        }
     }
 
     fn resolve_struct_expr(
@@ -2093,6 +2157,7 @@ impl Resolver {
     }
 
     fn resolve_closure(&mut self, params: &[ClosureParam], ret: Option<&Type>, body: &Expr) {
+        let outer_loops = std::mem::take(&mut self.loops);
         self.scopes.push();
         for param in params {
             if let Some(ty) = &param.ty {
@@ -2105,6 +2170,7 @@ impl Resolver {
         }
         self.resolve_expr(body);
         self.scopes.pop();
+        self.loops = outer_loops;
     }
 
     fn resolve_match_arm(&mut self, arm: &MatchArm) {

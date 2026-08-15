@@ -81,9 +81,14 @@ It starts with `gos <version> REPL [<architecture>-<os>]`. The REPL supports:
   lists the active set.
 - `%help` lists REPL commands.
 - `%info [pattern]` (`%i`) searches the public language and standard-library
-  catalog. `%explain NAME` (`%e`) inspects a persistent binding and filters
-  methods by its type and mutability. Add `--details` for descriptions and
-  examples.
+  catalog and the current session. A type reports its fields, the traits
+  implemented for it, and its methods, each tagged with the trait it came from
+  or `[inherent]`; a trait reports its methods and the types implementing it. A
+  session `impl` on a builtin type adds to that type's catalog entry rather
+  than replacing it. `%explain NAME` (`%e`) inspects a persistent binding,
+  showing the same fields and traits with methods in receiver form, and filters
+  the catalog methods by the binding's type and mutability. Add `--details` for
+  descriptions and examples.
 - `%bindings [pattern]` (`%b`), `%declarations [pattern]` (`%d`), and
   `%history [regex]` (`%h`) show persistent bindings, declarations, and input
   history. `%bindings` filters binding names, and `%declarations` filters

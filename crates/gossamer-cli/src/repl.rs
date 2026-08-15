@@ -19,9 +19,12 @@ REPL commands
   %help
     Show this list of REPL commands.
   %info (%i) [pattern] [-d|--details]
-    List language and standard-library matches; use -d for documentation.
+    List language, standard-library, and session matches; a type reports its
+    fields, the traits implemented for it, and its methods, and a trait reports
+    its methods and implementors. Use -d for documentation.
   %explain (%e) NAME [-d|--details]
-    Inspect a persistent `let` binding or declaration; use -d for methods and capability.
+    Inspect a persistent `let` binding or declaration, including its fields and
+    implemented traits; use -d for methods and capability.
   %bindings (%b) [pattern]
     Show persistent `let` bindings. Patterns filter binding names.
   %drop NAME
@@ -442,13 +445,6 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
     },
     CoreMethodHelp {
         owner: "String",
-        name: "to_string",
-        kind: "method",
-        signature: "fn to_string(self: String) -> String",
-        doc: "Returns the string unchanged.",
-    },
-    CoreMethodHelp {
-        owner: "String",
         name: "as_bytes",
         kind: "method",
         signature: "fn as_bytes(self: String) -> Vec<u8>",
@@ -670,20 +666,6 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         kind: "method",
         signature: "fn rev<T>(self: Vec<T>) -> Vec<T>",
         doc: "Returns a reversed vector.",
-    },
-    CoreMethodHelp {
-        owner: "Vec",
-        name: "collect",
-        kind: "method",
-        signature: "fn collect<T>(self: Vec<T>) -> Vec<T>",
-        doc: "Materializes the sequence as a vector.",
-    },
-    CoreMethodHelp {
-        owner: "Vec",
-        name: "to_vec",
-        kind: "method",
-        signature: "fn to_vec<T>(self: Vec<T>) -> Vec<T>",
-        doc: "Materializes the sequence as a vector.",
     },
     CoreMethodHelp {
         owner: "Vec",
@@ -2069,12 +2051,23 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                             continue;
                         }
                     };
-                    let result = if options.details {
+                    let session = session_index(&declarations);
+                    let session_text = repl_session_info(&session, &options.pattern);
+                    let catalog = if options.details {
                         repl_info(&options.pattern)
                     } else {
                         repl_info_listing(&options.pattern)
                     }
                     .map(|text| render_info(text, &options));
+                    // A session `impl` on a catalog type adds to what the
+                    // catalog knows rather than standing in for it.
+                    let result = match (session_text, catalog) {
+                        (Some(session), Ok(catalog)) if !is_nothing_found(&catalog) => {
+                            Ok(splice_session_into_catalog(&session, &catalog))
+                        }
+                        (Some(session), _) => Ok(session),
+                        (None, catalog) => catalog,
+                    };
                     match result {
                         Ok(text) => print_repl_output(&text),
                         Err(msg) => print_repl_error(&msg),
@@ -2101,13 +2094,17 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                     match result {
                         Some(Ok(text)) => print_repl_output(&text),
                         Some(Err(msg)) => print_repl_error(&msg),
-                        None => match repl_declaration_info(&declarations, &options.pattern) {
-                            Some(text) => print_repl_output(&text),
-                            None => print_repl_error(&format!(
-                                "no persistent binding or declaration named `{}`",
-                                options.pattern
-                            )),
-                        },
+                        None => {
+                            match repl_session_info(&session_index(&declarations), &options.pattern)
+                                .or_else(|| repl_declaration_info(&declarations, &options.pattern))
+                            {
+                                Some(text) => print_repl_output(&text),
+                                None => print_repl_error(&format!(
+                                    "no persistent binding or declaration named `{}`",
+                                    options.pattern
+                                )),
+                            }
+                        }
                     }
                     continue;
                 }
@@ -2666,7 +2663,18 @@ fn repl_binding_info(
             ));
             return out;
         }
+        if let Some(session) = render_session_type(
+            &session_index(declarations),
+            base_type_name(&ty.rendered),
+            Some(&var.name),
+        ) {
+            out.push_str(&session);
+            out.push('\n');
+        }
         let Some(ref owner) = ty.method_owner else {
+            if index_has_facts(declarations, base_type_name(&ty.rendered)) {
+                return out.trim_end().to_string();
+            }
             out.push_str(&format!(
                 "\nNo cataloged methods for this binding's type.\nExample: let copy = {}",
                 var.name
@@ -2720,6 +2728,14 @@ fn repl_binding_listing(
             let mut out = format!("{prefix}{name}: {} [binding]\n", ty.rendered);
             for (index, elem) in ty.tuple_elements.iter().enumerate() {
                 out.push_str(&format!("{name}.{index}: {elem} [element]\n"));
+            }
+            if let Some(session) = render_session_type(
+                &session_index(declarations),
+                base_type_name(&ty.rendered),
+                Some(name),
+            ) {
+                out.push_str(&session);
+                out.push('\n');
             }
             let Some(ref owner) = ty.method_owner else {
                 return out.trim_end().to_string();
@@ -3348,6 +3364,12 @@ fn push_catalog_match(
         }
     }
     out.push_str(&format!(" [{}]\n", catalog_kind_label(kind)));
+    // A type's line is otherwise just its name and tag, which answers
+    // nothing about what the type is; a method's name and signature
+    // already do, and a listing can match dozens of them.
+    if !details && kind == "type" && !description.is_empty() {
+        out.push_str(&format!("    {description}\n"));
+    }
     if details {
         out.push_str(&format!("    {description}\n"));
         let defined_in = defined_in
@@ -3450,29 +3472,82 @@ fn example_receiver(owner: &str) -> &'static str {
 
 fn core_namespace_description(owner: &str) -> &'static str {
     if owner == "sync::Map" {
-        return "Concurrent string map.";
+        return "Concurrent string-to-string map shared across goroutines.";
     }
     match owner.rsplit("::").next().unwrap_or(owner) {
-        "Array" => "Fixed-size contiguous sequence.",
-        "Slice" => "Borrowed contiguous sequence.",
-        "Vec" => "Growable contiguous sequence.",
-        "Map" => "Key-value map.",
-        "Set" => "Unique-value set.",
-        "BTreeMap" => "Ordered key-value map (BTreeMap).",
-        "BTreeSet" => "Ordered unique-value set (BTreeSet).",
-        "Deque" => "Double-ended queue.",
-        "Queue" => "FIFO-only queue.",
-        "Stack" => "LIFO-only stack.",
-        "MaxHeap" => "Max-priority heap.",
-        "MinHeap" => "Min-priority heap.",
-        "Iterator" => "Lazy sequence iterator.",
-        "Range" => "Bounded integer sequence; answers the Iterator surface.",
-        "Option" => "Optional value.",
-        "Result" => "Success or error value.",
-        "String" => "UTF-8 string.",
-        "Buffer" => "Growable byte buffer.",
-        "Tuple" => "Fixed-length group of values whose element types may differ.",
-        "Builder" => "Incremental string builder.",
+        "Array" => {
+            "Fixed-size contiguous sequence, written `[1, 2, 3]` or `[0; 8]`. Owns its \
+             elements; length is part of the type, so it cannot grow."
+        }
+        "Slice" => {
+            "Borrowed contiguous view `&[T]` / `&mut [T]` over an array or Vec. Shares the \
+             slice method surface; cannot resize."
+        }
+        "Vec" => {
+            "Growable contiguous sequence, written `#[1, 2, 3]` or `#[0; 8]`. The default \
+             owned sequence, and the only one with insert, remove, truncate, and capacity."
+        }
+        "Map" => {
+            "Key-value map, written `{\"one\": 1}`. Any hashable value keys it - integers, \
+             bool, char, String, tuples, arrays, structs, enums - and keys compare by value."
+        }
+        "Set" => {
+            "Unique-value set, written `#{1, 2, 3}`, with full set algebra (union, \
+             intersection, difference)."
+        }
+        "BTreeMap" => {
+            "Ordered key-value map with String or i64 keys. A distinct type from `Map`: \
+             neither converts to the other."
+        }
+        "BTreeSet" => {
+            "Ordered unique-value set. Written `#{..}` where a `BTreeSet<T>` is expected."
+        }
+        "Deque" => "Double-ended queue: push and pop at either end. Build with `Deque::new()`.",
+        "Queue" => {
+            "FIFO-only queue. The idiomatic choice over `Vec` or `Deque` when the contract \
+             is first-in-first-out. Build with `Queue::new()`."
+        }
+        "Stack" => {
+            "LIFO-only stack. The idiomatic choice over `Vec` when the contract is \
+             last-in-first-out. Build with `Stack::new()`."
+        }
+        "MaxHeap" => {
+            "Max-priority heap: largest element first, without negating keys. Build with \
+             `MaxHeap::new()`."
+        }
+        "MinHeap" => {
+            "Min-priority heap: smallest element first, without wrapping values. Build with \
+             `MinHeap::new()`."
+        }
+        "Iterator" => {
+            "Lazy sequence cursor from `.iter()`. Adapters stay lazy; terminals end the \
+             chain. Single-use - bind a fresh `.iter()` per pipeline."
+        }
+        "Range" => {
+            "Bounded integer sequence `a..b` / `a..=b`, already an iterator, so \
+             `(1..5).map(..)` reads straight through. Can be stored and consumed later."
+        }
+        "Option" => {
+            "Optional value: `Some(v)` or `None`. `?` propagates it inside an Option-returning fn."
+        }
+        "Result" => {
+            "Success or error value: `Ok(v)` or `Err(e)`. The fallibility type; `?` \
+             propagates and converts errors through `From`."
+        }
+        "String" => {
+            "UTF-8 text. Two index spaces: `len`, `s[i]`, and bare iteration count Unicode \
+             scalars (so `s[i]` is a `char`); `byte_len`, `byte_at`, `as_bytes`, `bytes`, \
+             and `substring` count UTF-8 bytes. Literals are already `String`."
+        }
+        "Buffer" => "Growable byte buffer for binary assembly.",
+        "Tuple" => {
+            "Fixed-length group of values whose element types may differ. Read positionally \
+             (`t.0`), destructured, and compared in declaration order. Not iterable."
+        }
+        "Builder" => {
+            "Incremental string builder. Preferred over repeated `+` on String, which \
+             copies on every append."
+        }
         _ => "Built-in type and method namespace.",
     }
 }
@@ -3671,7 +3746,10 @@ fn core_method_entries() -> Vec<CoreMethodEntry> {
     add_data_last_std_methods(&mut entries, "Range", "std::iter");
     for registered in gossamer_interp::registered_names() {
         if let Some((owner, name)) = registered_core_method_path(registered) {
-            if owner == "Iterator" && !gossamer_types::is_iterator_method(&name) {
+            // A runtime registration is not evidence the checker accepts the
+            // call: the name is global, so every receiver's builtin lands in
+            // one table. Discovery follows what the checker resolves.
+            if !gossamer_types::core_type_accepts_method(&owner, &name) {
                 continue;
             }
             let kind = if runtime_assoc_name(&name) {
@@ -3717,6 +3795,22 @@ fn core_method_entries() -> Vec<CoreMethodEntry> {
             derived.signature = sequence_owner_signature(&derived.signature, owner);
             insert_core_method_entry(&mut entries, derived);
         }
+    }
+    // `to_vec` copies a borrowed or fixed-length sequence into an owned
+    // one, so it belongs to these two owners rather than being inherited
+    // from `Vec`, which is already the owned form.
+    for owner in ["Array", "Slice"] {
+        let receiver = if owner == "Array" { "&[T; N]" } else { "&[T]" };
+        insert_core_method_entry(
+            &mut entries,
+            CoreMethodEntry {
+                owner: owner.to_string(),
+                name: "to_vec".to_string(),
+                kind: "method",
+                signature: format!("fn to_vec<T>(self: {receiver}) -> Vec<T>"),
+                doc: "Copies the elements into an owned vector.".to_string(),
+            },
+        );
     }
     insert_core_method_entry(
         &mut entries,
@@ -4020,7 +4114,6 @@ fn runtime_core_method_doc(owner: &str, name: &str) -> Option<&'static str> {
         ("String", "trim_start_matches") => Some("Removes leading characters from a set."),
         ("Vec", "chain") => Some("Concatenates this sequence with another sequence."),
         ("Vec", "chunks") => Some("Groups values into fixed-size chunks."),
-        ("Vec", "collect") => Some("Materializes the sequence as a vector."),
         ("Vec", "count") => Some("Counts values, or values accepted by a predicate."),
         ("Vec", "dedup") => Some("Removes adjacent duplicate values."),
         ("Vec", "enumerate") => Some("Pairs each value with its index."),
@@ -4170,6 +4263,10 @@ fn matching_core_namespaces(query: &str) -> Vec<String> {
     all_core_namespaces()
         .into_iter()
         .filter(|owner| core_namespace_matches(owner, query))
+        // A type with a `CORE_TYPES` row is rendered from that row, which
+        // carries its spelling and example; the namespace list holds the
+        // same name only because the type owns methods.
+        .filter(|owner| !CORE_TYPES.iter().any(|core| core.name == owner))
         .collect()
 }
 
@@ -4772,11 +4869,12 @@ fn rebuild_session(declarations: &[String]) -> std::result::Result<(), String> {
     if !resolve_diags.is_empty() {
         return Err(format_resolve_diags(&sf, &resolve_diags, &map));
     }
-    // Labelled and defaulted arguments are a caller-side spelling, rewritten
-    // into the callee's declared order before type checking. The REPL drives
-    // the front-end phase by phase rather than through `check_frontend`, so
-    // it has to run this pass itself to see the same calls a file does.
-    let named_arg_diags = gossamer_resolve::resolve_named_arguments(&mut sf, &res);
+    // A labelled or defaulted argument and a std function named in value
+    // position are caller-side spellings, rewritten into the one shape the
+    // checker and every tier lower. The REPL drives the front-end phase by
+    // phase rather than through `check_frontend`, so it runs the shared
+    // normalisation itself to see the same calls a file does.
+    let named_arg_diags = gossamer_types::normalize_caller_side_spellings(&mut sf, &res);
     if !named_arg_diags.is_empty() {
         return Err(format_resolve_diags(&sf, &named_arg_diags, &map));
     }
@@ -4817,11 +4915,12 @@ fn infer_repl_tail_type(source: &str) -> std::result::Result<ReplValueType, Stri
     if !resolve_diags.is_empty() {
         return Err(format_resolve_diags(&sf, &resolve_diags, &map));
     }
-    // Labelled and defaulted arguments are a caller-side spelling, rewritten
-    // into the callee's declared order before type checking. The REPL drives
-    // the front-end phase by phase rather than through `check_frontend`, so
-    // it has to run this pass itself to see the same calls a file does.
-    let named_arg_diags = gossamer_resolve::resolve_named_arguments(&mut sf, &res);
+    // A labelled or defaulted argument and a std function named in value
+    // position are caller-side spellings, rewritten into the one shape the
+    // checker and every tier lower. The REPL drives the front-end phase by
+    // phase rather than through `check_frontend`, so it runs the shared
+    // normalisation itself to see the same calls a file does.
+    let named_arg_diags = gossamer_types::normalize_caller_side_spellings(&mut sf, &res);
     if !named_arg_diags.is_empty() {
         return Err(format_resolve_diags(&sf, &named_arg_diags, &map));
     }
@@ -4858,11 +4957,12 @@ fn build_and_call_with_type_inner(
     if !resolve_diags.is_empty() {
         return Err(format_resolve_diags(&sf, &resolve_diags, &map));
     }
-    // Labelled and defaulted arguments are a caller-side spelling, rewritten
-    // into the callee's declared order before type checking. The REPL drives
-    // the front-end phase by phase rather than through `check_frontend`, so
-    // it has to run this pass itself to see the same calls a file does.
-    let named_arg_diags = gossamer_resolve::resolve_named_arguments(&mut sf, &res);
+    // A labelled or defaulted argument and a std function named in value
+    // position are caller-side spellings, rewritten into the one shape the
+    // checker and every tier lower. The REPL drives the front-end phase by
+    // phase rather than through `check_frontend`, so it runs the shared
+    // normalisation itself to see the same calls a file does.
+    let named_arg_diags = gossamer_types::normalize_caller_side_spellings(&mut sf, &res);
     if !named_arg_diags.is_empty() {
         return Err(format_resolve_diags(&sf, &named_arg_diags, &map));
     }
@@ -5350,7 +5450,10 @@ mod tests {
             let Some((owner, name)) = registered_core_method_path(registered) else {
                 continue;
             };
-            if owner == "Iterator" && !gossamer_types::is_iterator_method(&name) {
+            // The runtime's builtin names are global, so one registration
+            // serves every receiver: discovery follows what the checker
+            // resolves on the owner, and so does this gate.
+            if !gossamer_types::core_type_accepts_method(&owner, &name) {
                 continue;
             }
             let short_owner = owner.rsplit("::").next().unwrap_or(&owner);
@@ -5367,6 +5470,27 @@ mod tests {
         assert!(
             missing.is_empty(),
             "runtime methods on std types missing from %explain: {missing:?}"
+        );
+    }
+
+    /// Discovery must not advertise a call the checker refuses: a name the
+    /// runtime registers globally is not evidence a given receiver has it.
+    #[test]
+    fn explain_never_advertises_a_method_the_checker_rejects() {
+        let mut advertised = Vec::new();
+        for entry in core_method_entries() {
+            if entry.kind != "method" {
+                continue;
+            }
+            if !gossamer_types::core_type_accepts_method(&entry.owner, &entry.name) {
+                advertised.push(format!("{}::{}", entry.owner, entry.name));
+            }
+        }
+        advertised.sort();
+        advertised.dedup();
+        assert!(
+            advertised.is_empty(),
+            "%info advertises methods the checker rejects: {advertised:?}"
         );
     }
 
@@ -5496,8 +5620,6 @@ mod tests {
             "last",
             "get",
             "rev",
-            "collect",
-            "to_vec",
             "dedup",
             "take",
             "skip",
@@ -5610,4 +5732,316 @@ mod tests {
                 .any(|entry| entry.owner == "Slice" && entry.name == "clone")
         );
     }
+}
+
+/// Folds the session's facts about a type into the catalog's rendering
+/// of it, under the one header both would otherwise print.
+///
+/// The catalog's leading entry is its header line plus the indented
+/// lines describing it; the session's sections belong directly after
+/// that, ahead of the method list.
+fn splice_session_into_catalog(session: &str, catalog: &str) -> String {
+    let mut session_lines = session.lines();
+    let session_header = session_lines.next().unwrap_or_default();
+    let session_body: Vec<&str> = session_lines.collect();
+    let mut catalog_lines = catalog.lines();
+    let Some(catalog_header) = catalog_lines.next() else {
+        return session.to_string();
+    };
+    if catalog_header != session_header {
+        return format!("{session}\n{catalog}");
+    }
+    let rest: Vec<&str> = catalog_lines.collect();
+    let lead = rest
+        .iter()
+        .take_while(|line| line.starts_with("    "))
+        .count();
+    let mut out = vec![catalog_header];
+    out.extend_from_slice(&rest[..lead]);
+    out.extend(session_body);
+    out.extend_from_slice(&rest[lead..]);
+    out.join("\n")
+}
+
+/// `true` when a catalog lookup found no entries. The catalog reports a
+/// miss as ordinary text rather than an error, so a caller merging its
+/// result has to recognise the sentence.
+fn is_nothing_found(text: &str) -> bool {
+    text.trim_start().starts_with("nothing found for")
+}
+
+/// The bare type name inside a rendered type, so `&mut Point` and
+/// `Vec<Point>` both look up under `Point`.
+fn base_type_name(rendered: &str) -> &str {
+    rendered
+        .trim()
+        .trim_start_matches('&')
+        .trim_start_matches("mut ")
+        .trim()
+        .split(['<', '['])
+        .next()
+        .unwrap_or(rendered)
+        .trim()
+}
+
+/// `true` when the session declares anything about `name`.
+fn index_has_facts(declarations: &[String], name: &str) -> bool {
+    !session_index(declarations).is_empty_for(name)
+}
+
+/// What the session's stored declarations say about the types in it.
+///
+/// `%info` otherwise answers only from the stdlib catalog, so a struct
+/// or trait declared at the prompt has nowhere to be looked up.
+#[derive(Debug, Default)]
+struct SessionIndex {
+    /// Struct name to its declared fields, in declaration order.
+    fields: BTreeMap<String, Vec<(String, String)>>,
+    /// Type name to the traits implemented for it in this session.
+    implements: BTreeMap<String, Vec<String>>,
+    /// Trait name to the types implementing it.
+    implementors: BTreeMap<String, Vec<String>>,
+    /// Type name to its methods, each tagged with the trait it came from
+    /// or `None` for an inherent `impl`.
+    methods: BTreeMap<String, Vec<(String, Option<String>)>>,
+    /// Trait name to its declared method signatures.
+    trait_methods: BTreeMap<String, Vec<String>>,
+    /// Declared item name to the kind label `%info` prints for it.
+    kinds: BTreeMap<String, &'static str>,
+}
+
+impl SessionIndex {
+    /// `true` when nothing in the session declares `name`.
+    fn is_empty_for(&self, name: &str) -> bool {
+        !self.kinds.contains_key(name)
+            && !self.fields.contains_key(name)
+            && !self.implements.contains_key(name)
+            && !self.implementors.contains_key(name)
+            && !self.methods.contains_key(name)
+    }
+}
+
+/// Renders one AST type as source.
+fn render_type(ty: &gossamer_ast::Type) -> String {
+    let mut printer = gossamer_ast::Printer::new();
+    printer.print_type(ty);
+    printer.finish()
+}
+
+/// Renders a trait bound's path as source.
+fn render_trait_path(bound: &gossamer_ast::TraitBound) -> String {
+    let mut printer = gossamer_ast::Printer::new();
+    printer.print_type_path(&bound.path);
+    printer.finish()
+}
+
+/// Renders a method's parameter list and return type, without its body.
+fn render_fn_signature(decl: &gossamer_ast::FnDecl) -> String {
+    use gossamer_ast::{FnParam, Receiver};
+
+    let params = decl
+        .params
+        .iter()
+        .map(|param| match param {
+            FnParam::Receiver(Receiver::Owned) => "self".to_string(),
+            FnParam::Receiver(Receiver::RefShared) => "&self".to_string(),
+            FnParam::Receiver(Receiver::RefMut) => "&mut self".to_string(),
+            FnParam::Typed { pattern, ty, .. } => {
+                let mut printer = gossamer_ast::Printer::new();
+                printer.print_pattern(pattern);
+                format!("{}: {}", printer.finish(), render_type(ty))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let ret = decl
+        .ret
+        .as_ref()
+        .map_or_else(String::new, |ty| format!(" -> {}", render_type(ty)));
+    format!("({params}){ret}")
+}
+
+/// The base name of a self type, so `impl Trait for Wrapper<T>` indexes
+/// under `Wrapper`.
+fn self_type_name(ty: &gossamer_ast::Type) -> String {
+    let rendered = render_type(ty);
+    rendered
+        .split(['<', '['])
+        .next()
+        .unwrap_or(&rendered)
+        .trim()
+        .trim_start_matches('&')
+        .trim()
+        .to_string()
+}
+
+/// Builds the session's type index from the declarations replayed into
+/// every REPL evaluation.
+fn session_index(declarations: &[String]) -> SessionIndex {
+    use gossamer_ast::{ImplItem, ItemKind, StructBody, TraitItem};
+
+    let mut index = SessionIndex::default();
+    for declaration in declarations {
+        let mut map = gossamer_lex::SourceMap::new();
+        let file = map.add_file("irepl-session-index".to_string(), declaration.clone());
+        let (source_file, diags) = gossamer_parse::parse_source_file(declaration, file);
+        if !diags.is_empty() {
+            continue;
+        }
+        for item in &source_file.items {
+            match &item.kind {
+                ItemKind::Struct(decl) => {
+                    let name = decl.name.name.clone();
+                    index.kinds.insert(name.clone(), "struct");
+                    let fields = match &decl.body {
+                        StructBody::Named(fields) => fields
+                            .iter()
+                            .map(|field| (field.name.name.clone(), render_type(&field.ty)))
+                            .collect(),
+                        StructBody::Tuple(fields) => fields
+                            .iter()
+                            .enumerate()
+                            .map(|(position, field)| (position.to_string(), render_type(&field.ty)))
+                            .collect(),
+                        StructBody::Unit => Vec::new(),
+                    };
+                    index.fields.insert(name, fields);
+                }
+                ItemKind::Enum(decl) => {
+                    index.kinds.insert(decl.name.name.clone(), "enum");
+                }
+                ItemKind::Trait(decl) => {
+                    let name = decl.name.name.clone();
+                    index.kinds.insert(name.clone(), "trait");
+                    let signatures = decl
+                        .items
+                        .iter()
+                        .filter_map(|trait_item| match trait_item {
+                            TraitItem::Fn(fn_decl) => Some(format!(
+                                "fn {}{}",
+                                fn_decl.name.name,
+                                render_fn_signature(fn_decl)
+                            )),
+                            _ => None,
+                        })
+                        .collect();
+                    index.trait_methods.insert(name, signatures);
+                }
+                ItemKind::Fn(decl) => {
+                    index.kinds.insert(decl.name.name.clone(), "fn");
+                }
+                ItemKind::Impl(decl) => {
+                    let owner = self_type_name(&decl.self_ty);
+                    let trait_name = decl.trait_ref.as_ref().map(render_trait_path);
+                    if let Some(trait_name) = &trait_name {
+                        push_unique(
+                            index.implements.entry(owner.clone()).or_default(),
+                            trait_name.clone(),
+                        );
+                        push_unique(
+                            index.implementors.entry(trait_name.clone()).or_default(),
+                            owner.clone(),
+                        );
+                    }
+                    let methods = index.methods.entry(owner).or_default();
+                    for impl_item in &decl.items {
+                        if let ImplItem::Fn(fn_decl) = impl_item {
+                            methods.push((
+                                format!("{}{}", fn_decl.name.name, render_fn_signature(fn_decl)),
+                                trait_name.clone(),
+                            ));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    index
+}
+
+/// Appends `value` unless the list already carries it.
+fn push_unique(list: &mut Vec<String>, value: String) {
+    if !list.contains(&value) {
+        list.push(value);
+    }
+}
+
+/// Renders what the session knows about `name`: a struct's fields, the
+/// traits implemented for a type, a trait's methods and implementors.
+///
+/// `receiver` names the binding a method would be called on, so
+/// `%explain p` shows `p.area()` where `%info Point` shows
+/// `Point::area(&self)`. Returns `None` when the session declares
+/// nothing under `name`.
+fn render_session_type(index: &SessionIndex, name: &str, receiver: Option<&str>) -> Option<String> {
+    if index.is_empty_for(name) {
+        return None;
+    }
+    let mut out = String::new();
+    if let Some(fields) = index.fields.get(name)
+        && !fields.is_empty()
+    {
+        out.push_str("  fields\n");
+        for (field, ty) in fields {
+            out.push_str(&format!("    {field}: {ty}\n"));
+        }
+    }
+    if let Some(traits) = index.implements.get(name)
+        && !traits.is_empty()
+    {
+        out.push_str("  implements\n");
+        for trait_name in traits {
+            out.push_str(&format!("    {trait_name}\n"));
+        }
+    }
+    if let Some(signatures) = index.trait_methods.get(name)
+        && !signatures.is_empty()
+    {
+        out.push_str("  methods\n");
+        for signature in signatures {
+            out.push_str(&format!("    {signature}\n"));
+        }
+    }
+    if let Some(methods) = index.methods.get(name)
+        && !methods.is_empty()
+    {
+        out.push_str("  methods\n");
+        for (signature, from_trait) in methods {
+            let origin = from_trait
+                .as_ref()
+                .map_or_else(|| "[inherent]".to_string(), |t| format!("[{t}]"));
+            match receiver {
+                Some(binding) => {
+                    let call = signature.replacen("(&mut self, ", "(", 1);
+                    let call = call.replacen("(&mut self)", "()", 1);
+                    let call = call.replacen("(&self, ", "(", 1);
+                    let call = call.replacen("(&self)", "()", 1);
+                    let call = call.replacen("(self, ", "(", 1);
+                    let call = call.replacen("(self)", "()", 1);
+                    out.push_str(&format!("    {binding}.{call} {origin}\n"));
+                }
+                None => out.push_str(&format!("    {name}::{signature} {origin}\n")),
+            }
+        }
+    }
+    if let Some(types) = index.implementors.get(name)
+        && !types.is_empty()
+    {
+        out.push_str("  implemented by\n");
+        for ty in types {
+            out.push_str(&format!("    {ty}\n"));
+        }
+    }
+    if out.is_empty() {
+        return None;
+    }
+    Some(out.trim_end().to_string())
+}
+
+/// The `%info` rendering for a name the session declares.
+fn repl_session_info(index: &SessionIndex, name: &str) -> Option<String> {
+    let body = render_session_type(index, name, None)?;
+    let kind = index.kinds.get(name).copied().unwrap_or("type");
+    Some(format!("{name} [{kind}]\n{body}"))
 }

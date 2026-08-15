@@ -838,7 +838,7 @@ fn show(item: Info, as_json: bool) {
 }
 
 fn main() {
-    let it = Info { num: 42, label: "hello".to_string() }
+    let it = Info { num: 42, label: "hello" }
     show(it, false)
 }
 "#;
@@ -923,7 +923,7 @@ fn local_var_shadowing_module_does_not_capture_qualified_path() {
         src_dir.join("main.gos"),
         "mod prov;\n\
          fn main() {\n\
-             let prov = \"local-string\".to_string()\n\
+             let prov = \"local-string\"\n\
              let s = prov::greet(&prov)\n\
              println!(\"{}\", s)\n\
          }\n",

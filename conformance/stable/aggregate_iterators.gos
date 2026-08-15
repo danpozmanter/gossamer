@@ -4,8 +4,8 @@
 // word.
 
 struct Item {
-    name: String,
-    qty: i64,
+    name: String
+    qty: i64
 }
 
 fn main() {
@@ -20,12 +20,12 @@ fn main() {
     println!("first={}", items.iter().map(|i| i.name).collect()[0])
 
     match items.iter().max_by_key(|i| i.qty) {
-        Some(top) => println!("top={} {}", top.name, top.qty),
-        None => println!("top=none"),
+        Some(top) => println!("top={} {}", top.name, top.qty)
+        None => println!("top=none")
     }
     match items.iter().min_by_key(|i| i.qty) {
-        Some(low) => println!("low={} {}", low.name, low.qty),
-        None => println!("low=none"),
+        Some(low) => println!("low={} {}", low.name, low.qty)
+        None => println!("low=none")
     }
 
     let mut inventory = 0

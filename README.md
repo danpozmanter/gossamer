@@ -4,13 +4,19 @@
 
 [Homepage and Docs](http://gossamer-lang.org/)
 
-## North Star
+## North Star Goals
 
 * Trustworthy (Stability, Security, Correctness)
 
 * Ergonomic (Concise, Expressive)
 
 * Performant (Solid Execution Speed, Efficient Resource Usage)
+
+## Current Status
+
+In heavy development. Core elements of the language may change or break.
+
+My goal is a language stable enough for 1.0.0 (and beyond).
 
 ## Contributing
 
@@ -64,7 +70,6 @@ My goal is for Gossamer to replace Go, Python, F#/C#, Kotlin/Java, and
 | Immutable by default                            |    ✓     |   ✓  |     |  ✓  |        |    ✓   |   ✓    |
 | Reference mutability and escape checks          |    ✓     |   ✓  |     |     |        |        |        |
 | Automatic memory management                     |    ✓     |      |  ✓  |  ✓  |    ✓   |    ✓   |    ✓   |
-| Go style concurrency                            |    ✓     |      |  ✓  |     |        |        |        |
 | Small portable binaries                         |    ✓     |   ✓  |  ✓  |     |        |    ✓   |        |
 | Pipe operator (`\|>`)                           |    ✓     |      |     |  ✓  |        |    ✓   |        |
 | Interpreted / scripting mode                    |    ✓     |      |     |  ✓  |    ✓   |    ✓   |    ✓   |
@@ -90,6 +95,10 @@ Gossamer is built to extend simply via (synchronous) Rust.
 ## Features unique to Gossamer
 
 Or at least - not a carbon copy by intent!
+
+**Default colorless structured concurrency**
+
+As of 0.51.0 - Gossamer supports and defaults to colorless yet structured concurrency.
 
 **Tier Parity Across Interpreted/Compiled**
 
@@ -293,6 +302,32 @@ fn main() {
     }
 }
 ```
+
+A `cohort { }` owns the goroutines started inside it: the block cannot be
+left until every one of them has finished, and a child's failure cancels
+its siblings and becomes the block's `Result`.
+
+```gossamer
+use std::errors
+
+fn fetch(name: String) -> Result<String, errors::Error> { Ok(name) }
+
+fn gather() -> Result<(), errors::Error> {
+    cohort {
+        let a = spawn(|| fetch("one"))
+        let b = spawn(|| fetch("two"))
+        println!("{} {}", a.join()??, b.join()??)
+    }
+}
+
+fn main() {
+    println!("{:?}", gather())
+}
+```
+
+`main` itself runs inside a cohort, so no goroutine outlives the program
+and a spawned failure nobody joins is reported rather than lost. `go expr`
+remains the detached form for work that should outlive its block.
 
 ## REPL meta commands
 

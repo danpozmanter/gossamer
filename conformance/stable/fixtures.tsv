@@ -18,3 +18,4 @@ weak_references.gos	weak_references.out
 general_algos.gos	general_algos.out
 stress_algorithms.gos	stress_algorithms.out
 memory_shapes.gos	memory_shapes.out
+triple_quoted_strings.gos	triple_quoted_strings.out

@@ -125,6 +125,14 @@ Write clear, low-complexity, concise code.
 - **`m.inc(k)` / `m.inc(k, by)`** for counters; `m.or_insert(k,
   default)` for get-or-fill (`m.or_insert(k, d).method(args)` writes
   the mutation back into the stored value). `arr.swap(i, j)`.
+- **`collect()` belongs to the iterator; `to_vec()` converts a
+  collection.** `collect` is how an `Iterator` (a `Range` included) ends a
+  chain, and it is not on a collection that already holds its values.
+  `to_vec` copies a borrowed or fixed-length sequence - an array, a slice,
+  a `Set`, a `BTreeSet` - into an owned `Vec`, so neither is written on a
+  `Vec`, which is already both. For the same reason a `String` has no
+  `to_string`: use `clone` for a copy, and `to_string` only to convert
+  something else into text.
 - **A collection traverses eagerly; `iter()` makes it lazy.** `xs.map(f)`
   on a `Vec`, array, slice, or `Set` walks the values it already holds and
   answers a `Vec`. `xs.iter()` answers an `Iterator`, for when you do not
@@ -133,8 +141,8 @@ Write clear, low-complexity, concise code.
   so `(1..5).map(|i| i * i).sum()` reads straight through. The element's
   shape does not change that: a sequence of tuples or structs walks through
   the same cursor a sequence of scalars does. A `Map` hands over its pairs
-  with `iter()` (a cursor, over pairs read under the map's lock) or
-  `to_vec()` (eager). Adapters
+  with `iter()` (a cursor, over pairs read under the map's lock);
+  `m.iter().collect()` materialises them. Adapters
   (`map`, `filter`, `take`, `skip`, `step_by`, `enumerate`, `rev`,
   `zip`, `chain`, `flat_map`, ...) answer another iterator and stay
   lazy; terminals (`collect`, `sum`, `count`, `min`/`max`, `fold`,
@@ -143,6 +151,17 @@ Write clear, low-complexity, concise code.
   fresh `.iter()` per pipeline. Data-last `iter::` free forms take an
   iterator too, for `|>` pipelines. `xs.join(sep)` Display-joins
   scalar/String sequences without a traversal.
+- **A callback has two shorthands.** A std free function named in
+  value position IS the closure that calls it, so `xs.map(math::abs)`
+  and `xs.map(base64::encode)` need no `|v|` (a variadic like
+  `fmt::format` has no fixed parameter list and reports GT0015 - write
+  that closure). A `$`-headed projection in an argument is the closure
+  over that argument: `xs.map($.abs)` is `xs.map(|v| v.abs())`,
+  `$.len()` calls with arguments, and `$.0` / `$[i]` project. `$.name`
+  is the nullary METHOD call, exactly as in a pipe step, so read a
+  struct field with the closure instead: `people.map(|p| p.name)`. A
+  bare `$` argument keeps its pipe meaning - it selects the slot the
+  piped value lands in.
 - **Use metadata already returned by an API.** For entries from
   `fs::read_dir` or `fs::walk_dir`, inspect `entry.is_file`,
   `entry.is_dir`, `entry.is_symlink`, `entry.size`, `entry.path`, and
@@ -218,8 +237,11 @@ Write clear, low-complexity, concise code.
 - **`Result<T, E>` + `?`** for fallibility; panic only for invariant
   violations. Exhaustive `match` - no `_ =>` unless every unmatched
   case genuinely means the same thing.
-- **Goroutines + channels** for async work; `sync::Mutex` only when
-  shared memory is simpler.
+- **Goroutines under a `cohort { }`** for concurrent work: `spawn`
+  inside the block, which joins every child on every exit path and
+  reports the first failure. `go expr` is the detached escape hatch.
+  Channels carry values; `sync::Mutex` only when shared memory is
+  simpler.
 - **`arena { ... }`** for object graphs that die together:
   bump-allocated, freed wholesale at every exit. Nothing allocated
   inside may be referenced after the block - statically enforced
@@ -227,6 +249,13 @@ Write clear, low-complexity, concise code.
 - **Bare numeric literals** - `0`, `1.5`, never `0i64`; suffix only
   with no contextual hint. String literals are already `String` - no
   `.to_string()`; `&"foo"` borrows where `&String`/`&str` is expected.
+- **`"""` strings dedent themselves** - the body starts on the line
+  after the opening delimiter, and the indentation it shares with the
+  closing `"""` is stripped from every line, so embedded HTML or SQL
+  keeps the shape of the code around it. Escapes work as in `"..."` and
+  decode after the strip; only whitespace may follow the opening `"""`
+  (GP0033). `gos fmt` moves the body with the line that opens it, so
+  re-indenting the statement re-indents the block.
 - **Fixed macro set** - everything else `name!(..)` is a parse error
   (no user macros): `println!` `print!` `eprintln!` `eprint!`
   `format!` `panic!` (Rust `{}` / `{name}` / `{:spec}` formatting:
@@ -247,6 +276,8 @@ Left-associative, very low precedence.
   `$[i]`, and bare `$` (identity) work. One direct `$` also selects an
   argument slot: `x |> f($, k)` is `f(x, k)`.
 - Closure steps thread the value into the last slot too.
+- A `$` inside a step's ARGUMENT belongs to that argument's callback,
+  not to the pipe: `xs |> $.map($.abs)` maps `|v| v.abs()` over `xs`.
 
 ```gossamer
 let n = 3 |> double |> add(10) |> clamp(0, 100)
@@ -380,9 +411,41 @@ address. Neither corrupts memory.
 
 ## 9. Concurrency
 
-`go expr` is fire-and-forget; `spawn(f)` returns a `JoinHandle<T>`
-(`handle.join()` -> `Result<T, String>`). Typed channels: `recv()`
-blocks until a value or every sender is gone; producers `close()`.
+**`cohort { }` is the default shape.** The block owns every goroutine
+`spawn`ed inside it and cannot be left until each has finished, so a
+child cannot outlive it. Its value is `Result<(), errors::Error>`: the
+first child failure (lowest spawn index, never completion order) cancels
+its siblings and becomes the block's `Err`, so `cohort { .. }?` reads
+like any fallible call. `main` runs inside an implicit root cohort, so a
+spawned goroutine never outlives the program and a failure nobody joined
+is reported on stderr at exit instead of vanishing.
+
+`spawn(f)` returns a `JoinHandle<T>` (`handle.join()` ->
+`Result<T, String>`) and attaches to the enclosing cohort. `go expr` is
+the detached form, for work that should outlive the block; a `go` inside
+a cohort is `GL0053`. Typed channels: `recv()` blocks until a value or
+every sender is gone; producers `close()`.
+
+```gossamer
+fn gather() -> Result<(), errors::Error> {
+    cohort {
+        let a = spawn(|| fetch("one"))
+        let b = spawn(|| fetch("two"))
+        println!("{} {}", a.join()??, b.join()??)
+    }
+}
+```
+
+Header settings: `cohort(policy: Policy::CollectAll)` runs every child
+and reports all failures, `Policy::Race` stops at the first success (the
+losers are cancelled, not rolled back), `cohort(timeout: 500)` bounds the
+block in milliseconds, and `cohort(context: Context::Isolated)` gives
+each child its own OS thread - what synchronous Rust FFI and
+never-yielding CPU-bound work need. Cancellation is cooperative and
+never a kill: a cancelled `recv` answers `None` exactly as a closed
+channel does, a `sleep` returns early, and the child leaves through its
+own exit path with its `defer` frames running in order. Pure computation
+is not a cancellation point - poll `runtime::cohort_cancelled()`.
 
 ```gossamer
 use std::sync::channel
@@ -407,7 +470,8 @@ timer: `time::after(d) -> Receiver` as a select timeout arm.
 `std::sync` also has `Mutex`, `RwLock`, atomics, `Once`, `WaitGroup`,
 `Barrier`, and `Map` (concurrent string->string). `std::thread`
 provides scheduling hints and CPU introspection only: user code has no
-OS-thread spawn API. Use `go expr` or `spawn(f)` for concurrency.
+OS-thread spawn API. Use `cohort { }` with `spawn(f)`, or `go expr` when
+the work is genuinely detached.
 
 **Closures**: `|x: T| body`; capture is automatic (no `move`).
 Use `Fn(args) -> ret` for callback parameters. Plain `fn(args) -> ret`
@@ -604,7 +668,9 @@ before `FILE`.
 The REPL starts with `gos <version> REPL [<architecture>-<os>]` and uses the
 `>>>` prompt. Expression output is the value only, with no numbered markers.
 Binding and declaration progress is quiet unless `-v` is enabled. `%help`
-lists commands. `%info`/`%i` searches public symbols and shows item help,
+lists commands. `%info`/`%i` searches public symbols and the session, showing
+item help plus a type's fields, implemented traits, and methods (and a trait's
+implementors); `%explain`/`%e` answers the same for a binding in receiver form;
 `%bindings`/`%b`, `%declarations`/`%d`, and `%history`/`%h` inspect
 the session, `%reset`/`%r` clears it, and `%quit`/`%q` exits. Up/down cycles
 history; Enter continues until braces close; Ctrl-D also exits. Meta-command

@@ -69,9 +69,11 @@ nav:
       - language/index.md
       - Top-level statements: language/top_level_statements.md
       - Arena blocks: language/arena.md
+      - Cohorts: language/cohort.md
       - Comptime: language/comptime.md
       - Keyword arguments: language/keyword_arguments.md
       - Opaque nominal aliases: language/opaque_nominal_alias.md
+      - Triple-quoted strings: language/triple_quoted_string.md
       - Tuples: language/tuples.md
   - Memory model: memory.md
   - Writing libraries: libraries.md
@@ -125,9 +127,11 @@ not_in_nav: |
   !/language/index.md
   !/language/top_level_statements.md
   !/language/arena.md
+  !/language/cohort.md
   !/language/comptime.md
   !/language/keyword_arguments.md
   !/language/opaque_nominal_alias.md
+  !/language/triple_quoted_string.md
   !/language/tuples.md
 
 markdown_extensions:

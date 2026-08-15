@@ -922,6 +922,10 @@ pub unsafe extern "C" fn gos_rt_exec_run(prog: *const c_char, args: *mut GosVec)
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_program_start() {
     crate::sched_global::mark_program_entered();
+    // `main` runs inside the root cohort, so every `spawn` has a cohort
+    // to belong to: no goroutine outlives the program, and a child's
+    // failure that nothing reads is reported instead of vanishing.
+    crate::c_abi::cohort::open_root();
 }
 
 #[cfg(test)]

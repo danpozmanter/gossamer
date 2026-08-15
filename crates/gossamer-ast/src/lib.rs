@@ -27,8 +27,8 @@ pub use common::{
     is_error_name,
 };
 pub use expr::{
-    ArrayExpr, Block, ClosureParam, Expr, ExprKind, FieldSelector, Label, Literal, MacroCall,
-    MacroDelim, MatchArm, PathExpr, PathSegment, SelectArm, SelectOp, StructExprField,
+    ArrayExpr, Block, BlockKind, ClosureParam, Expr, ExprKind, FieldSelector, Label, Literal,
+    MacroCall, MacroDelim, MatchArm, PathExpr, PathSegment, SelectArm, SelectOp, StructExprField,
 };
 pub use items::{
     AssocBinding, Attribute, Attrs, ConstDecl, EnumDecl, EnumVariant, FnDecl, FnParam,

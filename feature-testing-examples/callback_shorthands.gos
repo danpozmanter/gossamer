@@ -1,0 +1,40 @@
+// The two spellings that abbreviate a callback: a std free function
+// named in value position, and a `$`-headed projection.
+use std::encoding::base64
+use std::{math, strings}
+
+struct Reading { label: String, value: f64 }
+
+fn main() {
+    let raw = #[1.0, -2.0, 3.5]
+
+    // A std free function stands for the closure that calls it.
+    println!("{:?}", raw.map(math::abs))
+    println!("{:?}", #["  a  ", " b "].map(strings::trim))
+    println!("{:?}", #["ab", "cd"].map(base64::encode))
+
+    // `$` stands for the callback's argument, and `$.name` is the
+    // nullary method call, exactly as it is in a pipe step.
+    println!("{:?}", raw.map($.abs))
+    println!("{:?}", #["hi", "yo"].map($.to_uppercase))
+    println!("{:?}", #["ab", "cde"].map($.len()))
+    println!("{:?}", #[(1, 2), (3, 4)].map($.0))
+    println!("{:?}", #[#[1, 2], #[3, 4]].map($[1]))
+
+    // The shorthand nests inside a pipe: the outer `$` is the piped
+    // value, the inner one the callback's argument.
+    println!("{:?}", #[4.0, 9.0] |> $.map($.sqrt))
+
+    // A struct-typed sequence reaches its methods the same way.
+    let readings = #[
+        Reading { label: "a", value: -1.5 }
+        Reading { label: "b", value: 2.5 }
+    ]
+    println!("{:?}", readings.map(|r| r.value).map($.abs))
+
+    // The mapped element type is concrete, so the debug rendering of
+    // the result is the element's own.
+    let scaled = raw.map($.abs).map(|v| v * 2.0)
+    println!("{:?} {} {}", scaled, scaled[0], scaled.len())
+    println!("{:?} {:?}", #[1, -2].map($.abs), #[2, 9].map($.sqrt))
+}

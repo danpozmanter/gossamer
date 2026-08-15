@@ -16,7 +16,7 @@ struct Counts {
 }
 
 fn main() -> Result<(), errors::Error> {
-    let text = "{\"small\":255,\"medium\":-1,\"big\":9000000000}".to_string()
+    let text = "{\"small\":255,\"medium\":-1,\"big\":9000000000}"
     let c = from_json::<Counts>(&text)?
     println!("small={} medium={} big={}", c.small, c.medium, c.big)
     Ok(())
@@ -117,7 +117,7 @@ struct AppCfg {
 }
 
 fn main() -> Result<(), errors::Error> {
-    let yaml = "name: gossamer\nport: 8080\ndebug: true\n".to_string()
+    let yaml = "name: gossamer\nport: 8080\ndebug: true\n"
     let cfg = from_yaml::<AppCfg>(&yaml)?
     println!("{} {} {}", cfg.name, cfg.port, cfg.debug)
 
@@ -674,9 +674,9 @@ fn sort_by_on_tuple_vec_orders_by_comparator() {
     let src = r#"
 fn main() {
     let mut xs: Vec<(String, i64)> = Vec::from([])
-    xs.push(("c".to_string(), 3))
-    xs.push(("a".to_string(), 1))
-    xs.push(("b".to_string(), 2))
+    xs.push(("c", 3))
+    xs.push(("a", 1))
+    xs.push(("b", 2))
     xs.sort_by(|a, b| {
         if a.1 < b.1 { -1 }
         else if a.1 > b.1 { 1 }
@@ -737,9 +737,9 @@ fn show(e: &Expr) {
 }
 fn main() {
     let mut xs: Vec<Expr> = Vec::from([])
-    xs.push(Expr::EColumn("t".to_string(), "id".to_string()))
+    xs.push(Expr::EColumn("t", "id"))
     xs.push(Expr::ELit(Sv::SvInt(42)))
-    xs.push(Expr::ELit(Sv::SvText("hello".to_string())))
+    xs.push(Expr::ELit(Sv::SvText("hello")))
     for e in &xs { show(e) }
 }
 "#;

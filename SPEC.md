@@ -214,11 +214,26 @@ exponent    = ( "e" | "E" ) [ "+" | "-" ] decimal_digits
 char_lit    = "'" ( unicode_char | byte_escape | unicode_escape ) "'"
 
 string_lit  = "\"" { string_char | escape } "\""
+triple_str  = "\"\"\"" { string_char | escape | newline } "\"\"\""
 raw_string  = "r\"" { raw_char } "\"" | "r#\"" { raw_char } "\"#"
 
 byte_lit    = "b'" byte_char "'"
 byte_string = "b\"" { byte_char } "\""
 ```
+
+A triple-quoted literal that spans lines strips the indentation its
+body shares with its closing delimiter. Only whitespace may follow the
+opening `"""` on its line (`GP0033` otherwise), and the newline after the
+opening delimiter is not part of the value. When the closing `"""` sits
+on a line of its own, that line contributes its whitespace to the
+measure and the newline before it is not part of the value; when content
+sits immediately before the closing delimiter, the value's last line has
+no trailing newline. The measure is the longest leading-whitespace
+prefix shared by every non-blank content line and by the closing
+delimiter's line, compared as text so tabs and spaces never merge. A
+whitespace-only line becomes empty. Escapes are decoded after the
+indentation is removed, so `\n` in the body is a newline escape rather
+than a line break. A single-line `"""..."""` takes its body verbatim.
 
 Literal suffixes disambiguate type:
 
@@ -1165,6 +1180,67 @@ outliving containers, no channel sends, no captures that outrun the
 block). `Weak` references to arena values upgrade to `None`. Arenas
 nest; inner arenas free at their own close brace.
 
+#### `cohort`
+
+```
+CohortExpr   = "cohort" [ "(" CohortArgs ")" ] Block
+CohortArgs   = CohortArg { "," CohortArg }
+CohortArg    = "policy" ":" PolicyVariant
+             | "timeout" ":" IntLiteral
+             | "context" ":" ContextVariant
+PolicyVariant  = "Policy" "::" ( "FailFast" | "CollectAll" | "Race" )
+ContextVariant = "Context" "::" ( "Default" | "Isolated" )
+```
+
+`cohort` is a contextual keyword (an identifier `cohort` not followed by
+`{`, or by a parenthesised header and `{`, is an ordinary name). Every
+goroutine started with `spawn` while the block runs belongs to the
+cohort, and the block cannot be left until each of them has finished:
+a child cannot outlive the block that started it.
+
+The block is an expression yielding `Result<(), errors::Error>`, so it
+binds and composes with `?`. A tail expression in the body is evaluated
+and discarded, as in `arena`. The construct desugars to
+`runtime::cohort_push(..)`, a block-scoped `defer runtime::cohort_pop()`,
+and a tail `runtime::cohort_join()`, so the join runs on every exit path
+including `return`, `break`, and a `?` out of the middle of the block.
+
+A child fails by panicking or by answering `Err`. Under the default
+`Policy::FailFast` the first failure cancels its siblings and becomes the
+cohort's `Err`; the reported failure is the one with the lowest spawn
+index, not the first to arrive, so the answer never depends on completion
+order or on which tier is running. `Policy::CollectAll` runs every child
+and reports every failure; `Policy::Race` stops at the first success.
+
+Cancellation is cooperative. A cancelled child observes cancellation as
+an operation's ordinary "nothing more is coming" answer - a `recv`
+reports `None`, the same answer a closed channel gives, and a `sleep`
+returns early - so it leaves through its own normal exit path and its
+`defer` frames and destructors run in order. Nothing is killed. Pure
+computation is not a cancellation point; a CPU-bound child cooperates by
+polling `runtime::cohort_cancelled()`. `timeout:` cancels the cohort once
+the given number of milliseconds has passed.
+
+`context: Context::Isolated` runs each child on a dedicated OS thread for
+its whole life, which is what synchronous Rust FFI and never-yielding
+CPU-bound work need. Channels work across contexts unchanged.
+
+`main` runs inside an implicit root cohort, so every `spawn` belongs to
+one: no goroutine outlives the program, and a child failure that nothing
+observed through its join handle is reported on stderr at exit instead of
+vanishing. The root's policy is `CollectAll`, so one child's failure never
+cancels another's work.
+
+```
+fn gather() -> Result<(), errors::Error> {
+  cohort {
+    let a = spawn(|| fetch("one"))
+    let b = spawn(|| fetch("two"))
+    println!("{} {}", a.join()??, b.join()??)
+  }
+}
+```
+
 #### `defer`
 
 ```
@@ -1316,13 +1392,38 @@ Desugaring rules (applied after parsing, before HIR lowering):
    → `path(a1, ..., x, ..., an)`. This selects a non-trailing argument
    position that the default data-last rule cannot express. A trailing `$` is
    valid but redundant.
-8. `x |> $.method(a1, ..., an)`, `x |> $.field`, `x |> $[i]`, and `x |> $`:
-   → `x.method(a1, ..., an)`, `x.field`, `x[i]`, and `x` respectively.
+8. `x |> $.method(a1, ..., an)`, `x |> $.name`, `x |> $.i`, `x |> $[i]`,
+   and `x |> $`:
+   → `x.method(a1, ..., an)`, `x.name()`, `x.i`, `x[i]`, and `x`
+   respectively. A `$.name` with no parentheses is the nullary method
+   call; a numeric `$.i` is a tuple index. Reading a named field
+   through a pipe uses a closure step (`x |> |v| v.name`).
 
 The direct-call placeholder may occur exactly once. It must be an immediate
 call argument, not part of a nested expression. The receiver forms in rule 8
 also consume the one available placeholder, so `x |> $.method($, y)` is
 invalid.
+
+**Placeholder closures.** A `$`-headed projection written as a call
+argument abbreviates the one-parameter closure over that argument, so
+the shorthand is available wherever a callback is: `xs.map($.abs)` is
+`xs.map(|v| v.abs())`. The projection forms are the ones rule 8 lists -
+`$.name` is the nullary method call, `$.name(a1, ..., an)` passes
+arguments, `$.i` and `$[i]` project - and they may chain. An argument
+that is a BARE `$` is not this shorthand: that spelling already selects
+the slot a pipe threads its value into (rule 7). Because the closure is
+built where the argument is parsed, a `$` inside an argument of a pipe
+step belongs to that argument's callback and the step's own `$` is
+still the piped value: `xs |> $.map($.abs)` maps `|v| v.abs()` over
+`xs`.
+
+**Std functions in value position.** A stdlib free function named where
+a value is expected is rewritten into the closure that calls it, using
+the parameter count its signature declares: `xs.map(math::abs)` is
+`xs.map(|v| math::abs(v))`. Every tier therefore lowers the same
+closure. A function with no fixed parameter list (the formatting
+family, `panic::panic`) has no such closure and is reported as
+`GT0015`.
 
 If the right operand is not a call form matching one of the above, the
 compiler emits `E0601: right-hand side of '|>' must be a callable`.

@@ -38,6 +38,7 @@ examples/netip_demo.gos	no hot body
 examples/os_user_demo.gos	no hot body
 examples/range_sum.gos	callable local
 examples/shapes.gos	bytecode-only local
+examples/structured_concurrency.gos	cross-goroutine
 examples/temperature.gos	bytecode-only local
 examples/toml_demo.gos	no hot body
 examples/url_escape_demo.gos	no hot body
@@ -59,6 +60,7 @@ feature-testing-examples/borrowed_option_result.gos	bytecode-only local
 feature-testing-examples/bounded_channel.gos	bytecode-only local
 feature-testing-examples/btreemap_i64_keys.gos	bytecode-only local
 feature-testing-examples/bytes_builder.gos	unlowered call
+feature-testing-examples/callback_shorthands.gos	callable local
 feature-testing-examples/capture_by_reference.gos	string append
 feature-testing-examples/chan_select_struct_payload.gos	bytecode-only local
 feature-testing-examples/chan_struct_local_recv.gos	bytecode-only local
@@ -67,6 +69,7 @@ feature-testing-examples/channel_fan_in.gos	cross-goroutine
 feature-testing-examples/channel_progress_not_deadlock.gos	cross-goroutine
 feature-testing-examples/channel_semantics_conformance.gos	cross-goroutine
 feature-testing-examples/channel_timers.gos	bytecode-only local
+feature-testing-examples/closure_capture_types.gos	callable local
 feature-testing-examples/clone_builtin_dispatch.gos	bytecode-only local
 feature-testing-examples/closure_capture_aggregate.gos	callable local
 feature-testing-examples/closure_capture_mutation.gos	callable local
@@ -74,6 +77,8 @@ feature-testing-examples/closure_env_container_capture.gos	callable local
 feature-testing-examples/closure_goroutine.gos	bytecode-only local
 feature-testing-examples/closure_lifetime_inference.gos	callable local
 feature-testing-examples/closure_payload_typing.gos	callable local
+feature-testing-examples/cohort_basics.gos	cross-goroutine
+feature-testing-examples/cohort_cancel.gos	cross-goroutine
 feature-testing-examples/combinator_sweep.gos	callable local
 feature-testing-examples/compress_bzip2.gos	no hot body
 feature-testing-examples/compress_zstd.gos	no hot body

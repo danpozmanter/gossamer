@@ -1,7 +1,7 @@
 use std::encoding::json
 
 fn main() {
-    let v = json::parse(&"{\"a\":1,\"b\":2}".to_string()).unwrap()
+    let v = json::parse(&"{\"a\":1,\"b\":2}").unwrap()
     let keys = json::keys(&v).unwrap()
     let n = keys.len() as i64
     println!("keys.len = {}", n)
@@ -10,7 +10,13 @@ fn main() {
         println!("k[{}] = {}", i, keys[i])
         i += 1
     }
-    let vals = json::values(&v).unwrap()
+    let mut vals = #[]
+    for key in keys {
+        match json::get(&v, &key) {
+            Some(item) => vals.push(item)
+            None => {}
+        }
+    }
     let m = vals.len() as i64
     println!("vals.len = {}", m)
     let mut j: i64 = 0
@@ -20,9 +26,9 @@ fn main() {
         j += 1
     }
     // Non-object → None
-    let s = json::parse(&"\"hi\"".to_string()).unwrap()
+    let s = json::parse(&"\"hi\"").unwrap()
     match json::keys(&s) {
-        Some(_) => println!("BAD"),
-        None => println!("string has no keys: ok"),
+        Some(_) => println!("BAD")
+        None => println!("string has no keys: ok")
     }
 }

@@ -2873,6 +2873,12 @@ pub unsafe extern "C" fn gos_rt_rc_alloc_copy(
         return payload;
     }
     unsafe { std::ptr::copy_nonoverlapping(src, payload, size as usize) };
+    if meta.is_null() {
+        // A leaf blob: its words are scalars, so the copy shares no RC
+        // child with the source and there is nothing to retain. The
+        // interning above already accepts null as "no child layout".
+        return payload;
+    }
     unsafe {
         if *meta == gossamer_abi::rc::RC_KIND_STRUCT_GUARDED {
             visit_guarded_children(payload, meta, |child| {

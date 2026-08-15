@@ -764,6 +764,16 @@ impl<'a> Lowerer<'a> {
         self.runtime_refs
             .insert(format!("declare double @{llvm_intrinsic}(double)"));
         let arg_v = self.lower_operand(&args[0])?;
+        let arg_llvm = self.operand_llvm_ty(&args[0]);
+        // An integer argument computes in floating point, the way
+        // `3.sqrt()` reads: widen it rather than reinterpret it.
+        let arg_v = if arg_llvm.starts_with('i') {
+            let d = self.fresh();
+            writeln!(self.out, "  {d} = sitofp {arg_llvm} {arg_v} to double").unwrap();
+            d
+        } else {
+            arg_v
+        };
         let dest_llvm = dest_ty;
         let tmp = self.fresh();
         writeln!(

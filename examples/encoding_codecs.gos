@@ -13,7 +13,7 @@ use std::encoding
 let data = "Hello, Gossamer!"
 
 // Base64
-let b64 = encoding::base64::encode(data.to_string().as_bytes())
+let b64 = encoding::base64::encode(data.clone().as_bytes())
 println!("base64 encode: {}", b64)
 let b64_dec = encoding::base64::decode(b64)
 match b64_dec {
@@ -22,7 +22,7 @@ match b64_dec {
 }
 
 // Hex
-let h = encoding::hex::encode(data.to_string().as_bytes())
+let h = encoding::hex::encode(data.clone().as_bytes())
 println!("hex encode:    {}", h)
 let h_dec = encoding::hex::decode(h)
 match h_dec {
@@ -31,7 +31,7 @@ match h_dec {
 }
 
 // Base32
-let b32 = encoding::base32::encode(data.to_string().as_bytes())
+let b32 = encoding::base32::encode(data.clone().as_bytes())
 println!("base32 encode: {}", b32)
 let b32_dec = encoding::base32::decode_string(b32)
 match b32_dec {

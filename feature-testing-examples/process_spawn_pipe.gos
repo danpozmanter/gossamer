@@ -6,7 +6,7 @@ use std::os::exec
 
 fn run_cmd(prog: String, args: Vec<String>) -> Result<String, String> {
     match exec::run(prog, args) {
-        Ok(out) => Ok(out.stdout.trim().to_string())
+        Ok(out) => Ok(out.stdout.trim().clone())
         Err(e) => Err(format!("{e}"))
     }
 }

@@ -163,7 +163,7 @@ fn encoding_xml_escape_lowers() {
         r#"
 use std::encoding::xml
 fn main() {
-    println!("{}", xml::escape(&"a<b>&c".to_string()))
+    println!("{}", xml::escape(&"a<b>&c"))
 }
 "#,
         "a&lt;b&gt;&amp;c",
@@ -177,7 +177,7 @@ fn encoding_base32_decode_string_lowers() {
         r#"
 use std::encoding::base32
 fn main() {
-    let enc = base32::encode_string(&"hi".to_string())
+    let enc = base32::encode_string(&"hi")
     match base32::decode_string(&enc) {
         Ok(s) => println!("{}", s),
         Err(_) => println!("err"),
@@ -195,7 +195,7 @@ fn crypto_hmac_sha256_mac_lowers() {
         r#"
 use std::crypto::hmac
 fn main() {
-    let mac = hmac::sha256_mac("key".to_string().as_bytes(), "msg".to_string().as_bytes())
+    let mac = hmac::sha256_mac("key".as_bytes(), "msg".as_bytes())
     println!("len={}", mac.len() > 0)
 }
 "#,
@@ -210,7 +210,7 @@ fn compress_flate_roundtrip_lowers() {
         r#"
 use std::compress::flate
 fn main() {
-    let data = "hello hello hello hello".to_string()
+    let data = "hello hello hello hello"
     let bytes = data.as_bytes()
     match flate::compress(bytes, 6) {
         Ok(packed) => match flate::decompress(packed) {
@@ -232,7 +232,7 @@ fn html_escape_lowers() {
         r#"
 use std::html
 fn main() {
-    println!("{}", html::escape(&"a<b>'c".to_string()))
+    println!("{}", html::escape(&"a<b>'c"))
 }
 "#,
         "a&lt;b&gt;&#39;c",
@@ -270,7 +270,7 @@ fn encoding_hex_encode_lowers() {
         r#"
 use std::encoding::hex
 fn main() {
-    println!("{}", hex::encode("hi".to_string().as_bytes()))
+    println!("{}", hex::encode("hi".as_bytes()))
 }
 "#,
         "6869",
@@ -284,7 +284,7 @@ fn encoding_base32_encode_bytes_lowers() {
         r#"
 use std::encoding::base32
 fn main() {
-    println!("{}", base32::encode("foobar".to_string().as_bytes()))
+    println!("{}", base32::encode("foobar".as_bytes()))
 }
 "#,
         "MZXW6YTBOI======",
@@ -298,7 +298,7 @@ fn compress_zlib_roundtrip_lowers() {
         r#"
 use std::compress::zlib
 fn main() {
-    let data = "zlib zlib zlib zlib".to_string()
+    let data = "zlib zlib zlib zlib"
     let bytes = data.as_bytes()
     match zlib::compress(bytes, 6) {
         Ok(packed) => match zlib::decompress(packed) {
@@ -323,7 +323,7 @@ fn parse(s: &String) -> Result<i64, errors::Error> {
     Err(errors::new("nope"))
 }
 fn main() {
-    let v = parse(&"x".to_string()) |> result::unwrap_or_else(|e| { let _ = e
+    let v = parse(&"x") |> result::unwrap_or_else(|e| { let _ = e
  -1 })
     println!("{}", v)
 }
@@ -339,7 +339,7 @@ fn encoding_base64_roundtrip_lowers() {
         r#"
 use std::encoding
 fn main() {
-    let enc = encoding::base64::encode("Hello, Gossamer!".to_string().as_bytes())
+    let enc = encoding::base64::encode("Hello, Gossamer!".as_bytes())
     println!("enc={}", enc)
     match encoding::base64::decode(enc) {
         Ok(bytes) => println!("dec={}", bytes.len()),

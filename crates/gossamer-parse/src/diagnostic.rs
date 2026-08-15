@@ -150,6 +150,10 @@ pub enum ParseError {
     /// A string literal is required by the grammar at this position.
     #[error("expected a string literal")]
     ExpectedString,
+    /// A multi-line triple-quoted literal carried text on the line that
+    /// opens it, where only the delimiter and whitespace belong.
+    #[error("text follows the opening `\"\"\"` of a multi-line string")]
+    TripleStringOpeningLine,
     /// A trailing integer produced an invalid tuple index (`foo.0xff`, etc.).
     #[error("invalid tuple index")]
     InvalidTupleIndex,
@@ -439,6 +443,15 @@ impl ParseError {
             ),
             ParseError::ExpectedInt => ("GP0009", "expected an integer literal".to_string(), None),
             ParseError::ExpectedString => ("GP0010", "expected a string literal".to_string(), None),
+            ParseError::TripleStringOpeningLine => (
+                "GP0033",
+                "text follows the opening `\"\"\"` of a multi-line string".to_string(),
+                Some(
+                    "start the body on the next line; the indentation the body shares with \
+                     the closing `\"\"\"` is stripped from every line"
+                        .to_string(),
+                ),
+            ),
             ParseError::InvalidTupleIndex => (
                 "GP0011",
                 "invalid tuple index".to_string(),

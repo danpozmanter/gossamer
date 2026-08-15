@@ -485,7 +485,7 @@ fn immutable_bindings_cannot_reach_mutation_through_calls() {
         ),
         (
             "String push_str on immutable binding",
-            "fn main() { let text = \"a\".to_string()\n text.push_str(\"b\") }",
+            "fn main() { let text = \"a\"\n text.push_str(\"b\") }",
             ExpectedError::ImmutableBinding,
         ),
         (
@@ -565,7 +565,7 @@ fn every_builtin_writeback_method_requires_a_writable_receiver() {
         ("truncate", "text.truncate(1)"),
     ];
     for (method, call) in string_cases {
-        let source = format!("fn main() {{ let text = \"a\".to_string()\n {call} }}");
+        let source = format!("fn main() {{ let text = \"a\"\n {call} }}");
         assert_rejected(
             &format!("immutable String::{method} receiver"),
             &source,
@@ -730,7 +730,7 @@ fn mutable_places_and_reference_capabilities_remain_usable() {
         ),
         (
             "mutable builtin method on mutable value",
-            "fn main() { let mut values: Vec<i64> = Vec::from([1, 2])\n values.push(3)\n let mut text = \"a\".to_string()\n text.push_str(\"b\") }",
+            "fn main() { let mut values: Vec<i64> = Vec::from([1, 2])\n values.push(3)\n let mut text = \"a\"\n text.push_str(\"b\") }",
         ),
         (
             "qualified map and set mutations on mutable values",

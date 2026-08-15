@@ -44,6 +44,7 @@ version. This page is auto-generated from the catalogue in
 | [`GP0030`](#gp0030) | Parser | match arm missing body |
 | [`GP0031`](#gp0031) | Parser | match arm missing separator |
 | [`GP0032`](#gp0032) | Parser | removed collection literal |
+| [`GP0033`](#gp0033) | Parser | text after a triple-quote opener |
 | [`GP0034`](#gp0034) | Parser | missing item type |
 | [`GP0035`](#gp0035) | Parser | duplicate slice-pattern rest |
 | [`GP0036`](#gp0036) | Parser | duplicate struct-literal spread |
@@ -55,6 +56,7 @@ version. This page is auto-generated from the catalogue in
 | [`GR0005`](#gr0005) | Resolve | unknown module path |
 | [`GR0006`](#gr0006) | Resolve | removed stdlib item |
 | [`GR0007`](#gr0007) | Resolve | unknown stdlib item |
+| [`GR0017`](#gr0017) | Resolver | break or continue with no loop |
 | [`GT0001`](#gt0001) | Types | type mismatch |
 | [`GT0002`](#gt0002) | Types | unresolved method |
 | [`GT0003`](#gt0003) | Types | unresolved operator |
@@ -62,7 +64,6 @@ version. This page is auto-generated from the catalogue in
 | [`GT0005`](#gt0005) | Types | non-primitive cast |
 | [`GT0044`](#gt0044) | Types | generic return type not inferred |
 | [`GT0045`](#gt0045) | Types | question mark not supported here |
-| [`GK0001`](#gk0001) | Package manager | manifest parse error |
 
 ## `GP0001` <a id="gp0001"></a>
 
@@ -256,6 +257,12 @@ Separate same-line expression arms with a comma, or start the next arm on a new 
 
 A bracket spelling that used to build a container is no longer syntax. Construct the container through its type: `Type::new()` or `Type::from([a, b, c])`.
 
+## `GP0033` <a id="gp0033"></a>
+
+**Parser** - text after a triple-quote opener
+
+A multi-line `"""` literal carried text on the same line as its opening delimiter. The body starts on the next line, and the indentation it shares with the closing `"""` is stripped from every line.
+
 ## `GP0034` <a id="gp0034"></a>
 
 **Parser** - missing item type
@@ -322,6 +329,12 @@ A container spelling that a canonical name replaced. Each container has exactly 
 
 The `use` names a module that exists but an item that module does not export. Check the item spelling; `gos doc std::<module>` lists every name a module exports.
 
+## `GR0017` <a id="gr0017"></a>
+
+**Resolver** - break or continue with no loop
+
+A `break` or `continue` has no loop to act on: either none encloses it, or the label it names is not carried by any enclosing loop. A closure body is a separate function, so a loop outside it is not a target.
+
 ## `GT0001` <a id="gt0001"></a>
 
 **Types** - type mismatch
@@ -363,10 +376,4 @@ A generic return payload cannot be inferred from call arguments alone. Add an ex
 **Types** - question mark not supported here
 
 The `?` operator can only unwrap `Result` inside a `Result`-returning function or `Option` inside an `Option`-returning function.
-
-## `GK0001` <a id="gk0001"></a>
-
-**Package manager** - manifest parse error
-
-The package manifest (`gos.toml`) could not be parsed. Check the TOML syntax and required fields.
 

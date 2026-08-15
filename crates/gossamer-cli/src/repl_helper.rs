@@ -346,6 +346,7 @@ impl Highlighter for GosReplHelper {
                 }
                 TokenKind::StringLit
                 | TokenKind::RawStringLit { .. }
+                | TokenKind::TripleStringLit
                 | TokenKind::ByteStringLit
                 | TokenKind::RawByteStringLit { .. }
                 | TokenKind::CharLit

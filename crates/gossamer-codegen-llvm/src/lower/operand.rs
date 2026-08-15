@@ -199,6 +199,13 @@ impl<'a> Lowerer<'a> {
     /// leaf address. Packed byte-array elements are stored as `i8` regardless
     /// of their logical integer-shaped leaf type.
     pub(crate) fn store_value_to_place(&mut self, place: &Place, llvm_ty: &str, value: &str) {
+        // A unit destination holds no value: `void` is only legal as a
+        // function result, so both the store and any cast feeding it are
+        // invalid IR. The slot exists in MIR to name the assignment, and
+        // nothing ever reads a value back out of it.
+        if llvm_ty == "void" || llvm_ty.is_empty() {
+            return;
+        }
         let addr = if place.projection.is_empty() {
             local_slot(place.local)
         } else {

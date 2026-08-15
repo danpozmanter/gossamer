@@ -48,17 +48,38 @@ function consumeBlockComment(stream, state) {
   }
 }
 
+/// Consume the remainder of an open triple-quoted string, clearing the
+/// flag when its closing `"""` is reached on this line. An escape
+/// consumes the character after it, so `\"""` does not close.
+function consumeTripleString(stream, state) {
+  while (!stream.eol()) {
+    if (stream.match('"""')) {
+      state.inTripleString = false;
+      return;
+    }
+    if (stream.peek() === "\\") {
+      stream.next();
+    }
+    stream.next();
+  }
+}
+
 const gossamerStreamParser = {
   name: "gossamer",
 
   startState() {
-    return { inBlockComment: false };
+    return { inBlockComment: false, inTripleString: false };
   },
 
   token(stream, state) {
     if (state.inBlockComment) {
       consumeBlockComment(stream, state);
       return "comment";
+    }
+
+    if (state.inTripleString) {
+      consumeTripleString(stream, state);
+      return "string";
     }
 
     if (stream.eatSpace()) return null;
@@ -90,6 +111,14 @@ const gossamerStreamParser = {
     if (ch === "'") {
       if (stream.match(/^'(?:\\.|[^'\\])'/)) return "string";
       stream.next();
+      return "string";
+    }
+
+    // Triple-quoted string: spans lines, so its open state carries
+    // across token calls the way a block comment's does.
+    if (ch === '"' && stream.match('\"\"\"')) {
+      state.inTripleString = true;
+      consumeTripleString(stream, state);
       return "string";
     }
 

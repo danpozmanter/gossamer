@@ -3530,6 +3530,16 @@ impl<'a> Builder<'a> {
                 self.region_depth = self.region_depth.saturating_sub(1);
                 ("gos_rt_arena_pop", self.tcx.unit())
             }
+            // The three entries a `cohort { }` block desugars to, plus
+            // the two a child uses to cooperate with cancellation.
+            "runtime::cohort_push" => (
+                "gos_rt_cohort_push",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "runtime::cohort_join" => ("gos_rt_cohort_join", self.result_unit_error_adt_ty()),
+            "runtime::cohort_pop" => ("gos_rt_cohort_pop", self.tcx.unit()),
+            "runtime::cohort_cancelled" => ("gos_rt_cohort_cancelled", self.tcx.bool_ty()),
+            "runtime::cohort_cancel" => ("gos_rt_cohort_cancel", self.tcx.unit()),
             "testing::check" => ("gos_rt_testing_check", self.tcx.bool_ty()),
             "testing::check_eq" => ("gos_rt_testing_check_eq_i64", self.tcx.bool_ty()),
             "testing::wait_for_scheduler_idle" => {

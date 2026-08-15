@@ -1,5 +1,147 @@
 # Changelog
 
+## 0.51.0 - Cohorts: structured concurrency, ergonomic features and fixes
+
+- Add `cohort { }`, a block that owns the goroutines `spawn`ed inside it.
+  The block cannot be left until every child has finished - on every exit
+  path, including `return`, `break`, and a `?` out of the middle - and its
+  value is `Result<(), errors::Error>`, so it composes with `?`. A child
+  fails by panicking or answering `Err`; the reported failure is the one
+  with the lowest spawn index rather than the first to arrive, so the
+  answer does not depend on completion order or on which tier runs it.
+- Run `main` inside an implicit root cohort. No spawned goroutine outlives
+  the program, and one that fails with nobody joining its handle is
+  reported on stderr at exit instead of vanishing.
+- Cancel cooperatively, never by killing. A cancelled child observes
+  cancellation as an operation's ordinary "nothing more is coming" answer:
+  a `recv` reports `None` exactly as a closed channel does, a `sleep`
+  returns early, and a blocked `select` resolves. The child leaves through
+  its own exit path, so its `defer` frames and destructors run in order.
+  Pure computation is not a cancellation point; `runtime::cohort_cancelled()`
+  lets a CPU-bound child cooperate where it chooses.
+- Take cohort settings as header arguments: `policy:` (`Policy::FailFast`,
+  `Policy::CollectAll`, `Policy::Race`), `timeout:` in milliseconds, and
+  `context: Context::Isolated`, which gives each child a dedicated OS
+  thread for synchronous Rust FFI and never-yielding CPU-bound work.
+- Report a `go` written inside a cohort as `GL0053`: it starts a goroutine
+  the cohort does not own. `go` itself is unchanged and stays the detached
+  form.
+- Strip the shared indentation from a triple-quoted string. `"""` opens a
+  literal whose body starts on the next line; the whitespace it shares with
+  the closing `"""` comes off every line, so embedded HTML or SQL keeps the
+  shape of the code around it. Escapes work as in `"..."` and decode after
+  the strip, and only whitespace may follow the opening `"""` (`GP0033`).
+- Move a triple-quoted body with the line that opens it in `gos fmt`.
+  Re-indenting the statement re-indents the whole block, and the formatter's
+  no-destruction gate now holds such a literal to the contents it decodes to
+  rather than to the text that spells it.
+- Take a std function named in value position as the closure that calls it, so
+  `#[1.0, -2.0].map(math::abs)` works on every tier. Only eight std functions
+  had been usable this way, each hand-tabled with a runtime symbol; the
+  rewrite reads the parameter count from the signature catalogue instead and
+  covers every std module, so `#["ab"].map(base64::encode)` compiles rather
+  than reaching the linker as an undefined symbol. `GT0015` now reports only
+  a function with no fixed parameter list, such as `fmt::format`.
+- Run the same caller-side normalisation in the REPL and the playground that a
+  file gets. Both drive the front end phase by phase, and each pass they had to
+  repeat was a chance to drift: a std function passed to `map` worked in a file
+  and reported `GT0015` at the prompt.
+- Abbreviate a callback with `$`: `#[1.0, -2.0].map($.abs)` is
+  `map(|v| v.abs())`. A `$`-headed projection written as a call argument is the
+  closure over that argument, with the same forms `$` already has in a pipe
+  step - `$.name` the nullary method call, `$.name(a)` with arguments, and
+  `$.0` / `$[i]` projecting. A bare `$` argument keeps its pipe meaning.
+- Type the `math` surface reached in method position. `x.sqrt()`, `(-2).abs()`,
+  and `a.pow(b)` answered an unresolved inference variable, so a `Vec` built
+  from one could not be debug-formatted on the compiled tiers; `abs`, `min`,
+  `max`, and `clamp` answer in the receiver's own type and the rest in `f64`.
+- Convert an integer argument to a float math intrinsic on the native tiers.
+  `9.sqrt()` reached the LLVM intrinsic as an `i64` and the build failed on
+  malformed IR.
+- Type a closure's captured value by the value it holds, whatever expression
+  reaches it. A capture the type walk did not reach - one used only inside a
+  tuple, a `Vec` or array literal, a set, or a range - took the closure's return
+  type instead, so a compiled build laid out and reference-counted an `i64` in a
+  `String`'s slot and faulted when the integer's low bits happened to look like
+  a string pointer. The capture's type now comes from the same traversal that
+  finds it, so the two cannot disagree.
+- Reject a field read on a value that has no fields. `x.abs` on a number,
+  `s.field` on a `String`, and `v.field` on a `Vec` passed `gos check` and
+  faulted at run time; the report names the type and, when the name is one of
+  its methods, says to call it.
+- Report a callback argument the checker can rule out. A non-callable in a
+  callback slot (`#[1, 2].map("x")`) passed `gos check` and failed at run time
+  as an unbound name, and a callable of the wrong parameter count reached the
+  runtime as an argument-count error with no source position.
+- Name the expected and found types the right way round when a callback slot
+  is given the wrong thing. `(0..9).map(1)` reported the argument as expected
+  and the callable shape as found.
+- Take `collect` off every receiver that is not an iterator, and `to_vec` off
+  `Vec` and `to_string` off `String`. A collection that already holds its
+  values has no chain to end, and neither name converts a type into itself;
+  `iter().collect()` and `clone()` are the spellings that remain. `%info` also
+  stops advertising a method the checker rejects: the runtime registers a
+  builtin name once for every receiver, and discovery had read that as
+  evidence each receiver had it.
+- Reject a `break` or `continue` that has no loop to act on, as `GR0017`.
+  A label naming no enclosing loop passed `gos check`, then failed at run time
+  with an interpreter-limitation message and produced a native binary that
+  trapped; the diagnostic now names the label and lists the ones in scope. The
+  same check covers a bare `break` or `continue` outside any loop, and one
+  written inside a closure, which is a separate function from the loop around
+  it.
+- Answer `%info` and `%explain` from the session, not only the stdlib catalog.
+  A struct reports its fields, a type the traits implemented for it, a trait
+  its methods and implementors, and every method carries the trait it came
+  from or `[inherent]`; `%info Point` on a type declared at the prompt used to
+  answer `nothing found`. A session `impl` on a builtin type adds to that
+  type's catalog entry rather than replacing it.
+- Say what a builtin type is on its `%info` line. `String [type]` and its
+  siblings printed a bare name and tag; each now carries a description, and a
+  type owning methods is named once rather than twice.
+- Hold every shipped `.gos` source to canonical form. The formatting gate
+  read only the top level of two directories, so sources under
+  `examples/projects/*/src/` and `conformance/` had drifted; ten are
+  reformatted and the gate now walks them.
+- Drop `GK0001` from the published diagnostics reference. No code emitted
+  it and its text named a `gos.toml` manifest that does not exist, so the
+  page documented a diagnostic `gos explain` could not look up.
+- Carry a spawned callable's whole return value. A `Result` or `Option`
+  comes back in two registers, and the spawn path read one, so a compiled
+  `spawn(|| work())` answered `Ok(0)` for `Ok(10)` and dereferenced a null
+  error for `Err`.
+- Type `spawn(f)` as `JoinHandle<T>` and `handle.join()` as
+  `Result<T, String>`. Neither had a type rule, so `spawn(f).join()` failed
+  the native build with an undefined symbol and `handle.join()?` was
+  rejected as not a `Result`.
+- Check `return` inside a closure against the closure's own return type. It
+  was checked against the enclosing function's, so a closure with a return
+  type could not use `return` at all.
+- Render `{:?}` of a `Result<(), E>` in a compiled build. The unit payload
+  had no formatter, so the LLVM backend refused the program outright.
+- Assign nothing to a unit destination in a compiled build. A `?` on a
+  `Result<(), E>` inside a closure emitted `bitcast i64 .. to void`, which
+  LLVM rejects, so the program failed to build at all.
+- Render `{:?}` of a nested `Result` / `Option`, and of an `errors::Error`
+  inside one, in a compiled build. `println!("{:?}", handle.join())` printed
+  on the VM and refused to build natively.
+- Reclaim a copied aggregate with no child layout. `gos_rt_rc_alloc_copy`
+  accepted a null meta blob and then dereferenced it.
+- Keep one `time::sleep`. Two builtins were registered under that name and
+  the one that won ignored cancellation.
+- Wake a child that a cohort cancels while it is on its way into a park.
+  The cancel landed between the child's cohort check and its registration
+  as a waiter, so it woke nobody and the child stayed parked; a release
+  build finished its work and then hung at exit.
+- Notify a channel's waiters under that channel's own lock, so a
+  cancellation raised while a receiver is deciding whether to sleep cannot
+  be lost.
+- Read a failed child's error message through its length header, so a
+  message carrying an interior NUL is not truncated.
+- Stop reporting `GL0011` for a `panic!` inside a closure in `main`. A panic
+  in a spawned goroutine ends that goroutine and reaches the program through
+  its join handle, so it is not the abort the lint describes.
+
 ## 0.50.1 - Lazy collections, native/JIT crash, diagnostic, and parity fixes
 
 - Drive a `for` loop over a lazy iterator through its cursor. The loop read

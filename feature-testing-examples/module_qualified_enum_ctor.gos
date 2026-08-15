@@ -24,7 +24,7 @@ fn describe(s: shapes::Shape) -> String {
     match s {
         shapes::Shape::Circle(r) => format!("circle {:.1}", r)
         shapes::Shape::Rect(w, h) => format!("rect {:.1}x{:.1}", w, h)
-        shapes::Shape::Point => "point".to_string()
+        shapes::Shape::Point => "point"
     }
 }
 

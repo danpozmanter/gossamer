@@ -708,8 +708,7 @@ fn writeback_block(
         )],
         tail: Some(Box::new(place)),
         synthetic: true,
-        is_arena: false,
-        is_comptime: false,
+        kind: gossamer_ast::BlockKind::Plain,
     })
 }
 

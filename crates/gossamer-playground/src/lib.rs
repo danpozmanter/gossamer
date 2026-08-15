@@ -221,13 +221,13 @@ fn front_end(
         .collect();
 
     let (resolutions, resolve_diags) = resolve_source_file(&sf);
-    // A named argument and a parameter default are caller-side
-    // spellings, rewritten into the callee's declared order before the
-    // checker sees the call. Every front end has to run this: without
+    // A named argument, a parameter default, and a std function named in
+    // value position are caller-side spellings, rewritten into the one
+    // shape the checker sees. Every front end has to run this: without
     // it a call that omits a defaulted parameter reaches the checker
     // with fewer arguments than the function declares, and is reported
     // as an arity error.
-    let named_arg_diags = gossamer_resolve::resolve_named_arguments(&mut sf, &resolutions);
+    let named_arg_diags = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let in_scope = top_level_names(&sf);
     diagnostics.extend(
         named_arg_diags

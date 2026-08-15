@@ -3,9 +3,9 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GT0015]: A std free function was used as a first-class value but is not - here
+error[GT0015]: A std free function was used as a first-class value, and it takes - here
 --- framed ---
-error[GT0015]: A std free function was used as a first-class value but is not
+error[GT0015]: A std free function was used as a first-class value, and it takes
   --> snap.gos:2:5
      2 |     let x = 1
        |     ^^^^^

@@ -1,3 +1,3 @@
 # `lang::go`
 
-Goroutine spawn.
+Goroutine spawn, detached.

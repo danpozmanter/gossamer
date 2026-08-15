@@ -148,6 +148,22 @@ pub enum ResolveError {
         /// Type as the user spelled it in the turbofish.
         name: String,
     },
+    /// A `break` or `continue` written where no loop encloses it.
+    #[error("`{keyword}` outside of a loop")]
+    LoopControlOutsideLoop {
+        /// The keyword as written, `break` or `continue`.
+        keyword: String,
+    },
+    /// A `break 'label` / `continue 'label` naming no enclosing loop.
+    #[error("no enclosing loop is labelled `\'{label}`")]
+    UnknownLoopLabel {
+        /// The keyword as written, `break` or `continue`.
+        keyword: String,
+        /// Label as written, without its leading apostrophe.
+        label: String,
+        /// Labels that are in scope here, for the help line.
+        in_scope: Vec<String>,
+    },
     /// A `name =` argument label naming no parameter of the callee.
     #[error("`{name}` is not a parameter of this function")]
     UnknownNamedArgument {
@@ -263,6 +279,8 @@ impl ResolveError {
             Self::NotImported { .. } => "not-imported",
             Self::DependencyNotImported { .. } => "dependency-not-imported",
             Self::MissingModuleSource { .. } => "missing-module-source",
+            Self::LoopControlOutsideLoop { .. } => "loop-control-outside-loop",
+            Self::UnknownLoopLabel { .. } => "unknown-loop-label",
         }
     }
 
@@ -292,7 +310,10 @@ impl ResolveError {
             | Self::NamedArgumentTarget { name, .. }
             | Self::NonConstantDefault { name }
             | Self::DuplicateImport { name } => name,
-            Self::PositionalAfterNamed | Self::MissingRequiredArgument { .. } => return false,
+            Self::PositionalAfterNamed
+            | Self::MissingRequiredArgument { .. }
+            | Self::LoopControlOutsideLoop { .. }
+            | Self::UnknownLoopLabel { .. } => return false,
             Self::DependencyNotImported { module, .. } => module,
             Self::AmbiguousNamedArgument { method, .. } => method,
             Self::UnknownModulePath { path } | Self::RemovedStdItem { path, .. } => path,
@@ -338,6 +359,7 @@ impl ResolveError {
             Self::NonConstantDefault { .. } => "GR0014",
             Self::MissingRequiredArgument { .. } => "GR0015",
             Self::DependencyNotImported { .. } => "GR0016",
+            Self::LoopControlOutsideLoop { .. } | Self::UnknownLoopLabel { .. } => "GR0017",
         }
     }
 }
@@ -355,6 +377,14 @@ impl ResolveDiagnostic {
         let mut out =
             Diagnostic::error(Code(self.error.code()), title.clone()).with_primary(location, title);
         if let ResolveError::UnresolvedName { name } = &self.error {
+            if name == "$" {
+                return out.with_help(
+                    "`$` stands for a value the surrounding form supplies: the piped value \
+                     in a `|>` step, or the argument of the callback a projection like \
+                     `$.method` abbreviates"
+                        .to_string(),
+                );
+            }
             if let Some(replacement) = crate::stdlib_exports::canonical_collection_name(name) {
                 return out.with_help(format!(
                     "`{replacement}` is the one spelling for this type; write `{replacement}` \
@@ -463,6 +493,8 @@ impl ResolveDiagnostic {
             } => out.with_help(format!(
                 "use a {expected} in this position; `{name}` resolves to a {found}"
             )),
+            error @ (ResolveError::LoopControlOutsideLoop { .. }
+            | ResolveError::UnknownLoopLabel { .. }) => loop_control_help(out, location, error),
             ResolveError::UnknownNamedArgument { .. }
             | ResolveError::DuplicateNamedArgument { .. }
             | ResolveError::PositionalAfterNamed
@@ -568,4 +600,53 @@ fn closest_module_path(path: &str) -> Option<&'static str> {
         return Some(exact);
     }
     gossamer_diagnostics::suggest(written, crate::STDLIB_MODULE_PATHS.iter().copied(), 2)
+}
+
+/// Help and did-you-mean for a `break` / `continue` with no loop to act
+/// on, or one naming a label no enclosing loop carries.
+fn loop_control_help(
+    out: gossamer_diagnostics::Diagnostic,
+    location: gossamer_diagnostics::Location,
+    error: &ResolveError,
+) -> gossamer_diagnostics::Diagnostic {
+    use gossamer_diagnostics::{Suggestion, suggest};
+
+    let (keyword, label, in_scope) = match error {
+        ResolveError::LoopControlOutsideLoop { keyword } => {
+            return out.with_help(format!(
+                "`{keyword}` acts on the innermost enclosing loop, so it needs one; move it \
+                 inside a `loop`, `while`, or `for`"
+            ));
+        }
+        ResolveError::UnknownLoopLabel {
+            keyword,
+            label,
+            in_scope,
+        } => (keyword, label, in_scope),
+        // Only the two loop-control errors reach here.
+        _ => return out,
+    };
+    let out = if in_scope.is_empty() {
+        out.with_help(format!(
+            "no enclosing loop carries a label; write `'name: loop {{ .. }}` on the \
+             loop `{keyword}` should act on, or drop the label"
+        ))
+    } else {
+        out.with_help(format!(
+            "labels in scope here: {}",
+            in_scope
+                .iter()
+                .map(|name| format!("`'{name}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    };
+    match suggest(label, in_scope.iter().map(String::as_str), 2) {
+        Some(best) => out.with_suggestion(Suggestion::replacement(
+            location,
+            format!("did you mean `'{best}`?"),
+            format!("{keyword} '{best}"),
+        )),
+        None => out,
+    }
 }

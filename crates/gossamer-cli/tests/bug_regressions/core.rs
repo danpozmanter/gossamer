@@ -262,12 +262,12 @@ enum Shape { Circle(i64), Rect(i64, i64), Unit }
 struct Point { x: i64, y: i64 }
 fn classify(n: i64) -> String {
     match n {
-        0 => "zero".to_string(),
-        1 | 2 | 3 => "small".to_string(),
-        4..=9 => "mid".to_string(),
-        x if x < 0 => "neg".to_string(),
+        0 => "zero",
+        1 | 2 | 3 => "small",
+        4..=9 => "mid",
+        x if x < 0 => "neg",
         big @ 100..=999 => format!("big:{}", big),
-        _ => "huge".to_string(),
+        _ => "huge",
     }
 }
 fn area(s: &Shape) -> i64 {
@@ -417,8 +417,8 @@ fn usize_index_works_for_string_arrays() {
     let src = r#"
 fn try_it() {
     let mut args: Vec<String> = [].to_vec()
-    args.push("zero".to_string())
-    args.push("one".to_string())
+    args.push("zero")
+    args.push("one")
     let mut i: usize = 0
     while i < args.len() {
         println!("[{}] = {}", i, args[i].clone())
@@ -458,7 +458,7 @@ fn indexing_tuple_slices_with_usize_works() {
     // above.
     let src = r#"
 fn first_key(vars: &[(String, String)]) -> String {
-    if vars.len() == 0 { return "".to_string() }
+    if vars.len() == 0 { return "" }
     let mut i: usize = 0
     while i < vars.len() {
         let _ = vars[i].0.clone()
@@ -469,8 +469,8 @@ fn first_key(vars: &[(String, String)]) -> String {
 
 fn main() {
     let pairs = [
-        ("alpha".to_string(), "1".to_string()),
-        ("beta".to_string(), "2".to_string()),
+        ("alpha", "1"),
+        ("beta", "2"),
     ].to_vec()
     println!("{}", first_key(&pairs))
 }
@@ -496,7 +496,7 @@ fn iter_next_is_bound_and_returns_some_for_first() {
     // a non-matching value).
     let src = r#"
 fn main() {
-    let xs = ["a".to_string(), "b".to_string()].to_vec()
+    let xs = ["a", "b"].to_vec()
     let mut it = xs.iter()
     match it.next() {
         Some(s) => println!("first={}", s),
@@ -613,9 +613,9 @@ fn json_set_appends_and_replaces_fields() {
 use std::encoding::json
 fn main() {
     let obj = json::Value::object()
-    let with_a = json::set(obj, &"a".to_string(), &json::Value::Int(1))
-    let with_b = json::set(with_a, &"b".to_string(), &json::Value::String("hello".to_string()))
-    let replaced = json::set(with_b, &"a".to_string(), &json::Value::Int(99))
+    let with_a = json::set(obj, &"a", &json::Value::Int(1))
+    let with_b = json::set(with_a, &"b", &json::Value::String("hello"))
+    let replaced = json::set(with_b, &"a", &json::Value::Int(99))
     println!("{}", json::render(&replaced))
 }
 "#;
@@ -712,7 +712,7 @@ fn regex_captures_indexing_works() {
 use std::regex
 fn main() {
     let re = regex::compile("(\\w+)=(\\d+)").unwrap()
-    let caps = regex::captures_all(&re, &"a=1 b=22".to_string())
+    let caps = regex::captures_all(&re, &"a=1 b=22")
     if caps.len() == 0 {
         println!("no match")
     } else {
@@ -1003,4 +1003,122 @@ fn assoc_missing_impl_item_is_rejected() {
         stderr.contains("add `type Item = ...`"),
         "help must name the fix: {stderr}"
     );
+}
+
+#[test]
+fn break_unknown_label_is_rejected() {
+    // `break 'wrong` inside a loop labelled `'search`: the label names no
+    // enclosing loop, so `gos check` reports it and names the labels that
+    // are in scope, rather than leaving the program to fault at run time.
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../feature-testing-examples/break_unknown_label.gos");
+    let out = Command::new(gos_bin())
+        .arg("check")
+        .arg(&fixture)
+        .output()
+        .expect("spawn gos check");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "check unexpectedly passed: {stderr}");
+    assert!(
+        stderr.contains("GR0017"),
+        "expected GR0017, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("no enclosing loop is labelled `'wrong`"),
+        "diagnostic must name the label: {stderr}"
+    );
+    assert!(
+        stderr.contains("`'search`"),
+        "diagnostic must list the labels in scope: {stderr}"
+    );
+}
+
+#[test]
+fn break_unknown_label_is_rejected_by_build_too() {
+    // The compiled path took the same program and produced a binary that
+    // trapped; refusing at check time covers `gos build` as well.
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../feature-testing-examples/break_unknown_label.gos");
+    let out = Command::new(gos_bin())
+        .arg("build")
+        .arg(&fixture)
+        .output()
+        .expect("spawn gos build");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stderr.contains("GR0017"),
+        "build must refuse the program: stdout={stdout} stderr={stderr}"
+    );
+    assert!(
+        !stdout.contains("native executable"),
+        "build must not emit a binary: {stdout}"
+    );
+}
+
+#[test]
+fn break_and_continue_outside_a_loop_are_rejected() {
+    for (source, keyword) in [
+        ("fn main() {\n    break\n}\n", "break"),
+        ("fn main() {\n    continue\n}\n", "continue"),
+        // A closure is a separate function, so a loop around it is not a
+        // target for a `break` written inside it.
+        (
+            "fn main() {\n    for i in 0..3 {\n        let f = || { break }\n        f()\n    }\n}\n",
+            "break",
+        ),
+    ] {
+        let path = std::env::temp_dir().join(format!(
+            "gos-loop-control-{}-{}.gos",
+            keyword,
+            std::process::id()
+        ));
+        std::fs::write(&path, source).expect("write fixture");
+        let out = Command::new(gos_bin())
+            .arg("check")
+            .arg(&path)
+            .output()
+            .expect("spawn gos check");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !out.status.success(),
+            "check unexpectedly passed for {source:?}: {stderr}"
+        );
+        assert!(
+            stderr.contains("GR0017") && stderr.contains(&format!("`{keyword}` outside of a loop")),
+            "expected an outside-of-a-loop GR0017 for {source:?}, got: {stderr}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[test]
+fn a_label_on_an_enclosing_loop_still_resolves() {
+    let source = concat!(
+        "fn main() {\n",
+        "    let mut found = (0, 0)\n",
+        "    'search: for row in 0..5 {\n",
+        "        'inner: for col in 0..5 {\n",
+        "            if row * col == 6 {\n",
+        "                found = (row, col)\n",
+        "                break 'search\n",
+        "            }\n",
+        "            continue 'inner\n",
+        "        }\n",
+        "    }\n",
+        "    println!(\"{:?}\", found)\n",
+        "}\n"
+    );
+    let path = std::env::temp_dir().join(format!("gos-loop-ok-{}.gos", std::process::id()));
+    std::fs::write(&path, source).expect("write fixture");
+    let out = Command::new(gos_bin())
+        .arg("run")
+        .arg(&path)
+        .output()
+        .expect("spawn gos run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "run failed: {stderr}");
+    assert!(stdout.contains("(2, 3)"), "stdout: {stdout}");
+    let _ = std::fs::remove_file(&path);
 }

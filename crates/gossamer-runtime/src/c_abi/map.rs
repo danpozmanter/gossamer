@@ -1636,6 +1636,12 @@ unsafe fn skip_desc(tags: *const u8, cursor: &mut usize) {
             skip_desc(tags, cursor);
         },
         gossamer_abi::DESC_SET_I64 | gossamer_abi::DESC_SET_STR => *cursor += 1,
+        gossamer_abi::DESC_OPTION => unsafe { skip_desc(tags, cursor) },
+        gossamer_abi::DESC_ERROR => {}
+        gossamer_abi::DESC_RESULT => unsafe {
+            skip_desc(tags, cursor);
+            skip_desc(tags, cursor);
+        },
         _ => {}
     }
 }
@@ -1703,6 +1709,58 @@ pub(crate) unsafe fn render_desc_value(
             } else {
                 out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(rendered) });
             }
+        }
+        gossamer_abi::DESC_ERROR => {
+            *cursor += 1;
+            let word = unsafe { (slot as *const i64).read_unaligned() };
+            if word == 0 {
+                return;
+            }
+            let rendered = unsafe {
+                crate::c_abi::gos_rt_error_display(std::ptr::with_exposed_provenance(word as usize))
+            };
+            if !rendered.is_null() {
+                out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(rendered) });
+            }
+        }
+        gossamer_abi::DESC_RESULT | gossamer_abi::DESC_OPTION => {
+            *cursor += 1;
+            let is_option = tag == gossamer_abi::DESC_OPTION;
+            // The slot holds a pointer to the nested value's two words:
+            // the discriminant, then the payload the selected arm carries.
+            let word = unsafe { (slot as *const i64).read_unaligned() };
+            let pair: *const i64 = std::ptr::with_exposed_provenance(word as usize);
+            let (disc, payload) = if pair.is_null() {
+                (0i64, 0i64)
+            } else {
+                unsafe { (pair.read_unaligned(), pair.add(1).read_unaligned()) }
+            };
+            let first_desc = *cursor;
+            unsafe { skip_desc(tags, cursor) };
+            let second_desc = *cursor;
+            if !is_option {
+                unsafe { skip_desc(tags, cursor) };
+            }
+            let arm_desc = if disc == 0 { first_desc } else { second_desc };
+            out.push_str(match (is_option, disc) {
+                (true, 0) => "Some(",
+                (true, _) => "None",
+                (false, 0) => "Ok(",
+                (false, _) => "Err(",
+            });
+            if is_option && disc != 0 {
+                return;
+            }
+            let mut arm_cursor = arm_desc;
+            unsafe {
+                render_desc_value(
+                    out,
+                    std::ptr::addr_of!(payload).cast::<u8>(),
+                    tags,
+                    &mut arm_cursor,
+                );
+            }
+            out.push(')');
         }
         gossamer_abi::DESC_SET_I64 | gossamer_abi::DESC_SET_STR => {
             *cursor += 1;

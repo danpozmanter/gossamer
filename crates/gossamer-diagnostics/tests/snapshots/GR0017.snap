@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GR0017]: A `break` or `continue` has no loop to act on: either none encloses - here
+--- framed ---
+error[GR0017]: A `break` or `continue` has no loop to act on: either none encloses
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

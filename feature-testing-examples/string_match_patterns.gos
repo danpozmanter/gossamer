@@ -31,17 +31,17 @@ fn guarded(s: &String, n: i64) -> String {
 }
 
 fn main() {
-    println!("{}", classify(&"GET".to_string()))
-    println!("{}", classify(&"POST".to_string()))
-    println!("{}", classify(&"DELETE".to_string()))
+    println!("{}", classify(&"GET"))
+    println!("{}", classify(&"POST"))
+    println!("{}", classify(&"DELETE"))
 
-    println!("{}", describe("SELECT".to_string()))
-    println!("{}", describe("INSERT".to_string()))
-    println!("{}", describe("UPDATE".to_string()))
+    println!("{}", describe("SELECT"))
+    println!("{}", describe("INSERT"))
+    println!("{}", describe("UPDATE"))
 
-    println!("{}", guarded(&"big".to_string(), 200))
-    println!("{}", guarded(&"big".to_string(), 50))
-    println!("{}", guarded(&"small".to_string(), 200))
+    println!("{}", guarded(&"big", 200))
+    println!("{}", guarded(&"big", 50))
+    println!("{}", guarded(&"small", 200))
 }
 
 #[cfg(test)]
@@ -50,32 +50,32 @@ mod string_match_patterns_tests {
 
     #[test]
     fn ref_string_classify() {
-        let _ = testing::check_eq(&super::classify(&"GET".to_string()), &"read", "GET=read")
-        let _ = testing::check_eq(&super::classify(&"POST".to_string()), &"write", "POST=write")
-        let _ = testing::check_eq(&super::classify(&"DELETE".to_string()), &"other", "DELETE=other")
+        let _ = testing::check_eq(&super::classify(&"GET"), &"read", "GET=read")
+        let _ = testing::check_eq(&super::classify(&"POST"), &"write", "POST=write")
+        let _ = testing::check_eq(&super::classify(&"DELETE"), &"other", "DELETE=other")
     }
 
     #[test]
     fn owned_string_describe() {
-        let _ = testing::check_eq(&super::describe("SELECT".to_string()), &"query", "SELECT=query")
-        let _ = testing::check_eq(&super::describe("INSERT".to_string()), &"write", "INSERT=write")
-        let _ = testing::check_eq(&super::describe("UPDATE".to_string()), &"unknown", "UPDATE=unknown")
+        let _ = testing::check_eq(&super::describe("SELECT"), &"query", "SELECT=query")
+        let _ = testing::check_eq(&super::describe("INSERT"), &"write", "INSERT=write")
+        let _ = testing::check_eq(&super::describe("UPDATE"), &"unknown", "UPDATE=unknown")
     }
 
     #[test]
     fn string_pattern_with_guard() {
         let _ = testing::check_eq(
-            &super::guarded(&"big".to_string(), 200)
+            &super::guarded(&"big", 200)
             &"big and large"
             "big+200"
         )
         let _ = testing::check_eq(
-            &super::guarded(&"big".to_string(), 50)
+            &super::guarded(&"big", 50)
             &"big but small"
             "big+50"
         )
         let _ = testing::check_eq(
-            &super::guarded(&"small".to_string(), 200)
+            &super::guarded(&"small", 200)
             &"other"
             "small+200"
         )

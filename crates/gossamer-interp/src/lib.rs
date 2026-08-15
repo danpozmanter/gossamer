@@ -158,6 +158,7 @@ pub use comptime::fold_into_source;
 pub use external_natives::{
     clear_external_natives_for_test, external_natives_snapshot, register_external_native,
 };
+pub use stdlib_builtins::cohort::{close_root as close_root_cohort, open_root as open_root_cohort};
 pub use value::{
     Channel, Closure, NativeEnumOwner, NativeEnumShape, NativeStructShape, RuntimeError,
     RuntimeResult, SmolStr, Value, native_enum_to_variant, registry_stats_for_test,

@@ -622,7 +622,7 @@ fn nested_vec_push_retains_inner_vec_once_for_container_share() {
 fn main() {
     let mut outer: Vec<Vec<String>> = Vec::new()
     let mut inner: Vec<String> = Vec::new()
-    inner.push("value".to_string())
+    inner.push("value")
     outer.push(inner)
     println(outer[0][0])
 }

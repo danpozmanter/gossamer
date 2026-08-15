@@ -487,7 +487,7 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         &[
             ("now", builtin_time_now),
             ("now_ms", builtin_time_now_ms),
-            ("sleep", builtin_time_sleep),
+            ("sleep", crate::stdlib_builtins::time_completeness::builtin_time_sleep),
             ("sleep_ctx", builtin_time_sleep_ctx),
             ("format_rfc3339", builtin_time_format_rfc3339),
             ("parse_rfc3339", builtin_time_parse_rfc3339),
@@ -1458,6 +1458,12 @@ fn native_variant_map_err(
         return Ok(Value::variant("Err", vec![mapped]));
     }
     Ok(receiver)
+}
+
+/// An `errors::Error` value with `message` and no cause - the shape a
+/// runtime-side failure (a cohort's child report) hands back to source.
+pub(crate) fn make_error_value(message: &str) -> Value {
+    errors_struct(message.to_string(), Value::variant("None", vec![]))
 }
 
 fn errors_struct(message: String, cause: Value) -> Value {

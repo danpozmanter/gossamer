@@ -394,6 +394,13 @@ const PRELUDE_VALUES: &[&str] = &[
     "__gos_sql_native_value_blob_of",
 ];
 
+/// Whether `name` is a prelude value: a callable or constructor every
+/// program can reach without an import.
+#[must_use]
+pub fn is_prelude_value(name: &str) -> bool {
+    PRELUDE_VALUES.contains(&name)
+}
+
 pub(crate) fn prelude_suggestion_names() -> impl Iterator<Item = &'static str> {
     PRIMITIVE_TYPES
         .iter()

@@ -98,9 +98,14 @@ fn run_source_on_vm(
     profile_rss_stage("frontend_released");
     profile_rss_stage("vm_loaded");
     drop(program);
+    // `main` runs inside the root cohort, so every `spawn` has a cohort
+    // to belong to: no goroutine outlives the program, and a child's
+    // failure that nothing reads is reported instead of vanishing.
+    gossamer_interp::open_root_cohort();
     let r = vm.call("main", Vec::new());
     profile_rss_stage("execution_complete");
     vm.release_jit_prelude();
+    gossamer_interp::close_root_cohort();
     gossamer_interp::join_outstanding_goroutines();
     gossamer_interp::flush_runtime_stdout();
     match r {

@@ -489,8 +489,7 @@ fn unroll_typeinfo_loop(
         stmts,
         tail: None,
         synthetic: true,
-        is_arena: false,
-        is_comptime: false,
+        kind: gossamer_ast::BlockKind::Plain,
     }
 }
 

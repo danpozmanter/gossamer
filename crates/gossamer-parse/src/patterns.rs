@@ -240,7 +240,7 @@ impl Parser<'_> {
                 self.bump();
                 Some(Literal::Float(self.slice(token.span).to_string()))
             }
-            TokenKind::StringLit | TokenKind::RawStringLit { .. } => {
+            TokenKind::StringLit | TokenKind::RawStringLit { .. } | TokenKind::TripleStringLit => {
                 self.bump();
                 Some(Literal::String(string_literal_value(
                     self.slice(token.span),
@@ -403,6 +403,11 @@ impl Parser<'_> {
 /// the parser accepts the raw body between the quotes verbatim; future
 /// phases may implement full escape decoding.
 pub(crate) fn string_literal_value(source: &str) -> String {
+    // A triple-quoted literal also opens and closes with `"`, so its
+    // dedent must be recognised before the ordinary-string strip.
+    if source.len() >= 6 && source.starts_with("\"\"\"") && source.ends_with("\"\"\"") {
+        return decode_string_escapes(&gossamer_lex::triple_string(source).body());
+    }
     if let Some(stripped) = source
         .strip_prefix('"')
         .and_then(|text| text.strip_suffix('"'))

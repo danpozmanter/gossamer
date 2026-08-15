@@ -325,7 +325,7 @@ fn cross_file_chained_sibling_module_calls() {
     .unwrap();
     fs::write(
         src.join("util.gos"),
-        "pub fn helper() -> String { \"leaf\".to_string() }\n",
+        "pub fn helper() -> String { \"leaf\" }\n",
     )
     .unwrap();
 
@@ -406,7 +406,7 @@ fn native_binary_os_read_file_to_string_returns_real_contents() {
     let src = format!(
         r#"use std::fs
 fn main() {{
-    let p: String = "{p}".to_string()
+    let p: String = "{p}"
     match fs::read_to_string(&p) {{
         Ok(s) => println!("ok len={{}} content={{}}", s.len(), s),
         Err(e) => println!("err: {{}}", e),
@@ -445,9 +445,9 @@ fn native_binary_exec_run_returns_subprocess_output() {
 use std::os::exec
 fn main() {
     println!("calling exec::run")
-    let mut argv: Vec<String> = Vec::from([]).to_vec()
-    argv.push("hello-via-echo".to_string())
-    match exec::run(&"echo".to_string(), &argv) {
+    let mut argv: Vec<String> = Vec::from([])
+    argv.push("hello-via-echo")
+    match exec::run(&"echo", &argv) {
         Ok(o) => println!("code={} stdout={}", o.code, o.stdout),
         Err(e) => println!("err: {}", e),
     }
@@ -492,10 +492,10 @@ fn native_binary_exec_run_with_literal_array_args() {
 use std::os::exec
 fn main() {
     let args: Vec<String> = [
-        "-n".to_string(),
-        "from-literal-array".to_string(),
+        "-n",
+        "from-literal-array",
     ].to_vec()
-    match exec::run(&"echo".to_string(), &args) {
+    match exec::run(&"echo", &args) {
         Ok(o) => println!("ok code={} stdout={}", o.code, o.stdout),
         Err(e) => println!("err: {}", e),
     }
@@ -542,7 +542,7 @@ fn main() {
     let raw = "{\"a\":{\"b\":{\"c\":42}}}"
     let mut iter: i64 = 0
     while iter < 1000 {
-        let v = json::parse(&raw.to_string()).unwrap_or(json::Value::Null)
+        let v = json::parse(&raw).unwrap_or(json::Value::Null)
         if let Some(a) = json::get(&v, &"a") {
             if let Some(b) = json::get(a, &"b") {
                 if let Some(c) = json::get(b, &"c") {
@@ -593,7 +593,7 @@ fn native_binary_result_map_non_capturing_closure_abi() {
 use std::encoding::json
 fn main() {
     let raw = "{\"x\":42}"
-    let r1 = json::parse(&raw.to_string())
+    let r1 = json::parse(&raw)
     let r2 = r1.map(|v| v.clone())
     let r3 = r2.unwrap_or(json::Value::Null)
     println!("r3.is_null={}", json::is_null(&r3))
@@ -629,7 +629,7 @@ fn main() {
     let v1 = json::Value::Null
     println!("v1 is_null={}", json::is_null(&v1))
     let raw = "{\"path\":\"/tmp\"}"
-    let parsed = json::parse(&raw.to_string()).unwrap_or(json::Value::Null)
+    let parsed = json::parse(&raw).unwrap_or(json::Value::Null)
     if let Some(child) = json::get(&parsed, &"path") {
         let s = json::as_str(&child).unwrap_or("")
         println!("path={}", s)
@@ -681,11 +681,11 @@ fn main() {
 fn native_binary_vec_string_indexed_assign_and_scalar_unwrap_or() {
     let src = r#"
 fn main() {
-    let mut xs: Vec<String> = Vec::from([]).to_vec()
-    xs.push("a".to_string())
-    xs.push("b".to_string())
-    xs[0] = "X".to_string()
-    xs[1] = "Y".to_string()
+    let mut xs: Vec<String> = Vec::from([])
+    xs.push("a")
+    xs.push("b")
+    xs[0] = "X"
+    xs[1] = "Y"
     println!("xs[0]={} xs[1]={}", xs[0], xs[1])
 }
 "#;
@@ -720,7 +720,7 @@ fn native_binary_literal_array_to_vec_does_not_segfault() {
 fn main() {
     let xs: Vec<i64> = [10, 20, 30].to_vec()
     println!("i64 len={} 0={} 1={} 2={}", xs.len(), xs[0], xs[1], xs[2])
-    let ys: Vec<String> = ["a".to_string(), "b".to_string(), "c".to_string()].to_vec()
+    let ys: Vec<String> = ["a", "b", "c"].to_vec()
     println!("str len={} 0={} 1={} 2={}", ys.len(), ys[0], ys[1], ys[2])
     let zs: Vec<String> = ["aa", "bb", "cc"].to_vec()
     println!("lit len={} 0={} 1={} 2={}", zs.len(), zs[0], zs[1], zs[2])
@@ -762,8 +762,8 @@ fn json_get_returns_option_with_correct_discriminator() {
     let src = r#"
 use std::encoding::json
 fn main() {
-    let v = json::parse(&"{\"a\":1}".to_string()).unwrap()
-    let opt = json::get(&v, &"a".to_string())
+    let v = json::parse(&"{\"a\":1}").unwrap()
+    let opt = json::get(&v, &"a")
     println!("is_some? {}", opt.is_some())
     println!("is_none? {}", opt.is_none())
     if let Some(_) = opt {
@@ -771,7 +771,7 @@ fn main() {
     } else {
         println!("matched None")
     }
-    let missing = json::get(&v, &"absent".to_string())
+    let missing = json::get(&v, &"absent")
     println!("missing is_some? {}", missing.is_some())
     println!("missing is_none? {}", missing.is_none())
 }
@@ -825,8 +825,8 @@ fn second_value(vars: &[(String, String)]) -> String {
 }
 fn main() {
     let pairs = [
-        ("alpha".to_string(), "1".to_string()),
-        ("beta".to_string(), "2".to_string()),
+        ("alpha", "1"),
+        ("beta", "2"),
     ].to_vec()
     println!("{}", first_key(&pairs))
     println!("{}", second_value(&pairs))
@@ -875,20 +875,20 @@ pub fn substring(s: &String, start: i64, end: i64) -> String {
     let mut b = end
     if a < 0 { a = 0 }
     if b > n { b = n }
-    if a >= b { return "".to_string() }
+    if a >= b { return "" }
     let drop_pat = regex::compile(&format!("(?s)^.{{0,{}}}", a)).unwrap_or(empty_pattern())
-    let after = regex::replace(&drop_pat, s, &"".to_string())
+    let after = regex::replace(&drop_pat, s, &"")
     let len = b - a
     let take_pat = regex::compile(&format!("(?s)^(.{{0,{}}})", len)).unwrap_or(empty_pattern())
     let row = regex::captures(&take_pat, &after).map(|r| r.clone()).unwrap_or([].to_vec())
-    if row.len() < 2 { return "".to_string() }
-    row[1].clone().map(|x| x.clone()).unwrap_or("".to_string())
+    if row.len() < 2 { return "" }
+    row[1].clone().map(|x| x.clone()).unwrap_or("")
 }
 
 #[cfg(test)]
 #[test]
 fn warmup_jit() {
-    let s = "padding-padding-padding-padding-padding-padding".to_string()
+    let s = "padding-padding-padding-padding-padding-padding"
     let mut i: i64 = 0
     while i < (s.len() as i64) {
         let _ = substring(&s, i, i + 5)
@@ -900,7 +900,7 @@ fn warmup_jit() {
 #[cfg(test)]
 #[test]
 fn after_jit_string_eq() {
-    let _ = testing::check_eq(&"hi".to_string(), &"hi".to_string(), "string eq")
+    let _ = testing::check_eq(&"hi", &"hi", "string eq")
 }
 
 #[cfg(test)]
@@ -964,7 +964,7 @@ fn main() {
     let mut total: i64 = 0
     let mut i: i64 = 0
     while i < 256 {
-        let parts = "a,b,c,d".to_string().split(",")
+        let parts = "a,b,c,d".split(",")
         total += parts.len() as i64
         i += 1
     }
@@ -1004,7 +1004,7 @@ fn show(client: User) -> String {
 }
 
 fn main() {
-    let u = User { name: "alice".to_string(), age: 30 }
+    let u = User { name: "alice", age: 30 }
     println!("{}", show(u))
 }
 "#;
@@ -1071,7 +1071,7 @@ pub fn substring(s: &String, a: i64, b: i64) -> String {
 }
 
 fn main() {
-    let s = "hello world".to_string()
+    let s = "hello world"
     println!("{}", substring(&s, 0, 5))
     println!("{}", substring(&s, 6, 11))
 }
@@ -1097,7 +1097,7 @@ use std::encoding::json
 fn main() {
     // Parse a JSON string. `as_object` keys / `as_array` iter on
     // a string value must return None.
-    let s = json::parse(&"\"plain\"".to_string()).unwrap()
+    let s = json::parse(&"\"plain\"").unwrap()
     match json::as_array(&s) {
         Some(_) => println!("array? wrong"),
         None => println!("not-array ok"),
@@ -1112,7 +1112,7 @@ fn main() {
         None => println!("missing ok"),
     }
     // Object lookup with a key that doesn't exist.
-    let obj = json::parse(&"{\"a\": 1}".to_string()).unwrap()
+    let obj = json::parse(&"{\"a\": 1}").unwrap()
     match json::get(&obj, &"b") {
         Some(_) => println!("b? wrong"),
         None => println!("b missing ok"),
@@ -1149,7 +1149,7 @@ fn json_as_array_iter_native() {
     let src = r#"
 use std::encoding::json
 fn main() {
-    let v = json::parse(&"[10, 20, 30]".to_string()).unwrap()
+    let v = json::parse(&"[10, 20, 30]").unwrap()
     let arr = json::as_array(&v).unwrap()
     let n = arr.len() as i64
     let mut i: i64 = 0
@@ -1198,7 +1198,7 @@ fn regex_replace_singular_native() {
 use std::regex
 fn main() {
     let pat = regex::compile(&"foo").unwrap()
-    let s = "foo and foo".to_string()
+    let s = "foo and foo"
     let one = pat.replace(&s, &"BAR")
     let all = pat.replace_all(&s, &"BAR")
     println!("{} | {}", one, all)

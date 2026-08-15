@@ -916,7 +916,13 @@ fn builtin_channel_join(args: &[Value]) -> RuntimeResult<Value> {
             vec![Value::String("join on a non-handle value".into())],
         ));
     };
-    match channel.recv() {
+    let outcome = channel.recv();
+    // Joining is how a child's outcome reaches the program, so a failure
+    // read here is not one the root cohort reports as unobserved at exit.
+    // Marked after the outcome arrives, by which point the child has
+    // already recorded the failure.
+    crate::stdlib_builtins::cohort::mark_handle_observed(channel.identity());
+    match outcome {
         crate::value::RecvOutcome::Value(outcome) => Ok(outcome),
         crate::value::RecvOutcome::Closed => Ok(Value::variant(
             "Err",

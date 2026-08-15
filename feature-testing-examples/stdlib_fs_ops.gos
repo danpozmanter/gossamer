@@ -14,7 +14,7 @@ fn main() {
 
     let a = path::join(&dir, &"a.txt")
     let b = path::join(&dir, &"b.txt")
-    let _ = fs::write(&a, "hello world".to_string().as_bytes())
+    let _ = fs::write(&a, "hello world".as_bytes())
 
     println!("a_is_file={}", fs::is_file(&a))
     println!("dir_is_dir={}", fs::is_dir(&dir))

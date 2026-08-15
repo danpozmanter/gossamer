@@ -170,6 +170,12 @@ pub unsafe extern "C" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
             0
         };
         loop {
+            // A cancelled cohort has no reader left to hand this value to,
+            // so the send stops waiting rather than pinning its child in a
+            // block the cohort is trying to wind down.
+            if super::cohort::current_is_cancelled() {
+                return;
+            }
             let mut guard = chan.buf.lock();
             chan.sync_ready(storage_len(&guard));
             if chan.cap == 0 {
@@ -212,12 +218,14 @@ pub unsafe extern "C" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
                 // queue registration but before suspension.
                 let mut parked_as = None;
                 let mut guard = Some(guard);
+                let mut cohort_wait = 0i64;
                 crate::sched_global::park(crate::sched::ParkReason::Chan, |parker| {
                     parked_as = Some(parker.gid);
                     chan.parked_send.lock().push_back(SendWaiter {
                         gid: parker.gid,
                         send_id,
                     });
+                    cohort_wait = super::cohort::register_waiter(parker.gid);
                     drop(guard.take());
                 });
                 // Cleanup: remove our gid from parked_send if still
@@ -227,6 +235,7 @@ pub unsafe extern "C" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
                 // whichever goroutine the resuming thread is running.
                 if let Some(gid) = parked_as {
                     chan.parked_send.lock().retain(|w| w.gid != gid);
+                    super::cohort::deregister_waiter(cohort_wait, gid);
                 }
             } else {
                 // Non-goroutine fallback: condvar-block the OS thread.
@@ -369,6 +378,12 @@ pub unsafe extern "C" fn gos_rt_chan_recv(c: *mut GosChan, out: *mut u8) -> i32 
         let chan = unsafe { &*c };
         let bytes_len = chan.elem_bytes as usize;
         loop {
+            // A cancelled cohort answers its children the way a closed
+            // channel does. The check precedes the buffer read so the
+            // answer does not depend on whether a sender arrived first.
+            if super::cohort::current_is_cancelled() {
+                return 0;
+            }
             let mut guard = chan.buf.lock();
             chan.sync_ready(storage_len(&guard));
             if let Some(consumed_id) = pop_front(&mut guard, out, bytes_len) {
@@ -395,15 +410,20 @@ pub unsafe extern "C" fn gos_rt_chan_recv(c: *mut GosChan, out: *mut u8) -> i32 
                 // wake, and strand both goroutines indefinitely.
                 let mut parked_as = None;
                 let mut guard = Some(guard);
+                let mut cohort_wait = 0i64;
                 crate::sched_global::park(crate::sched::ParkReason::Chan, |parker| {
                     parked_as = Some(parker.gid);
                     chan.recv_waiters.fetch_add(1, Ordering::AcqRel);
                     chan.parked_recv.lock().push_back(parker.gid);
+                    // Cancelling the cohort unparks this goroutine, which
+                    // then re-reads the check at the top of the loop.
+                    cohort_wait = super::cohort::register_waiter(parker.gid);
                     drop(guard.take());
                 });
                 chan.recv_waiters.fetch_sub(1, Ordering::AcqRel);
                 if let Some(gid) = parked_as {
                     chan.parked_recv.lock().retain(|g| *g != gid);
+                    super::cohort::deregister_waiter(cohort_wait, gid);
                 }
             } else {
                 chan.recv_waiters.fetch_add(1, Ordering::AcqRel);
@@ -990,6 +1010,13 @@ pub unsafe extern "C" fn gos_rt_select_wait(b: *mut SelectBuilder) -> i64 {
             .collect();
         let default_index = arms.iter().position(|(k, _, _)| *k == 2);
         loop {
+            // A cancelled cohort makes every blocking arm behave the way a
+            // closed channel does, so a select under cancellation resolves
+            // instead of waiting for a partner that will never come.
+            if super::cohort::current_is_cancelled() {
+                builder.last_value = 0;
+                return default_index.map_or(0, |index| index as i64);
+            }
             for i in select_shuffle_indices(arms.len()) {
                 let (kind, c, v) = arms[i];
                 if kind == 0 {
@@ -1042,8 +1069,10 @@ pub unsafe extern "C" fn gos_rt_select_wait(b: *mut SelectBuilder) -> i64 {
             crate::sched_global::report_deadlock_if_stuck("select");
             if gossamer_coro::in_goroutine() {
                 let mut parked_as = None;
+                let mut cohort_wait = 0i64;
                 crate::sched_global::park(crate::sched::ParkReason::Chan, |parker| {
                     parked_as = Some(parker.gid);
+                    cohort_wait = super::cohort::register_waiter(parker.gid);
                     for (kind, c, _) in &arms {
                         if c.is_null() {
                             continue;
@@ -1072,6 +1101,7 @@ pub unsafe extern "C" fn gos_rt_select_wait(b: *mut SelectBuilder) -> i64 {
                     }
                 });
                 if let Some(gid) = parked_as {
+                    super::cohort::deregister_waiter(cohort_wait, gid);
                     for (kind, c, _) in &arms {
                         if c.is_null() {
                             continue;

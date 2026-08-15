@@ -1,7 +1,7 @@
 use std::encoding::json
 
 fn main() {
-    let v = json::parse(&"{\"name\":\"alice\",\"age\":30}".to_string()).unwrap()
+    let v = json::parse(&"{\"name\":\"alice\",\"age\":30}").unwrap()
     match json::get(&v, &"name") {
         Some(name) => println!("name: {}", json::as_str(&name).unwrap_or("?")),
         None => println!("no name"),

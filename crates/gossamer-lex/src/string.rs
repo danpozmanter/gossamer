@@ -5,6 +5,111 @@ use crate::diagnostic::LexError;
 use crate::span::{FileId, Span};
 use crate::token::TokenKind;
 
+/// Opening and closing delimiter of a triple-quoted string literal.
+pub(crate) const TRIPLE_QUOTE: &str = "\"\"\"";
+
+/// A triple-quoted literal's source text split into its dedented body
+/// and the layout facts a formatter needs to re-render it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TripleString {
+    /// Content lines with the shared indentation removed, in order.
+    /// Escapes are still encoded so a caller decodes them after
+    /// dedenting. A literal whose closing delimiter follows the opening
+    /// one directly has no content lines at all, which is what keeps a
+    /// re-render from inventing one.
+    pub lines: Vec<String>,
+    /// The whitespace prefix removed from every content line.
+    pub indent: String,
+    /// `true` when the literal spans more than one physical line.
+    pub multiline: bool,
+    /// `true` when the closing `"""` sits on a line of its own.
+    pub closer_on_own_line: bool,
+    /// `true` when non-whitespace text follows the opening `"""`.
+    pub opening_line_text: bool,
+}
+
+impl TripleString {
+    /// The literal's contents with escapes still encoded: the content
+    /// lines joined by the newlines that separated them.
+    #[must_use]
+    pub fn body(&self) -> String {
+        self.lines.join("\n")
+    }
+}
+
+/// Splits a triple-quoted literal's source text, delimiters included,
+/// into its dedented body and layout.
+///
+/// The indentation measure is the longest leading-whitespace prefix
+/// shared by every non-blank content line and by the closing
+/// delimiter's line when it has one. Measuring the closing line too is
+/// what keeps a re-render at a fresh indentation stable under
+/// repetition. A whitespace-only line carries no content, so it neither
+/// contributes to the measure nor survives into the body.
+#[must_use]
+pub fn triple_string(raw: &str) -> TripleString {
+    let inner = raw
+        .strip_prefix(TRIPLE_QUOTE)
+        .and_then(|rest| rest.strip_suffix(TRIPLE_QUOTE))
+        .unwrap_or(raw);
+    let Some((opening, rest)) = inner.split_once('\n') else {
+        return TripleString {
+            lines: vec![inner.to_string()],
+            indent: String::new(),
+            multiline: false,
+            closer_on_own_line: false,
+            opening_line_text: false,
+        };
+    };
+    let opening_line_text = !opening.trim().is_empty();
+    let mut lines: Vec<&str> = rest.split('\n').collect();
+    let closer_on_own_line = lines.last().is_some_and(|last| last.trim().is_empty());
+    let mut measure: Option<&str> = None;
+    if closer_on_own_line {
+        measure = lines.pop();
+    }
+    for line in &lines {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let lead = &line[..line.len() - line.trim_start().len()];
+        measure = Some(match measure {
+            Some(current) => shared_prefix(current, lead),
+            None => lead,
+        });
+    }
+    let indent = measure.unwrap_or("");
+    let dedented = lines
+        .iter()
+        .map(|line| {
+            if line.trim().is_empty() {
+                String::new()
+            } else {
+                line.strip_prefix(indent).unwrap_or(line).to_string()
+            }
+        })
+        .collect();
+    TripleString {
+        lines: dedented,
+        indent: indent.to_string(),
+        multiline: true,
+        closer_on_own_line,
+        opening_line_text,
+    }
+}
+
+/// Longest leading substring shared by two whitespace runs.
+fn shared_prefix<'a>(left: &'a str, right: &str) -> &'a str {
+    let mut end = 0usize;
+    for ((offset, a), b) in left.char_indices().zip(right.chars()) {
+        if a != b {
+            break;
+        }
+        end = offset + a.len_utf8();
+    }
+    &left[..end]
+}
+
 /// Outcome of lexing one of the quoted-literal forms.
 pub(crate) struct QuotedOutcome {
     /// Token kind to emit for the literal.
@@ -55,6 +160,48 @@ pub(crate) fn lex_string(
             _ => {
                 cursor.bump();
             }
+        }
+    }
+}
+
+/// Lexes a triple-quoted string literal beginning at the opening `"""`.
+///
+/// The body may span lines and carries the same escape sequences an
+/// ordinary string literal does, so the literal ends at the first `"""`
+/// that an escape has not already consumed.
+pub(crate) fn lex_triple_string(
+    cursor: &mut Cursor<'_>,
+    file: FileId,
+    literal_start: u32,
+) -> QuotedOutcome {
+    debug_assert!(cursor.rest().starts_with(TRIPLE_QUOTE));
+    for _ in 0..TRIPLE_QUOTE.len() {
+        cursor.bump();
+    }
+    let mut diagnostics = Vec::new();
+    loop {
+        if cursor.is_eof() {
+            diagnostics.push(LexError::UnterminatedTripleString {
+                span: span_to_here(file, literal_start, cursor),
+            });
+            return QuotedOutcome {
+                kind: TokenKind::TripleStringLit,
+                diagnostics,
+            };
+        }
+        if cursor.rest().starts_with(TRIPLE_QUOTE) {
+            for _ in 0..TRIPLE_QUOTE.len() {
+                cursor.bump();
+            }
+            return QuotedOutcome {
+                kind: TokenKind::TripleStringLit,
+                diagnostics,
+            };
+        }
+        if cursor.peek() == '\\' {
+            consume_escape(cursor, file, &mut diagnostics);
+        } else {
+            cursor.bump();
         }
     }
 }
@@ -289,4 +436,86 @@ fn span_from_offset(file: FileId, start: usize, cursor: &Cursor<'_>) -> Span {
     let start_u32 = u32::try_from(start).unwrap_or(u32::MAX);
     let end_u32 = u32::try_from(cursor.offset()).unwrap_or(u32::MAX);
     Span::new(file, start_u32, end_u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::triple_string;
+
+    #[test]
+    fn strips_the_indentation_shared_with_the_closing_delimiter() {
+        let raw = "\"\"\"\n    <html>\n        <body>\n    </html>\n    \"\"\"";
+        let parsed = triple_string(raw);
+        assert_eq!(parsed.body(), "<html>\n    <body>\n</html>");
+        assert_eq!(parsed.indent, "    ");
+        assert!(parsed.multiline);
+        assert!(parsed.closer_on_own_line);
+        assert!(!parsed.opening_line_text);
+    }
+
+    #[test]
+    fn closing_delimiter_on_its_own_line_drops_the_final_newline() {
+        assert_eq!(triple_string("\"\"\"\nabc\n\"\"\"").body(), "abc");
+        assert_eq!(triple_string("\"\"\"\nabc\n\n\"\"\"").body(), "abc\n");
+    }
+
+    #[test]
+    fn an_empty_body_yields_an_empty_value() {
+        assert_eq!(triple_string("\"\"\"\n\"\"\"").body(), "");
+    }
+
+    #[test]
+    fn content_hugging_the_closing_delimiter_keeps_its_own_measure() {
+        let parsed = triple_string("\"\"\"\n    abc\"\"\"");
+        assert_eq!(parsed.body(), "abc");
+        assert_eq!(parsed.indent, "    ");
+        assert!(!parsed.closer_on_own_line);
+    }
+
+    #[test]
+    fn blank_lines_become_empty_and_do_not_lower_the_measure() {
+        let raw = "\"\"\"\n    a\n\n  \n    b\n    \"\"\"";
+        assert_eq!(triple_string(raw).body(), "a\n\n\nb");
+        assert_eq!(triple_string(raw).indent, "    ");
+    }
+
+    #[test]
+    fn a_line_indented_less_than_the_closer_shortens_the_measure() {
+        let raw = "\"\"\"\n  a\n      b\n    \"\"\"";
+        assert_eq!(triple_string(raw).body(), "a\n    b");
+        assert_eq!(triple_string(raw).indent, "  ");
+    }
+
+    #[test]
+    fn tabs_and_spaces_never_mix_into_a_shared_measure() {
+        let raw = "\"\"\"\n\ta\n    b\n\"\"\"";
+        assert_eq!(triple_string(raw).indent, "");
+        assert_eq!(triple_string(raw).body(), "\ta\n    b");
+    }
+
+    #[test]
+    fn a_single_line_literal_is_taken_verbatim() {
+        let parsed = triple_string("\"\"\"abc\"\"\"");
+        assert_eq!(parsed.body(), "abc");
+        assert!(!parsed.multiline);
+        assert!(!parsed.closer_on_own_line);
+    }
+
+    #[test]
+    fn text_after_the_opening_delimiter_is_flagged() {
+        assert!(triple_string("\"\"\"oops\n    a\n    \"\"\"").opening_line_text);
+        assert!(!triple_string("\"\"\"   \n    a\n    \"\"\"").opening_line_text);
+    }
+
+    #[test]
+    fn an_escaped_newline_sequence_is_not_a_line_break() {
+        let parsed = triple_string("\"\"\"\n    a\\nb\n    \"\"\"");
+        assert_eq!(parsed.body(), "a\\nb");
+    }
+
+    #[test]
+    fn trailing_whitespace_on_a_content_line_survives() {
+        let parsed = triple_string("\"\"\"\n    a  \n    \"\"\"");
+        assert_eq!(parsed.body(), "a  ");
+    }
 }

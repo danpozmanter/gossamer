@@ -1,0 +1,76 @@
+/*
+ * Cohorts - structured concurrency, and how it differs from `go`.
+ *
+ * `cohort { }` owns every goroutine `spawn`ed inside it: the block
+ * cannot be left until each child has finished, and a child's failure
+ * cancels its siblings and becomes the block's `Result`. `go expr`
+ * stays what it has always been - fire-and-forget, for work that
+ * genuinely should outlive the block that started it.
+ */
+
+use std::{errors, time}
+
+fn fetch(name: String, ms: i64) -> Result<String, errors::Error> {
+    time::sleep(ms)
+    Ok(name)
+}
+
+fn refuse(name: String) -> Result<String, errors::Error> {
+    Err(errors::newf("{} is unavailable", name))
+}
+
+// A long job that ends when its cohort is cancelled: the receive
+// reports `None` under cancellation, exactly as a closed channel does.
+fn drain(rx: Receiver<i64>) -> Result<i64, errors::Error> {
+    defer println!("  drain stopped cleanly")
+    let mut seen = 0
+    while let Some(_job) = rx.recv() {
+        seen += 1
+    }
+    Ok(seen)
+}
+
+// Fan out and wait. Both children are finished by the time the block's
+// value exists, and `?` inside the block propagates out of this
+// function - which runs the cohort's deferred join on the way.
+fn fan_out() -> Result<(), errors::Error> {
+    cohort {
+        let a = spawn(|| fetch("alpha", 20))
+        let b = spawn(|| fetch("beta", 10))
+        println!("fetched {} and {}", a.join()??, b.join()??)
+    }
+}
+
+fn main() {
+    println!("fan-out: {:?}", fan_out())
+
+    // One child fails: its sibling is cancelled and the block reports
+    // the failure. The sibling still runs its own `defer` on the way
+    // out - cancellation is an orderly exit, never a kill.
+    let (_tx, rx) = channel(1)
+    let failed = cohort {
+        let _worker = spawn(|| drain(rx))
+        let _bad = spawn(|| refuse("gamma"))
+    }
+    println!("fail-fast: {:?}", failed)
+
+    // Collect every failure instead of stopping at the first.
+    let collected = cohort(policy: Policy::CollectAll) {
+        let _x = spawn(|| refuse("delta"))
+        let _y = spawn(|| refuse("epsilon"))
+    }
+    println!("collect-all: {:?}", collected)
+
+    // Bound the whole block by a deadline.
+    let bounded = cohort(timeout: 50) {
+        let _slow = spawn(|| fetch("zeta", 30_000))
+    }
+    println!("timeout: {}", bounded.is_err())
+
+    // `go` is the detached form: nothing joins it and nothing waits.
+    // Suited to work with no relationship to this block - and note the
+    // program still cannot end with it running, because `main` itself
+    // runs inside a cohort.
+    go fetch("background", 1)
+    println!("detached goroutine started")
+}

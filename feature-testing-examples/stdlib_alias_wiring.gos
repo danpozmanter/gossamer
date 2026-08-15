@@ -19,7 +19,7 @@ fn main() {
     }
 
     let file = path::join(&dir, &"data.bin")
-    let _ = fs::write(&file, "abc".to_string().as_bytes())
+    let _ = fs::write(&file, "abc".as_bytes())
     let bytes = fs::read(&file).unwrap()
     println!("read_file_len={}", bytes.len())
 

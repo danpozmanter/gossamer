@@ -84,7 +84,7 @@ fn main() {
     }
 
     let file = path::join(&env::temp_dir(), &"gossamer_serve_file_fixture.txt")
-    let _ = fs::write(&file, "served-from-disk".to_string().as_bytes())
+    let _ = fs::write(&file, "served-from-disk".as_bytes())
     match static_files::serve_file(&file) {
         Ok(r) => println!("serve_file status={} body={}", r.status, r.body)
         Err(e) => println!("serve_file error: {}", e)

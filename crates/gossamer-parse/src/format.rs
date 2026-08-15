@@ -13,6 +13,7 @@
 
 #![forbid(unsafe_code)]
 
+use std::borrow::Cow;
 use std::fmt;
 
 use gossamer_lex::{FileId, Keyword, Punct, TokenKind, tokenize};
@@ -21,6 +22,9 @@ use crate::{ParseDiagnostic, parse_source_file};
 
 /// Number of spaces per indentation level.
 const INDENT_WIDTH: usize = 4;
+
+/// Opening and closing delimiter of a triple-quoted string literal.
+const TRIPLE_QUOTE: &str = "\"\"\"";
 
 /// Maximum run of blank lines preserved between statements.
 const MAX_BLANK_LINES: u32 = 2;
@@ -428,7 +432,11 @@ fn render_code_line<'src>(
                 body.push(' ');
             }
         }
-        body.push_str(tok.text);
+        if tok.kind == TokenKind::TripleStringLit {
+            body.push_str(&reindent_triple_string(tok.text, INDENT_WIDTH * line_level));
+        } else {
+            body.push_str(tok.text);
+        }
         let declaration_brace =
             line_opens_brace_after(line, tok_index, &[Keyword::Struct, Keyword::Enum]);
         let match_brace = line_opens_brace_after(line, tok_index, &[Keyword::Match]);
@@ -457,6 +465,35 @@ fn render_code_line<'src>(
         prev_was_comment = false;
     }
     body
+}
+
+/// Re-renders a multi-line triple-quoted literal with `indent` spaces
+/// before every content line and before its closing delimiter.
+///
+/// Each line keeps its offset from the literal's measured indentation,
+/// so the value the parser reads is the same before and after, and the
+/// block travels with the line that opens it.
+fn reindent_triple_string(raw: &str, indent: usize) -> String {
+    let parsed = gossamer_lex::triple_string(raw);
+    if !parsed.multiline {
+        return raw.to_string();
+    }
+    let prefix = " ".repeat(indent);
+    let mut out = String::with_capacity(raw.len() + indent * parsed.lines.len());
+    out.push_str(TRIPLE_QUOTE);
+    for line in &parsed.lines {
+        out.push('\n');
+        if !line.is_empty() {
+            out.push_str(&prefix);
+            out.push_str(line);
+        }
+    }
+    if parsed.closer_on_own_line {
+        out.push('\n');
+        out.push_str(&prefix);
+    }
+    out.push_str(TRIPLE_QUOTE);
+    out
 }
 
 fn line_opens_brace_after(line: &Line<'_>, index: usize, keywords: &[Keyword]) -> bool {
@@ -562,6 +599,7 @@ fn ends_expr(kind: TokenKind) -> bool {
             | TokenKind::FloatLit
             | TokenKind::StringLit
             | TokenKind::RawStringLit { .. }
+            | TokenKind::TripleStringLit
             | TokenKind::CharLit
             | TokenKind::ByteLit
             | TokenKind::ByteStringLit
@@ -941,7 +979,7 @@ fn assemble(entries: &[Entry]) -> String {
 
 /// The no-destruction gate: every non-whitespace token (comments
 /// included) of `before` must reappear in `after` with identical kind
-/// and text.
+/// and value.
 fn verify_equivalence(before: &str, after: &str, file: FileId) -> Result<(), FormatError> {
     let original = significant_tokens(before, file);
     let (_tokens, errs) = tokenize(after, file);
@@ -970,8 +1008,12 @@ fn verify_equivalence(before: &str, after: &str, file: FileId) -> Result<(), For
     Ok(())
 }
 
-/// Collects every non-whitespace token of `source` as `(kind, text)`.
-fn significant_tokens(source: &str, file: FileId) -> Vec<(TokenKind, &str)> {
+/// Collects every non-whitespace token of `source` as `(kind, value)`.
+///
+/// A triple-quoted literal's indentation is layout the formatter owns,
+/// so it is compared by the contents it decodes to rather than by the
+/// text that spells it.
+fn significant_tokens(source: &str, file: FileId) -> Vec<(TokenKind, Cow<'_, str>)> {
     let (tokens, _errs) = tokenize(source, file);
     tokens
         .iter()
@@ -998,10 +1040,13 @@ fn significant_tokens(source: &str, file: FileId) -> Vec<(TokenKind, &str)> {
             !source[token.span.end as usize..next_start].contains('\n')
         })
         .map(|(_, token)| {
-            (
-                token.kind,
-                &source[token.span.start as usize..token.span.end as usize],
-            )
+            let text = &source[token.span.start as usize..token.span.end as usize];
+            let value = if token.kind == TokenKind::TripleStringLit {
+                Cow::Owned(crate::patterns::string_literal_value(text))
+            } else {
+                Cow::Borrowed(text)
+            };
+            (token.kind, value)
         })
         .collect()
 }

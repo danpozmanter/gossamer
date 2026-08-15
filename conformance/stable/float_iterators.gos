@@ -20,12 +20,12 @@ fn main() {
     println!("big={big}")
 
     match xs.iter().max() {
-        Some(m) => println!("max={m:.2}"),
-        None => println!("max=none"),
+        Some(m) => println!("max={m:.2}")
+        None => println!("max=none")
     }
     match xs.iter().min() {
-        Some(m) => println!("min={m:.2}"),
-        None => println!("min=none"),
+        Some(m) => println!("min={m:.2}")
+        None => println!("min=none")
     }
 
     let mut running = 0.0

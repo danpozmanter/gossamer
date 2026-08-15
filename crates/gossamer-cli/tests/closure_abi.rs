@@ -219,8 +219,8 @@ fn closure_calling_concat_does_not_capture_concat() {
 fn main() {
     let prefix = "hello"
     let greet = |name: String| prefix + " " + name
-    println!("{}", greet("world".to_string()))
-    println!("{}", greet("there".to_string()))
+    println!("{}", greet("world"))
+    println!("{}", greet("there"))
 }
 "#;
     assert_three_tier_parity("closure_concat_no_capture", src, "hello world\nhello there");
@@ -235,8 +235,8 @@ fn closure_calling_format_does_not_capture_format() {
 fn main() {
     let n = 7
     let label = |tag: String| format!("{}={}", tag, n)
-    println!("{}", label("count".to_string()))
-    println!("{}", label("size".to_string()))
+    println!("{}", label("count"))
+    println!("{}", label("size"))
 }
 "#;
     assert_three_tier_parity("closure_format_no_capture", src, "count=7\nsize=7");

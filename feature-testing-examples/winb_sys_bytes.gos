@@ -55,10 +55,10 @@ fn main() {
     }
 
     // replace edge cases.
-    let _ = bytes::replace("aXbXc".to_string().as_bytes(), "X".to_string().as_bytes(), "-".to_string().as_bytes())
-    let _ = bytes::replace("aXbXc".to_string().as_bytes(), "X".to_string().as_bytes(), "".to_string().as_bytes())
-    let _ = bytes::replace("abc".to_string().as_bytes(), "X".to_string().as_bytes(), "-".to_string().as_bytes())
-    let _ = bytes::replace("abc".to_string().as_bytes(), "".to_string().as_bytes(), "-".to_string().as_bytes())
-    let _ = bytes::replace("aaa".to_string().as_bytes(), "a".to_string().as_bytes(), "bb".to_string().as_bytes())
+    let _ = bytes::replace("aXbXc".as_bytes(), "X".as_bytes(), "-".as_bytes())
+    let _ = bytes::replace("aXbXc".as_bytes(), "X".as_bytes(), "".as_bytes())
+    let _ = bytes::replace("abc".as_bytes(), "X".as_bytes(), "-".as_bytes())
+    let _ = bytes::replace("abc".as_bytes(), "".as_bytes(), "-".as_bytes())
+    let _ = bytes::replace("aaa".as_bytes(), "a".as_bytes(), "bb".as_bytes())
     println!("replace checked")
 }

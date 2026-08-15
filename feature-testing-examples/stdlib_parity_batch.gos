@@ -13,7 +13,7 @@ use std::utf8
 use std::math
 
 fn main() {
-    println!("a85 {}", encoding::ascii85::encode("hello".to_string().as_bytes()))
+    println!("a85 {}", encoding::ascii85::encode("hello".as_bytes()))
     println!("runelen {} {} {}", utf8::rune_len('A'), utf8::rune_len('é'), utf8::rune_len('日'))
     println!("mm {} {} {}", math::min(3.0, 7.0), math::max(3.0, 7.0), math::clamp(15.0, 0.0, 10.0))
     println!("mmf {} {}", math::min(2.5, 1.5), math::max(2.5, 1.5))

@@ -473,7 +473,7 @@ impl Lifter {
                 // closure expression into a `LiftedClosure` node
                 // that the MIR lowerer expands into the heap-alloc
                 // sequence.
-                let captures = collect_free_vars(body, &bound);
+                let captures = collect_free_vars_typed(body, &bound);
                 if !captures.is_empty() {
                     let (name, capture_exprs) =
                         self.lift_capturing(params, *ret, body, &captures, expr.span);
@@ -668,28 +668,23 @@ impl Lifter {
         params: &[HirParam],
         ret: Option<gossamer_types::Ty>,
         body: &HirExpr,
-        captures: &[String],
+        captures: &[(String, gossamer_types::Ty)],
         span: Span,
     ) -> (Ident, Vec<HirExpr>) {
         let name = self.fresh_name();
-        // Pull each capture's actual type from the first occurrence
-        // in the body. Without this, every capture's let pattern
-        // gets `body.ty` (the closure's return type), which is
-        // catastrophic when the captures' types differ from the
-        // return type - e.g. `let scale = 3; let bias = 0.5; |x|
-        // x * scale + bias` puts an i64 capture's bytes into an
-        // f64-typed slot and the codegen reads the integer's bit
-        // pattern as a subnormal float ≈ 0.
-        let capture_types: Vec<gossamer_types::Ty> = captures
-            .iter()
-            .map(|cap| capture_ty_in_expr(body, cap).unwrap_or(body.ty))
-            .collect();
+        // Each capture carries the type of the occurrence that made it
+        // free, so the env slot is laid out and reference-counted as
+        // the value it actually holds. A capture typed by anything else
+        // - the closure's return type, say - hands an `i64`'s bits to a
+        // `String` slot, and the compiled tiers then retain the integer
+        // as a pointer.
+        let capture_types: Vec<gossamer_types::Ty> = captures.iter().map(|(_, ty)| *ty).collect();
         // The lifted function's body wraps the original body in a
         // block that first pulls each capture out of the env pointer
         // via `gos_load(env, offset)`, binds it to a local of the
         // same name, then evaluates the original body.
         let mut stmts: Vec<HirStmt> = Vec::with_capacity(captures.len());
-        for (i, cap) in captures.iter().enumerate() {
+        for (i, (cap, _)) in captures.iter().enumerate() {
             let offset = (i as i64 + 1) * 8;
             let cap_ty = capture_types[i];
             let load_call = self.make_env_load(ENV_PARAM, offset, body.span, cap_ty);
@@ -760,7 +755,7 @@ impl Lifter {
         let capture_exprs: Vec<HirExpr> = captures
             .iter()
             .enumerate()
-            .map(|(i, n)| HirExpr {
+            .map(|(i, (n, _))| HirExpr {
                 id: self.ids.next(),
                 span,
                 ty: capture_types[i],
@@ -1001,95 +996,6 @@ fn is_closed<S: std::hash::BuildHasher + Clone>(
     }
 }
 
-/// Walks `expr` looking for the first `Path { name }` reference and
-/// returns its recorded type. Used by `lift_capturing` to thread the
-/// capture's actual type through the lifted function's wrapper let
-/// binding - without this, every capture's let gets the closure
-/// body's return type, mis-typing captures whose declared type
-/// differs from the body's tail expression.
-fn capture_ty_in_expr(expr: &HirExpr, name: &str) -> Option<gossamer_types::Ty> {
-    if let HirExprKind::Path {
-        segments,
-        def: None,
-        ..
-    } = &expr.kind
-        && segments.len() == 1
-        && segments[0].name.as_str() == name
-    {
-        return Some(expr.ty);
-    }
-    match &expr.kind {
-        HirExprKind::Call { callee, args } => capture_ty_in_expr(callee, name)
-            .or_else(|| args.iter().find_map(|a| capture_ty_in_expr(a, name))),
-        HirExprKind::MethodCall { receiver, args, .. } => capture_ty_in_expr(receiver, name)
-            .or_else(|| args.iter().find_map(|a| capture_ty_in_expr(a, name))),
-        HirExprKind::Field { receiver, .. } | HirExprKind::TupleIndex { receiver, .. } => {
-            capture_ty_in_expr(receiver, name)
-        }
-        HirExprKind::Index { base, index } => {
-            capture_ty_in_expr(base, name).or_else(|| capture_ty_in_expr(index, name))
-        }
-        HirExprKind::Unary { operand, .. } => capture_ty_in_expr(operand, name),
-        HirExprKind::Binary { lhs, rhs, .. } => {
-            capture_ty_in_expr(lhs, name).or_else(|| capture_ty_in_expr(rhs, name))
-        }
-        HirExprKind::Assign { place, value } => {
-            capture_ty_in_expr(place, name).or_else(|| capture_ty_in_expr(value, name))
-        }
-        HirExprKind::Cast { value, .. } => capture_ty_in_expr(value, name),
-        HirExprKind::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => capture_ty_in_expr(condition, name)
-            .or_else(|| capture_ty_in_expr(then_branch, name))
-            .or_else(|| {
-                else_branch
-                    .as_ref()
-                    .and_then(|e| capture_ty_in_expr(e, name))
-            }),
-        HirExprKind::Match { scrutinee, arms } => {
-            capture_ty_in_expr(scrutinee, name).or_else(|| {
-                arms.iter().find_map(|arm| {
-                    arm.guard
-                        .as_ref()
-                        .and_then(|g| capture_ty_in_expr(g, name))
-                        .or_else(|| capture_ty_in_expr(&arm.body, name))
-                })
-            })
-        }
-        HirExprKind::Loop { body, .. } => capture_ty_in_expr(body, name),
-        HirExprKind::While {
-            condition, body, ..
-        } => capture_ty_in_expr(condition, name).or_else(|| capture_ty_in_expr(body, name)),
-        HirExprKind::Block(block) => block
-            .stmts
-            .iter()
-            .find_map(|s| match &s.kind {
-                HirStmtKind::Let {
-                    init: Some(init), ..
-                } => capture_ty_in_expr(init, name),
-                HirStmtKind::Expr { expr, .. } => capture_ty_in_expr(expr, name),
-                _ => None,
-            })
-            .or_else(|| {
-                block
-                    .tail
-                    .as_ref()
-                    .and_then(|t| capture_ty_in_expr(t, name))
-            }),
-        HirExprKind::Closure { body, .. } => capture_ty_in_expr(body, name),
-        HirExprKind::LiftedClosure { captures, .. } => {
-            captures.iter().find_map(|c| capture_ty_in_expr(c, name))
-        }
-        HirExprKind::Return(inner) => inner.as_ref().and_then(|e| capture_ty_in_expr(e, name)),
-        HirExprKind::Break { value, .. } => {
-            value.as_ref().and_then(|e| capture_ty_in_expr(e, name))
-        }
-        _ => None,
-    }
-}
-
 /// Collects the free variables referenced by `expr` that are not in
 /// `bound`. Variables appear in first-use order (each distinct name
 /// shows up exactly once). Used by the lifter to produce a stable
@@ -1101,7 +1007,28 @@ pub fn collect_free_vars<S: std::hash::BuildHasher + Clone>(
     expr: &HirExpr,
     bound: &HashSet<String, S>,
 ) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
+    collect_free_vars_typed(expr, bound)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect()
+}
+
+/// Every free variable of `expr` paired with the type its first
+/// occurrence carries.
+///
+/// The type comes from the same traversal that finds the name, so a
+/// capture can never be found without one: a closure's environment
+/// slot is laid out and reference-counted by this type, and inferring
+/// it from a second, separately-written walk of the tree let the two
+/// disagree - a name the type walk did not reach took the closure's
+/// return type instead, and the compiled tiers then retained an `i64`
+/// as if it were a `String`.
+#[must_use]
+pub(crate) fn collect_free_vars_typed<S: std::hash::BuildHasher + Clone>(
+    expr: &HirExpr,
+    bound: &HashSet<String, S>,
+) -> Vec<(String, gossamer_types::Ty)> {
+    let mut out: Vec<(String, gossamer_types::Ty)> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     walk_free(expr, bound, &mut out, &mut seen);
     out
@@ -1110,7 +1037,7 @@ pub fn collect_free_vars<S: std::hash::BuildHasher + Clone>(
 fn walk_free<S: std::hash::BuildHasher + Clone>(
     expr: &HirExpr,
     bound: &HashSet<String, S>,
-    out: &mut Vec<String>,
+    out: &mut Vec<(String, gossamer_types::Ty)>,
     seen: &mut HashSet<String>,
 ) {
     match &expr.kind {
@@ -1148,7 +1075,7 @@ fn walk_free<S: std::hash::BuildHasher + Clone>(
                     return;
                 }
                 if !bound.contains(&first.name) && seen.insert(first.name.clone()) {
-                    out.push(first.name.clone());
+                    out.push((first.name.clone(), expr.ty));
                 }
             }
         }
@@ -1275,7 +1202,7 @@ fn walk_free<S: std::hash::BuildHasher + Clone>(
 fn walk_free_with<S: std::hash::BuildHasher + Clone>(
     expr: &HirExpr,
     bound: &HashSet<String, S>,
-    out: &mut Vec<String>,
+    out: &mut Vec<(String, gossamer_types::Ty)>,
     seen: &mut HashSet<String>,
 ) {
     walk_free(expr, bound, out, seen);
@@ -1284,7 +1211,7 @@ fn walk_free_with<S: std::hash::BuildHasher + Clone>(
 fn walk_free_block<S: std::hash::BuildHasher + Clone>(
     block: &HirBlock,
     bound: &HashSet<String, S>,
-    out: &mut Vec<String>,
+    out: &mut Vec<(String, gossamer_types::Ty)>,
     seen: &mut HashSet<String>,
 ) {
     let mut local = bound.clone();

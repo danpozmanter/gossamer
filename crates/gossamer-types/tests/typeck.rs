@@ -995,7 +995,7 @@ fn cast_allows_numeric_to_numeric() {
 
 #[test]
 fn cast_allows_bool_and_char_to_integer_but_rejects_string() {
-    let src = "fn main() { let b: bool = true\n let _ = b as i64\n let s: String = \"x\".to_string()\n let _ = s as i64 }\n";
+    let src = "fn main() { let b: bool = true\n let _ = b as i64\n let s: String = \"x\"\n let _ = s as i64 }\n";
     let checked = run(src);
     assert_eq!(checked.diagnostics.len(), 1);
     assert!(
@@ -1794,17 +1794,21 @@ fn diagnostics_for_with_lazy_iterators(
 }
 
 #[test]
-fn untabled_std_fn_as_value_errors_with_gt0015() {
-    let source = "use std::{iter, strings}\n\
-                  fn main() { let out = [\"ab\"] |> iter::map(strings::repeat)\n\
+fn a_variadic_std_fn_as_value_errors_with_gt0015() {
+    // Every std function with a fixed parameter list is rewritten into
+    // the closure that calls it before the checker runs. A formatting
+    // function has no such list, so it stays a value the tiers cannot
+    // lower - and is reported rather than reaching codegen.
+    let source = "use std::fmt\n\
+                  fn main() { let out = #[\"ab\"].map(fmt::format)\n\
                   let _ = out }\n";
     let diagnostics = diagnostics_for(source);
     assert!(
         diagnostics.iter().any(|d| matches!(
             &d.error,
-            TypeError::StdFnValueUnsupported { path } if path == "strings::repeat"
+            TypeError::StdFnValueUnsupported { path } if path == "fmt::format"
         )),
-        "expected StdFnValueUnsupported for strings::repeat, got {diagnostics:?}"
+        "expected StdFnValueUnsupported for fmt::format, got {diagnostics:?}"
     );
 }
 
@@ -2007,7 +2011,9 @@ fn the_iterator_surface_and_the_collection_surface_both_still_work() {
         // Collection operations: length, membership, ordering, copying.
         "fn main() { let xs = #[1, 2, 3]\n let _ = xs.len() }\n",
         "fn main() { let xs = #[1, 2, 3]\n let _ = xs.contains(2) }\n",
-        "fn main() { let xs = #[1, 2, 3]\n let _ = xs.to_vec() }\n",
+        // A Vec is already owned, so `to_vec` belongs to the borrowed and
+        // fixed-length sequences; a slice of one still converts.
+        "fn main() { let xs = #[1, 2, 3]\n let _ = xs.slice(0, 2) }\n",
         "fn main() { let mut xs = #[1, 2, 3]\n xs.sort()\n let _ = xs }\n",
         // `for` still iterates a collection directly.
         "fn main() { let xs = #[1, 2, 3]\n let mut t = 0\n for x in xs { t += x }\n let _ = t }\n",
@@ -4032,4 +4038,154 @@ fn handle_receiver_methods_reject_wrong_argument_count() {
          }\n";
     let d = diagnostics_for(clean);
     assert!(d.is_empty(), "the declared counts must type clean: {d:?}");
+}
+
+/// `collect` ends an iterator chain; a collection that already holds its
+/// values has no use for it, and neither does a `Vec` for `to_vec` nor a
+/// `String` for `to_string` - each would convert a type into itself.
+#[test]
+fn the_redundant_self_conversions_are_not_on_the_surface() {
+    for (source, ty, method) in [
+        (
+            "fn main() { let xs = #[1, 2, 3]\n let _ = xs.to_vec() }\n",
+            "Vec<i64>",
+            "to_vec",
+        ),
+        (
+            "fn main() { let s = \"a\"\n let _ = s.to_string() }\n",
+            "String",
+            "to_string",
+        ),
+        (
+            "use std::collections::Set\nfn main() { let s = #{1, 2}\n let _ = s.collect() }\n",
+            "Set<i64>",
+            "collect",
+        ),
+        (
+            "fn main() { let m = {\"a\": 1}\n let _ = m.collect() }\n",
+            "Map<String, i64>",
+            "collect",
+        ),
+    ] {
+        let d = diagnostics_for(source);
+        assert!(
+            d.iter().any(|diag| matches!(
+                &diag.error,
+                TypeError::UnresolvedMethod { ty: t, name, .. } if t == ty && name == method
+            )),
+            "{method} on {ty} should not resolve: {d:?}"
+        );
+    }
+}
+
+/// The conversions that do change a type stay: a borrowed or fixed-length
+/// sequence into an owned one, and an iterator chain into a Vec.
+#[test]
+fn the_real_conversions_still_resolve() {
+    for source in [
+        "fn main() { let a = [1, 2, 3]\n let _ = a.to_vec() }\n",
+        "use std::collections::Set\nfn main() { let s = #{1, 2}\n let _ = s.to_vec() }\n",
+        "fn main() { let _ = (0..3).collect() }\n",
+        "fn main() { let _ = #[1, 2].iter().collect() }\n",
+        "fn main() { let s = \"a\"\n let _ = s.clone() }\n",
+        "fn main() { let _ = 5.to_string() }\n",
+    ] {
+        let d = diagnostics_for(source);
+        assert!(d.is_empty(), "{source}: {d:?}");
+    }
+}
+
+// ---------------------------------------------------------------
+// Numeric receivers: the `math` surface reached in method position,
+// and the field reads a scalar cannot answer.
+// ---------------------------------------------------------------
+
+#[test]
+fn a_math_method_on_a_numeric_receiver_answers_concretely() {
+    // A concrete answer is one an annotation can agree or disagree
+    // with; a free inference variable would accept both spellings.
+    for (accepted, rejected) in [
+        (
+            "fn main() { let a: f64 = (-1.5).abs()\n let _ = a }\n",
+            "fn main() { let a: String = (-1.5).abs()\n let _ = a }\n",
+        ),
+        (
+            "fn main() { let a: f64 = 9.sqrt()\n let _ = a }\n",
+            "fn main() { let a: i64 = 9.sqrt()\n let _ = a }\n",
+        ),
+        (
+            "fn main() { let a: i64 = (-3).abs()\n let _ = a }\n",
+            "fn main() { let a: f64 = (-3).abs()\n let _ = a }\n",
+        ),
+        (
+            "fn main() { let a: bool = 1.5.is_nan()\n let _ = a }\n",
+            "fn main() { let a: f64 = 1.5.is_nan()\n let _ = a }\n",
+        ),
+        (
+            "fn main() { let a: Vec<f64> = #[1.0, -2.0].map(|x| x.abs())\n let _ = a }\n",
+            "fn main() { let a: Vec<String> = #[1.0, -2.0].map(|x| x.abs())\n let _ = a }\n",
+        ),
+        (
+            "fn main() { let a: Vec<i64> = #[1, -2].map(|x| x.abs())\n let _ = a }\n",
+            "fn main() { let a: Vec<String> = #[1, -2].map(|x| x.abs())\n let _ = a }\n",
+        ),
+        (
+            "fn main() { let a: Vec<f64> = #[1.0, -2.0].map($.abs)\n let _ = a }\n",
+            "fn main() { let a: Vec<String> = #[1.0, -2.0].map($.abs)\n let _ = a }\n",
+        ),
+    ] {
+        let d = diagnostics_for(accepted);
+        assert!(d.is_empty(), "{accepted}: {d:?}");
+        let d = diagnostics_for(rejected);
+        assert!(!d.is_empty(), "{rejected} should not typecheck");
+    }
+}
+
+#[test]
+fn a_field_read_on_a_fieldless_receiver_is_rejected() {
+    for source in [
+        "fn main() { let x = 1\n let _ = x.bogus }\n",
+        "fn main() { let s = \"hi\"\n let _ = s.bogus }\n",
+        "fn main() { let v = #[1, 2]\n let _ = v.bogus }\n",
+        "fn main() { let _ = #[1.0].map(|x| x.abs) }\n",
+    ] {
+        let d = diagnostics_for(source);
+        assert!(
+            d.iter()
+                .any(|diag| matches!(&diag.error, TypeError::UnknownField { .. })),
+            "{source} should report GT0006: {d:?}"
+        );
+    }
+}
+
+#[test]
+fn a_missing_call_on_a_method_names_the_method() {
+    let d = diagnostics_for("fn main() { let _ = #[1.0].map(|x| x.abs) }\n");
+    assert!(
+        d.iter().any(|diag| matches!(
+            &diag.error,
+            TypeError::UnknownField {
+                method_of_same_name: true,
+                ..
+            }
+        )),
+        "the report should name `abs` as a method: {d:?}"
+    );
+}
+
+#[test]
+fn a_call_of_a_field_names_the_field() {
+    let d = diagnostics_for(
+        "struct P { name: String }\nfn main() { let p = P { name: \"a\" }\n let _ = p.name() }\n",
+    );
+    assert!(
+        d.iter().any(|diag| matches!(
+            &diag.error,
+            TypeError::UnresolvedMethod {
+                field_of_same_name: true,
+                ..
+            }
+        )),
+        "the report should name `name` as a field: {d:?}"
+    );
 }

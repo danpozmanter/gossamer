@@ -230,7 +230,7 @@ impl FieldKind {
             Self::Option(inner) => {
                 let some_render = inner.render_to_json("__inner");
                 format!(
-                    "match {expr} {{ Some(__inner) => {some_render}, None => \"null\".to_string() }}"
+                    "match {expr} {{ Some(__inner) => {some_render}, None => \"null\" }}"
                 )
             }
             Self::Tuple(elems) => render_tuple_to_json(expr, elems),
@@ -423,7 +423,7 @@ fn render_vec_to_json(expr: &str, inner: &FieldKind) -> String {
     // the surrounding `out += ...` lands a single concatenated String.
     let elem_render = inner.render_to_json("__item");
     format!(
-        "{{ let mut __buf = \"[\".to_string()\n            let mut __first = true\n            for __item in {expr} {{\n                if !__first {{ __buf += \",\" }}\n                __first = false\n                __buf += {elem_render}\n            }}\n            __buf += \"]\"\n            __buf }}"
+        "{{ let mut __buf = \"[\"\n            let mut __first = true\n            for __item in {expr} {{\n                if !__first {{ __buf += \",\" }}\n                __first = false\n                __buf += {elem_render}\n            }}\n            __buf += \"]\"\n            __buf }}"
     )
 }
 
@@ -437,7 +437,7 @@ fn extract_vec_strict(value_expr: &str, inner: &FieldKind, path: &str) -> String
 }
 
 fn render_tuple_to_json(expr: &str, elems: &[FieldKind]) -> String {
-    let mut out = String::from("{ let mut __buf = \"[\".to_string()\n");
+    let mut out = String::from("{ let mut __buf = \"[\"\n");
     for (i, k) in elems.iter().enumerate() {
         if i > 0 {
             out.push_str("            __buf += \",\"\n");
@@ -472,7 +472,7 @@ fn render_map_to_json(expr: &str, inner: &FieldKind) -> String {
     // iteration order is not stable and differs interp-vs-compiled).
     let vr = inner.render_to_json("__v");
     format!(
-        "{{ let mut __ks = {expr}.keys()\n            __ks.sort()\n            let mut __buf = \"{{\".to_string()\n            let mut __first = true\n            for __k in __ks {{\n                if !__first {{ __buf += \",\" }}\n                __first = false\n                __buf += format!(\"\\\"{{}}\\\":\", __k)\n                if let Some(__v) = {expr}.get(&__k) {{ __buf += {vr} }}\n            }}\n            __buf += \"}}\"\n            __buf }}"
+        "{{ let mut __ks = {expr}.keys()\n            __ks.sort()\n            let mut __buf = \"{{\"\n            let mut __first = true\n            for __k in __ks {{\n                if !__first {{ __buf += \",\" }}\n                __first = false\n                __buf += format!(\"\\\"{{}}\\\":\", __k)\n                if let Some(__v) = {expr}.get(&__k) {{ __buf += {vr} }}\n            }}\n            __buf += \"}}\"\n            __buf }}"
     )
 }
 

@@ -1,0 +1,515 @@
+//! `cohort { }` builtins for the bytecode VM - the twin of
+//! `gossamer-runtime/src/c_abi/cohort.rs`.
+//!
+//! The two substrates differ in what a goroutine is: the compiled tiers
+//! multiplex coroutines over carrier threads, while a VM goroutine owns
+//! a pool thread for its whole life. The current cohort is therefore
+//! thread-local here and `Gid`-keyed there, and both answer the same
+//! questions in the same order, which is what keeps the observable
+//! behaviour identical.
+//!
+//! Everything else matches by construction: a child's index is assigned
+//! at its `spawn` call, the reported failure is the lowest-index one
+//! rather than the first to arrive, and cancellation is observed as an
+//! operation's ordinary "nothing more is coming" answer.
+
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::{Arc, LazyLock};
+use std::time::{Duration, Instant};
+
+use crate::builtins::{BuiltinFnPub, value_to_int};
+use crate::value::{RuntimeResult, Value};
+
+/// Completion policy, as spelled by `Policy::` in source.
+pub(crate) const POLICY_FAIL_FAST: i64 = 0;
+pub(crate) const POLICY_COLLECT_ALL: i64 = 1;
+pub(crate) const POLICY_RACE: i64 = 2;
+
+/// Execution context for children, as spelled by `Context::` in source.
+pub(crate) const CONTEXT_DEFAULT: i64 = 0;
+pub(crate) const CONTEXT_ISOLATED: i64 = 1;
+
+/// Whether any cohort has ever been opened, so a program that uses none
+/// pays one relaxed load per cancellation point.
+static ANY_COHORT: AtomicBool = AtomicBool::new(false);
+
+/// Whether this process has opened a cohort.
+#[inline]
+pub(crate) fn any_cohort_live() -> bool {
+    ANY_COHORT.load(Ordering::Relaxed)
+}
+
+/// Cohorts currently cancelled. `main` runs inside a root cohort, so
+/// "any cohort exists" is true for every program; this counter is the
+/// fast path a cancellation point reads instead.
+static CANCELLED_COHORTS: AtomicI64 = AtomicI64::new(0);
+
+/// The join handle of every cohort child, keyed by the handle channel's
+/// identity, so joining it marks that child's failure as one the program
+/// saw.
+static CHILD_HANDLES: LazyLock<parking_lot::Mutex<HashMap<usize, (i64, i64)>>> =
+    LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
+
+/// Records which cohort child a join handle belongs to.
+pub(crate) fn note_child_handle(handle: usize, cohort: i64, index: i64) {
+    if handle == 0 || cohort == 0 {
+        return;
+    }
+    CHILD_HANDLES.lock().insert(handle, (cohort, index));
+}
+
+/// Marks the child behind `handle` as observed: its outcome reached the
+/// program, so a failure it reported is not an orphaned one.
+pub(crate) fn mark_handle_observed(handle: usize) {
+    if handle == 0 {
+        return;
+    }
+    let entry = CHILD_HANDLES.lock().remove(&handle);
+    let Some((cohort, index)) = entry else {
+        return;
+    };
+    if let Some(node) = node_of(cohort) {
+        let mut state = node.state.lock();
+        for failure in &mut state.failures {
+            if failure.index == index {
+                failure.observed = true;
+            }
+        }
+    }
+}
+
+/// One child's failure, and whether any joiner ever read it.
+struct ChildFailure {
+    index: i64,
+    message: String,
+    observed: bool,
+}
+
+struct CohortState {
+    next_index: i64,
+    outstanding: i64,
+    failures: Vec<ChildFailure>,
+    successes: i64,
+    joined: bool,
+    timed_out: bool,
+}
+
+struct CohortNode {
+    parent: i64,
+    policy: i64,
+    context: i64,
+    cancelled: AtomicBool,
+    state: parking_lot::Mutex<CohortState>,
+    progress: parking_lot::Condvar,
+}
+
+static COHORTS: LazyLock<parking_lot::Mutex<HashMap<i64, Arc<CohortNode>>>> =
+    LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
+static NEXT_ID: AtomicI64 = AtomicI64::new(1);
+
+thread_local! {
+    /// The cohort current on this goroutine. A VM goroutine owns its
+    /// thread for its whole life, so thread-local is per goroutine here.
+    static CURRENT: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
+}
+
+fn node_of(id: i64) -> Option<Arc<CohortNode>> {
+    if id == 0 {
+        return None;
+    }
+    COHORTS.lock().get(&id).cloned()
+}
+
+/// The running goroutine's current cohort id, or 0.
+pub(crate) fn current_cohort() -> i64 {
+    if !any_cohort_live() {
+        return 0;
+    }
+    CURRENT.with(std::cell::Cell::get)
+}
+
+fn set_current(id: i64) {
+    CURRENT.with(|cell| cell.set(id));
+}
+
+/// Whether `id` or any enclosing cohort is cancelled.
+fn chain_is_cancelled(id: i64) -> bool {
+    let mut current = id;
+    while current != 0 {
+        let Some(node) = node_of(current) else {
+            return true;
+        };
+        if node.cancelled.load(Ordering::Acquire) {
+            return true;
+        }
+        current = node.parent;
+    }
+    false
+}
+
+/// Whether the running goroutine's cohort chain is cancelled - the
+/// predicate every cancellation point consults.
+pub(crate) fn current_is_cancelled() -> bool {
+    if CANCELLED_COHORTS.load(Ordering::Relaxed) == 0 {
+        return false;
+    }
+    let id = current_cohort();
+    id != 0 && chain_is_cancelled(id)
+}
+
+fn cancel(id: i64) {
+    let Some(node) = node_of(id) else {
+        return;
+    };
+    if node.cancelled.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    CANCELLED_COHORTS.fetch_add(1, Ordering::AcqRel);
+    node.progress.notify_all();
+    // A cancelled cohort's children are waiting on channels of their
+    // own, so wake every channel waiter to re-check its condition. The
+    // channel layer answers `None` to a receiver under a cancelled
+    // cohort, which is the same answer a closed channel gives.
+    crate::value::wake_all_channel_waiters();
+}
+
+/// Deadlines waiting to fire, earliest last so the timer thread pops the
+/// back. One thread serves every cohort.
+static DEADLINES: LazyLock<parking_lot::Mutex<Vec<(Instant, i64)>>> =
+    LazyLock::new(|| parking_lot::Mutex::new(Vec::new()));
+static DEADLINE_WAKE: LazyLock<parking_lot::Condvar> = LazyLock::new(parking_lot::Condvar::new);
+static TIMER_THREAD: std::sync::Once = std::sync::Once::new();
+
+fn schedule_deadline(deadline: Instant, id: i64) {
+    {
+        let mut queue = DEADLINES.lock();
+        queue.push((deadline, id));
+        queue.sort_unstable_by_key(|entry| std::cmp::Reverse(entry.0));
+    }
+    TIMER_THREAD.call_once(|| {
+        let _ = std::thread::Builder::new()
+            .name("gossamer-cohort-timer".to_string())
+            .spawn(run_deadline_timer);
+    });
+    DEADLINE_WAKE.notify_all();
+}
+
+fn run_deadline_timer() {
+    loop {
+        let mut queue = DEADLINES.lock();
+        let Some(&(earliest, id)) = queue.last() else {
+            DEADLINE_WAKE.wait(&mut queue);
+            continue;
+        };
+        let now = Instant::now();
+        if earliest > now {
+            DEADLINE_WAKE.wait_for(&mut queue, earliest - now);
+            continue;
+        }
+        queue.pop();
+        drop(queue);
+        if let Some(node) = node_of(id) {
+            node.state.lock().timed_out = true;
+            cancel(id);
+        }
+    }
+}
+
+/// Whether any cohort deadline is still pending. A pending deadline is
+/// an actor outside the goroutine set that will cancel a cohort, so a
+/// program waiting on one is waiting rather than deadlocked.
+pub(crate) fn deadline_pending() -> bool {
+    !DEADLINES.lock().is_empty()
+}
+
+fn push(policy: i64, timeout_ms: i64, context: i64) -> i64 {
+    ANY_COHORT.store(true, Ordering::Relaxed);
+    let parent = current_cohort();
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let node = Arc::new(CohortNode {
+        parent,
+        policy,
+        context,
+        cancelled: AtomicBool::new(false),
+        state: parking_lot::Mutex::new(CohortState {
+            next_index: 0,
+            outstanding: 0,
+            failures: Vec::new(),
+            successes: 0,
+            joined: false,
+            timed_out: false,
+        }),
+        progress: parking_lot::Condvar::new(),
+    });
+    COHORTS.lock().insert(id, node);
+    set_current(id);
+    if timeout_ms > 0 {
+        schedule_deadline(
+            Instant::now() + Duration::from_millis(timeout_ms as u64),
+            id,
+        );
+    }
+    id
+}
+
+/// Reserves a positional slot for a child about to be spawned into `id`.
+pub(crate) fn register_child(id: i64) -> i64 {
+    let Some(node) = node_of(id) else {
+        return -1;
+    };
+    let mut state = node.state.lock();
+    let index = state.next_index;
+    state.next_index += 1;
+    state.outstanding += 1;
+    index
+}
+
+/// Called on the child goroutine before its body runs.
+pub(crate) fn enter_child(id: i64) {
+    if id != 0 {
+        set_current(id);
+    }
+}
+
+/// Called on the child goroutine once its body has finished, however it
+/// finished.
+pub(crate) fn leave_child(id: i64, index: i64, failure: Option<String>) {
+    set_current(0);
+    let Some(node) = node_of(id) else {
+        return;
+    };
+    let cancel_now;
+    {
+        let mut state = node.state.lock();
+        state.outstanding -= 1;
+        match failure {
+            Some(message) => {
+                state.failures.push(ChildFailure {
+                    index,
+                    message,
+                    observed: false,
+                });
+                cancel_now = node.policy == POLICY_FAIL_FAST;
+            }
+            None => {
+                state.successes += 1;
+                cancel_now = node.policy == POLICY_RACE;
+            }
+        }
+        node.progress.notify_all();
+    }
+    if cancel_now {
+        cancel(id);
+    }
+}
+
+/// Sleeps for `duration` unless the running goroutine's cohort is
+/// cancelled first, and reports whether the full duration elapsed.
+///
+/// The wait is on the cohort's own condition variable, which cancelling
+/// signals, so a cancelled sleeper wakes at once rather than at the end
+/// of a polling slice. Outside a cohort this is a plain sleep.
+pub(crate) fn sleep_cancellable(duration: Duration) -> bool {
+    let id = current_cohort();
+    let Some(node) = node_of(id) else {
+        std::thread::sleep(duration);
+        return true;
+    };
+    let deadline = Instant::now() + duration;
+    loop {
+        if chain_is_cancelled(id) {
+            return false;
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return true;
+        }
+        let mut state = node.state.lock();
+        node.progress.wait_for(&mut state, deadline - now);
+    }
+}
+
+/// Whether children of the running goroutine's cohort run isolated.
+pub(crate) fn current_context() -> i64 {
+    let mut current = current_cohort();
+    while current != 0 {
+        let Some(node) = node_of(current) else {
+            return CONTEXT_DEFAULT;
+        };
+        if node.context != CONTEXT_DEFAULT {
+            return node.context;
+        }
+        current = node.parent;
+    }
+    CONTEXT_DEFAULT
+}
+
+fn wait_for_drain(node: &Arc<CohortNode>) {
+    let mut state = node.state.lock();
+    while state.outstanding > 0 {
+        node.progress.wait(&mut state);
+    }
+}
+
+fn outcome_message(node: &Arc<CohortNode>) -> Option<String> {
+    let mut state = node.state.lock();
+    state.joined = true;
+    state.failures.sort_by_key(|failure| failure.index);
+    match node.policy {
+        POLICY_COLLECT_ALL if !state.failures.is_empty() => Some(
+            state
+                .failures
+                .iter()
+                .map(|failure| failure.message.as_str())
+                .collect::<Vec<_>>()
+                .join("; "),
+        ),
+        POLICY_RACE => {
+            if state.successes > 0 {
+                None
+            } else {
+                state
+                    .failures
+                    .first()
+                    .map(|failure| failure.message.clone())
+                    .or_else(|| state.timed_out.then(|| "cohort timed out".to_string()))
+            }
+        }
+        _ => state
+            .failures
+            .first()
+            .map(|failure| failure.message.clone())
+            .or_else(|| state.timed_out.then(|| "cohort timed out".to_string())),
+    }
+}
+
+fn pop_current() {
+    let id = current_cohort();
+    let Some(node) = node_of(id) else {
+        return;
+    };
+    let already_joined = node.state.lock().joined;
+    if !already_joined {
+        cancel(id);
+        wait_for_drain(&node);
+    }
+    set_current(node.parent);
+    if node.cancelled.load(Ordering::Acquire) {
+        CANCELLED_COHORTS.fetch_sub(1, Ordering::AcqRel);
+    }
+    // A handle nobody joined has no one left to mark it observed, so its
+    // entry retires with the cohort rather than living for the process.
+    CHILD_HANDLES.lock().retain(|_, (cohort, _)| *cohort != id);
+    COHORTS.lock().remove(&id);
+}
+
+/// Opens the process-wide root cohort that `main` runs inside.
+///
+/// Every `spawn` is a child of some cohort, so a goroutine cannot outlive
+/// the program and a failure cannot vanish unread. The root's policy is
+/// collect-all: it bounds lifetimes and surfaces failures without
+/// imposing fail-fast on a program that never asked for it.
+pub fn open_root() {
+    if current_cohort() != 0 {
+        return;
+    }
+    push(POLICY_COLLECT_ALL, 0, CONTEXT_DEFAULT);
+}
+
+/// Closes the root cohort: waits for what `main` spawned, then reports
+/// any failure nothing in the program ever read.
+pub fn close_root() {
+    let id = current_cohort();
+    let Some(node) = node_of(id) else {
+        return;
+    };
+    wait_for_drain(&node);
+    let orphaned: Vec<String> = {
+        let state = node.state.lock();
+        state
+            .failures
+            .iter()
+            .filter(|failure| !failure.observed)
+            .map(|failure| failure.message.clone())
+            .collect()
+    };
+    for message in orphaned {
+        eprintln!("gossamer: spawned goroutine failed with nobody to observe it: {message}");
+    }
+    node.state.lock().joined = true;
+    pop_current();
+}
+
+/// Closes every cohort still open on the running goroutine. The spawn
+/// wrappers call this last, so a body that left by a path `defer` does
+/// not cover still cannot leave its children running.
+pub(crate) fn unwind_open_cohorts() {
+    if !any_cohort_live() {
+        return;
+    }
+    while current_cohort() != 0 {
+        pop_current();
+    }
+}
+
+pub(crate) fn install_cohort(globals: &mut Vec<(&'static str, Value)>) {
+    let entries: &[(&str, BuiltinFnPub)] = &[
+        ("runtime::cohort_push", builtin_cohort_push),
+        ("cohort_push", builtin_cohort_push),
+        ("runtime::cohort_join", builtin_cohort_join),
+        ("cohort_join", builtin_cohort_join),
+        ("runtime::cohort_pop", builtin_cohort_pop),
+        ("cohort_pop", builtin_cohort_pop),
+        ("runtime::cohort_cancelled", builtin_cohort_cancelled),
+        ("cohort_cancelled", builtin_cohort_cancelled),
+        ("runtime::cohort_cancel", builtin_cohort_cancel),
+        ("cohort_cancel", builtin_cohort_cancel),
+    ];
+    for (name, call) in entries {
+        globals.push((*name, crate::builtins::builtin_pub(name, *call)));
+    }
+}
+
+fn builtin_cohort_push(args: &[Value]) -> RuntimeResult<Value> {
+    let policy = args
+        .first()
+        .and_then(value_to_int)
+        .unwrap_or(POLICY_FAIL_FAST);
+    let timeout_ms = args.get(1).and_then(value_to_int).unwrap_or(0);
+    let context = args
+        .get(2)
+        .and_then(value_to_int)
+        .unwrap_or(CONTEXT_DEFAULT);
+    push(policy, timeout_ms, context);
+    Ok(Value::Unit)
+}
+
+fn builtin_cohort_join(_args: &[Value]) -> RuntimeResult<Value> {
+    let id = current_cohort();
+    let Some(node) = node_of(id) else {
+        return Ok(Value::variant("Ok", vec![Value::Unit]));
+    };
+    wait_for_drain(&node);
+    Ok(match outcome_message(&node) {
+        None => Value::variant("Ok", vec![Value::Unit]),
+        Some(message) => Value::variant("Err", vec![crate::builtins::make_error_value(&message)]),
+    })
+}
+
+fn builtin_cohort_pop(_args: &[Value]) -> RuntimeResult<Value> {
+    pop_current();
+    Ok(Value::Unit)
+}
+
+fn builtin_cohort_cancelled(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Bool(current_is_cancelled()))
+}
+
+fn builtin_cohort_cancel(_args: &[Value]) -> RuntimeResult<Value> {
+    let id = current_cohort();
+    if id != 0 {
+        cancel(id);
+    }
+    Ok(Value::Unit)
+}

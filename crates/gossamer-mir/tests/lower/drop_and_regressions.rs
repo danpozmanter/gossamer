@@ -901,7 +901,7 @@ fn call_names(body: &gossamer_mir::Body) -> Vec<String> {
 fn string_plus_assign_flattens_rhs_concat_chain_to_in_place_appends() {
     let source = r#"
 fn main() {
-    let mut out = "".to_string()
+    let mut out = ""
     let mut i: i64 = 0
     while i < 3 {
         let name = "user-" + i.to_string()

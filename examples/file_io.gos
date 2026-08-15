@@ -22,7 +22,7 @@ let json_path = path::join(&dir, &"settings.json")
 fs::create_dir_all(&dir).map_err(|e| errors::wrap(e, "mkdir"))?
 
 // --- text ---
-fs::write(&text_path, "hello, gossamer\n".to_string().as_bytes())
+fs::write(&text_path, "hello, gossamer\n".as_bytes())
     .map_err(|e| errors::wrap(e, "write text"))?
 let contents = fs::read_to_string(&text_path)
     .map_err(|e| errors::wrap(e, "read text"))?

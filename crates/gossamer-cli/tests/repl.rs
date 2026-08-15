@@ -3694,3 +3694,185 @@ fn repl_bare_map_iteration_formats_keys_and_returns_unit() {
         out.stderr
     );
 }
+
+/// An unterminated triple-quoted literal keeps the REPL reading lines
+/// until the closing delimiter arrives.
+#[test]
+fn repl_continues_reading_an_open_triple_quoted_string() {
+    let out = run_repl("let text = \"\"\"\n    a\n    b\n    \"\"\"\nprintln!(\"{}\", text)\n");
+    assert!(
+        out.stdout.contains("a\nb"),
+        "stdout: {}\nstderr: {}",
+        out.stdout,
+        out.stderr
+    );
+}
+
+/// `%info` answers for a type the session declares, not only for the
+/// stdlib catalog, and reports its fields, the traits implemented for
+/// it, and where each method came from.
+#[test]
+fn repl_info_reports_fields_traits_and_methods_for_a_session_struct() {
+    let out = run_repl(concat!(
+        "struct Point { x: f64, y: f64 }\n",
+        "trait Area { fn area(&self) -> f64 }\n",
+        "impl Area for Point { fn area(&self) -> f64 { self.x * self.y } }\n",
+        "impl Point { fn mag(&self) -> f64 { self.x } }\n",
+        "%info Point\n",
+    ));
+    assert!(
+        out.stdout.contains("Point [struct]"),
+        "stdout: {}",
+        out.stdout
+    );
+    assert!(out.stdout.contains("  fields"), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("    x: f64"), "stdout: {}", out.stdout);
+    assert!(
+        out.stdout.contains("  implements"),
+        "stdout: {}",
+        out.stdout
+    );
+    assert!(out.stdout.contains("    Area"), "stdout: {}", out.stdout);
+    assert!(
+        out.stdout.contains("Point::area(&self) -> f64 [Area]"),
+        "stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("Point::mag(&self) -> f64 [inherent]"),
+        "stdout: {}",
+        out.stdout
+    );
+}
+
+/// `%info` on a trait names its methods and the types implementing it.
+#[test]
+fn repl_info_reports_a_traits_methods_and_implementors() {
+    let out = run_repl(concat!(
+        "struct Point { x: f64, y: f64 }\n",
+        "trait Area { fn area(&self) -> f64 }\n",
+        "impl Area for Point { fn area(&self) -> f64 { self.x * self.y } }\n",
+        "%info Area\n",
+    ));
+    assert!(
+        out.stdout.contains("Area [trait]"),
+        "stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("fn area(&self) -> f64"),
+        "stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("  implemented by"),
+        "stdout: {}",
+        out.stdout
+    );
+}
+
+/// `%explain` on a binding renders the session's facts in receiver form.
+#[test]
+fn repl_explain_binding_shows_fields_and_receiver_form_methods() {
+    let out = run_repl(concat!(
+        "struct Point { x: f64, y: f64 }\n",
+        "trait Area { fn area(&self) -> f64 }\n",
+        "impl Area for Point { fn area(&self) -> f64 { self.x * self.y } }\n",
+        "let p = Point { x: 1.0, y: 2.0 }\n",
+        "%explain p\n",
+    ));
+    assert!(
+        out.stdout.contains("p: Point [binding]"),
+        "stdout: {}",
+        out.stdout
+    );
+    assert!(out.stdout.contains("    y: f64"), "stdout: {}", out.stdout);
+    assert!(
+        out.stdout.contains("p.area() -> f64 [Area]"),
+        "stdout: {}",
+        out.stdout
+    );
+}
+
+/// A session `impl` on a builtin type adds to the catalog's entry for
+/// it rather than replacing it.
+#[test]
+fn repl_info_merges_a_session_impl_into_a_builtin_types_entry() {
+    let out = run_repl(concat!(
+        "trait Area { fn area(&self) -> f64 }\n",
+        "impl Area for String { fn area(&self) -> f64 { 1.0 } }\n",
+        "%info String\n",
+    ));
+    assert!(
+        out.stdout.contains("String::area(&self) -> f64 [Area]"),
+        "session impl missing: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("String::to_uppercase"),
+        "catalog methods lost: {}",
+        out.stdout
+    );
+    assert_eq!(
+        out.stdout.matches("String [type]").count(),
+        1,
+        "header printed more than once: {}",
+        out.stdout
+    );
+}
+
+/// A builtin type's listing line carries what the type is, not just its
+/// name and tag.
+#[test]
+fn repl_info_describes_a_builtin_type_without_details() {
+    let out = run_repl("%info String\n");
+    assert!(
+        out.stdout.contains("String [type]"),
+        "stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("Unicode scalars"),
+        "no description on the type line: {}",
+        out.stdout
+    );
+}
+
+/// Every builtin type is named once, whether it reaches the listing as
+/// a catalogued type or as the owner of its methods.
+#[test]
+fn repl_info_names_a_builtin_type_once() {
+    let out = run_repl("%info Tuple\n");
+    assert_eq!(
+        out.stdout.matches("Tuple [type]").count(),
+        1,
+        "stdout: {}",
+        out.stdout
+    );
+}
+
+/// The REPL runs the front end phase by phase, so it has to perform
+/// the same caller-side normalisation a file gets: a std function
+/// named in value position, and a `$`-headed callback, both stand for
+/// the closure that calls them.
+#[test]
+fn repl_accepts_the_callback_shorthands() {
+    let out = run_repl(
+        "use std::math\n\
+         #[1.0, -2.0].map(math::abs)\n\
+         #[1.0, -2.0].map($.abs)\n\
+         #[\" a \"].map($.trim)\n",
+    );
+    assert!(
+        out.stdout.matches("[1.0, 2.0]").count() == 2,
+        "both shorthands should answer the mapped Vec: {}\n{}",
+        out.stdout,
+        out.stderr
+    );
+    assert!(
+        out.stdout.contains("[\"a\"]"),
+        "a nullary method shorthand should run: {}\n{}",
+        out.stdout,
+        out.stderr
+    );
+}

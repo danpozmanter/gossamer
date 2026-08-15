@@ -95,7 +95,7 @@ fn fannkuch_max(n: i64) -> i64 {
             count[r - 1] = r
             r -= 1
         }
-        let mut work = perm.to_vec()
+        let mut work = perm.clone()
         let mut flips = 0
         while work[0] != 0 {
             let k = work[0]

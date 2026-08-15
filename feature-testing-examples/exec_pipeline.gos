@@ -12,7 +12,7 @@
 use std::os::exec
 
 fn main() {
-    let cmds: Vec<String> = #["printf hello", "tr a-z A-Z"].to_vec()
+    let cmds: Vec<String> = #["printf hello", "tr a-z A-Z"]
     match exec::pipeline_run(&cmds) {
         Ok(out) => {
             println!("stdout: {}", out.stdout.trim())
@@ -25,7 +25,7 @@ fn main() {
         "printf 'a\\nb\\nc\\n'",
         "sort -r",
         "head -n 1",
-    ]).to_vec()
+    ])
     match exec::pipeline_run(&three) {
         Ok(out) => println!("3-stage tail: {}", out.stdout.trim())
         Err(e) => println!("3-stage err: {}", e.message())

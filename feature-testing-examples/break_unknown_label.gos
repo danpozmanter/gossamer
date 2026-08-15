@@ -1,0 +1,15 @@
+// A `break` naming a label no enclosing loop carries is rejected at
+// check time, not left to fault at run time. `break_unknown_label_is_rejected`
+// in `crates/gossamer-cli/tests/bug_regressions` asserts the diagnostic.
+fn main() {
+    let mut found = (0, 0)
+    'search: for row in 0..5 {
+        for col in 0..5 {
+            if row * col == 6 {
+                found = (row, col)
+                break 'wrong
+            }
+        }
+    }
+    println!("first pair with product 6 = {:?}", found)
+}

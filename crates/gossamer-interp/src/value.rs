@@ -2136,6 +2136,16 @@ pub struct Channel {
     inner: Arc<ChannelInner>,
 }
 
+impl Channel {
+    /// Stable identity of this channel, shared by every clone of it.
+    /// A join handle is a channel, so this is what keys a cohort child
+    /// to the handle its joiner holds.
+    #[must_use]
+    pub fn identity(&self) -> usize {
+        Arc::as_ptr(&self.inner) as usize
+    }
+}
+
 struct ChannelInner {
     state: Mutex<ChannelState>,
     cv: parking_lot::Condvar,
@@ -2271,6 +2281,12 @@ pub fn wake_all_channel_waiters() {
     let live = LIVE_CHANNELS.lock();
     for weak in live.iter() {
         if let Some(inner) = weak.upgrade() {
+            // Taken and released around the notify: a waiter decides
+            // whether to sleep while holding this lock, so notifying
+            // without it can land in the gap between that decision and
+            // the wait, waking nobody and leaving the waiter asleep on a
+            // condition that has already changed.
+            drop(inner.state.lock());
             inner.cv.notify_all();
         }
     }
@@ -2363,9 +2379,17 @@ impl Channel {
                 guard.waiting_senders += 1;
                 self.notify_channel_changed(&mut guard);
                 let mut deadlocked = false;
-                while guard.buf.iter().any(|msg| msg.id == id) && !guard.closed {
+                while guard.buf.iter().any(|msg| msg.id == id)
+                    && !guard.closed
+                    // A cancelled cohort has no reader left to take this
+                    // value, so the send stops waiting for a handoff that
+                    // is not coming.
+                    && !crate::stdlib_builtins::cohort::current_is_cancelled()
+                {
                     let Some(_waiting) = crate::vm::goroutine::ChannelWait::enter(|| {
-                        guard.has_ready_waiter() || any_channel_can_progress(&self.inner)
+                        guard.has_ready_waiter()
+                            || any_channel_can_progress(&self.inner)
+                            || crate::stdlib_builtins::cohort::deadline_pending()
                     }) else {
                         deadlocked = true;
                         break;
@@ -2487,6 +2511,13 @@ impl Channel {
         // window would read a channel that is about to hand off as stuck.
         let mut registered = false;
         let outcome = loop {
+            // A cancelled cohort answers its children the way a closed
+            // channel does: nothing more is coming. The check precedes the
+            // buffer read so the answer does not depend on whether a
+            // sender reached the channel first, matching `recv_with_cancel`.
+            if crate::stdlib_builtins::cohort::current_is_cancelled() {
+                break RecvOutcome::Closed;
+            }
             if let Some(msg) = guard.buf.pop_front() {
                 break RecvOutcome::Value(msg.value);
             }
@@ -2503,6 +2534,7 @@ impl Channel {
                 guard.has_ready_waiter()
                     || any_channel_can_progress(&self.inner)
                     || crate::stdlib_builtins::context::deadline_pending()
+                    || crate::stdlib_builtins::cohort::deadline_pending()
             }) else {
                 break RecvOutcome::Deadlocked;
             };

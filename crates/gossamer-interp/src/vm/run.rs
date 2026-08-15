@@ -4749,6 +4749,25 @@ fn select_try_once(
 /// channel arm when nothing is ready and no `default` exists. Any
 /// send, recv, close, or receiver-arrival event wakes the waiter and
 /// the VM re-polls all arms in a fresh pseudo-random order.
+/// The arm a select resolves to once its cohort is cancelled: the
+/// `default` arm when one is written, else the first arm, whose recv
+/// yields the element-type zero the way a closed channel does.
+fn select_cancelled_target(
+    arms: &[crate::bytecode::SelectArmMeta],
+    registers: &mut [Value],
+) -> Option<crate::bytecode::InstrIdx> {
+    use crate::bytecode::SelectArmKind;
+    let arm = arms
+        .iter()
+        .find(|a| a.kind == SelectArmKind::Default)
+        .or_else(|| arms.first())?;
+    if arm.kind == SelectArmKind::Recv {
+        // The same element-type zero a closed channel's recv arm binds.
+        registers[arm.bind_reg as usize] = Value::Int(0);
+    }
+    Some(arm.body_block)
+}
+
 fn select_dispatch(
     arms: &[crate::bytecode::SelectArmMeta],
     registers: &mut [Value],
@@ -4767,6 +4786,14 @@ fn select_dispatch(
         .collect();
     loop {
         if let Some(target) = select_try_once(arms, registers) {
+            return target;
+        }
+        // A cancelled cohort makes every blocking arm behave the way a
+        // closed channel does, so a select under cancellation resolves
+        // instead of waiting for a partner that will never come.
+        if crate::stdlib_builtins::cohort::current_is_cancelled()
+            && let Some(target) = select_cancelled_target(arms, registers)
+        {
             return target;
         }
         if channels.is_empty() {

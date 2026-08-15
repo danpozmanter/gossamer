@@ -9,8 +9,8 @@ fn sum_to(n: i64) -> i64 {
 fn main() {
     let answer = sum_to(1000)
     let label = match answer {
-        499500 => "ok",
-        _ => "bad",
+        499500 => "ok"
+        _ => "bad"
     }
     println!("{}:{}", label, answer)
 }

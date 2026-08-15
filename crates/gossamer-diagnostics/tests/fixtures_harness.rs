@@ -27,16 +27,10 @@ fn collect_diagnostics(source: &str, file_name: &str) -> Vec<Diagnostic> {
 
     let (resolutions, resolve_diags) = resolve_source_file(&sf);
     let in_scope = collect_names(&sf);
+    // Every resolver diagnostic, matching what `gos check` reports: a
+    // whitelist here would silently exclude any new one from fixturing.
     for diag in &resolve_diags {
-        if matches!(
-            diag.error,
-            ResolveError::UnresolvedName { .. }
-                | ResolveError::DuplicateItem { .. }
-                | ResolveError::DuplicateImport { .. }
-                | ResolveError::WrongNamespace { .. }
-        ) {
-            out.push(diag.to_diagnostic(&in_scope));
-        }
+        out.push(diag.to_diagnostic(&in_scope));
     }
 
     let mut tcx = TyCtxt::new();
@@ -118,6 +112,7 @@ fixture_test!(gr0001_unresolved_name, "GR0001_unresolved_name.gos");
 fixture_test!(gr0003_duplicate_item, "GR0003_duplicate_item.gos");
 fixture_test!(gt0001_type_mismatch, "GT0001_type_mismatch.gos");
 fixture_test!(gm0003_arena_escape, "GM0003_arena_escape.gos");
+fixture_test!(gr0017_unknown_loop_label, "GR0017_unknown_loop_label.gos");
 
 #[test]
 fn all_fixtures_have_error_marker() {

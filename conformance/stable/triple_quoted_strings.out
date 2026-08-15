@@ -1,0 +1,15 @@
+<html>
+    <body>
+        <h1>Hello</h1>
+    </body>
+</html>
+scan:6000
+empty::
+trailing:one
+:
+hugging:two:
+inline:a"b
+tabbed:a	b
+deeper:    indented once
+back:
+match: yes

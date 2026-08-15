@@ -19,7 +19,9 @@ mod context;
 mod error;
 mod exhaustiveness;
 mod infer;
+mod normalize;
 pub mod printer;
+pub mod std_fn_eta;
 pub mod std_fn_values;
 pub mod stdlib_signatures;
 mod subst;
@@ -32,16 +34,17 @@ pub use arena_escape::{
     ArenaEscapeDiagnostic, ArenaEscapeError, ArenaEscapeKind, check_arena_escapes,
 };
 pub use checker::{
-    is_array_sequence_method, is_collection_traversal_method, is_iterator_method, is_map_method,
-    is_slice_sequence_method, is_tuple_method, is_tuple_rejected_method,
-    is_vec_only_sequence_method, iterator_adapter_is_lazy, typecheck_source_file,
-    typecheck_source_file_for_repl_inspection, typecheck_source_file_with_edition,
-    typecheck_source_file_with_lazy_iterators,
+    core_type_accepts_method, is_array_sequence_method, is_collection_traversal_method,
+    is_iterator_method, is_map_method, is_slice_sequence_method, is_tuple_method,
+    is_tuple_rejected_method, is_vec_only_sequence_method, iterator_adapter_is_lazy,
+    typecheck_source_file, typecheck_source_file_for_repl_inspection,
+    typecheck_source_file_with_edition, typecheck_source_file_with_lazy_iterators,
 };
 pub use context::TyCtxt;
 pub use error::{NotDisplayableClass, TypeDiagnostic, TypeError};
 pub use exhaustiveness::{ExhaustivenessDiagnostic, ExhaustivenessError, check_exhaustiveness};
 pub use infer::{InferCtxt, UnifyError};
+pub use normalize::normalize_caller_side_spellings;
 pub use printer::{render_public_ty, render_ty};
 pub use stdlib_signatures::{
     STD_FUNCTION_SIGNATURES, StdFunctionSignature, function_shape as stdlib_function_shape,

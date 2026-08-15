@@ -1541,7 +1541,7 @@ fn build_output_preserves_http_method_chain_through_send_and_field_access() {
         format!(
             "use std::http\n\
              fn main() {{\n\
-                 let url = \"http://{addr}/\".to_string()\n\
+                 let url = \"http://{addr}/\"\n\
                  match http::Client::new().get(&url).send() {{\n\
                      Ok(resp) => println(resp.status.to_string() + \":\" + resp.body),\n\
                      Err(e) => println(\"send failed: \" + e.message()),\n\

@@ -2175,6 +2175,8 @@ fn debug_payload_string(payload: i64, kind: i64) -> String {
                 std::ptr::with_exposed_provenance(payload as usize),
             ))
         },
+        // A unit payload carries no value: the arm renders as `()`.
+        13 => "()".to_string(),
         _ => payload.to_string(),
     }
 }
@@ -2360,6 +2362,13 @@ pub unsafe extern "C" fn gos_rt_main_exit_code(raw: i64) -> i32 {
         // a body that finished has already written into the buffered
         // stdout the flush below drains. Skips (and does not boot) the
         // scheduler when the program never used it.
+        // Flush before the root cohort reports: stdout is buffered here
+        // and stderr is not, so a report printed first would appear
+        // ahead of output the program had already written.
+        unsafe { gos_rt_flush_stdout() };
+        // The root cohort joins what `main` spawned, and reports any
+        // failure nothing observed, before the drain below.
+        crate::c_abi::cohort::close_root();
         crate::sched_global::drain_goroutines_for_exit();
         // Flush any buffered stdout that workers wrote so it
         // reaches the user before the process exits.
@@ -2378,6 +2387,8 @@ pub unsafe extern "C" fn gos_rt_main_exit_code(raw: i64) -> i32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_main_exit_code_err(disc: i64, payload: i64) -> i32 {
     ffi_entry!(-1, {
+        unsafe { gos_rt_flush_stdout() };
+        crate::c_abi::cohort::close_root();
         crate::sched_global::drain_goroutines_for_exit();
         unsafe { gos_rt_flush_stdout() };
         if disc == 0 {

@@ -5,7 +5,7 @@
 
 fn classify(xs: Vec<i64>) -> String {
     match xs {
-        [] => "empty".to_string()
+        [] => "empty"
         [a] => format!("one({})", a)
         [a, b] => format!("two({},{})", a, b)
         [first, .., last] => format!("ends({},{})", first, last)
@@ -42,7 +42,7 @@ fn last_or(xs: Vec<i64>, fallback: i64) -> i64 {
 fn literal_prefix(xs: Vec<i64>) -> String {
     match xs {
         [1, second, _third] => format!("one-then-{}", second)
-        _ => "other".to_string()
+        _ => "other"
     }
 }
 

@@ -65,9 +65,9 @@ mod tests {
     #[test]
     fn health_returns_ok() {
         let _ = testing::check_eq(
-            &super::render_health(),
-            &"ok",
-            "health body is exactly \"ok\"",
+            &super::render_health()
+            &"ok"
+            "health body is exactly \"ok\""
         )
     }
 
@@ -83,9 +83,9 @@ mod tests {
     fn echo_wraps_query_in_json() {
         let body = super::render_echo(&"msg=hello")
         let _ = testing::check_eq(
-            &body,
-            &"{\"echo\":\"msg=hello\"}",
-            "echo body wraps the query string exactly",
+            &body
+            &"{\"echo\":\"msg=hello\"}"
+            "echo body wraps the query string exactly"
         )
     }
 
@@ -93,42 +93,42 @@ mod tests {
     fn echo_handles_empty_query() {
         let body = super::render_echo(&"")
         let _ = testing::check_eq(
-            &body,
-            &"{\"echo\":\"\"}",
-            "echo body still well-formed for empty input",
+            &body
+            &"{\"echo\":\"\"}"
+            "echo body still well-formed for empty input"
         )
     }
 
     #[test]
     fn classify_routes_known_paths() {
         let _ = testing::check_eq(
-            &super::classify("/health"),
-            &"health",
-            "health route classified",
+            &super::classify("/health")
+            &"health"
+            "health route classified"
         )
         let _ = testing::check_eq(
-            &super::classify("/users"),
-            &"users",
-            "users route classified",
+            &super::classify("/users")
+            &"users"
+            "users route classified"
         )
         let _ = testing::check_eq(
-            &super::classify("/echo"),
-            &"echo",
-            "echo route classified",
+            &super::classify("/echo")
+            &"echo"
+            "echo route classified"
         )
         let _ = testing::check_eq(
-            &super::classify("/echo?msg=hi"),
-            &"echo",
-            "echo route still classified with query string",
+            &super::classify("/echo?msg=hi")
+            &"echo"
+            "echo route still classified with query string"
         )
     }
 
     #[test]
     fn classify_falls_back_to_not_found() {
         let _ = testing::check_eq(
-            &super::classify("/missing"),
-            &"not_found",
-            "unknown path classified as not_found",
+            &super::classify("/missing")
+            &"not_found"
+            "unknown path classified as not_found"
         )
     }
 }

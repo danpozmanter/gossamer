@@ -4371,6 +4371,30 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         ),
         ("gos_rt_spawn", crate::c_abi::gos_rt_spawn as *const u8),
         (
+            "gos_rt_spawn_ex",
+            crate::c_abi::gos_rt_spawn_ex as *const u8,
+        ),
+        (
+            "gos_rt_cohort_push",
+            crate::c_abi::cohort::gos_rt_cohort_push as *const u8,
+        ),
+        (
+            "gos_rt_cohort_join",
+            crate::c_abi::cohort::gos_rt_cohort_join as *const u8,
+        ),
+        (
+            "gos_rt_cohort_pop",
+            crate::c_abi::cohort::gos_rt_cohort_pop as *const u8,
+        ),
+        (
+            "gos_rt_cohort_cancelled",
+            crate::c_abi::cohort::gos_rt_cohort_cancelled as *const u8,
+        ),
+        (
+            "gos_rt_cohort_cancel",
+            crate::c_abi::cohort::gos_rt_cohort_cancel as *const u8,
+        ),
+        (
             "gos_rt_sort_binary_search_f64",
             crate::c_abi::gos_rt_sort_binary_search_f64 as *const u8,
         ),

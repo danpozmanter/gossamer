@@ -237,8 +237,7 @@ impl SbkBuilder {
                 stmts,
                 tail: Some(Box::new(tail)),
                 synthetic: true,
-                is_arena: false,
-                is_comptime: false,
+                kind: gossamer_ast::BlockKind::Plain,
             }),
         )
     }
@@ -473,8 +472,7 @@ impl SbkBuilder {
             stmts: outer_stmts,
             tail: Some(Box::new(sort_call)),
             synthetic: true,
-            is_arena: false,
-            is_comptime: false,
+            kind: gossamer_ast::BlockKind::Plain,
         });
     }
 }
@@ -838,8 +836,8 @@ fn imported_type_paths(decl: &gossamer_ast::UseDecl) -> Vec<(String, String)> {
 /// if it has synthesized impl blocks that depend on them. Idempotent
 /// - checks for existing imports before inserting.
 pub fn inject_synthetic_uses(sf: &mut SourceFile, file: FileId) {
-    // `arena { ... }` desugars to `runtime::arena_push/pop` calls; make
-    // the module available without requiring an explicit import.
+    // `arena { ... }` and `cohort { }` desugar to `runtime::` calls;
+    // make the module available without requiring an explicit import.
     if uses_runtime_regions(sf) && !already_imports(&sf.uses, &["std", "runtime"]) {
         sf.uses.push(UseDecl::simple(
             NodeId::DUMMY,
@@ -912,8 +910,9 @@ pub fn inject_synthetic_uses(sf: &mut SourceFile, file: FileId) {
     }
 }
 
-/// True when any expression in the file calls `runtime::arena_push`
-/// (the `arena { ... }` desugar, or hand-written region management).
+/// True when any expression in the file calls a `runtime::` entry that
+/// a block desugar emits: the `arena { ... }` region pair, or the
+/// `cohort { }` push / join / pop trio.
 fn uses_runtime_regions(sf: &SourceFile) -> bool {
     use gossamer_ast::Visitor;
     use gossamer_ast::expr::{Expr, ExprKind};
@@ -928,7 +927,16 @@ fn uses_runtime_regions(sf: &SourceFile) -> bool {
             if let ExprKind::Path(p) = &expr.kind
                 && p.segments.len() == 2
                 && p.segments[0].name.name == "runtime"
-                && matches!(p.segments[1].name.name.as_str(), "arena_push" | "arena_pop")
+                && matches!(
+                    p.segments[1].name.name.as_str(),
+                    "arena_push"
+                        | "arena_pop"
+                        | "cohort_push"
+                        | "cohort_join"
+                        | "cohort_pop"
+                        | "cohort_cancelled"
+                        | "cohort_cancel"
+                )
             {
                 self.found = true;
                 return;

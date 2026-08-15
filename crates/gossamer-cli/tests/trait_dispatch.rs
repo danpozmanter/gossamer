@@ -207,8 +207,8 @@ impl Greet for Dog {
 }
 
 fn main() {
-    let c = Cat { name: "tabby".to_string() }
-    let d = Dog { name: "rex".to_string() }
+    let c = Cat { name: "tabby" }
+    let d = Dog { name: "rex" }
     println!("{}", c.greet())
     println!("{}", d.greet())
 }
@@ -241,7 +241,7 @@ impl Summarize for Inventory {
 }
 
 fn main() {
-    let inv = Inventory { name: "widgets".to_string(), stock: 42, weight: 17 }
+    let inv = Inventory { name: "widgets", stock: 42, weight: 17 }
     println!("{}", inv.summary())
 }
 "#;
@@ -264,12 +264,12 @@ struct Circle { radius: f64 }
 
 impl Shape for Square {
     fn area(&self) -> f64 { self.side * self.side }
-    fn name(&self) -> String { "square".to_string() }
+    fn name(&self) -> String { "square" }
 }
 
 impl Shape for Circle {
     fn area(&self) -> f64 { 3.14159 * self.radius * self.radius }
-    fn name(&self) -> String { "circle".to_string() }
+    fn name(&self) -> String { "circle" }
 }
 
 fn main() {

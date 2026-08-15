@@ -180,6 +180,33 @@ the receiver in forms such as `text |> $.trim`; it may not be used
 more than once in one pipe step. `$` is punctuation rather than an
 identifier, so it never collides with a name in scope.
 
+## Callback shorthands
+
+A callback that only calls one thing can be written without `|v|`.
+
+A std free function named where a value is expected is the closure that
+calls it, so `#[1.0, -2.0].map(math::abs)` means
+`map(|v| math::abs(v))`. A function with no fixed parameter list - the
+formatting family, `panic!`'s target - has no such closure and reports
+`GT0015`.
+
+A `$`-headed projection written as a call argument is the closure over
+that argument, with the forms `$` already has in a pipe step:
+
+```gossamer
+#[1.0, -2.0].map($.abs)        // |v| v.abs()      - nullary method call
+#["hi", "yo"].map($.to_uppercase)
+#["ab", "cde"].map($.len())    // |v| v.len()
+#[(1, 2), (3, 4)].map($.0)     // |v| v.0          - tuple index
+#[#[1, 2], #[3, 4]].map($[1])  // |v| v[1]
+```
+
+`$.name` is the method call, so read a named struct field with the
+closure instead: `people.map(|p| p.name)`. A bare `$` argument keeps its
+pipe meaning - it selects the slot the piped value lands in - and inside
+a pipe step the two readings compose: `xs |> $.map($.abs)` maps
+`|v| v.abs()` over `xs`.
+
 ## Pattern matching
 
 - `_` - wildcard.
@@ -333,6 +360,17 @@ referenced after it exits. See the
 ## Concurrency
 
 ```gossamer
+// Structured: the block owns what it starts, waits for all of it, and
+// reports the first failure as its own `Result<(), errors::Error>`.
+fn gather() -> Result<(), errors::Error> {
+    cohort {
+        let a = spawn(|| fetch("one"))
+        let b = spawn(|| fetch("two"))
+        println!("{} {}", a.join()??, b.join()??)
+    }
+}
+
+// Detached: fire-and-forget, for work that should outlive the block.
 let (tx, rx) = channel::<i64>()
 go fn() { tx.send(42) }()
 let n = rx.recv()
@@ -343,6 +381,16 @@ select {
     _ = time::after(5000) => timeout(),
 }
 ```
+
+`cohort { }` is structured concurrency: every `spawn` inside it belongs
+to the block, which cannot be left until each child has finished, and a
+child's panic or `Err` becomes the block's error after its siblings are
+cancelled. `main` runs inside an implicit root cohort, so a spawned
+goroutine can never outlive the program and a failure nobody joined is
+reported at exit rather than lost. Settings ride the header:
+`cohort(policy: Policy::CollectAll)`, `cohort(timeout: 500)`, and
+`cohort(context: Context::Isolated)` for FFI or CPU-bound children that
+need a thread of their own. See [cohorts](language/cohort.md).
 
 `go expr` spawns a goroutine - a real stackful coroutine on the
 M:N scheduler. Blocking primitives (channel ops, mutex contention,
@@ -459,8 +507,29 @@ for the rare standalone case with no contextual hint.
 - `"hello"` - ordinary double-quoted string. Spans multiple lines
   without extra syntax; embedded newlines are preserved.
 - `"\n"` / `"\t"` / `"\\"` / `"\""` - standard escapes.
+- `"""..."""` - triple-quoted string. The body starts on the line after
+  the opening delimiter, and the indentation it shares with the closing
+  `"""` is stripped from every line, so embedded HTML, SQL, or JSON sits
+  at the indentation of the surrounding code. `gos fmt` moves the whole
+  block with the line that opens it.
 - `r"raw"` / `r#"with embedded "quotes""#` - raw strings.
 - `b"bytes"` / `b'c'` - byte literals for binary protocols.
+
+```gossamer
+let page = """
+<html>
+    <body>
+        <h1>Hello</h1>
+    </body>
+</html>
+"""
+```
+
+`page` holds five lines with `<html>` at column zero and `<h1>` indented
+eight spaces. Escapes work as they do in `"..."`, and they are decoded
+after the indentation is removed, so `\t` in the body is a tab and a
+line break is a line break. Only whitespace may follow the opening
+`"""` on its line.
 
 ## Formatted output
 

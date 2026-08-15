@@ -921,3 +921,82 @@ fn assoc_type_binding_coexists_with_a_type_argument() {
     assert_eq!(bounds[0].bindings.len(), 1);
     assert_eq!(bounds[0].bindings[0].name.name, "Item");
 }
+
+/// Extracts the value of the first string literal in a parsed source file.
+fn first_string_literal(source: &str) -> String {
+    use gossamer_ast::Literal;
+    let mut map = SourceMap::new();
+    let file = map.add_file("triple.gos", source.to_string());
+    let (sf, diags) = parse_source_file(source, file);
+    assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+    let rendered = format!("{sf:?}");
+    let _ = Literal::Unit;
+    let marker = "String(\"";
+    let start = rendered.find(marker).expect("a string literal") + marker.len();
+    let tail = &rendered[start..];
+    let mut value = String::new();
+    let mut chars = tail.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => break,
+            '\\' => match chars.next() {
+                Some('n') => value.push('\n'),
+                Some('t') => value.push('\t'),
+                Some('\\') => value.push('\\'),
+                Some('"') => value.push('"'),
+                Some(other) => value.push(other),
+                None => break,
+            },
+            other => value.push(other),
+        }
+    }
+    value
+}
+
+#[test]
+fn triple_quoted_literal_folds_to_a_dedented_string() {
+    let source = "fn main() {\n    let text = \"\"\"\n    <html>\n        <body>\n    </html>\n    \"\"\"\n}\n";
+    assert_eq!(first_string_literal(source), "<html>\n    <body>\n</html>");
+}
+
+#[test]
+fn triple_quoted_literal_decodes_escapes_after_dedenting() {
+    let source = "fn main() {\n    let text = \"\"\"\n    a\\tb\n    \"\"\"\n}\n";
+    assert_eq!(first_string_literal(source), "a\tb");
+}
+
+#[test]
+fn single_line_triple_quoted_literal_keeps_its_body() {
+    let source = "fn main() {\n    let text = \"\"\"a\"b\"\"\"\n}\n";
+    assert_eq!(first_string_literal(source), "a\"b");
+}
+
+#[test]
+fn text_after_the_opening_delimiter_is_gp0033() {
+    let source = "fn main() {\n    let text = \"\"\"oops\n    a\n    \"\"\"\n}\n";
+    let mut map = SourceMap::new();
+    let file = map.add_file("bad.gos", source.to_string());
+    let (_sf, diags) = parse_source_file(source, file);
+    let codes: Vec<String> = diags
+        .iter()
+        .map(|d| d.to_diagnostic().code.0.to_string())
+        .collect();
+    assert_eq!(codes, vec!["GP0033".to_string()]);
+}
+
+#[test]
+fn a_triple_quoted_literal_works_as_a_match_pattern() {
+    let source = concat!(
+        "fn main() {\n",
+        "    let text = \"\"\"\n    hi\n    \"\"\"\n",
+        "    match text {\n",
+        "        \"\"\"\n        hi\n        \"\"\" => println!(\"yes\")\n",
+        "        _ => println!(\"no\")\n",
+        "    }\n",
+        "}\n"
+    );
+    let mut map = SourceMap::new();
+    let file = map.add_file("pat.gos", source.to_string());
+    let (_sf, diags) = parse_source_file(source, file);
+    assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+}

@@ -233,8 +233,8 @@ fn main() {
     counts.insert("banana", 7)
 
     let mut labels: Map<i64, String> = Map::new()
-    labels.insert(1, "first".to_string())
-    labels.insert(2, "second".to_string())
+    labels.insert(1, "first")
+    labels.insert(2, "second")
 
     if let Some(c) = counts.get(&"apple") {
         println!("apple={}", c)

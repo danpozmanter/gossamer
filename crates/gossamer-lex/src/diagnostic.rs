@@ -24,6 +24,12 @@ pub enum LexError {
         /// Span of the opening quote.
         span: Span,
     },
+    /// A triple-quoted string literal ran to end of file without `"""`.
+    #[error("unterminated triple-quoted string literal")]
+    UnterminatedTripleString {
+        /// Span of the opening `"""`.
+        span: Span,
+    },
     /// A raw string literal ran to end of file without its closing delimiter.
     #[error("unterminated raw string literal")]
     UnterminatedRawString {
@@ -76,6 +82,7 @@ impl LexError {
             Self::UnexpectedChar { span }
             | Self::UnterminatedBlockComment { span }
             | Self::UnterminatedString { span }
+            | Self::UnterminatedTripleString { span }
             | Self::UnterminatedRawString { span }
             | Self::UnterminatedChar { span }
             | Self::BadCharLiteralLength { span }

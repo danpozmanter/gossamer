@@ -35,7 +35,7 @@ fn main() {
     for w in words.iter().rev().collect() {
         println!("r={}", w)
     }
-    for w in "x y".split(" ").to_vec() {
+    for w in "x y".split(" ").clone() {
         println!("t={}", w)
     }
 

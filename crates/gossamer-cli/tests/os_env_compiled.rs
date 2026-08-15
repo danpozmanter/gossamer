@@ -172,8 +172,8 @@ fn os_set_env_round_trips_through_os_env_in_all_tiers() {
     let src = r#"
 use std::env
 fn main() {
-    env::set_var(&"GOS_ENV_PROBE_2026".to_string(), &"yes-set-2026".to_string())
-    let v = env::var(&"GOS_ENV_PROBE_2026".to_string()).unwrap_or("MISSING".to_string())
+    env::set_var(&"GOS_ENV_PROBE_2026", &"yes-set-2026")
+    let v = env::var(&"GOS_ENV_PROBE_2026").unwrap_or("MISSING")
     println!("got={}", v)
 }
 "#;
@@ -191,9 +191,9 @@ fn os_set_env_propagates_to_a_spawned_child_in_all_tiers() {
 use std::env
 use std::os::exec
 fn main() {
-    env::set_var(&"GOS_PROBE_CHILD_2026".to_string(), &"propagated".to_string())
-    let args: Vec<String> = Vec::from([]).to_vec()
-    match exec::run(&"/usr/bin/env".to_string(), &args) {
+    env::set_var(&"GOS_PROBE_CHILD_2026", &"propagated")
+    let args: Vec<String> = Vec::from([])
+    match exec::run(&"/usr/bin/env", &args) {
         Ok(o) => {
             for line in o.stdout.lines() {
                 if line.starts_with("GOS_PROBE_CHILD_2026=") {
@@ -221,9 +221,9 @@ fn os_set_env_propagates_to_a_spawned_child_in_all_tiers_windows() {
 use std::env
 use std::os::exec
 fn main() {
-    env::set_var(&"GOS_PROBE_CHILD_2026".to_string(), &"propagated".to_string())
+    env::set_var(&"GOS_PROBE_CHILD_2026", &"propagated")
     let args: Vec<String> = ["/c", "set", "GOS_PROBE_CHILD_2026"].to_vec()
-    match exec::run(&"cmd".to_string(), &args) {
+    match exec::run(&"cmd", &args) {
         Ok(o) => {
             for line in o.stdout.lines() {
                 if line.starts_with("GOS_PROBE_CHILD_2026=") {

@@ -7,7 +7,7 @@
 fn head_rest(xs: [i64; 4]) -> String {
     match xs {
         [first, ..rest] => format!("first={} rest_len={}", first, rest.len())
-        [] => "empty".to_string()
+        [] => "empty"
     }
 }
 
@@ -28,7 +28,7 @@ fn exact_four(xs: [i64; 4]) -> i64 {
 fn str_head_rest(xs: [String; 3]) -> String {
     match xs {
         [h, ..t] => format!("h={} t_len={}", h, t.len())
-        [] => "empty".to_string()
+        [] => "empty"
     }
 }
 
@@ -38,7 +38,7 @@ fn main() {
     println!("last={}", last_only([1, 2, 3, 4]))
     println!("sum={}", exact_four([5, 6, 7, 8]))
 
-    let ss = ["a".to_string(), "b".to_string(), "c".to_string()]
+    let ss = ["a", "b", "c"]
     println!("{}", str_head_rest(ss))
 
     // Inline match over a fresh array literal.

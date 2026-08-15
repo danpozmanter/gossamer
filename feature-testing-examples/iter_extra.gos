@@ -90,7 +90,7 @@ fn main() {
 
     // -- collect / once / empty as public free functions, plus method collect.
     let c = iter::collect(xs)
-    let mc = xs.to_vec()
+    let mc = xs.clone()
     let one = iter::once(99)
     let empty: Vec<i64> = iter::empty()
     println!("collect {} {} once {} empty {}", c[3], mc[0], one[0], empty.len())

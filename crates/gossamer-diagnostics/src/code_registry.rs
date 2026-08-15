@@ -276,6 +276,13 @@ pub const REGISTRY: &[(&str, &str)] = &[
             indexing counts Unicode scalars and yields a `char`.",
     ),
     (
+        "GL0053",
+        "A `go` inside a `cohort { }` spawns a goroutine the cohort does not\n\
+            own: the block can return while it is still running, and its\n\
+            failure reaches nobody. `spawn(..)` attaches the child to the\n\
+            cohort, which joins it and reports its panic or `Err`.",
+    ),
+    (
         "GM0001",
         "Generic monomorphization received a type substitution that the\n\
                      compiler does not yet support - typically a generic parameter\n\
@@ -449,6 +456,13 @@ pub const REGISTRY: &[(&str, &str)] = &[
         "A bracket spelling that used to build a container is no longer syntax. Construct the container through its type instead: `Type::new()` for an empty one, or `Type::from([a, b, c])`.",
     ),
     (
+        "GP0033",
+        "A triple-quoted string spanning several lines carried text on the\n\
+                     same line as its opening `\"\"\"`. The body starts on the next\n\
+                     line, and the indentation it shares with the closing `\"\"\"`\n\
+                     is stripped from every line.",
+    ),
+    (
         "GP0034",
         "A `const` or `static` item was declared without a type annotation.\n\
                      These items are never inferred from their initialiser, so the type\n\
@@ -597,6 +611,12 @@ pub const REGISTRY: &[(&str, &str)] = &[
             import, or alias it with `use \"example.com/lib\" as name`.",
     ),
     (
+        "GR0017",
+        "A `break` or `continue` has no loop to act on: either none encloses\n\
+                     it, or the label it names is not on any enclosing loop. A closure\n\
+                     body is a separate function, so a loop outside it is not a target.",
+    ),
+    (
         "GT0001",
         "The type checker could not reconcile two types it expected to\n\
                      match. The primary label shows the location of the mismatch;\n\
@@ -696,9 +716,10 @@ pub const REGISTRY: &[(&str, &str)] = &[
     ),
     (
         "GT0015",
-        "A std free function was used as a first-class value but is not\n\
-                     in the supported table; the compiled tiers have no symbol to\n\
-                     take the address of. Wrap the call in a closure: `|x| f(x)`.",
+        "A std free function was used as a first-class value, and it takes\n\
+                     a variable number of arguments, so it cannot be rewritten into\n\
+                     the closure that calls it. Write the closure yourself:\n\
+                     `|x| f(x)`.",
     ),
     (
         "GT0016",

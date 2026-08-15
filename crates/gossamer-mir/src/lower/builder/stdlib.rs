@@ -263,11 +263,30 @@ impl<'a> Builder<'a> {
         let handle_ty = self.tcx.intern(TyKind::JoinHandle(elem));
         let dest = self.fresh(handle_ty);
         let next = self.new_block(span);
+        // How the callable's return crosses the spawn boundary. A
+        // `Result` or an `Option` comes back in two registers, so the
+        // runtime has to read both and copy them into a cell; reading
+        // one word would keep the discriminant and drop the payload.
+        let (ret_words, err_kind) = self.spawn_return_shape(elem);
+        let ret_words_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(ret_words_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(ret_words)))),
+            span,
+        );
+        let err_kind_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(err_kind_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(err_kind)))),
+            span,
+        );
         self.terminate(Terminator::Call {
-            callee: Operand::Const(ConstValue::Str("gos_rt_spawn".to_string())),
+            callee: Operand::Const(ConstValue::Str("gos_rt_spawn_ex".to_string())),
             args: vec![
                 Operand::Copy(Place::local(code_local)),
                 Operand::Copy(Place::local(env_local)),
+                Operand::Copy(Place::local(ret_words_local)),
+                Operand::Copy(Place::local(err_kind_local)),
             ],
             destination: Place::local(dest),
             target: Some(next),
@@ -871,6 +890,35 @@ impl<'a> Builder<'a> {
             return self.coerce_array_to_vec(payload, elem, len, span);
         }
         payload
+    }
+
+    /// How a spawned callable's return type crosses the spawn boundary:
+    /// how many registers it occupies, and - when it is a `Result` -
+    /// what its `Err` payload is, so a cohort can name a failed child's
+    /// error. `Option` reports two words and no error kind: its `None`
+    /// shares `Err`'s discriminant but is not a failure.
+    fn spawn_return_shape(&mut self, elem: Ty) -> (i64, i64) {
+        use gossamer_types::TyKind;
+        const ERR_KIND_NONE: i64 = 0;
+        const ERR_KIND_ERROR: i64 = 1;
+        const ERR_KIND_STRING: i64 = 2;
+        const ERR_KIND_OTHER: i64 = 3;
+        let TyKind::Adt { def, substs } = self.tcx.kind_of(elem).clone() else {
+            return (1, ERR_KIND_NONE);
+        };
+        // Option is the sentinel one below Result; both are two-word.
+        if def.local == u32::MAX - 1 {
+            return (2, ERR_KIND_NONE);
+        }
+        if def.local != u32::MAX {
+            return (1, ERR_KIND_NONE);
+        }
+        let err_kind = match substs.types().get(1).map(|ty| self.tcx.kind_of(*ty)) {
+            Some(TyKind::DynError) => ERR_KIND_ERROR,
+            Some(TyKind::String) => ERR_KIND_STRING,
+            _ => ERR_KIND_OTHER,
+        };
+        (2, err_kind)
     }
 
     pub(crate) fn is_boxable_aggregate_payload(&self, ty: Ty) -> bool {

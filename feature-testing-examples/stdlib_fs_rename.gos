@@ -14,7 +14,7 @@ fn main() {
 
     let src = path::join(&dir, &"src.txt")
     let dst = path::join(&dir, &"dst.txt")
-    let _ = fs::write(&src, "payload\n".to_string().as_bytes())
+    let _ = fs::write(&src, "payload\n".as_bytes())
 
     match fs::rename(&src, &dst) {
         Ok(_) => println!("rename_ok=true")

@@ -251,6 +251,106 @@ impl Drop for SpawnOutcomeGuard {
     }
 }
 
+/// Reports a child's completion to the cohort that owns it, whichever
+/// path the body left by. A panicking body reaches the cohort through
+/// this guard's `Drop`, which is the only report the unwind path gets.
+struct CohortChildGuard {
+    cohort: i64,
+    index: i64,
+    failure: Option<String>,
+    /// Set once the body finished without unwinding, so the report can
+    /// tell a completed child from a panicking one.
+    completed: bool,
+    /// Set once the cohort has been told, so the normal path's explicit
+    /// report and this guard's `Drop` cannot report twice.
+    reported: bool,
+}
+
+impl CohortChildGuard {
+    /// Reports the child's outcome to its cohort, once.
+    fn report(&mut self) {
+        if self.cohort == 0 || self.reported {
+            return;
+        }
+        self.reported = true;
+        let failure = if self.completed {
+            self.failure.take()
+        } else {
+            Some(super::cohort::panic_failure_message(
+                super::panic::peek_last_goroutine_panic(),
+            ))
+        };
+        super::cohort::leave_child(self.cohort, self.index, failure);
+    }
+}
+
+impl Drop for CohortChildGuard {
+    fn drop(&mut self) {
+        self.report();
+    }
+}
+
+/// How many 8-byte words the spawned callable returns. A `Result` or an
+/// `Option` comes back in two registers, so reading it as one word keeps
+/// the discriminant and drops the payload.
+const SPAWN_RET_ONE_WORD: i64 = 1;
+
+/// Whether the callable returns a `Result`, and what its `Err` payload
+/// is. `NONE` means the return is not a `Result` at all, which is what
+/// keeps `Option`'s `None` - discriminant 1, exactly like `Err` - from
+/// reading as a failed child.
+pub const SPAWN_ERR_KIND_NONE: i64 = 0;
+pub const SPAWN_ERR_KIND_ERROR: i64 = 1;
+pub const SPAWN_ERR_KIND_STRING: i64 = 2;
+/// A `Result` whose `Err` payload is neither an `errors::Error` nor a
+/// `String`: the failure counts, and its message is the generic one.
+pub const SPAWN_ERR_KIND_OTHER: i64 = 3;
+
+/// Copies a two-word `Result` / `Option` into an RC cell and answers the
+/// cell pointer, which is how a value wider than one slot is carried in
+/// a slot everywhere else in the ABI.
+fn box_two_word_value(disc: i64, payload: i64) -> i64 {
+    let words = [disc, payload];
+    // SAFETY: `words` is a live 16-byte buffer for the length of the
+    // call, and a null meta blob names a leaf with no RC children.
+    let cell = unsafe {
+        super::rc::gos_rt_rc_alloc_copy(16, std::ptr::null(), words.as_ptr().cast::<u8>())
+    };
+    cell as i64
+}
+
+/// Renders a failed child's `Err` payload for the cohort's report.
+fn child_error_message(payload: i64, err_kind: i64) -> String {
+    if payload == 0 {
+        return "cohort child failed".to_string();
+    }
+    match err_kind {
+        SPAWN_ERR_KIND_ERROR => {
+            // SAFETY: the callable's static return type named
+            // `errors::Error` as its Err payload, so the word is a live
+            // `GosError` pointer.
+            let rendered = unsafe {
+                super::errors::gos_rt_error_display(payload as *const super::errors::GosError)
+            };
+            if rendered.is_null() {
+                return "cohort child failed".to_string();
+            }
+            // SAFETY: `gos_rt_error_display` answers a runtime-owned
+            // Gossamer string. Read through the length header so a
+            // message carrying an interior NUL is not truncated.
+            let text = unsafe { super::gos_str_arg_string(rendered) };
+            unsafe { super::string::gos_rt_str_free(rendered) };
+            text
+        }
+        SPAWN_ERR_KIND_STRING => {
+            // SAFETY: the Err payload is a runtime string pointer.
+            let bytes = unsafe { super::gos_str_arg_bytes(payload as *const std::os::raw::c_char) };
+            String::from_utf8_lossy(bytes).into_owned()
+        }
+        _ => "cohort child failed".to_string(),
+    }
+}
+
 /// `spawn(f) -> handle` - runs the callable `code`/`env` pair on the
 /// goroutine pool and returns a one-shot channel handle. The outcome
 /// (returned value, or panic message) is delivered to `gos_rt_join`.
@@ -265,6 +365,31 @@ impl Drop for SpawnOutcomeGuard {
 /// unwinds past it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_spawn(code: usize, env: usize) -> *mut super::chan::GosChan {
+    // The one-word form: a callable whose return fits a single slot.
+    unsafe { gos_rt_spawn_ex(code, env, SPAWN_RET_ONE_WORD, SPAWN_ERR_KIND_NONE) }
+}
+
+/// `spawn(f) -> handle`, told how wide the callable's return is.
+///
+/// `ret_words` is 1 for a value that fits one slot and 2 for a `Result`
+/// or `Option`, which comes back in two registers and is copied into an
+/// RC cell here so the handle carries it the way every other slot does.
+/// `err_kind` names the `Err` payload's shape so a cohort can render a
+/// failed child's message.
+///
+/// A panic is NOT caught here: catching across the runtime-call
+/// boundary trips the nounwind contract on the `gos_rt_panic` frame
+/// and aborts. Instead the panic propagates to the coroutine wrapper
+/// (the same path `go` uses to isolate goroutine panics), and the
+/// Drop-guards deliver `Err(message)` to the handle, and the failure to
+/// the cohort, as the stack unwinds past them.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_spawn_ex(
+    code: usize,
+    env: usize,
+    ret_words: i64,
+    err_kind: i64,
+) -> *mut super::chan::GosChan {
     ffi_entry!(std::ptr::null_mut(), {
         if code == 0 {
             return std::ptr::null_mut();
@@ -274,27 +399,75 @@ pub unsafe extern "C" fn gos_rt_spawn(code: usize, env: usize) -> *mut super::ch
         // without waiting for the joiner to arrive.
         let ch = unsafe { super::chan::gos_rt_chan_new(8, 1) };
         let ch_addr = ch as usize;
-        spawn_task(Box::new(move || {
+        // The cohort is read on the spawning goroutine, before the task
+        // is queued, so the child's slot is reserved in call order and a
+        // cohort cannot finish joining while a child of it is still in
+        // flight to a worker.
+        let cohort = super::cohort::current_cohort();
+        let index = if cohort == 0 {
+            -1
+        } else {
+            super::cohort::register_child(cohort)
+        };
+        super::cohort::note_child_handle(ch as usize, cohort, index);
+        let body = move || {
             // This body is joinable: a panic here is observed through `join()`,
             // so `gos_rt_panic` suppresses its eager report (the guard delivers
             // `Err` instead). The scope restores the flag on the unwind too.
             let _joinable = gossamer_coro::JoinableScope::enter(true);
+            super::cohort::enter_child(cohort);
             let mut guard = SpawnOutcomeGuard {
                 ch_addr,
                 armed: true,
             };
+            // Declared after the outcome guard so it drops first on an
+            // unwind: it reads the panic message without consuming it,
+            // leaving the outcome guard the same message to deliver.
+            let mut cohort_guard = CohortChildGuard {
+                cohort,
+                index,
+                failure: None,
+                completed: false,
+                reported: false,
+            };
             // SAFETY: `code` is the callable's entry address; the
-            // closure ABI calls it as `fn(env) -> i64` with the
-            // environment blob as the implicit argument. The
-            // `C-unwind` ABI lets a goroutine panic propagate across
-            // this call into the Drop-guard above.
-            type Fn1 = unsafe extern "C-unwind" fn(usize) -> i64;
-            let f: Fn1 = unsafe { std::mem::transmute(code) };
-            let value = unsafe { f(env) };
-            // Normal completion: disarm the guard and deliver Ok.
+            // closure ABI calls it as `fn(env) -> T` with the
+            // environment blob as the implicit argument, and `ret_words`
+            // reports T's register shape. The `C-unwind` ABI lets a
+            // goroutine panic propagate across this call into the
+            // Drop-guards above.
+            let value = if ret_words >= 2 {
+                type Fn1Wide = unsafe extern "C-unwind" fn(usize) -> i128;
+                let f: Fn1Wide = unsafe { std::mem::transmute(code) };
+                let wide = unsafe { f(env) };
+                let disc = super::vec::result_disc_of(wide);
+                let payload = super::vec::result_payload_of(wide);
+                if disc == 1 && err_kind != SPAWN_ERR_KIND_NONE {
+                    cohort_guard.failure = Some(child_error_message(payload, err_kind));
+                }
+                box_two_word_value(disc, payload)
+            } else {
+                type Fn1 = unsafe extern "C-unwind" fn(usize) -> i64;
+                let f: Fn1 = unsafe { std::mem::transmute(code) };
+                unsafe { f(env) }
+            };
+            // Normal completion. The cohort learns the outcome before the
+            // joiner can wake on it, so a joiner cannot mark a failure
+            // observed before the failure has been recorded.
             guard.armed = false;
+            cohort_guard.completed = true;
+            cohort_guard.report();
             deliver_outcome(ch_addr, 0, value);
-        }));
+        };
+        if cohort != 0 && super::cohort::current_context() == super::cohort::CONTEXT_ISOLATED {
+            // An isolated child owns an OS thread for its whole life, so
+            // it may block or call into synchronous Rust without
+            // stalling anything else. Channels already work from a
+            // thread that is not a scheduler goroutine.
+            super::cohort::spawn_isolated(Box::new(body));
+        } else {
+            spawn_task(Box::new(body));
+        }
         ch
     })
 }
@@ -315,6 +488,11 @@ pub unsafe extern "C" fn gos_rt_join(ch: *mut super::chan::GosChan) -> i128 {
         if ok == 0 {
             return super::vec::pack_result(1, 0);
         }
+        // Joining is how a child's outcome reaches the program, so a
+        // failure read here is not one the root cohort reports as
+        // unobserved at exit. Marked after the outcome arrives, by which
+        // point the child has already recorded the failure.
+        super::cohort::mark_handle_observed(ch as usize);
         let outcome_ptr = i64::from_ne_bytes(buf) as *mut SpawnOutcome;
         if outcome_ptr.is_null() {
             return super::vec::pack_result(1, 0);
@@ -355,7 +533,28 @@ pub unsafe extern "C" fn gos_rt_sleep_ns(ns: i64) {
         // worker thread is still parked on a Condvar, but the
         // scheduler's pool grows transparently if multiple goroutines
         // sleep concurrently.
-        crate::sched_global::sleep_until(deadline);
+        //
+        // Sleeping is also a cancellation point. Registering with the
+        // cohort means cancelling unparks the sleeper, which then leaves
+        // through the check below instead of finishing its nap; without a
+        // cohort the loop parks once and returns at the deadline.
+        loop {
+            if super::cohort::current_is_cancelled() {
+                return;
+            }
+            if std::time::Instant::now() >= deadline {
+                return;
+            }
+            let registered = crate::sched_global::current_gid()
+                .map(|gid| (gid, super::cohort::register_waiter(gid)));
+            crate::sched_global::sleep_until(deadline);
+            if let Some((gid, cohort)) = registered {
+                super::cohort::deregister_waiter(cohort, gid);
+            }
+            if !super::cohort::any_cohort_live() {
+                return;
+            }
+        }
     });
 }
 

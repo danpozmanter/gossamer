@@ -39,7 +39,7 @@ fn main() {
 
     // Borrow after concat
     let base = "base"
-    let extended = base.to_string() + "_extended"
+    let extended = base.clone() + "_extended"
     println!("base still borrowable: {}", base)
     println!("extended: {}", extended)
 }

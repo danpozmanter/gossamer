@@ -43,6 +43,20 @@ pub const DESC_SET_STR: u8 = 15;
 /// Payload kind rendering an `Option` / `Result` payload through the
 /// descriptor stream the companion pointer addresses.
 pub const DEBUG_PAYLOAD_DESC: u8 = 12;
+/// Payload kind for a unit payload: the arm carries no value and renders
+/// as `()`, which is what `Result<(), E>` shows on its `Ok` side.
+pub const DEBUG_PAYLOAD_UNIT: u8 = 13;
+
+/// Descriptor tag for a nested `Result`: the slot holds a pointer to the
+/// two-word `[disc, payload]` pair, and the Ok arm's descriptor follows
+/// this byte, then the Err arm's.
+pub const DESC_RESULT: u8 = 16;
+/// Descriptor tag for a nested `Option`, laid out as `DESC_RESULT` with
+/// only the Some arm's descriptor following.
+pub const DESC_OPTION: u8 = 17;
+/// Descriptor tag for an `errors::Error`: the slot holds the error
+/// pointer, rendered as the colon-joined cause chain `{}` shows.
+pub const DESC_ERROR: u8 = 18;
 
 pub use registry::{REGISTRY, all_llvm_declarations, lookup};
 pub use types::{AbiSig, AbiType, RuntimeEntry, Tier};

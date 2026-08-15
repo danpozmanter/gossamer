@@ -325,3 +325,76 @@ fn lexer_does_not_strip_leading_bom() {
         "the lexer must surface a BOM, not silently strip it"
     );
 }
+
+/// A triple-quoted literal spanning several lines is one token.
+#[test]
+fn triple_quoted_string_lexes_as_one_token() {
+    let source = "let a = \"\"\"\n    body\n    \"\"\"\n";
+    let (tokens, diagnostics) = tokenize(source, test_file());
+    assert!(
+        diagnostics.is_empty(),
+        "unexpected diagnostics: {diagnostics:?}"
+    );
+    let kinds: Vec<TokenKind> = tokens
+        .iter()
+        .filter(|token| !matches!(token.kind, TokenKind::Whitespace | TokenKind::Eof))
+        .map(|token| token.kind)
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            TokenKind::Keyword(Keyword::Let),
+            TokenKind::Ident,
+            TokenKind::Punct(Punct::Eq),
+            TokenKind::TripleStringLit,
+        ]
+    );
+}
+
+/// An escaped quote does not close a triple-quoted literal.
+#[test]
+fn triple_quoted_string_closes_on_first_unescaped_delimiter() {
+    let source = "\"\"\"a\\\"\"\"b\"\"\"";
+    let (tokens, diagnostics) = tokenize(source, test_file());
+    assert!(
+        diagnostics.is_empty(),
+        "unexpected diagnostics: {diagnostics:?}"
+    );
+    let literal = tokens
+        .iter()
+        .find(|token| token.kind == TokenKind::TripleStringLit)
+        .expect("triple-quoted token");
+    assert_eq!(
+        &source[literal.span.start as usize..literal.span.end as usize],
+        source
+    );
+}
+
+/// A triple-quoted literal running to end of input reports its own error.
+#[test]
+fn unterminated_triple_quoted_string_reports_diagnostic() {
+    let (_, diagnostics) = tokenize("\"\"\"never closed\n", test_file());
+    assert!(
+        matches!(
+            diagnostics.as_slice(),
+            [LexError::UnterminatedTripleString { .. }]
+        ),
+        "expected one unterminated-triple-string error, got {diagnostics:?}"
+    );
+}
+
+/// An empty string literal next to other tokens still lexes as `""`.
+#[test]
+fn empty_string_literal_is_not_a_triple_quote() {
+    assert_eq!(kinds_of("\"\""), vec![TokenKind::StringLit]);
+    assert_eq!(
+        kinds_of("(\"\", \"\")"),
+        vec![
+            TokenKind::Punct(Punct::LParen),
+            TokenKind::StringLit,
+            TokenKind::Punct(Punct::Comma),
+            TokenKind::StringLit,
+            TokenKind::Punct(Punct::RParen),
+        ]
+    );
+}

@@ -19,12 +19,12 @@ fn print_hex(label: &String, bytes: &[u8]) {
 
 fn main() {
     // Raw-digest byte vectors (lengths are the canonical digest sizes).
-    let d512 = crypto::sha512::digest("abc".to_string().as_bytes())
-    let db3 = crypto::blake3::digest("abc".to_string().as_bytes())
+    let d512 = crypto::sha512::digest("abc".as_bytes())
+    let db3 = crypto::blake3::digest("abc".as_bytes())
     println!("sha512 len = {}", d512.len())
     println!("blake3 len = {}", db3.len())
-    print_hex(&"md5", &crypto::insecure::md5("abc".to_string().as_bytes()))
-    print_hex(&"sha1", &crypto::insecure::sha1("abc".to_string().as_bytes()))
+    print_hex(&"md5", &crypto::insecure::md5("abc".as_bytes()))
+    print_hex(&"sha1", &crypto::insecure::sha1("abc".as_bytes()))
 
     // Hex-alphabet Base32 of "foobar".
     let raw: Vec<u8> = Vec::from([102, 111, 111, 98, 97, 114])

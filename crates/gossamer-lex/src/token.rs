@@ -34,6 +34,9 @@ pub enum TokenKind {
     FloatLit,
     /// A double-quoted string literal with escape sequences.
     StringLit,
+    /// A triple-quoted string literal `"""..."""`, whose body has the
+    /// indentation it shares with its closing delimiter removed.
+    TripleStringLit,
     /// A raw string literal `r"..."` with `hashes` surrounding `#` characters.
     RawStringLit {
         /// Number of `#` characters flanking the raw string delimiters.

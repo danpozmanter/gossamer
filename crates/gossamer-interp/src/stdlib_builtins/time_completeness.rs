@@ -329,7 +329,10 @@ pub(crate) fn builtin_time_sleep(args: &[Value]) -> RuntimeResult<Value> {
     }
     let ms = u64::try_from(ms)
         .map_err(|_| RuntimeError::Type("time::sleep: duration_ms is too large".to_string()))?;
-    std::thread::sleep(std::time::Duration::from_millis(ms));
+    // Sleeping is a cancellation point: a cancelled cohort wakes its
+    // children now rather than at the end of the nap they were taking.
+    let _elapsed =
+        crate::stdlib_builtins::cohort::sleep_cancellable(std::time::Duration::from_millis(ms));
     Ok(Value::Unit)
 }
 

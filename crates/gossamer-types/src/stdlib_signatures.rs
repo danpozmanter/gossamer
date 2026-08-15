@@ -2920,6 +2920,31 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::runtime",
+        name: "cohort_cancel",
+        signature: "fn cohort_cancel() -> ()",
+    },
+    StdFunctionSignature {
+        module_path: "std::runtime",
+        name: "cohort_cancelled",
+        signature: "fn cohort_cancelled() -> bool",
+    },
+    StdFunctionSignature {
+        module_path: "std::runtime",
+        name: "cohort_join",
+        signature: "fn cohort_join() -> Result<(), errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::runtime",
+        name: "cohort_pop",
+        signature: "fn cohort_pop() -> ()",
+    },
+    StdFunctionSignature {
+        module_path: "std::runtime",
+        name: "cohort_push",
+        signature: "fn cohort_push(policy: i64, timeout_ms: i64, context: i64) -> ()",
+    },
+    StdFunctionSignature {
+        module_path: "std::runtime",
         name: "arena_pop",
         signature: "fn arena_pop() -> ()",
     },

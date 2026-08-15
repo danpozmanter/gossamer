@@ -202,6 +202,7 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     install_validate(globals);
     install_rwlock(globals);
     install_context(globals);
+    install_cohort(globals);
     #[cfg(not(target_arch = "wasm32"))]
     install_metrics(globals);
     #[cfg(not(target_arch = "wasm32"))]
@@ -239,6 +240,7 @@ pub mod archive_tar;
 pub mod archive_zip;
 pub mod bufio;
 pub mod bytes_builder;
+pub mod cohort;
 pub mod compress;
 pub mod container_heap;
 pub mod container_ordered;
@@ -335,6 +337,7 @@ pub(crate) use bufio::install_bufio_extras;
 pub use bufio::*;
 pub(crate) use bytes_builder::install_bytes_builder;
 pub use bytes_builder::*;
+pub(crate) use cohort::install_cohort;
 pub(crate) use compress::install_compress;
 pub use compress::*;
 pub(crate) use container_heap::install_container_heap;

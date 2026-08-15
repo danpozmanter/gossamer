@@ -8,7 +8,8 @@ use crate::number::lex_number;
 use crate::punct::lex_punct;
 use crate::span::{FileId, Span};
 use crate::string::{
-    QuotedOutcome, lex_byte, lex_byte_string, lex_char, lex_raw_string, lex_string,
+    QuotedOutcome, TRIPLE_QUOTE, lex_byte, lex_byte_string, lex_char, lex_raw_string, lex_string,
+    lex_triple_string,
 };
 use crate::token::{Keyword, Token, TokenKind};
 
@@ -138,9 +139,14 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    /// Lexes a `"..."` string literal and forwards any diagnostics.
+    /// Lexes a `"..."` or `"""..."""` string literal and forwards any
+    /// diagnostics.
     fn finish_string(&mut self, start: u32) -> TokenKind {
-        let outcome = lex_string(&mut self.cursor, self.file, start);
+        let outcome = if self.cursor.rest().starts_with(TRIPLE_QUOTE) {
+            lex_triple_string(&mut self.cursor, self.file, start)
+        } else {
+            lex_string(&mut self.cursor, self.file, start)
+        };
         self.absorb_quoted(outcome)
     }
 

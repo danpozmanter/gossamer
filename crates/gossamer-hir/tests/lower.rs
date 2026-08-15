@@ -268,3 +268,69 @@ fn example_programs_lower_without_panics() {
         assert!(!program.items.is_empty(), "{path}: no items lowered");
     }
 }
+
+/// The types of the capture prologue's `let` bindings in the lifted
+/// function `name`, in environment-slot order.
+fn capture_slot_tys(source: &str, name: &str) -> (Vec<gossamer_types::Ty>, TyCtxt) {
+    let (hir, mut tcx) = lower(source);
+    let lifted = gossamer_hir::lift_closures(hir, &mut tcx);
+    let decl = lifted
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            gossamer_hir::HirItemKind::Fn(decl) if decl.name.name == name => Some(decl),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no lifted item named {name}"));
+    let block = &decl.body.as_ref().expect("a lifted body").block;
+    let tys = block
+        .stmts
+        .iter()
+        .filter_map(|stmt| match &stmt.kind {
+            gossamer_hir::HirStmtKind::Let {
+                ty,
+                init: Some(init),
+                ..
+            } if gossamer_hir::is_capture_env_load(init) => Some(*ty),
+            _ => None,
+        })
+        .collect();
+    (tys, tcx)
+}
+
+/// A capture's environment slot is typed by the value it holds, whatever
+/// expression the capture is reached through. Typing it by anything else
+/// (the closure's return type, say) lays out and reference-counts an
+/// `i64` as a `String`, which the compiled tiers fault on.
+#[test]
+fn a_capture_reached_through_an_aggregate_keeps_its_own_type() {
+    // `y` is an i64 and each closure returns a String, so a slot typed
+    // from the return would hold `y`'s bits under a String's contract.
+    for source in [
+        // Tuple.
+        "fn main() { let y = 5\n let f = |x: i64| { let t = (x, y)\n if t.0 == 1 { \"#\" } else { \" \" } }\n let _ = f(1) }\n",
+        // Vec literal.
+        "fn main() { let y = 5\n let f = |x: i64| { let v = #[x, y]\n if v[0] == 1 { \"#\" } else { \" \" } }\n let _ = f(1) }\n",
+        // Range.
+        "fn main() { let y = 5\n let f = |x: i64| { let r = x..y\n if x == 1 { \"#\" } else { \" \" } }\n let _ = f(1) }\n",
+    ] {
+        let (tys, mut tcx) = capture_slot_tys(source, "__closure_0");
+        let i64_ty = tcx.int_ty(gossamer_types::IntTy::I64);
+        assert_eq!(tys, vec![i64_ty], "{source}");
+    }
+}
+
+/// Captures of different types keep them apart, so each env slot is laid
+/// out independently of the others and of the return type.
+#[test]
+fn captures_of_mixed_types_each_keep_their_own() {
+    let source = "fn main() { let scale = 3\n let bias = 0.5\n let label = \"n\"\n \
+                  let f = |x: i64| { let t = (x, scale, bias, label)\n t.1 }\n let _ = f(1) }\n";
+    let (tys, mut tcx) = capture_slot_tys(source, "__closure_0");
+    let expected = vec![
+        tcx.int_ty(gossamer_types::IntTy::I64),
+        tcx.float_ty(gossamer_types::FloatTy::F64),
+        tcx.string_ty(),
+    ];
+    assert_eq!(tys, expected);
+}

@@ -304,7 +304,7 @@ fn every_cataloged_shared_sequence_method_typechecks_on_its_valid_receiver() {
     for call in immutable_calls {
         assert_accepted(
             &format!("fixed array shared method {call}"),
-            &format!("let values = #[1, 2, 3]\nlet _result = {call}"),
+            &format!("let values = [1, 2, 3]\nlet _result = {call}"),
         );
         assert_accepted(
             &format!("slice shared method {call}"),

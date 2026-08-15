@@ -113,7 +113,7 @@ impl Parser<'_> {
         // Tag the desugared block so the front-end runs the arena-escape
         // check (GM0003) on it - the raw `runtime::arena_push/pop`
         // primitive stays unchecked.
-        block.is_arena = true;
+        block.kind = gossamer_ast::BlockKind::Arena;
         let runtime_call = |p: &mut Self, fn_name: &str, span| {
             let path = Expr::new(
                 p.alloc_id(),

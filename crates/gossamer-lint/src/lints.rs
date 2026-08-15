@@ -72,6 +72,7 @@ pub(crate) fn run_lint(id: &str, sf: &SourceFile, src: &str) -> Vec<Finding> {
         "empty_loop" => lint_empty_loop(sf),
         "fill_loop" => lint_fill_loop(sf),
         "substring_byte_scan" => lint_substring_byte_scan(sf),
+        "detached_go_in_cohort" => lint_detached_go_in_cohort(sf),
         _ => Vec::new(),
     }
 }
@@ -716,7 +717,21 @@ fn lint_panic_in_main(sf: &SourceFile) -> Vec<Finding> {
                 continue;
             }
             if let Some(body) = &decl.body {
+                // A closure body is not main's frame: a panic in one that
+                // is `spawn`ed or `go`ne is goroutine-scoped, ends only
+                // that goroutine, and reaches the program through its join
+                // handle or its cohort. Only a panic main itself runs is
+                // the abort this lint is about.
+                let closure_spans = closure_body_spans(body);
+                let inside_closure = |span: Span| {
+                    closure_spans
+                        .iter()
+                        .any(|range| span.start >= range.0 && span.end <= range.1)
+                };
                 walk_expr(body, &mut |expr| {
+                    if inside_closure(expr.span) {
+                        return;
+                    }
                     if let ExprKind::Call { callee, .. } = &expr.kind {
                         if let ExprKind::Path(path) = &callee.kind {
                             if last_path_seg(path) == Some("panic") {
@@ -745,6 +760,17 @@ fn lint_panic_in_main(sf: &SourceFile) -> Vec<Finding> {
             }
         }
     }
+    out
+}
+
+/// Byte ranges of every closure body inside `expr`.
+fn closure_body_spans(expr: &Expr) -> Vec<(u32, u32)> {
+    let mut out = Vec::new();
+    walk_expr(expr, &mut |e| {
+        if let ExprKind::Closure { body, .. } = &e.kind {
+            out.push((body.span.start, body.span.end));
+        }
+    });
     out
 }
 
@@ -2260,6 +2286,70 @@ fn lint_fill_loop(sf: &SourceFile) -> Vec<Finding> {
 
 /// A `s.substring(i, i + 1)` single-byte read: `s.byte_at(i)` reads the
 /// same byte offset as an `i64` without allocating a String per step.
+/// A `go` inside a `cohort { }` body spawns a goroutine the cohort does
+/// not own, which is the leak the block exists to prevent. `spawn`
+/// attaches the child to the cohort instead.
+fn lint_detached_go_in_cohort(sf: &SourceFile) -> Vec<Finding> {
+    let mut out = Vec::new();
+    each_fn_body(sf, |body| {
+        walk_expr(body, &mut |expr| {
+            let ExprKind::Block(block) = &expr.kind else {
+                return;
+            };
+            if !block.is_cohort() {
+                return;
+            }
+            // Only this cohort's own statements: a nested cohort reports
+            // its own body, and reporting it twice would say the same
+            // thing about the same `go`.
+            for stmt in &block.stmts {
+                // Statement position (`go f()`) and expression position
+                // (`let _ = go f()`) are separate nodes in the grammar.
+                let inner = match &stmt.kind {
+                    StmtKind::Expr { expr: inner, .. } => inner,
+                    StmtKind::Go(_) => {
+                        out.push((
+                            stmt.span,
+                            "`go` inside a `cohort` spawns a goroutine the cohort does not own"
+                                .to_string(),
+                            Some(
+                                "use `spawn(..)` so the cohort joins the child and reports its \
+                                 failure"
+                                    .to_string(),
+                            ),
+                        ));
+                        continue;
+                    }
+                    StmtKind::Let {
+                        init: Some(inner), ..
+                    } => inner,
+                    _ => continue,
+                };
+                walk_expr(inner, &mut |candidate| {
+                    if let ExprKind::Block(nested) = &candidate.kind
+                        && nested.is_cohort()
+                    {
+                        return;
+                    }
+                    if matches!(candidate.kind, ExprKind::Go(_)) {
+                        out.push((
+                            candidate.span,
+                            "`go` inside a `cohort` spawns a goroutine the cohort does not own"
+                                .to_string(),
+                            Some(
+                                "use `spawn(..)` so the cohort joins the child and reports its \
+                                 failure"
+                                    .to_string(),
+                            ),
+                        ));
+                    }
+                });
+            }
+        });
+    });
+    out
+}
+
 fn lint_substring_byte_scan(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {

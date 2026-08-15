@@ -4,7 +4,7 @@ use std::encoding::json
 // segfault in compiled mode because json_borrow received *mut GosResult
 // (disc+payload) instead of *const GosJson and read disc=0 as a null Arc.
 fn main() {
-    let v = json::parse(&"{\"name\":\"alice\",\"age\":30}".to_string()).unwrap()
+    let v = json::parse(&"{\"name\":\"alice\",\"age\":30}").unwrap()
     let name = match json::get(&v, &"name") {
         Some(n) => json::as_str(&n).unwrap_or("?"),
         None => "?",

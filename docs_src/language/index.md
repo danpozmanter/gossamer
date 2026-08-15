@@ -24,7 +24,9 @@ One page per language feature. Source is `crates/gossamer-std/src/manifest/featu
 | [`lang::trait`](trait.md) | Behaviour interface declaration. |
 | [`lang::impl`](impl.md) | Inherent and trait implementation blocks. |
 | [`lang::generics`](generics.md) | Type parameters on functions / impls / structs. |
-| [`lang::go`](go.md) | Goroutine spawn. |
+| [`lang::go`](go.md) | Goroutine spawn, detached. |
+| [`lang::cohort`](cohort.md) | Structured concurrency: `cohort { }` owns the goroutines `spawn`ed inside it, joins them on every exit path, and reports the first failure as its `Result`. |
+| [`lang::triple_quoted_string`](triple_quoted_string.md) | `"""` string literal whose body is dedented by the indentation it shares with its closing delimiter; `gos fmt` moves the block with the line that opens it. |
 | [`lang::select`](select.md) | Channel multiplex select expression. |
 | [`lang::channel`](channel.md) | Typed channel via `std::sync::channel`. |
 | [`lang::weak_references`](weak_references.md) | `Weak<T>` downgrade/upgrade handles. Native collection is thread-local only and the bytecode VM has no cycle collector, so cross-tier cyclic reclamation is not yet a Stable guarantee. |

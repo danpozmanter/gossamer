@@ -20,7 +20,7 @@ fn main() -> Result<(), errors::Error> {
     let bad = String::slice(&s, 5, 2)
     println!("bad is err: {}", bad.is_err())
 
-    let xs: Vec<i64> = #[10, 20, 30, 40, 50].to_vec()
+    let xs: Vec<i64> = #[10, 20, 30, 40, 50]
     let chunk = xs.slice(0, 2)?
     println!("vec slice len: {}", chunk.len())
     println!("vec slice first: {}", chunk[0])

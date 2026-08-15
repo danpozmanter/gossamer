@@ -1,0 +1,49 @@
+fn page() -> String {
+    """
+    <html>
+        <body>
+            <h1>Hello</h1>
+        </body>
+    </html>
+    """
+}
+
+fn scan(text: &String, rounds: i64) -> i64 {
+    let mut total = 0
+    for _ in 0..rounds {
+        total += text.len()
+    }
+    total
+}
+
+fn main() {
+    println!("{}", page())
+    println!("scan:{}", scan(&page(), 100))
+    let empty = """
+    """
+    println!("empty:{}:", empty)
+    let trailing = """
+    one
+
+    """
+    println!("trailing:{}:", trailing)
+    let hugging = """
+    two"""
+    println!("hugging:{}:", hugging)
+    let inline = """a"b"""
+    println!("inline:{}", inline)
+    let tabbed = """
+    a\tb
+    """
+    println!("tabbed:{}", tabbed)
+    let deeper = """
+        indented once
+    back
+    """
+    println!("deeper:{}:", deeper)
+    match hugging {
+        """
+        two""" => println!("match: yes")
+        _ => println!("match: no")
+    }
+}

@@ -976,6 +976,12 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
         "A bracket spelling that used to build a container is no longer syntax. Construct the container through its type: `Type::new()` or `Type::from([a, b, c])`.",
     ),
     (
+        "GP0033",
+        "Parser",
+        "text after a triple-quote opener",
+        "A multi-line `\"\"\"` literal carried text on the same line as its opening delimiter. The body starts on the next line, and the indentation it shares with the closing `\"\"\"` is stripped from every line.",
+    ),
+    (
         "GP0034",
         "Parser",
         "missing item type",
@@ -1042,6 +1048,12 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
         "The `use` names a module that exists but an item that module does not export. Check the item spelling; `gos doc std::<module>` lists every name a module exports.",
     ),
     (
+        "GR0017",
+        "Resolver",
+        "break or continue with no loop",
+        "A `break` or `continue` has no loop to act on: either none encloses it, or the label it names is not carried by any enclosing loop. A closure body is a separate function, so a loop outside it is not a target.",
+    ),
+    (
         "GT0001",
         "Types",
         "type mismatch",
@@ -1082,12 +1094,6 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
         "Types",
         "question mark not supported here",
         "The `?` operator can only unwrap `Result` inside a `Result`-returning function or `Option` inside an `Option`-returning function.",
-    ),
-    (
-        "GK0001",
-        "Package manager",
-        "manifest parse error",
-        "The package manifest (`gos.toml`) could not be parsed. Check the TOML syntax and required fields.",
     ),
 ];
 
@@ -1754,4 +1760,37 @@ fn stdlib_modules_used(source: &str) -> Vec<String> {
         }
     }
     found
+}
+
+#[cfg(test)]
+mod diagnostic_catalogue_tests {
+    use super::DIAGNOSTIC_CATALOGUE;
+
+    /// The published page is a curated subset of the codes `gos explain`
+    /// answers for, so it does not have to carry every code. It does have
+    /// to carry only real ones: a row for a code nothing emits documents
+    /// a diagnostic a reader can never see and can never look up.
+    #[test]
+    fn every_catalogue_row_names_a_code_the_compiler_can_emit() {
+        let known: std::collections::BTreeSet<&str> =
+            gossamer_diagnostics::code_registry::codes().collect();
+        let stale: Vec<&str> = DIAGNOSTIC_CATALOGUE
+            .iter()
+            .map(|(code, ..)| *code)
+            .filter(|code| !known.contains(code))
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "DIAGNOSTIC_CATALOGUE rows with no registry entry: {stale:?}"
+        );
+    }
+
+    /// Two rows for one code would render the anchor twice.
+    #[test]
+    fn catalogue_has_no_duplicate_codes() {
+        let mut seen = std::collections::BTreeSet::new();
+        for (code, ..) in DIAGNOSTIC_CATALOGUE {
+            assert!(seen.insert(*code), "duplicate catalogue row for {code}");
+        }
+    }
 }

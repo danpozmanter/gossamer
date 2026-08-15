@@ -510,17 +510,44 @@ impl Vm {
     ) -> RuntimeResult<Value> {
         let channel = crate::value::Channel::unbounded();
         let worker_channel = channel.clone();
+        // The cohort is read on the spawning goroutine, before the task
+        // is queued, so children take their positional index in call
+        // order and a cohort cannot finish joining while one of its
+        // children is still on its way to a worker.
+        let cohort = crate::stdlib_builtins::cohort::current_cohort();
+        let index = if cohort == 0 {
+            -1
+        } else {
+            crate::stdlib_builtins::cohort::register_child(cohort)
+        };
+        crate::stdlib_builtins::cohort::note_child_handle(channel.identity(), cohort, index);
         self.spawn_on_pool(move |vm| {
-            let outcome = match vm.dispatch_call(&callee, args) {
+            crate::stdlib_builtins::cohort::enter_child(cohort);
+            let result = vm.dispatch_call(&callee, args);
+            // A child fails by panicking or by answering `Err`, the same
+            // two ways the compiled tier reports one.
+            let failure = match &result {
+                Ok(Value::Variant(v)) if v.name == "Err" => Some(child_err_message(&v.fields)),
+                Ok(_) => None,
+                Err(RuntimeError::Panic(msg)) => Some(msg.clone()),
+                Err(other) => Some(format!("{other}")),
+            };
+            let outcome = match result {
                 Ok(v) => Value::variant("Ok", vec![v]),
                 Err(RuntimeError::Panic(msg)) => {
                     Value::variant("Err", vec![Value::String(msg.into())])
                 }
                 Err(other) => Value::variant("Err", vec![Value::String(format!("{other}").into())]),
             };
+            if cohort != 0 {
+                // Before the send: a joiner that wakes on the outcome must
+                // not mark a failure observed before it is recorded.
+                crate::stdlib_builtins::cohort::leave_child(cohort, index, failure);
+            }
             // This send delivers the join handle's result on a channel the
             // joiner holds, so it can never be the last thing running.
             let _delivered = worker_channel.send(outcome);
+            crate::stdlib_builtins::cohort::unwind_open_cohorts();
         });
         Ok(Value::Channel(channel))
     }
@@ -595,6 +622,28 @@ impl Vm {
         full.extend(closure.capture_values.iter().cloned());
         full.extend(args);
         self.apply(Global::Fn(Arc::clone(chunk)), full)
+    }
+}
+
+/// Renders a failed cohort child's `Err` payload for the cohort's
+/// report: an `errors::Error` shows its message, anything else renders
+/// the way `{}` would show it.
+fn child_err_message(fields: &[Value]) -> String {
+    match fields.first() {
+        Some(Value::String(s)) => s.as_str().to_string(),
+        Some(Value::Struct(inner)) if inner.name == "errors::Error" => {
+            for (name, value) in &inner.fields {
+                if (*name) == "message" {
+                    return match value {
+                        Value::String(s) => s.as_str().to_string(),
+                        other => format!("{other}"),
+                    };
+                }
+            }
+            "cohort child failed".to_string()
+        }
+        Some(other) => format!("{other}"),
+        None => "cohort child failed".to_string(),
     }
 }
 

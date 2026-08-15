@@ -103,6 +103,31 @@ pub const RUNTIME: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "Installs a hook invoked with the message on panic.",
         },
+        StdItem {
+            name: "cohort_push",
+            kind: StdItemKind::Function,
+            doc: "Opens a cohort on the running goroutine. Written `cohort { }` in source; the block desugars to this plus `cohort_join` and a deferred `cohort_pop`.",
+        },
+        StdItem {
+            name: "cohort_join",
+            kind: StdItemKind::Function,
+            doc: "Waits for every child of the running goroutine's cohort and answers `Result<(), errors::Error>`.",
+        },
+        StdItem {
+            name: "cohort_pop",
+            kind: StdItemKind::Function,
+            doc: "Closes the running goroutine's cohort, cancelling and joining anything still running.",
+        },
+        StdItem {
+            name: "cohort_cancelled",
+            kind: StdItemKind::Function,
+            doc: "Whether the running goroutine's cohort has been cancelled. A CPU-bound child polls this to cooperate at a point of its own choosing.",
+        },
+        StdItem {
+            name: "cohort_cancel",
+            kind: StdItemKind::Function,
+            doc: "Cancels the running goroutine's cohort, winding its siblings down without failing it.",
+        },
     ],
 };
 

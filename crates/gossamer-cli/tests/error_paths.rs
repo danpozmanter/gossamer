@@ -166,7 +166,7 @@ fn question_mark_propagation_through_nested_callers() {
     // surfaces.
     let src = r#"
 fn parse_positive(s: String) -> Result<i64, String> {
-    let n = s.parse::<i64>().map_err(|_| "not a number".to_string())?
+    let n = s.parse::<i64>().map_err(|_| "not a number")?
     if n <= 0 { Err(format!("{} is not positive", n)) } else { Ok(n) }
 }
 
@@ -186,15 +186,15 @@ fn octa_positive(s: String) -> Result<i64, String> {
 }
 
 fn main() {
-    match octa_positive("3".to_string()) {
+    match octa_positive("3") {
         Ok(v) => println!("ok={}", v),
         Err(e) => println!("err={}", e),
     }
-    match octa_positive("abc".to_string()) {
+    match octa_positive("abc") {
         Ok(v) => println!("unexpected={}", v),
         Err(e) => println!("err={}", e),
     }
-    match octa_positive("-5".to_string()) {
+    match octa_positive("-5") {
         Ok(v) => println!("unexpected={}", v),
         Err(e) => println!("err={}", e),
     }
@@ -313,7 +313,7 @@ fn first_pair(seed: i64) -> Option<i64> {
 fn pipeline(seed: i64) -> Result<i64, String> {
     match first_pair(seed) {
         Some(v) => Ok(v + 1),
-        None => Err("missing".to_string()),
+        None => Err("missing"),
     }
 }
 

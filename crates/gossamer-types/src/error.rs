@@ -126,6 +126,9 @@ pub enum TypeError {
         /// Method names the receiver does have, in canonical order.
         /// Empty when the checker has no surface list for the receiver.
         available: Vec<String>,
+        /// The receiver declares a field under this name, so the call
+        /// spelling is what missed, not the name.
+        field_of_same_name: bool,
     },
     /// A method reached from outside the module its `impl` was written
     /// in, without `pub`.
@@ -301,6 +304,9 @@ pub enum TypeError {
         /// Span covering the field name alone, when the site can point at
         /// it. Carries the machine-applicable rename.
         field_span: Option<Span>,
+        /// The receiver has a method under this name, so the read is
+        /// missing its call parentheses.
+        method_of_same_name: bool,
     },
     /// A `Result<T, E>` expression was used as a statement without
     /// binding or propagating the value. SPEC §9: discarded Results
@@ -543,13 +549,11 @@ pub enum TypeError {
     },
     /// A std free function was used as a first-class value
     /// (`r.map_err(errors::new)`) but is not in the supported-set
-    /// table, so the compiled tiers have no symbol to take the
-    /// address of. Rejected uniformly on every tier rather than
-    /// letting the VM accept what a native build cannot link.
-    #[error(
-        "std function `{path}` cannot be passed as a value on compiled tiers; \
-         wrap it in a closure (e.g. `|x| {path}(x)`)"
-    )]
+    /// signature catalogue, so the pass that rewrites a std function
+    /// named in value position into the closure calling it has no arity
+    /// to write. Rejected uniformly on every tier rather than letting
+    /// the VM accept what a native build cannot link.
+    #[error("std function `{path}` has no fixed parameter list to pass as a value")]
     StdFnValueUnsupported {
         /// Qualified std path as written, e.g. `strings::repeat`.
         path: String,
@@ -1083,12 +1087,18 @@ impl TypeDiagnostic {
                 ty,
                 name,
                 available,
+                field_of_same_name,
             } => {
                 out = if name == "set" && ty.starts_with("Map") {
                     out.with_help(format!("`{ty}` writes with `insert(key, value)`"))
                         .with_note(
                             "`set` is the `json::Value` field-update helper, not a map method",
                         )
+                } else if *field_of_same_name {
+                    out.with_help(format!(
+                        "`{name}` is a field of `{ty}`, so it is read without parentheses: \
+                         `value.{name}` - and `|v| v.{name}` where a callback is expected"
+                    ))
                 } else {
                     unresolved_method_diagnostic(out, ty, name, available)
                 };
@@ -1242,6 +1252,7 @@ impl TypeDiagnostic {
                 opaque,
                 declared,
                 field_span,
+                method_of_same_name,
             } => {
                 out = unknown_field_diagnostic(
                     out,
@@ -1252,6 +1263,7 @@ impl TypeDiagnostic {
                         opaque: *opaque,
                         declared,
                         field_span: *field_span,
+                        method_of_same_name: *method_of_same_name,
                     },
                 );
             }
@@ -1664,6 +1676,7 @@ struct UnknownFieldParts<'a> {
     opaque: bool,
     declared: &'a [String],
     field_span: Option<Span>,
+    method_of_same_name: bool,
 }
 
 /// Attaches the GT0006 help and rename suggestion. Split out of
@@ -1679,7 +1692,13 @@ fn unknown_field_diagnostic(
         opaque,
         declared,
         field_span,
+        method_of_same_name,
     } = parts;
+    if method_of_same_name {
+        return out.with_help(format!(
+            "`{field}` is a method of `{ty}`, not a field: call it as `value.{field}()`"
+        ));
+    }
     if opaque {
         return out.with_help(format!(
             "`{ty}` has no named struct fields exposed to the language; \
@@ -1816,13 +1835,12 @@ fn std_fn_value_diagnostic(
     path: &str,
 ) -> gossamer_diagnostics::Diagnostic {
     out.with_help(format!(
-        "wrap the call in a closure: `|x| {path}(x)` works on every tier"
+        "write the closure yourself: `|x| {path}(x)` works on every tier"
     ))
     .with_note(
-        "the VM models std functions as callable builtin values, but the compiled \
-         tiers need a concrete runtime symbol; only the tabled supported set \
-         (errors::new, strings::to_uppercase/.../trim, strconv::parse_i64/...) can be \
-         passed directly",
+        "a std function named in value position is rewritten into the closure that \
+         calls it, which every tier lowers; this one takes a variable number of \
+         arguments, so there is no single closure to write for it",
     )
 }
 

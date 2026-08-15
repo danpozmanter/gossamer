@@ -1,0 +1,10 @@
+// ERROR: GR0017
+fn main() {
+    'search: for row in 0..5 {
+        for col in 0..5 {
+            if row * col == 6 {
+                break 'wrong
+            }
+        }
+    }
+}

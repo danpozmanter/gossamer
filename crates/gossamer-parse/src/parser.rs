@@ -468,7 +468,9 @@ fn token_text(token: Token) -> String {
         TokenKind::Ident => "identifier".to_string(),
         TokenKind::IntLit => "integer literal".to_string(),
         TokenKind::FloatLit => "float literal".to_string(),
-        TokenKind::StringLit | TokenKind::RawStringLit { .. } => "string literal".to_string(),
+        TokenKind::StringLit | TokenKind::RawStringLit { .. } | TokenKind::TripleStringLit => {
+            "string literal".to_string()
+        }
         TokenKind::CharLit => "char literal".to_string(),
         TokenKind::ByteLit => "byte literal".to_string(),
         TokenKind::ByteStringLit | TokenKind::RawByteStringLit { .. } => {

@@ -531,7 +531,7 @@ impl Finder<'_> {
     }
 
     fn walk_block(&mut self, block: &Block) {
-        if block.is_arena {
+        if block.is_arena() {
             let mut analyzer = Analyzer {
                 resolutions: self.resolutions,
                 table: self.table,

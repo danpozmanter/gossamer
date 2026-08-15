@@ -29,7 +29,7 @@ fn summarize<T>(x: &T) -> String where T: Named + Weighed {
 
 // One `where` clause constraining two parameters.
 fn heavier<T, U>(a: &T, b: &U) -> String where T: Named + Weighed, U: Weighed {
-    if a.grams() >= b.grams() { a.label() } else { "other".to_string() }
+    if a.grams() >= b.grams() { a.label() } else { "other" }
 }
 
 struct Crate<T: Weighed> { content: T }

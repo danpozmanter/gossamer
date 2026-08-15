@@ -46,6 +46,13 @@ pub(crate) fn take_last_goroutine_panic() -> Option<String> {
     LAST_GOROUTINE_PANIC.with(|c| c.borrow_mut().take())
 }
 
+/// Reads the last goroutine panic message without clearing it, for a
+/// second observer on the same unwind: a cohort records the child's
+/// failure and the join handle still delivers the message.
+pub(crate) fn peek_last_goroutine_panic() -> Option<String> {
+    LAST_GOROUTINE_PANIC.with(|c| c.borrow().clone())
+}
+
 // `C-unwind`, not `C`: on the goroutine path this raises a Rust panic
 // that must unwind back through its Gossamer caller to the coroutine
 // wrapper (and to a `spawn` join handle's Drop-guard). A plain
