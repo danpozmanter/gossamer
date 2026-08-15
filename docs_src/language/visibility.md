@@ -1,6 +1,7 @@
 # `lang::visibility`
 
 Three visibilities: private by default (the declaring module and its descendants), `pub(package)` (every module of the declaring package), and `pub` (the package's public API). Declared per item, per method, and per struct field; `pub(crate)` / `pub(super)` / `pub(in path)` are rejected (`GP0038`).
+
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## Packages, modules, and module descendants

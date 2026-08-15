@@ -837,22 +837,6 @@ pub const STDLIB_QUALIFIED: &[&str] = &[
     "iter::count",
     "iter::count_by",
     "iter::dedup",
-    "iter::eager_all",
-    "iter::eager_any",
-    "iter::eager_chain",
-    "iter::eager_collect",
-    "iter::eager_count",
-    "iter::eager_enumerate",
-    "iter::eager_filter",
-    "iter::eager_find",
-    "iter::eager_fold",
-    "iter::eager_map",
-    "iter::eager_range",
-    "iter::eager_range_inclusive",
-    "iter::eager_skip",
-    "iter::eager_sum",
-    "iter::eager_take",
-    "iter::eager_zip",
     "iter::empty",
     "iter::enumerate",
     "iter::filter",
@@ -1580,6 +1564,23 @@ pub const STDLIB_QUALIFIED: &[&str] = &[
     "zstd::encode_level",
 ];
 
+/// Manifest exports that are macros. They are written `name!(..)` and
+/// expand at parse time, so the runtime binds no callable for them: a
+/// call spelled as a value path resolves against the manifest and then
+/// fails at run time. Sorted for binary search, and kept in step with
+/// the manifest by `resolver_macro_item_table_matches_manifest` in
+/// `gossamer-std`.
+pub const STDLIB_MACRO_ITEMS: &[&str] = &[
+    "fmt::eprint",
+    "fmt::eprintln",
+    "fmt::format",
+    "fmt::print",
+    "fmt::println",
+    "fmt::write",
+    "fmt::writeln",
+    "panic::panic",
+];
+
 /// Canonical `module::item` exports the standard library manifest
 /// advertises, with the `std::` prefix stripped. Sorted for binary
 /// search. Kept in step with `gossamer_std::manifest::ALL_MODULES` by
@@ -2030,22 +2031,6 @@ pub const STDLIB_MANIFEST_ITEMS: &[&str] = &[
     "iter::count",
     "iter::count_by",
     "iter::dedup",
-    "iter::eager_all",
-    "iter::eager_any",
-    "iter::eager_chain",
-    "iter::eager_collect",
-    "iter::eager_count",
-    "iter::eager_enumerate",
-    "iter::eager_filter",
-    "iter::eager_find",
-    "iter::eager_fold",
-    "iter::eager_map",
-    "iter::eager_range",
-    "iter::eager_range_inclusive",
-    "iter::eager_skip",
-    "iter::eager_sum",
-    "iter::eager_take",
-    "iter::eager_zip",
     "iter::empty",
     "iter::enumerate",
     "iter::filter",
@@ -2566,6 +2551,16 @@ pub(crate) fn canonical_collection_name(name: &str) -> Option<&'static str> {
 #[must_use]
 pub fn is_stdlib_qualified(name: &str) -> bool {
     STDLIB_QUALIFIED.binary_search(&name).is_ok()
+}
+
+/// The macro this `std::`-relative path names, if it names one.
+#[must_use]
+pub fn stdlib_macro_named(path: &str) -> Option<&'static str> {
+    STDLIB_MACRO_ITEMS
+        .binary_search(&path)
+        .ok()
+        .and_then(|idx| STDLIB_MACRO_ITEMS.get(idx).copied())
+        .and_then(|entry| entry.rsplit("::").next())
 }
 
 /// True when some entry of `table` equals `prefix` or extends it by a

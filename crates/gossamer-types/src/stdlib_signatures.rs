@@ -1699,86 +1699,6 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         signature: "fn zip<A, B>(left: Vec<A>, right: Vec<B>) -> Vec<(A, B)>",
     },
     StdFunctionSignature {
-        module_path: "std::iter",
-        name: "eager_all",
-        signature: "fn eager_all<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> bool",
-    },
-    StdFunctionSignature {
-        module_path: "std::iter",
-        name: "eager_any",
-        signature: "fn eager_any<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> bool",
-    },
-    StdFunctionSignature {
-        module_path: "std::iter",
-        name: "eager_chain",
-        signature: "fn eager_chain<T>(left: Vec<T>, right: Vec<T>) -> Vec<T>",
-    },
-    StdFunctionSignature {
-        module_path: "std::iter",
-        name: "eager_collect",
-        signature: "fn eager_collect<T>(items: Vec<T>) -> Vec<T>",
-    },
-    StdFunctionSignature {
-        module_path: "std::iter",
-        name: "eager_count",
-        signature: "fn eager_count<T>(items: Vec<T>) -> i64",
-    },
-    StdFunctionSignature {
-        module_path: "std::iter",
-        name: "eager_enumerate",
-        signature: "fn eager_enumerate<T>(items: Vec<T>) -> Vec<(i64, T)>",
-    },
-    StdFunctionSignature {
-        module_path: "std::iter",
-        name: "eager_filter",
-        signature: "fn eager_filter<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> Vec<T>",
-    },
-    StdFunctionSignature {
-        module_path: "std::iter",
-        name: "eager_find",
-        signature: "fn eager_find<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> Option<T>",
-    },
-    StdFunctionSignature {
-        module_path: "std::iter",
-        name: "eager_fold",
-        signature: "fn eager_fold<T, U>(init: U, f: Fn(U, T) -> U, items: Vec<T>) -> U",
-    },
-    StdFunctionSignature {
-        module_path: "std::iter",
-        name: "eager_map",
-        signature: "fn eager_map<T, U>(f: Fn(T) -> U, items: Vec<T>) -> Vec<U>",
-    },
-    StdFunctionSignature {
-        module_path: "std::iter",
-        name: "eager_range",
-        signature: "fn eager_range(start: i64, end: i64) -> Vec<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::iter",
-        name: "eager_range_inclusive",
-        signature: "fn eager_range_inclusive(start: i64, end: i64) -> Vec<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::iter",
-        name: "eager_skip",
-        signature: "fn eager_skip<T>(n: i64, items: Vec<T>) -> Vec<T>",
-    },
-    StdFunctionSignature {
-        module_path: "std::iter",
-        name: "eager_sum",
-        signature: "fn eager_sum(items: Vec<i64>) -> i64",
-    },
-    StdFunctionSignature {
-        module_path: "std::iter",
-        name: "eager_take",
-        signature: "fn eager_take<T>(n: i64, items: Vec<T>) -> Vec<T>",
-    },
-    StdFunctionSignature {
-        module_path: "std::iter",
-        name: "eager_zip",
-        signature: "fn eager_zip<A, B>(left: Vec<A>, right: Vec<B>) -> Vec<(A, B)>",
-    },
-    StdFunctionSignature {
         module_path: "std::jwt",
         name: "sign_eddsa",
         signature: "fn sign_eddsa(claims_json: String, signing_key_pem: String) -> Result<String, errors::Error>",
@@ -3091,7 +3011,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::strings",
         name: "chars",
-        signature: "fn chars(text: String) -> Vec<char>",
+        signature: "fn chars(text: String) -> Iterator<char>",
     },
     StdFunctionSignature {
         module_path: "std::strings",

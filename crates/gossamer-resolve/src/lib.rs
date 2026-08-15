@@ -34,9 +34,9 @@ pub use resolutions::{FloatWidth, IntWidth, PrimitiveTy, Resolution, Resolutions
 pub use resolver::{project_dep_module_name, resolve_source_file};
 pub use scope::is_prelude_value;
 pub use stdlib_exports::{
-    STDLIB_MANIFEST_ITEMS, STDLIB_MODULE_PATHS, STDLIB_MODULES, STDLIB_QUALIFIED,
-    canonical_stdlib_path, is_stdlib_item_path, is_stdlib_qualified, sole_stdlib_module_exporting,
-    stdlib_module_item_names,
+    STDLIB_MACRO_ITEMS, STDLIB_MANIFEST_ITEMS, STDLIB_MODULE_PATHS, STDLIB_MODULES,
+    STDLIB_QUALIFIED, canonical_stdlib_path, is_stdlib_item_path, is_stdlib_qualified,
+    sole_stdlib_module_exporting, stdlib_macro_named, stdlib_module_item_names,
 };
 
 pub use external::{

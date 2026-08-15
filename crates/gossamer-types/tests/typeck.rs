@@ -1543,45 +1543,6 @@ fn lazy_iter_map_types_as_iterator_when_enabled() {
 }
 
 #[test]
-fn eager_iter_migration_aliases_preserve_combinator_types() {
-    let checked = run("use std::iter\n\
-         fn main() { let xs: Vec<String> = Vec::from([\"a\", \"bb\"])\n\
-         let ys = xs |> iter::eager_map(|s| format!(\"[{s}]\"))\n\
-         let kept = ys |> iter::eager_filter(|s| s.len() > 2)\n\
-         let found = kept |> iter::eager_find(|s| s.len() > 3)\n\
-         let _ = found }\n");
-    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
-
-    let mapped = let_init(&checked, "main", 1);
-    assert!(
-        matches!(closure_param_kind(&checked, mapped), TyKind::String),
-        "iter::eager_map must pin its closure parameter to the Vec element type"
-    );
-    let Some(TyKind::Vec(elem)) = checked.tcx.kind(checked.table.get(mapped.id).unwrap()) else {
-        panic!("iter::eager_map must type as Vec");
-    };
-    assert!(matches!(checked.tcx.kind(*elem), Some(TyKind::String)));
-}
-
-#[test]
-fn lazy_mode_keeps_eager_iter_aliases_as_vec() {
-    let checked = run_with_lazy_iterators(
-        "use std::iter\n\
-         fn main() { let xs: Vec<String> = Vec::from([\"a\", \"bb\"])\n\
-         let ys = xs |> iter::eager_map(|s| format!(\"[{s}]\"))\n\
-         let _ = ys }\n",
-        true,
-    );
-    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
-
-    let mapped = let_init(&checked, "main", 1);
-    let Some(TyKind::Vec(elem)) = checked.tcx.kind(checked.table.get(mapped.id).unwrap()) else {
-        panic!("iter::eager_map must type as Vec in lazy mode");
-    };
-    assert!(matches!(checked.tcx.kind(*elem), Some(TyKind::String)));
-}
-
-#[test]
 fn lazy_range_take_enumerate_collect_pipeline_types() {
     let checked = run_with_lazy_iterators(
         "use std::iter\n\
@@ -1794,21 +1755,21 @@ fn diagnostics_for_with_lazy_iterators(
 }
 
 #[test]
-fn a_variadic_std_fn_as_value_errors_with_gt0015() {
+fn a_macro_path_as_value_is_left_to_the_resolver() {
     // Every std function with a fixed parameter list is rewritten into
-    // the closure that calls it before the checker runs. A formatting
-    // function has no such list, so it stays a value the tiers cannot
-    // lower - and is reported rather than reaching codegen.
+    // the closure that calls it before the checker runs. A macro path is
+    // not a function at all, and the resolver already reports it as one
+    // (GR0018) - a second report about parameter lists would describe the
+    // wrong thing.
     let source = "use std::fmt\n\
                   fn main() { let out = #[\"ab\"].map(fmt::format)\n\
                   let _ = out }\n";
     let diagnostics = diagnostics_for(source);
     assert!(
-        diagnostics.iter().any(|d| matches!(
-            &d.error,
-            TypeError::StdFnValueUnsupported { path } if path == "fmt::format"
-        )),
-        "expected StdFnValueUnsupported for fmt::format, got {diagnostics:?}"
+        !diagnostics
+            .iter()
+            .any(|d| matches!(&d.error, TypeError::StdFnValueUnsupported { .. })),
+        "a macro path is the resolver's to report, got {diagnostics:?}"
     );
 }
 
@@ -1933,7 +1894,7 @@ fn lazy_iterator_step_by_is_accepted() {
 }
 
 #[test]
-fn lazy_terminal_rejects_materialized_vec_without_eager_alias() {
+fn lazy_terminal_rejects_a_materialized_vec() {
     let d = diagnostics_for_with_lazy_iterators(
         "use std::iter\nfn main() { let xs = [1, 2, 3]\n let n = iter::sum(xs)\n let _ = n }\n",
         true,

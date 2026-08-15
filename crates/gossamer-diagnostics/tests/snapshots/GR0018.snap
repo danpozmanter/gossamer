@@ -3,9 +3,9 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GT0015]: A std free function was used as a first-class value, but the - here
+error[GR0018]: A path named one of the standard library's macros - `println`, - here
 --- framed ---
-error[GT0015]: A std free function was used as a first-class value, but the
+error[GR0018]: A path named one of the standard library's macros - `println`,
   --> snap.gos:2:5
      2 |     let x = 1
        |     ^^^^^

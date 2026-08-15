@@ -1,6 +1,7 @@
 # `lang::slicing`
 
 A range in index position takes a subsequence: `xs[1..3]`, `xs[..k]`, `xs[k..]`, `xs[..]`, `xs[a..=b]`, over fixed arrays, slices, `Vec`, and `String`. Bounds clamp rather than panic, matching `substring`; a `String` slice takes byte offsets and snaps to codepoint boundaries.
+
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 Indexing with a range yields the elements it covers:

@@ -1054,6 +1054,12 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
         "A `break` or `continue` has no loop to act on: either none encloses it, or the label it names is not carried by any enclosing loop. A closure body is a separate function, so a loop outside it is not a target.",
     ),
     (
+        "GR0018",
+        "Resolver",
+        "standard library macro named as a value path",
+        "A path named one of the standard library's macros - `println`, `format`, `panic`, and the rest of the fixed set. A macro expands where it is written and the runtime binds no callable for it, so the path has nothing to call or pass as a value. Write it as `name!(..)`; a macro needs no import.",
+    ),
+    (
         "GT0001",
         "Types",
         "type mismatch",

@@ -632,4 +632,5 @@ pub fn spawn_isolated(body: Box<dyn FnOnce() + Send + 'static>) {
 
 /// Stack reserve for an isolated child. It runs the same bodies a
 /// goroutine does, so it gets the same reserve a scheduler carrier has.
+#[cfg(not(target_arch = "wasm32"))]
 const ISOLATED_STACK_BYTES: usize = 8 * 1024 * 1024;

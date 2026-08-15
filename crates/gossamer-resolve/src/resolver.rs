@@ -241,8 +241,19 @@ impl Resolver {
 
     /// Closest name currently in scope to `name`, for a "did you mean" hint.
     fn closest_visible_name(&self, name: &str) -> Option<String> {
-        // A qualified path fails on its head segment; comparing the whole
-        // path against bare names would only ever find noise.
+        // A `module::member` path under a known stdlib module fails on its
+        // leaf, so the neighbours worth offering are that module's own
+        // exports - spelled back the way the call site writes them.
+        if let Some((module, member)) = name.split_once("::")
+            && !member.contains("::")
+            && crate::stdlib_exports::is_stdlib_module_name(module)
+        {
+            let members = crate::stdlib_exports::stdlib_module_item_names(module);
+            return gossamer_diagnostics::suggest(member, members.iter().copied(), 2)
+                .map(|hit| format!("{module}::{hit}"));
+        }
+        // Any other qualified path fails on its head segment; comparing the
+        // whole path against bare names would only ever find noise.
         let target = name.split("::").next().unwrap_or(name);
         gossamer_diagnostics::suggest(target, self.scopes.visible_names(), 2).map(str::to_string)
     }
@@ -1730,6 +1741,25 @@ impl Resolver {
         );
     }
 
+    /// Reports `joined` when it names a std macro. A macro is spelled
+    /// `println!(..)` and expands at parse time; nothing binds the path
+    /// itself, so naming it in value position has nothing to call.
+    /// Returns whether the path was reported.
+    fn report_std_macro_as_value(&mut self, joined: &str, anchor: NodeId, span: Span) -> bool {
+        let Some(name) = crate::stdlib_exports::stdlib_macro_named(joined) else {
+            return false;
+        };
+        self.emit(
+            ResolveError::StdMacroAsValue {
+                path: joined.to_string(),
+                name: name.to_string(),
+            },
+            span,
+        );
+        self.resolutions.insert(anchor, Resolution::Err);
+        true
+    }
+
     fn resolve_value_path(&mut self, path: &PathExpr, anchor: NodeId, span: Span) {
         let Some(head) = path.segments.first() else {
             return;
@@ -1830,41 +1860,16 @@ impl Resolver {
             // name resolves to no binding is definitively an unresolved
             // name. User-defined module members never reach here: they
             // resolve via the joined lookup above (a real binding) and
-            // return.
-            //
-            // Two-segment `module::member` and three-segment
-            // `module::submodule::member` (all lowercase - a free
-            // function in a nested module, never a `module::Type::method`
-            // which stays opaque-by-head) are both validated. The
-            // three-segment form is the gap that let `crypto::x509::foo`
-            // / `http::health::bar`-style phantoms pass `check` then fault
-            // at runtime. Autoderive call rewrites (`csrf::check`,
+            // return, and autoderive call rewrites (`csrf::check`,
             // `errors::newf`, ...) run at parse time, so the resolver
-            // never sees those names; only genuine nested-module
-            // free-function calls reach this branch.
-            let stdlib_phantom = match effective.as_slice() {
-                [head, _member] => crate::stdlib_exports::is_stdlib_module_name(head),
-                [head, sub, member] if starts_lowercase(sub) && starts_lowercase(member) => {
-                    crate::stdlib_exports::is_stdlib_module_name(head)
-                }
-                // `module::Type::member` stays opaque-by-head in
-                // general (some type surfaces resolve through
-                // compiler rewrites rather than runtime bindings, so
-                // absence from the table is not proof of a phantom).
-                // Two closed surfaces ARE fully bound and validated:
-                // the `json::Value` / `flag::Value` constructor sets
-                // (`json::Value::string` is the classic casing typo),
-                // and the process/exec namespaces, which bind no
-                // type-associated path at all (`process::Command` is
-                // Rust-internal surface).
-                [head, sub, _member]
-                    if (matches!(*head, "json" | "flag") && *sub == "Value")
-                        || (matches!(*head, "process" | "exec") && !starts_lowercase(sub)) =>
-                {
-                    crate::stdlib_exports::is_stdlib_module_name(head)
-                }
-                _ => false,
-            } && !self.stdlib_member_resolves(&joined, &effective);
+            // never sees those names either. `path_shape_is_validated`
+            // decides which path shapes the tables can answer for.
+            if self.report_std_macro_as_value(&joined, anchor, span) {
+                self.resolve_path_generic_args(path);
+                return;
+            }
+            let stdlib_phantom = path_shape_is_validated(&effective)
+                && !self.stdlib_member_resolves(&joined, &effective);
             if stdlib_phantom {
                 self.emit(ResolveError::UnresolvedName { name: joined }, span);
                 self.resolutions.insert(anchor, Resolution::Err);
@@ -2328,6 +2333,31 @@ fn starts_lowercase(seg: &str) -> bool {
     seg.chars()
         .next()
         .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+}
+
+/// Whether a stdlib path of this shape is validated against the export
+/// tables, so absence from them proves the member does not exist.
+/// Two-segment `module::member` and all-lowercase three-segment
+/// `module::submodule::member` are validated. `module::Type::member`
+/// stays opaque-by-head in general - some type surfaces resolve through
+/// compiler rewrites rather than runtime bindings - except for two
+/// fully-bound surfaces: the `json::Value` / `flag::Value` constructor
+/// sets, and the process/exec namespaces, which bind no type-associated
+/// path at all.
+fn path_shape_is_validated(effective: &[&str]) -> bool {
+    match effective {
+        [head, _member] => crate::stdlib_exports::is_stdlib_module_name(head),
+        [head, sub, member] if starts_lowercase(sub) && starts_lowercase(member) => {
+            crate::stdlib_exports::is_stdlib_module_name(head)
+        }
+        [head, sub, _member]
+            if (matches!(*head, "json" | "flag") && *sub == "Value")
+                || (matches!(*head, "process" | "exec") && !starts_lowercase(sub)) =>
+        {
+            crate::stdlib_exports::is_stdlib_module_name(head)
+        }
+        _ => false,
+    }
 }
 
 /// Canonical `::`-joined spelling of a `use` target, used to tell a repeated

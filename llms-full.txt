@@ -153,9 +153,9 @@ Write clear, low-complexity, concise code.
   scalar/String sequences without a traversal.
 - **A callback has two shorthands.** A std free function named in
   value position IS the closure that calls it, so `xs.map(math::abs)`
-  and `xs.map(base64::encode)` need no `|v|` (a variadic like
-  `fmt::format` has no fixed parameter list and reports GT0015 - write
-  that closure). A `$`-headed projection in an argument is the closure
+  and `xs.map(base64::encode)` need no `|v|` (a macro is not a function:
+  `fmt::format` reports GR0018 and is written `format!(..)`, so pass a
+  closure that calls it). A `$`-headed projection in an argument is the closure
   over that argument: `xs.map($.abs)` is `xs.map(|v| v.abs())`,
   `$.len()` calls with arguments, and `$.0` / `$[i]` project. `$.name`
   is the nullary METHOD call, exactly as in a pipe step, so read a

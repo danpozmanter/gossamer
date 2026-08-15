@@ -1,6 +1,7 @@
 # `lang::macros`
 
 Built-in macros only - no user-defined macros: the format family (print/println/eprint/eprintln/format/panic), the desugar macros (matches!/todo!/unimplemented!/unreachable!/dbg!), and the build-time regex!/sql!/codegen!.
+
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 The macro set is fixed. Every `name!(...)` outside this list is a parse

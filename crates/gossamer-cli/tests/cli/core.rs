@@ -517,7 +517,7 @@ fn main() {
         })
         |> iter::take(3)
         |> iter::collect
-    println!("{}", iter::eager_sum(xs))
+    println!("{}", xs.sum())
 
     let skipped = iter::range(1, 8) |> iter::skip(3) |> iter::take(2) |> iter::sum
     println!("{skipped}")
@@ -563,10 +563,10 @@ fn main() {
     println!("{max_value}")
 
     let enumerated = iter::range(3, 6) |> iter::enumerate |> iter::collect
-    println!("{}", iter::eager_count(enumerated))
+    println!("{}", enumerated.len())
 
     let zipped = iter::zip(iter::range(1, 4), iter::range(10, 20)) |> iter::collect
-    println!("{}", iter::eager_count(zipped))
+    println!("{}", zipped.len())
 
     let pair_count = iter::range(1, 4) |> iter::enumerate |> iter::count
     println!("{pair_count}")
@@ -587,37 +587,12 @@ fn main() {
     let open_end = 10..
         |> iter::take(4)
         |> iter::collect
-    println!("{}", iter::eager_count(open_end))
+    println!("{}", open_end.len())
 }
 "#;
 
 const LAZY_ITERATOR_TIER_OUTPUT: &str =
     "6\n9\n14\n20\ntrue\nfalse\n4\n41\n24\n4\n6\n3\n3\n3\n14\n13\n4\n";
-
-const EAGER_ITERATOR_ALIAS_SOURCE: &str = r#"use std::{iter, option}
-
-fn main() {
-    let exclusive = iter::eager_range(1, 5)
-    let inclusive = iter::eager_range_inclusive(5, 7)
-    let mapped = iter::eager_map(|x| x * 2, exclusive)
-    let filtered = iter::eager_filter(|x| x > 3, mapped)
-    let taken = iter::eager_take(2, filtered)
-    let skipped = iter::eager_skip(1, taken)
-    let enumerated = iter::eager_enumerate(skipped)
-    let chained = iter::eager_chain(inclusive, [8, 9])
-    let zipped = iter::eager_zip(chained, [1, 2, 3, 4, 5])
-    let folded = iter::eager_fold(10i64, |acc: i64, x: i64| acc + x, [1, 2, 3])
-    let any = iter::eager_any(|x| x == 2, [1, 2, 3])
-    let all = iter::eager_all(|x| x > 0, [1, 2, 3])
-    let found = iter::eager_find(|x| x == 2, [1, 2, 3]) |> option::unwrap_or(-1)
-    let counted = iter::eager_count(enumerated)
-    let collected = iter::eager_collect([4, 5, 6])
-    let summed = iter::eager_sum(collected)
-    println!("{folded} {any} {all} {found} {counted} {} {summed}", iter::eager_count(zipped))
-}
-"#;
-
-const EAGER_ITERATOR_ALIAS_OUTPUT: &str = "16 true true 2 1 5 15\n";
 
 const EAGER_2026_COMPAT_SOURCE: &str = r#"use std::iter
 
@@ -643,7 +618,7 @@ fn main() {
         |> iter::filter(|x| x % 2 == 0)
         |> iter::take(3)
         |> iter::collect
-    println!("{}", iter::eager_sum(out))
+    println!("{}", out.sum())
 }
 "#;
 
@@ -779,76 +754,6 @@ fn build_absolute_project_uses_entry_edition_for_lazy_iterators() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-#[test]
-fn eager_iterator_migration_aliases_run_on_vm_jit_and_llvm() {
-    let dir = env::temp_dir().join(format!("gos-eager-iter-aliases-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create project dir");
-    std::fs::write(
-        dir.join("project.toml"),
-        "[project]\nid = \"example.com/eager-iter-aliases\"\nversion = \"0.1.0\"\nedition = \"2027\"\n",
-    )
-    .expect("write manifest");
-    std::fs::write(dir.join("main.gos"), EAGER_ITERATOR_ALIAS_SOURCE).expect("write source");
-
-    let vm = Command::new(gos_bin())
-        .arg("run")
-        .arg(&dir)
-        .output()
-        .expect("spawn VM run");
-    assert!(
-        vm.status.success(),
-        "{}",
-        String::from_utf8_lossy(&vm.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&vm.stdout),
-        EAGER_ITERATOR_ALIAS_OUTPUT
-    );
-
-    let jit = Command::new(gos_bin())
-        .arg("run")
-        .arg(&dir)
-        .env("GOSSAMER_JIT_THRESHOLD", "1")
-        .output()
-        .expect("spawn forced-JIT run");
-    assert!(
-        jit.status.success(),
-        "{}",
-        String::from_utf8_lossy(&jit.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&jit.stdout),
-        EAGER_ITERATOR_ALIAS_OUTPUT
-    );
-
-    let build = Command::new(gos_bin())
-        .args(["build"])
-        .arg(&dir)
-        .output()
-        .expect("build LLVM fixture");
-    assert!(
-        build.status.success(),
-        "{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let bin = dir.join("target").join("debug").join(if cfg!(windows) {
-        "eager-iter-aliases.exe"
-    } else {
-        "eager-iter-aliases"
-    });
-    let llvm = Command::new(bin).output().expect("run LLVM fixture");
-    assert!(
-        llvm.status.success(),
-        "{}",
-        String::from_utf8_lossy(&llvm.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&llvm.stdout),
-        EAGER_ITERATOR_ALIAS_OUTPUT
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-}
 
 #[test]
 fn edition_2026_iterator_surface_remains_eager_on_all_tiers() {

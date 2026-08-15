@@ -1,6 +1,7 @@
 # `lang::match`
 
 Exhaustive pattern match expression.
+
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 `match` is an expression: every arm yields a value and the whole `match`

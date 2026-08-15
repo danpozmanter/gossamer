@@ -617,6 +617,14 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      body is a separate function, so a loop outside it is not a target.",
     ),
     (
+        "GR0018",
+        "A path named one of the standard library's macros - `println`,\n\
+            `format`, `panic`, and the rest of the fixed set. A macro\n\
+            expands where it is written and the runtime binds no callable\n\
+            for it, so the path has nothing to call or pass as a value.\n\
+            Write it as `name!(..)`; a macro needs no import.",
+    ),
+    (
         "GT0001",
         "The type checker could not reconcile two types it expected to\n\
                      match. The primary label shows the location of the mismatch;\n\
@@ -716,10 +724,11 @@ pub const REGISTRY: &[(&str, &str)] = &[
     ),
     (
         "GT0015",
-        "A std free function was used as a first-class value, and it takes\n\
-                     a variable number of arguments, so it cannot be rewritten into\n\
-                     the closure that calls it. Write the closure yourself:\n\
-                     `|x| f(x)`.",
+        "A std free function was used as a first-class value, but the\n\
+                     signature catalogue carries no fixed parameter list for it, so\n\
+                     it cannot be rewritten into the closure that calls it. Write\n\
+                     the closure yourself: `|x| f(x)`. A macro is not a function and\n\
+                     reports GR0018 instead.",
     ),
     (
         "GT0016",

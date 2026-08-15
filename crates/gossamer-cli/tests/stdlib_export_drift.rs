@@ -70,40 +70,22 @@ fn resolver_stdlib_table_matches_runtime() {
 const ALLOWED_UNMANIFESTED: &[&str] = &[
     // Each entry's canonical spelling is the manifest member; these
     // are convenience / deprecated aliases the runtime keeps callable.
-    "channel::new",       // -> sync::channel
-    "channel::unbounded", // -> sync::channel_unbounded
-    "fs::create_dir",     // -> fs::create_dir_all
-    "fs::create_dir_all", // -> fs::create_dir_all
-    "fs::read",           // -> fs::read
-    "math::rem",          // -> math::rem
-    "os::home",           // -> env::home_dir
-    "os::list_dir",       // -> os::read_dir
-    "os::set_cwd",        // -> env::set_current_dir
-    "path::walk",         // -> fs::walk_dir
-    "thread::sleep_ms",   // -> time::sleep
-    // Edition-2027 migration targets retain the eager implementations while
-    // the unprefixed iterator names transition to lazy state values.
-    "iter::eager_all",
-    "iter::eager_any",
-    "iter::eager_chain",
-    "iter::eager_collect",
-    "iter::eager_count",
-    "iter::eager_enumerate",
-    "iter::eager_filter",
-    "iter::eager_find",
-    "iter::eager_fold",
-    "iter::eager_map",
-    "iter::eager_range",
-    "iter::eager_range_inclusive",
-    "iter::eager_skip",
-    "iter::eager_sum",
-    "iter::eager_take",
-    "iter::eager_zip",
-    "encoding::utf16::is_surrogate", // -> utf16::is_surrogate
-    "encoding::utf16::rune_len",     // -> utf16::rune_len
+    "channel::new",                           // -> sync::channel
+    "channel::unbounded",                     // -> sync::channel_unbounded
+    "fs::create_dir",                         // -> fs::create_dir_all
+    "fs::create_dir_all",                     // -> fs::create_dir_all
+    "fs::read",                               // -> fs::read
+    "math::rem",                              // -> math::rem
+    "os::home",                               // -> env::home_dir
+    "os::list_dir",                           // -> os::read_dir
+    "os::set_cwd",                            // -> env::set_current_dir
+    "path::walk",                             // -> fs::walk_dir
+    "thread::sleep_ms",                       // -> time::sleep
+    "encoding::utf16::is_surrogate",          // -> utf16::is_surrogate
+    "encoding::utf16::rune_len",              // -> utf16::rune_len
     "encoding::utf16::decode_surrogate_pair", // -> utf16::decode_surrogate_pair
-    "encoding::utf16::encode_string", // -> utf16::encode_string
-    "encoding::utf16::decode_to_string", // -> utf16::decode_to_string
+    "encoding::utf16::encode_string",         // -> utf16::encode_string
+    "encoding::utf16::decode_to_string",      // -> utf16::decode_to_string
 ];
 
 /// Primitive integer associated methods belong to the language type catalog,

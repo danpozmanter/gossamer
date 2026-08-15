@@ -1,6 +1,7 @@
 # `lang::attribute`
 
 Built-in attributes (`#[cfg]`, `#[test]`, `#[bench]`, `#[derive]`).
+
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 The attribute set is fixed - there are no user-defined attributes.

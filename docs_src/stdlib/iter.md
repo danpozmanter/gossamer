@@ -11,8 +11,9 @@ Sequence adapters: map, filter, fold, zip, enumerate, chain, etc. A `Vec` argume
 Edition 2026 keeps these canonical eager signatures. In edition 2027,
 `range`, `range_inclusive`, `map`, `filter`, `take`, `skip`, `enumerate`,
 `chain`, and `zip` form linear lazy `Iterator<T>` pipelines. Terminals consume
-that state once. Use `collect` to materialize it, or spell the matching
-`iter::eager_*` name to retain Vec behavior in either edition.
+that state once. Use `collect` to materialize it, or traverse a collection
+through its own methods (`xs.map(f)`, `xs.sum()`), which answer eagerly in
+either edition.
 See the [lazy iterator protocol](../design/lazy_iterators.md) for ownership,
 short-circuiting, overflow, and backend behavior.
 

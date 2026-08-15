@@ -249,6 +249,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
     (
         "std::encoding::base64",
         &[
+            "feature-testing-examples/callback_shorthands.gos",
             "feature-testing-examples/nul_in_strings.gos",
             "feature-testing-examples/stdlib_leaf_calls_and_json_queries.gos",
         ],
@@ -486,6 +487,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
     (
         "std::math",
         &[
+            "feature-testing-examples/callback_shorthands.gos",
             "feature-testing-examples/inline_scalar_kernel.gos",
             "feature-testing-examples/misc_class_a.gos",
             "feature-testing-examples/stdlib_math_bits.gos",
@@ -639,6 +641,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
     (
         "std::strings",
         &[
+            "feature-testing-examples/callback_shorthands.gos",
             "feature-testing-examples/closure_payload_typing.gos",
             "feature-testing-examples/early_break_materializers.gos",
             "feature-testing-examples/encoding_xml.gos",

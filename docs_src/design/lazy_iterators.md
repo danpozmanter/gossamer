@@ -4,8 +4,7 @@ Integer range expressions produce lazy iterators in every edition, and adapters
 applied to those iterator values remain lazy. The lazy
 `std::iter` constructor and Vec adapter surface is enabled in edition 2027;
 projects using edition 2026 otherwise keep the historical eager `std::iter`
-behavior. The `iter::eager_*` aliases remain available as explicit eager
-compatibility helpers.
+behavior.
 
 ## Goals
 
@@ -105,13 +104,12 @@ for `range.map.filter.take.collect`.
 
 The runnable `examples/projects/lazy_iterators` project shows the normal
 materialization boundary. `benchmarks/lazy_iterators` compares it with the
-permanently eager compatibility surface and pins equal output.
+eager collection surface and pins equal output.
 
 ## Migration
 
 The existing eager signatures remain the edition-2026 default. Projects that
 select `edition = "2027"` receive iterator-returning signatures. Code that
-depends on eager materialization can either insert `iter::collect` at the
-materialization boundary or rename the operation to its `iter::eager_*`
-compatibility spelling. Those aliases are permanently eager in both editions
-and share the canonical eager lowering paths on every execution tier.
+depends on eager materialization inserts `iter::collect` at the materialization
+boundary, or traverses the collection through its own methods (`xs.map(f)`,
+`xs.sum()`), which answer eagerly in every edition.

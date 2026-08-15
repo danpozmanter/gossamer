@@ -16,6 +16,7 @@ pub mod doc;
 pub mod loaders;
 pub mod paths;
 pub mod repl;
+pub mod repl_handles;
 pub mod repl_helper;
 pub mod style;
 

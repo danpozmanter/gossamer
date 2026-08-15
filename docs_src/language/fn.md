@@ -1,6 +1,7 @@
 # `lang::fn`
 
 Function declaration.
+
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 `fn name(params) -> Ret { body }`. The last expression is the return

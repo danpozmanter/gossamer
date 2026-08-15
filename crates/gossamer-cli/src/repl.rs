@@ -844,6 +844,36 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
     },
     CoreMethodHelp {
         owner: "Vec",
+        name: "product",
+        kind: "method",
+        signature: "fn product<T>(self: Vec<T>) -> T",
+        doc: "Multiplies every element, answering the element type's one for an empty sequence.",
+    },
+    CoreMethodHelp {
+        owner: "Map",
+        name: "inc",
+        kind: "method",
+        signature: "fn inc<K>(self: &mut Map<K, i64>, key: K, by: i64 = 1) -> i64",
+        doc: "Adds to the counter at a key, starting from zero, and answers the new count.",
+    },
+    CoreMethodHelp {
+        owner: "Map",
+        name: "inc_at",
+        kind: "method",
+        signature: "fn inc_at(self: &mut Map<String, i64>, text: String, start: i64, len: i64, \
+                    by: i64 = 1) -> i64",
+        doc: "Adds to the counter keyed by a byte range of `text`, and answers the new count.",
+    },
+    CoreMethodHelp {
+        owner: "Map",
+        name: "inc_batch",
+        kind: "method",
+        signature: "fn inc_batch<K>(self: &mut Map<K, i64>, keys: Vec<K>, by: i64 = 1) \
+                    -> Map<K, i64>",
+        doc: "Adds to the counter at every key in one pass, and answers the map.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
         name: "min",
         kind: "method",
         signature: "fn min<T>(self: Vec<T>) -> Option<T>",
@@ -3822,7 +3852,121 @@ fn core_method_entries() -> Vec<CoreMethodEntry> {
             doc: "Returns a fixed-size copy of the array.".to_string(),
         },
     );
+    fill_collection_sequence_signatures(&mut entries);
     entries.into_values().collect()
+}
+
+/// Names a map's elements are pairs of, so the `Vec` sequence surface it
+/// inherits reads over `(K, V)` rather than over a single element type.
+const MAP_SEQUENCE_OWNERS: &[&str] = &["Map", "BTreeMap"];
+
+/// Names a set's elements are single values of, so the inherited surface
+/// keeps `Vec`'s element type and only its receiver changes.
+const SET_SEQUENCE_OWNERS: &[&str] = &["Set", "BTreeSet"];
+
+/// Sequence methods a map cannot answer truthfully: its elements are
+/// `(K, V)` pairs, which neither add up nor flatten. They are dropped
+/// from the listing rather than given a signature that describes an
+/// operation the pair shape has no meaning for.
+const MAP_SEQUENCE_EXCLUSIONS: &[&str] = &["flatten", "product", "sum"];
+
+/// Fills the signature of every map/set sequence method from the `Vec`
+/// entry of the same name. The traversal surface is the same one `Vec`
+/// carries - only the receiver and the element type differ - so deriving
+/// it keeps one table authoritative instead of a second copy that drifts.
+fn fill_collection_sequence_signatures(entries: &mut BTreeMap<(String, String), CoreMethodEntry>) {
+    let vec_signatures: BTreeMap<String, String> = entries
+        .values()
+        .filter(|method| method.owner == "Vec" && method.kind == "method")
+        .map(|method| (method.name.clone(), method.signature.clone()))
+        .collect();
+    let owners: Vec<(String, String)> = entries
+        .keys()
+        .filter(|(owner, _)| {
+            MAP_SEQUENCE_OWNERS.contains(&owner.as_str())
+                || SET_SEQUENCE_OWNERS.contains(&owner.as_str())
+        })
+        .cloned()
+        .collect();
+    for key in owners {
+        let (owner, name) = (key.0.clone(), key.1.clone());
+        let is_map = MAP_SEQUENCE_OWNERS.contains(&owner.as_str());
+        if is_map && MAP_SEQUENCE_EXCLUSIONS.contains(&name.as_str()) {
+            entries.remove(&key);
+            continue;
+        }
+        let Some(entry) = entries.get_mut(&key) else {
+            continue;
+        };
+        if !entry.signature.is_empty() {
+            continue;
+        }
+        let Some(vec_signature) = vec_signatures.get(&name) else {
+            continue;
+        };
+        entry.signature = if is_map {
+            map_sequence_signature(vec_signature, &owner)
+        } else {
+            set_sequence_signature(vec_signature, &owner)
+        };
+    }
+}
+
+/// The `Vec` signature rewritten for a set receiver: same element type,
+/// same results, a set in the receiver's place.
+fn set_sequence_signature(signature: &str, owner: &str) -> String {
+    signature
+        .replace("self: &mut Vec<", &format!("self: &mut {owner}<"))
+        .replace("self: Vec<", &format!("self: {owner}<"))
+}
+
+/// The `Vec` signature rewritten for a map receiver: the element type `T`
+/// becomes the `(K, V)` pair, and `Vec`'s own key generic moves out of the
+/// way of the map's `K`.
+fn map_sequence_signature(signature: &str, owner: &str) -> String {
+    // `Vec`'s own key generic moves aside first so the map's `K` is free.
+    let renamed = replace_generic(signature, "K", "B");
+    let Some(params_start) = renamed.find('(') else {
+        return renamed;
+    };
+    let (head, body) = renamed.split_at(params_start);
+    // The declaration list names the two parameters a map is written with;
+    // every use of the element type is the pair they form.
+    let head = replace_generic(head, "T", "K, V");
+    let body = replace_generic(body, "T", "(K, V)")
+        .replace(
+            "self: &mut Vec<(K, V)>",
+            &format!("self: &mut {owner}<K, V>"),
+        )
+        .replace("self: Vec<(K, V)>", &format!("self: {owner}<K, V>"));
+    format!("{head}{body}")
+}
+
+/// Replaces every whole-word occurrence of the type parameter `from`.
+fn replace_generic(signature: &str, from: &str, to: &str) -> String {
+    let mut out = String::with_capacity(signature.len());
+    let mut rest = signature;
+    while let Some(idx) = rest.find(from) {
+        let (head, tail) = rest.split_at(idx);
+        let after = &tail[from.len()..];
+        let before_ok = head
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+        let after_ok = after
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+        out.push_str(head);
+        if before_ok && after_ok {
+            out.push_str(to);
+        } else {
+            out.push_str(from);
+        }
+        rest = after;
+    }
+    out.push_str(rest);
+    out
 }
 
 fn sequence_owner_signature(signature: &str, owner: &str) -> String {
@@ -4004,6 +4148,9 @@ fn runtime_core_method_signature(owner: &str, name: &str, kind: &str) -> Option<
     } {
         return Some(signature.to_string());
     }
+    if let Some(signature) = crate::repl_handles::handle_signature(owner, name) {
+        return Some(signature.to_string());
+    }
     if owner == "String" && kind == "method" {
         if let Some(shape) = gossamer_types::stdlib_function_shape("std::strings", name) {
             let mut params = vec!["self: String".to_string()];
@@ -4073,7 +4220,9 @@ fn runtime_core_method_doc(owner: &str, name: &str) -> Option<&'static str> {
         ("String", "byte_len") => Some("Returns the byte length of the string."),
         ("String", "bytes") => Some("Returns the UTF-8 bytes of the string."),
         ("String", "center") => Some("Pads both sides to the requested display width."),
-        ("String", "chars") => Some("Returns the Unicode scalar values of the string."),
+        ("String", "chars") => Some(
+            "Returns a cursor over the string's Unicode scalar values; `collect` materialises it.",
+        ),
         ("String", "contains") => Some("Returns whether the string contains a substring."),
         ("String", "contains_any") => Some("Returns whether any character in the set appears."),
         ("String", "count") => Some("Counts non-overlapping substring occurrences."),
@@ -4201,6 +4350,12 @@ fn canonical_runtime_owner(owner: &str) -> Option<String> {
     let owner = match owner {
         "option" => "Option",
         "result" => "Result",
+        // Runtime spellings of collections the language names once. A
+        // rejected alias (GR0006) must not surface as a type of its own.
+        "HashMap" => "Map",
+        "HashSet" => "Set",
+        "VecDeque" => "Deque",
+        "BinaryHeap" => "MaxHeap",
         "bytes::Buffer" => "Buffer",
         "bytes::Builder" => "Builder",
         other => other,

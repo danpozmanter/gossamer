@@ -35,6 +35,43 @@ fn missing_argument_help(
     }
 }
 
+/// Note and help for a std macro named as a value path: what a macro is,
+/// and the spelling that works.
+fn std_macro_help(
+    out: gossamer_diagnostics::Diagnostic,
+    name: &str,
+) -> gossamer_diagnostics::Diagnostic {
+    out.with_note(
+        "the macro set is fixed and expands at parse time, so a macro has no \
+         function to call or pass as a value"
+            .to_string(),
+    )
+    .with_help(format!(
+        "write `{name}!(..)`; the macro is in scope without an import"
+    ))
+}
+
+/// Suggestion or help for a `use` path that names no module: the closest
+/// real module path when one is near, otherwise how a path is spelled.
+fn unknown_module_help(
+    out: gossamer_diagnostics::Diagnostic,
+    location: gossamer_diagnostics::Location,
+    path: &str,
+) -> gossamer_diagnostics::Diagnostic {
+    match closest_module_path(path) {
+        Some(known) => out.with_suggestion(gossamer_diagnostics::Suggestion::replacement(
+            location,
+            format!("did you mean `std::{known}`?"),
+            format!("std::{known}"),
+        )),
+        None => out.with_help(
+            "a standard library path is spelled in full, as in \
+             `use std::encoding::json`; `gos doc std` lists the modules"
+                .to_string(),
+        ),
+    }
+}
+
 /// A single resolver diagnostic with its source span.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolveDiagnostic {
@@ -129,6 +166,16 @@ pub enum ResolveError {
         path: String,
         /// The canonical name to import instead.
         replacement: String,
+    },
+    /// A std macro named as a value path (`fmt::println(..)`). The
+    /// macro expands at parse time and the runtime binds no callable
+    /// for it, so the path has nothing to call.
+    #[error("`{path}` is a macro; it is written `{name}!(..)`")]
+    StdMacroAsValue {
+        /// The path as written, `std::`-relative.
+        path: String,
+        /// The macro's own name, for the `name!(..)` spelling.
+        name: String,
     },
     /// An item declared without `pub` named from outside the module
     /// that declares it.
@@ -266,6 +313,7 @@ impl ResolveError {
             Self::DuplicateImport { .. } => "duplicate-import",
             Self::UnknownStdItem { .. } => "unknown-std-item",
             Self::RemovedStdItem { .. } => "removed-std-item",
+            Self::StdMacroAsValue { .. } => "std-macro-as-value",
             Self::PrivateItem { .. } => "private-item",
             Self::UnreflectableType { .. } => "unreflectable-type",
             Self::UnknownNamedArgument { .. } => "unknown-named-argument",
@@ -316,7 +364,9 @@ impl ResolveError {
             | Self::UnknownLoopLabel { .. } => return false,
             Self::DependencyNotImported { module, .. } => module,
             Self::AmbiguousNamedArgument { method, .. } => method,
-            Self::UnknownModulePath { path } | Self::RemovedStdItem { path, .. } => path,
+            Self::UnknownModulePath { path }
+            | Self::RemovedStdItem { path, .. }
+            | Self::StdMacroAsValue { path, .. } => path,
             Self::PrivateItem { name, module, .. } => {
                 return name
                     .split("::")
@@ -360,6 +410,7 @@ impl ResolveError {
             Self::MissingRequiredArgument { .. } => "GR0015",
             Self::DependencyNotImported { .. } => "GR0016",
             Self::LoopControlOutsideLoop { .. } | Self::UnknownLoopLabel { .. } => "GR0017",
+            Self::StdMacroAsValue { .. } => "GR0018",
         }
     }
 }
@@ -495,6 +546,7 @@ impl ResolveDiagnostic {
             )),
             error @ (ResolveError::LoopControlOutsideLoop { .. }
             | ResolveError::UnknownLoopLabel { .. }) => loop_control_help(out, location, error),
+            ResolveError::StdMacroAsValue { name, .. } => std_macro_help(out, name),
             ResolveError::UnknownNamedArgument { .. }
             | ResolveError::DuplicateNamedArgument { .. }
             | ResolveError::PositionalAfterNamed
@@ -506,18 +558,7 @@ impl ResolveDiagnostic {
                 plural,
                 optional,
             } => missing_argument_help(out, missing, *plural, optional),
-            ResolveError::UnknownModulePath { path } => match closest_module_path(path) {
-                Some(known) => out.with_suggestion(Suggestion::replacement(
-                    location,
-                    format!("did you mean `std::{known}`?"),
-                    format!("std::{known}"),
-                )),
-                None => out.with_help(
-                    "a standard library path is spelled in full, as in \
-                         `use std::encoding::json`; `gos doc std` lists the modules"
-                        .to_string(),
-                ),
-            },
+            ResolveError::UnknownModulePath { path } => unknown_module_help(out, location, path),
             ResolveError::DuplicateItem { name } => out.with_help(format!(
                 "rename or remove one `{name}` declaration in this module"
             )),

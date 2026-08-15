@@ -57,6 +57,7 @@ version. This page is auto-generated from the catalogue in
 | [`GR0006`](#gr0006) | Resolve | removed stdlib item |
 | [`GR0007`](#gr0007) | Resolve | unknown stdlib item |
 | [`GR0017`](#gr0017) | Resolver | break or continue with no loop |
+| [`GR0018`](#gr0018) | Resolver | standard library macro named as a value path |
 | [`GT0001`](#gt0001) | Types | type mismatch |
 | [`GT0002`](#gt0002) | Types | unresolved method |
 | [`GT0003`](#gt0003) | Types | unresolved operator |
@@ -334,6 +335,12 @@ The `use` names a module that exists but an item that module does not export. Ch
 **Resolver** - break or continue with no loop
 
 A `break` or `continue` has no loop to act on: either none encloses it, or the label it names is not carried by any enclosing loop. A closure body is a separate function, so a loop outside it is not a target.
+
+## `GR0018` <a id="gr0018"></a>
+
+**Resolver** - standard library macro named as a value path
+
+A path named one of the standard library's macros - `println`, `format`, `panic`, and the rest of the fixed set. A macro expands where it is written and the runtime binds no callable for it, so the path has nothing to call or pass as a value. Write it as `name!(..)`; a macro needs no import.
 
 ## `GT0001` <a id="gt0001"></a>
 

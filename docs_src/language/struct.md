@@ -1,6 +1,7 @@
 # `lang::struct`
 
 Product type declaration.
+
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## Functional record update

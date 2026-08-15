@@ -1750,6 +1750,17 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#gr0018" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GR0018
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#gt0001" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -3190,6 +3201,17 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#gr0018" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GR0018
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#gt0001" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -3528,6 +3550,11 @@ version. This page is auto-generated from the catalogue in
 <td>break or continue with no loop</td>
 </tr>
 <tr>
+<td><a href="#gr0018"><code>GR0018</code></a></td>
+<td>Resolver</td>
+<td>standard library macro named as a value path</td>
+</tr>
+<tr>
 <td><a href="#gt0001"><code>GT0001</code></a></td>
 <td>Types</td>
 <td>type mismatch</td>
@@ -3699,6 +3726,9 @@ version. This page is auto-generated from the catalogue in
 <h2 id="gr0017"><code>GR0017</code> <a id="gr0017"></a><a class="headerlink" href="#gr0017" title="Permanent link">&para;</a></h2>
 <p><strong>Resolver</strong> - break or continue with no loop</p>
 <p>A <code>break</code> or <code>continue</code> has no loop to act on: either none encloses it, or the label it names is not carried by any enclosing loop. A closure body is a separate function, so a loop outside it is not a target.</p>
+<h2 id="gr0018"><code>GR0018</code> <a id="gr0018"></a><a class="headerlink" href="#gr0018" title="Permanent link">&para;</a></h2>
+<p><strong>Resolver</strong> - standard library macro named as a value path</p>
+<p>A path named one of the standard library's macros - <code>println</code>, <code>format</code>, <code>panic</code>, and the rest of the fixed set. A macro expands where it is written and the runtime binds no callable for it, so the path has nothing to call or pass as a value. Write it as <code>name!(..)</code>; a macro needs no import.</p>
 <h2 id="gt0001"><code>GT0001</code> <a id="gt0001"></a><a class="headerlink" href="#gt0001" title="Permanent link">&para;</a></h2>
 <p><strong>Types</strong> - type mismatch</p>
 <p>The type checker could not reconcile two types it expected to match. The primary label shows the location of the mismatch; the <code>note:</code> line names the conflicting types.</p>

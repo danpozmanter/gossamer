@@ -828,6 +828,15 @@ fn render_chunk_module(chunk_indices: &[usize], ctx: &ModuleCtx<'_>) -> Result<S
         }
     }
 
+    if target_is_windows()
+        && chunk_indices
+            .iter()
+            .any(|&idx| body_has_wide_spawn(&ctx.all_bodies[idx]))
+    {
+        out.push_str(&render_spawn_wide_cabi_thunk());
+        writeln!(out).unwrap();
+    }
+
     if target_is_windows() {
         // Win64 handler-return thunks (`name$cabi`): emitted as a plain `define`
         // in the one chunk that owns the handler body, and as an extern `declare`
@@ -1305,6 +1314,14 @@ fn render_module_to_path(
                 .write_all(b"\n")
                 .with_context(|| format!("writing {}", body_path.display()))?;
         }
+    }
+    if target_is_windows() && bodies.iter().any(body_has_wide_spawn) {
+        body_w
+            .write_all(render_spawn_wide_cabi_thunk().as_bytes())
+            .with_context(|| format!("writing {}", body_path.display()))?;
+        body_w
+            .write_all(b"\n")
+            .with_context(|| format!("writing {}", body_path.display()))?;
     }
 
     if let Some(user_main) = bodies.iter().find(|b| b.name == "main") {
@@ -1884,6 +1901,54 @@ const CABI_I128_COMBINATORS: &[&str] = &[
     "gos_rt_fs_walk_dir",
 ];
 
+/// `spawn(f)`'s shim. Its callable crosses as `i128` only when it answers
+/// a two-word `Result` / `Option`; the runtime reads the `ret_words`
+/// argument (index 2) to decide, and calls a one-word callable as
+/// `-> i64`, which already agrees on the GP register.
+pub(crate) const CABI_SPAWN_SHIM: &str = "gos_rt_spawn_ex";
+pub(crate) const CABI_SPAWN_RET_WORDS_ARG: usize = 2;
+pub(crate) const SPAWN_RET_TWO_WORDS: i128 = 2;
+
+/// Win64 entry the runtime is handed in place of a two-word spawn
+/// callable's own address: it forwards to the callable (which returns the
+/// `i128` in the GP-register pair) and re-emits the value as `<16 x i8>`,
+/// the vector register rustc's `extern "C" fn(..) -> i128` reads.
+pub(crate) const SPAWN_WIDE_CABI_THUNK: &str = "__gos_spawn_wide$cabi";
+
+/// True when `body` spawns a callable that answers a two-word value.
+fn body_has_wide_spawn(body: &Body) -> bool {
+    use gossamer_mir::{ConstValue, Operand, Terminator};
+    body.blocks.iter().any(|block| {
+        let Terminator::Call { callee, args, .. } = &block.terminator else {
+            return false;
+        };
+        matches!(callee, Operand::Const(ConstValue::Str(sym)) if sym == CABI_SPAWN_SHIM)
+            && args
+                .get(CABI_SPAWN_RET_WORDS_ARG)
+                .and_then(|w| operand_const_int(body, w))
+                == Some(SPAWN_RET_TWO_WORDS)
+    })
+}
+
+/// Renders [`SPAWN_WIDE_CABI_THUNK`]. The spawn lowering hands the runtime
+/// the env blob and the address at its slot 0; this thunk takes that
+/// argument pair's place, so it reads slot 0 itself and calls it the way
+/// gossamer code does.
+fn render_spawn_wide_cabi_thunk() -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "define linkonce_odr <16 x i8> @\"{SPAWN_WIDE_CABI_THUNK}\"(ptr %env) {{"
+    );
+    writeln!(out, "entry:").unwrap();
+    writeln!(out, "  %fn_ptr = load ptr, ptr %env").unwrap();
+    writeln!(out, "  %r = call i128 %fn_ptr(ptr %env)").unwrap();
+    writeln!(out, "  %v = bitcast i128 %r to <16 x i8>").unwrap();
+    writeln!(out, "  ret <16 x i8> %v").unwrap();
+    writeln!(out, "}}").unwrap();
+    out
+}
+
 /// Resolves a fn-address local to the non-runtime function name its defining
 /// `gos_fn_addr("name")` references, within `body`. The lowering assigns the
 /// address directly, so a single pass over the body's statements suffices.
@@ -1920,13 +1985,13 @@ fn resolve_fn_addr_name(body: &Body, target: gossamer_mir::Local) -> Option<Stri
     None
 }
 
-/// True when `op` is the integer literal 0, either directly or through a local
-/// bound to `Use(Const(Int(0)))` (the closure-env builder writes the callable
-/// offset as a separate `let zero = 0` local before the `gos_store`).
-fn operand_is_zero_offset(body: &Body, op: &gossamer_mir::Operand) -> bool {
+/// The integer literal `op` names, either directly or through a local bound
+/// to `Use(Const(Int(n)))` (a lowering that needs the value in a local writes
+/// it as a separate `let n = <literal>` statement first).
+pub(crate) fn operand_const_int(body: &Body, op: &gossamer_mir::Operand) -> Option<i128> {
     use gossamer_mir::{ConstValue, Operand, Rvalue, StatementKind};
     match op {
-        Operand::Const(ConstValue::Int(0)) => true,
+        Operand::Const(ConstValue::Int(n)) => Some(*n),
         Operand::Copy(p) if p.projection.is_empty() => {
             for block in &body.blocks {
                 for stmt in &block.stmts {
@@ -1935,14 +2000,21 @@ fn operand_is_zero_offset(body: &Body, op: &gossamer_mir::Operand) -> bool {
                         && place.projection.is_empty()
                         && let Rvalue::Use(Operand::Const(ConstValue::Int(n))) = rvalue
                     {
-                        return *n == 0;
+                        return Some(*n);
                     }
                 }
             }
-            false
+            None
         }
-        _ => false,
+        _ => None,
     }
+}
+
+/// True when `op` is the integer literal 0 (the closure-env builder writes
+/// the callable offset as a separate `let zero = 0` local before the
+/// `gos_store`).
+fn operand_is_zero_offset(body: &Body, op: &gossamer_mir::Operand) -> bool {
+    operand_const_int(body, op) == Some(0)
 }
 
 /// For a closure env-blob local, resolves the callable stored at offset 0 -
@@ -3260,6 +3332,57 @@ mod cabi_thunk_tests {
             handlers.contains_key("visit"),
             "walk_dir visitor must be collected, got: {handlers:?}"
         );
+    }
+
+    /// `spawn(f)` hands the runtime a callable the runtime invokes as
+    /// `extern "C-unwind" fn(usize) -> i128` - the same crossing the
+    /// combinators make, so a two-word spawn needs the Win64 forwarding
+    /// thunk.
+    #[test]
+    fn two_word_spawn_needs_the_win64_forwarding_thunk() {
+        assert!(super::body_has_wide_spawn(&spawn_body(2)));
+    }
+
+    /// A one-word spawn callable is invoked as `-> i64`, which already
+    /// agrees on the GP register: routing it through the `<16 x i8>` thunk
+    /// would hand the runtime a vector register it never reads.
+    #[test]
+    fn one_word_spawn_stays_on_the_gp_register() {
+        assert!(!super::body_has_wide_spawn(&spawn_body(1)));
+    }
+
+    /// The thunk reads the callable at slot 0 of the env blob - the same
+    /// address the spawn lowering passes - and re-emits its `i128` in the
+    /// vector register.
+    #[test]
+    fn spawn_wide_thunk_forwards_slot_zero_and_bitcasts() {
+        let ir = super::render_spawn_wide_cabi_thunk();
+        assert!(ir.contains("load ptr, ptr %env"), "{ir}");
+        assert!(ir.contains("call i128 %fn_ptr(ptr %env)"), "{ir}");
+        assert!(ir.contains("ret <16 x i8>"), "{ir}");
+    }
+
+    /// Builds a body shaped like the `spawn(f)` lowering: the callable's
+    /// address sits at offset 0 of the env blob, and `ret_words` reaches
+    /// the shim through a local bound to a literal.
+    fn spawn_body(ret_words: i128) -> gossamer_mir::Body {
+        use gossamer_mir::{ConstValue, Operand, Place, Rvalue, StatementKind, Terminator};
+        let mut body = env_callback_body("gos_rt_spawn_ex");
+        let block = &mut body.blocks[0];
+        let words = gossamer_mir::Local(5);
+        let span = block.span;
+        block.stmts.push(gossamer_mir::Statement {
+            kind: StatementKind::Assign {
+                place: Place::local(words),
+                rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(ret_words))),
+            },
+            span,
+        });
+        if let Terminator::Call { args, .. } = &mut block.terminator {
+            args.push(Operand::Copy(Place::local(words)));
+            args.push(Operand::Const(ConstValue::Int(0)));
+        }
+        body
     }
 
     /// Builds a body shaped like the env-blob callback lowering: the

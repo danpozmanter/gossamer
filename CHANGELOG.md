@@ -141,6 +141,44 @@
 - Stop reporting `GL0011` for a `panic!` inside a closure in `main`. A panic
   in a spawned goroutine ends that goroutine and reaches the program through
   its join handle, so it is not the abort the lint describes.
+- Read a spawned callable's `Result` correctly in a Windows native build. The
+  runtime invokes the callable as `extern "C" fn(..) -> i128` and reads the
+  value from xmm0, but a gossamer callable returns the two words in the
+  GP-register pair, so a failing child looked successful, a cohort that should
+  have cancelled its siblings hung, and a joined handle matched no pattern.
+  The callable now reaches the runtime through a forwarding thunk that answers
+  in the register the C ABI names.
+- Remove the `iter::eager_*` names. Each one duplicated a function that is
+  already reachable - `iter::filter(p, xs) |> iter::collect` for the adapters,
+  and a collection's own methods (`xs.map(f)`, `xs.sum()`) for a value that is
+  already materialised - so the parallel spelling bought only a second name for
+  the same work.
+- Report `String::chars` as the cursor it is. `%i` and the signature catalogue
+  described it as `Vec<char>` while it answered `Iterator<char>`.
+- Reject a standard library macro named as a value path (`GR0018`).
+  `fmt::println(..)`, `fmt::format(..)`, and `panic::panic(..)` passed
+  `gos check` and then failed at run time as unbound names, because a macro
+  expands where it is written and binds no callable. The report names the
+  `println!(..)` spelling instead.
+- Suggest from the module's own exports when a `module::member` path is
+  misspelled. `iter::fliter` offered a bare name from the surrounding scope;
+  it now offers `iter::filter`.
+- Give every map and set method a signature in `%i` / `%e`. The traversal
+  surface a collection inherits was listed by name alone - `Map::map [method]`
+  - because only `Vec` carried the contracts; each is now derived from the
+  `Vec` entry with the receiver's own element type, so `Map::map` reads
+  `fn map<K, V, U>(self: Map<K, V>, f: fn((K, V)) -> U) -> Vec<U>`. `sum`,
+  `product`, and `flatten` are dropped from the map listing: a `(K, V)` pair
+  neither adds up nor flattens.
+- Report a collection under the one name the language gives it. A runtime
+  builtin registered as `HashSet::symmetric_difference` surfaced `HashSet` as
+  a type of its own, though the spelling is rejected (`GR0006`).
+- Give every standard library handle type's methods a signature in `%i` /
+  `%e`. `net::TcpStream`, `http::Client` / `Request` / `Response` / `Router`,
+  `sync` locks and atomics, `fs::File` / `OpenOptions`, `regex::Pattern`,
+  `time`, `metrics`, `trace`, `context`, `process::Child`, `bufio`, and
+  `validate` are runtime registrations rather than manifest exports, so 247
+  methods across 53 types listed as a bare name with no contract.
 
 ## 0.50.1 - Lazy collections, native/JIT crash, diagnostic, and parity fixes
 

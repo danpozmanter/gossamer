@@ -198,15 +198,10 @@ fn is_free_function(path: &str) -> bool {
     })
 }
 
-/// Edition-2027 migration aliases are deliberately dispatched through the
-/// canonical eager lowering table. Keep the coverage gate aware of that
-/// one-to-one path relationship instead of requiring duplicate match arms for
-/// aliases that cannot diverge at runtime.
+/// Whether a stdlib path reaches a compiled-tier dispatch arm, directly or
+/// through the canonical spelling its call site folds to.
 fn has_compiled_dispatch(path: &str, reachable: &BTreeSet<String>) -> bool {
     reachable.contains(path)
-        || path
-            .strip_prefix("iter::eager_")
-            .is_some_and(|name| reachable.contains(&format!("iter::{name}")))
         // A leaf-module spelling (`gzip::encode`, the shape `use
         // std::compress::gzip` puts in scope) folds to its canonical path in
         // `lower_stdlib_free_call` before the dispatch arms are consulted, so

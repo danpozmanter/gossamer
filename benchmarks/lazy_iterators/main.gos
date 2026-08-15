@@ -7,11 +7,12 @@ fn main() {
         |> iter::take(1000)
         |> iter::sum
 
-    let eager = iter::eager_range(0, 100000)
-        |> iter::eager_map(|x| x + 1)
-        |> iter::eager_filter(|x| x % 2 == 0)
-        |> iter::eager_take(1000)
-        |> iter::eager_sum
+    let eager = iter::range(0, 100000)
+        |> iter::collect
+        |> $.map(|x| x + 1)
+        |> $.filter(|x| x % 2 == 0)
+        |> $.take(1000)
+        |> $.sum
 
     println!("{lazy} {eager}")
 }

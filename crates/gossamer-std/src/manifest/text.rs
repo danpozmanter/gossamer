@@ -342,7 +342,8 @@ pub const STRINGS: StdModule = StdModule {
         StdItem {
             name: "chars",
             kind: StdItemKind::Function,
-            doc: "Returns the Unicode scalar values of the string.",
+            doc: "Returns a cursor over the string's Unicode scalar values; \
+                  `collect` materialises it.",
         },
         StdItem {
             name: "center",

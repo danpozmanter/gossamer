@@ -1,6 +1,7 @@
 # `lang::mut_ref_params`
 
 Local `&mut` aliases write through; `&mut Vec<T>` / `&mut [T]` parameters write through on every tier.
+
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 `&mut T` parameters write through to the caller's source place on every tier

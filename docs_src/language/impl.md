@@ -1,6 +1,7 @@
 # `lang::impl`
 
 Inherent and trait implementation blocks.
+
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 An inherent `impl Type` block adds methods and associated functions; an

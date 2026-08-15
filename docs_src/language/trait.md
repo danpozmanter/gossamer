@@ -1,6 +1,7 @@
 # `lang::trait`
 
 Behaviour interface declaration.
+
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 A trait declares method signatures; a type provides them with `impl Trait

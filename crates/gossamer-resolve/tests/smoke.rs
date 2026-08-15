@@ -27,7 +27,7 @@ fn retained_resolver_oom_reproducer_terminates() {
 
 #[test]
 fn simple_hello_world_resolves_without_diagnostics() {
-    let source = "use std::fmt\n\nfn main() {\n    fmt::println(\"hello\")\n}\n";
+    let source = "use std::strings\n\nfn main() {\n    strings::repeat(\"a\", 2)\n}\n";
     let sf = parse(source);
     let (resolutions, diags) = resolve_source_file(&sf);
     assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
@@ -44,6 +44,21 @@ fn undefined_name_produces_unresolved_diagnostic() {
         diags[0].error,
         ResolveError::UnresolvedName { ref name } if name == "xyzzy"
     ));
+}
+
+#[test]
+fn misspelled_stdlib_member_suggests_the_module_own_export() {
+    let source = "use std::iter\n\nfn main() { let _ = iter::fliter(|x: i64| x > 1, #[1, 2]) }\n";
+    let sf = parse(source);
+    let (_resolutions, diags) = resolve_source_file(&sf);
+    let unresolved = diags
+        .iter()
+        .find(|d| matches!(d.error, ResolveError::UnresolvedName { .. }))
+        .expect("misspelled stdlib member is unresolved");
+    assert_eq!(
+        unresolved.in_scope_candidate.as_deref(),
+        Some("iter::filter")
+    );
 }
 
 #[test]
@@ -138,14 +153,14 @@ fn use_of_a_real_stdlib_item_resolves() {
 
 #[test]
 fn imported_name_resolves_to_import_resolution() {
-    let source = "use std::fmt\n\nfn main() {\n    fmt::println(\"x\")\n}\n";
+    let source = "use std::strings\n\nfn main() {\n    strings::repeat(\"a\", 2)\n}\n";
     let sf = parse(source);
     let (resolutions, _diags) = resolve_source_file(&sf);
     let has_import = resolutions
         .sorted_entries()
         .iter()
         .any(|(_, res)| matches!(res, Resolution::Import { .. }));
-    assert!(has_import, "expected import resolution for `fmt`");
+    assert!(has_import, "expected import resolution for `strings`");
 }
 
 #[test]
@@ -340,4 +355,32 @@ fn a_private_module_on_the_path_is_named_by_the_diagnostic() {
         )),
         "expected the private module to be named, got: {diags:?}"
     );
+}
+
+#[test]
+fn a_std_macro_named_as_a_value_path_is_rejected() {
+    for (source, macro_name) in [
+        (
+            "use std::fmt\n\nfn main() {\n    fmt::println(\"x\")\n}\n",
+            "println",
+        ),
+        (
+            "use std::fmt\n\nfn main() {\n    let _ = fmt::format(\"x\")\n}\n",
+            "format",
+        ),
+        (
+            "use std::panic\n\nfn main() {\n    panic::panic(\"x\")\n}\n",
+            "panic",
+        ),
+    ] {
+        let sf = parse(source);
+        let (_resolutions, diags) = resolve_source_file(&sf);
+        assert!(
+            diags.iter().any(|diag| matches!(
+                &diag.error,
+                ResolveError::StdMacroAsValue { name, .. } if name == macro_name
+            )),
+            "expected a macro-as-value diagnostic for {source:?}: {diags:?}"
+        );
+    }
 }

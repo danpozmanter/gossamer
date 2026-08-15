@@ -3235,8 +3235,8 @@ fn repl_meta_info_exact_short_name_still_matches_full_paths() {
     let out = run_repl("%i scan\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
-        "Scanner::scan [method]",
-        "bufio::Scanner::scan [method]",
+        "Scanner::scan(self: bufio::Scanner) -> bool [method]",
+        "bufio::Scanner::scan(self: bufio::Scanner) -> bool [method]",
         "std::iter::scan<",
     ] {
         assert!(

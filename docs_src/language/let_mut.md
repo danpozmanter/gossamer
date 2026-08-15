@@ -1,6 +1,7 @@
 # `lang::let_mut`
 
 Mutable bindings can be reassigned and can be the source of `&mut`.
+
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 Binding mutability and reference capability are separate:

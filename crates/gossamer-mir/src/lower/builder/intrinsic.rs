@@ -960,17 +960,6 @@ impl<'a> Builder<'a> {
         use gossamer_types::{IntTy, TyKind};
         let i64_ty = self.tcx.int_ty(IntTy::I64);
         let unit_ty = self.tcx.unit();
-        // Migration aliases are canonicalized before this all-tier lowering
-        // table, so they emit the same MIR and runtime calls as the original
-        // eager spellings rather than falling through to VM-only dispatch.
-        let canonical;
-        let joined = if let Some(name) = joined.strip_prefix("iter::eager_") {
-            canonical = format!("iter::{name}");
-            canonical.as_str()
-        } else {
-            joined
-        };
-
         match (joined, args.len()) {
             // Non-closure constructors / accessors.
             ("iter::collect", 1) => {

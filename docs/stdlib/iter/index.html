@@ -2117,8 +2117,9 @@
 <p>Edition 2026 keeps these canonical eager signatures. In edition 2027,
 <code>range</code>, <code>range_inclusive</code>, <code>map</code>, <code>filter</code>, <code>take</code>, <code>skip</code>, <code>enumerate</code>,
 <code>chain</code>, and <code>zip</code> form linear lazy <code>Iterator&lt;T&gt;</code> pipelines. Terminals consume
-that state once. Use <code>collect</code> to materialize it, or spell the matching
-<code>iter::eager_*</code> name to retain Vec behavior in either edition.
+that state once. Use <code>collect</code> to materialize it, or traverse a collection
+through its own methods (<code>xs.map(f)</code>, <code>xs.sum()</code>), which answer eagerly in
+either edition.
 See the <a href="../../design/lazy_iterators/">lazy iterator protocol</a> for ownership,
 short-circuiting, overflow, and backend behavior.</p>
 <h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>

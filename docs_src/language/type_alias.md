@@ -1,6 +1,7 @@
 # `lang::type_alias`
 
 Transparent type alias: `type X = T` (and generic `type Pair<A> = (A, A)`) is interchangeable with its target everywhere; a cyclic alias is rejected (`GT0024`).
+
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 A `type` declaration names an existing type. It is **transparent** - an

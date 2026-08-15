@@ -1,6 +1,7 @@
 # `lang::enum`
 
 Sum type declaration with payload-carrying variants.
+
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 Variants carry tuple payloads (`Line(i64)`, `Rect(i64, i64)`), struct

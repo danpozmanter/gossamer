@@ -14,7 +14,7 @@ fn main() {
         })
         |> iter::take(3)
         |> iter::collect
-    println!("{}", iter::eager_sum(pulled))
+    println!("{}", pulled.sum())
 
     let skipped = iter::range(1, 8) |> iter::skip(3) |> iter::take(2) |> iter::sum
     println!("{skipped}")
@@ -23,7 +23,7 @@ fn main() {
     println!("{chained}")
 
     let zipped = iter::zip(iter::range(1, 4), iter::range(10, 20)) |> iter::collect
-    println!("{}", iter::eager_count(zipped))
+    println!("{}", zipped.len())
 
     let any_hit = iter::range(1, 100)
         |> iter::any(|x| {

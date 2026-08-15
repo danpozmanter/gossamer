@@ -57,3 +57,29 @@ fn every_manifest_export_is_importable() {
         }
     }
 }
+
+#[test]
+fn resolver_macro_item_table_matches_manifest() {
+    let mut manifest: Vec<String> = Vec::new();
+    for module in gossamer_std::manifest::ALL_MODULES {
+        let path = module.path.strip_prefix("std::").unwrap_or(module.path);
+        for item in module.items {
+            if matches!(item.kind, gossamer_std::registry::StdItemKind::Macro) {
+                manifest.push(format!("{path}::{}", item.name));
+            }
+        }
+    }
+    manifest.sort();
+    manifest.dedup();
+
+    let table: Vec<String> = gossamer_resolve::STDLIB_MACRO_ITEMS
+        .iter()
+        .map(|path| (*path).to_string())
+        .collect();
+    assert_eq!(
+        table, manifest,
+        "STDLIB_MACRO_ITEMS drifted from the manifest's macro exports; \
+         the resolver reports a call to one of these as GR0018, so a missing \
+         entry lets that call pass `gos check` and fail at run time"
+    );
+}

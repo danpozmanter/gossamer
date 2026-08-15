@@ -18,6 +18,7 @@ One page per language feature. Source is `crates/gossamer-std/src/manifest/featu
 | [`lang::question_mark`](question_mark.md) | Short-circuit Result / Option propagation operator. |
 | [`lang::pipe`](pipe.md) | Forward-pipe operator `|>`. |
 | [`lang::closure`](closure.md) | Lambda expression `|args| body`. |
+| [`lang::callback_shorthand`](callback_shorthand.md) | A callback written without `|v|`: a std free function named in value position, and a `$`-headed projection argument (`xs.map($.abs)`), both stand for the closure that calls them. |
 | [`lang::fn`](fn.md) | Function declaration. |
 | [`lang::struct`](struct.md) | Product type declaration. |
 | [`lang::enum`](enum.md) | Sum type declaration with payload-carrying variants. |

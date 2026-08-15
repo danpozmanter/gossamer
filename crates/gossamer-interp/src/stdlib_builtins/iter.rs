@@ -1224,26 +1224,6 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         globals.push((qualified, crate::builtins::builtin_pub(qualified, *call)));
     }
 
-    // Explicit compatibility spellings for code migrated before the lazy
-    // edition changes these names to return iterator state. Keep these aliases
-    // on the same entry points as their eager counterparts.
-    let eager_static_aliases: &[(&str, BuiltinFnPub)] = &[
-        ("eager_chain", builtin_iter_eager_chain),
-        ("eager_collect", builtin_iter_collect),
-        ("eager_count", builtin_iter_count),
-        ("eager_enumerate", builtin_iter_eager_enumerate),
-        ("eager_skip", builtin_iter_eager_skip),
-        ("eager_sum", builtin_iter_sum),
-        ("eager_take", builtin_iter_eager_take),
-        ("eager_zip", builtin_iter_eager_zip),
-        ("eager_range", builtin_iter_eager_range),
-        ("eager_range_inclusive", builtin_iter_eager_range_inclusive),
-    ];
-    for (short, call) in eager_static_aliases {
-        let qualified: &'static str = Box::leak(format!("iter::{short}").into_boxed_str());
-        globals.push((qualified, crate::builtins::builtin_pub(qualified, *call)));
-    }
-
     // Closure-taking functions - must be `native` to access the interpreter.
     let native_entries: &[(&str, NativeCall)] = &[
         ("collect", native_iter_collect),
@@ -1287,19 +1267,6 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("chunks", native_iter_chunks),
     ];
     for (short, call) in native_entries {
-        let qualified: &'static str = Box::leak(format!("iter::{short}").into_boxed_str());
-        globals.push((qualified, Value::native(qualified, *call)));
-    }
-
-    let eager_native_aliases: &[(&str, NativeCall)] = &[
-        ("eager_all", native_iter_all),
-        ("eager_any", native_iter_any),
-        ("eager_filter", native_iter_eager_filter),
-        ("eager_find", native_iter_find),
-        ("eager_fold", native_iter_fold),
-        ("eager_map", native_iter_eager_map),
-    ];
-    for (short, call) in eager_native_aliases {
         let qualified: &'static str = Box::leak(format!("iter::{short}").into_boxed_str());
         globals.push((qualified, Value::native(qualified, *call)));
     }
@@ -1698,12 +1665,6 @@ pub(crate) fn builtin_iter_take(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Array(Arc::new(taken)))
 }
 
-fn builtin_iter_eager_take(args: &[Value]) -> RuntimeResult<Value> {
-    let n = non_negative_count(args, 0, "iter::eager_take")?;
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
-    Ok(Value::Array(Arc::new(iter_std::take(n, &xs))))
-}
-
 pub(crate) fn builtin_iter_skip(args: &[Value]) -> RuntimeResult<Value> {
     let n = non_negative_count(args, 0, "iter::skip")?;
     if lazy_iterators_enabled() || matches!(args.get(1), Some(Value::LazyIter(_))) {
@@ -1715,12 +1676,6 @@ pub(crate) fn builtin_iter_skip(args: &[Value]) -> RuntimeResult<Value> {
     let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
     let rest = iter_std::skip(n, &xs);
     Ok(Value::Array(Arc::new(rest)))
-}
-
-fn builtin_iter_eager_skip(args: &[Value]) -> RuntimeResult<Value> {
-    let n = non_negative_count(args, 0, "iter::eager_skip")?;
-    let xs = collect_array(args.get(1).unwrap_or(&Value::Unit));
-    Ok(Value::Array(Arc::new(iter_std::skip(n, &xs))))
 }
 
 pub(crate) fn builtin_iter_zip(args: &[Value]) -> RuntimeResult<Value> {
@@ -1743,17 +1698,6 @@ pub(crate) fn builtin_iter_zip(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Array(Arc::new(zipped)))
 }
 
-fn builtin_iter_eager_zip(args: &[Value]) -> RuntimeResult<Value> {
-    let a = collect_array(args.first().unwrap_or(&Value::Unit));
-    let b = collect_array(args.get(1).unwrap_or(&Value::Unit));
-    let zipped = a
-        .into_iter()
-        .zip(b)
-        .map(|(x, y)| Value::Tuple(Arc::from(vec![x, y])))
-        .collect();
-    Ok(Value::Array(Arc::new(zipped)))
-}
-
 pub(crate) fn builtin_iter_enumerate(args: &[Value]) -> RuntimeResult<Value> {
     // Concrete collections must remain restartable snapshots. Turning their
     // `.enumerate()` into a lazy iterator makes the bytecode `for` protocol
@@ -1763,16 +1707,6 @@ pub(crate) fn builtin_iter_enumerate(args: &[Value]) -> RuntimeResult<Value> {
         upstream: lazy_source(args.first().unwrap_or(&Value::Unit)),
         index: 0,
     }))
-}
-
-fn builtin_iter_eager_enumerate(args: &[Value]) -> RuntimeResult<Value> {
-    let xs = collect_array(args.first().unwrap_or(&Value::Unit));
-    let enumerated = xs
-        .into_iter()
-        .enumerate()
-        .map(|(i, x)| Value::Tuple(Arc::from(vec![Value::Int(i as i64), x])))
-        .collect();
-    Ok(Value::Array(Arc::new(enumerated)))
 }
 
 pub(crate) fn builtin_iter_chain(args: &[Value]) -> RuntimeResult<Value> {
@@ -1786,12 +1720,6 @@ pub(crate) fn builtin_iter_chain(args: &[Value]) -> RuntimeResult<Value> {
             in_second: false,
         }));
     }
-    let mut result = collect_array(args.first().unwrap_or(&Value::Unit));
-    result.extend(collect_array(args.get(1).unwrap_or(&Value::Unit)));
-    Ok(Value::Array(Arc::new(result)))
-}
-
-fn builtin_iter_eager_chain(args: &[Value]) -> RuntimeResult<Value> {
     let mut result = collect_array(args.first().unwrap_or(&Value::Unit));
     result.extend(collect_array(args.get(1).unwrap_or(&Value::Unit)));
     Ok(Value::Array(Arc::new(result)))
@@ -2643,26 +2571,12 @@ pub(crate) fn builtin_iter_range(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::IntArray(Arc::new(iter_std::range(start, end))))
 }
 
-fn builtin_iter_eager_range(args: &[Value]) -> RuntimeResult<Value> {
-    let start = args.first().and_then(value_to_int).unwrap_or(0);
-    let end = args.get(1).and_then(value_to_int).unwrap_or(0);
-    Ok(Value::IntArray(Arc::new(iter_std::range(start, end))))
-}
-
 pub(crate) fn builtin_iter_range_inclusive(args: &[Value]) -> RuntimeResult<Value> {
     let start = args.first().and_then(value_to_int).unwrap_or(0);
     let end = args.get(1).and_then(value_to_int).unwrap_or(0);
     if lazy_iterators_enabled() {
         return Ok(new_range_iter(start, end, true, false, false));
     }
-    Ok(Value::IntArray(Arc::new(iter_std::range_inclusive(
-        start, end,
-    ))))
-}
-
-fn builtin_iter_eager_range_inclusive(args: &[Value]) -> RuntimeResult<Value> {
-    let start = args.first().and_then(value_to_int).unwrap_or(0);
-    let end = args.get(1).and_then(value_to_int).unwrap_or(0);
     Ok(Value::IntArray(Arc::new(iter_std::range_inclusive(
         start, end,
     ))))

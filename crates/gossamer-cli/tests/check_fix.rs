@@ -60,11 +60,11 @@ fn a_resolvable_name_suggestion_is_applied() {
 
 #[test]
 fn a_suggestion_that_does_not_resolve_the_error_is_refused() {
-    // `strings::triim` draws a did-you-mean pointing at the `String`
-    // type; substituting it leaves the program just as broken, so the
-    // source must survive untouched.
-    let before =
-        "use std::strings\n\nfn main() {\n    println!(\"{}\", strings::triim(\"  x  \"))\n}\n";
+    // `coun` draws a did-you-mean pointing at `count`, a `String`;
+    // substituting it trades the unresolved name for a type error, so
+    // the source must survive untouched.
+    let before = "fn main() {\n    let count = \"text\"\n    println!(\"{}\", count)\n    \
+                  let total: i64 = coun + 1\n    println!(\"{}\", total)\n}\n";
     let file = case("wrong_suggestion", before);
     let report = run_fix(&file);
     assert!(report.contains("fix: 0 edit"), "report was: {report}");

@@ -94,7 +94,7 @@ Receiver methods on built-in types such as `String`, `Vec`, `Map`, `Option`, and
 | [`std::httptest`](#stdhttptest) | 1 | Loopback HTTP fixtures for source integration tests. |
 | [`std::image`](#stdimage) | 9 | Opaque RGBA8 image handles with PNG and JPEG codecs. |
 | [`std::io`](#stdio) | 21 | Stream-oriented I/O abstractions and process standard streams. |
-| [`std::iter`](#stditer) | 66 | Sequence adapters: map, filter, fold, zip, enumerate, chain, etc. A `Vec` argument is traversed eagerly; an `Iterator` argument keeps the adapter lazy and answers with another iterator. |
+| [`std::iter`](#stditer) | 50 | Sequence adapters: map, filter, fold, zip, enumerate, chain, etc. A `Vec` argument is traversed eagerly; an `Iterator` argument keeps the adapter lazy and answers with another iterator. |
 | [`std::jwt`](#stdjwt) | 10 | RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens. |
 | [`std::lifecycle`](#stdlifecycle) | 1 | Graceful-shutdown coordinator with signal handling and sd_notify support. |
 | [`std::math`](#stdmath) | 46 | Mathematical constants and f64 functions (Go's math package shape). |
@@ -1103,22 +1103,6 @@ Sequence adapters: map, filter, fold, zip, enumerate, chain, etc. A `Vec` argume
 | `count` | fn | Number of elements. |
 | `count_by` | fn | Counts elements per key derived by f. |
 | `dedup` | fn | Removes consecutive duplicate elements. |
-| `eager_all` | fn | Eager `all`: materialises rather than staying lazy, whatever the edition's default. The migration spelling for code that needs the eager shape explicitly. |
-| `eager_any` | fn | Eager `any`: materialises rather than staying lazy, whatever the edition's default. The migration spelling for code that needs the eager shape explicitly. |
-| `eager_chain` | fn | Eager `chain`: materialises rather than staying lazy, whatever the edition's default. The migration spelling for code that needs the eager shape explicitly. |
-| `eager_collect` | fn | Eager `collect`: materialises rather than staying lazy, whatever the edition's default. The migration spelling for code that needs the eager shape explicitly. |
-| `eager_count` | fn | Eager `count`: materialises rather than staying lazy, whatever the edition's default. The migration spelling for code that needs the eager shape explicitly. |
-| `eager_enumerate` | fn | Eager `enumerate`: materialises rather than staying lazy, whatever the edition's default. The migration spelling for code that needs the eager shape explicitly. |
-| `eager_filter` | fn | Eager `filter`: materialises rather than staying lazy, whatever the edition's default. The migration spelling for code that needs the eager shape explicitly. |
-| `eager_find` | fn | Eager `find`: materialises rather than staying lazy, whatever the edition's default. The migration spelling for code that needs the eager shape explicitly. |
-| `eager_fold` | fn | Eager `fold`: materialises rather than staying lazy, whatever the edition's default. The migration spelling for code that needs the eager shape explicitly. |
-| `eager_map` | fn | Eager `map`: materialises rather than staying lazy, whatever the edition's default. The migration spelling for code that needs the eager shape explicitly. |
-| `eager_range` | fn | Eager `range`: materialises rather than staying lazy, whatever the edition's default. The migration spelling for code that needs the eager shape explicitly. |
-| `eager_range_inclusive` | fn | Eager `range_inclusive`: materialises rather than staying lazy, whatever the edition's default. The migration spelling for code that needs the eager shape explicitly. |
-| `eager_skip` | fn | Eager `skip`: materialises rather than staying lazy, whatever the edition's default. The migration spelling for code that needs the eager shape explicitly. |
-| `eager_sum` | fn | Eager `sum`: materialises rather than staying lazy, whatever the edition's default. The migration spelling for code that needs the eager shape explicitly. |
-| `eager_take` | fn | Eager `take`: materialises rather than staying lazy, whatever the edition's default. The migration spelling for code that needs the eager shape explicitly. |
-| `eager_zip` | fn | Eager `zip`: materialises rather than staying lazy, whatever the edition's default. The migration spelling for code that needs the eager shape explicitly. |
 | `empty` | fn | Empty Vec. |
 | `enumerate` | fn | Pairs each element with its index. |
 | `filter` | fn | Returns elements where f is true. |
@@ -1639,7 +1623,7 @@ String operations.
 | `byte_len` | fn | Returns the UTF-8 byte length. |
 | `bytes` | fn | Returns the UTF-8 bytes of the string. |
 | `center` | fn | Symmetric pad to `width` using the given pad character. |
-| `chars` | fn | Returns the Unicode scalar values of the string. |
+| `chars` | fn | Returns a cursor over the string's Unicode scalar values; `collect` materialises it. |
 | `contains` | fn | Returns whether the string contains a substring. |
 | `contains_any` | fn | Reports whether the string contains any rune in a set. |
 | `count` | fn | Counts non-overlapping occurrences of `needle`. |

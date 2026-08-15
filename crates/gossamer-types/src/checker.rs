@@ -10544,11 +10544,6 @@ impl<'a> TypeChecker<'a> {
     /// arg) of a std data-last combinator the checker can type, or
     /// `None` for names it has no signature row for.
     fn std_combinator_arity(module: &str, name: &str) -> Option<usize> {
-        let name = if module == "iter" {
-            name.strip_prefix("eager_").unwrap_or(name)
-        } else {
-            name
-        };
         let arity = match (module, name) {
             (
                 "result",
@@ -11019,12 +11014,9 @@ impl<'a> TypeChecker<'a> {
                 Some(ty)
             }
             "iter" => {
-                let eager_alias = name.starts_with("eager_");
-                let name = name.strip_prefix("eager_").unwrap_or(name);
                 let all_tier_lazy = matches!(name, "range" | "range_inclusive" | "once" | "repeat")
                     || iterator_adapter_is_lazy(name);
-                let edition_lazy_result =
-                    self.edition == Edition::E2027 && !eager_alias && all_tier_lazy;
+                let edition_lazy_result = self.edition == Edition::E2027 && all_tier_lazy;
                 let i64_ty = self.tcx.int_ty(IntTy::I64);
                 if matches!(name, "range" | "range_inclusive") {
                     self.unify(i64_ty, lead_tys[0], span);
@@ -11046,18 +11038,13 @@ impl<'a> TypeChecker<'a> {
                 // `enumerate` pairs an index with each element as it is
                 // asked for, so it answers an iterator whatever it is
                 // handed, in every edition.
-                let lazy_result = edition_lazy_result
-                    || data_is_iterator
-                    || (!eager_alias && matches!(name, "enumerate"));
+                let lazy_result =
+                    edition_lazy_result || data_is_iterator || matches!(name, "enumerate");
                 let iterator_terminal = matches!(
                     name,
                     "fold" | "any" | "all" | "find" | "count" | "sum" | "collect"
                 );
-                if self.edition == Edition::E2027
-                    && !eager_alias
-                    && iterator_terminal
-                    && !data_is_iterator
-                {
+                if self.edition == Edition::E2027 && iterator_terminal && !data_is_iterator {
                     let found = self.render_public_ty(data_ty);
                     self.emit(
                         TypeError::TypeMismatch {
@@ -11068,7 +11055,7 @@ impl<'a> TypeChecker<'a> {
                     );
                     return Some(self.tcx.error_ty());
                 }
-                if data_is_iterator && (eager_alias || !all_tier_iterator_input) {
+                if data_is_iterator && !all_tier_iterator_input {
                     let found = self.render_public_ty(data_ty);
                     self.emit(
                         TypeError::TypeMismatch {
@@ -13863,7 +13850,13 @@ impl<'a> TypeChecker<'a> {
         if !self.callee_path_nodes.contains(&node)
             && crate::std_fn_values::is_std_free_fn_path(&segments)
         {
-            self.emit(TypeError::StdFnValueUnsupported { path: joined }, span);
+            // A macro path is not a function at all; the resolver already
+            // named it and said how to write it, so adding a second report
+            // about parameter lists describes the wrong thing.
+            let relative = joined.strip_prefix("std::").unwrap_or(joined.as_str());
+            if gossamer_resolve::stdlib_macro_named(relative).is_none() {
+                self.emit(TypeError::StdFnValueUnsupported { path: joined }, span);
+            }
             return self.tcx.error_ty();
         }
         self.fresh()

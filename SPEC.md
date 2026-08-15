@@ -2988,9 +2988,9 @@ Edition 2026 keeps the historical eager `std::iter` signatures. In edition
 `enumerate`, `chain`, and `zip` produce linear `Iterator<T>` state. `fold`,
 `any`, `all`, `find`, `count`, `sum`, and `collect` consume that state once.
 Adapters pull only on terminal demand, and `any`, `all`, `find`, `take`, and
-`zip` stop as soon as their result is decided. The corresponding
-`iter::eager_*` names retain Vec-based behavior in every edition. A program
-that needs to materialize a 2027 iterator uses `iter::collect`.
+`zip` stop as soon as their result is decided. A program that needs to
+materialize a 2027 iterator uses `iter::collect`; a collection that already
+holds its values traverses through its own methods (`xs.map(f)`, `xs.sum()`).
 
 ### 17.2 Standard library compatibility
 

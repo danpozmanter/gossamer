@@ -1,6 +1,7 @@
 # `lang::generics`
 
 Type parameters on functions / impls / structs.
+
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## Trait bounds and static dispatch

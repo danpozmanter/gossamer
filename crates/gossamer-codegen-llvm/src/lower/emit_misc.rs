@@ -484,11 +484,35 @@ impl<'a> Lowerer<'a> {
                 | "gos_rt_map_insert_str_i64_opt"
                 | "gos_rt_map_insert_typed_str_i64_opt"
         );
+        // Win64: the runtime invokes a two-word spawn callable as
+        // `extern "C-unwind" fn(usize) -> i128` and reads the result from
+        // xmm0, but the callable is a gossamer `ret i128` (GP-register
+        // pair). Hand it the `<16 x i8>` forwarding thunk in place of the
+        // callable's own address; the thunk reads slot 0 of the same env
+        // this call already passes, so a capturing closure, a
+        // non-capturing one, and a bare fn all route the same way.
+        let spawn_wide_cabi = symbol == crate::emit::CABI_SPAWN_SHIM
+            && crate::emit::target_is_windows()
+            && args
+                .get(crate::emit::CABI_SPAWN_RET_WORDS_ARG)
+                .and_then(|w| crate::emit::operand_const_int(self.body, w))
+                == Some(crate::emit::SPAWN_RET_TWO_WORDS);
         let mut arg_text = String::new();
         let mut arg_tys_for_decl: Vec<String> = Vec::new();
         for (i, arg) in args.iter().enumerate() {
             if i > 0 {
                 arg_text.push_str(", ");
+            }
+            if spawn_wide_cabi && i == 0 {
+                let code = self.fresh();
+                writeln!(
+                    self.out,
+                    "  {code} = ptrtoint ptr @\"{}\" to i64",
+                    crate::emit::SPAWN_WIDE_CABI_THUNK
+                )
+                .unwrap();
+                let _ = write!(arg_text, "i64 {code}");
+                continue;
             }
             let want = expected_param_tys.get(i).copied().flatten();
             let (a_v, mut a_ty) = self.lower_call_arg(arg, want, symbol)?;

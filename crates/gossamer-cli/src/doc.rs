@@ -24,10 +24,12 @@ fn generated_head(page: &str) -> &str {
 }
 
 /// Generated body joined with the on-disk page's handwritten tail.
+/// The marker starts its own Markdown block, so the join always
+/// leaves one blank line between the two halves.
 fn merge_handwritten(body: &str, on_disk: &str) -> String {
     on_disk.find(HANDWRITTEN_MARKER).map_or_else(
         || body.to_string(),
-        |idx| format!("{body}{}", &on_disk[idx..]),
+        |idx| format!("{}\n\n{}", body.trim_end(), &on_disk[idx..]),
     )
 }
 

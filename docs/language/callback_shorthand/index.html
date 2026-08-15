@@ -12,13 +12,9 @@
         <meta name="author" content="Gossamer contributors">
 
 
-        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/design/lazy_iterators/">
+        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/language/callback_shorthand/">
 
 
-        <link rel="prev" href="../incremental/">
-
-
-        <link rel="next" href="../runtime/">
 
 
 
@@ -29,7 +25,7 @@
 
 
 
-        <title>Lazy iterators - Gossamer</title>
+        <title>lang::callback_shorthand - Gossamer</title>
 
 
 
@@ -82,7 +78,7 @@
     <div data-md-component="skip">
 
 
-        <a href="#lazy-iterator-protocol" class="md-skip">
+        <a href="#langcallback_shorthand" class="md-skip">
           Skip to content
         </a>
 
@@ -117,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
 
-              Lazy iterators
+              lang::callback_shorthand
 
           </span>
         </div>
@@ -492,7 +488,7 @@
 
 
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
 
 
 
@@ -536,7 +532,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../language/top_level_statements/" class="md-nav__link">
+      <a href="../top_level_statements/" class="md-nav__link">
 
 
 
@@ -564,7 +560,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../language/arena/" class="md-nav__link">
+      <a href="../arena/" class="md-nav__link">
 
 
 
@@ -592,7 +588,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../language/cohort/" class="md-nav__link">
+      <a href="../cohort/" class="md-nav__link">
 
 
 
@@ -620,7 +616,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../language/comptime/" class="md-nav__link">
+      <a href="../comptime/" class="md-nav__link">
 
 
 
@@ -648,7 +644,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../language/keyword_arguments/" class="md-nav__link">
+      <a href="../keyword_arguments/" class="md-nav__link">
 
 
 
@@ -676,7 +672,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../language/opaque_nominal_alias/" class="md-nav__link">
+      <a href="../opaque_nominal_alias/" class="md-nav__link">
 
 
 
@@ -704,7 +700,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../language/triple_quoted_string/" class="md-nav__link">
+      <a href="../triple_quoted_string/" class="md-nav__link">
 
 
 
@@ -732,7 +728,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../../language/tuples/" class="md-nav__link">
+      <a href="../tuples/" class="md-nav__link">
 
 
 
@@ -1644,13 +1640,11 @@
 
 
 
-
-
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
 
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_16" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_16" >
 
 
           <label class="md-nav__link" for="__nav_16" id="__nav_16_label" tabindex="">
@@ -1671,7 +1665,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
 
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_16_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_16_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_16">
             <span class="md-nav__icon md-icon"></span>
 
@@ -1689,7 +1683,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../sequence_reference_safety/" class="md-nav__link">
+      <a href="../../design/sequence_reference_safety/" class="md-nav__link">
 
 
 
@@ -1717,7 +1711,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../diagnostics/" class="md-nav__link">
+      <a href="../../design/diagnostics/" class="md-nav__link">
 
 
 
@@ -1745,7 +1739,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../incremental/" class="md-nav__link">
+      <a href="../../design/incremental/" class="md-nav__link">
 
 
 
@@ -1772,35 +1766,8 @@
 
 
 
-
-
-    <li class="md-nav__item md-nav__item--active">
-
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-
-
-
-
-
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-
-
-
-  <span class="md-ellipsis">
-
-
-    Lazy iterators
-
-
-
-  </span>
-
-
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../design/lazy_iterators/" class="md-nav__link">
 
 
 
@@ -1816,103 +1783,6 @@
 
 
       </a>
-
-
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-
-
-
-
-
-
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-
-        <li class="md-nav__item">
-  <a href="#goals" class="md-nav__link">
-    <span class="md-ellipsis">
-
-        Goals
-
-    </span>
-  </a>
-
-</li>
-
-        <li class="md-nav__item">
-  <a href="#source-ownership" class="md-nav__link">
-    <span class="md-ellipsis">
-
-        Source ownership
-
-    </span>
-  </a>
-
-</li>
-
-        <li class="md-nav__item">
-  <a href="#invalidation-and-mutation" class="md-nav__link">
-    <span class="md-ellipsis">
-
-        Invalidation and mutation
-
-    </span>
-  </a>
-
-</li>
-
-        <li class="md-nav__item">
-  <a href="#terminal-operations" class="md-nav__link">
-    <span class="md-ellipsis">
-
-        Terminal operations
-
-    </span>
-  </a>
-
-</li>
-
-        <li class="md-nav__item">
-  <a href="#typed-mir-representation" class="md-nav__link">
-    <span class="md-ellipsis">
-
-        Typed MIR representation
-
-    </span>
-  </a>
-
-</li>
-
-        <li class="md-nav__item">
-  <a href="#backend-lowering" class="md-nav__link">
-    <span class="md-ellipsis">
-
-        Backend lowering
-
-    </span>
-  </a>
-
-</li>
-
-        <li class="md-nav__item">
-  <a href="#migration" class="md-nav__link">
-    <span class="md-ellipsis">
-
-        Migration
-
-    </span>
-  </a>
-
-</li>
-
-    </ul>
-
-</nav>
-
     </li>
 
 
@@ -1925,7 +1795,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../runtime/" class="md-nav__link">
+      <a href="../../design/runtime/" class="md-nav__link">
 
 
 
@@ -1953,7 +1823,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../jit_native_memory_ownership/" class="md-nav__link">
+      <a href="../../design/jit_native_memory_ownership/" class="md-nav__link">
 
 
 
@@ -1981,7 +1851,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../memory_model/" class="md-nav__link">
+      <a href="../../design/memory_model/" class="md-nav__link">
 
 
 
@@ -2009,7 +1879,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../goroutine_stacks/" class="md-nav__link">
+      <a href="../../design/goroutine_stacks/" class="md-nav__link">
 
 
 
@@ -2037,7 +1907,7 @@
 
 
     <li class="md-nav__item">
-      <a href="../selfhosting/" class="md-nav__link">
+      <a href="../../design/selfhosting/" class="md-nav__link">
 
 
 
@@ -2200,10 +2070,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
 
         <li class="md-nav__item">
-  <a href="#goals" class="md-nav__link">
+  <a href="#a-std-function-in-value-position" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Goals
+        A std function in value position
 
     </span>
   </a>
@@ -2211,65 +2081,10 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#source-ownership" class="md-nav__link">
+  <a href="#a-headed-projection" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Source ownership
-
-    </span>
-  </a>
-
-</li>
-
-        <li class="md-nav__item">
-  <a href="#invalidation-and-mutation" class="md-nav__link">
-    <span class="md-ellipsis">
-
-        Invalidation and mutation
-
-    </span>
-  </a>
-
-</li>
-
-        <li class="md-nav__item">
-  <a href="#terminal-operations" class="md-nav__link">
-    <span class="md-ellipsis">
-
-        Terminal operations
-
-    </span>
-  </a>
-
-</li>
-
-        <li class="md-nav__item">
-  <a href="#typed-mir-representation" class="md-nav__link">
-    <span class="md-ellipsis">
-
-        Typed MIR representation
-
-    </span>
-  </a>
-
-</li>
-
-        <li class="md-nav__item">
-  <a href="#backend-lowering" class="md-nav__link">
-    <span class="md-ellipsis">
-
-        Backend lowering
-
-    </span>
-  </a>
-
-</li>
-
-        <li class="md-nav__item">
-  <a href="#migration" class="md-nav__link">
-    <span class="md-ellipsis">
-
-        Migration
+        A $-headed projection
 
     </span>
   </a>
@@ -2293,99 +2108,53 @@
 
 
 
-<h1 id="lazy-iterator-protocol">Lazy iterator protocol<a class="headerlink" href="#lazy-iterator-protocol" title="Permanent link">&para;</a></h1>
-<p>Integer range expressions produce lazy iterators in every edition, and adapters
-applied to those iterator values remain lazy. The lazy
-<code>std::iter</code> constructor and Vec adapter surface is enabled in edition 2027;
-projects using edition 2026 otherwise keep the historical eager <code>std::iter</code>
-behavior.</p>
-<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
-<p>The public protocol supports lazy <code>map</code>, <code>filter</code>, <code>take</code>, <code>skip</code>,
-<code>enumerate</code>, <code>chain</code>, and <code>zip</code> without allocating an intermediate <code>Vec</code>.
-Terminal operations stop the source as soon as their result is known and
-preserve the same closure call order in the VM, Cranelift JIT, and LLVM.</p>
-<p>The built-in protocol and supported adapters are public in this release.
-User-defined iterator implementations, extra adapters such as <code>filter_map</code> and
-<code>flat_map</code>, and dynamic iterator trait objects are deferred until
-representation and optimization data are available.</p>
-<h2 id="source-ownership">Source ownership<a class="headerlink" href="#source-ownership" title="Permanent link">&para;</a></h2>
-<p>An iterator is a linear state value. Calling <code>next(&amp;mut self)</code> mutates its
-cursor and returns <code>Option&lt;Item&gt;</code>.</p>
-<ul>
-<li><code>RangeIter</code> owns its integer cursor and optional bounds. An open upper bound
-  follows Rust overflow behavior: debug builds panic before yielding
-  <code>i64::MAX</code>; release builds yield <code>i64::MAX</code>, wrap to <code>i64::MIN</code>, and
-  continue.</li>
-<li><code>SliceIter&lt;'a, T&gt;</code> borrows an immutable slice. Structural mutation of the
-  source <code>Vec</code> is rejected while this iterator is live.</li>
-<li><code>VecIntoIter&lt;T&gt;</code> owns the source allocation and moves each element out once.</li>
-<li>Adapter states own their upstream iterator and closure. They do not expose
-  the upstream state separately.</li>
-<li><code>chain</code> and <code>zip</code> own both inputs. <code>zip</code> stops when either input ends.</li>
-</ul>
-<p>Dropping an iterator drops its closure, any buffered item, and every still-owned
-source element exactly once. Exhausted iterators remain exhausted. Calling
-<code>next</code> after exhaustion returns <code>None</code> without invoking user code.</p>
-<h2 id="invalidation-and-mutation">Invalidation and mutation<a class="headerlink" href="#invalidation-and-mutation" title="Permanent link">&para;</a></h2>
-<p>A borrowed <code>Vec</code> iterator records the source allocation identity and structural
-generation. Element replacement that preserves length and capacity is visible
-on the next read. Push, pop, insert, remove, clear, reserve, and reallocation
-invalidate an outstanding borrowed iterator and produce a runtime error in
-Experimental editions. A future Stable edition should reject these mutations
-statically once region facts are available.</p>
-<p>An owning iterator is unaffected by later bindings that referred to the moved
-source, because those bindings are unavailable after the move. Captured mutable
-closure state is evaluated in source order and is published after every closure
-call, including calls that panic.</p>
-<h2 id="terminal-operations">Terminal operations<a class="headerlink" href="#terminal-operations" title="Permanent link">&para;</a></h2>
-<ul>
-<li><code>fold</code>, <code>count</code>, <code>sum</code>, and <code>collect</code> consume to exhaustion unless a closure
-  panics.</li>
-<li><code>any</code>, <code>all</code>, and <code>find</code> stop after the first decisive item.</li>
-<li><code>collect::&lt;Vec&lt;T&gt;&gt;</code> is the only required adapter pipeline allocation other
-  than allocations performed by user closures or an owning source itself.</li>
-<li>A terminal consumes the iterator. Reuse after a terminal is a type error.</li>
-<li>Panics unwind through adapter states and run their drops once.</li>
-</ul>
-<p>Infinite sources are valid only with a short-circuiting terminal or a bounding
-adapter such as <code>take</code>. Tests must use a watchdog when deliberately constructing
-an unbounded terminal.</p>
-<h2 id="typed-mir-representation">Typed MIR representation<a class="headerlink" href="#typed-mir-representation" title="Permanent link">&para;</a></h2>
-<p>The first implementation adds three internal operations rather than lowering
-adapters to ordinary dynamic calls:</p>
-<div class="language-text highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>IterSource { dst, source_kind, source, item_ty, ownership }
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>IterAdapter { dst, adapter_kind, upstream, closure_or_arg, item_ty }
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>IterNext { dst_option, iter_place, item_ty }
+<h1 id="langcallback_shorthand"><code>lang::callback_shorthand</code><a class="headerlink" href="#langcallback_shorthand" title="Permanent link">&para;</a></h1>
+<p>A callback written without <code>|v|</code>: a std free function named in value position, and a <code>$</code>-headed projection argument (<code>xs.map($.abs)</code>), both stand for the closure that calls them.</p>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<p>A callback slot takes a closure. When that closure would do nothing but
+call one function on its parameter, two shorthands write the call
+directly.</p>
+<h2 id="a-std-function-in-value-position">A std function in value position<a class="headerlink" href="#a-std-function-in-value-position" title="Permanent link">&para;</a></h2>
+<p>Naming a std free function where a callback is expected takes the closure
+that calls it:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="p">{</span><span class="n">encoding</span>::<span class="n">base64</span><span class="p">,</span><span class="w"> </span><span class="n">math</span><span class="p">}</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="cp">#[1.0, -2.0]</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="n">math</span>::<span class="n">abs</span><span class="p">))</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="cp">#[</span><span class="s">&quot;ab&quot;</span><span class="cp">, </span><span class="s">&quot;cd&quot;</span><span class="cp">]</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="n">base64</span>::<span class="n">encode</span><span class="p">))</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">}</span>
 </code></pre></div>
-<p><code>iter_place</code> is mutable and non-copy. MIR validation rejects a second consumer,
-use after terminal, and borrowed-source structural mutation. Drop elaboration
-owns cleanup for source and adapter state. The representation carries concrete
-item and state types, so no boxed <code>dyn Iterator</code> or per-item heap allocation is
-required.</p>
-<h2 id="backend-lowering">Backend lowering<a class="headerlink" href="#backend-lowering" title="Permanent link">&para;</a></h2>
-<p>The VM stores iterator state in native handles and pulls from sources and
-adapters only when a terminal requests an item. Adapter closures are called only
-for items that reach the adapter.</p>
-<p>Cranelift JIT and LLVM AOT use the same public contract through opaque runtime
-handles for the supported 0.30 surface. Scalar <code>Iterator&lt;i64&gt;</code> pipelines cover
-sources, <code>map</code>, <code>filter</code>, <code>take</code>, <code>skip</code>, <code>chain</code>, and scalar terminals. Pair
-iterator handles cover <code>enumerate</code>, <code>zip</code>, <code>collect</code>, and <code>count</code> for
-<code>(i64, i64)</code> items. The internal <code>IterSource</code>, <code>IterAdapter</code>, and <code>IterNext</code>
-MIR statements are verified and preserved by optimization passes, but strict
-lowering rejects them if a future lowering path emits them before executable
-backend lowering is added.</p>
-<p>The cross-tier conformance fixture records result and closure side-effect
-order. Promotion requires identical output and no intermediate Vec allocation
-for <code>range.map.filter.take.collect</code>.</p>
-<p>The runnable <code>examples/projects/lazy_iterators</code> project shows the normal
-materialization boundary. <code>benchmarks/lazy_iterators</code> compares it with the
-eager collection surface and pins equal output.</p>
-<h2 id="migration">Migration<a class="headerlink" href="#migration" title="Permanent link">&para;</a></h2>
-<p>The existing eager signatures remain the edition-2026 default. Projects that
-select <code>edition = "2027"</code> receive iterator-returning signatures. Code that
-depends on eager materialization inserts <code>iter::collect</code> at the materialization
-boundary, or traverses the collection through its own methods (<code>xs.map(f)</code>,
-<code>xs.sum()</code>), which answer eagerly in every edition.</p>
+<p>Each of those is the closure <code>|v| math::abs(v)</code> / <code>|v| base64::encode(v)</code>.
+The parameter count comes from the function's own signature, so a function
+with no fixed parameter list - <code>fmt::format</code>, which is variadic - has no
+closure to stand for and reports <code>GT0015</code>. Write that one out:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">fmt</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="cp">#[1, 2]</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">fmt</span>::<span class="n">format</span><span class="p">(</span><span class="s">&quot;&lt;{}&gt;&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">v</span><span class="p">)))</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="a-headed-projection">A <code>$</code>-headed projection<a class="headerlink" href="#a-headed-projection" title="Permanent link">&para;</a></h2>
+<p>A <code>$</code> projection written as a call argument is the closure over that
+argument, with the forms <code>$</code> already has in a pipe step:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="cp">#[1.0, -2.0]</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="cp">$</span><span class="p">.</span><span class="n">abs</span><span class="p">))</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="cp">#[</span><span class="s">&quot;a&quot;</span><span class="cp">, </span><span class="s">&quot;bb&quot;</span><span class="cp">]</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="cp">$</span><span class="p">.</span><span class="n">len</span><span class="p">()))</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="cp">#[(1, 2), (3, 4)]</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="cp">$</span><span class="p">.</span><span class="mi">0</span><span class="p">))</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>$.name</code> is the nullary method call, exactly as in a pipe step, so it does
+not read a struct field. A field projection stays a written closure:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">struct</span> <span class="nc">Person</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">name</span>: <span class="nb">String</span> <span class="p">}</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">people</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[Person { name: </span><span class="s">&quot;ada&quot;</span><span class="cp"> }, Person { name: </span><span class="s">&quot;grace&quot;</span><span class="cp"> }]</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">people</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="o">|</span><span class="n">p</span><span class="o">|</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="n">name</span><span class="p">))</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="p">}</span>
+</code></pre></div>
+<p>A bare <code>$</code> argument keeps its pipe meaning - it selects the slot the piped
+value lands in - so <code>x |&gt; f($, k)</code> is <code>f(x, k)</code>, not a callback.</p>
 
 
 
