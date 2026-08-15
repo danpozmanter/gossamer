@@ -1733,7 +1733,7 @@ Wall-clock and monotonic time facilities.
 | `format_rfc3339` | fn | Formats a `SystemTime` in RFC 3339 (`YYYY-MM-DDTHH:MM:SSZ`). |
 | `monotonic_ms` | fn | Monotonic clock reading in milliseconds. |
 | `monotonic_nanos` | fn | Monotonic clock reading in nanoseconds. |
-| `now` | fn | Returns the current monotonic `Instant`. |
+| `now` | fn | Wall-clock milliseconds since the Unix epoch; `Instant::now()` reads the monotonic clock. |
 | `now_ms` | fn | Wall-clock milliseconds since the Unix epoch. |
 | `now_nanos` | fn | Wall-clock nanoseconds since the Unix epoch. |
 | `parse_rfc3339` | fn | Parses an RFC 3339 timestamp into a `SystemTime`. |

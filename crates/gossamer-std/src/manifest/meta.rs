@@ -378,7 +378,7 @@ pub const TIME: StdModule = StdModule {
         StdItem {
             name: "now",
             kind: StdItemKind::Function,
-            doc: "Returns the current monotonic `Instant`.",
+            doc: "Wall-clock milliseconds since the Unix epoch; `Instant::now()` reads the monotonic clock.",
         },
         StdItem {
             name: "format_rfc3339",

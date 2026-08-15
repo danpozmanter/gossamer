@@ -3346,7 +3346,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::time",
         name: "now",
-        signature: "fn now() -> time::Instant",
+        signature: "fn now() -> i64",
     },
     StdFunctionSignature {
         module_path: "std::time",

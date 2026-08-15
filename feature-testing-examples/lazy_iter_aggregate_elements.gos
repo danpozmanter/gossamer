@@ -88,12 +88,12 @@ fn main() {
     println!("ranked {:?}", ranked)
 
     // A map hands its pairs over through the same cursor.
-    let scores = {1: 100, 2: 200, 3: 300}
+    let scores = { 1: 100, 2: 200, 3: 300 }
     println!("totals {:?}", scores.iter().map(|p| p.0 + p.1).collect())
     println!("map count {}", scores.iter().count())
     for (key, value) in scores.iter() {
         println!("entry {} {}", key, value)
     }
-    let named = {"a": 1, "b": 2}
+    let named = { "a": 1, "b": 2 }
     println!("named {:?}", named.iter().map(|p| p.1).collect())
 }

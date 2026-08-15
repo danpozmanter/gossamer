@@ -181,6 +181,7 @@ feature-testing-examples/json_round_trip_fuzz.gos	bytecode-only local
 feature-testing-examples/json_set_update.gos	no hot body
 feature-testing-examples/json_yaml_encode.gos	no hot body
 feature-testing-examples/jwt_roundtrip.gos	no hot body
+feature-testing-examples/lazy_iter_aggregate_elements.gos	callable local
 feature-testing-examples/let_destructure_struct.gos	bytecode-only local
 feature-testing-examples/literal_forms.gos	no hot body
 feature-testing-examples/map_entry_and_format_paths.gos	bytecode-only local

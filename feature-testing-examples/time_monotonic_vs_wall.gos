@@ -22,7 +22,7 @@ fn main() {
     println!("wall ms before > 0: {}", ms_before > 0)
     println!("wall ms after >= before: {}", ms_after >= ms_before)
 
-    // Monotonic: now() returns unix ms too; sleep advances it
+    // now() reads the wall clock in unix ms; sleep advances it
     let t1 = time::now()
     time::sleep(15)
     let t2 = time::now()

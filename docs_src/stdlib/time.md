@@ -23,7 +23,7 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 | [`format_rfc3339`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs) | `fn format_rfc3339(ms: i64) -> Result<String, errors::Error>` | Formats a `SystemTime` in RFC 3339 (`YYYY-MM-DDTHH:MM:SSZ`). |
 | [`monotonic_ms`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs) | `fn monotonic_ms() -> i64` | Monotonic clock reading in milliseconds. |
 | [`monotonic_nanos`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs) | `fn monotonic_nanos() -> i64` | Monotonic clock reading in nanoseconds. |
-| [`now`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs) | `fn now() -> time::Instant` | Returns the current monotonic `Instant`. |
+| [`now`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs) | `fn now() -> i64` | Wall-clock milliseconds since the Unix epoch; `Instant::now()` reads the monotonic clock. |
 | [`now_ms`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs) | `fn now_ms() -> i64` | Wall-clock milliseconds since the Unix epoch. |
 | [`now_nanos`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs) | `fn now_nanos() -> i64` | Wall-clock nanoseconds since the Unix epoch. |
 | [`parse_rfc3339`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/time.rs) | `fn parse_rfc3339(text: String) -> Result<i64, errors::Error>` | Parses an RFC 3339 timestamp into a `SystemTime`. |

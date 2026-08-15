@@ -81,6 +81,25 @@
   different one, instead of reporting the method as missing.
 - Answer `Iterator` for `iter()` in REPL help on `Map`, `BTreeMap`, `Set`,
   and `BTreeSet`, which still described the eager `Vec` result.
+- Check the argument count of a combinator on an iterator or range receiver.
+  A count the surface does not declare left the call unconstrained, so
+  `(0..9).map()` and `.collect(1)` answered an empty sequence instead of
+  reporting the mismatch.
+- Check the argument count of `String`'s `len`, `is_empty`, `as_bytes`,
+  `index_rune`, and `contains_rune`, and of every tuple method, which
+  accepted any number of arguments and ignored the extras.
+- Count the value `|>` supplies as the last argument of a method call on a
+  built-in receiver, and check its type against that slot. `9 |> xs.push()`
+  was rejected as a missing argument on every built-in receiver, while the
+  same form on a user method worked.
+- Check the argument count of a method on a channel, join handle, error,
+  JSON value, `Instant`, or `Duration` receiver. Each dispatches by name to
+  a shim reading a fixed number of slots, so an extra argument was dropped
+  and a missing one read as zero.
+- Type `it.next()` on a built-in iterator as `Option<T>`.
+- Describe `time::now()` as the wall-clock reading it has always answered on
+  every tier. It was published as a monotonic `Instant`, so pairing it with
+  `since_ms` or `elapsed_ms` subtracted two different clocks.
 
 ## 0.50.0 - Iterators/collections, codegen cycle safety, silent errors, fixes
 

@@ -16155,8 +16155,8 @@
       "id": "std-time-now",
       "name": "std::time::now",
       "kind": "function",
-      "signature": "fn now() -> time::Instant",
-      "description": "Returns the current monotonic `Instant`.",
+      "signature": "fn now() -> i64",
+      "description": "Wall-clock milliseconds since the Unix epoch; `Instant::now()` reads the monotonic clock.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",

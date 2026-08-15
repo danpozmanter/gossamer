@@ -3890,3 +3890,146 @@ fn an_unknown_method_on_a_module_local_type_is_still_rejected() {
         checked.diagnostics
     );
 }
+
+/// A combinator on a built-in iterator receiver takes exactly the
+/// arguments its surface declares. Without the count the call reaches
+/// the runtime with an unconstrained result and reads as a no-op.
+#[test]
+fn iterator_combinator_rejects_wrong_argument_count() {
+    for (src, callee, expected, found) in [
+        ("let _ = (0..9).map(|n| n * 2).collect(1)", "collect", 0, 1),
+        ("let _ = (0..9).map()", "map", 1, 0),
+        ("let _ = (0..9).sum(1)", "sum", 0, 1),
+        ("let _ = (0..9).take()", "take", 1, 0),
+        ("let _ = (0..9).filter(|n| n > 1, 2)", "filter", 1, 2),
+        ("let _ = (0..9).next(1)", "next", 0, 1),
+        ("let _ = (0..9).fold(0, |a, b| a + b, 3)", "fold", 2, 3),
+    ] {
+        let d = diagnostics_for(&format!("fn main() {{\n{src}\n}}\n"));
+        assert!(
+            d.iter().any(|x| matches!(
+                &x.error,
+                TypeError::CallArityMismatch { callee: got, expected: e, found: f }
+                    if got == callee && *e == expected && *f == found
+            )),
+            "`{src}` must be rejected: {d:?}"
+        );
+    }
+}
+
+/// The argument counts the iterator surface does declare stay accepted,
+/// including `count`'s predicate form.
+#[test]
+fn iterator_combinator_accepts_declared_argument_counts() {
+    for src in [
+        "let _ = (0..9).map(|n| n * 2).collect()",
+        "let _ = (0..9).filter(|n| n > 1).count()",
+        "let _ = (0..9).count(|n| n > 1)",
+        "let _ = (0..9).fold(0, |a, b| a + b)",
+        "let _ = (0..9).take(3).sum()",
+        "let _ = (0..9).next()",
+    ] {
+        let d = diagnostics_for(&format!("fn main() {{\n{src}\n}}\n"));
+        assert!(d.is_empty(), "`{src}` must type clean: {d:?}");
+    }
+}
+
+/// `x |> recv.m(a)` places the piped value in the method's last
+/// argument slot, so a built-in receiver counts it toward the arity and
+/// checks its type against that slot.
+#[test]
+fn piped_builtin_method_argument_is_counted_and_typed() {
+    let clean = [
+        "let mut xs = #[1, 2, 3]\nlet _ = 9 |> xs.push()",
+        "fn dbl(n: i64) -> i64 { n * 2 }\nfn main() { let xs = #[1, 2, 3]\n    let _ = dbl |> xs.map() }",
+        "let s = \"a-b\"\nlet _ = \"-\" |> s.split()",
+    ];
+    for src in clean {
+        let body = if src.contains("fn main") {
+            src.to_string()
+        } else {
+            format!("fn main() {{\n{src}\n}}\n")
+        };
+        let d = diagnostics_for(&body);
+        assert!(d.is_empty(), "`{src}` must type clean: {d:?}");
+    }
+    let d =
+        diagnostics_for("fn main() {\nlet mut xs = #[1, 2, 3]\nlet _ = \"x\" |> xs.push()\n}\n");
+    assert!(
+        d.iter()
+            .any(|x| matches!(x.error, TypeError::TypeMismatch { .. })),
+        "a piped value must match the slot it lands in: {d:?}"
+    );
+}
+
+/// The built-in String and tuple surfaces declare one argument count
+/// each; a call that supplies another reaches a shim that would ignore
+/// the extra value, so it is rejected at check.
+#[test]
+fn builtin_receiver_methods_reject_wrong_argument_count() {
+    for (recv, src) in [
+        ("let s = \"a\"", "s.len(1)"),
+        ("let s = \"a\"", "s.is_empty(1)"),
+        ("let s = \"a\"", "s.as_bytes(1)"),
+        ("let s = \"a\"", "s.index_rune()"),
+        ("let s = \"a\"", "s.contains_rune('a', 2)"),
+        ("let t = (1, 2)", "t.get()"),
+        ("let t = (1, 2)", "t.len(1)"),
+        ("let t = (1, 2)", "t.clone(1)"),
+        ("let v = #[1, 2]", "v.len(1)"),
+        ("let v = #[1, 2]", "v.first(1)"),
+    ] {
+        let d = diagnostics_for(&format!("fn main() {{\n{recv}\nlet _ = {src}\n}}\n"));
+        assert!(
+            d.iter()
+                .any(|x| matches!(x.error, TypeError::CallArityMismatch { .. })),
+            "`{src}` must be rejected as an arity mismatch: {d:?}"
+        );
+    }
+    for (recv, src) in [
+        ("let s = \"a\"", "s.len()"),
+        ("let s = \"a\"", "s.as_bytes()"),
+        ("let s = \"a\"", "s.index_rune('a')"),
+        ("let t = (1, 2)", "t.get(0)"),
+        ("let t = (1, 2)", "t.len()"),
+        ("let v = #[1, 2]", "v.first()"),
+    ] {
+        let d = diagnostics_for(&format!("fn main() {{\n{recv}\nlet _ = {src}\n}}\n"));
+        assert!(d.is_empty(), "`{src}` must type clean: {d:?}");
+    }
+}
+
+/// A built-in handle receiver dispatches by name to a runtime shim that
+/// reads a fixed number of slots, so a call supplying another count is
+/// rejected rather than silently dropping or zero-filling a slot.
+#[test]
+fn handle_receiver_methods_reject_wrong_argument_count() {
+    for (setup, src) in [
+        ("let (tx, rx) = channel()", "tx.send()"),
+        ("let (tx, rx) = channel()", "tx.close(1)"),
+        ("let (tx, rx) = channel()", "rx.recv(1)"),
+        ("let e = errors::new(\"x\")", "e.message(1)"),
+        ("let e = errors::new(\"x\")", "e.is()"),
+    ] {
+        let d = diagnostics_for(&format!(
+            "use std::errors\nuse std::sync::channel\nfn main() {{\n{setup}\nlet _ = {src}\n}}\n"
+        ));
+        assert!(
+            d.iter()
+                .any(|x| matches!(x.error, TypeError::CallArityMismatch { .. })),
+            "`{src}` must be rejected as an arity mismatch: {d:?}"
+        );
+    }
+    let clean = "use std::errors\nuse std::sync::channel\n\
+         fn main() {\n\
+         let (tx, rx) = channel()\n\
+         tx.send(1)\n\
+         tx.close()\n\
+         let _ = rx.recv()\n\
+         let e = errors::new(\"x\")\n\
+         let _ = e.message()\n\
+         let _ = e.is(\"x\")\n\
+         }\n";
+    let d = diagnostics_for(clean);
+    assert!(d.is_empty(), "the declared counts must type clean: {d:?}");
+}

@@ -920,6 +920,11 @@ struct TypeChecker<'a> {
     /// call supplies one fewer explicit argument than the callee's
     /// arity; the arity check accounts for the implicit piped argument.
     pipe_stage_callees: std::collections::HashSet<NodeId>,
+    /// Type of the value piped into a method call on the right of `|>`,
+    /// keyed by the method-call node. The value lands in the method's
+    /// last argument slot, so the built-in receiver surface counts and
+    /// types it alongside the explicit arguments.
+    pipe_stage_arg_tys: HashMap<NodeId, Ty>,
     /// Declared variant names of every user enum, keyed by enum name.
     /// Lets a `Enum::Variant` path reject an undeclared variant
     /// (`Shape::Triangle`) at check, instead of faulting at runtime.
@@ -1026,6 +1031,7 @@ impl<'a> TypeChecker<'a> {
             trait_required_methods: HashMap::new(),
             trait_supertraits: HashMap::new(),
             pipe_stage_callees: std::collections::HashSet::new(),
+            pipe_stage_arg_tys: HashMap::new(),
             enum_variants: HashMap::new(),
         }
     }
@@ -7096,6 +7102,8 @@ impl<'a> TypeChecker<'a> {
             "()" => return Some(self.tcx.unit()),
             "!" => return Some(self.tcx.intern(TyKind::Never)),
             "json::Value" => return Some(self.tcx.json_value_ty()),
+            "time::Instant" => return Some(self.tcx.instant_ty()),
+            "time::Duration" => return Some(self.tcx.duration_ty()),
             "io::Reader" | "io::Writer" => return Some(self.io_stream_ty()),
             "errors::Error" | "io::Error" => return Some(self.tcx.dyn_error_ty()),
             _ if src.ends_with("::Error") || src.ends_with("ParseError") => {
@@ -7780,6 +7788,19 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// The call's argument types with the piped value appended.
+    /// `x |> recv.m(a)` desugars to `recv.m(a, x)`, so the built-in
+    /// receiver surface sees the piped value as the trailing argument:
+    /// it counts toward the method's arity and its type is checked
+    /// against the slot it lands in.
+    fn arg_tys_with_piped(&self, call_id: NodeId, arg_tys: &[Ty]) -> Vec<Ty> {
+        let mut tys = arg_tys.to_vec();
+        if let Some(piped) = self.pipe_stage_arg_tys.get(&call_id).copied() {
+            tys.push(piped);
+        }
+        tys
+    }
+
     #[allow(
         clippy::too_many_lines,
         reason = "receiver dispatch is intentionally kept in source order"
@@ -7800,7 +7821,8 @@ impl<'a> TypeChecker<'a> {
         self.check_overlapping_mutable_call_args(args);
         let receiver_expected = self.method_receiver_expectation(method, receiver, expected);
         let receiver_ty = self.check_expr_expecting(receiver, receiver_expected);
-        if self.reject_invalid_non_vec_sequence_method(receiver_ty, method, args, name_span) {
+        if self.reject_invalid_builtin_receiver_call(receiver_ty, method, args, call_id, name_span)
+        {
             return self.tcx.error_ty();
         }
         self.check_mutating_method_receiver(receiver, receiver_ty, method);
@@ -7855,6 +7877,8 @@ impl<'a> TypeChecker<'a> {
             return ty;
         }
         let arg_tys = self.check_method_call_arg_tys(method, receiver_ty, args);
+        let all_arg_tys = self.arg_tys_with_piped(call_id, &arg_tys);
+        let arg_count = all_arg_tys.len();
         // When the receiver resolves to a non-generic Adt with a
         // recorded method return type, use it: a fresh var here
         // leaves chained results (`sel.params()`) untyped all the
@@ -7871,26 +7895,27 @@ impl<'a> TypeChecker<'a> {
             Some(TyKind::Int(_) | TyKind::Var(_))
         ) && matches!(method, "wrapping_add" | "wrapping_mul")
         {
-            if args.len() != 1 {
+            if arg_count != 1 {
                 let owner = self.render_public_ty(resolved);
                 self.emit(
                     TypeError::CallArityMismatch {
                         callee: format!("{owner}::{method}"),
                         expected: 1,
-                        found: args.len(),
+                        found: arg_count,
                     },
                     receiver.span,
                 );
                 return self.tcx.error_ty();
             }
-            let arg_ty = self.peel_refs(arg_tys[0]);
-            self.unify(resolved, arg_ty, args[0].span);
+            let arg_ty = self.peel_refs(all_arg_tys[0]);
+            let arg_span = args.first().map_or(receiver.span, |arg| arg.span);
+            self.unify(resolved, arg_ty, arg_span);
             return resolved;
         }
-        if self.reject_collection_method_arity(resolved, method, args.len(), receiver.span) {
+        if self.reject_collection_method_arity(resolved, method, arg_count, receiver.span) {
             return self.tcx.error_ty();
         }
-        if self.reject_unknown_deque_method(resolved, method, args.len(), receiver.span) {
+        if self.reject_unknown_deque_method(resolved, method, arg_count, receiver.span) {
             return self.tcx.error_ty();
         }
         if let Some(ty) =
@@ -7915,30 +7940,31 @@ impl<'a> TypeChecker<'a> {
             && let Some(name) = self.tcx.def_name(*def)
             && let Some(&ret) =
                 self.method_ret_types
-                    .get(&(name.to_string(), method.to_string(), args.len()))
+                    .get(&(name.to_string(), method.to_string(), arg_count))
         {
             return ret;
         }
         // A generic-instantiation receiver (`Wrap<f64>`) types the call
         // from the generic impl's return with the instantiation's
         // arguments substituted, so chained uses resolve concretely.
-        if let Some(ret) = self.generic_recv_method_ret(resolved, method, args.len()) {
+        if let Some(ret) = self.generic_recv_method_ret(resolved, method, arg_count) {
             return ret;
         }
-        if let Some(ty) = self.vec_method_ret(method, args, &arg_tys, resolved, receiver.span) {
+        if let Some(ty) = self.vec_method_ret(method, &all_arg_tys, resolved, receiver.span) {
             return ty;
         }
-        if let Some(ty) = self.seq_combinator_method_ret(method, &arg_tys, resolved, name_span) {
+        if let Some(ty) = self.seq_combinator_method_ret(method, &all_arg_tys, resolved, name_span)
+        {
             self.mark_consumed_iterator_expr(method, receiver, resolved);
             return ty;
         }
         if let Some(ty) = self.set_method_ret(method, resolved) {
             return ty;
         }
-        if self.reject_unknown_set_method(resolved, method, args.len(), receiver.span) {
+        if self.reject_unknown_set_method(resolved, method, arg_count, receiver.span) {
             return self.tcx.error_ty();
         }
-        if let Some(ty) = self.map_method_ret(method, args, &arg_tys, resolved, receiver.span) {
+        if let Some(ty) = self.map_method_ret(method, &all_arg_tys, resolved, receiver.span) {
             return ty;
         }
         if let Some(ty) = self.flag_set_method_ret(method, resolved) {
@@ -7958,12 +7984,12 @@ impl<'a> TypeChecker<'a> {
         // tiers could not route the next call to the json helper.
         if matches!(self.tcx.kind(resolved), Some(TyKind::JsonValue))
             && method == "set"
-            && args.len() == 2
+            && arg_count == 2
         {
             return self.tcx.json_value_ty();
         }
         if method != "clone"
-            && self.reject_unknown_sequence_method(resolved, method, args.len(), receiver.span)
+            && self.reject_unknown_sequence_method(resolved, method, arg_count, receiver.span)
         {
             return self.tcx.error_ty();
         }
@@ -7975,7 +8001,7 @@ impl<'a> TypeChecker<'a> {
             resolved,
             receiver.span,
             args,
-            &arg_tys,
+            &all_arg_tys,
         ) {
             return ty;
         }
@@ -8010,18 +8036,21 @@ impl<'a> TypeChecker<'a> {
             return None;
         }
         let expected_arity = match method {
-            "clear" => Some(0),
+            // The intrinsic String surface: the rest of the catalogue is
+            // shared with the `strings::` free functions and gets its arity
+            // from `check_strings_arity`.
+            "clear" | "len" | "is_empty" | "as_bytes" => Some(0),
             "truncate" | "push" | "push_str" | "push_char" | "push_byte" => Some(1),
             _ => None,
         };
         if let Some(expected_arity) = expected_arity
-            && args.len() != expected_arity
+            && arg_tys.len() != expected_arity
         {
             self.emit(
                 TypeError::CallArityMismatch {
                     callee: format!("String::{method}"),
                     expected: expected_arity,
-                    found: args.len(),
+                    found: arg_tys.len(),
                 },
                 span,
             );
@@ -8036,7 +8065,8 @@ impl<'a> TypeChecker<'a> {
             };
             if let Some(want) = want {
                 let found = self.peel_refs(arg_ty);
-                self.unify(want, found, args[0].span);
+                let arg_span = args.first().map_or(span, |arg| arg.span);
+                self.unify(want, found, arg_span);
             }
         }
         self.check_string_method_args_if_needed(call_id, method, span, args, arg_tys);
@@ -8222,6 +8252,84 @@ impl<'a> TypeChecker<'a> {
         true
     }
 
+    /// Rejects a call on a built-in handle receiver whose argument count
+    /// is not the one that method takes. These receivers dispatch by name
+    /// to a runtime shim that reads a fixed number of slots, so an extra
+    /// argument is dropped and a missing one is read as zero.
+    fn reject_handle_method_arity(
+        &mut self,
+        receiver_ty: Ty,
+        method: &str,
+        args: &[Expr],
+        pipe_extra: usize,
+        span: Span,
+    ) -> bool {
+        let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
+            resolved = self.infer.resolve(self.tcx, *inner);
+        }
+        let found = args.len() + pipe_extra;
+        let (owner, expected) = match self.tcx.kind(resolved) {
+            Some(TyKind::Sender(_)) => (
+                "Sender",
+                match method {
+                    "send" | "try_send" => Some(1),
+                    "close" => Some(0),
+                    _ => None,
+                },
+            ),
+            Some(TyKind::Receiver(_)) => (
+                "Receiver",
+                match method {
+                    "recv_ctx" => Some(1),
+                    "recv" | "try_recv" | "close" => Some(0),
+                    _ => None,
+                },
+            ),
+            Some(TyKind::JoinHandle(_)) => ("JoinHandle", (method == "join").then_some(0)),
+            Some(TyKind::Instant) => ("time::Instant", (method == "elapsed_ms").then_some(0)),
+            Some(TyKind::Duration) => (
+                "time::Duration",
+                matches!(method, "as_millis" | "as_secs" | "as_micros").then_some(0),
+            ),
+            Some(TyKind::DynError) => (
+                "errors::Error",
+                match method {
+                    "with_field" => Some(2),
+                    "is" | "field" => Some(1),
+                    "message" | "cause" | "chain" | "fields" => Some(0),
+                    _ => None,
+                },
+            ),
+            Some(TyKind::JsonValue) => (
+                "json::Value",
+                match method {
+                    "set" => Some(2),
+                    "get" | "at" => Some(1),
+                    "keys" | "len" | "is_null" | "as_str" | "as_i64" | "as_f64" | "as_bool"
+                    | "as_array" => Some(0),
+                    _ => None,
+                },
+            ),
+            _ => return false,
+        };
+        let Some(expected) = expected.filter(|expected| *expected != found) else {
+            return false;
+        };
+        for arg in args {
+            self.check_expr(arg);
+        }
+        self.emit(
+            TypeError::CallArityMismatch {
+                callee: format!("{owner}::{method}"),
+                expected,
+                found,
+            },
+            span,
+        );
+        true
+    }
+
     fn reject_collection_method_arity(
         &mut self,
         resolved: Ty,
@@ -8234,6 +8342,14 @@ impl<'a> TypeChecker<'a> {
                 "insert" | "get_or" | "or_insert" => Some(2),
                 "get" | "remove" | "pop" | "contains" | "contains_key" => Some(1),
                 "clear" | "len" | "is_empty" | "keys" | "values" | "iter" => Some(0),
+                _ => None,
+            },
+            // A tuple's surface is whole-value operations plus positional
+            // access; nothing else reaches a tuple receiver, so every name
+            // here has one arity.
+            Some(TyKind::Tuple(_)) => match method {
+                "get" => Some(1),
+                "len" | "is_empty" | "clone" | "to_string" | "into" | "try_into" => Some(0),
                 _ => None,
             },
             Some(TyKind::Adt { def, .. })
@@ -8577,15 +8693,20 @@ impl<'a> TypeChecker<'a> {
         true
     }
 
-    fn reject_invalid_non_vec_sequence_method(
+    /// Rejects a call a built-in receiver cannot take: a method its
+    /// surface does not carry, or one it carries at a different arity.
+    fn reject_invalid_builtin_receiver_call(
         &mut self,
         receiver_ty: Ty,
         method: &str,
         args: &[Expr],
+        call_id: NodeId,
         span: Span,
     ) -> bool {
+        let pipe_extra = usize::from(self.pipe_stage_callees.contains(&call_id));
         self.reject_non_vec_resizing_method(receiver_ty, method, args, span)
             || self.reject_unavailable_non_vec_sequence_method(receiver_ty, method, args, span)
+            || self.reject_handle_method_arity(receiver_ty, method, args, pipe_extra, span)
     }
 
     fn reject_unavailable_non_vec_sequence_method(
@@ -9096,9 +9217,37 @@ impl<'a> TypeChecker<'a> {
         }
         match self.tcx.kind(resolved) {
             Some(TyKind::Iterator(_) | TyKind::Range(_)) => {
-                let arity = Self::std_combinator_arity("iter", method)?;
-                if arity != arg_tys.len() + 1 {
-                    return None;
+                // The receiver is the combinator's data argument, so the
+                // declared arity leaves one slot for the explicit
+                // arguments. A count the surface does not declare is
+                // reported here: dispatch past this point has no iterator
+                // entry to reach, so it would answer an unconstrained
+                // variable and the call would run as a silent no-op.
+                let accepted = Self::iterator_method_arities(method)?;
+                if !accepted.contains(&arg_tys.len()) {
+                    self.emit(
+                        TypeError::CallArityMismatch {
+                            callee: method.to_string(),
+                            expected: accepted[0],
+                            found: arg_tys.len(),
+                        },
+                        span,
+                    );
+                    return Some(self.tcx.error_ty());
+                }
+                if method == "next" {
+                    let elem = self.sequence_elem_ty(resolved, span)?;
+                    return Some(self.option_adt_ty(elem));
+                }
+                // The predicate form of `count` has no data-last free
+                // spelling, so it is typed here: the predicate answers a
+                // bool for an element and the count is an integer.
+                if method == "count" && arg_tys.len() == 1 {
+                    let elem = self.sequence_elem_ty(resolved, span)?;
+                    let out = self.callable_output(arg_tys[0], &[elem], span);
+                    let bool_ty = self.tcx.bool_ty();
+                    self.unify(bool_ty, out, span);
+                    return Some(self.tcx.int_ty(IntTy::I64));
                 }
                 return self.std_combinator_ty("iter", method, arg_tys, resolved, span);
             }
@@ -9147,7 +9296,6 @@ impl<'a> TypeChecker<'a> {
     fn map_method_ret(
         &mut self,
         method: &str,
-        args: &[Expr],
         arg_tys: &[Ty],
         resolved: Ty,
         span: Span,
@@ -9166,7 +9314,7 @@ impl<'a> TypeChecker<'a> {
             self.emit(error, span);
             return Some(self.tcx.error_ty());
         }
-        let (key_arg, value_arg) = match (method, args.len()) {
+        let (key_arg, value_arg) = match (method, arg_tys.len()) {
             ("insert" | "get_or" | "or_insert", 2) => {
                 (arg_tys.first().copied(), arg_tys.get(1).copied())
             }
@@ -9233,7 +9381,22 @@ impl<'a> TypeChecker<'a> {
                     | "insert"
                     | "remove",
                 1
-            ) | ("slice", 2)
+            ) | ("slice" | "swap", 2)
+                | (
+                    "len"
+                        | "is_empty"
+                        | "first"
+                        | "last"
+                        | "to_vec"
+                        | "iter"
+                        | "sort"
+                        | "reverse"
+                        | "pop"
+                        | "clear"
+                        | "capacity"
+                        | "shrink_to_fit",
+                    0
+                )
         )
     }
 
@@ -9272,7 +9435,6 @@ impl<'a> TypeChecker<'a> {
     fn vec_method_ret(
         &mut self,
         method: &str,
-        args: &[Expr],
         arg_tys: &[Ty],
         resolved: Ty,
         span: Span,
@@ -9291,13 +9453,13 @@ impl<'a> TypeChecker<'a> {
             _ => None,
         };
         if let Some(expected) = expected_arity
-            && args.len() != expected
+            && arg_tys.len() != expected
         {
             self.emit(
                 TypeError::CallArityMismatch {
                     callee: format!("Vec::{method}"),
                     expected,
-                    found: args.len(),
+                    found: arg_tys.len(),
                 },
                 span,
             );
@@ -9305,7 +9467,7 @@ impl<'a> TypeChecker<'a> {
         }
         // References are layout-transparent (the runtime owns memory), so
         // peel them before comparing the pushed element to the slot type.
-        let push_arg = match (method, args.len()) {
+        let push_arg = match (method, arg_tys.len()) {
             ("push" | "fill", 1) => arg_tys.first().copied(),
             ("insert", 2) => arg_tys.get(1).copied(),
             _ => None,
@@ -9315,7 +9477,7 @@ impl<'a> TypeChecker<'a> {
             let arg_peeled = self.peel_refs(arg_ty);
             self.unify(elem_peeled, arg_peeled, span);
         }
-        match (method, args.len()) {
+        match (method, arg_tys.len()) {
             (
                 "push" | "clear" | "truncate" | "extend" | "extend_from_slice" | "reserve"
                 | "reserve_exact" | "sort" | "sort_by" | "sort_by_key" | "reverse" | "fill"
@@ -9362,12 +9524,12 @@ impl<'a> TypeChecker<'a> {
             ("count_of", 1) => Some(self.tcx.int_ty(IntTy::I64)),
             ("contains", 1) => Some(self.tcx.bool_ty()),
             ("slice", _) => {
-                if args.len() != 2 {
+                if arg_tys.len() != 2 {
                     self.emit(
                         TypeError::CallArityMismatch {
                             callee: "Vec::slice".to_string(),
                             expected: 2,
-                            found: args.len(),
+                            found: arg_tys.len(),
                         },
                         span,
                     );
@@ -10145,6 +10307,25 @@ impl<'a> TypeChecker<'a> {
             Some(TyKind::Adt { def, .. }) if def.local == u32::MAX => Some("Result"),
             Some(TyKind::Adt { def, .. }) if def.local == u32::MAX - 1 => Some("Option"),
             _ => None,
+        }
+    }
+
+    /// Explicit argument counts a method on a built-in iterator receiver
+    /// accepts: the combinator's declared arity less the data slot the
+    /// receiver fills. `None` for a name the iterator surface does not
+    /// declare, which the unresolved-method path reports instead.
+    fn iterator_method_arities(name: &str) -> Option<&'static [usize]> {
+        match name {
+            "next" => Some(&[0]),
+            // `count` answers the length, or the accepted-element count
+            // when handed a predicate.
+            "count" => Some(&[0, 1]),
+            _ => match Self::std_combinator_arity("iter", name)?.checked_sub(1)? {
+                0 => Some(&[0]),
+                1 => Some(&[1]),
+                2 => Some(&[2]),
+                _ => None,
+            },
         }
     }
 
@@ -11237,31 +11418,34 @@ impl<'a> TypeChecker<'a> {
         )
     }
 
+    /// Records what the right of `|>` is before its stage is checked: a
+    /// bare path there is a callee, and a call or method call receives
+    /// the piped value as its trailing argument during lowering, so the
+    /// arity checks account for one argument the source does not spell.
+    fn record_pipe_stage(&mut self, op: BinaryOp, rhs: &Expr) {
+        if op != BinaryOp::PipeGt {
+            return;
+        }
+        match &rhs.kind {
+            ExprKind::Path(_) => {
+                self.callee_path_nodes.insert(rhs.id);
+            }
+            ExprKind::Call { callee, .. } => {
+                self.pipe_stage_callees.insert(callee.id);
+            }
+            ExprKind::MethodCall { .. } => {
+                self.pipe_stage_callees.insert(rhs.id);
+            }
+            _ => {}
+        }
+    }
+
     fn check_binary(&mut self, op: BinaryOp, lhs: &Expr, rhs: &Expr, span: Span) -> Ty {
-        // The rhs of `|>` is a callee position: a bare std path there
-        // (`x |> strings::to_uppercase`) is the partial-application call
-        // shape, not a first-class fn value.
-        if op == BinaryOp::PipeGt && matches!(rhs.kind, ExprKind::Path(_)) {
-            self.callee_path_nodes.insert(rhs.id);
-        }
-        // `x |> f(a)` desugars to `f(a, x)`: the call on the right gets
-        // the piped value appended as its last argument during lowering,
-        // so its declared arity is satisfied by one fewer explicit
-        // argument here. Record the callee so the arity check accounts
-        // for the implicit piped argument.
-        if op == BinaryOp::PipeGt
-            && let ExprKind::Call { callee, .. } = &rhs.kind
-        {
-            self.pipe_stage_callees.insert(callee.id);
-        }
-        // `x |> recv.m(a)` desugars to `recv.m(a, x)`: the piped value
-        // lands as the method's last argument during lowering, so the
-        // declared arity is satisfied by one fewer explicit argument
-        // here. Record the call node so the arity check adds it back.
-        if op == BinaryOp::PipeGt && matches!(rhs.kind, ExprKind::MethodCall { .. }) {
-            self.pipe_stage_callees.insert(rhs.id);
-        }
+        self.record_pipe_stage(op, rhs);
         let lhs_ty = self.check_expr(lhs);
+        if op == BinaryOp::PipeGt && matches!(rhs.kind, ExprKind::MethodCall { .. }) {
+            self.pipe_stage_arg_tys.insert(rhs.id, lhs_ty);
+        }
         let rhs_ty = self.check_pipe_rhs(op, lhs_ty, rhs);
         match op {
             BinaryOp::Eq
@@ -15209,7 +15393,7 @@ fn strings_fn_arity(name: &str) -> Option<usize> {
         "split_whitespace" | "trim" | "trim_start" | "trim_end" | "to_lowercase"
         | "to_uppercase" | "to_title" | "to_i64" | "to_f64" | "to_bool" | "lines" | "chars"
         | "bytes" | "byte_len" => 1,
-        "repeat" | "byte_at" => 2,
+        "repeat" | "byte_at" | "index_rune" | "contains_rune" => 2,
         // `join(parts, sep)` is installed on `Vec` rather than `String`, but
         // it remains a `strings` free function and therefore belongs in the
         // same public arity catalogue.
@@ -15234,6 +15418,7 @@ fn strings_fn_int_params(name: &str) -> &'static [usize] {
 fn strings_fn_char_params(name: &str) -> &'static [usize] {
     match name {
         "center" | "pad_left" | "pad_right" => &[2],
+        "index_rune" | "contains_rune" => &[1],
         _ => &[],
     }
 }
