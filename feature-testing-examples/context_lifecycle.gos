@@ -4,7 +4,7 @@
 // and a cancellation-aware receive answers `None` once its context fires.
 
 use std::context
-use std::sync::channel
+use std::sync::{channel, channel_unbounded}
 
 fn produce(tx: Sender<i64>, value: i64) {
     tx.send(value)
@@ -37,11 +37,15 @@ fn main() {
     go produce(tx, 7)
     println!("recv-live {:?}", rx.recv_ctx(&live))
 
+    // A context that has already fired short-circuits the receive, so the
+    // answer does not depend on whether a sender reached the channel first:
+    // a queued value stays queued and is still there for a plain receive.
     let dead = context::Context::with_cancel(&root)
     dead.cancel()
-    let (tx2, rx2) = channel::<i64>()
-    go produce(tx2, 9)
+    let (tx2, rx2) = channel_unbounded::<i64>()
+    tx2.send(9)
     println!("recv-cancelled {:?}", rx2.recv_ctx(&dead))
+    println!("recv-after-cancel {:?}", rx2.recv())
 
     println!("root {}", root.is_cancelled())
 }

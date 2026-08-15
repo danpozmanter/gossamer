@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.50.1 - Lazy collections, native/JIT crash, and diagnostic fixes
+## 0.50.1 - Lazy collections, native/JIT crash, diagnostic, and parity fixes
 
 - Drive a `for` loop over a lazy iterator through its cursor. The loop read
   every element into a `Vec` first and walked that, so `for c in s.chars()`
@@ -100,6 +100,10 @@
 - Describe `time::now()` as the wall-clock reading it has always answered on
   every tier. It was published as a monotonic `Instant`, so pairing it with
   `since_ms` or `elapsed_ms` subtracted two different clocks.
+- Answer `rx.recv_ctx(&ctx)` with `None` on a context that has already fired,
+  without consuming a queued value. The VM took a queued value first while the
+  compiled tiers short-circuited, so the two answered differently whenever a
+  sender reached the channel before the receive.
 
 ## 0.50.0 - Iterators/collections, codegen cycle safety, silent errors, fixes
 

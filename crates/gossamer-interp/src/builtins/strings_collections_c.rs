@@ -41,8 +41,8 @@ fn builtin_channel_try_recv(args: &[Value]) -> RuntimeResult<Value> {
 
 /// `rx.recv_ctx(&ctx)` in the interpreter. The VM channel and Context use
 /// separate wait primitives, so the receive performs bounded condvar waits and
-/// checks the Context between them. A queued value wins over cancellation, as
-/// it does in the native runtime.
+/// checks the Context between them. A context that has already fired answers
+/// `None` without consuming a queued value, as it does in the native runtime.
 fn builtin_channel_recv_ctx(args: &[Value]) -> RuntimeResult<Value> {
     let Some(Value::Channel(channel)) = args.first() else {
         return Err(RuntimeError::Type(

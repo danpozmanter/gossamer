@@ -2516,11 +2516,17 @@ impl Channel {
     }
 
     /// Blocking receive which also observes a caller-provided cancellation
-    /// predicate. A queued value wins over cancellation, matching the native
-    /// runtime's receive ordering. The bounded wait makes cancellation visible
-    /// even though a Context does not share this channel's condvar.
+    /// predicate. A context that has already fired short-circuits without
+    /// consuming a queued value, matching the native runtime's receive
+    /// ordering, so the answer does not depend on whether a sender reached
+    /// the channel first. The bounded wait makes a cancellation raised during
+    /// the wait visible even though a Context does not share this channel's
+    /// condvar.
     #[must_use]
     pub fn recv_with_cancel(&self, is_cancelled: impl Fn() -> bool) -> Option<Value> {
+        if is_cancelled() {
+            return None;
+        }
         let mut guard = self.inner.state.lock();
         loop {
             if let Some(msg) = guard.buf.pop_front() {
