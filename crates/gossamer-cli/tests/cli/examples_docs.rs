@@ -463,55 +463,61 @@ fn farewell(name: String) -> String { \"bye, \" + name }
     let _ = std::fs::remove_file(&out_path);
 }
 
-#[test]
-fn clean_subcommand_removes_frontend_cache_directory() {
-    let tmp = std::env::temp_dir().join(format!(
-        "gos-clean-itest-{}-{}",
+/// Roots for a `gos clean` case: a cache directory the sweep may remove
+/// and a project directory the child runs in. The project directory is
+/// kept outside the cache root because a process cannot remove its own
+/// working directory on Windows.
+fn clean_case_roots(label: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let root = std::env::temp_dir().join(format!(
+        "gos-{label}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
-    std::fs::create_dir_all(&tmp).unwrap();
-    std::fs::write(tmp.join("abc123.ok"), b"").unwrap();
-    // Point every cache class inside `tmp`: `gos clean` sweeps the shared
+    let cache = root.join("cache");
+    let project = root.join("project");
+    std::fs::create_dir_all(&cache).unwrap();
+    std::fs::create_dir_all(&project).unwrap();
+    (cache, project)
+}
+
+#[test]
+fn clean_subcommand_removes_frontend_cache_directory() {
+    let (cache, project) = clean_case_roots("clean-itest");
+    std::fs::write(cache.join("abc123.ok"), b"").unwrap();
+    // Point every cache class inside `cache`: `gos clean` sweeps the shared
     // per-user cache too, which other tests in this run are writing to. The
     // project-local `.gos-cache` roots come from the working directory, so
-    // the child runs inside `tmp` as well.
+    // the child runs in a project directory of its own.
     let out = Command::new(gos_bin())
         .arg("clean")
-        .current_dir(&tmp)
-        .env("GOSSAMER_CACHE_DIR", &tmp)
-        .env("GOSSAMER_CACHE", &tmp)
-        .env("XDG_CACHE_HOME", &tmp)
-        .env("HOME", &tmp)
+        .current_dir(&project)
+        .env("GOSSAMER_CACHE_DIR", &cache)
+        .env("GOSSAMER_CACHE", &cache)
+        .env("XDG_CACHE_HOME", &cache)
+        .env("HOME", &cache)
         .output()
         .expect("spawn clean");
     assert!(out.status.success(), "clean should succeed: {out:?}");
     assert!(
-        !tmp.exists(),
+        !cache.exists(),
         "cache dir still exists after clean: {}",
-        tmp.display()
+        cache.display()
     );
+    let _ = std::fs::remove_dir_all(project.parent().unwrap());
 }
 
 #[test]
 fn clean_dry_run_reports_sizes_without_touching_the_cache() {
-    let tmp = std::env::temp_dir().join(format!(
-        "gos-clean-dryrun-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&tmp).unwrap();
+    let (cache, project) = clean_case_roots("clean-dryrun");
+    let tmp = cache;
     std::fs::write(tmp.join("abc123.ok"), b"hello").unwrap();
     let out = Command::new(gos_bin())
         .arg("clean")
         .arg("--dry-run")
-        .current_dir(&tmp)
+        .current_dir(&project)
         .env("GOSSAMER_CACHE_DIR", &tmp)
         .env("GOSSAMER_CACHE", &tmp)
         .env("XDG_CACHE_HOME", &tmp)
@@ -528,7 +534,7 @@ fn clean_dry_run_reports_sizes_without_touching_the_cache() {
         stdout.contains("would remove frontend cache"),
         "expected would-remove line in {stdout}"
     );
-    std::fs::remove_dir_all(&tmp).ok();
+    let _ = std::fs::remove_dir_all(project.parent().unwrap());
 }
 
 #[test]
