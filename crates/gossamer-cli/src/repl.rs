@@ -3864,12 +3864,6 @@ const MAP_SEQUENCE_OWNERS: &[&str] = &["Map", "BTreeMap"];
 /// keeps `Vec`'s element type and only its receiver changes.
 const SET_SEQUENCE_OWNERS: &[&str] = &["Set", "BTreeSet"];
 
-/// Sequence methods a map cannot answer truthfully: its elements are
-/// `(K, V)` pairs, which neither add up nor flatten. They are dropped
-/// from the listing rather than given a signature that describes an
-/// operation the pair shape has no meaning for.
-const MAP_SEQUENCE_EXCLUSIONS: &[&str] = &["flatten", "product", "sum"];
-
 /// Fills the signature of every map/set sequence method from the `Vec`
 /// entry of the same name. The traversal surface is the same one `Vec`
 /// carries - only the receiver and the element type differ - so deriving
@@ -3891,10 +3885,6 @@ fn fill_collection_sequence_signatures(entries: &mut BTreeMap<(String, String), 
     for key in owners {
         let (owner, name) = (key.0.clone(), key.1.clone());
         let is_map = MAP_SEQUENCE_OWNERS.contains(&owner.as_str());
-        if is_map && MAP_SEQUENCE_EXCLUSIONS.contains(&name.as_str()) {
-            entries.remove(&key);
-            continue;
-        }
         let Some(entry) = entries.get_mut(&key) else {
             continue;
         };
@@ -3999,7 +3989,9 @@ fn add_data_last_std_methods(
         if item.kind != StdItemKind::Function {
             continue;
         }
-        if matches!(owner, "Iterator" | "Range") && !gossamer_types::is_iterator_method(item.name) {
+        if matches!(owner, "Iterator" | "Range")
+            && !gossamer_types::iterator_receiver_accepts_method(item.name)
+        {
             continue;
         }
         let Some(signature) = data_last_method_signature(owner, module_path, item.name) else {

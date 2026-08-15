@@ -8937,7 +8937,9 @@ impl<'a> TypeChecker<'a> {
             // Iterator state addresses elements through the combinator
             // surface; a buffer method has no length or storage to act on
             // and would read as a silent no-op.
-            Some(TyKind::Iterator(_) | TyKind::Range(_)) => (is_iterator_method(method), false),
+            Some(TyKind::Iterator(_) | TyKind::Range(_)) => {
+                (iterator_receiver_accepts_method(method), false)
+            }
             // A map is keyed, not ordered by position: the sequence surface
             // has nothing to index, reorder, or slice on it.
             Some(TyKind::HashMap { .. }) => (is_map_method(method), false),
@@ -9404,8 +9406,9 @@ impl<'a> TypeChecker<'a> {
     ) -> Option<Ty> {
         // A map or set holds its values, so a traversal on one answers eagerly
         // with a sequence, the way one on a Vec does. A map's element is its
-        // key/value pair.
-        if COLLECTION_TRAVERSAL_METHODS.contains(&method) {
+        // key/value pair. A free-call-only traversal is declined here for the
+        // same reason `Vec` declines it: no receiver form exists to reach.
+        if COLLECTION_TRAVERSAL_METHODS.contains(&method) && !is_free_call_only_traversal(method) {
             let elem = match self.tcx.kind(resolved) {
                 Some(TyKind::HashMap { key, value, .. }) => {
                     let (key, value) = (*key, *value);
@@ -16701,7 +16704,57 @@ const TUPLE_METHODS: &[&str] = &[
 /// would read as a silent no-op.
 #[must_use]
 pub fn is_map_method(name: &str) -> bool {
-    MAP_METHODS.contains(&name) || COLLECTION_TRAVERSAL_METHODS.contains(&name)
+    MAP_METHODS.contains(&name)
+        || (COLLECTION_TRAVERSAL_METHODS.contains(&name)
+            && !MAP_UNTRAVERSABLE_METHODS.contains(&name)
+            && !is_free_call_only_traversal(name))
+}
+
+/// Traversals a map cannot answer: its element is a `(K, V)` pair, which
+/// neither adds up, multiplies, nor flattens.
+const MAP_UNTRAVERSABLE_METHODS: &[&str] = &["flatten", "product", "sum"];
+
+/// Whether the runtime binds `name` only as a data-last free call
+/// (`iter::filter_map(f, xs)`), with no receiver form on any tier.
+#[must_use]
+pub fn is_free_call_only_traversal(name: &str) -> bool {
+    FREE_CALL_ONLY_TRAVERSALS.contains(&name)
+}
+
+/// Traversals with a data-last free call and no receiver form. `Vec`
+/// already declines them, and nothing binds `xs.filter_map(..)` on any
+/// tier: accepting one in method position passes `gos check` and then
+/// fails as an unbound name at run time, or as an undefined symbol in a
+/// native build. Every receiver declines them the way `Vec` does; the
+/// free call is how they are written.
+const FREE_CALL_ONLY_TRAVERSALS: &[&str] = &[
+    "chunk_by",
+    "count_by",
+    "filter_map",
+    "find_map",
+    "flat_map",
+    "max_by",
+    "min_by",
+    "partition",
+    "product_by",
+    "reduce",
+    "scan",
+    "sum_by",
+    "unzip",
+];
+
+/// Whether a `Set` / `BTreeSet` receiver answers `name`.
+#[must_use]
+pub fn is_set_method(name: &str) -> bool {
+    SET_METHODS.contains(&name) && !is_free_call_only_traversal(name)
+}
+
+/// Whether an `Iterator` / `Range` receiver answers `name` in method
+/// position. The data-last free surface is wider - it takes an iterator
+/// for every name [`is_iterator_method`] lists - so the two differ.
+#[must_use]
+pub fn iterator_receiver_accepts_method(name: &str) -> bool {
+    is_iterator_method(name) && !is_free_call_only_traversal(name)
 }
 
 /// The `Map` method surface shared by discovery, type checking, and the
@@ -17236,9 +17289,9 @@ pub fn core_type_accepts_method(owner: &str, name: &str) -> bool {
         return true;
     }
     match owner {
-        "Iterator" | "Range" => is_iterator_method(name),
+        "Iterator" | "Range" => iterator_receiver_accepts_method(name),
         "Map" | "BTreeMap" => is_map_method(name),
-        "Set" | "BTreeSet" => SET_METHODS.contains(&name),
+        "Set" | "BTreeSet" => is_set_method(name),
         "Vec" => {
             is_slice_sequence_method(name)
                 || is_vec_only_sequence_method(name)

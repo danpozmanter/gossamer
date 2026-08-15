@@ -173,6 +173,16 @@
 - Report a collection under the one name the language gives it. A runtime
   builtin registered as `HashSet::symmetric_difference` surfaced `HashSet` as
   a type of its own, though the spelling is rejected (`GR0006`).
+- Decline a traversal no receiver binds. `xs.filter_map(f)`, `flat_map`,
+  `scan`, `reduce`, `sum_by`, `product_by`, `min_by`, `max_by`, `find_map`,
+  `partition`, `chunk_by`, and `count_by` passed `gos check` on a `Map`, a
+  `Set`, and an `Iterator`, then failed at run time as unbound names - and
+  failed a native build with an undefined symbol. `Vec` already declined
+  them; every receiver now does, and the data-last free call
+  (`iter::filter_map(f, xs)`) is how they are written.
+- Decline `sum`, `product`, and `flatten` on a map. Its element is a
+  `(K, V)` pair, and `m.sum()` answered `0` rather than reporting that
+  pairs do not add up.
 - Give every standard library handle type's methods a signature in `%i` /
   `%e`. `net::TcpStream`, `http::Client` / `Request` / `Response` / `Router`,
   `sync` locks and atomics, `fs::File` / `OpenOptions`, `regex::Pattern`,
