@@ -152,16 +152,32 @@ pub(crate) fn is_mut_ref_writeback(tcx: &TyCtxt, ty: Ty) -> bool {
     else {
         return false;
     };
+    is_writeback_pointee(tcx, *inner)
+}
+
+/// Returns `true` when a `&mut` alias to a place of type `ty` rides the
+/// write-back protocol. This is the pointee half of
+/// [`is_mut_ref_writeback`]: a call site wraps an argument in a cell only
+/// for these types, because only for these does the callee's parameter
+/// register unwrap one. A type with its own runtime handle (`Map`, a
+/// channel endpoint, a lazy iterator) mutates through the handle itself,
+/// so it crosses the call boundary as the bare handle.
+pub(crate) fn is_writeback_pointee(tcx: &TyCtxt, ty: Ty) -> bool {
     matches!(
-        tcx.kind(*inner),
+        tcx.kind(ty),
         Some(
-            TyKind::Int(_)
+            TyKind::Vec(_)
+                | TyKind::Slice(_)
+                | TyKind::Int(_)
                 | TyKind::Float(_)
                 | TyKind::Bool
                 | TyKind::Char
                 | TyKind::String
+                | TyKind::Duration
+                | TyKind::Instant
                 | TyKind::Array { .. }
                 | TyKind::Adt { .. }
+                | TyKind::Param { .. }
         )
     )
 }

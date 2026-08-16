@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.51.1 - `&mut` container and reference parameter fixes
+
+- Read and write a `Map` through a `&mut Map<K, V>` parameter. Reads
+  answered `None` and `len` answered `0` under `gos run`, and an `insert`
+  reported a type error.
+- Read and write a `Set`, `Deque`, `Queue`, or `Stack` through a `&mut`
+  parameter in compiled builds, where the handle arrived as the address of
+  the caller's slot and produced garbage lengths, false membership, or a
+  segfault.
+- Call methods on a `&mut String` or `&mut <scalar>` parameter in compiled
+  builds: `s.len()`, `s.to_uppercase()`, `n.to_string()`, and the rest now
+  read the value the reference points at, and `push_str` / `push` /
+  `push_char` / `push_byte` / `clear` / `truncate` publish back through it.
+
 ## 0.51.0 - Cohorts: structured concurrency, ergonomic features and fixes
 
 - Add `cohort { }`, a block that owns the goroutines `spawn`ed inside it.

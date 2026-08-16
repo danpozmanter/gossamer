@@ -776,6 +776,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/closure_payload_typing.gos"),
     spec("feature-testing-examples/combinator_sweep.gos"),
     spec("feature-testing-examples/mut_ref_params.gos"),
+    spec("feature-testing-examples/mut_ref_container_params.gos"),
     spec("feature-testing-examples/http_surface.gos"),
     spec("feature-testing-examples/http_form_multipart.gos"),
     spec("feature-testing-examples/option_none_variant_collision.gos"),

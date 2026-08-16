@@ -14,6 +14,11 @@ overlapping temporary borrow, and two `&mut` arguments rooted at the same
 binding in one call. Every permitted write is observed through the same source
 place.
 
+A `Map`, `Set`, `Deque`, `Queue`, or `Stack` parameter mutates the caller's
+container whether it is written `&mut T`, `&T`, or `T`: the value is a handle
+to storage the runtime owns. Write `&mut` on such a parameter to say the
+function mutates it; reads through it answer the caller's live contents.
+
 A call never creates `&mut` implicitly. Pass a mutable place explicitly:
 
 ```gossamer

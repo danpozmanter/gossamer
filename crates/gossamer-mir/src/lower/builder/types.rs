@@ -554,6 +554,39 @@ impl<'a> Builder<'a> {
         cur
     }
 
+    /// Returns `true` when `&mut <place>` over an operand of type
+    /// `operand_ty`, materialised in a local of type `local_ty`, must take
+    /// the place's slot address rather than pass its value. Scalars and
+    /// `String` are the shapes a callee rebinds wholesale through the
+    /// reference, so the caller hands over the slot and reloads from it
+    /// after the call.
+    ///
+    /// The local's type answers only for an operand the checker left
+    /// unresolved: a handle-backed container (`Set`, `Deque`, `Stack`, an
+    /// opaque runtime handle) lives in an `i64`-shaped local, and reading
+    /// that local as the operand's type would take the address of a handle
+    /// slot and hand the callee a pointer where it expects the handle.
+    pub(crate) fn mut_ref_takes_slot_address(&self, operand_ty: Ty, local_ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        let rebindable = |ty: Ty| {
+            matches!(
+                self.tcx.kind_of(ty),
+                TyKind::Int(_)
+                    | TyKind::Float(_)
+                    | TyKind::Bool
+                    | TyKind::Char
+                    | TyKind::String
+                    | TyKind::Duration
+                    | TyKind::Instant
+            )
+        };
+        if matches!(self.tcx.kind_of(operand_ty), TyKind::Var(_)) {
+            rebindable(local_ty)
+        } else {
+            rebindable(operand_ty)
+        }
+    }
+
     /// Element type of a `Vec<T>` / `[T]` / `[T; N]` receiver, peeling any
     /// leading references. `None` when `ty` is not a sequence.
     pub(crate) fn seq_elem_of(&self, ty: Ty) -> Option<Ty> {

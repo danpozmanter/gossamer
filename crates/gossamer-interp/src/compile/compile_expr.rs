@@ -4368,7 +4368,7 @@ impl<'tcx> FnBuilder<'tcx> {
     fn mut_ref_writeback_place<'a>(
         tcx: &TyCtxt,
         arg: &'a HirExpr,
-        _expected_ty: Option<Ty>,
+        expected_ty: Option<Ty>,
     ) -> Option<&'a HirExpr> {
         let typed_as_mut_ref = crate::compile::is_mut_ref_writeback(tcx, arg.ty);
         let (place, explicit_mut_place) = match &arg.kind {
@@ -4378,7 +4378,18 @@ impl<'tcx> FnBuilder<'tcx> {
             } => (operand.as_ref(), true),
             _ => (arg, false),
         };
-        if !typed_as_mut_ref && !explicit_mut_place {
+        // The callee unwraps an incoming cell for exactly the parameters
+        // its own declared type marks as write-back, so the declared type
+        // decides here too; the argument's own shape answers only when the
+        // callee is unknown at this call site.
+        let participates = match expected_ty {
+            Some(expected) => crate::compile::is_mut_ref_writeback(tcx, expected),
+            None => {
+                typed_as_mut_ref
+                    || (explicit_mut_place && crate::compile::is_writeback_pointee(tcx, place.ty))
+            }
+        };
+        if !participates {
             return None;
         }
         matches!(

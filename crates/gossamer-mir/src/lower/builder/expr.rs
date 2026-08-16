@@ -943,21 +943,8 @@ impl<'a> Builder<'a> {
                 // temporary keeps the historical value-passthrough so
                 // existing dispatch sites (e.g. `map.get(&k)` lowering
                 // to `gos_rt_map_get_i64(m, k_value)`) continue to work.
-                let scalar = matches!(
-                    self.tcx.kind_of(operand.ty),
-                    gossamer_types::TyKind::Int(_)
-                        | gossamer_types::TyKind::Float(_)
-                        | gossamer_types::TyKind::Bool
-                        | gossamer_types::TyKind::Char
-                        | gossamer_types::TyKind::String
-                ) || matches!(
-                    self.tcx.kind_of(self.locals[inner.0 as usize].ty),
-                    gossamer_types::TyKind::Int(_)
-                        | gossamer_types::TyKind::Float(_)
-                        | gossamer_types::TyKind::Bool
-                        | gossamer_types::TyKind::Char
-                        | gossamer_types::TyKind::String
-                );
+                let scalar =
+                    self.mut_ref_takes_slot_address(operand.ty, self.locals[inner.0 as usize].ty);
                 let is_place_expr = matches!(
                     operand.kind,
                     HirExprKind::Path { .. }
@@ -1054,6 +1041,8 @@ impl<'a> Builder<'a> {
                             | gossamer_types::TyKind::Float(_)
                             | gossamer_types::TyKind::Bool
                             | gossamer_types::TyKind::Char
+                            | gossamer_types::TyKind::Duration
+                            | gossamer_types::TyKind::Instant
                     );
                     let mut_string_pointee = mutability == gossamer_types::Mutbl::Mut
                         && matches!(self.tcx.kind_of(pointee), gossamer_types::TyKind::String);

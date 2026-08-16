@@ -1,0 +1,196 @@
+// Cross-tier matrix for `&mut` parameters over the container and
+// handle-backed types: a handle crosses the call boundary as itself,
+// and reads through the reference see the caller's live value. The
+// scalar and `String` shapes ride the same matrix because they cross
+// by slot address, so a method on the reference must read the slot.
+
+use std::time
+
+struct Point {
+    x: i64
+    y: i64
+}
+
+type Id = i64
+type UserId = new i64
+
+fn map_read(m: &mut Map<String, i64>, key: String) -> Option<i64> {
+    m.get(key)
+}
+
+fn map_write(m: &mut Map<String, i64>) -> i64 {
+    m.insert("c", 3)
+    m.len()
+}
+
+fn int_map_write(m: &mut Map<i64, i64>) -> i64 {
+    m.insert(3, 30)
+    m.len()
+}
+
+fn set_write(s: &mut Set<i64>) -> i64 {
+    s.insert(4)
+    s.len()
+}
+
+fn deque_write(d: &mut Deque<i64>) -> i64 {
+    d.push_back(4)
+    d.len()
+}
+
+fn stack_write(s: &mut Stack<i64>) -> i64 {
+    s.push(4)
+    s.len()
+}
+
+fn queue_write(q: &mut Queue<i64>) -> i64 {
+    q.push(4)
+    q.len()
+}
+
+fn vec_write(v: &mut Vec<i64>) -> i64 {
+    v.push(4)
+    v.len()
+}
+
+fn array_write(a: &mut [i64; 3]) -> i64 {
+    a[0] = 9
+    a[0]
+}
+
+fn struct_write(p: &mut Point) -> i64 {
+    p.x = 10
+    p.x
+}
+
+fn scalar_write(n: &mut i64) -> i64 {
+    *n += 1
+    *n
+}
+
+fn string_len(s: &mut String) -> i64 {
+    s.len()
+}
+
+fn string_upper(s: &mut String) -> String {
+    s.to_uppercase()
+}
+
+fn string_append(s: &mut String) {
+    s.push_str("!")
+}
+
+fn string_truncate(s: &mut String) {
+    s.truncate(2)
+}
+
+fn scalar_to_string(n: &mut i64) -> String {
+    n.to_string()
+}
+
+fn alias_write(n: &mut Id) -> i64 {
+    *n += 1
+    *n
+}
+
+fn opaque_write(n: &mut UserId) -> UserId {
+    *n = (5).into()
+    *n
+}
+
+fn duration_write(d: &mut time::Duration) -> i64 {
+    *d = time::Duration::from_millis(20)
+    d.as_millis()
+}
+
+fn generic_write<T>(slot: &mut T, value: T) {
+    *slot = value
+}
+
+fn text_len(s: &mut String) -> i64 {
+    s.len()
+}
+
+// The call is this function's tail: the `&mut` parameter it passes is still
+// read on the way out, when the frame publishes the value back to the caller.
+fn tail_call_arg(s: &mut String) -> i64 {
+    *s = "abcd"
+    text_len(s)
+}
+
+fn tail_call_duration(d: &mut time::Duration) -> i64 {
+    *d = time::Duration::from_millis(30)
+    d.as_millis()
+}
+
+fn main() {
+    let mut map = { "a": 1, "b": 2 }
+    println!("map get: {}", map_read(&mut map, "a"))
+    println!("map write: {} {}", map_write(&mut map), map)
+
+    let mut int_map = { 1: 10, 2: 20 }
+    println!("int map: {} {}", int_map_write(&mut int_map), int_map.len())
+
+    let mut set = #{ 1, 2, 3 }
+    println!("set: {} {}", set_write(&mut set), set.len())
+
+    let mut deque = Deque::from([1, 2, 3])
+    println!("deque: {} {}", deque_write(&mut deque), deque.len())
+
+    let mut stack = Stack::from([1, 2, 3])
+    println!("stack: {} {}", stack_write(&mut stack), stack.len())
+
+    let mut queue = Queue::from([1, 2, 3])
+    println!("queue: {} {}", queue_write(&mut queue), queue.len())
+
+    let mut vec = #[1, 2, 3]
+    println!("vec: {} {}", vec_write(&mut vec), vec)
+
+    let mut array = [1, 2, 3]
+    println!("array: {} {}", array_write(&mut array), array[0])
+
+    let mut point = Point { x: 1, y: 2 }
+    println!("struct: {} {}", struct_write(&mut point), point.x)
+
+    let mut count = 1
+    println!("scalar: {} {}", scalar_write(&mut count), count)
+    println!("scalar text: {}", scalar_to_string(&mut count))
+
+    let mut text = "hi"
+    println!("string len: {}", string_len(&mut text))
+    println!("string upper: {}", string_upper(&mut text))
+    string_append(&mut text)
+    println!("string append: {}", text)
+    string_truncate(&mut text)
+    println!("string truncate: {}", text)
+
+    let mut id: Id = 1
+    println!("alias: {} {}", alias_write(&mut id), id)
+
+    let mut user: UserId = (1).into()
+    println!("opaque: {} {}", opaque_write(&mut user), user)
+
+    let mut span = time::Duration::from_millis(10)
+    println!("duration: {} {}", duration_write(&mut span), span.as_millis())
+
+    let mut generic_int = 1
+    generic_write(&mut generic_int, 5)
+    let mut generic_text = "hi"
+    generic_write(&mut generic_text, "bye")
+    let mut generic_point = Point { x: 1, y: 2 }
+    generic_write(&mut generic_point, Point { x: 9, y: 8 })
+    println!(
+        "generic: {} {} {}"
+        generic_int, generic_text, generic_point.x
+    )
+
+    let mut tail_text = "hi"
+    println!("tail call: {} {}", tail_call_arg(&mut tail_text), tail_text)
+
+    let mut tail_span = time::Duration::from_millis(10)
+    println!(
+        "tail duration: {} {}"
+        tail_call_duration(&mut tail_span)
+        tail_span.as_millis()
+    )
+}

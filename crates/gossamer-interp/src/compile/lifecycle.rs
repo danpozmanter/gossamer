@@ -90,7 +90,7 @@ impl<'tcx> FnBuilder<'tcx> {
         optimize_float_accumulator_moves(&mut self.instrs, &mut self.instruction_locations);
         optimize_i64_to_f64_divs(&mut self.instrs, &mut self.instruction_locations);
         if !self.capture_cells_used {
-            optimize_tail_call_argument_moves(&mut self.instrs);
+            optimize_tail_call_argument_moves(&mut self.instrs, &self.mut_ref_params);
         }
         let instruction_locations = encode_instruction_locations(&self.instruction_locations);
         let mut chunk = FnChunk {
@@ -132,7 +132,11 @@ impl<'tcx> FnBuilder<'tcx> {
 /// follows the common shared-borrow materialization chain
 /// `Move local -> borrow_temp; Move borrow_temp -> arg_slot` so borrowed
 /// aggregate tail calls also avoid an otherwise redundant retain/release pair.
-fn optimize_tail_call_argument_moves(instrs: &mut [Op]) {
+///
+/// A `&mut` parameter register in `mut_ref_params` stays live past the call:
+/// the frame publishes its final value back to the caller's write-back cell
+/// on the return path, so its handle is not the child's to take.
+fn optimize_tail_call_argument_moves(instrs: &mut [Op], mut_ref_params: &[Reg]) {
     for call_idx in 0..instrs.len().saturating_sub(1) {
         let (dst, args, argc) = match instrs[call_idx] {
             Op::Call {
@@ -155,7 +159,7 @@ fn optimize_tail_call_argument_moves(instrs: &mut [Op]) {
             let Op::Move { dst: move_dst, src } = instrs[move_idx] else {
                 continue;
             };
-            if move_dst != arg_slot {
+            if move_dst != arg_slot || mut_ref_params.contains(&src) {
                 continue;
             }
             instrs[move_idx] = Op::MoveConsume { dst: arg_slot, src };
@@ -166,6 +170,7 @@ fn optimize_tail_call_argument_moves(instrs: &mut [Op]) {
                     src: original,
                 } = instrs[move_idx - 1]
                 && producer_dst == src
+                && !mut_ref_params.contains(&original)
             {
                 instrs[move_idx - 1] = Op::MoveConsume {
                     dst: src,

@@ -138,6 +138,25 @@ impl<'a> Builder<'a> {
         ty: Ty,
         span: Span,
     ) -> Option<Local> {
+        // A `&mut <scalar / String>` reference is the address of the
+        // caller's slot, so a method on it dispatches on the value the slot
+        // holds, exactly as `(*x).m()` does. The rebinding string methods
+        // keep the reference: they publish the runtime's replacement pointer
+        // back through the same slot.
+        if !Self::rebinds_receiver_place(method)
+            && let Some(pointee) = self.mut_slot_receiver_pointee(receiver)
+        {
+            let deref = HirExpr {
+                id: receiver.id,
+                span: receiver.span,
+                ty: pointee,
+                kind: HirExprKind::Unary {
+                    op: HirUnaryOp::Deref,
+                    operand: Box::new(receiver.clone()),
+                },
+            };
+            return self.lower_method_call(&deref, method, args, ty, span);
+        }
         // Fuse signed-integer `n.to_string().chars()` into one runtime call.
         // The unfused form allocated a C string, scanned it into a second
         // allocation, then released the temporary string. Numeric text is
@@ -1403,6 +1422,103 @@ impl<'a> Builder<'a> {
         MethodLowering::Pass
     }
 
+    /// `true` for the methods that rebind a `String` receiver in place.
+    /// They own their receiver's write-back, so the receiver reaches them
+    /// as the reference it was written as.
+    fn rebinds_receiver_place(method: &Ident) -> bool {
+        matches!(
+            method.name.as_str(),
+            "push_str" | "push" | "push_char" | "push_byte" | "clear" | "truncate"
+        )
+    }
+
+    /// The pointee type when `receiver` denotes a `&mut <scalar / String>`
+    /// place - the shapes a reference addresses by slot rather than by
+    /// value. `None` for every other receiver, including a shared `&T`,
+    /// which already holds the value's own pointer.
+    fn mut_slot_receiver_pointee(&self, receiver: &HirExpr) -> Option<Ty> {
+        let ref_ty = if matches!(self.tcx.kind_of(receiver.ty), TyKind::Ref { .. }) {
+            receiver.ty
+        } else {
+            let local = self.receiver_local_from_path(receiver)?;
+            self.locals[local.0 as usize].ty
+        };
+        self.mut_slot_pointee(ref_ty)
+    }
+
+    /// Reads the value a `&mut <scalar / String>` receiver local points at.
+    /// Any other receiver local already holds the value to dispatch on and
+    /// is returned unchanged.
+    fn load_receiver_slot(&mut self, local: Local, span: Span) -> Local {
+        let Some(pointee) = self.mut_slot_pointee_of_local(local) else {
+            return local;
+        };
+        let zero_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let zero = self.fresh(zero_ty);
+        self.emit_assign(
+            Place::local(zero),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+        let dest = self.fresh(pointee);
+        self.emit_assign(
+            Place::local(dest),
+            Rvalue::CallIntrinsic {
+                name: "gos_load",
+                args: vec![
+                    Operand::Copy(Place::local(local)),
+                    Operand::Copy(Place::local(zero)),
+                ],
+            },
+            span,
+        );
+        dest
+    }
+
+    /// Publishes a rebound receiver value: through the slot for a
+    /// `&mut <scalar / String>` receiver, into the local otherwise.
+    fn store_receiver_slot(&mut self, recv_local: Local, value: Local, span: Span) {
+        let place = if self.mut_slot_pointee_of_local(recv_local).is_some() {
+            Place {
+                local: recv_local,
+                projection: vec![crate::ir::Projection::Deref],
+            }
+        } else {
+            Place::local(recv_local)
+        };
+        self.emit_assign(place, Rvalue::Use(Operand::Copy(Place::local(value))), span);
+    }
+
+    /// Pointee of a local typed `&mut <scalar / String>`.
+    fn mut_slot_pointee_of_local(&self, local: Local) -> Option<Ty> {
+        self.mut_slot_pointee(self.locals[local.0 as usize].ty)
+    }
+
+    /// Pointee of `&mut T` when `T` is a shape a reference addresses by
+    /// slot: a scalar, a `String`, or one of the transparent `i64` time
+    /// newtypes. `None` for a shared reference or any other referent.
+    fn mut_slot_pointee(&self, ty: Ty) -> Option<Ty> {
+        let TyKind::Ref {
+            inner,
+            mutability: gossamer_types::Mutbl::Mut,
+        } = self.tcx.kind_of(ty)
+        else {
+            return None;
+        };
+        let inner = *inner;
+        matches!(
+            self.tcx.kind_of(inner),
+            TyKind::Int(_)
+                | TyKind::Float(_)
+                | TyKind::Bool
+                | TyKind::Char
+                | TyKind::String
+                | TyKind::Duration
+                | TyKind::Instant
+        )
+        .then_some(inner)
+    }
+
     /// `s.push_str/push/push_char/push_byte(_)` on an owned `String` receiver.
     fn lower_string_push_method(
         &mut self,
@@ -1436,13 +1552,14 @@ impl<'a> Builder<'a> {
                 let Some(arg_local) = self.lower_expr(&args[0]) else {
                     return MethodLowering::Handled(None);
                 };
-                let dest = self.fresh(recv_ty);
+                let recv_value = self.load_receiver_slot(recv_local, span);
+                let dest = self.fresh(peeled);
                 let next = self.new_block(span);
                 let (callee, call_args) = match literal_len {
                     Some(len) => (
                         "gos_rt_str_append_bytes",
                         vec![
-                            Operand::Copy(Place::local(recv_local)),
+                            Operand::Copy(Place::local(recv_value)),
                             Operand::Copy(Place::local(arg_local)),
                             Operand::Const(ConstValue::Int(len)),
                         ],
@@ -1450,7 +1567,7 @@ impl<'a> Builder<'a> {
                     None => (
                         "gos_rt_str_concat_drop_a",
                         vec![
-                            Operand::Copy(Place::local(recv_local)),
+                            Operand::Copy(Place::local(recv_value)),
                             Operand::Copy(Place::local(arg_local)),
                         ],
                     ),
@@ -1462,11 +1579,7 @@ impl<'a> Builder<'a> {
                     target: Some(next),
                 });
                 self.set_current(next);
-                self.emit_assign(
-                    Place::local(recv_local),
-                    Rvalue::Use(Operand::Copy(Place::local(dest))),
-                    span,
-                );
+                self.store_receiver_slot(recv_local, dest, span);
                 return MethodLowering::Handled(Some(self.lower_unit(span)));
             }
         }
@@ -1488,23 +1601,20 @@ impl<'a> Builder<'a> {
                 let Some(arg_local) = self.lower_expr(&args[0]) else {
                     return MethodLowering::Handled(None);
                 };
-                let dest = self.fresh(recv_ty);
+                let recv_value = self.load_receiver_slot(recv_local, span);
+                let dest = self.fresh(peeled);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
                     callee: Operand::Const(ConstValue::Str("gos_rt_str_push_char".to_string())),
                     args: vec![
-                        Operand::Copy(Place::local(recv_local)),
+                        Operand::Copy(Place::local(recv_value)),
                         Operand::Copy(Place::local(arg_local)),
                     ],
                     destination: Place::local(dest),
                     target: Some(next),
                 });
                 self.set_current(next);
-                self.emit_assign(
-                    Place::local(recv_local),
-                    Rvalue::Use(Operand::Copy(Place::local(dest))),
-                    span,
-                );
+                self.store_receiver_slot(recv_local, dest, span);
                 return MethodLowering::Handled(Some(self.lower_unit(span)));
             }
         }
@@ -1524,23 +1634,20 @@ impl<'a> Builder<'a> {
                 let Some(arg_local) = self.lower_expr(&args[0]) else {
                     return MethodLowering::Handled(None);
                 };
-                let dest = self.fresh(recv_ty);
+                let recv_value = self.load_receiver_slot(recv_local, span);
+                let dest = self.fresh(peeled);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
                     callee: Operand::Const(ConstValue::Str("gos_rt_str_push_char".to_string())),
                     args: vec![
-                        Operand::Copy(Place::local(recv_local)),
+                        Operand::Copy(Place::local(recv_value)),
                         Operand::Copy(Place::local(arg_local)),
                     ],
                     destination: Place::local(dest),
                     target: Some(next),
                 });
                 self.set_current(next);
-                self.emit_assign(
-                    Place::local(recv_local),
-                    Rvalue::Use(Operand::Copy(Place::local(dest))),
-                    span,
-                );
+                self.store_receiver_slot(recv_local, dest, span);
                 return MethodLowering::Handled(Some(self.lower_unit(span)));
             }
         }
@@ -1560,23 +1667,20 @@ impl<'a> Builder<'a> {
                 let Some(arg_local) = self.lower_expr(&args[0]) else {
                     return MethodLowering::Handled(None);
                 };
-                let dest = self.fresh(recv_ty);
+                let recv_value = self.load_receiver_slot(recv_local, span);
+                let dest = self.fresh(peeled);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
                     callee: Operand::Const(ConstValue::Str("gos_rt_str_push_byte".to_string())),
                     args: vec![
-                        Operand::Copy(Place::local(recv_local)),
+                        Operand::Copy(Place::local(recv_value)),
                         Operand::Copy(Place::local(arg_local)),
                     ],
                     destination: Place::local(dest),
                     target: Some(next),
                 });
                 self.set_current(next);
-                self.emit_assign(
-                    Place::local(recv_local),
-                    Rvalue::Use(Operand::Copy(Place::local(dest))),
-                    span,
-                );
+                self.store_receiver_slot(recv_local, dest, span);
                 return MethodLowering::Handled(Some(self.lower_unit(span)));
             }
         }
@@ -1594,7 +1698,8 @@ impl<'a> Builder<'a> {
                 peeled = *inner;
             }
             if matches!(self.tcx.kind_of(peeled), TyKind::String) {
-                let mut call_args = vec![Operand::Copy(Place::local(recv_local))];
+                let recv_value = self.load_receiver_slot(recv_local, span);
+                let mut call_args = vec![Operand::Copy(Place::local(recv_value))];
                 let rt = if method.name.as_str() == "clear" {
                     call_args.clear();
                     "gos_rt_str_clear"
@@ -1605,7 +1710,7 @@ impl<'a> Builder<'a> {
                     call_args.push(Operand::Copy(Place::local(arg_local)));
                     "gos_rt_str_truncate"
                 };
-                let dest = self.fresh(recv_ty);
+                let dest = self.fresh(peeled);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
                     callee: Operand::Const(ConstValue::Str(rt.to_string())),
@@ -1614,11 +1719,7 @@ impl<'a> Builder<'a> {
                     target: Some(next),
                 });
                 self.set_current(next);
-                self.emit_assign(
-                    Place::local(recv_local),
-                    Rvalue::Use(Operand::Copy(Place::local(dest))),
-                    span,
-                );
+                self.store_receiver_slot(recv_local, dest, span);
                 return MethodLowering::Handled(Some(self.lower_unit(span)));
             }
         }

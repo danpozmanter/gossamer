@@ -1196,7 +1196,6 @@ impl<'a> Builder<'a> {
     /// existing `&mut` parameter is already a pointer and needs no reload, so
     /// only the explicit `&mut <local>` form qualifies.
     pub(crate) fn mut_ref_reload_target(&self, arg: &HirExpr) -> Option<Local> {
-        use gossamer_types::TyKind;
         let HirExprKind::Unary {
             op: HirUnaryOp::RefMut,
             operand,
@@ -1211,13 +1210,8 @@ impl<'a> Builder<'a> {
             return None;
         };
         let local = self.lookup_local(&seg.name)?;
-        let writeback = matches!(
-            self.tcx.kind_of(operand.ty),
-            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::String
-        ) || matches!(
-            self.tcx.kind_of(self.locals[local.0 as usize].ty),
-            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::String
-        );
+        let writeback =
+            self.mut_ref_takes_slot_address(operand.ty, self.locals[local.0 as usize].ty);
         writeback.then_some(local)
     }
 }

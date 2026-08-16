@@ -1128,9 +1128,15 @@ fn compile_bodies_parallel_incremental(
     ))
 }
 
-fn dump_mir(bodies: &[Body], _tcx: &TyCtxt) {
+fn dump_mir(bodies: &[Body], tcx: &TyCtxt) {
     for body in bodies {
         eprintln!("=== MIR {} ===", body.name);
+        for (i, local) in body.locals.iter().enumerate() {
+            eprintln!(
+                "  local {i}: {}",
+                gossamer_types::printer::render_ty(tcx, local.ty)
+            );
+        }
         for (i, block) in body.blocks.iter().enumerate() {
             eprintln!("  bb{i}:");
             for stmt in &block.stmts {
