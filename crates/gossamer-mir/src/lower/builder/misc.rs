@@ -384,15 +384,7 @@ impl<'a> Builder<'a> {
             if let HirPatKind::Binding { name, mutable } = &val_pat.kind {
                 let bind_local = self.push_local(elem_ty, Some(name.clone()), *mutable);
                 self.bind_local(&name.name, bind_local);
-                let is_inline_aggregate = matches!(
-                    self.tcx.kind_of(elem_ty),
-                    TyKind::Tuple(_) | TyKind::Array { .. }
-                ) || matches!(
-                    self.tcx.kind_of(elem_ty),
-                    TyKind::Adt { def, .. }
-                        if def.local < u32::MAX - 16 && self.tcx.struct_field_tys(*def).is_some()
-                );
-                if is_inline_aggregate {
+                if self.is_inline_aggregate_ty(elem_ty) {
                     // A tuple/struct Vec element occupies several inline slots.
                     // `gos_load` only returns one word, so loading it as a
                     // whole silently truncates the aggregate. Keep the slot
@@ -772,10 +764,11 @@ impl<'a> Builder<'a> {
                     gossamer_types::TyKind::Tuple(elems) => elems.clone(),
                     _ => Vec::new(),
                 };
+                // Each part starts where the ones before it end, so the walk
+                // carries a running byte offset rather than a per-index one: a
+                // part that is itself an aggregate occupies several slots.
+                let mut byte_off: i128 = 0;
                 for (i, sub_pat) in sub_pats.iter().enumerate() {
-                    let HirPatKind::Binding { name, mutable } = &sub_pat.kind else {
-                        continue;
-                    };
                     let field_ty = if matches!(
                         self.tcx.kind_of(sub_pat.ty),
                         gossamer_types::TyKind::Var(_) | gossamer_types::TyKind::Error
@@ -793,12 +786,34 @@ impl<'a> Builder<'a> {
                     } else {
                         sub_pat.ty
                     };
+                    let field_bytes = i128::from(self.elem_bytes_of(field_ty).max(8));
+                    let part_off = byte_off;
+                    byte_off += field_bytes;
+                    let HirPatKind::Binding { name, mutable } = &sub_pat.kind else {
+                        continue;
+                    };
                     let bind_local = self.push_local(field_ty, Some(name.clone()), *mutable);
                     self.bind_local(&name.name, bind_local);
+                    // An inline aggregate part holds its words in the element's
+                    // own slots, so the binding names their address and later
+                    // field reads take their offsets from there. A single-word
+                    // part is the word itself.
+                    if self.is_inline_aggregate_ty(field_ty) {
+                        self.emit_assign(
+                            Place::local(bind_local),
+                            Rvalue::BinaryOp {
+                                op: BinOp::Add,
+                                lhs: Operand::Copy(Place::local(slot_ptr)),
+                                rhs: Operand::Const(ConstValue::Int(part_off)),
+                            },
+                            span,
+                        );
+                        continue;
+                    }
                     let off_local = self.fresh(i64_ty);
                     self.emit_assign(
                         Place::local(off_local),
-                        Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(i as i64) * 8))),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(part_off))),
                         span,
                     );
                     let after_load = self.new_block(span);
@@ -861,7 +876,8 @@ impl<'a> Builder<'a> {
         &mut self,
         set_expr: &HirExpr,
         elem_ty: Ty,
-        is_i64: bool,
+        sym: &str,
+        descriptor: Option<String>,
         loop_pat: &HirPat,
         body: &HirExpr,
         span: Span,
@@ -869,15 +885,16 @@ impl<'a> Builder<'a> {
         let set_local = self.lower_expr(set_expr)?;
         let vec_ty = self.tcx.intern(gossamer_types::TyKind::Vec(elem_ty));
         let vec_local = self.fresh(vec_ty);
-        let sym = if is_i64 {
-            "gos_rt_set_to_vec_i64"
-        } else {
-            "gos_rt_set_to_vec"
-        };
+        let mut args = vec![Operand::Copy(Place::local(set_local))];
+        // A content-keyed snapshot rebuilds each element from its slot
+        // descriptor, so the walk passes the same one the inserts used.
+        if let Some(descriptor) = descriptor {
+            args.push(Operand::Const(ConstValue::Str(descriptor)));
+        }
         let next = self.new_block(span);
         self.terminate(Terminator::Call {
             callee: Operand::Const(ConstValue::Str(sym.to_string())),
-            args: vec![Operand::Copy(Place::local(set_local))],
+            args,
             destination: Place::local(vec_local),
             target: Some(next),
         });

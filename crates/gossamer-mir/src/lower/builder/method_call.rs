@@ -3479,7 +3479,17 @@ impl<'a> Builder<'a> {
                 let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 self.tcx.intern(gossamer_types::TyKind::Vec(i))
             }
-            "gos_rt_set_to_vec_skey" => ty,
+            // The content-keyed snapshot is a materialised vec on every tier,
+            // exactly as the scalar-element ones above are, so `iter()` names
+            // the same sequence `to_vec()` does rather than a lazy cursor the
+            // handle has no protocol for.
+            "gos_rt_set_to_vec_skey" => match self.tcx.kind_of(ty) {
+                gossamer_types::TyKind::Iterator(elem) | gossamer_types::TyKind::Vec(elem) => {
+                    let elem = *elem;
+                    self.tcx.intern(gossamer_types::TyKind::Vec(elem))
+                }
+                _ => ty,
+            },
             "gos_rt_http_response_status"
             | "gos_rt_vec_capacity"
             | "gos_rt_set_len"

@@ -19,4 +19,18 @@ fn main() {
     let mut steps: Map<Point, i64> = Map::new()
     steps.insert(Point { x: 3, y: 4 }, 7)
     println!("steps={}", steps.get(Point { x: 3, y: 4 }).unwrap())
+
+    // A walk over a struct-keyed set rebuilds each element from its slot
+    // descriptor, so the body reads fields rather than the one word a
+    // scalar-element snapshot would hand it.
+    for p in left { println!("for {} {}", p.x, p.y) }
+    for p in left.iter() { println!("iter {} {}", p.x, p.y) }
+    println!("count {}", left.count(|p| p.x > 1))
+    println!("sum {}", left.map(|p| p.x + p.y).len())
+
+    // The element type is the one the first `insert` stores, so a set built
+    // empty walks the same way an annotated one does.
+    let mut inferred = Set::new()
+    inferred.insert(Point { x: 7, y: 8 })
+    for p in inferred { println!("inferred {} {}", p.x, p.y) }
 }

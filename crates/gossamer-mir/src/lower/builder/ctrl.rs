@@ -2822,15 +2822,28 @@ impl<'a> Builder<'a> {
                 .is_some_and(|rk| matches!(rk, "collections::HashSet" | "collections::BTreeSet")))
         {
             let is_i64 = matches!(self.set_elem_kind_of(probe_expr), MapKeyKind::I64);
-            let elem_ty = if is_i64 {
-                self.tcx.int_ty(gossamer_types::IntTy::I64)
-            } else {
-                self.tcx.string_ty()
+            // A struct / tuple / array element is content-keyed, and the
+            // snapshot rebuilds each one from its slot descriptor. Walking it
+            // as text would hand the body a pointer where it reads a field.
+            let aggregate_elem = self
+                .first_generic_of(probe_expr.ty)
+                .map(|elem| self.peel_ref_ty(elem))
+                .filter(|elem| self.is_aggregate_key(*elem))
+                .and_then(|elem| self.key_descriptor(elem).map(|desc| (elem, desc)));
+            let (elem_ty, sym, descriptor) = match (is_i64, aggregate_elem) {
+                (true, _) => (
+                    self.tcx.int_ty(gossamer_types::IntTy::I64),
+                    "gos_rt_set_to_vec_i64",
+                    None,
+                ),
+                (false, Some((elem, desc))) => (elem, "gos_rt_set_to_vec_skey", Some(desc)),
+                (false, None) => (self.tcx.string_ty(), "gos_rt_set_to_vec", None),
             };
             return self.lower_for_set(
                 probe_expr,
                 elem_ty,
-                is_i64,
+                sym,
+                descriptor,
                 for_loop.loop_pat,
                 for_loop.body,
                 span,
@@ -3234,7 +3247,15 @@ impl<'a> Builder<'a> {
                         {
                             for_vec_elem = Some(match self.set_elem_kind_of(receiver) {
                                 MapKeyKind::I64 => self.tcx.int_ty(gossamer_types::IntTy::I64),
-                                _ => self.tcx.string_ty(),
+                                // An aggregate element is snapshotted as its
+                                // own inline slots, so the binding takes the
+                                // element type itself - reading it as one word
+                                // would address a fraction of the element.
+                                _ => self
+                                    .first_generic_of(receiver.ty)
+                                    .map(|elem| self.peel_ref_ty(elem))
+                                    .filter(|elem| self.is_aggregate_key(*elem))
+                                    .unwrap_or_else(|| self.tcx.string_ty()),
                             });
                         } else if matches!(name.name.as_str(), "rev" | "to_vec" | "clone") {
                             for_vec_elem = self.for_loop_elem_ty(receiver);

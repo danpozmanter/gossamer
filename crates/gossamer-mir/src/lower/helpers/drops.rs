@@ -1676,6 +1676,17 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                         {
                             copy_srcs[i].push(src.local.0 as usize);
                         }
+                        // The address of a part of a borrowed element - the
+                        // aggregate half of a destructured `(k, v)` binding -
+                        // names the same storage the element does, so it is a
+                        // borrow exactly as the element pointer is.
+                        Rvalue::BinaryOp {
+                            op: BinOp::Add,
+                            lhs: Operand::Copy(src),
+                            rhs: Operand::Const(ConstValue::Int(_)),
+                        } if src.projection.is_empty() && (src.local.0 as usize) < n_locals => {
+                            copy_srcs[i].push(src.local.0 as usize);
+                        }
                         _ => disqualified[i] = true,
                     }
                 }
@@ -1909,12 +1920,17 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 // (the extracted sub-aggregate). A direct RC-field extract (dest
                 // is a `String`/`Vec`) has no aggregate RC fields, so this is a
                 // no-op there - those are retained by the owned-extract path.
+                // A `Deref` step is the same sharing copy: `dest = Copy(*r)`
+                // reads the struct the reference names into a local that owns
+                // its own share of what the words point at.
                 if let Rvalue::Use(Operand::Copy(src)) = rvalue
                     && !src.projection.is_empty()
-                    && src
-                        .projection
-                        .iter()
-                        .all(|p| matches!(p, crate::ir::Projection::Field(_)))
+                    && src.projection.iter().all(|p| {
+                        matches!(
+                            p,
+                            crate::ir::Projection::Field(_) | crate::ir::Projection::Deref
+                        )
+                    })
                     && place.projection.is_empty()
                     && (place.local.0 as usize) < body.locals.len()
                 {
@@ -1988,6 +2004,29 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         {
             for (f, w) in fields {
                 field_gaps[bi][len].push((false, destination.local, f.clone(), *w));
+            }
+        }
+        // A slot load into an owned aggregate local - the `(k, v)` a loop
+        // binds from a sequence element - copies words the container still
+        // owns, so the binding takes its own share of every RC field the copy
+        // now names. The release booked for the local at its death balances
+        // it. The retain lands at the head of the call's successor, where the
+        // loaded value first exists.
+        if let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            destination,
+            target: Some(succ),
+            ..
+        } = &block.terminator
+            && name == "gos_load"
+            && destination.projection.is_empty()
+            && let Some((_, fields)) = agg_locals
+                .iter()
+                .find(|(l, _)| *l == destination.local.0 as usize)
+        {
+            let succ = succ.0 as usize;
+            for (f, w) in fields {
+                field_gaps[succ][0].push((true, destination.local, f.clone(), *w));
             }
         }
     }

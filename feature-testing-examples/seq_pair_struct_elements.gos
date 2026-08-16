@@ -1,0 +1,44 @@
+// A sequence element that pairs a scalar with a struct keeps the struct's
+// words in the element's own slots. Destructuring the pair names those slots,
+// so every field read below answers the value written rather than the address
+// the slot would hold if the part were a handle, and the binding borrows the
+// element rather than taking a share of what the sequence owns.
+
+struct Part { name: String, tags: Vec<String>, weight: i64 }
+
+struct Cell { row: i64, col: i64 }
+
+fn total_weight(parts: &Vec<(String, Part)>) -> i64 {
+    let mut total = 0
+    for (key, part) in parts {
+        total += part.weight + key.len() + part.name.len() + part.tags.len()
+    }
+    total
+}
+
+fn main() {
+    let mut parts: Vec<(String, Part)> = #[]
+    parts.push(("bolt", Part { name: "hex", tags: #["steel", "m6"], weight: 12 }))
+    parts.push(("plate", Part { name: "flat", tags: #["steel"], weight: 30 }))
+
+    for (key, part) in parts {
+        println!("{} {} {} {}", key, part.name, part.tags.len(), part.weight)
+    }
+    println!("total {}", total_weight(&parts))
+    println!("still {} {}", parts.len(), parts[1].1.tags.len())
+
+    // A struct ahead of the scalar shifts every later part's offset.
+    let mut cells: Vec<(Cell, String)> = #[]
+    cells.push((Cell { row: 1, col: 2 }, "a"))
+    cells.push((Cell { row: 3, col: 4 }, "b"))
+    for (cell, label) in cells {
+        println!("cell {} {} {}", cell.row, cell.col, label)
+    }
+
+    // Three parts, with the aggregate in the middle.
+    let mut rows: Vec<(i64, Cell, String)> = #[]
+    rows.push((7, Cell { row: 5, col: 6 }, "z"))
+    for (id, cell, label) in rows {
+        println!("row {} {} {} {}", id, cell.row, cell.col, label)
+    }
+}

@@ -43,6 +43,24 @@
   native tier.
 - Resolve `Map::remove` / `Map::pop` and `keys()` iteration on an aggregate key
   from JIT-compiled code, which had no in-process symbol to call.
+- Hand `m.count(pred)` / `s.count(pred)` on a map or set a predicate whose
+  parameter is the element, so the body reads the pair or value it was written
+  for; the parameter previously reached codegen untyped and the count answered
+  from an uninitialised result.
+- Read a struct value's fields through a map traversal (`m.map`, `m.filter`,
+  `m.count`, `m.find`): the walk hands each pair the struct's own words, where
+  it previously handed the address of the entry and read that address as the
+  first field.
+- Destructure a sequence element that pairs a scalar with a struct, tuple, or
+  array: each part is read at its own slot offset and names the element the
+  sequence still owns, instead of taking one word per part and releasing what
+  the sequence holds.
+- Walk a set whose elements are structs, tuples, or fixed arrays with
+  `for p in s` and `s.iter()`, which yielded nothing in a compiled build and
+  faulted in a JIT-compiled body.
+- Take a set's element type from the value the first `insert` stores, so a set
+  built with `Set::new()` traverses and reads fields the way an annotated one
+  does.
 
 ## 0.51.1 - Reference parameters, method dispatch, sockets and byte sequences
 

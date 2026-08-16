@@ -1236,6 +1236,28 @@ pub(crate) fn lower_fn(
                 span,
             );
         }
+    } else if builder.current.is_some() {
+        // The body produced no value. A tail that never yields one - a `loop`
+        // with no `break`, an early exit - leaves RETURN unwritten by design.
+        // A tail whose own type carries the function's result must have
+        // lowered to something, so refuse that shape here rather than hand the
+        // backends a function whose result slot is never stored.
+        let ret_ty = builder.locals[Local::RETURN.0 as usize].ty;
+        let tail_yields_value = body.block.tail.as_ref().is_some_and(|tail| {
+            !matches!(
+                builder.tcx.kind_of(tail.ty),
+                gossamer_types::TyKind::Unit
+                    | gossamer_types::TyKind::Never
+                    | gossamer_types::TyKind::Error
+            )
+        });
+        assert!(
+            !tail_yields_value
+                || matches!(builder.tcx.kind_of(ret_ty), gossamer_types::TyKind::Unit),
+            "MIR lower: `{}` returns a value but its tail expression has no \
+             lowering; the expression's type did not reach the builder",
+            decl.name.name,
+        );
     }
     builder.end_auto_region(regioned, span);
     builder.terminate(Terminator::Return);

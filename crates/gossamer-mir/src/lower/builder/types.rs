@@ -1533,6 +1533,21 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Whether a value of this type lives in a container slot as its own
+    /// words rather than as a handle: a tuple, a fixed array, or a user
+    /// struct. A binding to one names the slot's address, and its field reads
+    /// take their offsets from there.
+    pub(crate) fn is_inline_aggregate_ty(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        match self.tcx.kind_of(ty) {
+            TyKind::Tuple(_) | TyKind::Array { .. } => true,
+            TyKind::Adt { def, .. } => {
+                def.local < u32::MAX - 16 && self.tcx.struct_field_tys(*def).is_some()
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn elem_bytes_of(&self, ty: Ty) -> u32 {
         use gossamer_types::TyKind;
         match self.tcx.kind_of(ty) {

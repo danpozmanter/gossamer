@@ -2197,8 +2197,9 @@ fn repl_hash_set_bindings_show_and_iterate_stored_structs() {
         );
     }
     assert!(
-        out.stdout.contains("mut set: Set<_> ="),
-        "`%explain set` should render the binding as `%bindings` does: {}",
+        out.stdout.contains("mut set: Set<Point> ="),
+        "`%explain set` should render the binding as `%bindings` does, with the \
+         element type the stored values gave it: {}",
         out.stdout
     );
     assert!(

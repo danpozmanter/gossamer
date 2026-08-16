@@ -8144,7 +8144,7 @@ impl<'a> TypeChecker<'a> {
             self.mark_consumed_iterator_expr(method, receiver, resolved);
             return ty;
         }
-        if let Some(ty) = self.set_method_ret(method, resolved) {
+        if let Some(ty) = self.set_method_ret(method, &all_arg_tys, resolved, receiver.span) {
             return ty;
         }
         if self.reject_unknown_set_method(resolved, method, arg_count, receiver.span) {
@@ -9483,8 +9483,30 @@ impl<'a> TypeChecker<'a> {
     /// def `u32::MAX - 7`). Without this the set-algebra methods are left
     /// a fresh `Var`, so iterating their result (`for e in a.union(&b)`)
     /// could not recover the set kind and read the handle as a vec.
-    fn set_method_ret(&mut self, method: &str, resolved: Ty) -> Option<Ty> {
+    fn set_method_ret(
+        &mut self,
+        method: &str,
+        arg_tys: &[Ty],
+        resolved: Ty,
+        span: Span,
+    ) -> Option<Ty> {
         let (_owner, elem) = self.set_elem_ty(resolved)?;
+        // The value a set is asked about is one of its elements, so a set
+        // built empty (`Set::new()`) learns its element type from the first
+        // such call. Left unpinned, the element stays a variable that no later
+        // traversal can dispatch a field read against. Only an unpinned
+        // element is filled in here, and the queried value is read through any
+        // borrow: `s.contains(&k)` asks about `k`.
+        if matches!(method, "insert" | "remove" | "contains")
+            && let [value] = arg_tys
+            && matches!(
+                self.tcx.kind(self.infer.resolve(self.tcx, elem)),
+                Some(TyKind::Var(_))
+            )
+        {
+            let value = self.peel_refs(*value);
+            self.unify(elem, value, span);
+        }
         match method {
             // New sets - same element type as the receiver.
             "union" | "intersection" | "difference" | "symmetric_difference" => Some(resolved),
@@ -9498,6 +9520,18 @@ impl<'a> TypeChecker<'a> {
             "clear" => Some(self.tcx.unit()),
             _ => None,
         }
+    }
+
+    /// Type of `xs.count(pred)` - the accepted-element count - pinning the
+    /// predicate to one that takes an element and answers a bool. Every
+    /// receiver that traverses reaches this, so the predicate's parameter is
+    /// the element type wherever the call is written; a parameter left
+    /// unresolved reaches codegen with no type to project a field against.
+    fn pred_count_ty(&mut self, pred_ty: Ty, elem: Ty, span: Span) -> Ty {
+        let out = self.callable_output(pred_ty, &[elem], span);
+        let bool_ty = self.tcx.bool_ty();
+        self.unify(bool_ty, out, span);
+        self.tcx.int_ty(IntTy::I64)
     }
 
     /// Return type of an `iter::` combinator called in method form on a
@@ -9526,6 +9560,12 @@ impl<'a> TypeChecker<'a> {
                 _ => self.set_elem_ty(resolved).map(|(_owner, elem)| elem),
             };
             if let Some(elem) = elem {
+                // The predicate form of `count` has no data-last free
+                // spelling for `std_combinator_ty` to answer from, so it is
+                // typed here the way a sequence receiver types it.
+                if method == "count" && arg_tys.len() == 1 {
+                    return Some(self.pred_count_ty(arg_tys[0], elem, span));
+                }
                 let seq = self.tcx.intern(TyKind::Vec(elem));
                 return self.std_combinator_ty("iter", method, arg_tys, seq, span);
             }
@@ -9559,10 +9599,7 @@ impl<'a> TypeChecker<'a> {
                 // bool for an element and the count is an integer.
                 if method == "count" && arg_tys.len() == 1 {
                     let elem = self.sequence_elem_ty(resolved, span)?;
-                    let out = self.callable_output(arg_tys[0], &[elem], span);
-                    let bool_ty = self.tcx.bool_ty();
-                    self.unify(bool_ty, out, span);
-                    return Some(self.tcx.int_ty(IntTy::I64));
+                    return Some(self.pred_count_ty(arg_tys[0], elem, span));
                 }
                 return self.std_combinator_ty("iter", method, arg_tys, resolved, span);
             }
@@ -9583,10 +9620,7 @@ impl<'a> TypeChecker<'a> {
             // takes an element and yields bool.
             ("count", 1) => {
                 let elem = self.sequence_elem_ty(resolved, span)?;
-                let out = self.callable_output(arg_tys[0], &[elem], span);
-                let b = self.tcx.bool_ty();
-                self.unify(b, out, span);
-                Some(self.tcx.int_ty(IntTy::I64))
+                Some(self.pred_count_ty(arg_tys[0], elem, span))
             }
             (
                 m @ ("map" | "filter" | "for_each" | "any" | "all" | "find" | "position"

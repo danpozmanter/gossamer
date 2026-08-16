@@ -505,6 +505,10 @@ const SPECS: &[Spec] = &[
     // Traversal methods on `&Map` / `&Set` walk the collection the reference
     // names, matching the same call written on the collection itself.
     spec("feature-testing-examples/keyed_traversal_through_ref.gos"),
+    // A sequence element pairing a scalar with a struct holds the struct's
+    // words inline, so a destructured binding reads each part at its own slot
+    // offset and borrows the element the sequence still owns.
+    spec("feature-testing-examples/seq_pair_struct_elements.gos"),
     // A type's identity is the module declaring it, so two modules may each
     // declare `Point` and `Tag` without their constructors, `{:?}`, `==`,
     // map keying, or serde symbols colliding.

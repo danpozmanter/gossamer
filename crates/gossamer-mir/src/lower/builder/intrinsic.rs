@@ -4651,31 +4651,34 @@ impl<'a> Builder<'a> {
             Some(MapKeyKind::String) => str_ty,
             _ => i64_ty,
         };
-        let val_ty = {
-            match value_kind {
-                Some(MapValueKind::String) => str_ty,
-                // A struct value is stored as a boxed pointer; bind the
-                // tuple slot as a reference so field access derefs the box.
-                // A by-value struct binding makes the drop pass release the
-                // blob pointer's RC fields as if they were inline — a
-                // use-after-free. Mirrors the `for (k, v) in m.iter()` and
-                // `for v in m.values()` bindings.
-                Some(MapValueKind::Other) => {
-                    let value_struct = self
-                        .hash_map_kv_tys(recv_ty)
-                        .map(|(_, v)| v)
-                        .filter(|v| self.struct_name_of(*v).is_some());
-                    match value_struct {
-                        Some(v) => self.tcx.intern(TyKind::Ref {
-                            mutability: gossamer_types::Mutbl::Not,
-                            inner: v,
-                        }),
-                        None => self.hash_map_kv_tys(recv_ty).map_or(i64_ty, |(_, v)| v),
-                    }
-                }
-                _ => i64_ty,
-            }
+        // A struct value is stored boxed, so the entry's word is the box's
+        // address. The materialised pair is an owned element - it outlives the
+        // walk that produced it and can be stored - so the struct is copied out
+        // of the box into the slot, and the vec's slot-children meta retains
+        // what the copy shares with the map's own value. The `for (k, v) in
+        // m.iter()` binding keeps the reference instead: it names the entry for
+        // the body's duration only.
+        let struct_val_ty = match value_kind {
+            Some(MapValueKind::Other) => self
+                .hash_map_kv_tys(recv_ty)
+                .map(|(_, v)| v)
+                .filter(|v| self.struct_name_of(*v).is_some()),
+            _ => None,
         };
+        let val_ty = match (&value_kind, struct_val_ty) {
+            (Some(MapValueKind::String), _) => str_ty,
+            (_, Some(value)) => value,
+            (Some(MapValueKind::Other), None) => {
+                self.hash_map_kv_tys(recv_ty).map_or(i64_ty, |(_, v)| v)
+            }
+            _ => i64_ty,
+        };
+        let boxed_val_ty = struct_val_ty.map(|value| {
+            self.tcx.intern(TyKind::Ref {
+                mutability: gossamer_types::Mutbl::Not,
+                inner: value,
+            })
+        });
         let keys_helper = match key_kind {
             Some(MapKeyKind::String) => "gos_rt_map_keys_str",
             _ => "gos_rt_map_keys_i64",
@@ -4819,7 +4822,7 @@ impl<'a> Builder<'a> {
             );
             l
         };
-        let val_local = self.fresh(val_ty);
+        let val_local = self.fresh(boxed_val_ty.unwrap_or(val_ty));
         let after_val = self.new_block(span);
         self.terminate(Terminator::Call {
             callee: Operand::Const(ConstValue::Str(get_or_helper.to_string())),
@@ -4832,6 +4835,22 @@ impl<'a> Builder<'a> {
             target: Some(after_val),
         });
         self.set_current(after_val);
+        // The pair's slot holds the struct's own words, so read them through
+        // the box the entry named.
+        let val_local = if boxed_val_ty.is_some() {
+            let copied = self.fresh(val_ty);
+            self.emit_assign(
+                Place::local(copied),
+                Rvalue::Use(Operand::Copy(Place {
+                    local: val_local,
+                    projection: vec![crate::ir::Projection::Deref],
+                })),
+                span,
+            );
+            copied
+        } else {
+            val_local
+        };
 
         // tuple = (key, val); result.push(tuple)
         let tuple_local = self.fresh(tuple_ty);
