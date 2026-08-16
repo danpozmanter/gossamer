@@ -987,8 +987,8 @@ fn materialise_src_binding(
         })
         .unwrap_or_else(|| PathBuf::from("."));
     let cargo_toml = format!(
-        "[package]\nname = \"gos-srcwrap-{name}\"\nversion = \"0.0.1\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n\n[lib]\ncrate-type = [\"rlib\"]\n\n[dependencies]\n{deps}\ngossamer-binding = {{ path = \"{}\" }}\n",
-        gossamer_root.join("crates/gossamer-binding").display(),
+        "[package]\nname = \"gos-srcwrap-{name}\"\nversion = \"0.0.1\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n\n[lib]\ncrate-type = [\"rlib\"]\n\n[dependencies]\n{deps}\ngossamer-binding = {{ {} }}\n",
+        toml_path_kv("path", &gossamer_root.join("crates/gossamer-binding")),
     );
     let lib_rs = format!(
         "//! Generated wrapper around `{}` for the `{name}` binding.\n\n#[path = {:?}]\nmod __user;\n\npub use __user::*;\n\n/// Linker-hook anchoring `linkme` registry entries across LTO.\npub fn __bindings_force_link() {{\n    let _ = ::gossamer_binding::modules();\n}}\n",
@@ -1009,7 +1009,10 @@ fn materialise_src_binding(
 /// either we fall back to a basic string with `\\` doubling, which
 /// covers every realistic filesystem path on the platforms we
 /// support without sacrificing correctness.
-fn toml_path_kv(key: &str, path: &Path) -> String {
+/// Renders a `key = <path>` TOML pair that a strict parser accepts on every
+/// platform: a literal string keeps a Windows separator verbatim, and a path
+/// containing an apostrophe falls back to an escaped basic string.
+pub fn toml_path_kv(key: &str, path: &Path) -> String {
     let display = path.display().to_string();
     if !display.contains('\'') && !display.chars().any(char::is_control) {
         format!("{key} = '{display}'")

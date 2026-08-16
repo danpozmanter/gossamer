@@ -2243,8 +2243,10 @@ fn a_dependency_reaches_an_associated_fn_in_its_own_sibling_module() {
     fs::write(
         app.join("project.toml"),
         format!(
+            // A TOML basic string reads `\` as an escape, so the path goes
+            // in forward-slash form, which Windows accepts as a separator.
             "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\nentry = \"src/main.gos\"\n\n[dependencies]\n\"example.com/widget-lib\" = {{ path = \"{}\" }}\n",
-            lib.display()
+            lib.display().to_string().replace('\\', "/")
         ),
     )
     .unwrap();
@@ -2371,8 +2373,10 @@ fn a_dependency_module_reaches_its_siblings_types_consts_and_variants() {
     fs::write(
         app.join("project.toml"),
         format!(
+            // A TOML basic string reads `\` as an escape, so the path goes
+            // in forward-slash form, which Windows accepts as a separator.
             "[project]\nid = \"example.com/reachapp\"\nversion = \"0.1.0\"\nentry = \"src/main.gos\"\n\n[dependencies]\n\"example.com/reach\" = {{ path = \"{}\" }}\n",
-            lib.display()
+            lib.display().to_string().replace('\\', "/")
         ),
     )
     .unwrap();

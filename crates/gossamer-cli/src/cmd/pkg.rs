@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
+use gossamer_driver::binding_runner::toml_path_kv;
 
 use crate::paths::friendly_io_error;
 
@@ -314,15 +315,14 @@ fn scaffold_wrapper_if_needed(
         std::fs::canonicalize(&crate_root).unwrap_or_else(|_| crate_root.clone())
     };
     let wrapper_cargo_toml = format!(
-        "[package]\nname = \"gos-{name}\"\nversion = \"0.0.1\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n\n[lib]\ncrate-type = [\"rlib\"]\n\n[dependencies]\n{name} = {{ path = \"{}\" }}\ngossamer-binding = {{ path = \"{}\" }}\n",
-        dep_abs.display(),
-        crate::binding_dispatch::locate_gossamer_root().map_or_else(
-            || "../../../crates/gossamer-binding".to_string(),
-            |r| r
-                .join("crates")
-                .join("gossamer-binding")
-                .display()
-                .to_string(),
+        "[package]\nname = \"gos-{name}\"\nversion = \"0.0.1\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n\n[lib]\ncrate-type = [\"rlib\"]\n\n[dependencies]\n{name} = {{ {} }}\ngossamer-binding = {{ {} }}\n",
+        toml_path_kv("path", &dep_abs),
+        toml_path_kv(
+            "path",
+            &crate::binding_dispatch::locate_gossamer_root().map_or_else(
+                || PathBuf::from("../../../crates/gossamer-binding"),
+                |r| r.join("crates").join("gossamer-binding"),
+            )
         )
     );
     fs::write(wrapper_dir.join("Cargo.toml"), wrapper_cargo_toml)?;

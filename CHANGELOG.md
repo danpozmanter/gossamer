@@ -2,6 +2,9 @@
 
 ## 0.51.1 - Reference parameters, method dispatch, sockets and byte sequences
 
+- Build a `[rust-bindings]` dependency on Windows, where the generated
+  wrapper crate spelled its path with native separators that Cargo's TOML
+  parser read as escape sequences.
 - Parse a multiline `matches!` the way `gos fmt` writes it: the formatter
   drops the comma after the scrutinee, as it does in every delimited list, and
   the parser now accepts the newline in its place instead of refusing its own
