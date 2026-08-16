@@ -1,9 +1,33 @@
+/// `true` when `source` mentions the module path `marker` (`"sql::"`,
+/// `"pem::"`), rather than merely containing those characters inside a
+/// longer name.
+///
+/// The wrappers a marker pulls in declare top-level items, so a spurious
+/// match injects names that collide with the program's own: without the
+/// boundary check, a package called `psql` or `mysql` drags in the
+/// `std::database::sql` wrappers and their `Null` / `Int` / `Text` variants.
+fn mentions_path(source: &str, marker: &str) -> bool {
+    let mut from = 0;
+    while let Some(offset) = source[from..].find(marker) {
+        let at = from + offset;
+        let preceded_by_name = source[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_');
+        if !preceded_by_name {
+            return true;
+        }
+        from = at + marker.len();
+    }
+    false
+}
+
 fn synthesize_stdlib_wrappers(source: &str) -> String {
     let mut stdlib_wrappers = String::new();
-    if source.contains("pem::") {
+    if mentions_path(source, "pem::") {
         stdlib_wrappers.push_str(PEM_WRAPPERS);
     }
-    if source.contains("x509::") {
+    if mentions_path(source, "x509::") {
         stdlib_wrappers.push_str(X509_WRAPPERS);
     }
     if source.contains("fs::metadata") {
@@ -12,13 +36,13 @@ fn synthesize_stdlib_wrappers(source: &str) -> String {
     if source.contains("path::Path") {
         stdlib_wrappers.push_str(PATH_WRAPPERS);
     }
-    if source.contains("tar::") {
+    if mentions_path(source, "tar::") {
         stdlib_wrappers.push_str(TAR_WRAPPERS);
     }
-    if source.contains("zip::") {
+    if mentions_path(source, "zip::") {
         stdlib_wrappers.push_str(ZIP_WRAPPERS);
     }
-    if source.contains("sql::") {
+    if mentions_path(source, "sql::") {
         stdlib_wrappers.push_str(SQL_WRAPPERS);
     }
     if HTTP_SECURITY_MARKERS.iter().any(|m| source.contains(m)) {

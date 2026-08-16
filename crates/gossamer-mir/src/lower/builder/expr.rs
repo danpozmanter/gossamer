@@ -859,6 +859,9 @@ impl<'a> Builder<'a> {
         // That extra owner was especially harmful for `&record.vec_field`:
         // the temporary was never retained, so native cleanup over-released
         // the Vec header after repeated struct construction.
+        // A place reached through a reference (`&*v`) is already the handle
+        // the borrow must carry, so re-addressing it would hand over the
+        // address of the reference instead of the value it names.
         if matches!(op, HirUnaryOp::RefShared)
             && matches!(
                 self.tcx.kind_of(operand.ty),
@@ -866,6 +869,10 @@ impl<'a> Builder<'a> {
             )
             && !runtime_projected_field
             && let Some(place) = self.lower_place_expr(operand)
+            && !place
+                .projection
+                .iter()
+                .any(|p| matches!(p, crate::ir::Projection::Deref))
         {
             let dest = self.fresh(ty);
             self.emit_assign(
@@ -2686,8 +2693,25 @@ impl<'a> Builder<'a> {
                         // `Field` arm can resolve field indices.
                         use gossamer_types::{Mutbl, TyKind};
                         let base_place = self.lower_place_expr(base)?;
+                        // The helper takes the Vec handle itself. A Vec
+                        // reached through a projection (`self.columns[i]`,
+                        // `rows[j].cells[i]`) has to be loaded out of its
+                        // holder first: passing the holder's own local would
+                        // hand the enclosing struct to a helper that reads it
+                        // as a `GosVec`.
+                        let vec_local = if base_place.projection.is_empty() {
+                            base_place.local
+                        } else {
+                            let holder = self.fresh(base.ty);
+                            self.emit_assign(
+                                Place::local(holder),
+                                Rvalue::Use(Operand::Copy(base_place.clone())),
+                                expr.span,
+                            );
+                            holder
+                        };
                         let index_local = self.lower_expr(index)?;
-                        self.emit_vec_index_bounds_assert(base_place.local, index_local, expr.span);
+                        self.emit_vec_index_bounds_assert(vec_local, index_local, expr.span);
                         let ref_ty = self.tcx.intern(TyKind::Ref {
                             mutability: Mutbl::Mut,
                             inner: elem,
@@ -2699,7 +2723,7 @@ impl<'a> Builder<'a> {
                                 "gos_rt_vec_get_ptr".to_string(),
                             )),
                             args: vec![
-                                Operand::Copy(Place::local(base_place.local)),
+                                Operand::Copy(Place::local(vec_local)),
                                 Operand::Copy(Place::local(index_local)),
                             ],
                             destination: Place::local(ptr_local),

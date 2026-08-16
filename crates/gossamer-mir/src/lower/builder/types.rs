@@ -554,6 +554,40 @@ impl<'a> Builder<'a> {
         cur
     }
 
+    /// `true` when a reference to `ty` is the address of a slot rather than
+    /// the value itself. A scalar has no runtime handle of its own, so both
+    /// `&T` and `&mut T` over one carry the place's address and a read
+    /// through the reference loads from it.
+    pub(crate) fn slot_addressed_pointee(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        matches!(
+            self.tcx.kind_of(ty),
+            TyKind::Int(_)
+                | TyKind::Float(_)
+                | TyKind::Bool
+                | TyKind::Char
+                | TyKind::Duration
+                | TyKind::Instant
+        )
+    }
+
+    /// Reads the value a slot-addressed reference points at.
+    pub(crate) fn load_slot_value(&mut self, local: Local, pointee: Ty, span: Span) -> Local {
+        let dest = self.fresh(pointee);
+        self.emit_assign(
+            Place::local(dest),
+            Rvalue::CallIntrinsic {
+                name: "gos_load",
+                args: vec![
+                    Operand::Copy(Place::local(local)),
+                    Operand::Const(ConstValue::Int(0)),
+                ],
+            },
+            span,
+        );
+        dest
+    }
+
     /// Returns `true` when `&mut <place>` over an operand of type
     /// `operand_ty`, materialised in a local of type `local_ty`, must take
     /// the place's slot address rather than pass its value. Scalars and

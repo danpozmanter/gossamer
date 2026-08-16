@@ -500,12 +500,16 @@ impl super::FnBuilder<'_> {
     /// here, so its value may be moved instead of cloned). A direct
     /// reference binding and its source share one register, so neither name
     /// may consume that register while the other name remains accessible.
+    /// A `&mut` parameter is read once more than the body shows: every
+    /// return path publishes its register back to the caller's write-back
+    /// cell, so its value is never the last reader's to take.
     pub(crate) fn consumable_path<'a>(&self, expr: &'a HirExpr) -> Option<&'a str> {
         if let HirExprKind::Path { segments, .. } = &expr.kind
             && let [seg] = segments.as_slice()
             && self.consumable.contains(seg.name.as_str())
             && let Some(home) = self.lookup_local(&seg.name)
             && !self.reference_alias_regs.contains(&home.reg)
+            && !self.mut_ref_params.contains(&home.reg)
         {
             Some(seg.name.as_str())
         } else {

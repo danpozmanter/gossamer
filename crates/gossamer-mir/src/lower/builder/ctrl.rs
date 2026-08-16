@@ -598,12 +598,29 @@ impl<'a> Builder<'a> {
                 );
                 Some(cmp)
             }
-            HirPatKind::Literal(HirLiteral::Float(_) | HirLiteral::Unit) => {
-                // Float / Unit literal arms are pathological;
-                // float equality match is rarely correct. Fall
-                // back to "always matches" so the program still
-                // compiles. Programs depending on these arms
-                // should use a guard with `==` instead.
+            HirPatKind::Literal(HirLiteral::Float(text)) => {
+                let value: f64 = text.trim().parse().ok()?;
+                let scrut_ty = self.locals[scrutinee.0 as usize].ty;
+                let lit_local = self.fresh(scrut_ty);
+                self.emit_assign(
+                    Place::local(lit_local),
+                    Rvalue::Use(Operand::Const(ConstValue::Float(value.to_bits()))),
+                    span,
+                );
+                let cmp = self.fresh(bool_ty);
+                self.emit_assign(
+                    Place::local(cmp),
+                    Rvalue::BinaryOp {
+                        op: BinOp::Eq,
+                        lhs: Operand::Copy(Place::local(scrutinee)),
+                        rhs: Operand::Copy(Place::local(lit_local)),
+                    },
+                    span,
+                );
+                Some(cmp)
+            }
+            HirPatKind::Literal(HirLiteral::Unit) => {
+                // `()` has one inhabitant, so naming it always matches.
                 let l = self.fresh(bool_ty);
                 self.emit_assign(
                     Place::local(l),

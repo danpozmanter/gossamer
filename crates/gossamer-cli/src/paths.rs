@@ -353,6 +353,21 @@ pub(crate) fn resolve_project_entry(root: &Path) -> Result<PathBuf> {
     if bare.is_file() {
         return Ok(bare);
     }
+    // A library package has no `main`; its root is the `[lib] path`, or
+    // `src/lib.gos` / `lib.gos` by convention. Resolved before the
+    // sole-candidate fallback so a library with several sibling modules
+    // roots at its own entry rather than reporting them as ambiguous.
+    if let Some(path) = manifest_lib_path(root) {
+        let path = root.join(path);
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+    for candidate in [root.join("src").join("lib.gos"), root.join("lib.gos")] {
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
     if let Some(tail) = manifest_id_tail(root) {
         let named = root.join("src").join(format!("{tail}.gos"));
         if named.is_file() {
@@ -393,6 +408,13 @@ fn manifest_id_tail(root: &Path) -> Option<String> {
     let text = fs::read_to_string(root.join("project.toml")).ok()?;
     let manifest = gossamer_pkg::Manifest::parse(&text).ok()?;
     Some(manifest.project.id.tail().to_string())
+}
+
+/// `[lib] path` from the root's manifest, when it declares a library.
+fn manifest_lib_path(root: &Path) -> Option<String> {
+    let text = fs::read_to_string(root.join("project.toml")).ok()?;
+    let manifest = gossamer_pkg::Manifest::parse(&text).ok()?;
+    manifest.lib.and_then(|lib| lib.path)
 }
 
 /// `[project] entry` from the root's manifest, when present and the

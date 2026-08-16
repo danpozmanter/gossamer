@@ -1442,7 +1442,14 @@ impl Resolver {
                 }
             }
         }
-        let name = &head.name.name;
+        // A qualifier that leaves one segment behind (`super::Point`,
+        // `crate::Point`) names that type through the scope chain, the same
+        // way the value side reaches `super::origin`. Looking the written
+        // head up instead would search for a type called `super`.
+        let name = match effective.first() {
+            Some(first) if effective.len() == 1 => *first,
+            _ => head.name.name.as_str(),
+        };
         let resolution = if is_self_type(name) {
             Resolution::Err
         } else {
@@ -2030,10 +2037,14 @@ impl Resolver {
         }
         let depth = self.current_module.len().saturating_sub(supers);
         let mut out = Vec::new();
-        if depth > 0 {
+        // Walk outward from the enclosing module, so a path written in one
+        // module reaches a sibling module's item (`model::Cell` from inside
+        // `engine`, both under the same package) as well as its own child's.
+        // Innermost first, matching how a name resolves.
+        for level in (1..=depth).rev() {
             out.push(format!(
                 "{}::{absolute}",
-                self.current_module[..depth].join("::")
+                self.current_module[..level].join("::")
             ));
         }
         out.push(absolute);

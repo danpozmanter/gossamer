@@ -132,6 +132,70 @@ impl<'tcx> FnBuilder<'tcx> {
         Some(bare.to_string())
     }
 
+    /// Bare name an `impl` block would spell for `ty`'s self type, seeing
+    /// through `&` / `&mut`: `Counter` for a user struct, `i64` for an
+    /// `impl Trait for i64`, `Vec` for `impl Trait for Vec<T>`. Paired
+    /// with a method name it reconstructs the `Type::method` key both
+    /// [`FnBuilder::method_muts`] and the global table use, so dispatch
+    /// resolves against the receiver's own type rather than by name alone.
+    pub(crate) fn impl_target_name(&self, ty: gossamer_types::Ty) -> Option<String> {
+        self.impl_target_names(ty).into_iter().next()
+    }
+
+    /// Every name an `impl` for `ty` may be keyed under, most qualified
+    /// first: the type's full module-qualified identity, then its bare
+    /// name.
+    ///
+    /// A type declared in a module is identified by its qualified name, so
+    /// an `impl` inside that module keys its methods there. Reading only the
+    /// bare tail would miss them, and a `&mut self` method that is missed is
+    /// called without the write-back protocol - its mutation of `self` never
+    /// reaches the caller.
+    pub(crate) fn impl_target_names(&self, ty: gossamer_types::Ty) -> Vec<String> {
+        let ty = self.unwrap_ref(ty);
+        if self.tcx.kind(ty).is_none() {
+            return Vec::new();
+        }
+        let rendered = gossamer_types::printer::render_ty(self.tcx, ty);
+        let unparameterized = rendered.split('<').next().unwrap_or(&rendered);
+        let bare = unparameterized
+            .rsplit("::")
+            .next()
+            .unwrap_or(unparameterized);
+        if bare.is_empty() || bare.starts_with("adt#") {
+            return Vec::new();
+        }
+        if unparameterized == bare {
+            return vec![bare.to_string()];
+        }
+        vec![unparameterized.to_string(), bare.to_string()]
+    }
+
+    /// `true` when `ty` could name a user type carrying an inherent
+    /// `impl`, or is not resolved concretely enough to tell. A built-in
+    /// receiver (`String`, `Vec`, `Map`, a slice, a scalar, a channel
+    /// endpoint) owns its method surface outright, so a same-named user
+    /// method on an unrelated type is not a candidate for it - the guard
+    /// that keeps name-only `&mut self` dispatch off builtin receivers.
+    pub(crate) fn ty_may_have_user_methods(&self, ty: gossamer_types::Ty) -> bool {
+        let ty = self.unwrap_ref(ty);
+        match self.tcx.kind(ty) {
+            // No resolved kind: the receiver's type is unknown here, so a
+            // uniquely-named user method stays reachable.
+            None => true,
+            Some(kind) => matches!(
+                kind,
+                TyKind::Adt { .. }
+                    | TyKind::Nominal { .. }
+                    | TyKind::Alias { .. }
+                    | TyKind::Dyn(_)
+                    | TyKind::Var(_)
+                    | TyKind::Param { .. }
+                    | TyKind::Error
+            ),
+        }
+    }
+
     /// Bare name of the `Ok` payload type `B` of a `Result<B, E>` (the result
     /// type of `x.try_into()`), so the call can route to `B::try_from(x)`.
     pub(crate) fn result_ok_adt_name(&self, ty: gossamer_types::Ty) -> Option<String> {

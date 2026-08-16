@@ -299,6 +299,14 @@ pub unsafe extern "C" fn gos_rt_vec_sort_i64(v: *mut GosVec) {
             return;
         }
         let len_usize = vec.len.max(0) as usize;
+        // A `Vec<u8>` packs its elements one byte wide; reading those slots
+        // as `i64` would order eight elements at a time and write the
+        // combined words back over the buffer.
+        if vec.elem_bytes == 1 {
+            let buf = unsafe { std::slice::from_raw_parts_mut(vec.ptr.as_ptr(), len_usize) };
+            buf.sort_unstable();
+            return;
+        }
         let buf = unsafe { std::slice::from_raw_parts_mut(vec.ptr.cast::<i64>(), len_usize) };
         buf.sort_unstable();
     });

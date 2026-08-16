@@ -300,6 +300,11 @@ impl<'a> Builder<'a> {
             | "gos_rt_heap_u8_to_string"
             | "gos_rt_i64_to_str"
             | "gos_rt_f64_to_str"
+            // A `char` / `bool` `to_string` answers a String like every
+            // other scalar's does; without the pin the destination keeps an
+            // integer type and the String pointer prints as a number.
+            | "gos_rt_char_to_str"
+            | "gos_rt_bool_to_str"
             | "gos_rt_stream_read_to_string"
             | "gos_rt_map_get_str_str"
             | "gos_rt_map_get_or_str_str"

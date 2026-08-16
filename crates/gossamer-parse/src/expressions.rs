@@ -2324,7 +2324,16 @@ impl Parser<'_> {
                 return ExprKind::Error;
             }
             let scrutinee = self.with_struct_literals_allowed(Self::parse_expr_no_assign);
-            self.expect_punct(Punct::Comma, "after `matches!` scrutinee");
+            // A newline separates the scrutinee from the pattern wherever a
+            // comma could, so the multiline form the formatter writes parses
+            // as the one-line form does.
+            if !self.eat_punct(Punct::Comma) && !self.newline_before_peek() {
+                let found = self.peek_text();
+                self.record(
+                    ParseError::unexpected("`,` after `matches!` scrutinee".to_string(), found),
+                    self.peek_span(),
+                );
+            }
             let pattern = self.parse_pattern();
             self.expect_punct(
                 Punct::RParen,

@@ -795,6 +795,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/go_stdlib_spawn.gos",
             "feature-testing-examples/goroutine_panic_isolation.gos",
             "feature-testing-examples/instant_methods.gos",
+            "feature-testing-examples/mut_ref_container_params.gos",
             "feature-testing-examples/mutex_poison_recovery.gos",
             "feature-testing-examples/mutex_vs_channel_counter.gos",
             "feature-testing-examples/os_signal_handler.gos",

@@ -356,7 +356,7 @@ pub(crate) fn run_with_opts(opts: TestOpts) -> Result<()> {
         None => default_test_root()?,
     };
     let style = TestStyle::detect();
-    let files = collect_lint_targets(&resolved)?;
+    let files = test_units(&resolved)?;
     if files.is_empty() {
         return Err(anyhow!(
             "no `.gos` sources found under {}",
@@ -732,8 +732,35 @@ fn render_lcov(records: &[TestRecord], files: &[PathBuf]) -> String {
     out
 }
 
+/// The compilation units to run tests from.
+///
+/// A package is one unit rooted at its entry, so a `#[test]` in a sibling
+/// module runs with the whole module tree in scope - re-rooting each file
+/// would turn its siblings into modules of it and leave cross-module paths
+/// unresolvable. A path naming a single file, or a directory that is not a
+/// package, keeps the file-per-unit reading.
+fn test_units(resolved: &PathBuf) -> Result<Vec<PathBuf>> {
+    if resolved.is_dir()
+        && crate::paths::project_root_for_entry(&resolved.join("project.toml")).is_some()
+        && let Ok(entry) = crate::paths::resolve_project_entry(resolved)
+    {
+        let mut units = vec![entry];
+        // An integration test under `tests/` is its own program, not part of
+        // the package's module tree, so it stays its own unit.
+        let integration = resolved.join("tests");
+        if integration.is_dir() {
+            units.extend(collect_lint_targets(&integration)?);
+        }
+        return Ok(units);
+    }
+    collect_lint_targets(resolved)
+}
+
 fn discover_tests(file: &Path) -> Result<Vec<TestSpec>> {
-    let source = read_source(file)?;
+    // The assembled unit, not the file's own bytes: a package entry
+    // carries its sibling modules inlined, and a `#[test]` inside one of
+    // them is only visible in the assembled source.
+    let source = read_entry_source(file)?;
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
     let (sf, _diags) = gossamer_parse::parse_source_file(&source, file_id);

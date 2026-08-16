@@ -1,3 +1,27 @@
+/// Bytes taken from a packed byte-sequence receiver, paired with the
+/// constructor that rebuilds that receiver's own representation.
+type PackedBytes = (Vec<u8>, fn(Vec<u8>) -> Value);
+
+/// Bytes of a packed byte-sequence receiver plus the constructor that
+/// rebuilds its own representation, so a mutator answers the same shape it
+/// was handed. `None` for a receiver that is not a byte sequence.
+///
+/// `Vec<u8>` and `[u8; N]` reach a builtin as one of these packed forms
+/// rather than a boxed `Array`, so a mutator that matches only `Array` /
+/// `IntArray` / `FloatVec` would answer its receiver unchanged.
+fn packed_bytes_receiver(recv: &Value) -> Option<PackedBytes> {
+    match recv {
+        Value::ByteVec(data) => Some((data.as_ref().clone(), |b| Value::ByteVec(Arc::new(b)))),
+        Value::ByteArray(data) => {
+            Some((data.to_vec(), |b| Value::ByteArray(Arc::new(b.into()))))
+        }
+        Value::InlineByteArray(data) => Some((data.to_vec(), |b| {
+            Value::InlineByteArray(Arc::new(smallvec::SmallVec::from_vec(b)))
+        })),
+        _ => None,
+    }
+}
+
 fn builtin_remove(args: &[Value]) -> RuntimeResult<Value> {
     if matches!(
         args.first(),
@@ -59,6 +83,7 @@ fn builtin_clear(args: &[Value]) -> RuntimeResult<Value> {
         Some(Value::IntArray(_)) => Ok(Value::IntArray(Arc::new(Vec::new()))),
         Some(Value::FloatVec(_)) => Ok(Value::FloatVec(Arc::new(Vec::new()))),
         Some(Value::String(_)) => Ok(Value::String(SmolStr::from(String::new()))),
+        Some(v) if packed_bytes_receiver(v).is_some() => Ok(Value::ByteVec(Arc::new(Vec::new()))),
         _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
     }
 }
@@ -93,7 +118,21 @@ fn builtin_extend(args: &[Value]) -> RuntimeResult<Value> {
             }
             Ok(Value::FloatVec(Arc::new(owned)))
         }
-        _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
+        Some(v) => {
+            let Some((mut owned, rebuild)) = packed_bytes_receiver(v) else {
+                return Ok(v.clone());
+            };
+            if let Some(extra) = args.get(1).and_then(array_as_values) {
+                owned.extend(
+                    extra
+                        .into_iter()
+                        .filter_map(|v| crate::builtins::value_to_int(&v))
+                        .map(|n| n as u8),
+                );
+            }
+            Ok(rebuild(owned))
+        }
+        None => Ok(Value::Unit),
     }
 }
 
@@ -133,7 +172,14 @@ fn builtin_truncate(args: &[Value]) -> RuntimeResult<Value> {
                 .unwrap_or(0);
             Ok(Value::String(SmolStr::from(&s[..end])))
         }
-        _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
+        Some(v) => {
+            let Some((mut owned, rebuild)) = packed_bytes_receiver(v) else {
+                return Ok(v.clone());
+            };
+            owned.truncate(cap);
+            Ok(rebuild(owned))
+        }
+        None => Ok(Value::Unit),
     }
 }
 
@@ -285,7 +331,14 @@ fn builtin_sort(args: &[Value]) -> RuntimeResult<Value> {
             owned.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             Ok(Value::FloatVec(Arc::new(owned)))
         }
-        other => Ok(other.cloned().unwrap_or(Value::Unit)),
+        Some(v) => {
+            let Some((mut owned, rebuild)) = packed_bytes_receiver(v) else {
+                return Ok(v.clone());
+            };
+            owned.sort_unstable();
+            Ok(rebuild(owned))
+        }
+        None => Ok(Value::Unit),
     }
 }
 
@@ -306,7 +359,14 @@ fn builtin_reverse(args: &[Value]) -> RuntimeResult<Value> {
             owned.reverse();
             Ok(Value::FloatVec(Arc::new(owned)))
         }
-        _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
+        Some(v) => {
+            let Some((mut owned, rebuild)) = packed_bytes_receiver(v) else {
+                return Ok(v.clone());
+            };
+            owned.reverse();
+            Ok(rebuild(owned))
+        }
+        None => Ok(Value::Unit),
     }
 }
 

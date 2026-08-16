@@ -275,6 +275,23 @@ impl<'a> Lowerer<'a> {
             operand_llvm = "i32".to_string();
             kind = NumericKind::Other;
         }
+        // The two sides can still disagree in width: a `char` renders as
+        // `i32`, while a codepoint that came out of a string walk occupies a
+        // whole slot and renders as `i64`. Widen the narrow side rather than
+        // declaring the operation `i32`, which would name an `i64` value at
+        // `i32` and fail the verifier. A Unicode scalar is positive, so the
+        // extension is value-preserving either way.
+        if lhs_llvm == "i32" && rhs_llvm == "i64" {
+            let widened = self.fresh();
+            writeln!(self.out, "  {widened} = sext i32 {lhs_v} to i64").unwrap();
+            lhs_v = widened;
+            operand_llvm = "i64".to_string();
+        } else if lhs_llvm == "i64" && rhs_llvm == "i32" {
+            let widened = self.fresh();
+            writeln!(self.out, "  {widened} = sext i32 {rhs_v} to i64").unwrap();
+            rhs_v = widened;
+            operand_llvm = "i64".to_string();
+        }
         // An unresolved operand type renders `void` (the unit return
         // type); the operand LLVM types are authoritative - adopt the
         // sides' concrete type. Match-conjunction `and`s land here when
@@ -633,11 +650,13 @@ impl<'a> Lowerer<'a> {
                 let pred = float_cmp_pred(cmp);
                 format!("fcmp {pred} {operand_llvm}")
             }
-            (cmp, NumericKind::Other) if is_cmp(cmp) && operand_llvm == "i32" => {
-                // `char` comparison: compare codepoints as `i32`. Valid
-                // scalar values (0..=0x10FFFF) are positive, so the signed
-                // predicates give the natural codepoint ordering, and
-                // equality is exact.
+            (cmp, NumericKind::Other)
+                if is_cmp(cmp) && (operand_llvm == "i32" || operand_llvm == "i64") =>
+            {
+                // `char` comparison: compare codepoints at whichever width
+                // both sides share. Valid scalar values (0..=0x10FFFF) are
+                // positive, so the signed predicates give the natural
+                // codepoint ordering, and equality is exact.
                 let pred = int_cmp_pred(cmp, true);
                 format!("icmp {pred} {operand_llvm}")
             }

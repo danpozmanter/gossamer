@@ -1,7 +1,93 @@
 # Changelog
 
-## 0.51.1 - `&mut` container and reference parameter fixes
+## 0.51.1 - Reference parameters, method dispatch, sockets and byte sequences
 
+- Parse a multiline `matches!` the way `gos fmt` writes it: the formatter
+  drops the comma after the scrutinee, as it does in every delimited list, and
+  the parser now accepts the newline in its place instead of refusing its own
+  formatter's output.
+- Index a `Vec` reached through a projection in compiled builds:
+  `self.columns[i].name` handed the enclosing struct to the element-address
+  helper, which read it as a `Vec` and segfaulted.
+- Answer a `String` from `char::to_string()` / `bool::to_string()` in compiled
+  builds, where the result kept an integer type and the string's pointer
+  printed as a number.
+- Compare a `char` against a literal in compiled builds when the two sides
+  reach the comparison at different widths, which failed the IR verifier and
+  refused the build outright.
+- Write back a shortened vector when `pop` is called on a field or element
+  receiver (`self.idle.pop()`): under `gos run` the receiver kept every
+  element while the compiled tiers dropped one.
+- Carry a `&mut` out-parameter through a `&mut self` method
+  (`conn.next_row(&mut stream)`): the argument was passed by value, so the
+  callee's mutation landed on a copy.
+- Write back a `&mut self` method's mutation of a receiver declared in a
+  module. A type declared there is identified by its qualified name, so its
+  `impl` keys the method under that identity; the call site read only the
+  bare name, missed it, and ran the method without the write-back protocol,
+  so `conn.next_id()` kept answering its initial value while a `Map` field
+  updated normally. This reached any multi-module package, and any package
+  consumed as a dependency.
+- Reach a sibling module's types, constants, and enum variants from inside a
+  package that is consumed as a dependency: a signature naming
+  `model::Cell` resolved to a synthesized type, and `model::LIMIT` /
+  `model::Cell::Empty` went unbound at run time.
+- Resolve `super::Type` and `crate::Type` in type position, which reported
+  that `super` could not be found while the same paths worked in value
+  position.
+- Pop or remove a `String`-keyed `Map` entry through a `&mut Map` in compiled
+  builds. The key kind was read through the reference rather than the map, so
+  the call routed to the integer-key helper: the entry was never found and
+  never removed.
+- Forward an existing `&mut Map` / `&mut Set` parameter without copying it,
+  so the callee's `insert` / `pop` reaches the caller's container.
+- Discover and run `#[test]` functions across a package's modules. `gos test`
+  rooted every file as its own compilation unit, which turned a file's
+  siblings into modules of it and left cross-module paths unresolvable; a
+  package now assembles once from its entry, a library package resolves that
+  entry from `[lib] path` or `src/lib.gos`, and an integration test under
+  `tests/` stays its own unit.
+- Stop a package whose name merely contains a stdlib module path (`psql`,
+  `mysql`) from pulling in that module's generated wrappers, whose top-level
+  `Null` / `Int` / `Text` declarations then collided with the program's own.
+- Match a `const` named in a pattern against its value. `match oid { INT4 =>
+  .., TEXT => .. }` read the constant as a nominal pattern, which no scalar
+  matches, so every arm fell through to `_`.
+- Match a float literal pattern by value in compiled builds, where the arm
+  matched every value it was handed.
+- Match a unit struct by naming it (`match m { Marker => .. }`), which
+  panicked as a non-exhaustive match under `gos run` and failed the native
+  build outright; it means the fieldless struct pattern `Marker {}`.
+- Propagate a `std::net` socket constructor with `?`. `TcpStream::connect`,
+  `UnixStream::connect`, and the `bind` constructors answer a `Result`, but
+  the checker had no signature for the socket handles and reported that the
+  operand was not a `Result`; `stream.read(n)?`, `write_all(..)?`,
+  `accept()?`, `local_addr()?`, and the `start_tls` family carry their errors
+  the same way now.
+- Write a `Vec<u8>` to a socket. `stream.write(payload)` /
+  `write_all(payload)` and `UdpSocket::send_to` reported "expected string or
+  byte array" for every packed byte sequence, which is what a `Vec<u8>` or
+  `[u8; N]` is at run time.
+- Mutate a `Vec<u8>` through the whole sequence surface. `extend`,
+  `extend_from_slice`, `truncate`, `sort`, `reverse`, and `clear` answered
+  the receiver unchanged under `gos run`; `extend` with a literal argument
+  appended nothing in compiled builds, and `sort` read the packed bytes
+  eight at a time and wrote the combined words back over the buffer.
+- Reach an associated function declared in a dependency's own sibling
+  module. `Type::assoc` is spelled relative to the module it is written in,
+  so both `use self::other::Type` + `Type::assoc()` and the qualified
+  `other::Type::assoc()` type-checked inside a bundled dependency and were
+  unbound at run time.
+- Report `UnixListener::accept` as answering `Result<(UnixStream, String),
+  errors::Error>` in `%info` and `gos doc`, the pair it has always returned.
+- Keep a built-in receiver's own method when a user `impl` elsewhere in the
+  program declares the same method name. Under `gos run`, `xs.push(v)` on a
+  `Vec` field, a `&mut Vec` parameter, or a field read from outside its
+  `impl` reached the unrelated user `push` instead - dropping the element
+  and, where the user method took a different `self` shape, failing with a
+  field-access type error. Method dispatch resolves against the receiver's
+  own type on every tier, and an `impl Trait for i64` / `for String` /
+  `for Vec<T>` still answers by that type's name.
 - Read and write a `Map` through a `&mut Map<K, V>` parameter. Reads
   answered `None` and `len` answered `0` under `gos run`, and an `insert`
   reported a type error.
@@ -13,6 +99,28 @@
   builds: `s.len()`, `s.to_uppercase()`, `n.to_string()`, and the rest now
   read the value the reference points at, and `push_str` / `push` /
   `push_char` / `push_byte` / `clear` / `truncate` publish back through it.
+- Pass a `&mut T` where a `&T` is expected. A function that only reads keeps
+  its `&T` parameter and a caller holding a `&mut T` hands it over directly,
+  for every referent - scalar, `String`, `Vec`, `Map`, and struct. The
+  reverse is still rejected: a `&T` never satisfies a `&mut T`.
+- Read a scalar through a shared reference parameter. `fn read(n: &i64) ->
+  i64 { *n }` faulted in compiled builds for every caller shape - `read(&n)`,
+  `read(&record.field)`, and forwarding one `&i64` parameter into the next -
+  because the argument crossed as the value while the body read through it as
+  an address. `read(&*n)` on a `&mut Vec<T>` faulted for the same reason.
+- Write back through a `&mut` parameter the body hands on to another call.
+  The register was given away at its last use, so the caller's binding was
+  left empty under `gos run` while compiled builds published the new value.
+- Write back through a `&mut time::Duration` / `&mut time::Instant`
+  parameter, and read one with `d.as_millis()` inside the callee: `gos run`
+  answered the pre-call value and compiled builds faulted.
+- Write back through the `&mut T` parameter of a generic function, which
+  `gos run` dropped.
+- Reach an opaque alias's own method when a built-in answers the same name.
+  `impl UserId { fn next(&self) }` over `type UserId = new i64` reached the
+  built-in `next` under `gos run` and answered `None`; an alias inherits none
+  of its representation's methods, so its own impl is what the call names.
+- full-check.sh -> full-test.sh (limited to just running tests)
 
 ## 0.51.0 - Cohorts: structured concurrency, ergonomic features and fixes
 

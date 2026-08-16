@@ -111,6 +111,47 @@ fn text_len(s: &mut String) -> i64 {
     s.len()
 }
 
+fn read_scalar(n: &i64) -> i64 {
+    *n
+}
+
+fn read_text(s: &String) -> i64 {
+    s.len()
+}
+
+fn read_vec(v: &Vec<i64>) -> i64 {
+    v.len()
+}
+
+fn read_map(m: &Map<String, i64>) -> i64 {
+    m.len()
+}
+
+fn read_point(p: &Point) -> i64 {
+    p.x
+}
+
+fn forward_scalar(n: &i64) -> i64 {
+    read_scalar(n)
+}
+
+// A `&mut T` reborrows as the `&T` these read-only helpers declare, and the
+// helpers keep saying they only read.
+fn reborrow_all(
+    n: &mut i64
+    s: &mut String
+    v: &mut Vec<i64>
+    m: &mut Map<String, i64>
+    p: &mut Point
+) -> i64 {
+    read_scalar(n) + read_text(s) + read_vec(v) + read_map(m) + read_point(p)
+}
+
+// The explicit reborrow spelling reaches the same helpers.
+fn reborrow_explicit(n: &mut i64, s: &mut String, v: &mut Vec<i64>) -> i64 {
+    read_scalar(&*n) + read_text(&*s) + read_vec(&*v)
+}
+
 // The call is this function's tail: the `&mut` parameter it passes is still
 // read on the way out, when the frame publishes the value back to the caller.
 fn tail_call_arg(s: &mut String) -> i64 {
@@ -186,6 +227,26 @@ fn main() {
 
     let mut tail_text = "hi"
     println!("tail call: {} {}", tail_call_arg(&mut tail_text), tail_text)
+
+    let plain = 5
+    println!("shared scalar: {} {}", read_scalar(&plain), forward_scalar(&plain))
+    let plain_point = Point { x: 3, y: 4 }
+    println!("shared struct field: {}", read_scalar(&plain_point.x))
+
+    let mut rb_n = 1
+    let mut rb_s = "hi"
+    let mut rb_v = #[1, 2, 3]
+    let mut rb_m = { "a": 1 }
+    let mut rb_p = Point { x: 4, y: 5 }
+    println!(
+        "reborrow: {}"
+        reborrow_all(&mut rb_n, &mut rb_s, &mut rb_v, &mut rb_m, &mut rb_p)
+    )
+    println!(
+        "reborrow explicit: {}"
+        reborrow_explicit(&mut rb_n, &mut rb_s, &mut rb_v)
+    )
+    println!("reborrow sources: {} {} {}", rb_n, rb_s, rb_v)
 
     let mut tail_span = time::Duration::from_millis(10)
     println!(

@@ -3051,6 +3051,30 @@ impl<'a> TypeChecker<'a> {
         Some(vec![identity, bare])
     }
 
+    /// Identities the owner path of an associated call could name, most
+    /// specific first: the path anchored under each enclosing module, then
+    /// the path as written, then its bare tail.
+    ///
+    /// A path is written relative to the module it appears in, while a type
+    /// registers under its full module-qualified identity, so `model::Point`
+    /// written inside `engine` names `pkg::model::Point` when both sit under
+    /// `pkg` - which is what a package consumed as a dependency looks like.
+    fn owner_identity_candidates(&self, owner: &[&str]) -> Vec<String> {
+        let written = owner.join("::");
+        let mut out = Vec::new();
+        for level in (1..=self.current_module.len()).rev() {
+            out.push(format!(
+                "{}::{written}",
+                self.current_module[..level].join("::")
+            ));
+        }
+        out.push(written);
+        if let Some(bare) = owner.last() {
+            out.push((*bare).to_string());
+        }
+        out
+    }
+
     fn collect_impl_signatures(&mut self, decl: &ImplDecl, module_path: &[String]) {
         // Self-type names for receiver-keyed method return types.
         // Generic impls are skipped: their returns may mention
@@ -5384,7 +5408,8 @@ impl<'a> TypeChecker<'a> {
         // A type reached through its module (`lib::Point::new`) is keyed
         // by the identity it registers under, so try the written path
         // before the bare name two modules could share.
-        let type_name = [owner.join("::"), (*owner.last()?).to_string()]
+        let type_name = self
+            .owner_identity_candidates(owner)
             .into_iter()
             .find(|candidate| self.user_type_decls.contains(candidate))?;
         // An associated function carries its own visibility, the same as a
@@ -6520,6 +6545,12 @@ impl<'a> TypeChecker<'a> {
         if let Some((offset, handle)) = stdlib_handle_ctor(module, last) {
             return Some(self.stdlib_handle_ty(offset, handle));
         }
+        // A socket constructor answers its handle through a `Result`, so
+        // `TcpStream::connect(addr)?` propagates like any fallible call.
+        if let Some((offset, handle)) = net_socket_ctor(module, last) {
+            let socket = self.stdlib_handle_ty(offset, handle);
+            return Some(self.fallible(socket));
+        }
         let is_middleware = matches!(
             module,
             ["middleware"] | ["http", "middleware"] | ["std", "http", "middleware"]
@@ -6561,6 +6592,77 @@ impl<'a> TypeChecker<'a> {
     fn bytes_handle_ty(&mut self, name: &str) -> Ty {
         let offset = if name == "bytes::Buffer" { 26 } else { 27 };
         self.stdlib_handle_ty(offset, name)
+    }
+
+    /// Return type of a method on one of the opaque `std::net` socket
+    /// handles. Without a row here the call answers a fresh variable, so
+    /// `?` on `sock.read(n)` reports the operand is not a `Result`.
+    fn net_handle_method_ret(&mut self, method: &str, resolved: Ty) -> Option<Ty> {
+        let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved) else {
+            return None;
+        };
+        let owner = self.tcx.def_name(*def)?.to_string();
+        let unit = self.tcx.unit();
+        match (owner.as_str(), method) {
+            (
+                "net::TcpStream" | "net::UnixStream" | "net::TcpListener" | "net::UnixListener"
+                | "net::UdpSocket",
+                "close",
+            )
+            | (
+                "net::TcpStream",
+                "set_read_timeout_ms"
+                | "set_write_timeout_ms"
+                | "clear_read_timeout"
+                | "clear_write_timeout",
+            ) => Some(unit),
+            ("net::TcpStream" | "net::UnixStream", "read") => {
+                let bytes = self.byte_vec_ty();
+                Some(self.fallible(bytes))
+            }
+            ("net::TcpStream" | "net::UnixStream", "read_to_string")
+            | ("net::TcpListener" | "net::UdpSocket", "local_addr") => {
+                let string = self.tcx.string_ty();
+                Some(self.fallible(string))
+            }
+            ("net::TcpStream" | "net::UnixStream", "write" | "write_all")
+            | ("net::UdpSocket", "send_to") => Some(self.fallible(unit)),
+            ("net::TcpStream", "start_tls" | "start_tls_ca" | "start_tls_insecure") => {
+                let handle = self.stdlib_handle_ty(12, "net::TcpStream");
+                Some(self.fallible(handle))
+            }
+            ("net::TcpListener", "accept") => {
+                let stream = self.stdlib_handle_ty(12, "net::TcpStream");
+                let string = self.tcx.string_ty();
+                let pair = self.tcx.intern(TyKind::Tuple(vec![stream, string]));
+                Some(self.fallible(pair))
+            }
+            ("net::UnixListener", "accept") => {
+                let stream = self.stdlib_handle_ty(15, "net::UnixStream");
+                let string = self.tcx.string_ty();
+                let pair = self.tcx.intern(TyKind::Tuple(vec![stream, string]));
+                Some(self.fallible(pair))
+            }
+            ("net::UdpSocket", "recv_from") => {
+                let bytes = self.byte_vec_ty();
+                let string = self.tcx.string_ty();
+                let pair = self.tcx.intern(TyKind::Tuple(vec![bytes, string]));
+                Some(self.fallible(pair))
+            }
+            _ => None,
+        }
+    }
+
+    /// `Vec<u8>`, the shape every socket read answers.
+    fn byte_vec_ty(&mut self) -> Ty {
+        let u8_ty = self.tcx.int_ty(IntTy::U8);
+        self.tcx.intern(TyKind::Vec(u8_ty))
+    }
+
+    /// `Result<ok, errors::Error>` - the stdlib's fallible answer shape.
+    fn fallible(&mut self, ok: Ty) -> Ty {
+        let err = self.tcx.dyn_error_ty();
+        self.result_adt_ty(ok, err)
     }
 
     fn bytes_handle_method_ret(
@@ -7212,9 +7314,13 @@ impl<'a> TypeChecker<'a> {
         // A nominal stdlib handle resolves to the same sentinel Adt a written
         // annotation gets, so a signature slot naming one carries its fields
         // rather than an inference variable.
-        if let Some(offset) = stdlib_handle_def_offset(src.rsplit("::").next().unwrap_or(src)) {
+        let tail = src.rsplit("::").next().unwrap_or(src);
+        if let Some(offset) = stdlib_handle_def_offset(tail) {
             let def = gossamer_resolve::DefId::local(u32::MAX - offset);
-            let name = src.rsplit("::").next().unwrap_or(src).to_string();
+            // A socket handle keeps the qualified name the annotation path
+            // registers, so one `DefId` never carries two spellings.
+            let name =
+                stdlib_net_handle(tail).map_or_else(|| tail.to_string(), |(_, n)| n.to_string());
             self.tcx.register_def_name(def, &name);
             return Some(self.tcx.intern(TyKind::Adt {
                 def,
@@ -8056,6 +8162,9 @@ impl<'a> TypeChecker<'a> {
         if let Some(ty) =
             self.bytes_handle_method_ret(method, args, &arg_tys, resolved, receiver.span)
         {
+            return ty;
+        }
+        if let Some(ty) = self.net_handle_method_ret(method, resolved) {
             return ty;
         }
         // `v.set(k, val)` on a `json::Value` returns the updated value;
@@ -9682,6 +9791,22 @@ impl<'a> TypeChecker<'a> {
             let elem_peeled = self.peel_refs(elem);
             let arg_peeled = self.peel_refs(arg_ty);
             self.unify(elem_peeled, arg_peeled, span);
+        }
+        // `xs.extend(ys)` appends a sequence of the receiver's own element
+        // type. Unifying it pins a literal argument to that element type, so
+        // `Vec<u8>.extend(#[4, 5])` appends bytes rather than leaving the
+        // literal at the default integer width.
+        if matches!(method, "extend" | "extend_from_slice")
+            && let Some(arg_ty) = arg_tys.first().copied()
+        {
+            let sequence = self.tcx.intern(TyKind::Vec(elem));
+            let arg_peeled = self.peel_refs(arg_ty);
+            if matches!(
+                self.tcx.kind(self.infer.resolve(self.tcx, arg_peeled)),
+                Some(TyKind::Vec(_) | TyKind::Var(_))
+            ) {
+                self.unify(sequence, arg_peeled, span);
+            }
         }
         match (method, arg_tys.len()) {
             (
@@ -14533,15 +14658,7 @@ impl<'a> TypeChecker<'a> {
         // struct field or a parameter and the construction-site tag is
         // gone - without this `conn.sock.read(..)` lowers to an undefined
         // name-global symbol on the compiled tiers.
-        let net_handle: Option<(u32, &str)> = match tail {
-            "TcpStream" => Some((12, "net::TcpStream")),
-            "TcpListener" => Some((13, "net::TcpListener")),
-            "UdpSocket" => Some((14, "net::UdpSocket")),
-            "UnixStream" => Some((15, "net::UnixStream")),
-            "UnixListener" => Some((16, "net::UnixListener")),
-            _ => None,
-        };
-        if let Some((off, name)) = net_handle {
+        if let Some((off, name)) = stdlib_net_handle(tail) {
             let def = gossamer_resolve::DefId::local(u32::MAX - off);
             self.tcx.register_def_name(def, name);
             return self.tcx.intern(TyKind::Adt {
@@ -17254,6 +17371,35 @@ fn stdlib_handle_def_offset(tail: &str) -> Option<u32> {
         "Output" => 3,
         "ResponseStream" => 4,
         "Response" => 5,
+        _ => return stdlib_net_handle(tail).map(|(offset, _)| offset),
+    })
+}
+
+/// `(sentinel offset, name)` of the socket a `std::net` constructor
+/// answers. The path may name the type alone (`TcpStream::connect`) or
+/// carry its module (`net::TcpStream::connect`), so only the type segment
+/// the method hangs off is matched.
+fn net_socket_ctor(module: &[&str], last: &str) -> Option<(u32, &'static str)> {
+    let type_name = *module.last()?;
+    let expected = match (type_name, last) {
+        ("TcpStream" | "UnixStream", "connect")
+        | ("TcpListener" | "UnixListener" | "UdpSocket", "bind") => type_name,
+        _ => return None,
+    };
+    stdlib_net_handle(expected)
+}
+
+/// Sentinel-`Adt` offset and canonical name for the opaque `std::net`
+/// socket handles. The written annotation (`let s: net::TcpStream`) and a
+/// signature slot naming the same type must land on one `DefId` under one
+/// registered name, so both sides read this table.
+fn stdlib_net_handle(tail: &str) -> Option<(u32, &'static str)> {
+    Some(match tail {
+        "TcpStream" => (12, "net::TcpStream"),
+        "TcpListener" => (13, "net::TcpListener"),
+        "UdpSocket" => (14, "net::UdpSocket"),
+        "UnixStream" => (15, "net::UnixStream"),
+        "UnixListener" => (16, "net::UnixListener"),
         _ => return None,
     })
 }

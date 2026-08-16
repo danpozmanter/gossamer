@@ -2205,3 +2205,235 @@ fn a_descendant_module_reaches_its_parents_private_items() {
         outside.1
     );
 }
+
+#[test]
+fn a_dependency_reaches_an_associated_fn_in_its_own_sibling_module() {
+    // A `Type::assoc` path is spelled relative to the module it is written
+    // in, while the impl registers under the type's full module-qualified
+    // identity. Inside a bundled dependency that identity carries the
+    // dependency's module too, so both the imported spelling
+    // (`use self::helper::Widget` + `Widget::make`) and the qualified one
+    // (`helper::Widget::make`) have to anchor there - they type-checked and
+    // were unbound at run time.
+    let lib = fresh_dir("dep_assoc_lib");
+    fs::write(
+        lib.join("project.toml"),
+        "[project]\nid = \"example.com/widget-lib\"\nversion = \"0.1.0\"\n\n[lib]\nname = \"widget-lib\"\npath = \"src/lib.gos\"\n",
+    )
+    .unwrap();
+    fs::create_dir_all(lib.join("src")).unwrap();
+    fs::write(
+        lib.join("src/helper.gos"),
+        "pub struct Widget { pub name: String, pub size: i64 }\n\
+         impl Widget {\n\
+         \x20   pub fn make(name: String, size: i64) -> Widget { Widget { name: name, size: size } }\n\
+         \x20   pub fn grow(&mut self, by: i64) { self.size += by }\n\
+         }\n",
+    )
+    .unwrap();
+    fs::write(
+        lib.join("src/lib.gos"),
+        "use self::helper::Widget\n\n\
+         pub fn imported(name: String) -> Widget { Widget::make(name, 2) }\n\
+         pub fn qualified(name: String) -> Widget { helper::Widget::make(name, 3) }\n",
+    )
+    .unwrap();
+
+    let app = fresh_dir("dep_assoc_app");
+    fs::write(
+        app.join("project.toml"),
+        format!(
+            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\nentry = \"src/main.gos\"\n\n[dependencies]\n\"example.com/widget-lib\" = {{ path = \"{}\" }}\n",
+            lib.display()
+        ),
+    )
+    .unwrap();
+    fs::create_dir_all(app.join("src")).unwrap();
+    fs::write(
+        app.join("src/main.gos"),
+        "use \"example.com/widget-lib\" as widgets\n\n\
+         fn main() {\n\
+         \x20   let mut a = widgets::imported(\"one\")\n\
+         \x20   a.grow(10)\n\
+         \x20   println!(\"{} {}\", a.name, a.size)\n\
+         \x20   let b = widgets::qualified(\"two\")\n\
+         \x20   println!(\"{} {}\", b.name, b.size)\n\
+         }\n",
+    )
+    .unwrap();
+
+    let run = project_run_vm(&app);
+    let _ = fs::remove_dir_all(&app);
+    let _ = fs::remove_dir_all(&lib);
+    assert_eq!(run.2, Some(0), "stderr: {}", run.1);
+    assert_eq!(run.0, "one 12\ntwo 3\n");
+}
+
+#[test]
+fn a_mut_self_method_on_a_module_type_writes_back_to_its_caller() {
+    // A type declared in a module is identified by its qualified name, so an
+    // `impl` inside that module keys its methods there. Reading only the
+    // bare name missed them, and a `&mut self` method that is missed runs
+    // without the write-back protocol: its mutation of `self` never reached
+    // the caller, so a counter kept answering its initial value. The `Map`
+    // field mutates through its own handle, which is why only the plain
+    // fields lost their updates.
+    let dir = write_project(
+        "mut_self_module_writeback",
+        "example.com/writeback",
+        &[
+            (
+                "src/engine.gos",
+                "pub struct Conn { pub counter: i64 }\n\
+                 impl Conn {\n\
+                 \x20   pub fn next_id(&mut self) -> i64 { self.counter += 1; self.counter }\n\
+                 }\n\
+                 \n\
+                 pub struct Client { pub pg: Conn, pub seen: Vec<i64> }\n\
+                 impl Client {\n\
+                 \x20   pub fn take(&mut self) -> i64 {\n\
+                 \x20       let id = self.pg.next_id()\n\
+                 \x20       self.seen.push(id)\n\
+                 \x20       id\n\
+                 \x20   }\n\
+                 }\n\
+                 \n\
+                 pub fn open() -> Client { Client { pg: Conn { counter: 0 }, seen: #[] } }\n",
+            ),
+            (
+                "src/main.gos",
+                "fn main() {\n\
+                 \x20   let mut c = engine::open()\n\
+                 \x20   println!(\"{} {} {}\", c.take(), c.take(), c.take())\n\
+                 \x20   println!(\"counter={} seen={:?}\", c.pg.counter, c.seen)\n\
+                 }\n",
+            ),
+        ],
+    );
+    let vm = project_run_vm(&dir);
+    let native = project_build_run(&dir, "writeback");
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, "1 2 3\ncounter=3 seen=[1, 2, 3]\n", "vm stdout");
+    assert_eq!(native.0, vm.0, "tier parity");
+}
+
+#[test]
+fn a_dependency_module_reaches_its_siblings_types_consts_and_variants() {
+    // A path inside a package is written relative to the module it appears
+    // in, while items register under their full module-qualified identity.
+    // Consumed as a dependency the package gains an outer module, so a
+    // sibling's type in a signature, its constants, and its enum variants
+    // all have to anchor there - they resolved to a synthesized type or went
+    // unbound at run time.
+    let lib = fresh_dir("sibling_reach_lib");
+    fs::write(
+        lib.join("project.toml"),
+        "[project]\nid = \"example.com/reach\"\nversion = \"0.1.0\"\n\n[lib]\nname = \"reach\"\npath = \"src/lib.gos\"\n",
+    )
+    .unwrap();
+    fs::create_dir_all(lib.join("src")).unwrap();
+    fs::write(
+        lib.join("src/model.gos"),
+        "pub const LIMIT: i64 = 7\n\
+         pub enum Cell { Empty, Number(i64) }\n\
+         pub struct Tally { pub total: i64 }\n\
+         impl Tally {\n\
+         \x20   pub fn start() -> Tally { Tally { total: 0 } }\n\
+         }\n",
+    )
+    .unwrap();
+    fs::write(
+        lib.join("src/engine.gos"),
+        "use crate::model\n\n\
+         pub fn sum(cells: &Vec<model::Cell>) -> i64 {\n\
+         \x20   let mut tally = model::Tally::start()\n\
+         \x20   for cell in cells {\n\
+         \x20       tally.total += match cell {\n\
+         \x20           model::Cell::Empty => 0,\n\
+         \x20           model::Cell::Number(v) => v,\n\
+         \x20       }\n\
+         \x20   }\n\
+         \x20   min(tally.total, model::LIMIT)\n\
+         }\n",
+    )
+    .unwrap();
+    fs::write(
+        lib.join("src/lib.gos"),
+        "use crate::{engine, model}\n\n\
+         pub fn number(v: i64) -> model::Cell { model::Cell::Number(v) }\n\
+         pub fn empty() -> model::Cell { model::Cell::Empty }\n\
+         pub fn total(cells: &Vec<model::Cell>) -> i64 { engine::sum(cells) }\n",
+    )
+    .unwrap();
+
+    let app = fresh_dir("sibling_reach_app");
+    fs::write(
+        app.join("project.toml"),
+        format!(
+            "[project]\nid = \"example.com/reachapp\"\nversion = \"0.1.0\"\nentry = \"src/main.gos\"\n\n[dependencies]\n\"example.com/reach\" = {{ path = \"{}\" }}\n",
+            lib.display()
+        ),
+    )
+    .unwrap();
+    fs::create_dir_all(app.join("src")).unwrap();
+    fs::write(
+        app.join("src/main.gos"),
+        "use \"example.com/reach\" as reach\n\n\
+         fn main() {\n\
+         \x20   let cells = #[reach::number(2), reach::empty(), reach::number(3)]\n\
+         \x20   println!(\"{}\", reach::total(&cells))\n\
+         \x20   let capped = #[reach::number(50)]\n\
+         \x20   println!(\"{}\", reach::total(&capped))\n\
+         }\n",
+    )
+    .unwrap();
+
+    let run = project_run_vm(&app);
+    let _ = fs::remove_dir_all(&app);
+    let _ = fs::remove_dir_all(&lib);
+    assert_eq!(run.2, Some(0), "stderr: {}", run.1);
+    assert_eq!(run.0, "5\n7\n");
+}
+
+#[test]
+fn forwarding_a_mut_map_parameter_keeps_the_callers_container() {
+    // A reference is an alias by construction, so forwarding an existing
+    // `&mut Map` parameter has to reach the callee as the same container.
+    // Inside a module it was copied first, and the callee's `pop` emptied a
+    // copy while the caller's map kept every entry.
+    let dir = write_project(
+        "forwarded_mut_map",
+        "example.com/forwarded",
+        &[
+            (
+                "src/params.gos",
+                "fn take_one(kv: &mut Map<String, String>, key: &String) -> Option<String> {\n\
+                 \x20   Map::pop(kv, key)\n\
+                 }\n\
+                 \n\
+                 pub fn drain(kv: &mut Map<String, String>) -> String {\n\
+                 \x20   let host = match take_one(kv, &\"host\") {\n\
+                 \x20       Some(v) => v,\n\
+                 \x20       None => \"none\",\n\
+                 \x20   }\n\
+                 \x20   format!(\"{} left={}\", host, kv.len())\n\
+                 }\n",
+            ),
+            (
+                "src/main.gos",
+                "fn main() {\n\
+                 \x20   let mut kv: Map<String, String> = {\"host\": \"h\", \"dbname\": \"d\"}\n\
+                 \x20   let summary = params::drain(&mut kv)\n\
+                 \x20   println!(\"{} after={}\", summary, kv.len())\n\
+                 }\n",
+            ),
+        ],
+    );
+    let vm = project_run_vm(&dir);
+    let native = project_build_run(&dir, "forwarded");
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, "h left=1 after=1\n", "vm stdout");
+    assert_eq!(native.0, vm.0, "tier parity");
+}

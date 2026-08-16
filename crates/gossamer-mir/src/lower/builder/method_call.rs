@@ -1450,29 +1450,10 @@ impl<'a> Builder<'a> {
     /// Any other receiver local already holds the value to dispatch on and
     /// is returned unchanged.
     fn load_receiver_slot(&mut self, local: Local, span: Span) -> Local {
-        let Some(pointee) = self.mut_slot_pointee_of_local(local) else {
-            return local;
-        };
-        let zero_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-        let zero = self.fresh(zero_ty);
-        self.emit_assign(
-            Place::local(zero),
-            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
-            span,
-        );
-        let dest = self.fresh(pointee);
-        self.emit_assign(
-            Place::local(dest),
-            Rvalue::CallIntrinsic {
-                name: "gos_load",
-                args: vec![
-                    Operand::Copy(Place::local(local)),
-                    Operand::Copy(Place::local(zero)),
-                ],
-            },
-            span,
-        );
-        dest
+        match self.mut_slot_pointee_of_local(local) {
+            Some(pointee) => self.load_slot_value(local, pointee, span),
+            None => local,
+        }
     }
 
     /// Publishes a rebound receiver value: through the slot for a

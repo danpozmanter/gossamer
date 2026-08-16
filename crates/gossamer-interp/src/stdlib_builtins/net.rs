@@ -105,6 +105,23 @@ use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeError, RuntimeResu
 /// Entry point invoked from `builtins::install`.
 use super::*;
 
+/// Payload bytes for a socket write. Every byte-sequence representation is
+/// accepted: a `Vec<u8>` and a `[u8; N]` reach the runtime as one of the
+/// packed forms rather than a boxed `Array`, and a `String` writes its
+/// UTF-8. Anything else is not a byte sequence and answers `None` so the
+/// caller reports it.
+fn socket_write_bytes(arg: Option<&Value>) -> Option<Vec<u8>> {
+    match arg? {
+        Value::String(_)
+        | Value::Array(_)
+        | Value::IntArray(_)
+        | Value::ByteArray(_)
+        | Value::InlineByteArray(_)
+        | Value::ByteVec(_) => Some(crate::stdlib_builtins::crypto::value_to_bytes(arg?)),
+        _ => None,
+    }
+}
+
 pub(crate) fn install_net(globals: &mut Vec<(&'static str, Value)>) {
     install_module_pub("net", &[("lookup", builtin_net_resolve)], globals);
     let entries: &[(&str, BuiltinFnPub)] = &[
@@ -402,20 +419,10 @@ pub(crate) fn builtin_tcp_stream_write(args: &[Value]) -> RuntimeResult<Value> {
     let Some(id) = args.first().and_then(handle_id) else {
         return Ok(err_variant("TcpStream::write: missing handle"));
     };
-    let bytes: Vec<u8> = match args.get(1) {
-        Some(Value::String(s)) => s.as_bytes().to_vec(),
-        Some(Value::Array(arr)) => arr
-            .iter()
-            .filter_map(|v| match v {
-                Value::Int(n) => u8::try_from(*n).ok(),
-                _ => None,
-            })
-            .collect(),
-        _ => {
-            return Ok(err_variant(
-                "TcpStream::write: expected string or byte array",
-            ));
-        }
+    let Some(bytes) = socket_write_bytes(args.get(1)) else {
+        return Ok(err_variant(
+            "TcpStream::write: expected string or byte array",
+        ));
     };
     let bytes_len = bytes.len() as i64;
     let res = if tls_has(id) {
@@ -749,20 +756,10 @@ pub(crate) fn builtin_unix_stream_write(args: &[Value]) -> RuntimeResult<Value> 
     let Some(id) = args.first().and_then(handle_id) else {
         return Ok(err_variant("UnixStream::write: missing handle"));
     };
-    let bytes: Vec<u8> = match args.get(1) {
-        Some(Value::String(s)) => s.as_bytes().to_vec(),
-        Some(Value::Array(arr)) => arr
-            .iter()
-            .filter_map(|v| match v {
-                Value::Int(n) => u8::try_from(*n).ok(),
-                _ => None,
-            })
-            .collect(),
-        _ => {
-            return Ok(err_variant(
-                "UnixStream::write: expected string or byte array",
-            ));
-        }
+    let Some(bytes) = socket_write_bytes(args.get(1)) else {
+        return Ok(err_variant(
+            "UnixStream::write: expected string or byte array",
+        ));
     };
     let bytes_len = bytes.len() as i64;
     let res = match clone_unix_stream(id) {
@@ -966,20 +963,10 @@ pub(crate) fn builtin_udp_send_to(args: &[Value]) -> RuntimeResult<Value> {
     let Some(id) = args.first().and_then(handle_id) else {
         return Ok(err_variant("UdpSocket::send_to: missing handle"));
     };
-    let bytes: Vec<u8> = match args.get(1) {
-        Some(Value::String(s)) => s.as_bytes().to_vec(),
-        Some(Value::Array(arr)) => arr
-            .iter()
-            .filter_map(|v| match v {
-                Value::Int(n) => u8::try_from(*n).ok(),
-                _ => None,
-            })
-            .collect(),
-        _ => {
-            return Ok(err_variant(
-                "UdpSocket::send_to: expected string or byte array",
-            ));
-        }
+    let Some(bytes) = socket_write_bytes(args.get(1)) else {
+        return Ok(err_variant(
+            "UdpSocket::send_to: expected string or byte array",
+        ));
     };
     let addr = args.get(2).and_then(as_str).unwrap_or("").to_string();
     let res = match fetch_socket(&UDP_REGISTRY, id) {

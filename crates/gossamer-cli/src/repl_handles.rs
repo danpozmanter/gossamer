@@ -1005,7 +1005,7 @@ pub const HANDLE_SIGNATURES: &[(&str, &str, &str)] = &[
     (
         "UnixListener",
         "accept",
-        "fn accept(self: net::UnixListener) -> Result<net::UnixStream, errors::Error>",
+        "fn accept(self: net::UnixListener) -> Result<(net::UnixStream, String), errors::Error>",
     ),
     (
         "UnixListener",

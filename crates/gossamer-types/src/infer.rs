@@ -521,6 +521,12 @@ impl InferCtxt {
             {
                 self.unify_ref_to_slice(tcx, *ai, *bi)
             }
+            // A reference reborrows as a shared one, and only in that
+            // direction: an expected `&T` accepts a `&mut T`, so a function
+            // that only reads keeps its `&T` signature and a caller holding
+            // a `&mut T` can still hand it over. An expected `&mut T` keeps
+            // rejecting a `&T`, which would grant a write the source place
+            // never authorized.
             (
                 TyKind::Ref {
                     mutability: am,
@@ -530,7 +536,7 @@ impl InferCtxt {
                     mutability: bm,
                     inner: bi,
                 },
-            ) if am == bm => self.unify(tcx, *ai, *bi),
+            ) if am == bm || (*am == Mutbl::Not && *bm == Mutbl::Mut) => self.unify(tcx, *ai, *bi),
             // String literals and owned strings coerce to `&str`. Gossamer's
             // text references are layout-transparent, but the rule remains
             // directional so an arbitrary bare value cannot satisfy `&T`.

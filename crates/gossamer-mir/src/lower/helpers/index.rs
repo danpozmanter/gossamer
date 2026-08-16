@@ -182,12 +182,24 @@ pub(crate) fn vec_element_kind(tcx: &gossamer_types::TyCtxt, ty: Ty) -> VecElemK
 
 pub(crate) fn hashmap_key_kind(tcx: &gossamer_types::TyCtxt, ty: Ty) -> VecElemKind {
     use gossamer_types::TyKind;
-    if let TyKind::HashMap { key, .. } = tcx.kind_of(ty) {
-        if matches!(tcx.kind_of(*key), TyKind::String) {
-            return VecElemKind::Str;
+    // See through `&` / `&mut`: a map reached through a reference has the
+    // same key type it does directly, and reading the reference itself
+    // answers `Int` for a string-keyed map - which routes the call to the
+    // integer-key runtime helper, so the lookup finds nothing.
+    let mut cur = ty;
+    loop {
+        match tcx.kind_of(cur) {
+            TyKind::Ref { inner, .. } => cur = *inner,
+            TyKind::HashMap { key, .. } => {
+                return if matches!(tcx.kind_of(*key), TyKind::String) {
+                    VecElemKind::Str
+                } else {
+                    VecElemKind::Int
+                };
+            }
+            _ => return VecElemKind::Int,
         }
     }
-    VecElemKind::Int
 }
 
 pub(crate) fn arg_is_float(tcx: &gossamer_types::TyCtxt, expr: &HirExpr) -> bool {

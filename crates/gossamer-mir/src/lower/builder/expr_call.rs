@@ -1120,6 +1120,10 @@ impl<'a> Builder<'a> {
             } else {
                 local
             };
+            let local = {
+                let expected = callee_param_tys.as_ref().and_then(|p| p.get(idx).copied());
+                self.match_reference_parameter(local, expected, span)
+            };
             arg_operands.push(Operand::Copy(Place::local(local)));
         }
         // When an inline closure literal is the callee (e.g. `x |> |s| f(s)`),
@@ -1195,6 +1199,63 @@ impl<'a> Builder<'a> {
     /// `String` operand takes a slot address. A bare path that *forwards* an
     /// existing `&mut` parameter is already a pointer and needs no reload, so
     /// only the explicit `&mut <local>` form qualifies.
+    /// Hands an argument over in the shape the callee's declared parameter
+    /// reads. A reference to a scalar is the address of a slot, so a `&T`
+    /// parameter needs one even when the argument is a bare value; a shared
+    /// `&String` is the string pointer itself, so a `&mut String` argument -
+    /// which is the address of the caller's slot - is loaded first. Every
+    /// other pairing already shares its representation and passes unchanged.
+    fn match_reference_parameter(
+        &mut self,
+        local: Local,
+        expected: Option<Ty>,
+        span: Span,
+    ) -> Local {
+        use gossamer_types::TyKind;
+        let Some(expected) = expected else {
+            return local;
+        };
+        let TyKind::Ref {
+            inner: expected_inner,
+            mutability: expected_mut,
+        } = self.tcx.kind_of(expected)
+        else {
+            return local;
+        };
+        let (expected_inner, expected_mut) = (*expected_inner, *expected_mut);
+        let actual = self.locals[local.0 as usize].ty;
+        let actual_ref = match self.tcx.kind_of(actual) {
+            TyKind::Ref {
+                inner, mutability, ..
+            } => Some((*inner, *mutability)),
+            _ => None,
+        };
+        if self.slot_addressed_pointee(expected_inner) {
+            // Already a reference: forwarding one parameter into the next
+            // hands over the same address.
+            if actual_ref.is_some() {
+                return local;
+            }
+            let dest = self.fresh(expected);
+            self.emit_assign(
+                Place::local(dest),
+                Rvalue::Ref {
+                    mutable: expected_mut == gossamer_types::Mutbl::Mut,
+                    place: Place::local(local),
+                },
+                span,
+            );
+            return dest;
+        }
+        let reborrowing_string = expected_mut == gossamer_types::Mutbl::Not
+            && matches!(self.tcx.kind_of(expected_inner), TyKind::String)
+            && matches!(actual_ref, Some((_, gossamer_types::Mutbl::Mut)));
+        if reborrowing_string {
+            return self.load_slot_value(local, expected_inner, span);
+        }
+        local
+    }
+
     pub(crate) fn mut_ref_reload_target(&self, arg: &HirExpr) -> Option<Local> {
         let HirExprKind::Unary {
             op: HirUnaryOp::RefMut,

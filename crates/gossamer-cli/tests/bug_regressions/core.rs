@@ -1122,3 +1122,240 @@ fn a_label_on_an_enclosing_loop_still_resolves() {
     assert!(stdout.contains("(2, 3)"), "stdout: {stdout}");
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn builtin_receiver_keeps_its_method_over_a_same_named_user_method() {
+    // A user `impl` declaring a method name a built-in container also
+    // uses (`push`) must not capture calls whose receiver is that
+    // container. The receiver's type owns the method surface, so
+    // `xs.push(v)` on a `Vec` field, a `&mut Vec` parameter, and a
+    // field read from outside the impl all reach `Vec::push`.
+    let src = r#"
+struct Other {}
+impl Other { fn push(&mut self, v: i64) -> i64 { v * 100 } }
+
+struct Holder { items: Vec<i64> }
+
+impl Holder {
+    fn add(&mut self, v: i64) { self.items.push(v) }
+}
+
+fn free_push(xs: &mut Vec<i64>, v: i64) { xs.push(v) }
+
+fn main() {
+    let mut h = Holder { items: #[] }
+    h.add(1)
+    println!("field={:?}", h.items)
+
+    let mut direct = Holder { items: #[] }
+    direct.items.push(2)
+    println!("outside={:?}", direct.items)
+
+    let mut xs: Vec<i64> = #[]
+    free_push(&mut xs, 3)
+    println!("param={:?}", xs)
+
+    let mut o = Other {}
+    println!("user={}", o.push(4))
+}
+"#;
+    let dir = fresh_dir("builtin_receiver_dispatch");
+    let path = write_source(&dir, "builtin_receiver_dispatch", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+
+    let vm = run_vm(&path);
+    let bin = build_native(&path, &scratch).expect("native build");
+    let native = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(
+        vm.0, "field=[1]\noutside=[2]\nparam=[3]\nuser=400\n",
+        "vm stdout"
+    );
+    assert_eq!(native.0, vm.0, "tier parity");
+}
+
+#[test]
+fn vec_u8_mutators_agree_across_tiers() {
+    // A `Vec<u8>` packs its elements one byte wide rather than into the
+    // boxed slots the generic sequence path assumes, so every mutator has
+    // to read and write at that width: the VM answered its receiver
+    // unchanged for `extend` / `truncate` / `sort` / `reverse` / `clear`,
+    // and the compiled tiers sorted eight elements at a time.
+    let src = r#"
+fn main() {
+    let mut a: Vec<u8> = #[1, 2, 3]
+    a.extend(#[4, 5])
+    println!("extend {:?}", a)
+
+    let mut b: Vec<u8> = #[1, 2, 3]
+    b.extend_from_slice(#[9])
+    println!("extend_from_slice {:?}", b)
+
+    let mut c: Vec<u8> = #[1, 2, 3, 4]
+    c.truncate(2)
+    println!("truncate {:?}", c)
+
+    let mut d: Vec<u8> = #[3, 1, 2]
+    d.sort()
+    println!("sort {:?}", d)
+
+    let mut e: Vec<u8> = #[1, 2, 3]
+    e.reverse()
+    println!("reverse {:?}", e)
+
+    let mut f: Vec<u8> = #[1, 2, 3]
+    f.clear()
+    println!("clear {:?}", f)
+
+    let mut g: Vec<u8> = #[]
+    g.extend("hi".as_bytes())
+    println!("extend_str {:?}", g)
+}
+"#;
+    let dir = fresh_dir("vec_u8_mutators");
+    let path = write_source(&dir, "vec_u8_mutators", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+
+    let vm = run_vm(&path);
+    let bin = build_native(&path, &scratch).expect("native build");
+    let native = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(
+        vm.0,
+        "extend [1, 2, 3, 4, 5]\n\
+         extend_from_slice [1, 2, 3, 9]\n\
+         truncate [1, 2]\n\
+         sort [1, 2, 3]\n\
+         reverse [3, 2, 1]\n\
+         clear []\n\
+         extend_str [104, 105]\n",
+        "vm stdout"
+    );
+    assert_eq!(native.0, vm.0, "tier parity");
+}
+
+#[test]
+fn a_socket_constructor_propagates_with_the_question_mark() {
+    // `TcpStream::connect` answers a `Result`, so `?` carries its error
+    // like any other fallible call; the checker had no signature for the
+    // socket handles and reported the operand was not a `Result`. A
+    // `Vec<u8>` also reaches a socket write as packed bytes rather than a
+    // boxed array, so the payload has to be read at that width.
+    let src = r#"
+use std::errors
+use std::net::{TcpListener, TcpStream}
+
+fn serve(listener: TcpListener) -> Result<String, errors::Error> {
+    let (client, _addr) = listener.accept()?
+    let payload = client.read(64)?
+    client.close()
+    String::from_utf8(payload)
+}
+
+fn main() -> Result<(), errors::Error> {
+    let listener = TcpListener::bind("127.0.0.1:0")?
+    let addr = listener.local_addr()?
+    let sender = spawn(|| serve(listener))
+    let stream = TcpStream::connect(&addr)?
+    let mut payload: Vec<u8> = #[]
+    payload.extend("ping".as_bytes())
+    stream.write_all(payload)?
+    stream.close()
+    println!("{}", sender.join()??)
+    Ok(())
+}
+"#;
+    let dir = fresh_dir("socket_question_mark");
+    let path = write_source(&dir, "socket_question_mark", src);
+    let vm = run_vm(&path);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, "ping\n");
+}
+
+#[test]
+fn a_const_named_in_a_pattern_matches_its_value() {
+    // A pattern must be a compile-time constant, so a `const` named in one
+    // stands for its value. It parsed as a nominal pattern instead, which
+    // no scalar matches, so every arm fell through to `_`. A unit variant
+    // or unit struct of the same shape keeps its own nominal meaning.
+    let src = r#"
+const LOW: i64 = 10
+const HIGH: i64 = 20
+const NAME: String = "pg"
+const RATIO: f64 = 1.5
+
+enum Color { Red, Green }
+struct Marker
+
+fn band(v: i64) -> String {
+    match v {
+        LOW => "low",
+        HIGH => "high",
+        _ => "other",
+    }
+}
+
+fn label(s: String) -> String {
+    match s {
+        NAME => "known",
+        _ => "unknown",
+    }
+}
+
+fn scale(f: f64) -> String {
+    match f {
+        RATIO => "exact",
+        _ => "off",
+    }
+}
+
+fn hue(c: Color) -> String {
+    match c {
+        Color::Red => "red",
+        Color::Green => "green",
+    }
+}
+
+fn marked(m: Marker) -> String {
+    match m {
+        Marker => "marker",
+    }
+}
+
+fn main() {
+    println!("{} {} {}", band(10), band(20), band(30))
+    println!("{} {}", label("pg"), label("other"))
+    println!("{} {}", scale(1.5), scale(2.5))
+    println!("{} {}", hue(Color::Red), hue(Color::Green))
+    println!("{}", marked(Marker))
+}
+"#;
+    let dir = fresh_dir("const_pattern");
+    let path = write_source(&dir, "const_pattern", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+
+    let vm = run_vm(&path);
+    let bin = build_native(&path, &scratch).expect("native build");
+    let native = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(
+        vm.0,
+        "low high other\nknown unknown\nexact off\nred green\nmarker\n",
+        "vm stdout"
+    );
+    assert_eq!(native.0, vm.0, "tier parity");
+}

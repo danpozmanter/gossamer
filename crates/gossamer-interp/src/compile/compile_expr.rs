@@ -2925,6 +2925,14 @@ impl<'tcx> FnBuilder<'tcx> {
                 dst: opt_dst,
                 receiver: receiver_reg,
             });
+            // A field or element receiver (`self.idle.pop()`,
+            // `groups[i].pop()`) has its own storage, so the shortened
+            // vector is spliced back through the place-store protocol -
+            // the same contract `remove` / `insert` / `swap` follow, and
+            // what the compiled tiers do by mutating in place.
+            if !matches!(receiver.kind, HirExprKind::Path { .. }) {
+                self.compile_place_store(receiver, receiver_reg)?;
+            }
             return Ok(opt_dst);
         }
         // Super-instruction fast path for `<stream>.write_byte(<b>)`.
@@ -3209,11 +3217,26 @@ impl<'tcx> FnBuilder<'tcx> {
                 .def_name(*def)
                 .map(|type_name| format!("{type_name}::{}", name.name))
                 .filter(|qualified| self.fn_param_tys.contains_key(qualified)),
-            // A payload binding extracted from a generic enum keeps an
-            // unresolved type, which is exactly the receiver of a recursive
-            // method's inner call. One `impl` declaring the name settles it
-            // without a type: there is nothing else the call could reach.
-            _ => self.sole_impl_method(&name.name),
+            // A non-`Adt` receiver still reaches an `impl Trait for i64` /
+            // `for String` / `for Vec<T>` through the name that `impl`
+            // block spells.
+            _ => self
+                .impl_target_names(resolved_receiver_ty)
+                .into_iter()
+                .map(|type_name| format!("{type_name}::{}", name.name))
+                .find(|qualified| self.fn_param_tys.contains_key(qualified))
+                // A payload binding extracted from a generic enum keeps an
+                // unresolved type, which is exactly the receiver of a
+                // recursive method's inner call. One `impl` declaring the
+                // name settles it without a type: there is nothing else the
+                // call could reach. A receiver that resolved to a built-in
+                // container or scalar owns its own method surface, so its
+                // own type is the only place the method may come from.
+                .or_else(|| {
+                    self.ty_may_have_user_methods(resolved_receiver_ty)
+                        .then(|| self.sole_impl_method(&name.name))
+                        .flatten()
+                }),
         };
         let dispatch_name = if is_map_pop {
             "Map::pop"
@@ -3453,10 +3476,18 @@ impl<'tcx> FnBuilder<'tcx> {
             return Ok(None);
         }
         let qual = self
-            .adt_type_name(place.ty)
+            .impl_target_names(place.ty)
+            .into_iter()
             .map(|type_name| format!("{type_name}::{}", name.name))
-            .filter(|qual| self.method_muts.contains(qual))
+            .find(|qual| self.method_muts.contains(qual))
             .or_else(|| {
+                // Name-only fallback, for a receiver whose type is not
+                // resolved to a concrete nominal here. A built-in receiver
+                // owns `push` / `insert` / `pop` itself, so it must keep
+                // its own method however a user type spells its methods.
+                if !self.ty_may_have_user_methods(place.ty) {
+                    return None;
+                }
                 let suffix = format!("::{}", name.name);
                 let mut matches = self
                     .method_muts
@@ -3494,9 +3525,60 @@ impl<'tcx> FnBuilder<'tcx> {
         // Evaluate every argument BEFORE capturing the receiver, so an argument
         // that reads the receiver (`c.bump(c.value)`) still sees its live value
         // - `CellNewMove` empties the receiver's register immediately after.
+        //
+        // A `&mut` argument rides the same write-back cell the generic call
+        // path gives it: a `&mut self` method may take an out-parameter
+        // (`conn.next_row(&mut stream)`), and passing that by value would
+        // leave every mutation on a copy.
         let mut arg_regs: Vec<Reg> = Vec::with_capacity(args.len());
-        for arg in args {
-            arg_regs.push(self.compile_expr(arg)?);
+        let mut arg_cell_takes: Vec<(Reg, Reg)> = Vec::new();
+        let mut arg_place_takes: Vec<(&HirExpr, Reg)> = Vec::new();
+        for (i, arg) in args.iter().enumerate() {
+            if let Some(home) = self.mut_ref_arg_home(arg, None) {
+                let arg_cell = self.alloc_reg();
+                if Self::mut_ref_place_name(arg)
+                    .is_some_and(|name| Self::mut_arg_move_safe(args, i, name))
+                {
+                    self.emit(Op::CellNewMove {
+                        dst: arg_cell,
+                        src: home,
+                    });
+                } else {
+                    self.emit(Op::CellNew {
+                        dst: arg_cell,
+                        src: home,
+                    });
+                }
+                arg_cell_takes.push((home, arg_cell));
+                arg_regs.push(arg_cell);
+            } else if let Some(place) = Self::mut_ref_writeback_place(self.tcx, arg, None) {
+                let place_reg = self.compile_expr(place)?;
+                let arg_cell = self.alloc_reg();
+                let local_home = Self::path_single_seg_name(place).and_then(|name| {
+                    self.lookup_local(name)
+                        .filter(|tr| tr.kind == RegKind::Value)
+                        .map(|_| name)
+                });
+                if local_home.is_some_and(|name| Self::mut_arg_move_safe(args, i, name)) {
+                    self.emit(Op::CellNewMove {
+                        dst: arg_cell,
+                        src: place_reg,
+                    });
+                } else {
+                    self.emit(Op::CellNew {
+                        dst: arg_cell,
+                        src: place_reg,
+                    });
+                }
+                if local_home.is_some() {
+                    arg_cell_takes.push((place_reg, arg_cell));
+                } else {
+                    arg_place_takes.push((place, arg_cell));
+                }
+                arg_regs.push(arg_cell);
+            } else {
+                arg_regs.push(self.compile_expr(arg)?);
+            }
         }
         let cell = self.alloc_reg();
         // Move (not clone) the receiver into the cell. `CellTake` below
@@ -3540,6 +3622,20 @@ impl<'tcx> FnBuilder<'tcx> {
         let tmp = self.alloc_reg();
         self.emit(Op::CellTake { dst: tmp, cell });
         self.compile_place_store(place, tmp)?;
+        for (home, arg_cell) in arg_cell_takes {
+            self.emit(Op::CellTake {
+                dst: home,
+                cell: arg_cell,
+            });
+        }
+        for (arg_place, arg_cell) in arg_place_takes {
+            let taken = self.alloc_reg();
+            self.emit(Op::CellTake {
+                dst: taken,
+                cell: arg_cell,
+            });
+            self.compile_place_store(arg_place, taken)?;
+        }
         Ok(Some(dst))
     }
 
@@ -3963,6 +4059,11 @@ impl<'tcx> FnBuilder<'tcx> {
                 });
             } else if is_path_expr(&args[i])
                 && (self.expr_is_map(&args[i]) || self.expr_is_hashset(&args[i]))
+                // A reference is an alias by construction: forwarding an
+                // existing `&mut Map` / `&mut Set` parameter must reach the
+                // callee as the same container, or the callee's `insert` /
+                // `pop` lands on a copy and the caller sees nothing.
+                && !matches!(self.tcx.kind(args[i].ty), Some(TyKind::Ref { .. }))
             {
                 // A `Map` / `Set` local passed by value must reach the callee
                 // as an independent value, not an `Arc<Mutex<_>>` alias the
@@ -4334,8 +4435,15 @@ impl<'tcx> FnBuilder<'tcx> {
         })
     }
 
-    fn mut_ref_arg_home(&self, arg: &HirExpr, _expected_ty: Option<Ty>) -> Option<Reg> {
-        let expects_mut_vec = crate::compile::is_mut_ref_vec(self.tcx, arg.ty);
+    fn mut_ref_arg_home(&self, arg: &HirExpr, expected_ty: Option<Ty>) -> Option<Reg> {
+        // The callee's declared parameter decides, exactly as it does in
+        // `mut_ref_writeback_place`: a `&Vec<T>` parameter reads the vector
+        // and unwraps no cell, so a `&mut Vec<T>` argument reborrows as the
+        // bare value.
+        let expects_mut_vec = match expected_ty {
+            Some(expected) => crate::compile::is_mut_ref_vec(self.tcx, expected),
+            None => crate::compile::is_mut_ref_vec(self.tcx, arg.ty),
+        };
         if !expects_mut_vec {
             return None;
         }

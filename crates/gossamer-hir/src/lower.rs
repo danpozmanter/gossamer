@@ -82,6 +82,8 @@ pub fn lower_source_file_with_edition(
         ctor_arity: collect_ctor_arities(&source.items),
         struct_fields: collect_struct_fields(&source.items),
         unit_structs: collect_unit_structs(&source.items),
+        const_literals: collect_const_literals(&source.items),
+        dependency_modules: collect_dependency_modules(&source.items),
         module_fn_paths,
         module_impl_fns,
         module_type_names,
@@ -218,6 +220,28 @@ fn collect_module_impl_fns(
                     }
                 }
             }
+            // An enum's variant constructors are registered under the
+            // enum's module-qualified identity too, and a `Enum::Variant`
+            // path written inside the module needs the same anchoring an
+            // associated function does.
+            AstItemKind::Enum(decl) if !module_path.is_empty() => {
+                for variant in &decl.variants {
+                    out.insert(format!(
+                        "{}::{}::{}",
+                        module_path.join("::"),
+                        decl.name.name,
+                        variant.name.name
+                    ));
+                }
+            }
+            // A module's constants and statics are reached by the same
+            // module-relative path, so they anchor the same way.
+            AstItemKind::Const(decl) if !module_path.is_empty() => {
+                out.insert(format!("{}::{}", module_path.join("::"), decl.name.name));
+            }
+            AstItemKind::Static(decl) if !module_path.is_empty() => {
+                out.insert(format!("{}::{}", module_path.join("::"), decl.name.name));
+            }
             _ => {}
         }
     }
@@ -339,6 +363,70 @@ fn collect_struct_fields(items: &[AstItem]) -> std::collections::HashMap<String,
     let mut map = std::collections::HashMap::new();
     collect_struct_fields_into(items, &mut map);
     map
+}
+
+/// Literal value of every `const NAME: T = <literal>` the file declares,
+/// keyed by name, including inside inline modules.
+///
+/// A pattern must be a compile-time constant, so a `const` named in one
+/// stands for its value. Only a literal initializer (optionally negated)
+/// is collected; a computed one keeps its path form and is reported.
+/// Names of the modules a `path = "..."` dependency was inlined under.
+///
+/// A path written inside one is relative to that package, so a
+/// `crate::`-rooted path there names the dependency's own root rather than
+/// the consuming package's.
+fn collect_dependency_modules(items: &[AstItem]) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    for item in items {
+        if let AstItemKind::Mod(decl) = &item.kind
+            && item
+                .attrs
+                .outer
+                .iter()
+                .any(|attr| attr.string_argument("dependency").is_some())
+        {
+            out.insert(decl.name.name.clone());
+        }
+    }
+    out
+}
+
+fn collect_const_literals(items: &[AstItem]) -> std::collections::HashMap<String, HirLiteral> {
+    fn literal_of(expr: &AstExpr) -> Option<HirLiteral> {
+        match &expr.kind {
+            AstExprKind::Literal(lit) => Some(lower_literal(lit)),
+            AstExprKind::Unary {
+                op: UnaryOp::Neg,
+                operand,
+            } => match literal_of(operand)? {
+                HirLiteral::Int(text) => Some(HirLiteral::Int(format!("-{text}"))),
+                HirLiteral::Float(text) => Some(HirLiteral::Float(format!("-{text}"))),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+    fn visit(items: &[AstItem], out: &mut std::collections::HashMap<String, HirLiteral>) {
+        for item in items {
+            match &item.kind {
+                AstItemKind::Const(decl) => {
+                    if let Some(lit) = literal_of(&decl.value) {
+                        out.insert(decl.name.name.clone(), lit);
+                    }
+                }
+                AstItemKind::Mod(decl) => {
+                    if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                        visit(inner, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut out = std::collections::HashMap::new();
+    visit(items, &mut out);
+    out
 }
 
 fn collect_unit_structs(items: &[AstItem]) -> std::collections::HashSet<String> {
@@ -507,9 +595,15 @@ struct Lowerer<'a> {
     /// same-named sibling registered a flat global last.
     module_fn_paths: std::collections::HashMap<gossamer_resolve::DefId, Vec<Ident>>,
     /// Qualified names of every inline-module `impl`'s associated
-    /// functions, for respelling a bare `Type::assoc` written inside
+    /// functions and every inline-module enum's variant constructors, for
+    /// respelling a `Type::assoc` or `Enum::Variant` path written inside
     /// the module that declares it.
     module_impl_fns: std::collections::HashSet<String>,
+    /// Literal value of each `const` the file declares, so a constant
+    /// named in a pattern matches its value.
+    const_literals: std::collections::HashMap<String, HirLiteral>,
+    /// Modules an inlined dependency's source sits under.
+    dependency_modules: std::collections::HashSet<String>,
     /// Module whose items are currently being lowered.
     current_module: Vec<String>,
     promoted_items: Vec<HirItem>,
@@ -562,6 +656,21 @@ impl Lowerer<'_> {
         let (def, _) = res_nominal?;
         let name = self.tcx.def_name(def)?.to_string();
         Some(NominalInto::From(name))
+    }
+
+    /// Name of the opaque alias a method receiver is declared as, when it is
+    /// one. Its impl methods are filed under this name, and the erasure that
+    /// follows lowering replaces the type with its representation.
+    fn nominal_impl_owner(&mut self, receiver: NodeId) -> Option<String> {
+        let mut recv = self.table.get(receiver)?;
+        while let Some(gossamer_types::TyKind::Ref { inner, .. }) = self.tcx.kind(recv) {
+            recv = *inner;
+        }
+        let Some(gossamer_types::TyKind::Nominal { def, .. }) = self.tcx.kind(recv) else {
+            return None;
+        };
+        let def = *def;
+        Some(self.tcx.def_name(def)?.to_string())
     }
 
     fn unit(&mut self) -> gossamer_types::Ty {
@@ -1025,6 +1134,31 @@ impl Lowerer<'_> {
                         }
                         None => {}
                     }
+                }
+                // An opaque alias owns its method surface outright - it
+                // inherits none of the representation's - so a method on one
+                // is its own impl's, and that impl is filed under the alias's
+                // name. Name it here, for the same reason `.into()` is named
+                // here: below this point the receiver is the representation,
+                // whose own methods would answer instead.
+                if let Some(target) = self.nominal_impl_owner(receiver.id) {
+                    let span = expr.span;
+                    let ty = self.ty_of(expr.id);
+                    let callee = HirExpr {
+                        id: self.fresh(),
+                        span,
+                        ty,
+                        kind: HirExprKind::Path {
+                            segments: vec![Ident::new(&target), name.clone()],
+                            def: None,
+                        },
+                    };
+                    let mut call_args = vec![self.lower_expr(receiver)];
+                    call_args.extend(args.iter().map(|a| self.lower_expr(a)));
+                    return HirExprKind::Call {
+                        callee: Box::new(callee),
+                        args: call_args,
+                    };
                 }
                 // A map or set traverses eagerly, and the compiled tiers reach
                 // that walk through the iterator its `iter()` answers.
@@ -2643,6 +2777,86 @@ impl Lowerer<'_> {
             .collect()
     }
 
+    /// `tail` prefixed with the innermost enclosing module path under which
+    /// an `impl` function of that name is registered, or `None` when no
+    /// enclosing module declares one.
+    ///
+    /// A `Type::assoc` path is spelled relative to the module it is written
+    /// in, while the impl's body is keyed by the type's full module-qualified
+    /// identity. Walking outward from the innermost module lets an inner
+    /// module's item win over a same-named one further out, matching name
+    /// resolution.
+    fn anchor_impl_fn_path(&self, tail: &[&str], from_depth: usize) -> Option<Vec<Ident>> {
+        let joined = tail.join("::");
+        let from_depth = from_depth.min(self.current_module.len());
+        for depth in (1..=from_depth).rev() {
+            let prefix = self.current_module[..depth].join("::");
+            if self
+                .module_impl_fns
+                .contains(&format!("{prefix}::{joined}"))
+            {
+                return Some(
+                    self.current_module[..depth]
+                        .iter()
+                        .map(Ident::new)
+                        .chain(tail.iter().map(|s| Ident::new(*s)))
+                        .collect(),
+                );
+            }
+        }
+        None
+    }
+
+    /// Full spelling of a single-segment name bound by `use` to a stdlib free
+    /// function or a registered `[rust-bindings]` item, if it names one.
+    fn imported_leaf_path(&self, node: NodeId, leaf: &Ident) -> Option<Vec<Ident>> {
+        let Some(Resolution::Import { use_id }) = self.resolutions.get(node) else {
+            return None;
+        };
+        let entries = self.import_targets.get(&use_id)?;
+        let (_, full) = entries.iter().find(|(bound, _)| *bound == leaf.name)?;
+        let qualified = full
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect::<Vec<_>>()
+            .join("::");
+        let std_qualified = qualified
+            .strip_prefix("std::")
+            .is_some_and(gossamer_resolve::is_stdlib_qualified);
+        if std_qualified {
+            Some(full.iter().skip(1).cloned().collect())
+        } else if gossamer_resolve::lookup_external_item(&qualified).is_some() {
+            Some(full.clone())
+        } else {
+            None
+        }
+    }
+
+    /// Module-qualified spelling of a `Type::assoc` path whose `Type` came from
+    /// a `use`, which is the key the impl's body is registered under.
+    fn imported_assoc_path(&self, node: NodeId, segments: &[Ident]) -> Option<Vec<Ident>> {
+        let Some(Resolution::Import { use_id }) = self.resolutions.get(node) else {
+            return None;
+        };
+        let entries = self.import_targets.get(&use_id)?;
+        let (_, full) = entries
+            .iter()
+            .find(|(bound, _)| *bound == segments[0].name)?;
+        let mut target: Vec<&str> = full
+            .iter()
+            .map(|s| s.name.as_str())
+            .filter(|s| !matches!(*s, "crate" | "self" | "super" | "root"))
+            .collect();
+        target.push(segments[1].name.as_str());
+        if self.module_impl_fns.contains(&target.join("::")) {
+            return Some(target.iter().map(|s| Ident::new(*s)).collect());
+        }
+        // The import target is spelled relative to the module the `use` was
+        // written in, so the impl it names is registered under that module's
+        // own path.
+        self.anchor_impl_fn_path(&target, self.current_module.len())
+    }
+
     fn lower_path_expr(&mut self, node: NodeId, path: &gossamer_ast::PathExpr) -> HirExprKind {
         let mut segments: Vec<Ident> = path.segments.iter().map(|s| s.name.clone()).collect();
         // A single-segment name bound by `use` and targeting a
@@ -2655,23 +2869,9 @@ impl Lowerer<'_> {
         // program actually imported. std / user imports are
         // untouched - the gate is a registered external item.
         if segments.len() == 1
-            && let Some(Resolution::Import { use_id }) = self.resolutions.get(node)
-            && let Some(entries) = self.import_targets.get(&use_id)
-            && let Some((_, full)) = entries.iter().find(|(bound, _)| *bound == segments[0].name)
+            && let Some(expanded) = self.imported_leaf_path(node, &segments[0])
         {
-            let qualified = full
-                .iter()
-                .map(|s| s.name.as_str())
-                .collect::<Vec<_>>()
-                .join("::");
-            let std_qualified = qualified
-                .strip_prefix("std::")
-                .is_some_and(gossamer_resolve::is_stdlib_qualified);
-            if std_qualified {
-                segments = full.iter().skip(1).cloned().collect();
-            } else if gossamer_resolve::lookup_external_item(&qualified).is_some() {
-                segments = full.clone();
-            }
+            segments = expanded;
         }
         // The resolver has already used a leading `crate` / `self` /
         // `super` / `root` to pick the target, and nothing below HIR keys
@@ -2684,6 +2884,12 @@ impl Lowerer<'_> {
                 segments[0].name.as_str(),
                 "crate" | "self" | "super" | "root"
             );
+        // How far out the enclosing module chain a `Type::assoc` /
+        // `Enum::Variant` path is anchored: the current module for a bare
+        // or `self::`-relative path, one level out per `super::`, and
+        // nowhere for a `crate::`-rooted path, which already names its
+        // route from the package root.
+        let mut anchor_depth = Some(self.current_module.len());
         if qualified_spelling {
             while segments.len() > 1
                 && matches!(
@@ -2691,27 +2897,35 @@ impl Lowerer<'_> {
                     "crate" | "self" | "super" | "root"
                 )
             {
+                match segments[0].name.as_str() {
+                    // Inside an inlined dependency, the package root is that
+                    // dependency's own module, not the consuming package's.
+                    "crate" | "root" => {
+                        anchor_depth = self
+                            .current_module
+                            .first()
+                            .filter(|outermost| self.dependency_modules.contains(*outermost))
+                            .map(|_| 1);
+                    }
+                    "super" => {
+                        anchor_depth = anchor_depth.map(|depth| depth.saturating_sub(1));
+                    }
+                    _ => {}
+                }
                 segments.remove(0);
             }
         }
-        // A bare `Type::assoc` written inside a module names that
-        // module's own impl, whose body is keyed by the qualified
-        // spelling. Walk outward so an inner module's item wins over a
-        // same-named one further out, matching name resolution. A path
-        // that named its own route is left alone.
-        if !qualified_spelling && segments.len() == 2 && !self.current_module.is_empty() {
-            let tail = format!("{}::{}", segments[0].name, segments[1].name);
-            for depth in (1..=self.current_module.len()).rev() {
-                let prefix = self.current_module[..depth].join("::");
-                let qualified = format!("{prefix}::{tail}");
-                if self.module_impl_fns.contains(&qualified) {
-                    segments = self.current_module[..depth]
-                        .iter()
-                        .map(Ident::new)
-                        .chain(segments.iter().cloned())
-                        .collect();
-                    break;
-                }
+        // A `Type::assoc` or `Enum::Variant` written inside a module names
+        // that module's own item, whose body is keyed by the qualified
+        // spelling. Walk outward from the anchor so an inner module's item
+        // wins over a same-named one further out, matching name resolution.
+        if let Some(depth) = anchor_depth
+            && segments.len() >= 2
+            && depth > 0
+        {
+            let tail: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
+            if let Some(anchored) = self.anchor_impl_fn_path(&tail, depth) {
+                segments = anchored;
             }
         }
         // A `Type::assoc` whose `Type` came from a `use` names an impl
@@ -2720,23 +2934,9 @@ impl Lowerer<'_> {
         // the call type-checks and is unbound at run time.
         if !qualified_spelling
             && segments.len() == 2
-            && let Some(Resolution::Import { use_id }) = self.resolutions.get(node)
-            && let Some(entries) = self.import_targets.get(&use_id)
-            && let Some((_, full)) = entries.iter().find(|(bound, _)| *bound == segments[0].name)
+            && let Some(target) = self.imported_assoc_path(node, &segments)
         {
-            let target: Vec<&str> = full
-                .iter()
-                .map(|s| s.name.as_str())
-                .filter(|s| !matches!(*s, "crate" | "self" | "super" | "root"))
-                .collect();
-            let qualified = format!("{}::{}", target.join("::"), segments[1].name);
-            if self.module_impl_fns.contains(&qualified) {
-                segments = target
-                    .iter()
-                    .map(|s| Ident::new(*s))
-                    .chain(std::iter::once(segments[1].clone()))
-                    .collect();
-            }
+            segments = target;
         }
         // A path headed by a `use "id" as alias` binding names items
         // registered under the dependency module's real name, so the
@@ -3290,13 +3490,7 @@ impl Lowerer<'_> {
                 }
             }
             AstPatKind::Literal(lit) => HirPatKind::Literal(lower_literal(lit)),
-            AstPatKind::Path(path) => HirPatKind::Variant {
-                name: path
-                    .segments
-                    .last()
-                    .map_or_else(|| Ident::new("<error>"), |seg| seg.name.clone()),
-                fields: Vec::new(),
-            },
+            AstPatKind::Path(path) => self.lower_path_pat(path),
             AstPatKind::TupleStruct { path, elems } => {
                 let name = path
                     .segments
@@ -3307,21 +3501,7 @@ impl Lowerer<'_> {
                 HirPatKind::Variant { name, fields }
             }
             AstPatKind::Struct { path, fields, rest } => {
-                let mut name = path
-                    .segments
-                    .last()
-                    .map_or_else(|| Ident::new("<error>"), |seg| seg.name.clone());
-                if let Some(Resolution::Def { def, .. }) = self.resolutions.get(pattern.id)
-                    && let Some(promoted) = self.module_fn_paths.get(&def)
-                    && let Some(promoted_name) = promoted.last()
-                {
-                    name.clone_from(promoted_name);
-                }
-                HirPatKind::Struct {
-                    name,
-                    fields: fields.iter().map(|f| self.lower_field_pat(f)).collect(),
-                    rest: *rest,
-                }
+                self.lower_struct_pat(pattern.id, path, fields, *rest)
             }
             AstPatKind::Tuple(parts) => {
                 HirPatKind::Tuple(parts.iter().map(|p| self.lower_pat(p)).collect())
@@ -3343,34 +3523,99 @@ impl Lowerer<'_> {
                 mutable: matches!(mutability, Mutability::Mutable),
             },
             AstPatKind::Range { lo, hi, kind } => {
-                let inclusive = matches!(kind, gossamer_ast::RangeKind::Inclusive);
-                // An open bound denotes the scrutinee type's extreme, so
-                // synthesise a type-correct min/max literal and lower to a
-                // closed `lo..=hi` / `lo..hi` predicate the compiled tiers
-                // already handle. An open end always reaches the maximum,
-                // hence inclusive of it.
-                match (lo, hi) {
-                    (Some(lo), Some(hi)) => HirPatKind::Range {
-                        lo: lower_literal(lo),
-                        hi: lower_literal(hi),
-                        inclusive,
-                    },
-                    (None, Some(hi)) => HirPatKind::Range {
-                        lo: int_extreme_literal(self.tcx, ty, Extreme::Min),
-                        hi: lower_literal(hi),
-                        inclusive,
-                    },
-                    (Some(lo), None) => HirPatKind::Range {
-                        lo: lower_literal(lo),
-                        hi: int_extreme_literal(self.tcx, ty, Extreme::Max),
-                        inclusive: true,
-                    },
-                    (None, None) => HirPatKind::Wildcard,
-                }
+                self.lower_range_pat(lo.as_ref(), hi.as_ref(), *kind, ty)
             }
             AstPatKind::Error => HirPatKind::Wildcard,
         }
         .erase_unused(ty)
+    }
+
+    /// Lowers a path pattern, resolving it to a const value, unit struct, or unit variant.
+    fn lower_path_pat(&mut self, path: &gossamer_ast::TypePath) -> HirPatKind {
+        let name = path
+            .segments
+            .last()
+            .map_or_else(|| Ident::new("<error>"), |seg| seg.name.clone());
+        // A `const` named in a pattern stands for its value, the way
+        // a literal written there does. A unit variant or unit struct
+        // of the same name is the nominal pattern and keeps it.
+        if self.unit_structs.contains(name.name.as_str()) {
+            // A unit struct has one value, so naming it is the
+            // fieldless struct pattern its braced form spells.
+            return HirPatKind::Struct {
+                name,
+                fields: Vec::new(),
+                rest: false,
+            };
+        }
+        match self.const_literals.get(name.name.as_str()) {
+            Some(lit) if !self.ctor_arity.contains_key(name.name.as_str()) => {
+                HirPatKind::Literal(lit.clone())
+            }
+            _ => HirPatKind::Variant {
+                name,
+                fields: Vec::new(),
+            },
+        }
+    }
+
+    /// Lowers a braced struct pattern, naming it by its promoted module path when it has one.
+    fn lower_struct_pat(
+        &mut self,
+        id: NodeId,
+        path: &gossamer_ast::TypePath,
+        fields: &[AstFieldPat],
+        rest: bool,
+    ) -> HirPatKind {
+        let mut name = path
+            .segments
+            .last()
+            .map_or_else(|| Ident::new("<error>"), |seg| seg.name.clone());
+        if let Some(Resolution::Def { def, .. }) = self.resolutions.get(id)
+            && let Some(promoted) = self.module_fn_paths.get(&def)
+            && let Some(promoted_name) = promoted.last()
+        {
+            name.clone_from(promoted_name);
+        }
+        HirPatKind::Struct {
+            name,
+            fields: fields.iter().map(|f| self.lower_field_pat(f)).collect(),
+            rest,
+        }
+    }
+
+    /// Lowers a range pattern, closing an open bound with the scrutinee type's extreme.
+    fn lower_range_pat(
+        &self,
+        lo: Option<&AstLiteral>,
+        hi: Option<&AstLiteral>,
+        kind: gossamer_ast::RangeKind,
+        ty: gossamer_types::Ty,
+    ) -> HirPatKind {
+        let inclusive = matches!(kind, gossamer_ast::RangeKind::Inclusive);
+        // An open bound denotes the scrutinee type's extreme, so
+        // synthesise a type-correct min/max literal and lower to a
+        // closed `lo..=hi` / `lo..hi` predicate the compiled tiers
+        // already handle. An open end always reaches the maximum,
+        // hence inclusive of it.
+        match (lo, hi) {
+            (Some(lo), Some(hi)) => HirPatKind::Range {
+                lo: lower_literal(lo),
+                hi: lower_literal(hi),
+                inclusive,
+            },
+            (None, Some(hi)) => HirPatKind::Range {
+                lo: int_extreme_literal(self.tcx, ty, Extreme::Min),
+                hi: lower_literal(hi),
+                inclusive,
+            },
+            (Some(lo), None) => HirPatKind::Range {
+                lo: lower_literal(lo),
+                hi: int_extreme_literal(self.tcx, ty, Extreme::Max),
+                inclusive: true,
+            },
+            (None, None) => HirPatKind::Wildcard,
+        }
     }
 
     fn lower_field_pat(&mut self, field: &AstFieldPat) -> HirFieldPat {
