@@ -1,0 +1,93 @@
+// `Map::from` over a runtime sequence of key/value pairs, alongside the two
+// shapes such a call is written from: a `map` whose closure answers a tuple
+// (an element wider than one slot), and a positional `let` that takes a
+// `split` result apart. Each is a place a compiled build read one word where
+// the value needed two, or reached a binding with no type to dispatch against,
+// so a regression shows up as wrong text rather than a silent tier change.
+
+struct Reaction { quantity: i64, ingredients: Map<String, i64> }
+
+fn parse_pairs(text: String) -> Map<String, i64> {
+    Map::from(
+        text.split(", ").map(|entry| {
+            let (qty, name) = entry.split(" ")
+            (name, qty.to_i64().unwrap_or(-1))
+        })
+    )
+}
+
+fn parse_reactions(text: String) -> Map<String, Reaction> {
+    Map::from(
+        text.split("; ").map(|line| {
+            let (inputs, output) = line.split(" => ")
+            let (out_qty, out_name) = output.split(" ")
+            (out_name, Reaction {
+                quantity: out_qty.to_i64().unwrap_or(-1)
+                ingredients: parse_pairs(inputs)
+            })
+        })
+    )
+}
+
+fn ordered_from_sequence(text: String) -> BTreeMap<String, i64> {
+    BTreeMap::from(
+        text.split(", ").map(|entry| {
+            let (qty, name) = entry.split(" ")
+            (name, qty.to_i64().unwrap_or(-1))
+        })
+    )
+}
+
+fn tuple_keys(n: i64) -> Map<(i64, i64), i64> {
+    let mut pairs: Vec<((i64, i64), i64)> = #[]
+    let mut i = 0
+    while i < n {
+        pairs.push(((i % 3, i % 2), i))
+        i += 1
+    }
+    Map::from(pairs)
+}
+
+fn string_values(n: i64) -> Map<i64, String> {
+    let mut pairs: Vec<(i64, String)> = #[]
+    let mut i = 0
+    while i < n {
+        pairs.push((i, "v"))
+        i += 1
+    }
+    Map::from(pairs)
+}
+
+fn main() {
+    let counts = parse_pairs("7 A, 1 B, 4 C")
+    println!("A {} B {} C {}", counts.get_or("A", -1), counts.get_or("B", -1), counts.get_or("C", -1))
+    println!("counts len {}", counts.len())
+
+    let reactions = parse_reactions("9 ORE => 2 A; 8 ORE => 3 B; 7 A, 1 B => 1 FUEL")
+    let fuel = reactions.get("FUEL").unwrap()
+    println!("fuel qty {} inputs {}", fuel.quantity, fuel.ingredients.len())
+    println!("fuel needs A {} B {}", fuel.ingredients.get_or("A", -1), fuel.ingredients.get_or("B", -1))
+    println!("reaction count {}", reactions.len())
+
+    let ranked = ordered_from_sequence("3 z, 1 a, 2 m")
+    for key in ranked.keys() { println!("ranked {} {}", key, ranked.get_or(key, -1)) }
+
+    let grid = tuple_keys(6)
+    println!("grid len {} at (1,1) {}", grid.len(), grid.get_or((1, 1), -1))
+
+    let named = string_values(4)
+    println!("named len {} at 2 {}", named.len(), named.get_or(2, "none"))
+
+    // The `map` result is a sequence of two-slot elements in its own right.
+    let pairs = #["a 1", "b 2"].map(|entry| {
+        let (name, qty) = entry.split(" ")
+        (name, qty.to_i64().unwrap_or(-1))
+    })
+    for (name, qty) in pairs { println!("pair {} {}", name, qty) }
+    println!("pair 0 {} {}", pairs[0].0, pairs[0].1)
+
+    // A positional `let` over a sequence binds each part to the element type.
+    let words: Vec<String> = #["one", "two", "three"]
+    let (first, second, third) = words
+    println!("words {} {} {} lens {} {} {}", first, second, third, first.len(), second.len(), third.len())
+}

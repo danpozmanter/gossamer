@@ -373,6 +373,16 @@ impl<'tcx> FnBuilder<'tcx> {
     /// collection - either by its resolved type or, for a pattern-bound
     /// local whose inferred type stayed an unresolved var, by the
     /// `collection_locals` tag recorded at bind time.
+    /// True when `expr` names the `__for_iter` state binding the `for`
+    /// desugar introduces for an iterable with no home of its own.
+    pub(crate) fn is_for_iter_state_path(expr: &HirExpr) -> bool {
+        matches!(
+            &expr.kind,
+            HirExprKind::Path { segments, .. }
+                if matches!(segments.as_slice(), [seg] if seg.name == "__for_iter")
+        )
+    }
+
     pub(crate) fn receiver_is_collection(&self, expr: &HirExpr) -> bool {
         if self.is_indexable_collection_ty(expr.ty) {
             return true;

@@ -2525,8 +2525,8 @@ the implementation by a rev.</p>
 <td>Remove selected toolchain caches. With no cache-class flag it clears frontend and IR caches; <code>--all</code> includes Rust-binding runners, packages, and legacy build artifacts. <code>--vendor</code> also deletes <code>./vendor/</code>.</td>
 </tr>
 <tr>
-<td><code>gos cache [--path] [--prune] [--dry-run]</code></td>
-<td>Show cache roots and usage, print paths only, or prune files older than 30 days and files exceeding the configured total cap.</td>
+<td><code>gos cache [--path] [--prune] [--clear] [--scope SCOPE] [--dry-run]</code></td>
+<td>Show cache roots and usage, print paths only, prune files older than 30 days and files exceeding the configured total cap, or clear every class. <code>--scope local</code> (the default for <code>--prune</code> / <code>--clear</code>) reaches this project's <code>.gos-cache/</code>; <code>--scope global</code> reaches the shared roots every project reuses; <code>--scope all</code> reaches both, and is what the report shows.</td>
 </tr>
 </tbody>
 </table>

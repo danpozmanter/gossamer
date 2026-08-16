@@ -1,11 +1,11 @@
 //! Cache inspection and retention commands.
 
 use anyhow::Result;
-use gossamer_driver::cache_maintenance::{self, CacheClass, CachePolicy};
+use gossamer_driver::cache_maintenance::{self, CacheClass, CachePolicy, CacheScope};
 
-pub(crate) fn status(paths_only: bool) -> Result<()> {
+pub(crate) fn status(paths_only: bool, scope: CacheScope) -> Result<()> {
     let cwd = std::env::current_dir()?;
-    let entries = cache_maintenance::status(&cwd);
+    let entries = cache_maintenance::status(&cwd, scope);
     if paths_only {
         for entry in entries {
             println!("{}\t{}", entry.class.name(), entry.path.display());
@@ -27,17 +27,18 @@ pub(crate) fn status(paths_only: bool) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn prune(dry_run: bool) -> Result<()> {
+pub(crate) fn prune(scope: CacheScope, dry_run: bool) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let policy = CachePolicy::default();
-    let (bytes, files) = cache_maintenance::prune(&cwd, policy, dry_run)?;
+    let (bytes, files) = cache_maintenance::prune(&cwd, policy, scope, dry_run)?;
     let verb = if dry_run {
         "would reclaim"
     } else {
         "reclaimed"
     };
     println!(
-        "cache prune: {verb} {} from {files} files (cap={}, max-age={} days)",
+        "cache prune ({}): {verb} {} from {files} files (cap={}, max-age={} days)",
+        scope.name(),
         human_bytes(bytes),
         human_bytes(policy.max_bytes),
         policy.max_age.as_secs() / 86_400
@@ -45,15 +46,16 @@ pub(crate) fn prune(dry_run: bool) -> Result<()> {
     Ok(())
 }
 
-/// Removes every cache class known to the toolchain without touching project
-/// build outputs or vendored dependencies.
-pub(crate) fn clear(dry_run: bool) -> Result<()> {
+/// Removes every cache class known to the toolchain within `scope`, without
+/// touching project build outputs or vendored dependencies.
+pub(crate) fn clear(scope: CacheScope, dry_run: bool) -> Result<()> {
     let cwd = std::env::current_dir()?;
-    let removed = cache_maintenance::remove(&cwd, CacheClass::all(), dry_run)?;
+    let removed = cache_maintenance::remove(&cwd, CacheClass::all(), scope, dry_run)?;
     let bytes = removed.iter().map(|entry| entry.bytes).sum::<u64>();
     let verb = if dry_run { "would remove" } else { "removed" };
     println!(
-        "cache clear: {verb} {} from {} cache roots",
+        "cache clear ({}): {verb} {} from {} cache roots",
+        scope.name(),
         human_bytes(bytes),
         removed.len()
     );

@@ -1881,6 +1881,15 @@ impl<'a> Builder<'a> {
         span: Span,
     ) {
         use gossamer_types::TyKind;
+        // A sequence taken apart positionally reads its elements through the
+        // indexed accessor. `Projection::Field` addresses an aggregate's own
+        // slots, which on a `Vec` are its header words rather than its
+        // elements.
+        let scrutinee_ty = self.peel_ref_ty(self.locals[tuple_local.0 as usize].ty);
+        if let TyKind::Vec(elem) | TyKind::Slice(elem) = self.tcx.kind_of(scrutinee_ty).clone() {
+            self.bind_sequence_tuple_pattern(tuple_local, sub_patterns, elem, span);
+            return;
+        }
         // `TcpListener::accept` returns `(TcpStream-handle, peer-addr)`;
         // the call dest is tagged `net::accept_pair`, which flows here
         // through the `Ok(p)`/match-result kind propagation. Re-tag the
@@ -1989,6 +1998,70 @@ impl<'a> Builder<'a> {
                 Rvalue::Use(Operand::Copy(place)),
                 span,
             );
+        }
+    }
+
+    /// Binds a positional pattern against a `Vec` / slice scrutinee, reading
+    /// each part with the indexed accessor for the element's slot shape.
+    ///
+    /// A `..` rest counts from the end, so the parts written after it read
+    /// the tail. The sequence's length is a runtime property, so a part past
+    /// the end reads whatever `xs[i]` reads there - the same contract an
+    /// explicit index has.
+    fn bind_sequence_tuple_pattern(
+        &mut self,
+        seq_local: Local,
+        sub_patterns: &[HirPat],
+        elem_ty: Ty,
+        span: Span,
+    ) {
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let rest_pos = sub_patterns
+            .iter()
+            .position(|p| matches!(p.kind, HirPatKind::Rest));
+        let len_local = rest_pos.map(|_| {
+            self.emit_combinator_call(
+                "gos_rt_vec_len",
+                vec![Operand::Copy(Place::local(seq_local))],
+                i64_ty,
+                span,
+            )
+        });
+        for (i, sub) in sub_patterns.iter().enumerate() {
+            if matches!(sub.kind, HirPatKind::Rest | HirPatKind::Wildcard) {
+                continue;
+            }
+            let index = self.fresh(i64_ty);
+            match (rest_pos, len_local) {
+                (Some(rest_idx), Some(len)) if i > rest_idx => {
+                    let from_end = i64::try_from(sub_patterns.len() - i).unwrap_or(0);
+                    self.emit_assign(
+                        Place::local(index),
+                        Rvalue::BinaryOp {
+                            op: BinOp::Sub,
+                            lhs: Operand::Copy(Place::local(len)),
+                            rhs: Operand::Const(ConstValue::Int(i128::from(from_end))),
+                        },
+                        span,
+                    );
+                }
+                _ => {
+                    self.emit_assign(
+                        Place::local(index),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(
+                            i128::try_from(i).unwrap_or(0),
+                        ))),
+                        span,
+                    );
+                }
+            }
+            let element = self.emit_vec_get(seq_local, index, elem_ty, span);
+            match &sub.kind {
+                HirPatKind::Binding { name, .. } => {
+                    self.bind_local(name.name.as_str(), element);
+                }
+                _ => self.bind_aggregate_let_pattern(element, sub, span),
+            }
         }
     }
 

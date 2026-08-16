@@ -2631,9 +2631,9 @@ card:</p>
   scalar/String sequences without a traversal.</li>
 <li><strong>A callback has two shorthands.</strong> A std free function named in
   value position IS the closure that calls it, so <code>xs.map(math::abs)</code>
-  and <code>xs.map(base64::encode)</code> need no <code>|v|</code> (a variadic like
-  <code>fmt::format</code> has no fixed parameter list and reports GT0015 - write
-  that closure). A <code>$</code>-headed projection in an argument is the closure
+  and <code>xs.map(base64::encode)</code> need no <code>|v|</code> (a macro is not a function:
+  <code>fmt::format</code> reports GR0018 and is written <code>format!(..)</code>, so pass a
+  closure that calls it). A <code>$</code>-headed projection in an argument is the closure
   over that argument: <code>xs.map($.abs)</code> is <code>xs.map(|v| v.abs())</code>,
   <code>$.len()</code> calls with arguments, and <code>$.0</code> / <code>$[i]</code> project. <code>$.name</code>
   is the nullary METHOD call, exactly as in a pipe step, so read a

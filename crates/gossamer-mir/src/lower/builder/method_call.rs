@@ -2130,11 +2130,16 @@ impl<'a> Builder<'a> {
                     Some("")
                 }
             }
+            // `.ok()` / `.err()` answer an `Option`, so they take the carrier
+            // helpers the `result::ok` / `result::err` free forms use. The
+            // payload-reading helpers of the same name are the `unwrap` family
+            // and hand back a bare word, which a `match` then reads as a
+            // discriminant.
             "ok" => {
                 if matches!(&receiver_kind_flat, TyKind::Adt { .. })
                     && self.is_result_or_option_adt(receiver_ty)
                 {
-                    Some("gos_rt_result_ok")
+                    Some("gos_rt_result_to_opt_ok")
                 } else {
                     Some("")
                 }
@@ -2143,7 +2148,7 @@ impl<'a> Builder<'a> {
                 if matches!(&receiver_kind_flat, TyKind::Adt { .. })
                     && self.is_result_or_option_adt(receiver_ty)
                 {
-                    Some("gos_rt_result_err")
+                    Some("gos_rt_result_to_opt_err")
                 } else {
                     Some("")
                 }
@@ -2678,28 +2683,11 @@ impl<'a> Builder<'a> {
             // `get` extends the gate to `JsonValue` because the
             // json runtime also exposes a single-arg `get(key)`.
             "insert" => match &receiver_kind_flat {
-                TyKind::HashMap { .. } => match self.hash_map_value_kind(receiver_ty) {
-                    Some(MapValueKind::I64) => match self.hash_map_key_kind(receiver_ty) {
-                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_typed_str_i64_opt"),
-                        _ => Some("gos_rt_map_insert_i64_i64_opt"),
-                    },
-                    Some(MapValueKind::String) => match self.hash_map_key_kind(receiver_ty) {
-                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_str_str_opt"),
-                        _ => Some("gos_rt_map_insert_i64_str_opt"),
-                    },
-                    Some(MapValueKind::Bytes) => match self.hash_map_key_kind(receiver_ty) {
-                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_typed_str_i64_opt"),
-                        _ => Some("gos_rt_map_insert_i64_i64_opt"),
-                    },
-                    // Aggregate value (Vec / struct): stored as an
-                    // 8-byte handle word, so route by KEY kind - a
-                    // String key must still use the str path, not the
-                    // i64/i64 path that reinterprets the key pointer.
-                    _ => match self.hash_map_key_kind(receiver_ty) {
-                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_typed_str_i64_opt"),
-                        _ => Some("gos_rt_map_insert_i64_i64_opt"),
-                    },
-                },
+                // An aggregate value (Vec / struct) is stored as an 8-byte
+                // handle word, so the helper routes by KEY kind there - a
+                // String key must still use the str path, not the i64/i64
+                // path that reinterprets the key pointer.
+                TyKind::HashMap { .. } => Some(self.map_insert_helper(receiver_ty)),
                 // Vec insertion mutates in place and returns a bounds error.
                 TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } => {
                     Some("gos_rt_vec_insert_safe")
@@ -3527,6 +3515,20 @@ impl<'a> Builder<'a> {
                 } else {
                     inner
                 }
+            }
+            // `.ok()` / `.err()` wrap the selected side in an `Option`, so the
+            // destination is the carrier rather than the payload.
+            "gos_rt_result_to_opt_ok" | "gos_rt_result_to_opt_err" => {
+                let recv_mir_ty = self.locals[receiver_local.0 as usize].ty;
+                let payload = if rt == "gos_rt_result_to_opt_ok" {
+                    self.first_generic_of(receiver.ty)
+                        .or_else(|| self.first_generic_of(recv_mir_ty))
+                } else {
+                    self.second_generic_of(receiver.ty)
+                        .or_else(|| self.second_generic_of(recv_mir_ty))
+                }
+                .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64));
+                self.option_payload_adt_ty(payload)
             }
             "gos_rt_child_write_stdin" | "gos_rt_child_kill" => self.tcx.bool_ty(),
             "gos_rt_child_close_stdin" => self.tcx.unit(),
@@ -4403,8 +4405,8 @@ impl<'a> Builder<'a> {
             match method.name.as_str() {
                 "unwrap" | "expect" => runtime_symbol = Some("gos_rt_result_unwrap"),
                 "unwrap_or" => runtime_symbol = Some("gos_rt_result_unwrap_or"),
-                "ok" => runtime_symbol = Some("gos_rt_result_ok"),
-                "err" => runtime_symbol = Some("gos_rt_result_err"),
+                "ok" => runtime_symbol = Some("gos_rt_result_to_opt_ok"),
+                "err" => runtime_symbol = Some("gos_rt_result_to_opt_err"),
                 _ => {}
             }
         }

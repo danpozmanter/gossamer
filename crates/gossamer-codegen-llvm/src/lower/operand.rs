@@ -314,6 +314,29 @@ impl<'a> Lowerer<'a> {
                     // array elements; APIs that intend a non-panicking probe
                     // must name that operation explicitly.
                     self.emit_array_bounds_check(current_ty, &idx_raw);
+                    // A `Vec` / slice keeps its elements behind the header's
+                    // data pointer at the header's own stride, so the element
+                    // address comes from the runtime rather than from a walk
+                    // off the header. An array holds its elements inline and
+                    // keeps the inline walk below.
+                    if matches!(
+                        self.tcx.kind(current_ty),
+                        Some(TyKind::Vec(_) | TyKind::Slice(_))
+                    ) {
+                        declare_rt(&mut self.runtime_refs, "gos_rt_vec_get_ptr");
+                        writeln!(
+                            self.out,
+                            "  {next} = call ptr @gos_rt_vec_get_ptr(ptr {current}, i64 {idx_raw})"
+                        )
+                        .unwrap();
+                        current = next;
+                        current_ty = match self.tcx.kind(current_ty) {
+                            Some(TyKind::Vec(elem) | TyKind::Slice(elem)) => *elem,
+                            _ => current_ty,
+                        };
+                        stride_slots = elem_slots(self.tcx, current_ty);
+                        continue;
+                    }
                     if packed_byte_array_len(self.tcx, current_ty).is_some() {
                         writeln!(
                             self.out,

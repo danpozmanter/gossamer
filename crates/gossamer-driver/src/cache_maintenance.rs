@@ -59,6 +59,61 @@ impl CacheClass {
     }
 }
 
+/// Which cache roots an operation reaches.
+///
+/// The project's own `.gos-cache/` is disposable and belongs to the checkout,
+/// while the shared roots under the user's cache directory are what every
+/// project on the machine reuses. Naming the two apart is what lets a command
+/// throw away this project's cache without emptying the machine's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CacheScope {
+    /// Cache roots inside the working directory (`.gos-cache/`).
+    #[default]
+    Local,
+    /// Shared roots outside the working directory: the user cache directory,
+    /// the package cache, and the retired build-graph root.
+    Global,
+    /// Every root, local and shared.
+    All,
+}
+
+impl CacheScope {
+    /// Stable command-line name.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Global => "global",
+            Self::All => "all",
+        }
+    }
+
+    /// Parses a command-line name.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "local" => Some(Self::Local),
+            "global" => Some(Self::Global),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
+
+    /// True when `path` is a root this scope reaches.
+    ///
+    /// A root under the working directory is the project's own; anything else
+    /// is shared. Classifying by location rather than by class keeps a
+    /// `GOSSAMER_CACHE_DIR` override on whichever side the user pointed it at.
+    #[must_use]
+    pub fn covers(self, path: &Path, cwd: &Path) -> bool {
+        match self {
+            Self::All => true,
+            Self::Local => path.starts_with(cwd),
+            Self::Global => !path.starts_with(cwd),
+        }
+    }
+}
+
 /// One cache root with its current accounting.
 #[derive(Debug, Clone)]
 pub struct CacheEntry {
@@ -155,6 +210,15 @@ pub fn paths(cwd: &Path) -> Vec<(CacheClass, PathBuf)> {
     out
 }
 
+/// The cache roots `scope` reaches, in the order [`paths`] reports them.
+#[must_use]
+pub fn paths_in_scope(cwd: &Path, scope: CacheScope) -> Vec<(CacheClass, PathBuf)> {
+    paths(cwd)
+        .into_iter()
+        .filter(|(_, path)| scope.covers(path, cwd))
+        .collect()
+}
+
 /// Directory the retired build-graph cache wrote to. Still reported and
 /// cleaned so an upgrade does not strand gigabytes in a user's home.
 fn legacy_build_cache_root() -> PathBuf {
@@ -166,10 +230,11 @@ fn legacy_build_cache_root() -> PathBuf {
     home.join(".gossamer").join("build")
 }
 
-/// Reports every known cache root. Missing roots are represented as zeroes.
+/// Reports the cache roots `scope` reaches. Missing roots are represented as
+/// zeroes.
 #[must_use]
-pub fn status(cwd: &Path) -> Vec<CacheEntry> {
-    paths(cwd)
+pub fn status(cwd: &Path, scope: CacheScope) -> Vec<CacheEntry> {
+    paths_in_scope(cwd, scope)
         .into_iter()
         .map(|(class, path)| {
             let (bytes, files) = dir_size(&path);
@@ -183,14 +248,16 @@ pub fn status(cwd: &Path) -> Vec<CacheEntry> {
         .collect()
 }
 
-/// Removes selected cache classes, returning the paths actually removed.
+/// Removes selected cache classes within `scope`, returning the paths actually
+/// removed.
 pub fn remove(
     cwd: &Path,
     classes: &[CacheClass],
+    scope: CacheScope,
     dry_run: bool,
 ) -> std::io::Result<Vec<CacheEntry>> {
     let mut removed = Vec::new();
-    for (class, path) in paths(cwd) {
+    for (class, path) in paths_in_scope(cwd, scope) {
         if !classes.contains(&class) || !path.is_dir() {
             continue;
         }
@@ -218,10 +285,15 @@ pub fn remove(
 /// Prunes expired files first, then oldest files until the aggregate budget is
 /// met. Runner directories with a build lock are skipped so an active build is
 /// never disrupted. Returns reclaimed bytes and files.
-pub fn prune(cwd: &Path, policy: CachePolicy, dry_run: bool) -> std::io::Result<(u64, u64)> {
+pub fn prune(
+    cwd: &Path,
+    policy: CachePolicy,
+    scope: CacheScope,
+    dry_run: bool,
+) -> std::io::Result<(u64, u64)> {
     let now = SystemTime::now();
     let mut files = Vec::new();
-    for (class, root) in paths(cwd) {
+    for (class, root) in paths_in_scope(cwd, scope) {
         let mut root_files = Vec::new();
         collect_files(&root, &mut root_files);
         files.extend(root_files.into_iter().map(|entry| (class, entry)));
@@ -394,6 +466,69 @@ mod tests {
         assert!(runner_locked(&sigs));
         assert!(runner_locked(&runner));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scope_splits_project_roots_from_shared_ones() {
+        let cwd = scratch("scope-cwd");
+        let local = cwd.join(".gos-cache").join("frontend");
+        let shared = scratch("scope-shared").join("frontend");
+        assert!(CacheScope::Local.covers(&local, &cwd));
+        assert!(!CacheScope::Local.covers(&shared, &cwd));
+        assert!(CacheScope::Global.covers(&shared, &cwd));
+        assert!(!CacheScope::Global.covers(&local, &cwd));
+        assert!(CacheScope::All.covers(&local, &cwd));
+        assert!(CacheScope::All.covers(&shared, &cwd));
+    }
+
+    #[test]
+    fn scope_names_round_trip_through_parse() {
+        for scope in [CacheScope::Local, CacheScope::Global, CacheScope::All] {
+            assert_eq!(CacheScope::parse(scope.name()), Some(scope));
+        }
+        assert_eq!(CacheScope::parse("machine"), None);
+        assert_eq!(CacheScope::default(), CacheScope::Local);
+    }
+
+    #[test]
+    fn local_scope_reports_only_roots_under_the_working_directory() {
+        let cwd = scratch("scope-paths");
+        let local = paths_in_scope(&cwd, CacheScope::Local);
+        assert!(!local.is_empty(), "a project always has its own roots");
+        assert!(
+            local.iter().all(|(_, path)| path.starts_with(&cwd)),
+            "local scope reached a shared root: {local:?}"
+        );
+        let global = paths_in_scope(&cwd, CacheScope::Global);
+        assert!(
+            global.iter().all(|(_, path)| !path.starts_with(&cwd)),
+            "global scope reached a project root: {global:?}"
+        );
+        assert_eq!(
+            local.len() + global.len(),
+            paths_in_scope(&cwd, CacheScope::All).len(),
+            "the two scopes partition every root"
+        );
+    }
+
+    #[test]
+    fn a_local_clear_leaves_the_shared_roots_alone() {
+        let cwd = scratch("scope-clear");
+        let _ = fs::remove_dir_all(&cwd);
+        for (_, path) in paths_in_scope(&cwd, CacheScope::Local) {
+            fs::create_dir_all(&path).unwrap();
+            fs::write(path.join("blob"), b"xyz").unwrap();
+        }
+        let removed = remove(&cwd, CacheClass::all(), CacheScope::Local, false).unwrap();
+        assert!(!removed.is_empty(), "nothing was removed");
+        assert!(
+            removed.iter().all(|entry| entry.path.starts_with(&cwd)),
+            "a shared root was removed: {removed:?}"
+        );
+        for (_, path) in paths_in_scope(&cwd, CacheScope::Local) {
+            assert!(!path.is_dir(), "{} survived the clear", path.display());
+        }
+        let _ = fs::remove_dir_all(&cwd);
     }
 
     #[test]

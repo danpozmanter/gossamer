@@ -1419,8 +1419,16 @@ impl Lowerer<'_> {
         span: Span,
     ) -> HirExprKind {
         let mut iter_expr = self.lower_expr(iter);
+        // A reference to a `String` walks the text it names, so the cursor is
+        // chosen from the referent's type. Reading the reference's own type
+        // here left the loop on the generic sequence walk, which hands the
+        // body each scalar as an integer rather than a `char`.
+        let mut iter_referent = iter_expr.ty;
+        while let Some(gossamer_types::TyKind::Ref { inner, .. }) = self.tcx.kind(iter_referent) {
+            iter_referent = *inner;
+        }
         if matches!(
-            self.tcx.kind(iter_expr.ty),
+            self.tcx.kind(iter_referent),
             Some(gossamer_types::TyKind::String)
         ) {
             let char_ty = self.tcx.char_ty();
@@ -2616,7 +2624,14 @@ impl Lowerer<'_> {
         {
             return None;
         }
-        let recv_ty = self.ty_of(receiver.id);
+        // A reference to a keyed collection walks the collection it names, so
+        // the container's own type decides the element. The cursor call below
+        // takes the receiver as written, which the `iter()` lowering already
+        // reads through a borrow.
+        let mut recv_ty = self.ty_of(receiver.id);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(recv_ty) {
+            recv_ty = *inner;
+        }
         // The element a walk sees: a map yields its key/value pair, a set its
         // value.
         let elem = match self.tcx.kind(recv_ty) {

@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.51.2 - Element access, map construction, and scoped cache commands
+
+- Scope `gos cache --prune` / `gos cache --clear` to this project's
+  `.gos-cache/` by default, with `--scope global` for the shared roots every
+  project reuses and `--scope all` for both; each previously emptied the
+  machine's caches from any directory.
+- Iterate a `&String` as Unicode scalars, so `c.to_string()` on the loop
+  binding renders the character rather than its code point.
+- Run a `for` over a sequence literal whose body moves the element into a
+  container, which failed against the literal's own storage.
+- Answer the whole element from `Vec::remove` when it is a struct or tuple;
+  only its first field's word came back, and reading that word as the
+  element's address faulted.
+- Pass `&xs[i]` as the element it names when `xs` is a `Vec`, in compiled
+  builds and JIT-compiled bodies alike; the callee received the sequence
+  header's own words and faulted on the first read.
+- Answer an `Option` from `Result::ok()` / `Result::err()` in compiled
+  builds, where a `match` on the result read an `Err` as `Some(0)`.
+- Skip serde synthesis for a struct that transitively holds an opaque
+  handle, instead of emitting a serializer that calls a function the
+  synthesizer refused to write.
+- Build `Map::from` / `BTreeMap::from` over a runtime sequence of key/value
+  pairs in compiled builds, which refused the program outright.
+- Bind each part of a positional `let` over a sequence (`let (a, b) =
+  s.split(" ")`) to the element type, and read the parts through the indexed
+  accessor: the bindings previously carried no type to dispatch a method
+  against, and compiled builds addressed the sequence header as if it were the
+  elements.
+- Answer a tuple from a `map` closure in compiled builds, where the result vec
+  stored one word per element and read back the pointer as the first field.
+- Walk a map with `find` / `any` / `all` / `count` and friends in compiled
+  builds when the element is a key/value pair: the eager combinator received
+  the iterator's own state where it expected a sequence.
+- Walk a keyed collection through a reference: `m.find(..)` on a `&Map` or
+  `&Set` reached the generic by-name dispatch, which answered an index-shaped
+  value on the VM and had no symbol at all in a compiled build.
+- JIT-compile a body holding a map keyed by a tuple, struct, fixed array, or
+  enum. Such a key kept its body - and, through the caller chain, every
+  function it reached - on the bytecode interpreter, so an idiomatic
+  aggregate-keyed lookup anywhere in a program cost the whole program its
+  native tier.
+- Resolve `Map::remove` / `Map::pop` and `keys()` iteration on an aggregate key
+  from JIT-compiled code, which had no in-process symbol to call.
+
 ## 0.51.1 - Reference parameters, method dispatch, sockets and byte sequences
 
 - Build a `[rust-bindings]` dependency on Windows, where the generated

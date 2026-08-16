@@ -1,3 +1,36 @@
+/// The classified body of one struct the synthesizer may emit for.
+enum SerdeShape {
+    Named(Vec<(String, FieldKind)>, HashSet<String>),
+    Tuple(Vec<FieldKind>),
+}
+
+impl SerdeShape {
+    fn kinds(&self) -> Box<dyn Iterator<Item = &FieldKind> + '_> {
+        match self {
+            Self::Named(fields, _) => Box::new(fields.iter().map(|(_, kind)| kind)),
+            Self::Tuple(fields) => Box::new(fields.iter()),
+        }
+    }
+}
+
+/// True when every user type this field kind reaches has a synthesized
+/// serializer of its own, so the emitted body can call it.
+fn kind_is_emittable(kind: &FieldKind, emittable: &HashSet<String>) -> bool {
+    match kind {
+        FieldKind::Struct(ty) => emittable.contains(&ty.symbol),
+        FieldKind::Vec(inner) | FieldKind::Option(inner) | FieldKind::Map(inner) => {
+            kind_is_emittable(inner, emittable)
+        }
+        FieldKind::Tuple(elems) => elems.iter().all(|e| kind_is_emittable(e, emittable)),
+        FieldKind::Int(_)
+        | FieldKind::I64
+        | FieldKind::F64
+        | FieldKind::Bool
+        | FieldKind::String
+        | FieldKind::Json => true,
+    }
+}
+
 /// Walks `parsed` for struct definitions and synthesizes
 /// serialization-method source for each eligible struct. Returns the
 /// generated source text, ready to be parsed and merged.
@@ -11,7 +44,7 @@ pub fn synthesize_serde_impls(parsed: &SourceFile) -> String {
     let aliases = alias_targets(&parsed.items);
     let opaque = opaque_alias_names(&parsed.items);
 
-
+    let mut classified: Vec<(TyId, SerdeShape)> = Vec::new();
     for (module, item) in flatten_items_with_modules(&parsed.items) {
         let ItemKind::Struct(decl) = &item.kind else {
             continue;
@@ -35,7 +68,7 @@ pub fn synthesize_serde_impls(parsed: &SourceFile) -> String {
                     .map(|f| f.name.name.clone())
                     .collect();
                 if let Some(typed) = typed {
-                    emit_impl(&mut out, &ty, &typed, &opaque_fields);
+                    classified.push((ty, SerdeShape::Named(typed, opaque_fields)));
                 }
             }
             StructBody::Tuple(fields) => {
@@ -44,10 +77,44 @@ pub fn synthesize_serde_impls(parsed: &SourceFile) -> String {
                     .map(|f| FieldKind::from_type(&f.ty, &struct_names, &aliases))
                     .collect();
                 if let Some(typed) = typed {
-                    emit_tuple_impl(&mut out, &ty, &typed);
+                    classified.push((ty, SerdeShape::Tuple(typed)));
                 }
             }
             StructBody::Unit => {}
+        }
+    }
+
+    // A field naming a user struct is emittable only when that struct's own
+    // serializer is emitted. Classification answers per type, so the set has
+    // to settle: dropping one type can drop the types that reach it, however
+    // deep the nesting runs.
+    let mut emittable: HashSet<String> =
+        classified.iter().map(|(ty, _)| ty.symbol.clone()).collect();
+    loop {
+        let mut dropped = false;
+        for (ty, shape) in &classified {
+            if !emittable.contains(&ty.symbol) {
+                continue;
+            }
+            if !shape.kinds().all(|kind| kind_is_emittable(kind, &emittable)) {
+                emittable.remove(&ty.symbol);
+                dropped = true;
+            }
+        }
+        if !dropped {
+            break;
+        }
+    }
+
+    for (ty, shape) in &classified {
+        if !emittable.contains(&ty.symbol) {
+            continue;
+        }
+        match shape {
+            SerdeShape::Named(typed, opaque_fields) => {
+                emit_impl(&mut out, ty, typed, opaque_fields);
+            }
+            SerdeShape::Tuple(typed) => emit_tuple_impl(&mut out, ty, typed),
         }
     }
     out

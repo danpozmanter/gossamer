@@ -15210,6 +15210,21 @@ impl<'a> TypeChecker<'a> {
                     .collect(),
                 None => elems,
             },
+            // A sequence taken apart positionally binds each part to the
+            // element type, exactly as a slice pattern does. Every part
+            // otherwise takes a fresh variable that no later use resolves, so
+            // the binding reaches codegen with no type to dispatch a method
+            // against.
+            Some(TyKind::Vec(elem) | TyKind::Slice(elem) | TyKind::Array { elem, .. }) => {
+                let elem = match ref_mutability {
+                    Some(mutability) => self.tcx.intern(TyKind::Ref {
+                        mutability,
+                        inner: elem,
+                    }),
+                    None => elem,
+                };
+                vec![elem; count]
+            }
             _ => (0..count).map(|_| self.fresh()).collect(),
         }
     }

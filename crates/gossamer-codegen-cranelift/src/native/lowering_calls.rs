@@ -528,6 +528,10 @@ pub(super) fn lower_generic_rt_call(
         }
         "gos_rt_map_insert_str_str_opt" => (&[ptr_ty, ptr_ty, ptr_ty], Some(types::I128)),
         "gos_rt_map_insert_skey_opt" => (&[ptr_ty, ptr_ty, ptr_ty, types::I64], Some(types::I128)),
+        "gos_rt_map_get_skey_opt" | "gos_rt_map_pop_skey" => {
+            (&[ptr_ty, ptr_ty, ptr_ty], Some(types::I128))
+        }
+        "gos_rt_map_contains_skey" => (&[ptr_ty, ptr_ty, ptr_ty], Some(types::I8)),
         "gos_rt_map_get_or_skey" | "gos_rt_map_or_insert_skey" | "gos_rt_map_inc_skey" => {
             (&[ptr_ty, ptr_ty, ptr_ty, types::I64], Some(types::I64))
         }

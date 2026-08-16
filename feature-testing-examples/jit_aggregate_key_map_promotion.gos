@@ -1,0 +1,138 @@
+// A map keyed by a tuple, struct, or fixed array is content-hashed through the
+// slot descriptor the compiled tiers pass with every entry point, so a
+// loop-bearing body holding one is JIT-promotable exactly as its scalar-keyed
+// twin is. Each body below is hot enough to seed native compilation, and walks
+// the whole aggregate-key surface - insert, get, get_or, contains, inc,
+// or_insert, remove/pop, len, keys, and pair iteration - so a regression that
+// declines these bodies or mislowers an entry shows up as a wrong total rather
+// than a silent tier change.
+
+struct Cell { row: i64, col: i64 }
+
+enum Slot { Empty, Taken(i64), Named { id: i64 } }
+
+fn tuple_keys(n: i64) -> i64 {
+    let mut grid: Map<(i64, i64), i64> = Map::new()
+    let mut i = 0
+    while i < n {
+        grid.inc((i % 7, i % 5), 2)
+        i += 1
+    }
+    let mut total = 0
+    for (key, value) in grid.iter() {
+        total += (key.0 * 10 + key.1) * value
+    }
+    total += grid.get_or((3, 3), -1)
+    total += if grid.contains_key((0, 0)) { 1 } else { 0 }
+    total += grid.or_insert((99, 99), 5)
+    total += grid.remove((3, 3)).unwrap_or(-1)
+    total + grid.len()
+}
+
+fn struct_keys(n: i64) -> i64 {
+    let mut seen: Map<Cell, i64> = Map::new()
+    let mut i = 0
+    while i < n {
+        seen.insert(Cell { row: i % 6, col: i % 4 }, i)
+        i += 1
+    }
+    let mut total = seen.len()
+    for key in seen.keys() {
+        total += key.row * 100 + key.col
+    }
+    total += seen.get(Cell { row: 1, col: 1 }).unwrap_or(-1)
+    total += seen.pop(Cell { row: 1, col: 1 }).unwrap_or(-1)
+    total + seen.len()
+}
+
+fn labelled_keys(n: i64) -> i64 {
+    let mut hits: Map<(String, i64), i64> = Map::new()
+    let mut i = 0
+    while i < n {
+        hits.inc(("row", i % 3))
+        i += 1
+    }
+    let mut total = 0
+    for (key, value) in hits.iter() {
+        total += key.1 * value
+    }
+    total + hits.get_or(("row", 1), 0)
+}
+
+fn array_keys(n: i64) -> i64 {
+    let mut cells: Map<[i64; 2], i64> = Map::new()
+    let mut i = 0
+    while i < n {
+        cells.insert([i % 4, i % 3], i)
+        i += 1
+    }
+    let mut total = cells.len()
+    total += cells.get_or([1, 1], -1)
+    total + if cells.contains_key([0, 0]) { 1 } else { 0 }
+}
+
+fn enum_keys(n: i64) -> i64 {
+    let mut slots: Map<Slot, i64> = Map::new()
+    let mut i = 0
+    while i < n {
+        slots.inc(Slot::Taken(i % 4))
+        slots.inc(Slot::Empty)
+        slots.inc(Slot::Named { id: i % 2 })
+        i += 1
+    }
+    let mut total = slots.len()
+    total += slots.get_or(Slot::Taken(1), -1)
+    total += slots.get(Slot::Empty).unwrap_or(-1)
+    total += if slots.contains_key(Slot::Named { id: 1 }) { 1 } else { 0 }
+    total + slots.pop(Slot::Taken(3)).unwrap_or(-1)
+}
+
+fn ordered_tuple_keys(n: i64) -> i64 {
+    let mut ranked: BTreeMap<(i64, i64), i64> = BTreeMap::new()
+    let mut i = 0
+    while i < n {
+        ranked.insert((i % 5, i % 3), i)
+        i += 1
+    }
+    let mut total = ranked.len()
+    for key in ranked.keys() {
+        total += key.0 * 10 + key.1
+    }
+    total + ranked.get_or((1, 1), -1)
+}
+
+fn tuple_set(n: i64) -> i64 {
+    let mut seen: Set<(i64, i64)> = Set::new()
+    let mut i = 0
+    while i < n {
+        seen.insert((i % 6, i % 4))
+        i += 1
+    }
+    seen.len() + if seen.contains((1, 1)) { 1 } else { 0 }
+}
+
+fn string_values(n: i64) -> i64 {
+    let mut named: Map<(i64, i64), String> = Map::new()
+    let mut i = 0
+    while i < n {
+        named.insert((i % 3, i % 2), "cell")
+        i += 1
+    }
+    let mut total = named.len()
+    for (key, value) in named.iter() {
+        total += key.0 + key.1 + value.len()
+    }
+    total += named.get_or((1, 1), "none").len()
+    total + named.pop((1, 1)).unwrap_or("none").len()
+}
+
+fn main() {
+    println!("tuple {}", tuple_keys(4000))
+    println!("struct {}", struct_keys(3000))
+    println!("labelled {}", labelled_keys(3000))
+    println!("array {}", array_keys(2000))
+    println!("enum {}", enum_keys(2000))
+    println!("ordered {}", ordered_tuple_keys(2000))
+    println!("set {}", tuple_set(2000))
+    println!("string values {}", string_values(2000))
+}

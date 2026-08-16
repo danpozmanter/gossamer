@@ -868,6 +868,22 @@ impl<'a> Builder<'a> {
                 .second_generic_of(receiver_ty)
                 .or_else(|| self.second_generic_of(lowered_recv_ty))
                 .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64)),
+            // `.ok()` / `.err()` wrap the selected side in an `Option`, so the
+            // destination is the carrier rather than the payload.
+            "gos_rt_result_to_opt_ok" => {
+                let payload = self
+                    .first_generic_of(receiver_ty)
+                    .or_else(|| self.first_generic_of(lowered_recv_ty))
+                    .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64));
+                self.option_payload_adt_ty(payload)
+            }
+            "gos_rt_result_to_opt_err" => {
+                let payload = self
+                    .second_generic_of(receiver_ty)
+                    .or_else(|| self.second_generic_of(lowered_recv_ty))
+                    .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64));
+                self.option_payload_adt_ty(payload)
+            }
             "gos_rt_result_is_ok" | "gos_rt_result_is_err" => self.tcx.bool_ty(),
             "gos_rt_json_as_f64" => self.tcx.float_ty(gossamer_types::FloatTy::F64),
             // The Option-returning query helpers: a JSON node only answers

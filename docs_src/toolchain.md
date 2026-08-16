@@ -41,7 +41,7 @@ the implementation by a rev.
 | Command | Purpose |
 |---------|---------|
 | `gos clean [--all] [--frontend] [--ir] [--runners] [--packages] [--build-cache] [--vendor] [--dry-run]` | Remove selected toolchain caches. With no cache-class flag it clears frontend and IR caches; `--all` includes Rust-binding runners, packages, and legacy build artifacts. `--vendor` also deletes `./vendor/`. |
-| `gos cache [--path] [--prune] [--dry-run]` | Show cache roots and usage, print paths only, or prune files older than 30 days and files exceeding the configured total cap. |
+| `gos cache [--path] [--prune] [--clear] [--scope SCOPE] [--dry-run]` | Show cache roots and usage, print paths only, prune files older than 30 days and files exceeding the configured total cap, or clear every class. `--scope local` (the default for `--prune` / `--clear`) reaches this project's `.gos-cache/`; `--scope global` reaches the shared roots every project reuses; `--scope all` reaches both, and is what the report shows. |
 
 ## Package manager
 

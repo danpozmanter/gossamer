@@ -208,10 +208,37 @@ pub(super) fn lower_place_address(
                 // (i64-as-u64 wraps to a large value that trips the
                 // `>=` test). The check is opt-out via
                 // `GOSSAMER_DISABLE_BOUNDS_CHECK=1` for micro-bench
-                // programs that can prove safety. Vec/Slice indexing
-                // does not reach this path - those go through
-                // `gos_rt_vec_get_*` intrinsics which check internally.
+                // programs that can prove safety. A `Vec` / slice
+                // carries its own bounds check in the runtime helper
+                // the branch below calls.
                 emit_array_bounds_check(module, builder, intrinsics, current_ty, idx_val, tcx)?;
+                // A `Vec` / slice keeps its elements behind the header's
+                // data pointer at the header's own stride, so the element
+                // address comes from the runtime rather than from a walk off
+                // the header. An array holds its elements inline and keeps
+                // the stride walk below.
+                let mut indexed = current_ty;
+                while let TyKind::Ref { inner, .. } = tcx.kind_of(indexed).clone() {
+                    indexed = inner;
+                }
+                if let TyKind::Vec(elem) | TyKind::Slice(elem) = tcx.kind_of(indexed).clone() {
+                    let idx_i64 = match value_type(idx_val, builder) {
+                        t if t == types::I64 => idx_val,
+                        _ => builder.ins().sextend(types::I64, idx_val),
+                    };
+                    let get_ptr = intrinsics.extern_fn(
+                        module,
+                        "gos_rt_vec_get_ptr",
+                        &[ptr_ty, types::I64],
+                        &[ptr_ty],
+                    )?;
+                    let fref = module.declare_func_in_func(get_ptr, builder.func);
+                    let call = builder.ins().call(fref, &[current, idx_i64]);
+                    current = builder.inst_results(call)[0];
+                    current_ty = elem;
+                    stride_slots = stride_slots_from_ty(tcx, current_ty).unwrap_or(1);
+                    continue;
+                }
                 let idx_ptr = match value_type(idx_val, builder) {
                     t if t == ptr_ty => idx_val,
                     t if t == types::I64 && ptr_ty == types::I32 => {

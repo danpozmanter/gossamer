@@ -1359,3 +1359,463 @@ fn main() {
     );
     assert_eq!(native.0, vm.0, "tier parity");
 }
+
+#[test]
+fn string_reference_iterates_unicode_scalars() {
+    // Iterating a `&String` handed the body each scalar as an integer:
+    // the loop chose its cursor from the reference's own type rather
+    // than the text it names, so `c.to_string()` rendered the code
+    // point. The by-value spelling was already correct.
+    let src = r#"
+fn escape(text: &String) -> String {
+    let mut out = ""
+    for c in text {
+        out += match c { 'b' => "B", _ => c.to_string() }
+    }
+    out
+}
+
+fn count_upper(text: &String) -> i64 {
+    let mut n = 0
+    for c in text { if c >= 'A' && c <= 'Z' { n += 1 } }
+    n
+}
+
+fn main() {
+    println!("{}", escape(&"abc"))
+    let owned = "aXbY"
+    let borrowed = &owned
+    let mut joined = ""
+    for c in borrowed { joined += c.to_string() }
+    println!("{}", joined)
+    println!("{}", count_upper(&"aXbY"))
+}
+"#;
+    let dir = fresh_dir("string_ref_iter");
+    let path = write_source(&dir, "string_ref_iter", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+
+    let vm = run_vm(&path);
+    let bin = build_native(&path, &scratch).expect("native build");
+    let native = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(vm.0, "aBc\naXbY\n2\n", "vm stdout");
+    assert_eq!(native.0, vm.0, "tier parity");
+}
+
+#[test]
+fn for_over_sequence_literal_survives_a_body_that_moves_the_element() {
+    // The `for` desugar binds an iterable with no home of its own to
+    // its own `__for_iter` state local and takes `&mut` of it. The VM's
+    // indexed loop read that `&mut` as a request to write each element
+    // back into the source, so a body that moved the element into a
+    // container stored the emptied register over the snapshot - a type
+    // error against the literal's integer storage. A `&mut` the user
+    // wrote still writes through.
+    let src = r#"
+enum V { Null, Int(i64), Text(String) }
+
+fn main() {
+    for n in #[1, 2, 3] {
+        let params = #[V::Int(n)]
+        let _ = params.len()
+    }
+    println!("literal enum ok")
+    for s in #["a", "b"] {
+        let held = #[s]
+        let _ = held.len()
+    }
+    println!("literal string ok")
+    let mut v = Vec::from([1, 2])
+    for i in &mut v {
+        *i += 1
+    }
+    println!("write-back {} {}", v[0], v[1])
+    let mut inline = #[#[1]]
+    for row in &mut inline { row.push(5) }
+    println!("inline {}", inline[0].len())
+}
+"#;
+    let dir = fresh_dir("for_literal_move");
+    let path = write_source(&dir, "for_literal_move", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+
+    let vm = run_vm(&path);
+    let bin = build_native(&path, &scratch).expect("native build");
+    let native = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(
+        vm.0,
+        "literal enum ok\nliteral string ok\nwrite-back 2 3\ninline 2\n",
+        "vm stdout"
+    );
+    assert_eq!(native.0, vm.0, "tier parity");
+}
+
+#[test]
+fn vec_remove_hands_back_a_whole_struct_element() {
+    // `remove` read one word of the element and then shifted the tail
+    // over the slot it read from, so a struct or tuple element came
+    // back as its first field's word - a wrong value, and a fault once
+    // that word was read as the element's address.
+    let src = r#"
+struct N { channel: String, pid: i64 }
+
+struct Conn { pending: Vec<N>, count: i64 }
+
+impl Conn {
+    fn take(&mut self) -> Option<N> {
+        match Vec::remove(&mut self.pending, 0) {
+            Ok(n) => Some(n)
+            Err(_) => None
+        }
+    }
+}
+
+fn main() {
+    let mut xs: Vec<N> = #[N { channel: "a", pid: 1 }, N { channel: "b", pid: 2 }]
+    match Vec::remove(&mut xs, 0) {
+        Ok(n) => println!("free {} {}", n.channel, n.pid)
+        Err(_) => println!("none")
+    }
+    println!("left {}", xs.len())
+
+    let mut c = Conn {
+        pending: #[N { channel: "c", pid: 3 }, N { channel: "d", pid: 4 }]
+        count: 0
+    }
+    while let Some(n) = c.take() {
+        println!("field {} {}", n.channel, n.pid)
+    }
+    println!("drained {}", c.pending.len())
+
+    let mut ints: Vec<i64> = #[7, 8]
+    match Vec::remove(&mut ints, 0) {
+        Ok(v) => println!("int {}", v)
+        Err(_) => println!("none")
+    }
+    match Vec::remove(&mut ints, 5) {
+        Ok(v) => println!("int {}", v)
+        Err(_) => println!("out of range")
+    }
+}
+"#;
+    let dir = fresh_dir("vec_remove_struct");
+    let path = write_source(&dir, "vec_remove_struct", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+
+    let vm = run_vm(&path);
+    let bin = build_native(&path, &scratch).expect("native build");
+    let native = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(
+        vm.0,
+        "free a 1\nleft 1\nfield c 3\nfield d 4\ndrained 0\nint 7\nout of range\n",
+        "vm stdout"
+    );
+    assert_eq!(native.0, vm.0, "tier parity");
+}
+
+#[test]
+fn reference_to_a_vec_element_names_the_element() {
+    // `&xs[i]` walked the element address off the `GosVec` header
+    // rather than its data buffer, so the callee received the header's
+    // own words. Binding the element first happened to load it
+    // correctly, which is why the two spellings disagreed.
+    let src = r#"
+enum Value { Null, Int(i64), Text(String) }
+
+fn row_len(row: &Vec<Value>) -> i64 { row.len() }
+
+fn first_text(row: &Vec<Value>) -> String {
+    match row[0] {
+        Value::Text(s) => s
+        _ => "?"
+    }
+}
+
+fn walk(params: &Vec<Vec<Value>>) -> i64 {
+    let mut total = 0
+    let mut i = 0
+    while i < params.len() {
+        total += row_len(&params[i])
+        i += 1
+    }
+    total
+}
+
+fn sum_words(words: &Vec<String>) -> i64 {
+    let mut total = 0
+    let mut i = 0
+    while i < words.len() {
+        total += words[i].len()
+        i += 1
+    }
+    total
+}
+
+fn main() {
+    let params: Vec<Vec<Value>> = #[
+        #[Value::Text("a"), Value::Int(1)]
+        #[Value::Null]
+    ]
+    println!("total {}", walk(&params))
+    println!("first {}", first_text(&params[0]))
+    let words: Vec<String> = #["ab", "cde"]
+    println!("words {}", sum_words(&words))
+}
+"#;
+    let dir = fresh_dir("vec_elem_ref");
+    let path = write_source(&dir, "vec_elem_ref", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let release_scratch = dir.join("bin-release");
+    std::fs::create_dir_all(&release_scratch).unwrap();
+
+    let vm = run_vm(&path);
+    let bin = build_native(&path, &scratch).expect("native build");
+    let native = run_native(&bin);
+    let release_bin = build_native_release(&path, &release_scratch).expect("release build");
+    let release_native = run_native(&release_bin);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(vm.0, "total 3\nfirst a\nwords 5\n", "vm stdout");
+    assert_eq!(native.0, vm.0, "tier parity");
+    assert_eq!(release_native.0, vm.0, "release tier parity");
+}
+
+#[test]
+fn result_ok_and_err_answer_a_matchable_option() {
+    // `.ok()` / `.err()` reached the payload-reading helper of the
+    // `unwrap` family, so a compiled build handed the `match` a bare
+    // word where an `Option` carrier was expected: `Err` read back as
+    // `Some(0)`, and a String payload as a `Some` holding the error.
+    let src = r#"
+use std::errors
+
+fn parse(text: &String) -> Result<i64, errors::Error> {
+    match text.to_i64() {
+        Some(v) => Ok(v)
+        None => Err(errors::new("bad"))
+    }
+}
+
+fn read(text: &String) -> Result<String, errors::Error> {
+    if text.len() > 0 { Ok(text.clone()) } else { Err(errors::new("empty")) }
+}
+
+fn main() {
+    println!("{}", match parse(&"42").ok() { Some(v) => v, None => -1 })
+    println!("{}", match parse(&"x").ok() { Some(v) => v, None => -1 })
+    println!("{}", match read(&"hi").ok() { Some(v) => v, None => "none" })
+    println!("{}", match read(&"").ok() { Some(v) => v, None => "none" })
+    println!("{}", parse(&"7").ok().is_some())
+    println!("{}", parse(&"x").err().is_some())
+    println!("{}", parse(&"7").err().is_some())
+}
+"#;
+    let dir = fresh_dir("result_ok_option");
+    let path = write_source(&dir, "result_ok_option", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let release_scratch = dir.join("bin-release");
+    std::fs::create_dir_all(&release_scratch).unwrap();
+
+    let vm = run_vm(&path);
+    let bin = build_native(&path, &scratch).expect("native build");
+    let native = run_native(&bin);
+    let release_bin = build_native_release(&path, &release_scratch).expect("release build");
+    let release_native = run_native(&release_bin);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(vm.0, "42\n-1\nhi\nnone\ntrue\ntrue\nfalse\n", "vm stdout");
+    assert_eq!(native.0, vm.0, "tier parity");
+    assert_eq!(release_native.0, vm.0, "release tier parity");
+}
+
+#[test]
+fn recursive_parser_returning_a_vec_of_enums_keeps_every_element() {
+    // A recursive function whose result is `Result<Vec<Enum>, _>`
+    // must answer the same list on every tier, nesting included.
+    let src = r#"
+use std::errors
+
+enum Value {
+    Null
+    Bool(bool)
+    Int(i64)
+    Float(f64)
+    Text(String)
+    Bytes(Vec<u8>)
+    Array(Vec<Value>)
+}
+
+fn matching_brace(text: &String, open: i64) -> Result<i64, errors::Error> {
+    let n = text.byte_len()
+    let mut depth = 0
+    let mut i = open
+    while i < n {
+        let c = text.byte_at(i)
+        if c == 123 { depth += 1 }
+        if c == 125 {
+            depth -= 1
+            if depth == 0 { return Ok(i) }
+        }
+        i += 1
+    }
+    Err(errors::new("unterminated"))
+}
+
+fn parse_body(text: &String) -> Result<Vec<Value>, errors::Error> {
+    let n = text.byte_len()
+    let mut items: Vec<Value> = #[]
+    let mut i = 1
+    if i < n && text.byte_at(i) == 125 {
+        return Ok(items)
+    }
+    while i < n {
+        let c = text.byte_at(i)
+        if c == 123 {
+            let close = matching_brace(text, i)?
+            let inner = parse_body(&text.substring(i, close + 1))?
+            items.push(Value::Array(inner))
+            i = close + 1
+        } else {
+            let start = i
+            while i < n && text.byte_at(i) != 44 && text.byte_at(i) != 125 { i += 1 }
+            items.push(Value::Text(text.substring(start, i)))
+        }
+        if i >= n { return Err(errors::new("unterminated")) }
+        let sep = text.byte_at(i)
+        if sep == 125 { return Ok(items) }
+        if sep != 44 { return Err(errors::new("unexpected byte")) }
+        i += 1
+    }
+    Err(errors::new("unterminated"))
+}
+
+fn describe(vs: &Vec<Value>) -> String {
+    let mut out = ""
+    for v in vs {
+        out += match v {
+            Value::Text(s) => format!("{} ", s)
+            Value::Array(inner) => format!("[{}] ", describe(&inner))
+            _ => "? "
+        }
+    }
+    out
+}
+
+fn report(text: &String) {
+    match parse_body(text) {
+        Ok(vs) => println!("{} :: {}", vs.len(), describe(&vs))
+        Err(e) => println!("err {}", e)
+    }
+}
+
+fn main() {
+    report(&"{a,b}")
+    report(&"{a,{b,c},d}")
+    report(&"{{a,b},{c,d},{e,f}}")
+    report(&"{}")
+}
+"#;
+    let dir = fresh_dir("recursive_vec_enum");
+    let path = write_source(&dir, "recursive_vec_enum", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let release_scratch = dir.join("bin-release");
+    std::fs::create_dir_all(&release_scratch).unwrap();
+
+    let vm = run_vm(&path);
+    let bin = build_native(&path, &scratch).expect("native build");
+    let native = run_native(&bin);
+    let release_bin = build_native_release(&path, &release_scratch).expect("release build");
+    let release_native = run_native(&release_bin);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(
+        vm.0,
+        "2 :: a b \n3 :: a [b c ] d \n3 :: [a b ] [c d ] [e f ] \n0 :: \n",
+        "vm stdout"
+    );
+    assert_eq!(native.0, vm.0, "tier parity");
+    assert_eq!(release_native.0, vm.0, "release tier parity");
+}
+
+#[test]
+fn a_struct_reaching_an_opaque_handle_skips_serde_synthesis() {
+    // The serde synthesizer decided per type, so a struct whose field
+    // named a type it had refused still had a serializer emitted - one
+    // that called the refused type's missing function. The refusal is
+    // transitive now, and a type that still qualifies keeps its
+    // serializer.
+    let src = r#"
+use std::net::UnixStream
+
+enum Socket { Unix(UnixStream) }
+
+struct Conn { sock: Socket, counter: i64 }
+
+struct Client { pg: Conn, label: String }
+
+struct Inner { a: i64, b: String }
+
+struct Outer { name: String, inner: Inner, xs: Vec<Inner> }
+
+fn main() {
+    let o = Outer { name: "n", inner: Inner { a: 1, b: "x" }, xs: #[Inner { a: 2, b: "y" }] }
+    let text = to_json::<Outer>(o).unwrap_or("ERR")
+    println!("{}", text)
+    let back = from_json::<Outer>(&text).unwrap_or(Outer {
+        name: "?"
+        inner: Inner { a: 0, b: "?" }
+        xs: #[]
+    })
+    println!("{} {} {}", back.name, back.inner.a, back.xs[0].b)
+    match UnixStream::connect("/nonexistent-gossamer-regression.sock") {
+        Ok(s) => {
+            let c = Client { pg: Conn { sock: Socket::Unix(s), counter: 3 }, label: "pg" }
+            println!("{} {}", c.label, c.pg.counter)
+        }
+        Err(_) => println!("no socket")
+    }
+}
+"#;
+    let dir = fresh_dir("serde_opaque_handle");
+    let path = write_source(&dir, "serde_opaque_handle", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+
+    let vm = run_vm(&path);
+    let bin = build_native(&path, &scratch).expect("native build");
+    let native = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(
+        vm.0,
+        "{\"name\":\"n\",\"inner\":{\"a\":1,\"b\":\"x\"},\"xs\":[{\"a\":2,\"b\":\"y\"}]}\nn 1 y\nno socket\n",
+        "vm stdout"
+    );
+    assert_eq!(native.0, vm.0, "tier parity");
+}

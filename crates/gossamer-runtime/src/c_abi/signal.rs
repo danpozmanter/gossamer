@@ -1325,6 +1325,26 @@ pub unsafe extern "C" fn gos_rt_vec_insert_at(v: *mut GosVec, idx: i64, value: i
     });
 }
 
+/// The payload word for the element `remove` hands back.
+///
+/// A word-wide element is the value itself. A wider one is a flat slot block
+/// the caller addresses in place, so it is copied out first: the shift that
+/// closes the gap writes over the slot it was read from, and the payload has
+/// to outlive that.
+unsafe fn removed_elem_payload(vec: &GosVec, idx: i64) -> i64 {
+    let stride = vec.elem_bytes as usize;
+    if stride <= 8 || vec.ptr.is_null() {
+        return unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, idx) };
+    }
+    let copy = crate::c_abi::gc::gos_rt_gc_alloc(stride as u64);
+    if copy.is_null() {
+        return 0;
+    }
+    let src = unsafe { vec.ptr.add((idx as usize) * stride) };
+    unsafe { std::ptr::copy_nonoverlapping(src, copy, stride) };
+    copy as i64
+}
+
 /// Bounds-checked in-place removal returning `Result<T, errors::Error>`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_remove_safe(v: *mut GosVec, idx: i64) -> i128 {
@@ -1338,7 +1358,7 @@ pub unsafe extern "C" fn gos_rt_vec_remove_safe(v: *mut GosVec, idx: i64) -> i12
         }
         let vec = unsafe { &mut *v };
         crate::c_abi::vec::bump_vec_mutation_generation(vec);
-        let removed = unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, idx) };
+        let removed = unsafe { removed_elem_payload(vec, idx) };
         // Shift the tail [idx+1, len) down one element so the removal is
         // reflected in place (the caller owns the returned element, so its
         // pointer-bearing payload is not freed here).
@@ -1372,7 +1392,7 @@ pub unsafe extern "C" fn gos_rt_vec_remove_at(v: *mut GosVec, idx: i64) -> i64 {
         }
         let vec = unsafe { &mut *v };
         crate::c_abi::vec::bump_vec_mutation_generation(vec);
-        let removed = unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, idx) };
+        let removed = unsafe { removed_elem_payload(vec, idx) };
         let stride = vec.elem_bytes as usize;
         if !vec.ptr.is_null() && idx + 1 < len {
             let base = vec.ptr.as_ptr();

@@ -369,8 +369,10 @@ fn cache_clear_removes_every_known_cache_class() {
         std::fs::write(path.join("entry"), b"project data").expect("write project data");
     }
 
+    // Every class is reached by the scope that spans both sides; the default
+    // scope is the project's own, covered by the test below.
     let out = Command::new(gos_bin())
-        .args(["cache", "--clear"])
+        .args(["cache", "--clear", "--scope", "all"])
         .current_dir(&project)
         .env("GOSSAMER_CACHE_DIR", &frontend)
         .env("GOSSAMER_CACHE", &binding)
@@ -387,7 +389,7 @@ fn cache_clear_removes_every_known_cache_class() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&out.stdout).contains("cache clear: removed"),
+        String::from_utf8_lossy(&out.stdout).contains("cache clear (all): removed"),
         "stdout: {}",
         String::from_utf8_lossy(&out.stdout)
     );
@@ -396,6 +398,87 @@ fn cache_clear_removes_every_known_cache_class() {
     }
     assert!(target.exists(), "cache clear removed target/");
     assert!(vendor.exists(), "cache clear removed vendor/");
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn cache_clear_defaults_to_the_project_cache() {
+    // A bare `--clear` empties the checkout's own `.gos-cache/` and leaves
+    // the roots every other project on the machine reuses in place.
+    let root = env::temp_dir().join(format!(
+        "gossamer-cache-scope-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let binding = root.join("binding-cache");
+    let runners = binding.join("gossamer").join("runners");
+    let packages = root.join("packages");
+    let home = root.join("home");
+    let local_app_data = root.join("localappdata");
+    let user_cache = if cfg!(windows) {
+        local_app_data.join("gossamer")
+    } else {
+        home.join(".cache").join("gossamer")
+    };
+    let shared_frontend = user_cache.join("frontend");
+    let shared_ir = user_cache.join("ir-cache");
+    let build = home.join(".gossamer").join("build");
+    let project = root.join("project");
+    let project_frontend = project.join(".gos-cache").join("frontend");
+    let project_ir = project.join(".gos-cache").join("ir-cache");
+
+    let shared_roots = [&shared_frontend, &shared_ir, &runners, &packages, &build];
+    let project_roots = [&project_frontend, &project_ir];
+    for path in shared_roots.iter().chain(project_roots.iter()) {
+        std::fs::create_dir_all(path).expect("create cache root");
+        std::fs::write(path.join("entry"), b"cache").expect("write cache entry");
+    }
+
+    let run = |args: &[&str]| {
+        Command::new(gos_bin())
+            .args(args)
+            .current_dir(&project)
+            .env("GOSSAMER_CACHE", &binding)
+            .env("GOS_CACHE_DIR", &packages)
+            .env("HOME", &home)
+            .env("LOCALAPPDATA", &local_app_data)
+            .env_remove("GOSSAMER_CACHE_DIR")
+            .env_remove("XDG_CACHE_HOME")
+            .output()
+            .expect("spawn gos cache")
+    };
+
+    let out = run(&["cache", "--clear"]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("cache clear (local): removed"),
+        "stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    for path in project_roots {
+        assert!(!path.exists(), "project root remains: {}", path.display());
+    }
+    for path in shared_roots {
+        assert!(path.exists(), "shared root removed: {}", path.display());
+    }
+
+    let out = run(&["cache", "--clear", "--scope", "global"]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    for path in shared_roots {
+        assert!(!path.exists(), "shared root remains: {}", path.display());
+    }
 
     let _ = std::fs::remove_dir_all(root);
 }

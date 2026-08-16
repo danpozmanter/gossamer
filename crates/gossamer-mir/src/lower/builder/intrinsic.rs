@@ -3329,9 +3329,15 @@ impl<'a> Builder<'a> {
         let raw_ty = self.locals[raw.0 as usize].ty;
         match self.tcx.kind_of(raw_ty).clone() {
             TyKind::Array { elem, len } => Some(self.coerce_array_to_vec(raw, elem, len, arg.span)),
-            TyKind::Iterator(elem) if self.lazy_iter_carries_elem(elem) => {
+            // Lazy state, whether it carries its element in a word slot or by
+            // address. An eager combinator reads a `GosVec` header, so the
+            // handle drains into the sequence it stands for first; handing the
+            // handle over unchanged has it read as a vec of its own fields.
+            TyKind::Iterator(elem)
+                if self.lazy_iter_carries_elem(elem) || self.local_aggr_iter.contains(&raw) =>
+            {
                 let vec_ty = self.tcx.intern(TyKind::Vec(elem));
-                let collect_symbol = self.lazy_collect_symbol(elem);
+                let collect_symbol = self.lazy_collect_symbol_for(raw, elem);
                 Some(self.emit_combinator_call(
                     collect_symbol,
                     vec![Operand::Copy(Place::local(raw))],

@@ -167,6 +167,11 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/cohort_cancel.gos"),
     spec("examples/structured_concurrency.gos"),
     spec("feature-testing-examples/jit_map_local_promotion.gos"),
+    // The same promotion for a map keyed by a tuple, struct, String-bearing
+    // tuple, or fixed array: the content-hashing key path is native, so a hot
+    // body holding one compiles instead of pinning its whole call tree to
+    // bytecode.
+    spec("feature-testing-examples/jit_aggregate_key_map_promotion.gos"),
     spec("feature-testing-examples/string_append_self_consuming.gos"),
     // A `Vec<String>` membership result computed beside a range-`for` in
     // the same body survives the loop. The JIT is the tier at risk: the
@@ -493,6 +498,13 @@ const SPECS: &[Spec] = &[
     // (unit and payload), fixed array - keys by value on every tier, and
     // `keys()` rebuilds the aggregate the program wrote.
     spec("feature-testing-examples/hashable_map_keys.gos"),
+    // `Map::from` / `BTreeMap::from` over a runtime sequence of pairs, the
+    // tuple-returning `map` closure that feeds one, and the positional `let`
+    // that takes a `split` result apart.
+    spec("feature-testing-examples/map_from_sequence.gos"),
+    // Traversal methods on `&Map` / `&Set` walk the collection the reference
+    // names, matching the same call written on the collection itself.
+    spec("feature-testing-examples/keyed_traversal_through_ref.gos"),
     // A type's identity is the module declaring it, so two modules may each
     // declare `Point` and `Tag` without their constructors, `{:?}`, `==`,
     // map keying, or serde symbols colliding.

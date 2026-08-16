@@ -552,10 +552,31 @@ unsafe fn take_lazy_f64(iter: *mut GosLazyIterI64) -> impl Iterator<Item = f64> 
 /// Declared width of a mapped element, clamped to the widths the Vec storage
 /// addresses. A zero or negative argument means the call site had no width to
 /// declare, which reads back as the word-slot default.
+///
+/// A width past one word is a flat slot block - a tuple or struct result - and
+/// the output vec strides by the whole block, because every reader addresses
+/// such an element inline rather than through a handle.
 fn mapped_stride(out_bytes: i64) -> u32 {
     match out_bytes {
         1 | 2 | 4 => out_bytes as u32,
+        n if n > 8 => u32::try_from(n).unwrap_or(8),
         _ => 8,
+    }
+}
+
+/// Appends one mapped result to `out`.
+///
+/// A word-wide element is the value itself. A wider one is a flat slot block
+/// the callback returns the address of, so the block's bytes are copied into
+/// the element's own storage.
+unsafe fn push_mapped(out: *mut GosVec, y: i64, out_bytes: i64) {
+    if out_bytes > 8 {
+        let block = std::ptr::with_exposed_provenance::<u8>(y as usize);
+        if !block.is_null() {
+            unsafe { crate::c_abi::vec::gos_rt_vec_push(out, block) };
+        }
+    } else {
+        unsafe { gos_rt_vec_push_i64(out, y) };
     }
 }
 
@@ -1855,7 +1876,7 @@ pub unsafe extern "C" fn gos_rt_iter_map_i64(
         for i in 0..vec.len {
             let x = unsafe { gos_rt_vec_get_i64(v, i) };
             let y = unsafe { f(env, x) };
-            unsafe { gos_rt_vec_push_i64(out, y) };
+            unsafe { push_mapped(out, y, out_bytes) };
         }
         out
     })
@@ -1884,7 +1905,7 @@ pub unsafe extern "C" fn gos_rt_iter_map_ptr_i64(
         for i in 0..len {
             let x = unsafe { gos_rt_vec_get_ptr(v, i) };
             let y = unsafe { f(env, x) };
-            unsafe { gos_rt_vec_push_i64(out, y) };
+            unsafe { push_mapped(out, y, out_bytes) };
         }
         out
     })
@@ -2001,7 +2022,7 @@ pub unsafe extern "C" fn gos_rt_iter_map_f64_word(
         for i in 0..vec.len {
             let x = f64::from_bits(unsafe { gos_rt_vec_get_i64(v, i) } as u64);
             let y = unsafe { f(env, x) };
-            unsafe { gos_rt_vec_push_i64(out, y) };
+            unsafe { push_mapped(out, y, out_bytes) };
         }
         out
     })

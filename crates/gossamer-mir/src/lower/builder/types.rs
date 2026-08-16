@@ -429,6 +429,23 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// The typed `gos_rt_map_insert_*_opt` entry point for a map of type
+    /// `map_ty`, whose key is one of the scalar / `String` fast paths.
+    ///
+    /// The value picks the storage width - an aggregate value crosses as an
+    /// 8-byte handle word, so it shares the `i64` entry points - and the key
+    /// then picks between the integer and string spelling, because a `String`
+    /// key must reach the string path whatever the value does.
+    pub(crate) fn map_insert_helper(&self, map_ty: Ty) -> &'static str {
+        let string_key = matches!(self.hash_map_key_kind(map_ty), Some(MapKeyKind::String));
+        match self.hash_map_value_kind(map_ty) {
+            Some(MapValueKind::String) if string_key => "gos_rt_map_insert_str_str_opt",
+            Some(MapValueKind::String) => "gos_rt_map_insert_i64_str_opt",
+            _ if string_key => "gos_rt_map_insert_typed_str_i64_opt",
+            _ => "gos_rt_map_insert_i64_i64_opt",
+        }
+    }
+
     /// `(K, V)` of a `HashMap<K, V>` (seeing through a leading `&`).
     pub(crate) fn hash_map_kv_tys(&self, ty: Ty) -> Option<(Ty, Ty)> {
         use gossamer_types::TyKind;

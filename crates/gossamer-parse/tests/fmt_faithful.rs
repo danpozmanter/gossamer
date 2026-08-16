@@ -370,3 +370,79 @@ fn corpus_is_already_formatted() {
         drifted.join("\n")
     );
 }
+
+#[test]
+fn triple_quoted_block_follows_code_that_moves_right() {
+    // The whole literal - opener, body, closer - travels with the
+    // statement that opens it, and the value is unchanged.
+    let source =
+        "fn main() {\nif true {\nlet text = \"\"\"\n<html>\n    <body>\n</html>\n\"\"\"\n}\n}\n";
+    let formatted = fmt(source);
+    assert_eq!(
+        formatted,
+        "fn main() {\n    if true {\n        let text = \"\"\"\n        <html>\n            <body>\n        </html>\n        \"\"\"\n    }\n}\n"
+    );
+    assert_eq!(triple_body(source), triple_body(&formatted));
+}
+
+#[test]
+fn triple_quoted_block_follows_code_that_moves_left() {
+    let source = "fn main() {\n            let text = \"\"\"\n            one\n              two\n            \"\"\"\n}\n";
+    let formatted = fmt(source);
+    assert_eq!(
+        formatted,
+        "fn main() {\n    let text = \"\"\"\n    one\n      two\n    \"\"\"\n}\n"
+    );
+    assert_eq!(triple_body(source), triple_body(&formatted));
+}
+
+#[test]
+fn a_closer_indented_less_than_the_body_keeps_the_offset_it_declares() {
+    // The closing delimiter is the value's baseline, so a body written
+    // past it carries that extra indentation into the string. Moving the
+    // pair as a unit is what keeps the value the same.
+    let source = "fn main() {\n  let text = \"\"\"\n      aaa\n        bbb\n  \"\"\"\n}\n";
+    let formatted = fmt(source);
+    assert_eq!(
+        formatted,
+        "fn main() {\n    let text = \"\"\"\n        aaa\n          bbb\n    \"\"\"\n}\n"
+    );
+    assert_eq!(triple_body(source), triple_body(&formatted));
+    assert_eq!(triple_body(source), "    aaa\n      bbb");
+}
+
+#[test]
+fn triple_quoted_leading_and_trailing_blank_lines_survive_reindenting() {
+    let source = "fn main() {\n  let text = \"\"\"\n\n  a\n\n    b\n\n  \"\"\"\n}\n";
+    let formatted = fmt(source);
+    assert_eq!(
+        formatted,
+        "fn main() {\n    let text = \"\"\"\n\n    a\n\n      b\n\n    \"\"\"\n}\n"
+    );
+    assert_eq!(triple_body(source), triple_body(&formatted));
+    assert_eq!(triple_body(source), "\na\n\n  b\n");
+    assert_eq!(fmt(&formatted), formatted, "second pass moved the body");
+}
+
+#[test]
+fn a_body_indented_less_than_its_opener_moves_out_to_the_statement() {
+    // Every content line and the closer share a zero-width prefix here,
+    // so the block reindents to the statement's column with the value
+    // untouched.
+    let source = "fn main() {\n    let text = \"\"\"\naaa\n  bbb\n\"\"\"\n}\n";
+    let formatted = fmt(source);
+    assert_eq!(
+        formatted,
+        "fn main() {\n    let text = \"\"\"\n    aaa\n      bbb\n    \"\"\"\n}\n"
+    );
+    assert_eq!(triple_body(source), triple_body(&formatted));
+    assert_eq!(triple_body(source), "aaa\n  bbb");
+}
+
+#[test]
+fn a_triple_quoted_argument_keeps_its_value_when_the_call_moves() {
+    let source = "fn main() {\nprintln!(\"{}\", \"\"\"\none\n two\n\"\"\")\n}\n";
+    let formatted = fmt(source);
+    assert_eq!(triple_body(source), triple_body(&formatted));
+    assert_eq!(fmt(&formatted), formatted, "second pass moved the body");
+}

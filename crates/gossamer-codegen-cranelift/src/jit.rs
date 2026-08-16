@@ -1549,6 +1549,69 @@ fn jit_map_component_ok(tcx: &TyCtxt, ty: Ty) -> bool {
     )
 }
 
+/// True when a map key of this type reaches the content-hashing `skey`
+/// runtime, which folds the key's flat slot block through the per-slot
+/// descriptor the MIR emits alongside the call.
+///
+/// Mirrors the descriptor the MIR builds for an aggregate key: a tuple,
+/// fixed array, or plain struct whose leaf slots are scalars or `String`.
+/// A key shape the descriptor cannot spell keeps the whole body on
+/// bytecode, because there is no `skey` call for it to lower to.
+fn jit_map_key_descriptor_ok(tcx: &TyCtxt, ty: Ty, depth: u32) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    let mut ty = ty;
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+        ty = *inner;
+    }
+    match tcx.kind_of(ty) {
+        TyKind::Int(_) | TyKind::Bool | TyKind::Char | TyKind::Float(_) | TyKind::String => true,
+        TyKind::Tuple(elems) => {
+            !elems.is_empty()
+                && elems
+                    .iter()
+                    .all(|elem| jit_map_key_descriptor_ok(tcx, *elem, depth + 1))
+        }
+        TyKind::Array { elem, len } => {
+            matches!(len, gossamer_types::ArrayLen::Concrete(n) if *n > 0)
+                && jit_map_key_descriptor_ok(tcx, *elem, depth + 1)
+        }
+        // A plain struct inlines its fields into the same slot block. An
+        // enum varies its layout per variant and keys through the separate
+        // `ekey` descriptor instead, handled by [`jit_map_enum_key_ok`].
+        TyKind::Adt { def, substs } if def.local < u32::MAX - 64 => {
+            tcx.enum_variant_tys(*def).is_none()
+                && tcx.adt_field_tys(*def, substs).is_some_and(|fields| {
+                    !fields.is_empty()
+                        && fields
+                            .iter()
+                            .all(|field| jit_map_key_descriptor_ok(tcx, *field, depth + 1))
+                })
+        }
+        _ => false,
+    }
+}
+
+/// True when a map key of this enum type reaches the `ekey` runtime, which
+/// hashes by discriminant and payload through the structural-equality
+/// descriptor the MIR interns for the type.
+///
+/// The descriptor's presence is the authority: the MIR registers it exactly
+/// when it routes the type's map operations to `ekey`, and declines both
+/// together for a variant shape it cannot classify. An enum without one keys
+/// by node address, which no native entry point reproduces.
+fn jit_map_enum_key_ok(tcx: &TyCtxt, ty: Ty) -> bool {
+    let mut ty = ty;
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+        ty = *inner;
+    }
+    matches!(tcx.kind_of(ty), TyKind::Adt { def, .. } if tcx.enum_variant_tys(*def).is_some())
+        && tcx
+            .rc_meta(&format!("gos_rc_meta_enumeq_{}", ty.as_u32()))
+            .is_some()
+}
+
 fn jit_local_ty_needs_bytecode_inner(
     tcx: &TyCtxt,
     ty: Ty,
@@ -1628,8 +1691,16 @@ fn jit_local_ty_needs_bytecode_inner(
         // map whose value is a struct or carries heap children needs the
         // per-entry ownership the VM applies when it hands a value back, which
         // the native entry points do not reproduce.
+        //
+        // A content-hashed key is one the `skey` / `ekey` runtimes fold
+        // through the descriptor the MIR passes with every call, so a tuple,
+        // fixed array, plain struct, or descriptor-bearing enum key stays
+        // native alongside the scalar and `String` fast paths.
         TyKind::HashMap { key, value, .. } => {
-            !jit_map_component_ok(tcx, *key) || !jit_map_component_ok(tcx, *value)
+            !(jit_map_component_ok(tcx, *key)
+                || jit_map_key_descriptor_ok(tcx, *key, 0)
+                || jit_map_enum_key_ok(tcx, *key))
+                || !jit_map_component_ok(tcx, *value)
         }
         // Options, other tagged standard-library carriers, and opaque handles
         // still need the bytecode path. Ordinary user aggregates are safe as
@@ -2884,6 +2955,8 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_map_insert_skey"     => rt::gos_rt_map_insert_skey,
         "gos_rt_map_insert_skey_opt" => rt::gos_rt_map_insert_skey_opt,
         "gos_rt_map_get_skey_opt"    => rt::gos_rt_map_get_skey_opt,
+        "gos_rt_map_pop_skey"        => rt::gos_rt_map_pop_skey,
+        "gos_rt_map_keys_skey"       => rt::gos_rt_map_keys_skey,
         "gos_rt_map_contains_skey"   => rt::gos_rt_map_contains_skey,
         "gos_rt_map_get_or_skey"     => rt::gos_rt_map_get_or_skey,
         "gos_rt_map_or_insert_skey"  => rt::gos_rt_map_or_insert_skey,

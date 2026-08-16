@@ -2213,7 +2213,16 @@ impl<'tcx> FnBuilder<'tcx> {
             HirExprKind::Unary {
                 op: HirUnaryOp::RefMut,
                 operand,
-            } if self.receiver_is_collection(operand) => (operand.as_ref(), false, true),
+            } if self.receiver_is_collection(operand) => {
+                // The `&mut` a user wrote names a sequence the body's stores
+                // reach through, so each element is written back. The one the
+                // `for` desugar mints over a temporary names its own state
+                // binding: nothing observes that snapshot, and the body is
+                // free to move the element out of its register, which the
+                // write-back would then store over the element it read.
+                let write_back = !Self::is_for_iter_state_path(operand);
+                (operand.as_ref(), false, write_back)
+            }
             HirExprKind::Unary {
                 op: HirUnaryOp::RefMut,
                 ..

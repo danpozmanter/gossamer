@@ -1,0 +1,52 @@
+// A traversal method on a reference to a keyed collection walks the
+// collection the reference names. `&Map` / `&Set` receivers reached the
+// generic by-name dispatch instead of the keyed walk, which the VM answered
+// with an index-shaped value and the compiled tiers had no symbol for at all.
+
+struct Tally { hits: i64 }
+
+fn read_map(m: &Map<String, i64>) -> String {
+    let found = m.find(|(_, n)| n > 1)
+    let doubled = m.map(|(k, n)| (k, n * 2))
+    let kept = m.filter(|(_, n)| n > 1)
+    format!(
+        "find {:?} any {} all {} count {} doubled {} kept {}"
+        found
+        m.any(|(_, n)| n == 2)
+        m.all(|(_, n)| n > 0)
+        m.count(|(_, n)| n > 0)
+        doubled.len()
+        kept.len()
+    )
+}
+
+fn read_set(s: &Set<i64>) -> String {
+    let found = s.find(|v| v > 1)
+    let kept = s.filter(|v| v > 1)
+    format!("find {:?} any {} kept {}", found, s.any(|v| v == 3), kept.len())
+}
+
+fn read_struct_values(m: &Map<String, Tally>) -> String {
+    let found = m.find(|(_, t)| t.hits > 1)
+    format!("struct find {} count {}", found.is_some(), m.count(|(_, t)| t.hits > 0))
+}
+
+fn main() {
+    let m = { "a": 1, "b": 2 }
+    let s = #{ 1, 2, 3 }
+    let mut tallies: Map<String, Tally> = Map::new()
+    tallies.insert("x", Tally { hits: 1 })
+    tallies.insert("y", Tally { hits: 3 })
+
+    println!("{}", read_map(&m))
+    println!("{}", read_set(&s))
+    println!("{}", read_struct_values(&tallies))
+
+    // The same walks written on a local reference binding.
+    let mr = &m
+    let sr = &s
+    println!("{}", read_map(mr))
+    println!("{}", read_set(sr))
+    println!("ref find {:?}", mr.find(|(_, n)| n > 1))
+    println!("deref find {:?}", (*mr).find(|(_, n)| n > 1))
+}

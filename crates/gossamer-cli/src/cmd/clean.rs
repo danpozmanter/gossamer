@@ -37,7 +37,14 @@ pub(crate) fn run(options: Options) -> Result<()> {
             gossamer_driver::cache_maintenance::CacheClass::Ir,
         ]);
     }
-    for entry in gossamer_driver::cache_maintenance::remove(&cwd, &classes, dry_run)? {
+    // `gos clean` keeps reaching every root it always has; `gos cache` is
+    // where the local / global distinction is named.
+    for entry in gossamer_driver::cache_maintenance::remove(
+        &cwd,
+        &classes,
+        gossamer_driver::cache_maintenance::CacheScope::All,
+        dry_run,
+    )? {
         let verb = if dry_run { "would remove" } else { "removed" };
         println!(
             "{verb} {} cache at {} ({} bytes)",

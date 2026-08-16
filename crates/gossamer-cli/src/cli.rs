@@ -614,6 +614,11 @@ enum Command {
         /// Remove every Gossamer cache class.
         #[arg(long, conflicts_with_all = ["path", "prune"])]
         clear: bool,
+        /// Cache roots to act on: `local` (this project's `.gos-cache/`),
+        /// `global` (the shared roots every project reuses), or `all`.
+        /// `--prune` and `--clear` default to `local`; the report shows `all`.
+        #[arg(long, value_name = "SCOPE", value_parser = ["local", "global", "all"])]
+        scope: Option<String>,
         /// Report cache removal without deleting files.
         #[arg(long, short = 'n')]
         dry_run: bool,
@@ -1292,14 +1297,20 @@ fn dispatch(
             path,
             prune,
             clear,
+            scope,
             dry_run,
         }) => {
+            use gossamer_driver::cache_maintenance::CacheScope;
+            // A deletion defaults to the project's own cache: emptying every
+            // project's shared roots is a bigger act than the bare flag says,
+            // so it is named. The report is read-only and shows everything.
+            let requested = scope.as_deref().and_then(CacheScope::parse);
             if clear {
-                cmd::cache::clear(dry_run)
+                cmd::cache::clear(requested.unwrap_or_default(), dry_run)
             } else if prune {
-                cmd::cache::prune(dry_run)
+                cmd::cache::prune(requested.unwrap_or_default(), dry_run)
             } else {
-                cmd::cache::status(path)
+                cmd::cache::status(path, requested.unwrap_or(CacheScope::All))
             }
         }
         Some(Command::Clean {
