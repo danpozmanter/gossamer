@@ -1844,3 +1844,78 @@ fn walk(n: i64) -> i64 {
         "the pinned owner must still be released at function exit"
     );
 }
+
+/// Statement index of the first `name` intrinsic call in `block` whose
+/// first argument is `local`.
+fn intrinsic_index_on(
+    block: &gossamer_mir::BasicBlock,
+    name: &str,
+    local: Local,
+) -> Option<usize> {
+    block.stmts.iter().position(|stmt| {
+        matches!(
+            &stmt.kind,
+            StatementKind::Assign {
+                rvalue: Rvalue::CallIntrinsic { name: n, args },
+                ..
+            } if *n == name
+                && matches!(
+                    args.first(),
+                    Some(Operand::Copy(p)) if p.projection.is_empty() && p.local == local
+                )
+        )
+    })
+}
+
+/// A `let` binding of an `Option` whose payload is a copy-blob takes its
+/// own share at the copy, and the temporary the copy read is dead right
+/// after it. The retain that hands the binding its share must run before
+/// the temporary's release: with a sole reference the other order frees
+/// the payload and then retains the freed node, so a later read of the
+/// binding reaches reused memory.
+#[test]
+fn drop_pass_retains_option_binding_before_releasing_the_moved_temporary() {
+    let source = r#"
+fn read_map(m: &Map<String, i64>) -> String {
+    let found = m.find(|(_, n)| n > 1)
+    let kept = m.filter(|(_, n)| n > 1)
+    format!("find {:?} kept {}", found, kept.len())
+}
+"#;
+    let (bodies, _) = build(source);
+    let body = bodies.iter().find(|b| b.name == "read_map").expect("body");
+
+    let mut checked = 0;
+    for block in &body.blocks {
+        for (si, stmt) in block.stmts.iter().enumerate() {
+            let StatementKind::Assign {
+                place,
+                rvalue: Rvalue::Use(Operand::Copy(src)),
+            } = &stmt.kind
+            else {
+                continue;
+            };
+            if !place.projection.is_empty() || !src.projection.is_empty() {
+                continue;
+            }
+            let Some(release) = intrinsic_index_on(block, "gos_rt_option_slot_release", src.local)
+            else {
+                continue;
+            };
+            if release <= si {
+                continue;
+            }
+            let retain = intrinsic_index_on(block, "gos_rt_option_slot_retain", place.local)
+                .expect("the copy target takes its own share");
+            assert!(
+                retain < release,
+                "the option binding must be retained before the temporary it copied is released"
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked > 0,
+        "the option-returning traversal must lower to a copy the drop pass accounts for"
+    );
+}

@@ -3098,6 +3098,43 @@ pub(crate) fn insert_vec_elem_metas(body: &mut Body, tcx: &mut gossamer_types::T
 /// via the named release intrinsic with an optional meta symbol.
 type PendingRelease = (usize, Local, &'static str, Option<String>);
 
+/// True for the RC retain intrinsics [`insert_aggr_copy_drops`] anchors to
+/// the statement whose destination they cover.
+fn is_rc_retain_intrinsic(name: &str) -> bool {
+    matches!(
+        name,
+        "gos_rt_rc_retain"
+            | "gos_rt_rc_weak_retain"
+            | "gos_rt_vec_retain"
+            | "gos_rt_str_retain_typed"
+            | "gos_rt_aggr_retain_children"
+            | "gos_rt_option_slot_retain"
+    )
+}
+
+/// Index of the last statement in the run of RC retains that follows `si`,
+/// or `si` itself when none does. Those retains take the share the
+/// statement's destination keeps, so they read a payload `si` may hold the
+/// only reference to.
+fn retain_anchor_end(stmts: &[Statement], si: usize) -> usize {
+    let mut end = si;
+    while let Some(Statement {
+        kind:
+            StatementKind::Assign {
+                rvalue: Rvalue::CallIntrinsic { name, .. },
+                ..
+            },
+        ..
+    }) = stmts.get(end + 1)
+    {
+        if !is_rc_retain_intrinsic(name) {
+            break;
+        }
+        end += 1;
+    }
+    end
+}
+
 pub(crate) fn insert_early_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
     // Locals whose payload is extracted anywhere in the body - a
     // by-value Result/Option slot read (`gos_rt_result_payload`) or an
@@ -3575,9 +3612,17 @@ pub(crate) fn insert_early_releases(body: &mut Body, tcx: &gossamer_types::TyCtx
         if head.is_empty() && after.is_empty() {
             continue;
         }
-        after.sort_by_key(|(si, ..)| *si);
         let span = body.blocks[bi].span;
         let orig: Vec<Statement> = std::mem::take(&mut body.blocks[bi].stmts);
+        // A statement that copies this local into another place hands the
+        // new holder an alias of the same payload, and the copy pass takes
+        // that holder's share in the retains anchored right after it. The
+        // release belongs after those, so the share the alias keeps is
+        // taken before this one is given up.
+        for entry in &mut after {
+            entry.0 = retain_anchor_end(&orig, entry.0);
+        }
+        after.sort_by_key(|(si, ..)| *si);
         let mut new_stmts: Vec<Statement> =
             Vec::with_capacity(orig.len() + 2 * (head.len() + after.len()));
         for (l, release, meta) in &head {

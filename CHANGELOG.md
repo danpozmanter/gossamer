@@ -28,6 +28,10 @@
 - Read a sequence's aggregate element from the element's own storage wherever
   a combinator or a rendering reaches one, which a one-slot struct answered as
   the reading pointer's bits in a JIT-compiled body.
+- Take an `Option` or `Result` binding's share of its payload before the
+  temporary it was copied from gives up its own: a sole-reference payload was
+  freed at that copy and the binding then read reused memory, so a compiled
+  `let found = m.find(..)` followed by another traversal faulted.
 - Reach a `&self` method on an enum binding in a compiled build, which handed
   the callee the address of the place holding the enum rather than the value it
   decodes and panicked on a non-exhaustive match; `e.fmt()`, `e.tag()`, and
