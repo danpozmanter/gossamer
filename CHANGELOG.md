@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.51.3 - Unordered sets and slot-container element types
+
+- Traverse a `Set` in no defined order: it answers membership, cardinality,
+  and set algebra, and every sequence operation is written on the walk
+  `iter()` answers (`s.iter().take(3)`, `s.iter().count(|v| v > 1)`). Reading
+  a set as a sorted sequence was an accident of the implementation that
+  programs could come to depend on.
+- Report `s.take(3)` / `s.enumerate()` / `s.map(f)` and the rest of the
+  sequence surface on a set as GT0002, naming the `s.iter()` spelling that
+  answers them.
+- Read a `BTreeSet` in ascending element order, as the sorted set it is: the
+  two types shared one representation that sorted for both.
+- Print and serialize either kind sorted, so rendered output is stable
+  whatever order the elements went in.
+- Render a set built by `union` / `intersection` / `difference` /
+  `symmetric_difference` under `{:?}` in a compiled build, which printed the
+  handle's address.
+- Hold any scalar element in a `Deque`, `Queue`, `Stack`, `MaxHeap`, or
+  `MinHeap` - every integer width, `f32` / `f64`, `bool`, `char` - where each
+  was `i64` alone, and answer `Option<T>` in that element type from `pop` /
+  `peek`.
+- Order a `MaxHeap<f64>` / `MinHeap<f64>` by the float value rather than by
+  the integer its bits spell.
+- Read a `u64` / `usize` as unsigned wherever a value holds one - a sequence's
+  element, an `Option` / `Result` arm, a struct field, a tuple element, a map's
+  key or value, a set's element - so a value at or above `i64::MAX` renders as
+  its own decimal rather than the negative the same bits spell.
+- Render a struct's `u64` field the same way on every tier: a JIT-compiled or
+  interpreted body printed it signed while a compiled build printed it
+  unsigned.
+- Print a `u64` local in a JIT-compiled body as unsigned, which it did only
+  when every write to it was an `as u64` cast.
+- Leave a value the JIT's `format!` path cannot render to the bytecode VM
+  instead of answering `<value>`: a `Vec` or `Option` of structs printed that
+  placeholder from a JIT-compiled body.
+- Report an element a slot-backed container cannot hold - a `String`, a
+  container, a struct, a tuple, an array, an enum, or a `u64` / `usize` in a
+  heap - as GT0068, naming what it holds instead.
+
 ## 0.51.2 - Element access, map construction, and scoped cache commands
 
 - Scope `gos cache --prune` / `gos cache --clear` to this project's

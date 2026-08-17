@@ -2203,8 +2203,8 @@ fn repl_hash_set_bindings_show_and_iterate_stored_structs() {
         out.stdout
     );
     assert!(
-        !out.stderr.contains("no method named `map`"),
-        "a set traverses its own values: {}",
+        out.stderr.contains("iterator operation"),
+        "a set has no sequence surface, so `map` names the `iter()` spelling: {}",
         out.stderr
     );
 }
@@ -3875,5 +3875,34 @@ fn repl_accepts_the_callback_shorthands() {
         "a nullary method shorthand should run: {}\n{}",
         out.stdout,
         out.stderr
+    );
+}
+
+/// A traversal on a reference to a map walks the map the reference names, so
+/// `mr.find(..)` answers what `(*mr).find(..)` does. The REPL runs its own
+/// front end, so it checks the same contract the compiled tiers hold to.
+#[test]
+fn repl_traverses_a_keyed_collection_through_a_reference() {
+    let out = run_repl(
+        "let m = {\"a\": 1, \"b\": 2}\n\
+         let mr = &m\n\
+         mr.find(|(_, n)| n > 1)\n\
+         (*mr).find(|(_, n)| n > 1)\n\
+         let s = #{1, 2, 3}\n\
+         let sr = &s\n\
+         sr.iter().find(|v| v > 1)\n\
+         sr.len()\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert_eq!(
+        out.stdout.matches("Some((\"b\", 2))").count(),
+        2,
+        "a `&Map` walk answers what the dereferenced walk does: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("Some(2)"),
+        "a `&Set` walks through its iterator: {}",
+        out.stdout
     );
 }

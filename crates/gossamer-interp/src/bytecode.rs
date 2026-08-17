@@ -1426,6 +1426,20 @@ pub enum Op {
     // contiguous block of float registers for `[S; N]` literals
     // where `S` has all-f64 fields) lives in the `wide_ops`
     // side-table - see `Op::Wide` and `WideOp::BuildFloatArray`.
+    /// `registers[dst] = registers[src]` with the integers a descriptor names
+    /// re-boxed as `Value::Uint`, so a `u64` at or above `i64::MAX` renders as
+    /// its own decimal. `desc_idx` is a const-pool index holding the
+    /// descriptor string (see `value::uint_desc`), which the compiler builds
+    /// from the rendered argument's declared type. Only the rendered copy is
+    /// converted; the source value keeps its own representation.
+    UintLeaves {
+        /// Destination Value register.
+        dst: Reg,
+        /// Source Value register.
+        src: Reg,
+        /// Const-pool index of the descriptor string.
+        desc_idx: ConstIdx,
+    },
     /// `registers[dst_v] = Value::Uint(ints[src_i] as u64)`.
     /// Produces an unsigned 64-bit display value for `x as u64` / `x as usize`.
     I64ToUint {

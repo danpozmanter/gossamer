@@ -255,6 +255,14 @@ pub(super) fn emit_per_arg_print(
                 print_str,
                 intrinsics,
             )?,
+            PrintKind::VecUint => emit_vec_print(
+                module,
+                builder,
+                "gos_rt_vec_format_u64",
+                value,
+                print_str,
+                intrinsics,
+            )?,
             PrintKind::VecF64 => emit_vec_print(
                 module,
                 builder,
@@ -387,6 +395,13 @@ pub(super) fn emit_per_arg_print(
             }
             PrintKind::Map => {
                 let s = emit_map_format_value(module, builder, value, intrinsics)?;
+                let fref = module.declare_func_in_func(print_str, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
+            PrintKind::MapTagged(key_tag, val_tag) => {
+                let s = emit_map_format_tagged_value(
+                    module, builder, value, key_tag, val_tag, intrinsics,
+                )?;
                 let fref = module.declare_func_in_func(print_str, builder.func);
                 builder.ins().call(fref, &[s]);
             }
@@ -562,6 +577,30 @@ pub(super) fn emit_tuple_format_value(
 
 /// Emits `gos_rt_map_format(map)` and returns the rendered string
 /// pointer. `value` is the `GosMap` pointer.
+/// Emits `gos_rt_map_format_tagged(map, key_tag, val_tag, null, 0)` for a map
+/// whose key or value carries a declared width, returning the rendered string
+/// pointer.
+pub(super) fn emit_map_format_tagged_value(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    value: ir::Value,
+    key_tag: u8,
+    val_tag: u8,
+    intrinsics: &mut IntrinsicContext,
+) -> Result<ir::Value> {
+    let ptr_ty = module.target_config().pointer_type();
+    let f = intrinsics.extern_fn_by_name(module, "gos_rt_map_format_tagged")?;
+    let fref = module.declare_func_in_func(f, builder.func);
+    let key_tag = builder.ins().iconst(types::I64, i64::from(key_tag));
+    let val_tag = builder.ins().iconst(types::I64, i64::from(val_tag));
+    let null = builder.ins().iconst(ptr_ty, 0);
+    let aux_n = builder.ins().iconst(types::I64, 0);
+    let call = builder
+        .ins()
+        .call(fref, &[value, key_tag, val_tag, null, aux_n]);
+    Ok(builder.inst_results(call)[0])
+}
+
 pub(super) fn emit_map_format_value(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -728,6 +767,7 @@ pub(super) fn emit_args_to_concat_string(
                 builder.ins().call(fref, &[c]);
             }
             PrintKind::VecI64
+            | PrintKind::VecUint
             | PrintKind::VecF64
             | PrintKind::VecBool
             | PrintKind::VecString
@@ -735,6 +775,7 @@ pub(super) fn emit_args_to_concat_string(
             | PrintKind::VecVecString => {
                 let helper = match kind {
                     PrintKind::VecI64 => "gos_rt_vec_format_i64",
+                    PrintKind::VecUint => "gos_rt_vec_format_u64",
                     PrintKind::VecF64 => "gos_rt_vec_format_f64",
                     PrintKind::VecBool => "gos_rt_vec_format_bool",
                     PrintKind::VecString => "gos_rt_vec_format_string",
@@ -822,6 +863,14 @@ pub(super) fn emit_args_to_concat_string(
             }
             PrintKind::Map => {
                 let s = emit_map_format_value(module, builder, value, intrinsics)?;
+                let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
+            PrintKind::MapTagged(key_tag, val_tag) => {
+                let s = emit_map_format_tagged_value(
+                    module, builder, value, key_tag, val_tag, intrinsics,
+                )?;
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);
                 builder.ins().call(fref, &[s]);

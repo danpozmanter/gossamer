@@ -509,6 +509,19 @@ const SPECS: &[Spec] = &[
     // words inline, so a destructured binding reads each part at its own slot
     // offset and borrows the element the sequence still owns.
     spec("feature-testing-examples/seq_pair_struct_elements.gos"),
+    // A `u64` / `usize` reads as unsigned wherever a value directly holds one -
+    // on its own, as a sequence element, an `Option` / `Result` arm, or a
+    // struct field - so a value at or above `i64::MAX` renders as its own
+    // decimal on every tier.
+    spec("feature-testing-examples/unsigned_width_rendering.gos"),
+    // A slot-backed container holds one word per element, and that word holds
+    // whichever scalar the type names - each integer width, `f32` / `f64`,
+    // `bool`, `char` - with a heap ordering by the element's own comparison.
+    spec("feature-testing-examples/slot_container_element_types.gos"),
+    // A `Set` answers membership and set algebra and walks through `iter()`
+    // in an order it promises nothing about; a `BTreeSet` reads sorted, and
+    // both render sorted. Every tier reproduces the same walk.
+    spec("feature-testing-examples/set_unordered_contract.gos"),
     // A type's identity is the module declaring it, so two modules may each
     // declare `Point` and `Tag` without their constructors, `{:?}`, `==`,
     // map keying, or serde symbols colliding.

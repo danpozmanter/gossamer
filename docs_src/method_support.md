@@ -56,10 +56,12 @@ dispatch-table additions.
 `Vec<T>` is the only owned growable sequence. `[T; N]`, `&[T]`, and `&mut [T]`
 share only the non-resizing methods listed below. Mutable arrays and slices may
 reorder or replace existing elements, but cannot change their length or
-capacity. Every collection - `Vec`, fixed arrays, slices, `Set`, `BTreeSet`,
-`Map`, `BTreeMap` - traverses the values it holds, so `map` / `filter` / `fold`
+capacity. An ordered collection - `Vec`, fixed arrays, slices, `Map`,
+`BTreeMap` - traverses the values it holds, so `map` / `filter` / `fold`
 answer eagerly on it; `iter()` is how a caller asks for the lazy walk that
-never holds the whole sequence, and `collect()` ends one. `collect` belongs
+never holds the whole sequence, and `collect()` ends one. A `Set` has no
+element order, so every traversal on one is written on the iterator
+`s.iter()` answers. `collect` belongs
 to the iterator, so it is not written on a collection that already holds its
 values; `to_vec` is the conversion a borrowed or fixed-length sequence
 carries, so a `Vec` has neither.
@@ -146,15 +148,23 @@ iterates in key order.
 
 ## Set
 
+`Set<T>` is unordered: it answers membership, cardinality, and set algebra,
+and holds no promise about the order a walk sees its elements in. Sequence
+operations are the iterator's, so they are written `s.iter().take(3)`,
+`s.iter().count(|v| v > 1)`, `s.iter().map(f).collect()`; `s.take(3)` reports
+GT0002 and names that spelling. Sort the materialised sequence, or use
+`BTreeSet`, when order is part of the answer. Printing and serialization sort
+both kinds, so rendered output is stable whatever order the elements went in.
+
 | Method | Returns | Notes |
 |---|---|---|
 | `s.insert(v)` | `bool` | Inserts the value and reports whether it was newly added. |
 | `s.contains(v)` | `bool` | Membership test. |
 | `s.remove(v)` | `bool` | Deletes the value and reports whether it was present. |
 | `s.len()` | `i64` | |
-| `s.clear()` | `()` | Removes all values. |
-| `s.iter()` | `Iterator<T>` | Lazy walk over the values; `s.map(f)` / `s.filter(p)` answer eagerly. |
-| `s.to_vec()` | `Vec<T>` | Materialises the set values. |
+| `s.is_empty()` / `s.clear()` | `bool` / `()` | Empty test and in-place removal of all values. |
+| `s.iter()` | `Iterator<T>` | The walk every sequence operation starts from. |
+| `s.to_vec()` | `Vec<T>` | Materialises the values, in the same unordered walk. |
 | `s.union(other)` | `Set<T>` | Set union. |
 | `s.intersection(other)` | `Set<T>` | Shared values. |
 | `s.difference(other)` | `Set<T>` | Values present only in `s`. |
@@ -164,56 +174,73 @@ iterates in key order.
 
 ## BTreeSet
 
-`BTreeSet<T>` has the same method surface as `Set<T>`, with ordered
-iteration and `to_vec` output.
+`BTreeSet<T>` is the sorted set: the same method surface as `Set<T>`, and its
+`iter()` / `to_vec()` read in ascending element order.
 
 ## Deque
 
-Phase 1 `Deque` support is `Deque<i64>`. It is a double-ended ring
-buffer; both ends are constant-time. The pop / peek methods return
-`Option<i64>`. Like Rust's `VecDeque`, `Deque` uses explicit front/back method names.
+`Deque<T>` is a double-ended ring buffer; both ends are constant-time. Its
+element is any scalar - an integer of any width, `f32` / `f64`, `bool`, or
+`char` - and the pop / peek methods answer `Option<T>` in that element type.
+Like Rust's `VecDeque`, `Deque` uses explicit front/back method names.
 
 | Method | Returns | Notes |
 |---|---|---|
 | `d.push_back(v)` | `()` | Append to the back. |
 | `d.push_front(v)` | `()` | Prepend to the front. |
-| `d.pop_back()` | `Option<i64>` | Remove and return the back element. |
-| `d.pop_front()` | `Option<i64>` | Remove and return the front element. |
-| `d.peek_back()` | `Option<i64>` | Back element without removing it. |
-| `d.peek_front()` | `Option<i64>` | Front element without removing it. |
+| `d.pop_back()` | `Option<T>` | Remove and return the back element. |
+| `d.pop_front()` | `Option<T>` | Remove and return the front element. |
+| `d.peek_back()` | `Option<T>` | Back element without removing it. |
+| `d.peek_front()` | `Option<T>` | Front element without removing it. |
 | `d.len()` | `i64` | |
 | `d.is_empty()` | `bool` | |
 | `d.clear()` | `()` | Removes all values. |
 
 ## Queue
 
-Phase 1 `Queue` support is `Queue<i64>`. It is a restricted FIFO queue:
+`Queue<T>` is a restricted FIFO queue over any scalar element:
 `push` appends to the back, `pop` removes from the front, and `peek` observes
 the front without removing it. Build one with `Queue::new()` or `Queue::from([a, b])`.
 
 | Method | Returns | Notes |
 |---|---|---|
 | `q.push(v)` | `()` | Append to the back. |
-| `q.pop()` | `Option<i64>` | Remove and return the front element. |
-| `q.peek()` | `Option<i64>` | Return the front element without removing it. |
+| `q.pop()` | `Option<T>` | Remove and return the front element. |
+| `q.peek()` | `Option<T>` | Return the front element without removing it. |
 | `q.len()` | `i64` | |
 | `q.is_empty()` | `bool` | |
 | `q.clear()` | `()` | Removes all values. |
 
 ## Stack
 
-Phase 1 `Stack` support is `Stack<i64>`. It is a restricted LIFO stack:
+`Stack<T>` is a restricted LIFO stack over any scalar element:
 `push` appends to the top, `pop` removes from the top, and `peek` observes
 the top without removing it. Build one with `Stack::new()` or `Stack::from([a, b])`.
 
 | Method | Returns | Notes |
 |---|---|---|
 | `s.push(v)` | `()` | Push onto the top. |
-| `s.pop()` | `Option<i64>` | Remove and return the top element. |
-| `s.peek()` | `Option<i64>` | Return the top element without removing it. |
+| `s.pop()` | `Option<T>` | Remove and return the top element. |
+| `s.peek()` | `Option<T>` | Return the top element without removing it. |
 | `s.len()` | `i64` | |
 | `s.is_empty()` | `bool` | |
 | `s.clear()` | `()` | Removes all values. |
+
+## MaxHeap And MinHeap
+
+`MaxHeap<T>` and `MinHeap<T>` order their elements by the element's own
+comparison: `push` inserts, `pop` removes the greatest (or least) element, and
+`peek` observes it. The element is any scalar the ordering covers - each signed
+integer width, `u8` / `u16` / `u32`, `f32` / `f64`, `bool`, `char`. A `u64` or
+`usize` element is reported as GT0068: the heap compares slots as signed
+64-bit values, which that range outruns.
+
+## Slot-backed container elements
+
+`Deque`, `Queue`, `Stack`, `MaxHeap`, and `MinHeap` hold one 8-byte slot per
+element, so their element is a scalar. A `String`, a container, a struct, a
+tuple, an array, or an enum is reported as GT0068 - hold those in a `Vec`, or
+keep a key here and look the value up in a `Map`.
 
 ## Tuple
 

@@ -1942,11 +1942,34 @@ fn a_collection_traverses_its_own_values() {
         "fn main() { let xs = #[1, 2, 3]\n let _ = xs.fold(0, |a, x| a + x) }\n",
         "fn main() { let xs = #[1, 2, 3]\n let _ = xs.rev() }\n",
         "fn main() { let a: [i64; 3] = [1, 2, 3]\n let _ = a.map(|x| x) }\n",
-        "fn main() { let s = #{1, 2, 3}\n let _ = s.map(|x| x * 2) }\n",
-        "fn main() { let s = #{1, 2, 3}\n let _ = s.filter(|x| x > 1) }\n",
     ] {
         let d = diagnostics_for(source);
         assert!(d.is_empty(), "{source}: {d:?}");
+    }
+}
+
+/// A set has no element order, so a traversal on one is the iterator's and is
+/// written through `iter()`. The set itself answers membership, cardinality,
+/// and set algebra.
+#[test]
+fn a_set_traverses_through_its_iterator() {
+    for source in [
+        "fn main() { let s = #{1, 2, 3}\n let _ = s.iter().map(|x| x * 2).collect() }\n",
+        "fn main() { let s = #{1, 2, 3}\n let _ = s.iter().filter(|x| x > 1).collect() }\n",
+        "fn main() { let s = #{1, 2, 3}\n let _ = s.iter().take(2).collect() }\n",
+        "fn main() { let s = #{1, 2, 3}\n let _ = s.len() + s.to_vec().len() }\n",
+        "fn main() { let s = #{1, 2, 3}\n let _ = s.union(#{4}).contains(4) }\n",
+    ] {
+        let d = diagnostics_for(source);
+        assert!(d.is_empty(), "{source}: {d:?}");
+    }
+    for source in [
+        "fn main() { let s = #{1, 2, 3}\n let _ = s.map(|x| x * 2) }\n",
+        "fn main() { let s = #{1, 2, 3}\n let _ = s.take(2) }\n",
+        "fn main() { let s = #{1, 2, 3}\n let _ = s.enumerate() }\n",
+    ] {
+        let d = diagnostics_for(source);
+        assert!(!d.is_empty(), "{source}: a set has no sequence surface");
     }
 }
 
@@ -3220,52 +3243,99 @@ fn phase1_runtime_collection_shapes_accept_i64_paths() {
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
 
+/// A slot-backed container holds one word per element, so an element that is a
+/// handle or spans several slots is reported as such. A heap also orders its
+/// elements against a signed 64-bit comparison, which `u64` outruns.
 #[test]
-fn phase1_runtime_collection_shapes_reject_unsupported_generics() {
-    for (name, source, expected, found) in [
+fn slot_backed_collections_reject_elements_they_cannot_hold() {
+    for (name, source, owner, found) in [
         (
-            "vecdeque string annotation",
+            "deque string annotation",
             "use std::collections::Deque\n\
              fn main() { let mut q: Deque<String> = Deque::new()\n\
              q.push_back(\"a\") }\n",
-            "i64",
+            "Deque",
             "String",
         ),
         (
             "queue string from",
             "use std::collections::Queue\n\
              fn main() { let mut q = Queue::from([\"a\"])\n\
-             println!(\"{}\", q.pop().unwrap_or(0)) }\n",
-            "i64",
+             println!(\"{}\", q.len()) }\n",
+            "Queue",
             "String",
+        ),
+        (
+            "stack tuple annotation",
+            "use std::collections::Stack\n\
+             fn main() { let mut s: Stack<(i64, i64)> = Stack::new()\n\
+             println!(\"{}\", s.len()) }\n",
+            "Stack",
+            "(i64, i64)",
         ),
         (
             "max heap string annotation",
             "use std::collections::MaxHeap\n\
              fn main() { let mut h: MaxHeap<String> = MaxHeap::new()\n\
-             h.push(\"a\") }\n",
-            "i64",
+             println!(\"{}\", h.len()) }\n",
+            "MaxHeap",
             "String",
         ),
         (
             "min heap string from",
             "use std::collections::MinHeap\n\
              fn main() { let mut h = MinHeap::from([\"a\"])\n\
-             h.push(\"b\") }\n",
-            "i64",
+             println!(\"{}\", h.len()) }\n",
+            "MinHeap",
             "String",
+        ),
+        (
+            "max heap unsigned annotation",
+            "use std::collections::MaxHeap\n\
+             fn main() { let mut h: MaxHeap<u64> = MaxHeap::new()\n\
+             println!(\"{}\", h.len()) }\n",
+            "MaxHeap",
+            "u64",
         ),
     ] {
         let diagnostics = diagnostics_for(source);
         assert!(
             diagnostics.iter().any(|diagnostic| matches!(
                 &diagnostic.error,
-                TypeError::TypeMismatch { expected: got_expected, found: got_found }
-                    if got_expected == expected && got_found == found
+                TypeError::SlotCollectionElement { owner: got_owner, found: got_found }
+                    if got_owner == owner && got_found == found
             )),
-            "{name} should reject unsupported Phase 1 collection shape: {diagnostics:?}"
+            "{name} should name the element the container cannot hold: {diagnostics:?}"
         );
     }
+}
+
+/// Every scalar is one word, so a slot-backed container holds it as written
+/// and answers `Option<T>` in that element type.
+#[test]
+fn slot_backed_collections_hold_any_scalar_element() {
+    let diagnostics = diagnostics_for(
+        "use std::collections::{Deque, MaxHeap, MinHeap, Queue, Stack}\n\
+         fn main() {\n\
+         let mut q: Queue<u32> = Queue::new()\n\
+         q.push(7 as u32)\n\
+         let head: Option<u32> = q.pop()\n\
+         let mut s: Stack<char> = Stack::new()\n\
+         s.push('a')\n\
+         let top: Option<char> = s.pop()\n\
+         let mut d: Deque<bool> = Deque::new()\n\
+         d.push_back(true)\n\
+         let flag: Option<bool> = d.pop_front()\n\
+         let mut hi: MaxHeap<f64> = MaxHeap::new()\n\
+         hi.push(1.5)\n\
+         let most: Option<f64> = hi.pop()\n\
+         let mut lo: MinHeap<i16> = MinHeap::new()\n\
+         lo.push(3 as i16)\n\
+         let least: Option<i16> = lo.pop()\n\
+         println!(\"{:?} {:?} {:?} {:?} {:?}\", head, top, flag, most, least)\n\
+         }\n",
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
 
 #[test]

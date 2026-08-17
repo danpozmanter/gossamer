@@ -102,6 +102,11 @@ use crate::builtins::{
 };
 use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
 
+/// One set's elements, in the order they were added. A `Set` traverses in
+/// that order and gives it no meaning beyond being the same on every tier; a
+/// `BTreeSet` sorts on the way out.
+pub(crate) type SetEntries = indexmap::IndexMap<MapKey, Value>;
+
 /// Entry point invoked from `builtins::install`.
 use super::*;
 
@@ -228,7 +233,21 @@ pub(crate) fn set_deep_clone(value: &Value) -> Value {
     } else {
         "Set"
     };
-    set_handle_named(name, new_id)
+    let handle = set_handle_named(name, new_id);
+    // A rendered copy carries the unsigned-element marker; the clone a `let`
+    // or a by-value argument takes must keep it, or the elements read signed
+    // on the way out.
+    if inner
+        .fields
+        .iter()
+        .any(|(field, _)| *field == crate::value::SET_UINT_MARKER)
+        && let Value::Struct(cloned) = &handle
+    {
+        let mut fields = cloned.fields.to_vec();
+        fields.push((crate::value::SET_UINT_MARKER, Value::Int(1)));
+        return Value::struct_(name, fields);
+    }
+    handle
 }
 
 pub(crate) fn set_id_of(value: &Value) -> Option<i64> {
@@ -257,7 +276,7 @@ pub(crate) fn builtin_btreeset_new(_args: &[Value]) -> RuntimeResult<Value> {
 fn builtin_set_new_named(name: &'static str) -> RuntimeResult<Value> {
     let id = next_set_handle();
     SET_REGISTRY.with(|r| {
-        r.borrow_mut().insert(id, StdHashMap::default());
+        r.borrow_mut().insert(id, SetEntries::default());
     });
     Ok(set_handle_named(name, id))
 }
@@ -309,7 +328,7 @@ pub(crate) fn builtin_set_remove(args: &[Value]) -> RuntimeResult<Value> {
     let key = MapKey::from_value(value);
     let removed = SET_REGISTRY.with(|r| {
         if let Some(s) = r.borrow_mut().get_mut(&id) {
-            s.remove(&key).is_some()
+            s.shift_remove(&key).is_some()
         } else {
             false
         }
@@ -333,7 +352,7 @@ pub(crate) fn builtin_set_len(args: &[Value]) -> RuntimeResult<Value> {
     let Some(id) = args.first().and_then(set_id_of) else {
         return Ok(Value::Int(0));
     };
-    let n = SET_REGISTRY.with(|r| r.borrow().get(&id).map_or(0, StdHashMap::len));
+    let n = SET_REGISTRY.with(|r| r.borrow().get(&id).map_or(0, SetEntries::len));
     Ok(Value::Int(n as i64))
 }
 
@@ -341,7 +360,7 @@ pub(crate) fn builtin_set_is_empty(args: &[Value]) -> RuntimeResult<Value> {
     let Some(id) = args.first().and_then(set_id_of) else {
         return Ok(Value::Bool(true));
     };
-    let empty = SET_REGISTRY.with(|r| r.borrow().get(&id).is_none_or(StdHashMap::is_empty));
+    let empty = SET_REGISTRY.with(|r| r.borrow().get(&id).is_none_or(SetEntries::is_empty));
     Ok(Value::Bool(empty))
 }
 
@@ -361,19 +380,29 @@ pub(crate) fn builtin_set_to_vec(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Array(Arc::new(values)))
 }
 
-/// Returns the stored values in deterministic key order for user-facing
-/// iteration and REPL rendering.
+/// The stored values in the order a walk sees them: sorted for a `BTreeSet`,
+/// and otherwise the order the elements were added, which a `Set` gives no
+/// meaning to beyond being the same on every tier.
 pub(crate) fn set_snapshot(value: &Value) -> Option<Vec<Value>> {
+    set_values(value, set_handle_name(Some(value)) == "BTreeSet")
+}
+
+/// The stored values sorted by key, for rendering and serialization: printed
+/// and encoded output stays stable whatever order the elements went in.
+pub(crate) fn set_display_snapshot(value: &Value) -> Option<Vec<Value>> {
+    set_values(value, true)
+}
+
+fn set_values(value: &Value, sorted: bool) -> Option<Vec<Value>> {
     let id = set_id_of(value)?;
     Some(SET_REGISTRY.with(|r| {
         r.borrow()
             .get(&id)
             .map(|s| {
-                // Sort for deterministic, cross-tier-identical order - a
-                // `HashSet`'s iteration order is otherwise unstable
-                // (RandomState) and differs run-to-run and across tiers.
                 let mut entries: Vec<(&MapKey, &Value)> = s.iter().collect();
-                entries.sort_by_key(|(key, _)| (*key).clone());
+                if sorted {
+                    entries.sort_by_key(|(key, _)| (*key).clone());
+                }
                 entries
                     .into_iter()
                     .map(|(_, value)| value.clone())
@@ -401,7 +430,7 @@ fn set_handle_name(value: Option<&Value>) -> &'static str {
 /// result under a fresh handle.
 fn set_binary_op(
     args: &[Value],
-    op: impl Fn(&StdHashMap<MapKey, Value>, &StdHashMap<MapKey, Value>) -> StdHashMap<MapKey, Value>,
+    op: impl Fn(&SetEntries, &SetEntries) -> SetEntries,
 ) -> RuntimeResult<Value> {
     let result = match set_pair_ids(args) {
         Some((a, b)) => SET_REGISTRY.with(|r| {
@@ -410,7 +439,7 @@ fn set_binary_op(
             let sb = r.get(&b).cloned().unwrap_or_default();
             op(&sa, &sb)
         }),
-        None => StdHashMap::default(),
+        None => SetEntries::default(),
     };
     let id = next_set_handle();
     SET_REGISTRY.with(|r| {
@@ -421,7 +450,7 @@ fn set_binary_op(
 
 fn set_predicate(
     args: &[Value],
-    pred: impl Fn(&StdHashMap<MapKey, Value>, &StdHashMap<MapKey, Value>) -> bool,
+    pred: impl Fn(&SetEntries, &SetEntries) -> bool,
 ) -> RuntimeResult<Value> {
     let result = match set_pair_ids(args) {
         Some((a, b)) => SET_REGISTRY.with(|r| {
@@ -529,7 +558,7 @@ pub(crate) static MUTEX_REGISTRY: GlobalReg<StdHashMap<i64, Arc<MutexCell>>> =
 // Mirrors the `sync::*` registries above.
 pub(crate) static NEXT_SET_HANDLE: GlobalReg<i64> =
     GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(1)));
-pub(crate) static SET_REGISTRY: GlobalReg<StdHashMap<i64, StdHashMap<MapKey, Value>>> =
+pub(crate) static SET_REGISTRY: GlobalReg<StdHashMap<i64, SetEntries>> =
     GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
 
 /// Backing state for an interpreter `sync::Mutex`. The lock is held

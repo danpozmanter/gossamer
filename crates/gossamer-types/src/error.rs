@@ -130,6 +130,16 @@ pub enum TypeError {
         /// spelling is what missed, not the name.
         field_of_same_name: bool,
     },
+    /// A slot-backed container (`Deque`, `Queue`, `Stack`, `MaxHeap`,
+    /// `MinHeap`) named an element it cannot hold: one word per element is
+    /// all it stores.
+    #[error("`{owner}` cannot hold an element of type `{found}`")]
+    SlotCollectionElement {
+        /// Container spelling as written.
+        owner: String,
+        /// The element type the annotation named.
+        found: String,
+    },
     /// A method reached from outside the module its `impl` was written
     /// in, without `pub`.
     #[error("method `{name}` on `{ty}` is private to module `{module}`")]
@@ -789,6 +799,7 @@ impl TypeError {
             Self::NumericOperandMismatch { .. } => "numeric-operand-mismatch",
             Self::OptionValueMismatch { .. } => "option-value-mismatch",
             Self::ArgumentTypeMismatch { .. } => "argument-type-mismatch",
+            Self::SlotCollectionElement { .. } => "slot-collection-element",
             Self::UnresolvedMethod { .. } => "unresolved-method",
             Self::PrivateMethod { .. } => "private-method",
             Self::PrivateField { .. } => "private-field",
@@ -883,6 +894,7 @@ impl TypeError {
             Self::NumericOperandMismatch { .. } => "GT0001",
             Self::OptionValueMismatch { .. } => "GT0001",
             Self::ArgumentTypeMismatch { .. } => "GT0001",
+            Self::SlotCollectionElement { .. } => "GT0068",
             Self::UnresolvedMethod { .. } => "GT0002",
             Self::UnresolvedOp { .. } | Self::UnresolvedOpImpl { .. } => "GT0003",
             Self::NonExhaustiveMatch { .. } => "GT0004",
@@ -1083,13 +1095,42 @@ impl TypeDiagnostic {
                      `if let Some({binding}) = {actual}`"
                 ));
             }
+            TypeError::SlotCollectionElement { owner, found } => {
+                out = if matches!(found.as_str(), "u64" | "usize") {
+                    out.with_help(format!(
+                        "`{owner}` orders its elements as signed 64-bit values, which \
+                         `{found}` outruns; hold `i64`, or keep the values in a \
+                         `Deque` / `Queue` / `Stack` and order them yourself"
+                    ))
+                } else {
+                    out.with_help(format!(
+                        "`{owner}` holds a scalar element - an integer of any width, \
+                         `f32` / `f64`, `bool`, or `char`; `{found}` needs a `Vec` \
+                         (or a key into a `Map`)"
+                    ))
+                    .with_note(
+                        "each element occupies one 8-byte slot, which a handle or a \
+                         multi-slot value does not fit",
+                    )
+                };
+            }
             TypeError::UnresolvedMethod {
                 ty,
                 name,
                 available,
                 field_of_same_name,
             } => {
-                out = if name == "set" && ty.starts_with("Map") {
+                out = if (ty.starts_with("Set<") || ty.starts_with("BTreeSet<"))
+                    && crate::is_iterator_method(name)
+                {
+                    out.with_help(format!(
+                        "`{name}` is an iterator operation: write `<set>.iter().{name}(..)`"
+                    ))
+                    .with_note(
+                        "a set answers membership, cardinality, and set algebra; \
+                         traversal goes through `iter()`",
+                    )
+                } else if name == "set" && ty.starts_with("Map") {
                     out.with_help(format!("`{ty}` writes with `insert(key, value)`"))
                         .with_note(
                             "`set` is the `json::Value` field-update helper, not a map method",

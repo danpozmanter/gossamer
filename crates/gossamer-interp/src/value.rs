@@ -730,6 +730,11 @@ pub enum MapKey {
     Bool(bool),
     /// `i64` key (every integer width converges here).
     Int(i64),
+    /// A key the renderer reads as unsigned. Only the rendered copy of a map
+    /// whose keys were declared `u64` / `usize` holds one, so a key at or
+    /// above `i64::MAX` prints as its own decimal; a live map keys by
+    /// [`MapKey::Int`] whatever width the source named.
+    Uint(u64),
     /// `char` key.
     Char(char),
     /// String key (stored inline when ≤ 7 bytes - see [`SmolStr`]).
@@ -841,6 +846,7 @@ impl MapKey {
         match self {
             Self::Bool(b) => Value::Bool(*b),
             Self::Int(n) => Value::Int(*n),
+            Self::Uint(n) => Value::Uint(*n),
             Self::Char(c) => Value::Char(*c),
             Self::Str(s) => Value::String(s.clone()),
             // An aggregate key retains the shape it was hashed from, so it
@@ -3052,6 +3058,197 @@ impl fmt::Display for Value {
     }
 }
 
+/// Descriptor bytes naming where a rendered value's integers were declared
+/// unsigned. The compiler builds one per rendered argument whose type holds
+/// such an integer; [`uint_leaves`] walks the value alongside it.
+pub(crate) mod uint_desc {
+    /// Nothing under this position is unsigned.
+    pub(crate) const NONE: u8 = b'.';
+    /// This integer position is unsigned.
+    pub(crate) const UINT: u8 = b'u';
+    /// A sequence; the element's own descriptor follows.
+    pub(crate) const SEQ: u8 = b'v';
+    /// A map; the key's descriptor follows, then the value's.
+    pub(crate) const MAP: u8 = b'm';
+    /// A tuple; its arity follows as one byte, then that many descriptors.
+    pub(crate) const TUPLE: u8 = b't';
+    /// An `Option`; the payload's descriptor follows.
+    pub(crate) const OPTION: u8 = b'o';
+    /// A `Result`; the `Ok` descriptor follows, then the `Err` one.
+    pub(crate) const RESULT: u8 = b'r';
+    /// A set whose elements are unsigned.
+    pub(crate) const SET: u8 = b's';
+}
+
+/// Field a rendered set handle carries to say its elements read as unsigned.
+/// Only [`uint_leaves`] adds it, and only to the copy the renderer sees.
+pub(crate) const SET_UINT_MARKER: &str = "__uint";
+
+/// Returns `value` with the integers the descriptor names re-boxed as
+/// [`Value::Uint`], so a `u64` at or above `i64::MAX` renders as its own
+/// decimal instead of the negative the same bits spell. The copy is the
+/// renderer's alone, so the source keeps its own representation.
+pub(crate) fn uint_leaves(value: &Value, desc: &[u8]) -> Value {
+    let mut cursor = 0usize;
+    convert_uint(value, desc, &mut cursor)
+}
+
+/// Advances `cursor` past one descriptor without converting anything.
+fn skip_uint_desc(desc: &[u8], cursor: &mut usize) {
+    let tag = desc.get(*cursor).copied().unwrap_or(uint_desc::NONE);
+    *cursor += 1;
+    match tag {
+        uint_desc::SEQ | uint_desc::OPTION => skip_uint_desc(desc, cursor),
+        uint_desc::MAP | uint_desc::RESULT => {
+            skip_uint_desc(desc, cursor);
+            skip_uint_desc(desc, cursor);
+        }
+        uint_desc::TUPLE => {
+            let arity = desc.get(*cursor).copied().unwrap_or(0) as usize;
+            *cursor += 1;
+            for _ in 0..arity {
+                skip_uint_desc(desc, cursor);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn convert_uint(value: &Value, desc: &[u8], cursor: &mut usize) -> Value {
+    let tag = desc.get(*cursor).copied().unwrap_or(uint_desc::NONE);
+    *cursor += 1;
+    match tag {
+        uint_desc::UINT => match value {
+            Value::Int(n) => Value::Uint(*n as u64),
+            other => other.clone(),
+        },
+        uint_desc::SEQ => convert_uint_sequence(value, desc, cursor),
+        uint_desc::TUPLE => {
+            let arity = desc.get(*cursor).copied().unwrap_or(0) as usize;
+            *cursor += 1;
+            let Value::Tuple(parts) = value else {
+                for _ in 0..arity {
+                    skip_uint_desc(desc, cursor);
+                }
+                return value.clone();
+            };
+            let mut out = Vec::with_capacity(parts.len());
+            for i in 0..arity {
+                match parts.get(i) {
+                    Some(part) => out.push(convert_uint(part, desc, cursor)),
+                    None => skip_uint_desc(desc, cursor),
+                }
+            }
+            out.extend(parts.iter().skip(arity).cloned());
+            Value::Tuple(Arc::new(out))
+        }
+        uint_desc::OPTION | uint_desc::RESULT => convert_uint_variant(value, desc, cursor, tag),
+        uint_desc::MAP => convert_uint_map(value, desc, cursor),
+        uint_desc::SET => match value {
+            Value::Struct(inner) if is_set_struct_name(inner.name.as_str()) => {
+                let mut fields = inner.fields.to_vec();
+                fields.push((SET_UINT_MARKER, Value::Int(1)));
+                Value::struct_(inner.name.as_str(), fields)
+            }
+            other => other.clone(),
+        },
+        _ => value.clone(),
+    }
+}
+
+fn convert_uint_sequence(value: &Value, desc: &[u8], cursor: &mut usize) -> Value {
+    let elem_at = *cursor;
+    skip_uint_desc(desc, cursor);
+    let convert = |v: &Value| {
+        let mut elem_cursor = elem_at;
+        convert_uint(v, desc, &mut elem_cursor)
+    };
+    match value {
+        Value::Array(items) => Value::Array(Arc::new(items.iter().map(convert).collect())),
+        Value::IntArray(items) => Value::Array(Arc::new(
+            items.iter().map(|n| convert(&Value::Int(*n))).collect(),
+        )),
+        other => other.clone(),
+    }
+}
+
+fn convert_uint_variant(value: &Value, desc: &[u8], cursor: &mut usize, tag: u8) -> Value {
+    let ok_at = *cursor;
+    skip_uint_desc(desc, cursor);
+    let err_at = *cursor;
+    if tag == uint_desc::RESULT {
+        skip_uint_desc(desc, cursor);
+    }
+    let Value::Variant(variant) = value else {
+        return value.clone();
+    };
+    let arm_at = match variant.name.as_str() {
+        "Some" | "Ok" => ok_at,
+        "Err" if tag == uint_desc::RESULT => err_at,
+        _ => return value.clone(),
+    };
+    let fields = variant
+        .fields
+        .iter()
+        .map(|field| {
+            let mut field_cursor = arm_at;
+            convert_uint(field, desc, &mut field_cursor)
+        })
+        .collect();
+    Value::variant(variant.name.as_str(), fields)
+}
+
+fn convert_uint_map(value: &Value, desc: &[u8], cursor: &mut usize) -> Value {
+    let key_at = *cursor;
+    skip_uint_desc(desc, cursor);
+    let val_at = *cursor;
+    skip_uint_desc(desc, cursor);
+    let key_is_uint = desc.get(key_at).copied() == Some(uint_desc::UINT);
+    let convert_key = |key: &MapKey| match key {
+        MapKey::Int(n) if key_is_uint => MapKey::Uint(*n as u64),
+        other => other.clone(),
+    };
+    let convert_value = |v: &Value| {
+        let mut value_cursor = val_at;
+        convert_uint(v, desc, &mut value_cursor)
+    };
+    let mut out: DenseMap<MapKey, Value> = dense_map();
+    match value {
+        Value::Map(map) => {
+            for (key, entry) in map.lock().iter() {
+                out.insert(convert_key(key), convert_value(entry));
+            }
+        }
+        Value::IntMap(map) => {
+            for (key, entry) in map.lock().iter() {
+                out.insert(
+                    convert_key(&MapKey::Int(*key)),
+                    convert_value(&Value::Int(*entry)),
+                );
+            }
+        }
+        Value::StrIntMap(map) => {
+            for (key, entry) in map.lock().iter() {
+                out.insert(MapKey::Str(key.clone()), convert_value(&Value::Int(*entry)));
+            }
+        }
+        other => return other.clone(),
+    }
+    Value::Map(Arc::new(parking_lot::Mutex::new(out)))
+}
+
+/// Renders one struct field, reading it as unsigned when the declaration
+/// named it `u64` / `usize`, which is what the derived `fmt` the compiled
+/// tiers call does.
+fn uint_aware_field(struct_name: &str, field_name: &str, field: &Value) -> String {
+    match field {
+        Value::Int(n) if crate::builtins::struct_field_is_uint(struct_name, field_name) => {
+            format!("{}", *n as u64)
+        }
+        other => repr_value(other),
+    }
+}
+
 fn repr_value(value: &Value) -> String {
     match value {
         Value::Float(number) => repr_float(*number),
@@ -3144,16 +3341,30 @@ fn repr_value(value: &Value) -> String {
     }
 }
 
-/// Renders `owner {a, b}` over the set's elements. Elements print in
-/// their Display form, matching `gos_rt_set_format_*` and the way a
-/// sequence of the same elements prints.
+/// Renders `owner {a, b}` over the set's elements, sorted so printed output is
+/// stable whatever order the elements went in. Elements print in their Display
+/// form, matching `gos_rt_set_format_*` and the way a sequence of the same
+/// elements prints.
 fn repr_set(value: &Value, owner: &str) -> String {
-    let values = crate::stdlib_builtins::set::set_snapshot(value).unwrap_or_default();
+    let values = crate::stdlib_builtins::set::set_display_snapshot(value).unwrap_or_default();
+    // The rendered copy of a set whose elements were declared `u64` / `usize`
+    // carries the marker, so those elements read as unsigned here.
+    let unsigned = matches!(
+        value,
+        Value::Struct(inner)
+            if inner
+                .fields
+                .iter()
+                .any(|(name, _)| *name == SET_UINT_MARKER)
+    );
     format!(
         "{owner} {{{}}}",
         values
             .iter()
-            .map(ToString::to_string)
+            .map(|element| match element {
+                Value::Int(n) if unsigned => format!("{}", *n as u64),
+                other => other.to_string(),
+            })
             .collect::<Vec<_>>()
             .join(", ")
     )
@@ -3193,6 +3404,9 @@ fn repr_float(number: f64) -> String {
 }
 
 fn repr_struct(name: &str, fields: &[(&'static str, Value)]) -> String {
+    // A field declared `u64` / `usize` reads as unsigned, matching the
+    // derived `fmt` the compiled tiers call.
+    let render_field = |field_name: &str, field: &Value| uint_aware_field(name, field_name, field);
     let is_tuple_struct = !fields.is_empty()
         && fields
             .iter()
@@ -3201,7 +3415,7 @@ fn repr_struct(name: &str, fields: &[(&'static str, Value)]) -> String {
     if is_tuple_struct {
         let fields = fields
             .iter()
-            .map(|(_, field)| repr_value(field))
+            .map(|(field_name, field)| render_field(field_name, field))
             .collect::<Vec<_>>()
             .join(", ");
         return format!("{name}({fields})");
@@ -3210,7 +3424,7 @@ fn repr_struct(name: &str, fields: &[(&'static str, Value)]) -> String {
         "{name} {{ {} }}",
         fields
             .iter()
-            .map(|(field_name, field)| format!("{field_name}: {}", repr_value(field)))
+            .map(|(field_name, field)| format!("{field_name}: {}", render_field(field_name, field)))
             .collect::<Vec<_>>()
             .join(", ")
     )
@@ -3354,11 +3568,11 @@ fn write_struct(
             .all(|(i, (n, _))| n.parse::<usize>() == Ok(i));
     if is_tuple_struct {
         out.write_str("(")?;
-        for (i, (_, value)) in fields.iter().enumerate() {
+        for (i, (ident, value)) in fields.iter().enumerate() {
             if i > 0 {
                 out.write_str(", ")?;
             }
-            out.write_str(&repr_value(value))?;
+            out.write_str(&uint_aware_field(name, ident, value))?;
         }
         return out.write_str(")");
     }
@@ -3367,7 +3581,12 @@ fn write_struct(
         if i > 0 {
             out.write_str(", ")?;
         }
-        write!(out, "{}: {}", (*ident), repr_value(value))?;
+        write!(
+            out,
+            "{}: {}",
+            (*ident),
+            uint_aware_field(name, ident, value)
+        )?;
     }
     out.write_str(" }")
 }

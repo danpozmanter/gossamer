@@ -260,6 +260,12 @@ pub(super) enum ConcatKind {
     /// `Vec<i64>` (or any 8-byte-elem Vec) formatted via
     /// `gos_rt_vec_format_i64`.
     VecI64,
+    /// `Vec<u64>` / `Vec<usize>`: the same slots read as unsigned, so an
+    /// element at or above `i64::MAX` renders as its own decimal.
+    VecUint,
+    /// `Set<u64>` / `BTreeSet<usize>`: the elements read as unsigned. The
+    /// `bool` is true for the ordered spelling.
+    SetUint(bool),
     VecF64,
     VecBool,
     VecString,
@@ -280,8 +286,9 @@ pub(super) enum ConcatKind {
     MapDesc(Vec<u8>, usize),
     /// Tuple-elem Vec: the per-element tag bytes and the tuple's arity.
     VecTuple(Vec<u8>, usize),
-    /// Map whose values carry the given tuple tag (`0` for scalars).
-    MapTagged(u8),
+    /// Map whose keys and values carry the given tuple tags (`0` for a signed
+    /// scalar, `1` for an unsigned one).
+    MapTagged(u8, u8),
     /// Map whose values are aggregates rendered by a derived `fmt`.
     MapAdt(String),
     /// Map whose values are tuples: the per-element tag bytes and the arity.

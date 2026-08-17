@@ -1,7 +1,6 @@
-// A traversal method on a reference to a keyed collection walks the
-// collection the reference names. `&Map` / `&Set` receivers reached the
-// generic by-name dispatch instead of the keyed walk, which the VM answered
-// with an index-shaped value and the compiled tiers had no symbol for at all.
+// A traversal on a reference to a keyed collection walks the collection the
+// reference names: a `&Map` reads its pairs, and a `&Set` reaches the same
+// walk through the iterator `iter()` answers.
 
 struct Tally { hits: i64 }
 
@@ -23,9 +22,9 @@ fn read_map(m: &Map<String, i64>) -> String {
 }
 
 fn read_set(s: &Set<i64>) -> String {
-    let found = s.find(|v| v > 1)
-    let kept = s.filter(|v| v > 1)
-    format!("find {:?} any {} kept {}", found, s.any(|v| v == 3), kept.len())
+    let found = s.iter().find(|v| v > 1)
+    let kept = s.iter().filter(|v| v > 1).collect()
+    format!("find {:?} any {} kept {}", found, s.iter().any(|v| v == 3), kept.len())
 }
 
 fn read_struct_values(m: &Map<String, Tally>) -> String {

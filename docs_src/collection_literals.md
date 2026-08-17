@@ -126,12 +126,28 @@ println(seen.contains("ada"))
 
 The literal removes duplicates just like repeated `insert` calls.
 
-An expected `BTreeSet<T>` type shapes the same literal into an ordered set:
+A `Set` is unordered. It answers membership, cardinality, and set algebra;
+every sequence operation is written on the walk `iter()` answers, and the
+order that walk produces is not something a program may rely on:
+
+```gos
+let seen = #{"ada", "grace"}
+println(seen.iter().count(|name| name.len() > 3))
+let mut names = seen.iter().collect()
+names.sort()
+println(names)
+```
+
+An expected `BTreeSet<T>` type shapes the same literal into the sorted set,
+whose `iter()` and `to_vec()` read in ascending order:
 
 ```gos
 let ordered: BTreeSet<String> = #{"grace", "ada", "ada"}
 println(ordered.to_vec())
 ```
+
+Printing sorts either kind, so `{:?}` output is stable whatever order the
+elements went in.
 
 ## Queue
 

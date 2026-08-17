@@ -1585,6 +1585,7 @@ pub unsafe extern "C" fn gos_rt_map_clear(m: *mut GosMap) {
 /// the word as a handle; a tag with no handle shape renders as an integer.
 pub(crate) unsafe fn render_tagged_word(out: &mut String, word: i64, tag: u8) {
     match tag {
+        1 => out.push_str(&crate::builtins::format_uint(word as u64)),
         2 => out.push_str(&crate::builtins::format_float_debug(f64::from_bits(
             word as u64,
         ))),
@@ -1812,6 +1813,7 @@ pub(crate) unsafe fn render_tuple_elements(
         *slot_cursor += 1;
         match tag {
             0 => out.push_str(&crate::builtins::format_int(word)),
+            1 => out.push_str(&crate::builtins::format_uint(word as u64)),
             2 => out.push_str(&crate::builtins::format_float_debug(f64::from_bits(
                 word as u64,
             ))),
@@ -2233,7 +2235,7 @@ unsafe fn vec_str_self_enum_eq(a_word: i64, b_word: i64, desc: *const i64) -> bo
 /// string-valued maps here.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
-    unsafe { gos_rt_map_format_tagged(m, 0, std::ptr::null(), 0) }
+    unsafe { gos_rt_map_format_tagged(m, 0, 0, std::ptr::null(), 0) }
 }
 
 /// Renders one map value word. An aggregate tag reads the word as the address
@@ -2345,6 +2347,7 @@ unsafe fn map_word_entries(m: *const GosMap) -> Vec<(Option<Vec<u8>>, i64, i64)>
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_format_tagged(
     m: *const GosMap,
+    key_tag: i64,
     val_tag: i64,
     aux: *const u8,
     aux_n: i64,
@@ -2380,6 +2383,16 @@ pub unsafe extern "C" fn gos_rt_map_format_tagged(
             out.push_str(v);
         };
         let quote_key = |key: &[u8]| format!("{:?}", String::from_utf8_lossy(key));
+        // An integer key follows the width its declaration named: `1` is the
+        // unsigned tag, so a key at or above `i64::MAX` reads as its own
+        // decimal rather than the negative the same bits spell.
+        let format_key = |k: i64| {
+            if key_tag == 1 {
+                crate::builtins::format_uint(k as u64)
+            } else {
+                crate::builtins::format_int(k)
+            }
+        };
         let mut first = true;
         match &*storage {
             MapStorage::I64I64(inner) => {
@@ -2388,12 +2401,7 @@ pub unsafe extern "C" fn gos_rt_map_format_tagged(
                 for (k, v) in entries {
                     let mut value = String::new();
                     unsafe { render_map_value(&mut value, v, val_tag, aux, aux_n) };
-                    push_entry(
-                        &mut out,
-                        &mut first,
-                        &crate::builtins::format_int(k),
-                        &value,
-                    );
+                    push_entry(&mut out, &mut first, &format_key(k), &value);
                 }
             }
             MapStorage::StrI64(inner) => {
@@ -2426,7 +2434,7 @@ pub unsafe extern "C" fn gos_rt_map_format_tagged(
                     push_entry(
                         &mut out,
                         &mut first,
-                        &crate::builtins::format_int(k),
+                        &format_key(k),
                         &String::from_utf8_lossy(v),
                     );
                 }
@@ -2439,12 +2447,7 @@ pub unsafe extern "C" fn gos_rt_map_format_tagged(
                         "[{}]",
                         v.iter().map(u8::to_string).collect::<Vec<_>>().join(", ")
                     );
-                    push_entry(
-                        &mut out,
-                        &mut first,
-                        &crate::builtins::format_int(k),
-                        &value,
-                    );
+                    push_entry(&mut out, &mut first, &format_key(k), &value);
                 }
             }
             MapStorage::StrBytes(inner) => {

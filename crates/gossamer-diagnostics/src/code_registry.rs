@@ -1062,6 +1062,17 @@ pub const REGISTRY: &[(&str, &str)] = &[
             `unwrap_or(..)` - and iterate that.",
     ),
     (
+        "GT0068",
+        "A `Deque`, `Queue`, `Stack`, `MaxHeap`, or `MinHeap` named an\n\
+            element it cannot hold. Each holds one 8-byte slot per element, so\n\
+            the element is a scalar: an integer of any width, `f32` / `f64`,\n\
+            `bool`, or `char`. A `String`, a container, or an aggregate is\n\
+            held in a `Vec`, or reached through a key in a `Map`. A heap also\n\
+            orders its elements, comparing a slot as a signed 64-bit value, so\n\
+            it declines `u64` / `usize`, whose range runs past what that\n\
+            comparison orders.",
+    ),
+    (
         "GX0001",
         "An operation received a value of an incompatible type. The\n\
                      diagnostic names the type that was required and the type\n\

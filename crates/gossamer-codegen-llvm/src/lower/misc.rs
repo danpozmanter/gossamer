@@ -649,6 +649,7 @@ impl<'a> Lowerer<'a> {
                     Some(TyKind::Slice(elem) | TyKind::Vec(elem)) => {
                         let elem = *elem;
                         match self.tcx.kind(elem) {
+                            Some(TyKind::Int(IntTy::U64 | IntTy::Usize)) => ConcatKind::VecUint,
                             Some(TyKind::Int(_)) => ConcatKind::VecI64,
                             Some(TyKind::Float(_)) => ConcatKind::VecF64,
                             Some(TyKind::Bool) => ConcatKind::VecBool,
@@ -703,8 +704,26 @@ impl<'a> Lowerer<'a> {
                     // Scalar-keyed, scalar/string-valued HashMap:
                     // route through `gos_rt_map_format`.
                     Some(TyKind::HashMap { key, value, .. }) => {
+                        let unsigned_kv = matches!(
+                            self.tcx.kind(self.unwrap_ref(*key)),
+                            Some(TyKind::Int(IntTy::U64 | IntTy::Usize))
+                        ) || matches!(
+                            self.tcx.kind(self.unwrap_ref(*value)),
+                            Some(TyKind::Int(IntTy::U64 | IntTy::Usize))
+                        );
                         if !self.map_kv_supported(*key) {
                             ConcatKind::Unsupported
+                        } else if unsigned_kv && self.map_kv_supported(*value) {
+                            // The plain map formatter reads every integer slot
+                            // as signed; the tags carry each side's declared
+                            // width instead.
+                            let unsigned_tag = |ty| {
+                                u8::from(matches!(
+                                    self.tcx.kind(self.unwrap_ref(ty)),
+                                    Some(TyKind::Int(IntTy::U64 | IntTy::Usize))
+                                ))
+                            };
+                            ConcatKind::MapTagged(unsigned_tag(*key), unsigned_tag(*value))
                         } else if self.map_kv_supported(*value) {
                             ConcatKind::Map
                         } else {
@@ -713,7 +732,7 @@ impl<'a> Lowerer<'a> {
                             // an aggregate value is a slot buffer the derived
                             // `fmt` or the tuple tags render.
                             match self.tuple_elem_tag(*value) {
-                                Some(tag) => ConcatKind::MapTagged(tag),
+                                Some(tag) => ConcatKind::MapTagged(0, tag),
                                 None => self.map_aggregate_value_kind(*key, *value),
                             }
                         }
@@ -724,6 +743,9 @@ impl<'a> Lowerer<'a> {
                         let elem = substs.types().first().copied();
                         let scalar =
                             elem.and_then(|elem| match self.tcx.kind(self.unwrap_ref(elem)) {
+                                Some(TyKind::Int(IntTy::U64 | IntTy::Usize)) => {
+                                    Some(ConcatKind::SetUint(is_btree))
+                                }
                                 Some(TyKind::Int(i)) if int_width(*i) == 64 => {
                                     Some(ConcatKind::SetI64(is_btree))
                                 }
@@ -799,6 +821,27 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// The element kind of a set built from a sequence: the source vec's
+    /// element type names the declared width the set's own i64 handle drops.
+    fn set_from_vec_kind(&self, args: &[Operand], is_btree: bool) -> ConcatKind {
+        let unsigned = args.first().is_some_and(|arg| match arg {
+            Operand::Copy(place) => matches!(
+                self.tcx.kind(self.unwrap_ref(self.place_leaf_ty(place))),
+                Some(TyKind::Vec(elem) | TyKind::Slice(elem))
+                    if matches!(
+                        self.tcx.kind(self.unwrap_ref(*elem)),
+                        Some(TyKind::Int(IntTy::U64 | IntTy::Usize))
+                    )
+            ),
+            _ => false,
+        });
+        if unsigned {
+            ConcatKind::SetUint(is_btree)
+        } else {
+            ConcatKind::SetI64(is_btree)
+        }
+    }
+
     fn set_handle_print_kind(&self, local: Local, depth: u8) -> Option<ConcatKind> {
         if depth > 8 {
             return None;
@@ -830,12 +873,22 @@ impl<'a> Lowerer<'a> {
                     if let Some(sym) = container_ctor_format_symbol(name.as_str()) {
                         return Some(ConcatKind::HandleFormat(sym));
                     }
-                    // `let` binds a `Set`/`BTreeSet` through a defensive
-                    // `gos_rt_set_clone` (neither type carries its own
-                    // refcount), so the element kind lives on the cloned
-                    // source handle, not on this call's own operands.
-                    if name.as_str() == "gos_rt_set_clone"
-                        && let Some(Operand::Copy(src)) = args.first()
+                    // A set that came from another set - the defensive
+                    // `gos_rt_set_clone` a `let` binds through (neither type
+                    // carries its own refcount), or a set-algebra result -
+                    // holds the elements of the set it was built from, so the
+                    // element kind lives on that handle rather than on this
+                    // call's own operands.
+                    if matches!(
+                        name.as_str(),
+                        "gos_rt_set_clone"
+                            | "gos_rt_set_clear"
+                            | "gos_rt_set_union"
+                            | "gos_rt_set_intersection"
+                            | "gos_rt_set_intersection_skey"
+                            | "gos_rt_set_difference"
+                            | "gos_rt_set_symmetric_difference"
+                    ) && let Some(Operand::Copy(src)) = args.first()
                         && src.projection.is_empty()
                         && let Some(kind) = self.set_handle_print_kind(src.local, depth + 1)
                     {
@@ -853,7 +906,7 @@ impl<'a> Lowerer<'a> {
                         "gos_rt_btree_set_from_vec_i64" => {
                             saw_set_ctor = true;
                             is_btree = true;
-                            elem_kind = Some(ConcatKind::SetI64(true));
+                            elem_kind = Some(self.set_from_vec_kind(args, true));
                         }
                         "gos_rt_btree_set_from_vec_str" => {
                             saw_set_ctor = true;
@@ -862,7 +915,7 @@ impl<'a> Lowerer<'a> {
                         }
                         "gos_rt_set_from_vec_i64" => {
                             saw_set_ctor = true;
-                            elem_kind = Some(ConcatKind::SetI64(false));
+                            elem_kind = Some(self.set_from_vec_kind(args, false));
                         }
                         "gos_rt_set_from_vec_str" => {
                             saw_set_ctor = true;
@@ -879,7 +932,23 @@ impl<'a> Lowerer<'a> {
                     )
                 }) {
                     match name.as_str() {
-                        "gos_rt_set_insert_i64" => elem_kind = Some(ConcatKind::SetI64(is_btree)),
+                        "gos_rt_set_insert_i64" => {
+                            // The inserted value names the element's declared
+                            // width, which the set handle's own i64 type does
+                            // not carry.
+                            let unsigned = args.get(1).is_some_and(|arg| match arg {
+                                Operand::Copy(place) => matches!(
+                                    self.tcx.kind(self.unwrap_ref(self.place_leaf_ty(place))),
+                                    Some(TyKind::Int(IntTy::U64 | IntTy::Usize))
+                                ),
+                                _ => false,
+                            });
+                            elem_kind = Some(if unsigned {
+                                ConcatKind::SetUint(is_btree)
+                            } else {
+                                ConcatKind::SetI64(is_btree)
+                            });
+                        }
                         "gos_rt_set_insert" => elem_kind = Some(ConcatKind::SetString(is_btree)),
                         // An aggregate element is stored as its slot bytes;
                         // the inserted operand names the type whose descriptor
@@ -959,10 +1028,11 @@ impl<'a> Lowerer<'a> {
     pub(crate) fn debug_payload_kind(&self, ty: Ty) -> Option<u8> {
         let ty = self.unwrap_ref(ty);
         match self.tcx.kind(ty) {
-            // The VM stores an `Option` / `Result` payload as a plain i64 with
-            // no width info, so a `u64` payload renders signed inside `{:?}`
-            // (`u64::MAX` => `-1`). Match that signed rendering for parity - a
-            // bare `u64` outside an enum still prints unsigned via `Uint`.
+            // A `u64` / `usize` payload reads as unsigned, so a value at or
+            // above `i64::MAX` renders as its own decimal rather than the
+            // negative the same bits spell. The VM boxes the payload as its
+            // `Uint` value for the same reason.
+            Some(TyKind::Int(IntTy::U64 | IntTy::Usize)) => Some(1),
             Some(TyKind::Int(_)) => Some(0),
             Some(TyKind::Float(_)) => Some(2),
             Some(TyKind::Bool) => Some(3),
@@ -980,6 +1050,10 @@ impl<'a> Lowerer<'a> {
             // `{:?}` of that vec uses; the slot carries its pointer.
             Some(TyKind::Vec(elem) | TyKind::Slice(elem)) => {
                 match self.tcx.kind(self.unwrap_ref(*elem)) {
+                    // An unsigned element has no scalar vec formatter of its
+                    // own here; the descriptor path renders it, element tag
+                    // and all.
+                    Some(TyKind::Int(IntTy::U64 | IntTy::Usize)) => None,
                     Some(TyKind::Int(_)) => Some(6),
                     Some(TyKind::String) => Some(7),
                     _ => None,
@@ -1109,6 +1183,9 @@ impl<'a> Lowerer<'a> {
 
     pub(crate) fn tuple_elem_tag(&self, elem: Ty) -> Option<u8> {
         match self.tcx.kind(self.unwrap_ref(elem)) {
+            // A `u64` / `usize` slot spans the whole unsigned range, so it
+            // reads as unsigned wherever a tag stream names it.
+            Some(TyKind::Int(IntTy::U64 | IntTy::Usize)) => Some(1),
             Some(TyKind::Int(i)) if int_width(*i) == 64 => Some(0),
             Some(TyKind::Duration | TyKind::Instant) => Some(0),
             Some(TyKind::Float(FloatTy::F64)) => Some(2),

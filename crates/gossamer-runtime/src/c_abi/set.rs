@@ -16,8 +16,15 @@
 #![allow(clippy::wildcard_imports)]
 
 use crate::c_abi::GosVec;
-use rustc_hash::{FxHashMap, FxHashSet};
+use indexmap::{IndexMap, IndexSet};
+use rustc_hash::FxBuildHasher;
 use std::os::raw::c_char;
+
+/// A membership table keyed by content, in the order elements were added.
+type SetTable<T> = IndexSet<T, FxBuildHasher>;
+/// The aggregate family's canonical-bytes to stored-slots table, in the order
+/// elements were added.
+type AggregateTable = IndexMap<Box<[u8]>, Box<[u8]>, FxBuildHasher>;
 
 // ---------------------------------------------------------------
 // Sets - one heap table per element family, with the pointer to the
@@ -25,18 +32,26 @@ use std::os::raw::c_char;
 // elements in their own representation: text keys as `String`,
 // integer keys as `i64`, and struct/tuple keys by their canonical
 // slot bytes.
+//
+// A `Set` traverses in no particular order: the tables keep the order
+// elements were added, which every tier reproduces, and no program may
+// rely on it. A `BTreeSet` sorts, and carries `ordered` to say so.
 // ---------------------------------------------------------------
 
 #[derive(Clone, Default)]
 pub struct GosSet {
-    inner: FxHashSet<String>,
+    inner: SetTable<String>,
     /// Integer elements keep their numeric representation: a decimal-text
     /// encoding would cost a formatting pass and an allocation per membership
     /// test, and store roughly twice the bytes per live element.
-    i64_inner: FxHashSet<i64>,
+    i64_inner: SetTable<i64>,
     /// Aggregate elements are keyed by their canonical slot bytes and retain
     /// an owned copy of those slots for `iter()` / set algebra.
-    struct_inner: FxHashMap<Box<[u8]>, Box<[u8]>>,
+    struct_inner: AggregateTable,
+    /// A `BTreeSet` reads its elements in sorted order; a `Set` reads them in
+    /// the table's own order. Set algebra carries the flag onto its result, so
+    /// `a.union(b)` reads the way `a` does.
+    ordered: bool,
 }
 
 #[unsafe(no_mangle)]
@@ -48,7 +63,20 @@ pub unsafe extern "C" fn gos_rt_set_new() -> *mut GosSet {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_btree_set_new() -> *mut GosSet {
-    unsafe { gos_rt_set_new() }
+    ffi_entry!(std::ptr::null_mut(), {
+        Box::into_raw(Box::new(GosSet {
+            ordered: true,
+            ..GosSet::default()
+        }))
+    })
+}
+
+/// Marks a set as reading in sorted order (the `BTreeSet` contract).
+fn mark_ordered(set: *mut GosSet) -> *mut GosSet {
+    if !set.is_null() {
+        unsafe { &mut *set }.ordered = true;
+    }
+    set
 }
 
 /// `xs.clone()` for a `Set` / `BTreeSet` receiver, and the primitive a
@@ -128,14 +156,14 @@ pub unsafe extern "C" fn gos_rt_set_from_vec_str(v: *const GosVec) -> *mut GosSe
 /// Same contract as [`gos_rt_set_from_vec_i64`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_btree_set_from_vec_i64(v: *const GosVec) -> *mut GosSet {
-    unsafe { gos_rt_set_from_vec_i64(v) }
+    mark_ordered(unsafe { gos_rt_set_from_vec_i64(v) })
 }
 
 /// # Safety
 /// Same contract as [`gos_rt_set_from_vec_str`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_btree_set_from_vec_str(v: *const GosVec) -> *mut GosSet {
-    unsafe { gos_rt_set_from_vec_str(v) }
+    mark_ordered(unsafe { gos_rt_set_from_vec_str(v) })
 }
 
 #[unsafe(no_mangle)]
@@ -174,7 +202,7 @@ pub unsafe extern "C" fn gos_rt_set_remove(s: *mut GosSet, key: *const c_char) -
         // Gossamer strings are always valid UTF-8 at the source level.
         let k: &str = unsafe { std::str::from_utf8_unchecked(bytes) };
         let s = unsafe { &mut *s };
-        i64::from(s.inner.remove(k))
+        i64::from(s.inner.shift_remove(k))
     })
 }
 
@@ -210,7 +238,7 @@ pub unsafe extern "C" fn gos_rt_set_remove_i64(s: *mut GosSet, key: i64) -> i64 
             return 0;
         }
         let s = unsafe { &mut *s };
-        i64::from(s.i64_inner.remove(&key))
+        i64::from(s.i64_inner.shift_remove(&key))
     })
 }
 
@@ -288,6 +316,30 @@ pub unsafe extern "C" fn gos_rt_set_format_desc(
     })
 }
 
+/// Renders an integer set whose elements were declared `u64` / `usize`: the
+/// same slots as [`gos_rt_set_format_i64`], read as unsigned so an element at
+/// or above `i64::MAX` shows its own decimal.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_format_u64(s: *const GosSet, ordered: i32) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let mut out = String::from(set_format_prefix(ordered));
+        out.push_str(" {");
+        if !s.is_null() {
+            let set = unsafe { &*s };
+            let mut keys: Vec<u64> = set.i64_inner.iter().map(|n| *n as u64).collect();
+            keys.sort_unstable();
+            for (index, key) in keys.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&crate::builtins::format_uint(*key));
+            }
+        }
+        out.push('}');
+        crate::c_abi::string::alloc_cstring(out.as_bytes())
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_format_string(s: *const GosSet, ordered: i32) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
@@ -309,9 +361,9 @@ pub unsafe extern "C" fn gos_rt_set_format_string(s: *const GosSet, ordered: i32
     })
 }
 
-/// Snapshots a string set's keys into a fresh `Vec<String>`, sorted
-/// lexicographically so iteration order is deterministic and matches
-/// the VM's sorted `to_vec`.
+/// Snapshots a string set's keys into a fresh `Vec<String>`: sorted for a
+/// `BTreeSet`, and otherwise in the table's own order, which a `Set` gives no
+/// meaning to beyond being the same on every tier.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_to_vec(s: *const GosSet) -> *mut crate::c_abi::vec::GosVec {
     ffi_entry!(std::ptr::null_mut(), {
@@ -323,7 +375,9 @@ pub unsafe extern "C" fn gos_rt_set_to_vec(s: *const GosSet) -> *mut crate::c_ab
         }
         let s = unsafe { &*s };
         let mut keys: Vec<&str> = s.inner.iter().map(String::as_str).collect();
-        keys.sort_unstable();
+        if s.ordered {
+            keys.sort_unstable();
+        }
         for k in keys {
             let cstr = crate::c_abi::string::alloc_cstring(k.as_bytes());
             let slot = (cstr as usize as i64).to_ne_bytes();
@@ -333,8 +387,8 @@ pub unsafe extern "C" fn gos_rt_set_to_vec(s: *const GosSet) -> *mut crate::c_ab
     })
 }
 
-/// Snapshots an i64 set's keys into a fresh `Vec<i64>`, sorted
-/// numerically to match the VM's `MapKey::Int` ordering.
+/// Snapshots an i64 set's keys into a fresh `Vec<i64>`: sorted numerically for
+/// a `BTreeSet`, and otherwise in the table's own order.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_to_vec_i64(s: *const GosSet) -> *mut crate::c_abi::vec::GosVec {
     ffi_entry!(std::ptr::null_mut(), {
@@ -346,7 +400,9 @@ pub unsafe extern "C" fn gos_rt_set_to_vec_i64(s: *const GosSet) -> *mut crate::
         }
         let s = unsafe { &*s };
         let mut keys: Vec<i64> = s.i64_inner.iter().copied().collect();
-        keys.sort_unstable();
+        if s.ordered {
+            keys.sort_unstable();
+        }
         for k in keys {
             unsafe { crate::c_abi::vec::gos_rt_vec_push_i64(out, k) };
         }
@@ -368,7 +424,9 @@ pub unsafe extern "C" fn gos_rt_set_intersection_to_vec(
         };
         let (a, b) = unsafe { set_refs(a, b) };
         let mut keys: Vec<&str> = a.inner.intersection(&b.inner).map(String::as_str).collect();
-        keys.sort_unstable();
+        if a.ordered {
+            keys.sort_unstable();
+        }
         for key in keys {
             let cstr = crate::c_abi::string::alloc_cstring(key.as_bytes());
             let slot = (cstr as usize as i64).to_ne_bytes();
@@ -390,7 +448,9 @@ pub unsafe extern "C" fn gos_rt_set_intersection_to_vec_i64(
         };
         let (a, b) = unsafe { set_refs(a, b) };
         let mut keys: Vec<i64> = a.i64_inner.intersection(&b.i64_inner).copied().collect();
-        keys.sort_unstable();
+        if a.ordered {
+            keys.sort_unstable();
+        }
         for key in keys {
             unsafe { crate::c_abi::vec::gos_rt_vec_push_i64(out, key) };
         }
@@ -427,18 +487,18 @@ unsafe fn set_refs<'a>(a: *const GosSet, b: *const GosSet) -> (&'a GosSet, &'a G
 unsafe fn set_combine(
     a: *const GosSet,
     b: *const GosSet,
-    text: impl Fn(&FxHashSet<String>, &FxHashSet<String>) -> FxHashSet<String>,
-    ints: impl Fn(&FxHashSet<i64>, &FxHashSet<i64>) -> FxHashSet<i64>,
-    aggregates: impl Fn(
-        &FxHashMap<Box<[u8]>, Box<[u8]>>,
-        &FxHashMap<Box<[u8]>, Box<[u8]>>,
-    ) -> FxHashMap<Box<[u8]>, Box<[u8]>>,
+    text: impl Fn(&SetTable<String>, &SetTable<String>) -> SetTable<String>,
+    ints: impl Fn(&SetTable<i64>, &SetTable<i64>) -> SetTable<i64>,
+    aggregates: impl Fn(&AggregateTable, &AggregateTable) -> AggregateTable,
 ) -> *mut GosSet {
     let (a, b) = unsafe { set_refs(a, b) };
     Box::into_raw(Box::new(GosSet {
         inner: text(&a.inner, &b.inner),
         i64_inner: ints(&a.i64_inner, &b.i64_inner),
         struct_inner: aggregates(&a.struct_inner, &b.struct_inner),
+        // The result is read the way the receiver is: `a.union(b)` on a
+        // `BTreeSet` answers a `BTreeSet`.
+        ordered: a.ordered,
     }))
 }
 
@@ -446,9 +506,9 @@ unsafe fn set_combine(
 unsafe fn set_relation(
     a: *const GosSet,
     b: *const GosSet,
-    text: impl Fn(&FxHashSet<String>, &FxHashSet<String>) -> bool,
-    ints: impl Fn(&FxHashSet<i64>, &FxHashSet<i64>) -> bool,
-    aggregates: impl Fn(&FxHashMap<Box<[u8]>, Box<[u8]>>, &FxHashMap<Box<[u8]>, Box<[u8]>>) -> bool,
+    text: impl Fn(&SetTable<String>, &SetTable<String>) -> bool,
+    ints: impl Fn(&SetTable<i64>, &SetTable<i64>) -> bool,
+    aggregates: impl Fn(&AggregateTable, &AggregateTable) -> bool,
 ) -> i64 {
     let (a, b) = unsafe { set_refs(a, b) };
     i64::from(
@@ -458,10 +518,7 @@ unsafe fn set_relation(
     )
 }
 
-fn aggregate_union(
-    a: &FxHashMap<Box<[u8]>, Box<[u8]>>,
-    b: &FxHashMap<Box<[u8]>, Box<[u8]>>,
-) -> FxHashMap<Box<[u8]>, Box<[u8]>> {
+fn aggregate_union(a: &AggregateTable, b: &AggregateTable) -> AggregateTable {
     let mut out = a.clone();
     for (key, slots) in b {
         out.entry(key.clone()).or_insert_with(|| slots.clone());
@@ -469,20 +526,14 @@ fn aggregate_union(
     out
 }
 
-fn aggregate_intersection(
-    a: &FxHashMap<Box<[u8]>, Box<[u8]>>,
-    b: &FxHashMap<Box<[u8]>, Box<[u8]>>,
-) -> FxHashMap<Box<[u8]>, Box<[u8]>> {
+fn aggregate_intersection(a: &AggregateTable, b: &AggregateTable) -> AggregateTable {
     a.iter()
         .filter(|(key, _)| b.contains_key(key.as_ref()))
         .map(|(key, slots)| (key.clone(), slots.clone()))
         .collect()
 }
 
-fn aggregate_difference(
-    a: &FxHashMap<Box<[u8]>, Box<[u8]>>,
-    b: &FxHashMap<Box<[u8]>, Box<[u8]>>,
-) -> FxHashMap<Box<[u8]>, Box<[u8]>> {
+fn aggregate_difference(a: &AggregateTable, b: &AggregateTable) -> AggregateTable {
     a.iter()
         .filter(|(key, _)| !b.contains_key(key.as_ref()))
         .map(|(key, slots)| (key.clone(), slots.clone()))
@@ -550,7 +601,7 @@ pub unsafe extern "C" fn gos_rt_set_remove_skey(
             return 0;
         }
         let s = unsafe { &mut *s };
-        i64::from(s.struct_inner.remove(canonical.as_slice()).is_some())
+        i64::from(s.struct_inner.shift_remove(canonical.as_slice()).is_some())
     })
 }
 
@@ -575,7 +626,9 @@ pub unsafe extern "C" fn gos_rt_set_to_vec_skey(
         }
         let s = unsafe { &*s };
         let mut entries: Vec<_> = s.struct_inner.iter().collect();
-        entries.sort_unstable_by_key(|(key, _)| *key);
+        if s.ordered {
+            entries.sort_unstable_by_key(|(key, _)| *key);
+        }
         for (_, slots) in entries {
             unsafe { crate::c_abi::vec::gos_rt_vec_push(out, slots.as_ptr()) };
         }
@@ -583,9 +636,9 @@ pub unsafe extern "C" fn gos_rt_set_to_vec_skey(
     })
 }
 
-/// Aggregate-key counterpart of [`gos_rt_set_intersection_to_vec`]. It keeps
-/// the sorted deterministic iteration order while avoiding the cloned keys
-/// and slots of an intermediate intersection set.
+/// Aggregate-key counterpart of [`gos_rt_set_intersection_to_vec`]. It reads in
+/// the receiver's own order while avoiding the cloned keys and slots of an
+/// intermediate intersection set.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_intersection_to_vec_skey(
     a: *const GosSet,
@@ -612,7 +665,9 @@ pub unsafe extern "C" fn gos_rt_set_intersection_to_vec_skey(
             .iter()
             .filter(|(key, _)| b.struct_inner.contains_key(key.as_ref()))
             .collect();
-        entries.sort_unstable_by_key(|(key, _)| *key);
+        if a.ordered {
+            entries.sort_unstable_by_key(|(key, _)| *key);
+        }
         for (_, slots) in entries {
             unsafe { crate::c_abi::vec::gos_rt_vec_push(out, slots.as_ptr()) };
         }
@@ -712,7 +767,7 @@ pub unsafe extern "C" fn gos_rt_set_symmetric_difference(
 pub unsafe extern "C" fn gos_rt_set_is_subset(a: *const GosSet, b: *const GosSet) -> i64 {
     ffi_entry!(-1, {
         unsafe {
-            set_relation(a, b, FxHashSet::is_subset, FxHashSet::is_subset, |x, y| {
+            set_relation(a, b, SetTable::is_subset, SetTable::is_subset, |x, y| {
                 x.keys().all(|key| y.contains_key(key.as_ref()))
             })
         }
@@ -726,8 +781,8 @@ pub unsafe extern "C" fn gos_rt_set_is_superset(a: *const GosSet, b: *const GosS
             set_relation(
                 a,
                 b,
-                FxHashSet::is_superset,
-                FxHashSet::is_superset,
+                SetTable::is_superset,
+                SetTable::is_superset,
                 |x, y| y.keys().all(|key| x.contains_key(key.as_ref())),
             )
         }
@@ -741,8 +796,8 @@ pub unsafe extern "C" fn gos_rt_set_is_disjoint(a: *const GosSet, b: *const GosS
             set_relation(
                 a,
                 b,
-                FxHashSet::is_disjoint,
-                FxHashSet::is_disjoint,
+                SetTable::is_disjoint,
+                SetTable::is_disjoint,
                 |x, y| !x.keys().any(|key| y.contains_key(key.as_ref())),
             )
         }

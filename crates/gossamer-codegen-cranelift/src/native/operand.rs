@@ -168,6 +168,9 @@ pub(super) enum PrintKind {
     /// `Vec<i64>` (or any 8-byte-elem Vec): formatted at runtime
     /// via `gos_rt_vec_format_i64` into a `[v0, v1, …]` string.
     VecI64,
+    /// `Vec<u64>` / `Vec<usize>`: the same slots read as unsigned, so an
+    /// element at or above `i64::MAX` renders as its own decimal.
+    VecUint,
     /// `Vec<f64>` formatted via `gos_rt_vec_format_f64`.
     VecF64,
     /// `Vec<bool>` formatted via `gos_rt_vec_format_bool`.
@@ -204,6 +207,10 @@ pub(super) enum PrintKind {
     /// A scalar-keyed, scalar/string-valued `HashMap` - rendered via
     /// `gos_rt_map_format`.
     Map,
+    /// A `HashMap` whose key or value was declared `u64` / `usize`: the tags
+    /// carry each side's width to `gos_rt_map_format_tagged`, so a slot at or
+    /// above `i64::MAX` reads as its own decimal.
+    MapTagged(u8, u8),
     /// A container handle - `Deque` / `Queue` / `Stack` / `MaxHeap` /
     /// `MinHeap` - rendered by the named runtime shim, which owns the one
     /// text form every tier prints.
@@ -233,7 +240,10 @@ fn tuple_elem_tag(tcx: &TyCtxt, ty: Ty) -> Option<u8> {
         ty = *inner;
     }
     match tcx.kind_of(ty) {
-        TyKind::Int(IntTy::I64 | IntTy::U64 | IntTy::Isize | IntTy::Usize) => Some(0),
+        // A `u64` / `usize` slot spans the whole unsigned range, so it reads
+        // as unsigned wherever a tag stream names it.
+        TyKind::Int(IntTy::U64 | IntTy::Usize) => Some(1),
+        TyKind::Int(IntTy::I64 | IntTy::Isize) => Some(0),
         TyKind::Duration | TyKind::Instant => Some(0),
         TyKind::Float(FloatTy::F64) => Some(2),
         TyKind::Bool => Some(3),
@@ -244,15 +254,17 @@ fn tuple_elem_tag(tcx: &TyCtxt, ty: Ty) -> Option<u8> {
 }
 
 /// Maps an `Option` / `Result` payload type to the `gos_rt_debug_*` formatter
-/// kind (0=i64/signed, 2=f64, 3=bool, 4=char, 5=String), or `None` for an
-/// aggregate / nested payload. A `u64` payload renders signed (kind 0) to match
-/// the VM, which stores the payload as a width-less i64.
+/// kind (0=i64/signed, 1=u64, 2=f64, 3=bool, 4=char, 5=String), or `None` for
+/// an aggregate / nested payload. A `u64` / `usize` payload reads as unsigned,
+/// so a value at or above `i64::MAX` renders as its own decimal; the VM boxes
+/// the payload as its `Uint` value for the same reason.
 fn debug_payload_kind(tcx: &TyCtxt, ty: Ty) -> Option<u8> {
     let mut ty = ty;
     while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
         ty = *inner;
     }
     match tcx.kind_of(ty) {
+        TyKind::Int(IntTy::U64 | IntTy::Usize) => Some(1),
         TyKind::Int(_) => Some(0),
         TyKind::Float(_) => Some(2),
         TyKind::Bool => Some(3),
@@ -542,19 +554,14 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                     {
                         return kind;
                     }
-                    // Every ≤64-bit int lives as a signed i64 at
-                    // runtime and prints signed - the VM renders
-                    // `0u64 - 1` as `-1`. The one exception the VM
-                    // makes is display provenance: an explicit
-                    // `as u64`/`as usize` cast result becomes
-                    // `Value::Uint` and prints unsigned. Mirror that
-                    // statically: a local prints unsigned only when
-                    // all its writers are such casts. u128 keeps the
-                    // unsigned printer outright.
-                    let uint_provenance = matches!(int_ty, IntTy::U64 | IntTy::Usize)
-                        && place.projection.is_empty()
-                        && gossamer_mir::local_is_uint_cast(body, tcx, place.local);
-                    if uint_provenance || matches!(int_ty, IntTy::U128) {
+                    // A value's declared width decides how it reads: a
+                    // `u64` / `usize` spans the whole unsigned range, so
+                    // one at or above `i64::MAX` prints as its own
+                    // decimal rather than the negative the same slot
+                    // spells. Every narrower int is signed at runtime and
+                    // prints signed; `u128` keeps the unsigned printer
+                    // outright.
+                    if matches!(int_ty, IntTy::U64 | IntTy::Usize | IntTy::U128) {
                         PrintKind::Uint
                     } else {
                         PrintKind::Int
@@ -627,6 +634,7 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                     }
                 }
                 TyKind::Slice(elem) => match tcx.kind_of(*elem) {
+                    TyKind::Int(IntTy::U64 | IntTy::Usize) => PrintKind::VecUint,
                     TyKind::Int(_) => PrintKind::VecI64,
                     TyKind::Float(_) => PrintKind::VecF64,
                     TyKind::Bool => PrintKind::VecBool,
@@ -639,6 +647,7 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                     _ => PrintKind::Unsupported("slice"),
                 },
                 TyKind::Vec(elem) => match tcx.kind_of(*elem) {
+                    TyKind::Int(IntTy::U64 | IntTy::Usize) => PrintKind::VecUint,
                     TyKind::Int(_) => PrintKind::VecI64,
                     TyKind::Float(_) => PrintKind::VecF64,
                     TyKind::Bool => PrintKind::VecBool,
@@ -652,10 +661,22 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                 },
                 TyKind::Iterator(_) | TyKind::Range(_) => PrintKind::Unsupported("iterator"),
                 TyKind::HashMap { key, value, .. } => {
-                    if map_kv_supported(tcx, *key) && map_kv_supported(tcx, *value) {
-                        PrintKind::Map
-                    } else {
+                    let unsigned_tag = |ty: Ty| {
+                        let mut peeled = ty;
+                        while let TyKind::Ref { inner, .. } = tcx.kind_of(peeled) {
+                            peeled = *inner;
+                        }
+                        u8::from(matches!(
+                            tcx.kind_of(peeled),
+                            TyKind::Int(IntTy::U64 | IntTy::Usize)
+                        ))
+                    };
+                    if !(map_kv_supported(tcx, *key) && map_kv_supported(tcx, *value)) {
                         PrintKind::Unsupported("HashMap")
+                    } else if unsigned_tag(*key) == 1 || unsigned_tag(*value) == 1 {
+                        PrintKind::MapTagged(unsigned_tag(*key), unsigned_tag(*value))
+                    } else {
+                        PrintKind::Map
                     }
                 }
                 TyKind::Sender(_) | TyKind::Receiver(_) | TyKind::JoinHandle(_) => {
@@ -690,6 +711,9 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                 {
                     let ordered = i32::from(def.local == u32::MAX - 18);
                     match substs.types().first().map(|elem| tcx.kind_of(*elem)) {
+                        Some(TyKind::Int(IntTy::U64 | IntTy::Usize)) => {
+                            PrintKind::SetFormat("gos_rt_set_format_u64", ordered)
+                        }
                         Some(TyKind::Int(_)) => {
                             PrintKind::SetFormat("gos_rt_set_format_i64", ordered)
                         }

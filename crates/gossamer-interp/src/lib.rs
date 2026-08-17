@@ -45,7 +45,7 @@ mod vm;
 pub use builtins::{
     TestTally, registered_names, reset_test_tally, set_assertion_location, set_http_max_requests,
     set_program_args, set_program_name, set_stderr_writer, set_stdout_writer, set_struct_layouts,
-    take_test_tally,
+    set_struct_uint_fields, take_test_tally,
 };
 pub use jit_call::{
     force_jit_disabled as set_jit_disabled, force_jit_enable as set_jit_enabled,

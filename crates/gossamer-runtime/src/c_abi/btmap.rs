@@ -42,6 +42,31 @@ pub unsafe extern "C" fn gos_rt_vec_format_i64(v: *const GosVec) -> *mut c_char 
     })
 }
 
+/// Renders a `u64`-elem `Vec` as `[v0, v1, …]`. A slot holds the value's
+/// bits, so an element at or above `i64::MAX` reads as its unsigned decimal
+/// rather than the negative the same bits spell. Returns a fresh String
+/// pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_format_u64(v: *const GosVec) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if v.is_null() {
+            return alloc_cstring(b"[]");
+        }
+        let vec = unsafe { &*v };
+        let mut out = String::with_capacity(2 + (vec.len as usize) * 4);
+        out.push('[');
+        for i in 0..vec.len {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            let n = unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, i) } as u64;
+            out.push_str(&format!("{n}"));
+        }
+        out.push(']');
+        alloc_cstring(out.as_bytes())
+    })
+}
+
 /// Renders an `f64`-elem `Vec` as `[v0, v1, …]`. Returns a fresh
 /// String pointer.
 #[unsafe(no_mangle)]

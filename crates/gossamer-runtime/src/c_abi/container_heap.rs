@@ -381,3 +381,220 @@ pub unsafe extern "C" fn gos_rt_bheap_len(v: *const GosVec) -> i64 {
         unsafe { (*v).len }
     })
 }
+
+// ---------------------------------------------------------------
+// Float elements. A slot holds the `f64`'s bit pattern, so the sift
+// compares the value those bits spell rather than the bits' integer
+// order (which reverses across the sign bit). Peek reads the root
+// without comparing, so the integer entry points serve both.
+// ---------------------------------------------------------------
+
+fn slot_as_f64(bits: i64) -> f64 {
+    f64::from_bits(bits as u64)
+}
+
+unsafe fn heap_sift_up_f64(buf: *mut i64, start_i: usize) {
+    let mut i = start_i;
+    while i > 0 {
+        let parent = (i - 1) / 2;
+        let parent_v = slot_as_f64(unsafe { *buf.add(parent) });
+        let cur_v = slot_as_f64(unsafe { *buf.add(i) });
+        if parent_v > cur_v {
+            unsafe { std::ptr::swap(buf.add(parent), buf.add(i)) };
+            i = parent;
+        } else {
+            break;
+        }
+    }
+}
+
+unsafe fn heap_sift_down_f64(buf: *mut i64, len: usize, start_i: usize) {
+    let mut i = start_i;
+    loop {
+        let l = 2 * i + 1;
+        let r = 2 * i + 2;
+        let mut smallest = i;
+        if l < len
+            && slot_as_f64(unsafe { *buf.add(l) }) < slot_as_f64(unsafe { *buf.add(smallest) })
+        {
+            smallest = l;
+        }
+        if r < len
+            && slot_as_f64(unsafe { *buf.add(r) }) < slot_as_f64(unsafe { *buf.add(smallest) })
+        {
+            smallest = r;
+        }
+        if smallest == i {
+            break;
+        }
+        unsafe { std::ptr::swap(buf.add(smallest), buf.add(i)) };
+        i = smallest;
+    }
+}
+
+unsafe fn max_heap_sift_up_f64(buf: *mut i64, start_i: usize) {
+    let mut i = start_i;
+    while i > 0 {
+        let parent = (i - 1) / 2;
+        let parent_v = slot_as_f64(unsafe { *buf.add(parent) });
+        let cur_v = slot_as_f64(unsafe { *buf.add(i) });
+        if parent_v < cur_v {
+            unsafe { std::ptr::swap(buf.add(parent), buf.add(i)) };
+            i = parent;
+        } else {
+            break;
+        }
+    }
+}
+
+unsafe fn max_heap_sift_down_f64(buf: *mut i64, len: usize, start_i: usize) {
+    let mut i = start_i;
+    loop {
+        let l = 2 * i + 1;
+        let r = 2 * i + 2;
+        let mut largest = i;
+        if l < len
+            && slot_as_f64(unsafe { *buf.add(l) }) > slot_as_f64(unsafe { *buf.add(largest) })
+        {
+            largest = l;
+        }
+        if r < len
+            && slot_as_f64(unsafe { *buf.add(r) }) > slot_as_f64(unsafe { *buf.add(largest) })
+        {
+            largest = r;
+        }
+        if largest == i {
+            break;
+        }
+        unsafe { std::ptr::swap(buf.add(largest), buf.add(i)) };
+        i = largest;
+    }
+}
+
+/// Heapifies a `Vec<f64>` snapshot into a max-heap over the float values.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bheap_max_from_vec_f64(v: *mut GosVec) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let heap = if v.is_null() {
+            unsafe { gos_rt_vec_new(8) }
+        } else {
+            unsafe { gos_rt_vec_clone(v) }
+        };
+        let vec = unsafe { &*heap };
+        let len = vec.len as usize;
+        if len > 1 {
+            let buf = vec.ptr.cast::<i64>();
+            for i in (0..=(len / 2)).rev() {
+                unsafe { max_heap_sift_down_f64(buf, len, i) };
+            }
+        }
+        heap
+    })
+}
+
+/// Pushes a float onto a max-heap, keeping the greatest value at the root.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bheap_max_push_f64(v: *mut GosVec, value: f64) {
+    ffi_entry!((), {
+        if v.is_null() {
+            return;
+        }
+        unsafe { gos_rt_vec_push_i64(v, value.to_bits() as i64) };
+        let vec = unsafe { &*v };
+        let len = vec.len as usize;
+        if len > 1 {
+            unsafe { max_heap_sift_up_f64(vec.ptr.cast::<i64>(), len - 1) };
+        }
+    });
+}
+
+/// Removes and returns the greatest float as `Option<f64>` bits packed into
+/// an i128 (disc=0 `Some`, disc=1 `None`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bheap_max_pop_f64(v: *mut GosVec) -> i128 {
+    ffi_entry!(super::vec::pack_result(1, 0), {
+        if v.is_null() {
+            return super::vec::pack_result(1, 0);
+        }
+        let vec = unsafe { &mut *v };
+        if vec.len <= 0 {
+            return super::vec::pack_result(1, 0);
+        }
+        let buf = vec.ptr.cast::<i64>();
+        let root = unsafe { *buf };
+        let last_idx = (vec.len - 1) as usize;
+        if last_idx > 0 {
+            unsafe { *buf = *buf.add(last_idx) };
+        }
+        vec.len -= 1;
+        let new_len = vec.len as usize;
+        if new_len > 1 {
+            unsafe { max_heap_sift_down_f64(buf, new_len, 0) };
+        }
+        super::vec::pack_result(0, root)
+    })
+}
+
+/// Heapifies a `Vec<f64>` snapshot into a min-heap over the float values.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bheap_min_from_vec_f64(v: *mut GosVec) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let heap = if v.is_null() {
+            unsafe { gos_rt_vec_new(8) }
+        } else {
+            unsafe { gos_rt_vec_clone(v) }
+        };
+        let vec = unsafe { &*heap };
+        let len = vec.len as usize;
+        if len > 1 {
+            let buf = vec.ptr.cast::<i64>();
+            for i in (0..=(len / 2)).rev() {
+                unsafe { heap_sift_down_f64(buf, len, i) };
+            }
+        }
+        heap
+    })
+}
+
+/// Pushes a float onto a min-heap, keeping the least value at the root.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bheap_min_push_f64(v: *mut GosVec, value: f64) {
+    ffi_entry!((), {
+        if v.is_null() {
+            return;
+        }
+        unsafe { gos_rt_vec_push_i64(v, value.to_bits() as i64) };
+        let vec = unsafe { &*v };
+        let len = vec.len as usize;
+        if len > 1 {
+            unsafe { heap_sift_up_f64(vec.ptr.cast::<i64>(), len - 1) };
+        }
+    });
+}
+
+/// Removes and returns the least float as `Option<f64>` bits packed into an
+/// i128 (disc=0 `Some`, disc=1 `None`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bheap_min_pop_f64(v: *mut GosVec) -> i128 {
+    ffi_entry!(super::vec::pack_result(1, 0), {
+        if v.is_null() {
+            return super::vec::pack_result(1, 0);
+        }
+        let vec = unsafe { &mut *v };
+        if vec.len <= 0 {
+            return super::vec::pack_result(1, 0);
+        }
+        let buf = vec.ptr.cast::<i64>();
+        let root = unsafe { *buf };
+        let last_idx = (vec.len - 1) as usize;
+        if last_idx > 0 {
+            unsafe { *buf = *buf.add(last_idx) };
+        }
+        vec.len -= 1;
+        let new_len = vec.len as usize;
+        if new_len > 1 {
+            unsafe { heap_sift_down_f64(buf, new_len, 0) };
+        }
+        super::vec::pack_result(0, root)
+    })
+}

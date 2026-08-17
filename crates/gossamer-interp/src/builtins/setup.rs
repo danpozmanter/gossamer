@@ -86,13 +86,15 @@ mod thread_local_registries {
         pub(crate) static SET_REGISTRY: RefCell<std::collections::HashMap<u64, SetState>> =
             RefCell::new(std::collections::HashMap::new());
         pub(crate) static CELL_REGISTRY: RefCell<CellMap> = RefCell::new(std::collections::HashMap::new());
+        pub(crate) static STRUCT_UINT_FIELDS: RefCell<std::collections::HashMap<String, Vec<&'static str>>> =
+            RefCell::new(std::collections::HashMap::new());
         pub(crate) static STRUCT_LAYOUTS: RefCell<std::collections::HashMap<String, Vec<&'static str>>> =
             RefCell::new(std::collections::HashMap::new());
     }
 }
 
 pub(crate) use thread_local_registries::{
-    CELL_REGISTRY, NEXT_SET_ID, SET_REGISTRY, STRUCT_LAYOUTS,
+    CELL_REGISTRY, NEXT_SET_ID, SET_REGISTRY, STRUCT_LAYOUTS, STRUCT_UINT_FIELDS,
 };
 
 /// Installs the struct-field declaration-order table that
@@ -117,6 +119,37 @@ pub fn set_struct_layouts(layouts: std::collections::HashMap<String, Vec<String>
         })
         .collect();
     STRUCT_LAYOUTS.with(|cell| *cell.borrow_mut() = interned);
+}
+
+/// Installs the per-struct list of fields declared `u64` / `usize`, which
+/// `{:?}` reads so such a field renders as its own decimal rather than the
+/// negative the same bits spell. Invoked by [`crate::Vm::load`] alongside
+/// [`set_struct_layouts`].
+#[allow(
+    clippy::implicit_hasher,
+    reason = "stored verbatim in a RandomState-typed thread-local; generic hasher would force the thread-local to be generic too"
+)]
+pub fn set_struct_uint_fields(fields: std::collections::HashMap<String, Vec<String>>) {
+    let interned: std::collections::HashMap<String, Vec<&'static str>> = fields
+        .into_iter()
+        .map(|(name, names)| {
+            let interned_names = names
+                .iter()
+                .map(|f| crate::value::intern_type_name(f))
+                .collect();
+            (name, interned_names)
+        })
+        .collect();
+    STRUCT_UINT_FIELDS.with(|cell| *cell.borrow_mut() = interned);
+}
+
+/// Whether `field` of struct `name` was declared `u64` / `usize`.
+pub(crate) fn struct_field_is_uint(name: &str, field: &str) -> bool {
+    STRUCT_UINT_FIELDS.with(|cell| {
+        cell.borrow()
+            .get(name)
+            .is_some_and(|fields| fields.contains(&field))
+    })
 }
 
 #[derive(Debug, Clone)]

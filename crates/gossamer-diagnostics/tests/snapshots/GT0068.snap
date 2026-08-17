@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0068]: A `Deque`, `Queue`, `Stack`, `MaxHeap`, or `MinHeap` named an - here
+--- framed ---
+error[GT0068]: A `Deque`, `Queue`, `Stack`, `MaxHeap`, or `MinHeap` named an
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

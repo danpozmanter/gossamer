@@ -1,0 +1,85 @@
+// `Deque`, `Queue`, `Stack`, `MaxHeap`, and `MinHeap` hold one word per
+// element, and that word holds whichever scalar the type names: an integer of
+// any width, `f32` / `f64`, `bool`, or `char`. A narrow integer keeps its own
+// range, a float keeps its value rather than the integer its bits spell, and a
+// heap orders by the element's own comparison.
+
+fn drain_totals(rounds: i64) -> i64 {
+    let mut total = 0
+    let mut i = 0
+    while i < rounds {
+        let mut q: Queue<i32> = Queue::new()
+        q.push((i % 5) as i32)
+        q.push((i % 3) as i32)
+        total += q.pop().unwrap_or(0) as i64 + q.len()
+        let mut h: MinHeap<i16> = MinHeap::new()
+        h.push((i % 7) as i16)
+        h.push((i % 2) as i16)
+        total += h.pop().unwrap_or(0) as i64
+        i += 1
+    }
+    total
+}
+
+fn main() {
+    println!("hot {}", drain_totals(2000))
+
+    let mut wide: Queue<u32> = Queue::new()
+    wide.push(4000000000 as u32)
+    wide.push(7 as u32)
+    println!("u32 {:?} {:?}", wide.pop(), wide.pop())
+
+    let mut narrow: Stack<i8> = Stack::new()
+    narrow.push(-128 as i8)
+    narrow.push(127 as i8)
+    println!("i8 {:?} {:?}", narrow.pop(), narrow.pop())
+
+    let mut flags: Deque<bool> = Deque::new()
+    flags.push_back(true)
+    flags.push_front(false)
+    println!("bool {:?} {:?}", flags.pop_front(), flags.pop_back())
+
+    let mut letters: Stack<char> = Stack::new()
+    letters.push('a')
+    letters.push('z')
+    println!("char {:?} {:?}", letters.pop(), letters.pop())
+
+    let mut reals: Queue<f64> = Queue::new()
+    reals.push(1.5)
+    reals.push(-2.25)
+    println!("f64 {:?} {:?}", reals.pop(), reals.pop())
+
+    let mut singles: Deque<f32> = Deque::new()
+    singles.push_back(0.5 as f32)
+    singles.push_front(2.5 as f32)
+    println!("f32 {:?} {:?}", singles.pop_front(), singles.pop_back())
+
+    // A heap orders by the element's own comparison, floats included.
+    let mut top: MaxHeap<f64> = MaxHeap::new()
+    top.push(2.5)
+    top.push(-1.5)
+    top.push(9.75)
+    println!("maxf {:?} {:?} {:?}", top.pop(), top.pop(), top.pop())
+
+    let mut low: MinHeap<f64> = MinHeap::new()
+    low.push(2.5)
+    low.push(-1.5)
+    low.push(9.75)
+    println!("minf {:?} {:?}", low.pop(), low.pop())
+
+    let mut ranks: MaxHeap<i32> = MaxHeap::new()
+    ranks.push(3 as i32)
+    ranks.push(11 as i32)
+    println!("maxi {:?} peek {:?}", ranks.pop(), ranks.peek())
+
+    // The from-sequence constructors read the same element type.
+    let mut seeded = MinHeap::from([5.5, 1.5, 3.5])
+    println!("seeded {:?}", seeded.pop())
+    let mut queued = Queue::from([9, 8])
+    println!("queued {:?} len {}", queued.pop(), queued.len())
+
+    // An unannotated container takes its element from the first push.
+    let mut inferred = Stack::new()
+    inferred.push(2.5)
+    println!("inferred {:?}", inferred.pop())
+}

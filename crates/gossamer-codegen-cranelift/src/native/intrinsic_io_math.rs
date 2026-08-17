@@ -275,6 +275,7 @@ pub(super) fn lower_intrinsic_call_io_math(
                         builder.ins().call(fref, &[c]);
                     }
                     PrintKind::VecI64
+                    | PrintKind::VecUint
                     | PrintKind::VecF64
                     | PrintKind::VecBool
                     | PrintKind::VecString
@@ -282,6 +283,7 @@ pub(super) fn lower_intrinsic_call_io_math(
                     | PrintKind::VecVecString => {
                         let helper = match kind {
                             PrintKind::VecI64 => "gos_rt_vec_format_i64",
+                            PrintKind::VecUint => "gos_rt_vec_format_u64",
                             PrintKind::VecF64 => "gos_rt_vec_format_f64",
                             PrintKind::VecBool => "gos_rt_vec_format_bool",
                             PrintKind::VecString => "gos_rt_vec_format_string",
@@ -389,6 +391,14 @@ pub(super) fn lower_intrinsic_call_io_math(
                         let fref = module.declare_func_in_func(f, builder.func);
                         builder.ins().call(fref, &[s]);
                     }
+                    PrintKind::MapTagged(key_tag, val_tag) => {
+                        let s = super::print_emit::emit_map_format_tagged_value(
+                            module, builder, value, key_tag, val_tag, intrinsics,
+                        )?;
+                        let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
+                        let fref = module.declare_func_in_func(f, builder.func);
+                        builder.ins().call(fref, &[s]);
+                    }
                     PrintKind::HandleFormat(symbol) => {
                         let s =
                             emit_handle_format_value(module, builder, value, symbol, intrinsics)?;
@@ -424,12 +434,14 @@ pub(super) fn lower_intrinsic_call_io_math(
                         let fref = module.declare_func_in_func(f, builder.func);
                         builder.ins().call(fref, &[s]);
                     }
-                    PrintKind::Unsupported(_) => {
-                        let placeholder = intrinsics.intern_string(module, "<value>")?;
-                        let p = intrinsics.static_string_body_ptr(module, builder, placeholder);
-                        let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
-                        let fref = module.declare_func_in_func(f, builder.func);
-                        builder.ins().call(fref, &[p]);
+                    PrintKind::Unsupported(label) => {
+                        // A value this path cannot render is left to the
+                        // bytecode VM, which renders every shape: emitting a
+                        // placeholder here would answer `<value>` where the
+                        // other tiers answer the value itself.
+                        bail!(
+                            "native codegen: no Display lowering for concat operand kind {label}"
+                        );
                     }
                 }
             }

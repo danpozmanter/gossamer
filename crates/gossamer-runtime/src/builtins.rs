@@ -21,6 +21,14 @@ pub fn format_int(n: i64) -> String {
     format!("{n}")
 }
 
+/// Canonical decimal rendering of a 64-bit unsigned integer. A slot holds the
+/// value's bits, so one at or above `i64::MAX` reads as its own decimal here
+/// rather than the negative [`format_int`] would spell.
+#[must_use]
+pub fn format_uint(n: u64) -> String {
+    format!("{n}")
+}
+
 /// Canonical rendering of a 64-bit float. Matches Rust's `{f}`
 /// format - the interpreter and native backend must not diverge on
 /// NaN / infinity / negative-zero output, so the single

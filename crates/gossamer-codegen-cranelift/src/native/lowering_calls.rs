@@ -719,6 +719,9 @@ pub(super) fn lower_generic_rt_call(
         | "gos_rt_btree_set_from_vec_i64"
         | "gos_rt_btree_set_from_vec_str" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_deque_push_back" | "gos_rt_deque_push_front" => (&[ptr_ty, types::I64], None),
+        "gos_rt_deque_push_back_f64" | "gos_rt_deque_push_front_f64" => {
+            (&[ptr_ty, types::F64], None)
+        }
         "gos_rt_deque_pop_front"
         | "gos_rt_deque_pop_back"
         | "gos_rt_deque_peek_front"
@@ -816,13 +819,19 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_bheap_clear" => (&[ptr_ty], None),
         "gos_rt_bheap_max_new_i64" => (&[], Some(ptr_ty)),
         "gos_rt_bheap_max_from_vec_i64" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_bheap_max_from_vec_f64" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_bheap_max_push_i64" => (&[ptr_ty, types::I64], None),
+        "gos_rt_bheap_max_push_f64" => (&[ptr_ty, types::F64], None),
         "gos_rt_bheap_max_pop_i64" => (&[ptr_ty], Some(types::I128)),
+        "gos_rt_bheap_max_pop_f64" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_bheap_max_peek_i64" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_bheap_min_new_i64" => (&[], Some(ptr_ty)),
         "gos_rt_bheap_min_from_vec_i64" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_bheap_min_from_vec_f64" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_bheap_min_push_i64" => (&[ptr_ty, types::I64], None),
+        "gos_rt_bheap_min_push_f64" => (&[ptr_ty, types::F64], None),
         "gos_rt_bheap_min_pop_i64" => (&[ptr_ty], Some(types::I128)),
+        "gos_rt_bheap_min_pop_f64" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_bheap_min_peek_i64" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_vec_first_i64" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_vec_last_i64" => (&[ptr_ty], Some(types::I64)),
@@ -916,11 +925,16 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_vec_reserve_at_least" | "gos_rt_vec_reserve_exact" => (&[ptr_ty, types::I64], None),
         "gos_rt_vec_set_i64" => (&[ptr_ty, types::I64, types::I64], None),
         "gos_rt_vec_format_i64" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_vec_format_u64" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_tuple_format" => (&[ptr_ty, types::I64, ptr_ty], Some(ptr_ty)),
         "gos_rt_tuple_cmp" => (&[ptr_ty, ptr_ty, types::I64, ptr_ty], Some(types::I64)),
         "gos_rt_vec_eq" => (&[ptr_ty, ptr_ty, types::I8], Some(types::I8)),
         "gos_rt_map_format" => (&[ptr_ty], Some(ptr_ty)),
-        "gos_rt_set_format_i64" | "gos_rt_set_format_string" => {
+        "gos_rt_map_format_tagged" => (
+            &[ptr_ty, types::I64, types::I64, ptr_ty, types::I64],
+            Some(ptr_ty),
+        ),
+        "gos_rt_set_format_i64" | "gos_rt_set_format_string" | "gos_rt_set_format_u64" => {
             (&[ptr_ty, types::I32], Some(ptr_ty))
         }
         "gos_rt_deque_format"

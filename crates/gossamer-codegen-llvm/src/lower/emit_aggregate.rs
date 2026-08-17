@@ -489,6 +489,14 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
             }
+            ConcatKind::VecUint => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_u64");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_vec_format_u64(ptr {value})"
+                )
+                .unwrap();
+            }
             ConcatKind::VecF64 => {
                 declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_f64");
                 writeln!(
@@ -530,11 +538,11 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
             }
-            ConcatKind::MapTagged(tag) => {
+            ConcatKind::MapTagged(key_tag, val_tag) => {
                 declare_rt(&mut self.runtime_refs, "gos_rt_map_format_tagged");
                 writeln!(
                     self.out,
-                    "  {dest} = call ptr @gos_rt_map_format_tagged(ptr {value}, i64 {tag}, ptr null, i64 0)"
+                    "  {dest} = call ptr @gos_rt_map_format_tagged(ptr {value}, i64 {key_tag}, i64 {val_tag}, ptr null, i64 0)"
                 )
                 .unwrap();
             }
@@ -543,7 +551,7 @@ impl<'a> Lowerer<'a> {
                 let adt = i64::from(gossamer_abi::DEBUG_PAYLOAD_ADT);
                 writeln!(
                     self.out,
-                    "  {dest} = call ptr @gos_rt_map_format_tagged(ptr {value}, i64 {adt}, ptr @\"{fmt}\", i64 0)"
+                    "  {dest} = call ptr @gos_rt_map_format_tagged(ptr {value}, i64 0, i64 {adt}, ptr @\"{fmt}\", i64 0)"
                 )
                 .unwrap();
             }
@@ -554,7 +562,7 @@ impl<'a> Lowerer<'a> {
                 let nested = i64::from(gossamer_abi::TUPLE_TAG_NESTED);
                 writeln!(
                     self.out,
-                    "  {dest} = call ptr @gos_rt_map_format_tagged(ptr {value}, i64 {nested}, ptr {tags_global}, i64 {arity})"
+                    "  {dest} = call ptr @gos_rt_map_format_tagged(ptr {value}, i64 0, i64 {nested}, ptr {tags_global}, i64 {arity})"
                 )
                 .unwrap();
             }
@@ -751,6 +759,15 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
             }
+            ConcatKind::SetUint(is_btree) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_set_format_u64");
+                let ordered = i32::from(is_btree);
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_set_format_u64(ptr {value}, i32 {ordered})"
+                )
+                .unwrap();
+            }
             ConcatKind::SetString(is_btree) => {
                 declare_rt(&mut self.runtime_refs, "gos_rt_set_format_string");
                 let ordered = i32::from(is_btree);
@@ -844,6 +861,7 @@ impl<'a> Lowerer<'a> {
         match kind {
             ConcatKind::Tuple => self.emit_tuple_format(arg, value),
             ConcatKind::SetI64(_)
+            | ConcatKind::SetUint(_)
             | ConcatKind::SetString(_)
             | ConcatKind::SetDesc(..)
             | ConcatKind::HandleFormat(_) => {

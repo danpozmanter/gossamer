@@ -65,6 +65,7 @@ regex = { version = "1", default-features = false, features = ["std", "unicode"]
 flate2 = { workspace = true }
 sha1 = { version = "0.10", default-features = false, features = ["std"] }
 rustc-hash = "2"
+indexmap = { workspace = true }
 gossamer-coro = { workspace = true }
 gossamer-pkg = { workspace = true }
 gossamer-abi = { workspace = true }

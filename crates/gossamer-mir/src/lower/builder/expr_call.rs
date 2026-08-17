@@ -437,10 +437,12 @@ impl<'a> Builder<'a> {
                         | "std::collections::MinHeap::from"
                 ) || self.binary_heap_ty_is_min(ty)
                     || self.binary_heap_elem_is_reverse_i64(ty);
-                let symbol = if is_min {
-                    "gos_rt_bheap_min_from_vec_i64"
-                } else {
-                    "gos_rt_bheap_max_from_vec_i64"
+                let float_elem = self.heap_elem_is_float(ty);
+                let symbol = match (is_min, float_elem) {
+                    (true, true) => "gos_rt_bheap_min_from_vec_f64",
+                    (true, false) => "gos_rt_bheap_min_from_vec_i64",
+                    (false, true) => "gos_rt_bheap_max_from_vec_f64",
+                    (false, false) => "gos_rt_bheap_max_from_vec_i64",
                 };
                 let dest = self.fresh(ty);
                 let next = self.new_block(span);

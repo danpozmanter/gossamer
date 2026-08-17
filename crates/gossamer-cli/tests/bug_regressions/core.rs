@@ -1819,3 +1819,49 @@ fn main() {
     );
     assert_eq!(native.0, vm.0, "tier parity");
 }
+
+/// A `for` over a sequence literal whose body binds a tuple from a call with a
+/// diverging arm reads the literal's elements, rather than storing the call's
+/// tuple back into the literal's own storage.
+#[test]
+fn a_for_over_a_literal_keeps_the_literal_as_the_sequence_it_walks() {
+    let src = r#"
+fn main() {
+    let mut total = 0
+    for cmd in #[1, 2, 3, 4] {
+        let (dx, dy) = dir(cmd)
+        total += dx + dy
+    }
+    println!("{}", total)
+    let mut seen = 0
+    for cmd in #[2, 4] {
+        let (dx, _) = dir(cmd)
+        seen += dx
+    }
+    println!("{}", seen)
+}
+
+fn dir(cmd: i64) -> (i64, i64) {
+    match cmd {
+        1 => (0, -1)
+        2 => (0, 1)
+        3 => (-1, 0)
+        4 => (1, 0)
+        _ => panic!("bad")
+    }
+}
+"#;
+    let dir = fresh_dir("for_literal_tuple_call");
+    let path = write_source(&dir, "for_literal_tuple_call", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+
+    let vm = run_vm(&path);
+    let bin = build_native(&path, &scratch).expect("native build");
+    let native = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, "0\n1\n", "vm stdout");
+    assert_eq!(native.0, vm.0, "tier parity");
+}

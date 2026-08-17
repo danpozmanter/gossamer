@@ -1505,6 +1505,10 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, dst_v)?;
                 check_i(op_idx, src_i)?;
             }
+            Op::UintLeaves { dst, src, .. } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, src)?;
+            }
             Op::VariantIs {
                 dst, src, name_idx, ..
             } => {
@@ -1879,6 +1883,7 @@ pub(crate) fn register_effects(
         | Op::Deref { dst, .. }
         | Op::Move { dst, .. }
         | Op::CloneMapLike { dst, .. }
+        | Op::UintLeaves { dst, .. }
         | Op::Eq { dst, .. }
         | Op::Ne { dst, .. }
         | Op::Lt { dst, .. }
@@ -1990,6 +1995,7 @@ pub(crate) fn register_effects(
         Op::StoreStatic { src, .. } => effect.v_reads.push(src),
         Op::Move { src, .. }
         | Op::CloneMapLike { src, .. }
+        | Op::UintLeaves { src, .. }
         | Op::Deref { src, .. }
         | Op::Neg { operand: src, .. }
         | Op::Not { operand: src, .. }

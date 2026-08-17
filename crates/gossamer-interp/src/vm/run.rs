@@ -3856,6 +3856,14 @@ impl Vm {
                     };
                     *ints.get_unchecked_mut(dst_i as usize) = result;
                 },
+                Op::UintLeaves { dst, src, desc_idx } => {
+                    let desc = match &chunk.consts[desc_idx as usize] {
+                        Value::String(text) => text.as_str().as_bytes().to_vec(),
+                        _ => Vec::new(),
+                    };
+                    registers[dst as usize] =
+                        crate::value::uint_leaves(&registers[src as usize], &desc);
+                }
                 Op::I64ToUint { dst_v, src_i } => unsafe {
                     registers[dst_v as usize] =
                         Value::Uint(*ints.get_unchecked(src_i as usize) as u64);

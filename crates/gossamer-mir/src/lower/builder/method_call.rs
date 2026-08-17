@@ -506,12 +506,25 @@ impl<'a> Builder<'a> {
             .is_some_and(|local| self.local_binary_heap_min_i64.contains(&local))
             || self.binary_heap_elem_is_reverse_i64(receiver_ty)
             || self.binary_heap_elem_is_reverse_i64(receiver.ty);
+        // The element decides how a heap orders, and the receiver's own type
+        // may have been pinned to the handle word by now; the pushed value and
+        // the `Option<T>` a pop answers name it either way.
+        let receiver_heap_float_elem = self.heap_elem_is_float(receiver_ty)
+            || self.heap_elem_is_float(receiver.ty)
+            || args
+                .first()
+                .is_some_and(|arg| matches!(self.tcx.kind_of(arg.ty), TyKind::Float(_)))
+            || matches!(self.tcx.kind_of(ty), TyKind::Adt { .. })
+                && self
+                    .first_generic_of(ty)
+                    .is_some_and(|payload| matches!(self.tcx.kind_of(payload), TyKind::Float(_)));
         if let Some(rt) = self.kind_dispatch_symbol(
             receiver_runtime_kind,
             method,
             args,
             receiver_ty,
             receiver_heap_reverse_i64,
+            receiver_heap_float_elem,
         ) {
             return self.lower_kind_dispatch_call(rt, receiver, args, ty, span);
         }
@@ -657,12 +670,22 @@ impl<'a> Builder<'a> {
         let lowered_heap_reverse_i64 = self.local_binary_heap_min_i64.contains(&receiver_local)
             || self.binary_heap_elem_is_reverse_i64(receiver_ty)
             || self.binary_heap_elem_is_reverse_i64(receiver.ty);
+        let lowered_heap_float_elem = self.heap_elem_is_float(receiver_ty)
+            || self.heap_elem_is_float(receiver.ty)
+            || args
+                .first()
+                .is_some_and(|arg| matches!(self.tcx.kind_of(arg.ty), TyKind::Float(_)))
+            || matches!(self.tcx.kind_of(ty), TyKind::Adt { .. })
+                && self
+                    .first_generic_of(ty)
+                    .is_some_and(|payload| matches!(self.tcx.kind_of(payload), TyKind::Float(_)));
         if let Some(rt) = self.lowered_kind_dispatch_symbol(
             lowered_runtime_kind,
             method,
             args,
             receiver_ty,
             lowered_heap_reverse_i64,
+            lowered_heap_float_elem,
         ) {
             return self.lower_lowered_kind_dispatch_call(
                 rt,
@@ -2840,11 +2863,26 @@ impl<'a> Builder<'a> {
         args: &[HirExpr],
         receiver_ty: Ty,
         heap_reverse_i64: bool,
+        heap_float_elem: bool,
     ) -> Option<&'static str> {
-        self.kind_dispatch_symbol_a(rk, method, args, receiver_ty, heap_reverse_i64)
-            .or_else(|| {
-                self.kind_dispatch_symbol_b(rk, method, args, receiver_ty, heap_reverse_i64)
-            })
+        self.kind_dispatch_symbol_a(
+            rk,
+            method,
+            args,
+            receiver_ty,
+            heap_reverse_i64,
+            heap_float_elem,
+        )
+        .or_else(|| {
+            self.kind_dispatch_symbol_b(
+                rk,
+                method,
+                args,
+                receiver_ty,
+                heap_reverse_i64,
+                heap_float_elem,
+            )
+        })
     }
 
     /// First half of the receiver-runtime-kind dispatch table.
@@ -2855,12 +2893,19 @@ impl<'a> Builder<'a> {
         _args: &[HirExpr],
         receiver_ty: Ty,
         heap_reverse_i64: bool,
+        heap_float_elem: bool,
     ) -> Option<&'static str> {
         if matches!(
             rk,
             Some("collections::BinaryHeap" | "collections::MaxHeap" | "collections::MinHeap")
         ) {
-            return self.binary_heap_runtime_symbol(rk, receiver_ty, method, heap_reverse_i64);
+            return self.binary_heap_runtime_symbol(
+                rk,
+                receiver_ty,
+                method,
+                heap_reverse_i64,
+                heap_float_elem,
+            );
         }
         match (rk, method.name.as_str()) {
             (Some("flag::Set"), "string") => Some("gos_rt_flag_set_string"),
@@ -3005,12 +3050,22 @@ impl<'a> Builder<'a> {
         receiver_ty: Ty,
         method: &Ident,
         heap_reverse_i64: bool,
+        float_elem: bool,
     ) -> Option<&'static str> {
         let min_heap = rk == Some("collections::MinHeap")
             || heap_reverse_i64
             || self.binary_heap_ty_is_min(receiver_ty)
             || self.binary_heap_elem_is_reverse_i64(receiver_ty);
+        // A float element is stored as its bit pattern, whose integer order is
+        // not the float order, so the sift compares the value the bits spell.
+        // Peek reads the root without comparing, so it stays on the integer
+        // entry point.
+        let float_elem = float_elem || self.heap_elem_is_float(receiver_ty);
         match (method.name.as_str(), min_heap) {
+            ("push", true) if float_elem => Some("gos_rt_bheap_min_push_f64"),
+            ("pop", true) if float_elem => Some("gos_rt_bheap_min_pop_f64"),
+            ("push", false) if float_elem => Some("gos_rt_bheap_max_push_f64"),
+            ("pop", false) if float_elem => Some("gos_rt_bheap_max_pop_f64"),
             ("push", true) => Some("gos_rt_bheap_min_push_i64"),
             ("pop", true) => Some("gos_rt_bheap_min_pop_i64"),
             ("peek", true) => Some("gos_rt_bheap_min_peek_i64"),
@@ -3022,6 +3077,43 @@ impl<'a> Builder<'a> {
             ("clear", _) => Some("gos_rt_bheap_clear"),
             _ => None,
         }
+    }
+
+    /// Whether a heap receiver's element is a 64-bit unsigned integer, whose
+    /// slots span the whole unsigned range and so order as `u64` rather than
+    /// as the signed value the same bits spell.
+    pub(crate) fn heap_elem_is_unsigned(&self, ty: Ty) -> bool {
+        use gossamer_types::{IntTy, TyKind};
+        let mut cur = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(cur) {
+            cur = *inner;
+        }
+        let Some(TyKind::Adt { substs, .. }) = self.tcx.kind(cur) else {
+            return false;
+        };
+        substs.types().first().is_some_and(|elem| {
+            matches!(
+                self.tcx.kind_of(*elem),
+                TyKind::Int(IntTy::U64 | IntTy::Usize)
+            )
+        })
+    }
+
+    /// Whether a heap receiver's element is a float, whose slots hold bit
+    /// patterns the ordering entry points read as floats.
+    pub(crate) fn heap_elem_is_float(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(cur) {
+            cur = *inner;
+        }
+        let Some(TyKind::Adt { substs, .. }) = self.tcx.kind(cur) else {
+            return false;
+        };
+        substs
+            .types()
+            .first()
+            .is_some_and(|elem| matches!(self.tcx.kind_of(*elem), TyKind::Float(_)))
     }
 
     pub(crate) fn binary_heap_elem_is_reverse_i64(&self, ty: Ty) -> bool {
@@ -3077,6 +3169,7 @@ impl<'a> Builder<'a> {
         args: &[HirExpr],
         receiver_ty: Ty,
         _heap_reverse_i64: bool,
+        _heap_float_elem: bool,
     ) -> Option<&'static str> {
         let _ = receiver_ty;
         match (rk, method.name.as_str()) {
@@ -3287,6 +3380,19 @@ impl<'a> Builder<'a> {
                 | "gos_rt_router_add"
         );
         let mut rt = rt;
+        // A slot-backed container holds one word per element, so a float
+        // element crosses as its bit pattern: the `_f64` entry point stores
+        // the bits the `Option<f64>` read on the way out reinterprets.
+        if matches!(rt, "gos_rt_deque_push_back" | "gos_rt_deque_push_front")
+            && args
+                .first()
+                .is_some_and(|arg| matches!(self.tcx.kind_of(arg.ty), TyKind::Float(_)))
+        {
+            rt = match rt {
+                "gos_rt_deque_push_back" => "gos_rt_deque_push_back_f64",
+                _ => "gos_rt_deque_push_front_f64",
+            };
+        }
         let aggregate_set_desc = self
             .first_generic_of(receiver.ty)
             .filter(|elem| self.is_aggregate_key(*elem))
@@ -3495,15 +3601,21 @@ impl<'a> Builder<'a> {
             | "gos_rt_set_len"
             | "gos_rt_set_clear" => self.tcx.int_ty(gossamer_types::IntTy::I64),
             "gos_rt_flag_set_short" => self.tcx.unit(),
-            "gos_rt_deque_push_back" | "gos_rt_deque_push_front" | "gos_rt_deque_clear" => {
-                self.tcx.unit()
-            }
-            "gos_rt_bheap_max_push_i64" | "gos_rt_bheap_min_push_i64" | "gos_rt_bheap_clear" => {
-                self.tcx.unit()
-            }
+            "gos_rt_deque_push_back"
+            | "gos_rt_deque_push_back_f64"
+            | "gos_rt_deque_push_front"
+            | "gos_rt_deque_push_front_f64"
+            | "gos_rt_deque_clear" => self.tcx.unit(),
+            "gos_rt_bheap_max_push_i64"
+            | "gos_rt_bheap_max_push_f64"
+            | "gos_rt_bheap_min_push_i64"
+            | "gos_rt_bheap_min_push_f64"
+            | "gos_rt_bheap_clear" => self.tcx.unit(),
             "gos_rt_bheap_max_pop_i64"
+            | "gos_rt_bheap_max_pop_f64"
             | "gos_rt_bheap_max_peek_i64"
             | "gos_rt_bheap_min_pop_i64"
+            | "gos_rt_bheap_min_pop_f64"
             | "gos_rt_bheap_min_peek_i64" => ty,
             "gos_rt_bheap_is_empty" => self.tcx.bool_ty(),
             // `Child::read_line() -> Option<String>`; `wait` returns
@@ -3887,11 +3999,26 @@ impl<'a> Builder<'a> {
         args: &[HirExpr],
         receiver_ty: Ty,
         heap_reverse_i64: bool,
+        heap_float_elem: bool,
     ) -> Option<&'static str> {
-        self.lowered_kind_dispatch_symbol_a(rk, method, args, receiver_ty, heap_reverse_i64)
-            .or_else(|| {
-                self.lowered_kind_dispatch_symbol_b(rk, method, args, receiver_ty, heap_reverse_i64)
-            })
+        self.lowered_kind_dispatch_symbol_a(
+            rk,
+            method,
+            args,
+            receiver_ty,
+            heap_reverse_i64,
+            heap_float_elem,
+        )
+        .or_else(|| {
+            self.lowered_kind_dispatch_symbol_b(
+                rk,
+                method,
+                args,
+                receiver_ty,
+                heap_reverse_i64,
+                heap_float_elem,
+            )
+        })
     }
 
     /// First half of the lowered-receiver-runtime-kind dispatch table.
@@ -3902,12 +4029,19 @@ impl<'a> Builder<'a> {
         _args: &[HirExpr],
         receiver_ty: Ty,
         heap_reverse_i64: bool,
+        heap_float_elem: bool,
     ) -> Option<&'static str> {
         if matches!(
             rk,
             Some("collections::BinaryHeap" | "collections::MaxHeap" | "collections::MinHeap")
         ) {
-            return self.binary_heap_runtime_symbol(rk, receiver_ty, method, heap_reverse_i64);
+            return self.binary_heap_runtime_symbol(
+                rk,
+                receiver_ty,
+                method,
+                heap_reverse_i64,
+                heap_float_elem,
+            );
         }
         match (rk, method.name.as_str()) {
             (Some("flag::Set"), "string") => Some("gos_rt_flag_set_string"),
@@ -4048,6 +4182,7 @@ impl<'a> Builder<'a> {
         args: &[HirExpr],
         receiver_ty: Ty,
         _heap_reverse_i64: bool,
+        _heap_float_elem: bool,
     ) -> Option<&'static str> {
         let _ = receiver_ty;
         match (rk, method.name.as_str()) {

@@ -348,6 +348,10 @@ impl Vm {
         // runtime `__struct` reorder, and `def_layouts` (by
         // DefId) for compile-time offset resolution.
         let mut name_layouts: HashMap<String, Vec<String>> = HashMap::new();
+        // Fields a struct declared `u64` / `usize`: `{:?}` reads them as
+        // unsigned, so a value at or above `i64::MAX` renders as its own
+        // decimal rather than the negative the same bits spell.
+        let mut uint_fields: HashMap<String, Vec<String>> = HashMap::new();
         let mut def_layouts: HashMap<gossamer_resolve::DefId, Vec<String>> = HashMap::new();
         // Trivial-wrapper table. `fn fsqrt(x: f64) -> f64 { math::sqrt(x) }`
         // and similar single-expression passthroughs get recorded
@@ -374,6 +378,26 @@ impl Vm {
                         let names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
                         name_layouts.insert(adt.name.name.clone(), names.clone());
                         if let Some(def) = item.def {
+                            let unsigned: Vec<String> = tcx
+                                .struct_field_tys(def)
+                                .map(<[gossamer_types::Ty]>::to_vec)
+                                .unwrap_or_default()
+                                .iter()
+                                .zip(names.iter())
+                                .filter(|(ty, _)| {
+                                    matches!(
+                                        tcx.kind(**ty),
+                                        Some(gossamer_types::TyKind::Int(
+                                            gossamer_types::IntTy::U64
+                                                | gossamer_types::IntTy::Usize
+                                        ))
+                                    )
+                                })
+                                .map(|(_, name)| name.clone())
+                                .collect();
+                            if !unsigned.is_empty() {
+                                uint_fields.insert(adt.name.name.clone(), unsigned);
+                            }
                             def_layouts.insert(def, names);
                         }
                     }
@@ -430,6 +454,7 @@ impl Vm {
             }
         }
         crate::builtins::set_struct_layouts(name_layouts);
+        crate::builtins::set_struct_uint_fields(uint_fields);
         // Qualified names of every user `&mut self` method, so a call on
         // a place receiver routes through the write-back cell protocol
         // and the receiver's mutation persists (the `for x in <custom

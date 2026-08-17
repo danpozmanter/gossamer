@@ -1115,6 +1115,28 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#maxheap-and-minheap" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        MaxHeap And MinHeap
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#slot-backed-container-elements" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Slot-backed container elements
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#tuple" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -2431,6 +2453,28 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#maxheap-and-minheap" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        MaxHeap And MinHeap
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#slot-backed-container-elements" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Slot-backed container elements
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#tuple" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -2732,10 +2776,12 @@ dispatch-table additions.</p>
 <p><code>Vec&lt;T&gt;</code> is the only owned growable sequence. <code>[T; N]</code>, <code>&amp;[T]</code>, and <code>&amp;mut [T]</code>
 share only the non-resizing methods listed below. Mutable arrays and slices may
 reorder or replace existing elements, but cannot change their length or
-capacity. Every collection - <code>Vec</code>, fixed arrays, slices, <code>Set</code>, <code>BTreeSet</code>,
-<code>Map</code>, <code>BTreeMap</code> - traverses the values it holds, so <code>map</code> / <code>filter</code> / <code>fold</code>
+capacity. An ordered collection - <code>Vec</code>, fixed arrays, slices, <code>Map</code>,
+<code>BTreeMap</code> - traverses the values it holds, so <code>map</code> / <code>filter</code> / <code>fold</code>
 answer eagerly on it; <code>iter()</code> is how a caller asks for the lazy walk that
-never holds the whole sequence, and <code>collect()</code> ends one. <code>collect</code> belongs
+never holds the whole sequence, and <code>collect()</code> ends one. A <code>Set</code> has no
+element order, so every traversal on one is written on the iterator
+<code>s.iter()</code> answers. <code>collect</code> belongs
 to the iterator, so it is not written on a collection that already holds its
 values; <code>to_vec</code> is the conversion a borrowed or fixed-length sequence
 carries, so a <code>Vec</code> has neither.
@@ -3077,6 +3123,13 @@ iterates in key order.</p>
 </tbody>
 </table>
 <h2 id="set">Set<a class="headerlink" href="#set" title="Permanent link">&para;</a></h2>
+<p><code>Set&lt;T&gt;</code> is unordered: it answers membership, cardinality, and set algebra,
+and holds no promise about the order a walk sees its elements in. Sequence
+operations are the iterator's, so they are written <code>s.iter().take(3)</code>,
+<code>s.iter().count(|v| v &gt; 1)</code>, <code>s.iter().map(f).collect()</code>; <code>s.take(3)</code> reports
+GT0002 and names that spelling. Sort the materialised sequence, or use
+<code>BTreeSet</code>, when order is part of the answer. Printing and serialization sort
+both kinds, so rendered output is stable whatever order the elements went in.</p>
 <table>
 <thead>
 <tr>
@@ -3107,19 +3160,19 @@ iterates in key order.</p>
 <td></td>
 </tr>
 <tr>
-<td><code>s.clear()</code></td>
-<td><code>()</code></td>
-<td>Removes all values.</td>
+<td><code>s.is_empty()</code> / <code>s.clear()</code></td>
+<td><code>bool</code> / <code>()</code></td>
+<td>Empty test and in-place removal of all values.</td>
 </tr>
 <tr>
 <td><code>s.iter()</code></td>
 <td><code>Iterator&lt;T&gt;</code></td>
-<td>Lazy walk over the values; <code>s.map(f)</code> / <code>s.filter(p)</code> answer eagerly.</td>
+<td>The walk every sequence operation starts from.</td>
 </tr>
 <tr>
 <td><code>s.to_vec()</code></td>
 <td><code>Vec&lt;T&gt;</code></td>
-<td>Materialises the set values.</td>
+<td>Materialises the values, in the same unordered walk.</td>
 </tr>
 <tr>
 <td><code>s.union(other)</code></td>
@@ -3154,12 +3207,13 @@ iterates in key order.</p>
 </tbody>
 </table>
 <h2 id="btreeset">BTreeSet<a class="headerlink" href="#btreeset" title="Permanent link">&para;</a></h2>
-<p><code>BTreeSet&lt;T&gt;</code> has the same method surface as <code>Set&lt;T&gt;</code>, with ordered
-iteration and <code>to_vec</code> output.</p>
+<p><code>BTreeSet&lt;T&gt;</code> is the sorted set: the same method surface as <code>Set&lt;T&gt;</code>, and its
+<code>iter()</code> / <code>to_vec()</code> read in ascending element order.</p>
 <h2 id="deque">Deque<a class="headerlink" href="#deque" title="Permanent link">&para;</a></h2>
-<p>Phase 1 <code>Deque</code> support is <code>Deque&lt;i64&gt;</code>. It is a double-ended ring
-buffer; both ends are constant-time. The pop / peek methods return
-<code>Option&lt;i64&gt;</code>. Like Rust's <code>VecDeque</code>, <code>Deque</code> uses explicit front/back method names.</p>
+<p><code>Deque&lt;T&gt;</code> is a double-ended ring buffer; both ends are constant-time. Its
+element is any scalar - an integer of any width, <code>f32</code> / <code>f64</code>, <code>bool</code>, or
+<code>char</code> - and the pop / peek methods answer <code>Option&lt;T&gt;</code> in that element type.
+Like Rust's <code>VecDeque</code>, <code>Deque</code> uses explicit front/back method names.</p>
 <table>
 <thead>
 <tr>
@@ -3181,22 +3235,22 @@ buffer; both ends are constant-time. The pop / peek methods return
 </tr>
 <tr>
 <td><code>d.pop_back()</code></td>
-<td><code>Option&lt;i64&gt;</code></td>
+<td><code>Option&lt;T&gt;</code></td>
 <td>Remove and return the back element.</td>
 </tr>
 <tr>
 <td><code>d.pop_front()</code></td>
-<td><code>Option&lt;i64&gt;</code></td>
+<td><code>Option&lt;T&gt;</code></td>
 <td>Remove and return the front element.</td>
 </tr>
 <tr>
 <td><code>d.peek_back()</code></td>
-<td><code>Option&lt;i64&gt;</code></td>
+<td><code>Option&lt;T&gt;</code></td>
 <td>Back element without removing it.</td>
 </tr>
 <tr>
 <td><code>d.peek_front()</code></td>
-<td><code>Option&lt;i64&gt;</code></td>
+<td><code>Option&lt;T&gt;</code></td>
 <td>Front element without removing it.</td>
 </tr>
 <tr>
@@ -3217,7 +3271,7 @@ buffer; both ends are constant-time. The pop / peek methods return
 </tbody>
 </table>
 <h2 id="queue">Queue<a class="headerlink" href="#queue" title="Permanent link">&para;</a></h2>
-<p>Phase 1 <code>Queue</code> support is <code>Queue&lt;i64&gt;</code>. It is a restricted FIFO queue:
+<p><code>Queue&lt;T&gt;</code> is a restricted FIFO queue over any scalar element:
 <code>push</code> appends to the back, <code>pop</code> removes from the front, and <code>peek</code> observes
 the front without removing it. Build one with <code>Queue::new()</code> or <code>Queue::from([a, b])</code>.</p>
 <table>
@@ -3236,12 +3290,12 @@ the front without removing it. Build one with <code>Queue::new()</code> or <code
 </tr>
 <tr>
 <td><code>q.pop()</code></td>
-<td><code>Option&lt;i64&gt;</code></td>
+<td><code>Option&lt;T&gt;</code></td>
 <td>Remove and return the front element.</td>
 </tr>
 <tr>
 <td><code>q.peek()</code></td>
-<td><code>Option&lt;i64&gt;</code></td>
+<td><code>Option&lt;T&gt;</code></td>
 <td>Return the front element without removing it.</td>
 </tr>
 <tr>
@@ -3262,7 +3316,7 @@ the front without removing it. Build one with <code>Queue::new()</code> or <code
 </tbody>
 </table>
 <h2 id="stack">Stack<a class="headerlink" href="#stack" title="Permanent link">&para;</a></h2>
-<p>Phase 1 <code>Stack</code> support is <code>Stack&lt;i64&gt;</code>. It is a restricted LIFO stack:
+<p><code>Stack&lt;T&gt;</code> is a restricted LIFO stack over any scalar element:
 <code>push</code> appends to the top, <code>pop</code> removes from the top, and <code>peek</code> observes
 the top without removing it. Build one with <code>Stack::new()</code> or <code>Stack::from([a, b])</code>.</p>
 <table>
@@ -3281,12 +3335,12 @@ the top without removing it. Build one with <code>Stack::new()</code> or <code>S
 </tr>
 <tr>
 <td><code>s.pop()</code></td>
-<td><code>Option&lt;i64&gt;</code></td>
+<td><code>Option&lt;T&gt;</code></td>
 <td>Remove and return the top element.</td>
 </tr>
 <tr>
 <td><code>s.peek()</code></td>
-<td><code>Option&lt;i64&gt;</code></td>
+<td><code>Option&lt;T&gt;</code></td>
 <td>Return the top element without removing it.</td>
 </tr>
 <tr>
@@ -3306,6 +3360,18 @@ the top without removing it. Build one with <code>Stack::new()</code> or <code>S
 </tr>
 </tbody>
 </table>
+<h2 id="maxheap-and-minheap">MaxHeap And MinHeap<a class="headerlink" href="#maxheap-and-minheap" title="Permanent link">&para;</a></h2>
+<p><code>MaxHeap&lt;T&gt;</code> and <code>MinHeap&lt;T&gt;</code> order their elements by the element's own
+comparison: <code>push</code> inserts, <code>pop</code> removes the greatest (or least) element, and
+<code>peek</code> observes it. The element is any scalar the ordering covers - each signed
+integer width, <code>u8</code> / <code>u16</code> / <code>u32</code>, <code>f32</code> / <code>f64</code>, <code>bool</code>, <code>char</code>. A <code>u64</code> or
+<code>usize</code> element is reported as GT0068: the heap compares slots as signed
+64-bit values, which that range outruns.</p>
+<h2 id="slot-backed-container-elements">Slot-backed container elements<a class="headerlink" href="#slot-backed-container-elements" title="Permanent link">&para;</a></h2>
+<p><code>Deque</code>, <code>Queue</code>, <code>Stack</code>, <code>MaxHeap</code>, and <code>MinHeap</code> hold one 8-byte slot per
+element, so their element is a scalar. A <code>String</code>, a container, a struct, a
+tuple, an array, or an enum is reported as GT0068 - hold those in a <code>Vec</code>, or
+keep a key here and look the value up in a <code>Map</code>.</p>
 <h2 id="tuple">Tuple<a class="headerlink" href="#tuple" title="Permanent link">&para;</a></h2>
 <p>A tuple's surface is mostly syntax rather than methods. See
 <a href="../language/tuples/">Tuples</a> for its method table and the reason <code>iter()</code> is

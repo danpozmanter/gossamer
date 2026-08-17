@@ -134,7 +134,7 @@ Write clear, low-complexity, concise code.
   `to_string`: use `clone` for a copy, and `to_string` only to convert
   something else into text.
 - **A collection traverses eagerly; `iter()` makes it lazy.** `xs.map(f)`
-  on a `Vec`, array, slice, or `Set` walks the values it already holds and
+  on a `Vec`, array, or slice walks the values it already holds and
   answers a `Vec`. `xs.iter()` answers an `Iterator`, for when you do not
   want the whole sequence in memory: `xs.iter().map(f).take(3).collect()`
   produces three elements' worth of work. A `Range` is already an iterator,
@@ -151,6 +151,19 @@ Write clear, low-complexity, concise code.
   fresh `.iter()` per pipeline. Data-last `iter::` free forms take an
   iterator too, for `|>` pipelines. `xs.join(sep)` Display-joins
   scalar/String sequences without a traversal.
+- **A `Set` has no element order, so its traversal is the iterator's.**
+  The set itself answers membership and cardinality (`insert`, `remove`,
+  `contains`, `len`, `is_empty`, `clear`), set algebra (`union`,
+  `intersection`, `difference`, `symmetric_difference`, `is_subset`,
+  `is_superset`, `is_disjoint`), `to_vec`, and `iter`. Every sequence
+  operation is written on the iterator - `s.iter().take(3)`,
+  `s.iter().count(|v| v > 1)`, `s.iter().map(f).collect()` - and
+  `s.take(3)` reports GT0002 with that spelling. A walk yields each element
+  once in an order the language promises nothing about (every tier
+  reproduces the same one, which is not a licence to depend on it): sort the
+  materialised sequence, or use `BTreeSet`, when order is part of the
+  answer. Printing (`{:?}`) and serialization sort both kinds, so rendered
+  output is stable whatever order the elements went in.
 - **A callback has two shorthands.** A std free function named in
   value position IS the closure that calls it, so `xs.map(math::abs)`
   and `xs.map(base64::encode)` need no `|v|` (a macro is not a function:
@@ -525,10 +538,15 @@ are callable as methods/free functions and materialize results.
 - `std::collections`: `Vec`, `Map` (any hashable key by value;
   `iter()` is a cursor over its `(K, V)` pairs, `keys`, `values`,
   `Map::pop`),
-  `Set` / `BTreeSet` (`#{...}` literals and full set algebra), `BTreeMap` (sorted; `String` or `i64`
-  keys), `Deque`, `Queue`, `Stack`. A separate i64-only `queue`/`stack`/`deque`/
-  `heap`/`ordered_*` family is functional re-bind style
-  (`let q = queue::push(q, v)`), not mutating.
+  `Set` (unordered; `#{...}` literals, full set algebra, and `iter()` for
+  every traversal) / `BTreeSet` (the sorted set), `BTreeMap` (sorted; `String` or `i64`
+  keys), `Deque`, `Queue`, `Stack`, `MaxHeap`, `MinHeap` (one slot per
+  element, so the element is a scalar - any integer width, `f32`/`f64`,
+  `bool`, `char`; a heap declines `u64`/`usize`, whose range outruns the
+  signed comparison it orders by, and every one of them declines a `String`,
+  container, or aggregate element with GT0068). A separate i64-only
+  `queue`/`stack`/`deque`/`heap`/`ordered_*` family is functional re-bind
+  style (`let q = queue::push(q, v)`), not mutating.
 - Bracket literals create Vec values unless an expected fixed-array type is
   present. Borrow arrays or Vecs as `&[T]` / `&mut [T]`.
 - **Weak references**: RC means a genuine cycle leaks unless one edge

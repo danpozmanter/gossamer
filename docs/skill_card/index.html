@@ -2612,7 +2612,7 @@ card:</p>
   <code>to_string</code>: use <code>clone</code> for a copy, and <code>to_string</code> only to convert
   something else into text.</li>
 <li><strong>A collection traverses eagerly; <code>iter()</code> makes it lazy.</strong> <code>xs.map(f)</code>
-  on a <code>Vec</code>, array, slice, or <code>Set</code> walks the values it already holds and
+  on a <code>Vec</code>, array, or slice walks the values it already holds and
   answers a <code>Vec</code>. <code>xs.iter()</code> answers an <code>Iterator</code>, for when you do not
   want the whole sequence in memory: <code>xs.iter().map(f).take(3).collect()</code>
   produces three elements' worth of work. A <code>Range</code> is already an iterator,
@@ -2629,6 +2629,19 @@ card:</p>
   fresh <code>.iter()</code> per pipeline. Data-last <code>iter::</code> free forms take an
   iterator too, for <code>|&gt;</code> pipelines. <code>xs.join(sep)</code> Display-joins
   scalar/String sequences without a traversal.</li>
+<li><strong>A <code>Set</code> has no element order, so its traversal is the iterator's.</strong>
+  The set itself answers membership and cardinality (<code>insert</code>, <code>remove</code>,
+  <code>contains</code>, <code>len</code>, <code>is_empty</code>, <code>clear</code>), set algebra (<code>union</code>,
+  <code>intersection</code>, <code>difference</code>, <code>symmetric_difference</code>, <code>is_subset</code>,
+  <code>is_superset</code>, <code>is_disjoint</code>), <code>to_vec</code>, and <code>iter</code>. Every sequence
+  operation is written on the iterator - <code>s.iter().take(3)</code>,
+  <code>s.iter().count(|v| v &gt; 1)</code>, <code>s.iter().map(f).collect()</code> - and
+  <code>s.take(3)</code> reports GT0002 with that spelling. A walk yields each element
+  once in an order the language promises nothing about (every tier
+  reproduces the same one, which is not a licence to depend on it): sort the
+  materialised sequence, or use <code>BTreeSet</code>, when order is part of the
+  answer. Printing (<code>{:?}</code>) and serialization sort both kinds, so rendered
+  output is stable whatever order the elements went in.</li>
 <li><strong>A callback has two shorthands.</strong> A std free function named in
   value position IS the closure that calls it, so <code>xs.map(math::abs)</code>
   and <code>xs.map(base64::encode)</code> need no <code>|v|</code> (a macro is not a function:
@@ -2981,10 +2994,15 @@ are callable as methods/free functions and materialize results.</p>
 <li><code>std::collections</code>: <code>Vec</code>, <code>Map</code> (any hashable key by value;
   <code>iter()</code> is a cursor over its <code>(K, V)</code> pairs, <code>keys</code>, <code>values</code>,
   <code>Map::pop</code>),
-  <code>Set</code> / <code>BTreeSet</code> (<code>#{...}</code> literals and full set algebra), <code>BTreeMap</code> (sorted; <code>String</code> or <code>i64</code>
-  keys), <code>Deque</code>, <code>Queue</code>, <code>Stack</code>. A separate i64-only <code>queue</code>/<code>stack</code>/<code>deque</code>/
-  <code>heap</code>/<code>ordered_*</code> family is functional re-bind style
-  (<code>let q = queue::push(q, v)</code>), not mutating.</li>
+  <code>Set</code> (unordered; <code>#{...}</code> literals, full set algebra, and <code>iter()</code> for
+  every traversal) / <code>BTreeSet</code> (the sorted set), <code>BTreeMap</code> (sorted; <code>String</code> or <code>i64</code>
+  keys), <code>Deque</code>, <code>Queue</code>, <code>Stack</code>, <code>MaxHeap</code>, <code>MinHeap</code> (one slot per
+  element, so the element is a scalar - any integer width, <code>f32</code>/<code>f64</code>,
+  <code>bool</code>, <code>char</code>; a heap declines <code>u64</code>/<code>usize</code>, whose range outruns the
+  signed comparison it orders by, and every one of them declines a <code>String</code>,
+  container, or aggregate element with GT0068). A separate i64-only
+  <code>queue</code>/<code>stack</code>/<code>deque</code>/<code>heap</code>/<code>ordered_*</code> family is functional re-bind
+  style (<code>let q = queue::push(q, v)</code>), not mutating.</li>
 <li>Bracket literals create Vec values unless an expected fixed-array type is
   present. Borrow arrays or Vecs as <code>&amp;[T]</code> / <code>&amp;mut [T]</code>.</li>
 <li><strong>Weak references</strong>: RC means a genuine cycle leaks unless one edge

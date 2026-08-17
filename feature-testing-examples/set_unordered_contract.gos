@@ -1,0 +1,72 @@
+// A `Set` has no element order: it answers membership, cardinality, and set
+// algebra, and a walk over it goes through the iterator `iter()` answers. The
+// order that walk happens to produce is the same on every tier - which is what
+// the lines below check - but it is not a promise to a program: sort it, or
+// reach for `BTreeSet`, when order is part of the answer.
+//
+// A `BTreeSet` is the ordered collection: it reads sorted. Printing sorts for
+// both, so rendered output stays stable whatever order the elements went in.
+
+struct Cell { row: i64, col: i64 }
+
+// A hot body holding a set: membership and the iterator walk both run inside a
+// loop, so the JIT compiles this and the compiled tiers are exercised on the
+// same contract the straight-line checks below state.
+fn tally(rounds: i64) -> i64 {
+    let seen = #{ 3, 1, 5, 2 }
+    let mut total = 0
+    let mut i = 0
+    while i < rounds {
+        if seen.contains(i % 7) { total += 1 }
+        for n in seen {
+            if n > i % 7 { total += 1 }
+        }
+        i += 1
+    }
+    total + seen.len()
+}
+
+fn main() {
+    println!("tally {}", tally(3000))
+
+    let nums = #{ 3, 1, 5, 2 }
+    println!("{:?}", nums)
+    println!("len {} has3 {} has9 {}", nums.len(), nums.contains(3), nums.contains(9))
+    for n in nums { print!("{} ", n) }
+    println!("")
+    let mut ordered = nums.iter().collect()
+    ordered.sort()
+    println!("sorted {:?}", ordered)
+
+    // Sequence operations are the iterator's, and read that same walk.
+    println!("take {:?}", nums.iter().take(2).collect())
+    println!("skip {:?}", nums.iter().skip(2).collect())
+    println!("enumerate {:?}", nums.iter().enumerate().collect())
+    println!("count {} sum {}", nums.iter().count(|n| n > 2), nums.iter().sum())
+
+    let ranked: BTreeSet<i64> = #{ 3, 1, 5, 2 }
+    println!("{:?}", ranked)
+    for n in ranked { print!("{} ", n) }
+    println!("")
+    println!("btree take {:?}", ranked.iter().take(2).collect())
+
+    let words = #{ "pear", "apple", "fig" }
+    println!("{:?}", words)
+    println!("words len {} has {}", words.len(), words.contains("fig"))
+
+    let mut cells: Set<Cell> = Set::new()
+    cells.insert(Cell { row: 2, col: 1 })
+    cells.insert(Cell { row: 1, col: 4 })
+    println!("cells {} has {}", cells.len(), cells.contains(Cell { row: 1, col: 4 }))
+    for c in cells { print!("{}:{} ", c.row, c.col) }
+    println!("")
+
+    // Set algebra answers sets, and each result reads the way its receiver does.
+    let left = #{ 1, 2, 3 }
+    let right = #{ 3, 4 }
+    println!("union {:?}", left.union(right))
+    println!("intersection {:?}", left.intersection(right))
+    println!("difference {:?}", left.difference(right))
+    println!("symmetric {:?}", left.symmetric_difference(right))
+    println!("subset {} disjoint {}", #{ 1, 2 }.is_subset(left), left.is_disjoint(#{ 9 }))
+}

@@ -881,14 +881,14 @@ const HASHSET_METHODS: &[BuiltinMethod] = &[
     },
     BuiltinMethod {
         name: "iter",
-        signature: "fn iter(&self) -> Vec<T>",
-        doc: "Returns the set values as a vector.",
+        signature: "fn iter(&self) -> Iterator<T>",
+        doc: "Walks the values; every sequence operation on a set starts here.",
         snippet: "iter()$0",
     },
     BuiltinMethod {
         name: "to_vec",
         signature: "fn to_vec(&self) -> Vec<T>",
-        doc: "Returns the set values as a vector.",
+        doc: "Returns the set values as a vector, in the same unordered walk.",
         snippet: "to_vec()$0",
     },
     BuiltinMethod {

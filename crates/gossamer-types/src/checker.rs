@@ -332,52 +332,11 @@ const SEQUENCE_COMBINATOR_METHODS: &[&str] = &[
     "count",
 ];
 
-/// The `Set` and `BTreeSet` method surface.
+/// The `Set` and `BTreeSet` method surface: membership, cardinality, and set
+/// algebra - the operations a set defines. A set has no element order, so the
+/// sequence operations belong to the iterator `iter()` answers, and are
+/// written `s.iter().take(3)` the way they are on any other iterator.
 const SET_METHODS: &[&str] = &[
-    "map",
-    "filter",
-    "filter_map",
-    "flat_map",
-    "for_each",
-    "fold",
-    "reduce",
-    "any",
-    "all",
-    "find",
-    "position",
-    "count",
-    "sum",
-    "product",
-    "min",
-    "max",
-    "min_by",
-    "max_by",
-    "min_by_key",
-    "max_by_key",
-    "sort_by",
-    "sort_by_key",
-    "take",
-    "skip",
-    "step_by",
-    "enumerate",
-    "rev",
-    "dedup",
-    "chain",
-    "zip",
-    "partition",
-    "chunk_by",
-    "count_by",
-    "sum_by",
-    "product_by",
-    "take_while",
-    "skip_while",
-    "find_map",
-    "scan",
-    "windows",
-    "chunks",
-    "pairwise",
-    "flatten",
-    "join",
     "insert",
     "remove",
     "contains",
@@ -6252,23 +6211,23 @@ impl<'a> TypeChecker<'a> {
                 Some(self.tcx.intern(TyKind::Vec(elem)))
             }
             "Deque" => {
-                let elem = self.tcx.int_ty(IntTy::I64);
+                let elem = self.fresh();
                 Some(self.vecdeque_ty(elem))
             }
             "Queue" => {
-                let elem = self.tcx.int_ty(IntTy::I64);
+                let elem = self.fresh();
                 Some(self.vecqueue_ty(elem))
             }
             "Stack" => {
-                let elem = self.tcx.int_ty(IntTy::I64);
+                let elem = self.fresh();
                 Some(self.vecstack_ty(elem))
             }
             "MaxHeap" => {
-                let elem = self.tcx.int_ty(IntTy::I64);
+                let elem = self.fresh();
                 Some(self.binary_heap_ty(elem))
             }
             "MinHeap" => {
-                let elem = self.tcx.int_ty(IntTy::I64);
+                let elem = self.fresh();
                 Some(self.min_heap_ty(elem))
             }
             "Map" => {
@@ -6337,32 +6296,27 @@ impl<'a> TypeChecker<'a> {
             }
             "Deque" => {
                 let elem = array_source_elem(self);
-                self.require_phase1_i64_collection_elem(elem, owner, span);
-                let elem = self.tcx.int_ty(IntTy::I64);
+                let elem = self.require_slot_collection_elem(elem, owner, span);
                 Some(self.vecdeque_ty(elem))
             }
             "Queue" => {
                 let elem = array_source_elem(self);
-                self.require_phase1_i64_collection_elem(elem, owner, span);
-                let elem = self.tcx.int_ty(IntTy::I64);
+                let elem = self.require_slot_collection_elem(elem, owner, span);
                 Some(self.vecqueue_ty(elem))
             }
             "Stack" => {
                 let elem = array_source_elem(self);
-                self.require_phase1_i64_collection_elem(elem, owner, span);
-                let elem = self.tcx.int_ty(IntTy::I64);
+                let elem = self.require_slot_collection_elem(elem, owner, span);
                 Some(self.vecstack_ty(elem))
             }
             "MaxHeap" => {
                 let elem = array_source_elem(self);
-                self.require_phase1_i64_collection_elem(elem, owner, span);
-                let elem = self.tcx.int_ty(IntTy::I64);
+                let elem = self.require_slot_collection_elem(elem, owner, span);
                 Some(self.binary_heap_ty(elem))
             }
             "MinHeap" => {
                 let elem = array_source_elem(self);
-                self.require_phase1_i64_collection_elem(elem, owner, span);
-                let elem = self.tcx.int_ty(IntTy::I64);
+                let elem = self.require_slot_collection_elem(elem, owner, span);
                 Some(self.min_heap_ty(elem))
             }
             "Map" | "BTreeMap" => {
@@ -7575,9 +7529,65 @@ impl<'a> TypeChecker<'a> {
         self.tcx.intern(TyKind::Adt { def, substs })
     }
 
-    fn require_phase1_i64_collection_elem(&mut self, elem: Ty, _owner: &str, span: Span) {
+    /// The element type a slot-backed container's methods read and write. An
+    /// element the constructor never pinned - `Queue::new()` with no
+    /// annotation and no `push` yet - settles as `i64`, the width a slot
+    /// holds.
+    fn slot_collection_elem(&mut self, elem: Option<Ty>, owner: &str, span: Span) -> Ty {
         let i64_ty = self.tcx.int_ty(IntTy::I64);
-        self.unify(i64_ty, elem, span);
+        let Some(elem) = elem else { return i64_ty };
+        self.require_slot_collection_elem(elem, owner, span)
+    }
+
+    /// Checks the element type of a slot-backed container (`Deque`, `Queue`,
+    /// `Stack`, `MaxHeap`, `MinHeap`), which holds one word per element.
+    ///
+    /// Every scalar - each integer width, `f32` / `f64`, `bool`, `char` - is
+    /// one word and is held as written. An element that is a `String` or a
+    /// container is a counted handle, and one that is a struct, tuple, array,
+    /// or enum spans several slots; neither is stored here yet, so the call
+    /// says so rather than silently reading the value as an integer. An
+    /// unresolved element is left to the push that pins it.
+    ///
+    /// A heap also orders its elements, and it compares a slot as a signed
+    /// 64-bit value (or, for a float element, as the value its bits spell), so
+    /// `u64` / `usize` - whose range runs past what that comparison orders -
+    /// are declined there while a `Deque` / `Queue` / `Stack`, which only
+    /// stores, holds them exactly.
+    fn require_slot_collection_elem(&mut self, elem: Ty, owner: &str, span: Span) -> Ty {
+        let resolved = self.infer.resolve(self.tcx, elem);
+        let ordered = matches!(owner, "MaxHeap" | "MinHeap" | "BinaryHeap");
+        if ordered
+            && matches!(
+                self.tcx.kind(resolved),
+                Some(TyKind::Int(IntTy::U64 | IntTy::Usize))
+            )
+        {
+            let found = self.render_public_ty(resolved);
+            self.emit(
+                TypeError::SlotCollectionElement {
+                    owner: owner.to_string(),
+                    found,
+                },
+                span,
+            );
+            return self.tcx.int_ty(IntTy::I64);
+        }
+        if matches!(
+            self.tcx.kind(resolved),
+            Some(TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::Var(_))
+        ) {
+            return elem;
+        }
+        let found = self.render_public_ty(resolved);
+        self.emit(
+            TypeError::SlotCollectionElement {
+                owner: owner.to_string(),
+                found,
+            },
+            span,
+        );
+        self.tcx.int_ty(IntTy::I64)
     }
 
     fn reverse_ty(&mut self, elem: Ty) -> Ty {
@@ -7800,19 +7810,15 @@ impl<'a> TypeChecker<'a> {
         if let Some(TyKind::Adt { def, substs }) = self.tcx.kind(resolved)
             && def.local == VEC_DEQUE_DEF_LOCAL
         {
-            let elem = substs.types().first().copied();
-            let i64_ty = self.tcx.int_ty(IntTy::I64);
-            if let Some(elem) = elem {
-                self.unify(i64_ty, elem, span);
-            }
+            let elem = self.slot_collection_elem(substs.types().first().copied(), "Deque", span);
             return match method {
                 "push_back" | "push_front" if args.len() == 1 => {
-                    let v = self.check_expr_expecting(&args[0], Expectation::HasType(i64_ty));
-                    self.unify(i64_ty, v, args[0].span);
+                    let v = self.check_expr_expecting(&args[0], Expectation::HasType(elem));
+                    self.unify(elem, v, args[0].span);
                     Some(self.tcx.unit())
                 }
                 "pop_back" | "pop_front" | "peek_back" | "peek_front" if args.is_empty() => {
-                    Some(self.option_adt_ty(i64_ty))
+                    Some(self.option_adt_ty(elem))
                 }
                 "len" if args.is_empty() => Some(self.tcx.int_ty(IntTy::I64)),
                 "is_empty" if args.is_empty() => Some(self.tcx.bool_ty()),
@@ -7837,18 +7843,19 @@ impl<'a> TypeChecker<'a> {
         if let Some(TyKind::Adt { def, substs }) = self.tcx.kind(resolved)
             && matches!(def.local, VEC_QUEUE_DEF_LOCAL | VEC_STACK_DEF_LOCAL)
         {
-            let elem = substs.types().first().copied();
-            let i64_ty = self.tcx.int_ty(IntTy::I64);
-            if let Some(elem) = elem {
-                self.unify(i64_ty, elem, span);
-            }
+            let owner = if def.local == VEC_QUEUE_DEF_LOCAL {
+                "Queue"
+            } else {
+                "Stack"
+            };
+            let elem = self.slot_collection_elem(substs.types().first().copied(), owner, span);
             return match method {
                 "push" if args.len() == 1 => {
-                    let v = self.check_expr_expecting(&args[0], Expectation::HasType(i64_ty));
-                    self.unify(i64_ty, v, args[0].span);
+                    let v = self.check_expr_expecting(&args[0], Expectation::HasType(elem));
+                    self.unify(elem, v, args[0].span);
                     Some(self.tcx.unit())
                 }
-                "pop" | "peek" if args.is_empty() => Some(self.option_adt_ty(i64_ty)),
+                "pop" | "peek" if args.is_empty() => Some(self.option_adt_ty(elem)),
                 "len" if args.is_empty() => Some(self.tcx.int_ty(IntTy::I64)),
                 "is_empty" if args.is_empty() => Some(self.tcx.bool_ty()),
                 "clear" if args.is_empty() => Some(self.tcx.unit()),
@@ -7869,33 +7876,27 @@ impl<'a> TypeChecker<'a> {
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
             resolved = self.infer.resolve(self.tcx, *inner);
         }
-        let elem_ty = match self.tcx.kind(resolved) {
+        let (owner, elem_ty) = match self.tcx.kind(resolved) {
             Some(TyKind::Adt { def, substs })
                 if matches!(def.local, BINARY_HEAP_DEF_LOCAL | MIN_HEAP_DEF_LOCAL) =>
             {
-                substs
-                    .types()
-                    .first()
-                    .copied()
-                    .unwrap_or_else(|| self.tcx.int_ty(IntTy::I64))
+                let owner = if def.local == BINARY_HEAP_DEF_LOCAL {
+                    "MaxHeap"
+                } else {
+                    "MinHeap"
+                };
+                (owner, substs.types().first().copied())
             }
             _ => return None,
         };
-        if !matches!(
-            self.tcx.kind(resolved),
-            Some(TyKind::Adt { def, .. }) if matches!(def.local, BINARY_HEAP_DEF_LOCAL | MIN_HEAP_DEF_LOCAL)
-        ) {
-            return None;
-        }
-        let i64_ty = self.tcx.int_ty(IntTy::I64);
-        self.unify(i64_ty, elem_ty, span);
+        let elem_ty = self.slot_collection_elem(elem_ty, owner, span);
         match method {
             "push" if args.len() == 1 => {
-                let got = self.check_expr_expecting(&args[0], Expectation::HasType(i64_ty));
-                self.unify(i64_ty, got, args[0].span);
+                let got = self.check_expr_expecting(&args[0], Expectation::HasType(elem_ty));
+                self.unify(elem_ty, got, args[0].span);
                 Some(self.tcx.unit())
             }
-            "pop" | "peek" if args.is_empty() => Some(self.option_adt_ty(i64_ty)),
+            "pop" | "peek" if args.is_empty() => Some(self.option_adt_ty(elem_ty)),
             "len" if args.is_empty() => Some(self.tcx.int_ty(IntTy::I64)),
             "is_empty" if args.is_empty() => Some(self.tcx.bool_ty()),
             "clear" if args.is_empty() => Some(self.tcx.unit()),
@@ -9547,17 +9548,20 @@ impl<'a> TypeChecker<'a> {
         resolved: Ty,
         span: Span,
     ) -> Option<Ty> {
-        // A map or set holds its values, so a traversal on one answers eagerly
-        // with a sequence, the way one on a Vec does. A map's element is its
-        // key/value pair. A free-call-only traversal is declined here for the
-        // same reason `Vec` declines it: no receiver form exists to reach.
+        // A map holds its pairs, so a traversal on one answers eagerly with a
+        // sequence, the way one on a Vec does. A free-call-only traversal is
+        // declined here for the same reason `Vec` declines it: no receiver
+        // form exists to reach.
         if COLLECTION_TRAVERSAL_METHODS.contains(&method) && !is_free_call_only_traversal(method) {
+            // A map's element is its key/value pair. A set has no order for a
+            // traversal to read its elements in, so a set answers these
+            // through the iterator `iter()` gives, not on the collection.
             let elem = match self.tcx.kind(resolved) {
                 Some(TyKind::HashMap { key, value, .. }) => {
                     let (key, value) = (*key, *value);
                     Some(self.tcx.intern(TyKind::Tuple(vec![key, value])))
                 }
-                _ => self.set_elem_ty(resolved).map(|(_owner, elem)| elem),
+                _ => None,
             };
             if let Some(elem) = elem {
                 // The predicate form of `count` has no data-last free
@@ -14508,7 +14512,7 @@ impl<'a> TypeChecker<'a> {
                     .first()
                     .copied()
                     .unwrap_or_else(|| self.tcx.int_ty(IntTy::I64));
-                self.require_phase1_i64_collection_elem(elem, head_name, span);
+                let elem = self.require_slot_collection_elem(elem, head_name, span);
                 let (local, name) = match head_name {
                     "Queue" => (VEC_QUEUE_DEF_LOCAL, "Queue"),
                     "Stack" => (VEC_STACK_DEF_LOCAL, "Stack"),
@@ -14516,7 +14520,7 @@ impl<'a> TypeChecker<'a> {
                 };
                 let def = gossamer_resolve::DefId::local(local);
                 self.tcx.register_def_name(def, name);
-                let substs = crate::Substs::from_types([self.tcx.int_ty(IntTy::I64)]);
+                let substs = crate::Substs::from_types([elem]);
                 return self.tcx.intern(TyKind::Adt { def, substs });
             }
             "MaxHeap" => {
@@ -14526,8 +14530,7 @@ impl<'a> TypeChecker<'a> {
                     .first()
                     .copied()
                     .unwrap_or_else(|| self.tcx.int_ty(IntTy::I64));
-                self.require_phase1_i64_collection_elem(elem, head_name, span);
-                let elem = self.tcx.int_ty(IntTy::I64);
+                let elem = self.require_slot_collection_elem(elem, head_name, span);
                 return self.binary_heap_ty(elem);
             }
             "MinHeap" => {
@@ -14537,8 +14540,7 @@ impl<'a> TypeChecker<'a> {
                     .first()
                     .copied()
                     .unwrap_or_else(|| self.tcx.int_ty(IntTy::I64));
-                self.require_phase1_i64_collection_elem(elem, head_name, span);
-                let elem = self.tcx.int_ty(IntTy::I64);
+                let elem = self.require_slot_collection_elem(elem, head_name, span);
                 return self.min_heap_ty(elem);
             }
             "Reverse" => {

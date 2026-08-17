@@ -204,12 +204,24 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_bheap_max_from_vec_i64 as *const u8,
         ),
         (
+            "gos_rt_bheap_max_from_vec_f64",
+            crate::c_abi::gos_rt_bheap_max_from_vec_f64 as *const u8,
+        ),
+        (
             "gos_rt_bheap_max_push_i64",
             crate::c_abi::gos_rt_bheap_max_push_i64 as *const u8,
         ),
         (
+            "gos_rt_bheap_max_push_f64",
+            crate::c_abi::gos_rt_bheap_max_push_f64 as *const u8,
+        ),
+        (
             "gos_rt_bheap_max_pop_i64",
             crate::c_abi::gos_rt_bheap_max_pop_i64 as *const u8,
+        ),
+        (
+            "gos_rt_bheap_max_pop_f64",
+            crate::c_abi::gos_rt_bheap_max_pop_f64 as *const u8,
         ),
         (
             "gos_rt_bheap_max_peek_i64",
@@ -224,12 +236,24 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_bheap_min_from_vec_i64 as *const u8,
         ),
         (
+            "gos_rt_bheap_min_from_vec_f64",
+            crate::c_abi::gos_rt_bheap_min_from_vec_f64 as *const u8,
+        ),
+        (
             "gos_rt_bheap_min_push_i64",
             crate::c_abi::gos_rt_bheap_min_push_i64 as *const u8,
         ),
         (
+            "gos_rt_bheap_min_push_f64",
+            crate::c_abi::gos_rt_bheap_min_push_f64 as *const u8,
+        ),
+        (
             "gos_rt_bheap_min_pop_i64",
             crate::c_abi::gos_rt_bheap_min_pop_i64 as *const u8,
+        ),
+        (
+            "gos_rt_bheap_min_pop_f64",
+            crate::c_abi::gos_rt_bheap_min_pop_f64 as *const u8,
         ),
         (
             "gos_rt_bheap_min_peek_i64",
@@ -460,8 +484,16 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::deque::gos_rt_deque_push_back as *const u8,
         ),
         (
+            "gos_rt_deque_push_back_f64",
+            crate::c_abi::deque::gos_rt_deque_push_back_f64 as *const u8,
+        ),
+        (
             "gos_rt_deque_push_front",
             crate::c_abi::deque::gos_rt_deque_push_front as *const u8,
+        ),
+        (
+            "gos_rt_deque_push_front_f64",
+            crate::c_abi::deque::gos_rt_deque_push_front_f64 as *const u8,
         ),
         (
             "gos_rt_bufio_read_lines_of",
@@ -4236,6 +4268,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_set_format_string as *const u8,
         ),
         (
+            "gos_rt_set_format_u64",
+            crate::c_abi::gos_rt_set_format_u64 as *const u8,
+        ),
+        (
             "gos_rt_set_free",
             crate::c_abi::gos_rt_set_free as *const u8,
         ),
@@ -5596,6 +5632,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_vec_format_tuple",
             crate::c_abi::gos_rt_vec_format_tuple as *const u8,
+        ),
+        (
+            "gos_rt_vec_format_u64",
+            crate::c_abi::btmap::gos_rt_vec_format_u64 as *const u8,
         ),
         (
             "gos_rt_tuple_cmp",

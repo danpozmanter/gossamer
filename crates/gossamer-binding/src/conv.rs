@@ -647,6 +647,9 @@ fn map_key_to_value(k: &MapKey) -> Value {
         MapKey::NonHashable => Value::Unit,
         MapKey::Bool(b) => Value::Bool(*b),
         MapKey::Int(i) => Value::Int(*i),
+        // A rendered map's unsigned key carries the same bits the live map
+        // keyed by, so it converts back to that integer.
+        MapKey::Uint(n) => Value::Int(*n as i64),
         MapKey::Char(c) => Value::Char(*c),
         MapKey::Str(s) => Value::String(s.clone()),
         // Aggregate keys don't round-trip to their typed shape (field names /

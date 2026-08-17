@@ -76,6 +76,29 @@ pub unsafe extern "C" fn gos_rt_deque_push_back(d: *mut GosDeque, value: i64) {
     });
 }
 
+/// Append a float to the back, stored as its bit pattern: a slot holds one
+/// 64-bit word, and the pop side reads the same bits back as an `f64`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_deque_push_back_f64(d: *mut GosDeque, value: f64) {
+    ffi_entry!((), {
+        if d.is_null() {
+            return;
+        }
+        unsafe { &mut *d }.inner.push_back(value.to_bits() as i64);
+    });
+}
+
+/// Prepend a float to the front, stored as its bit pattern.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_deque_push_front_f64(d: *mut GosDeque, value: f64) {
+    ffi_entry!((), {
+        if d.is_null() {
+            return;
+        }
+        unsafe { &mut *d }.inner.push_front(value.to_bits() as i64);
+    });
+}
+
 /// Remove and return the front element as `Option<i64>` packed into i128.
 /// Encoding: disc=0 (low i64) means `Some(value)`, disc=1 means `None`.
 #[unsafe(no_mangle)]
