@@ -1,0 +1,2 @@
+// ERROR: GT0069
+fn total(&m: Map<String, i64>) -> i64 { m.len() }

@@ -77,6 +77,7 @@ pub fn lift_closures(mut program: HirProgram, tcx: &mut gossamer_types::TyCtxt) 
     let mut lifter = Lifter {
         next_id: 0,
         lifted: Vec::new(),
+        scopes: Vec::new(),
         ids: HirIdGenerator::new(),
         env_ty,
         scalar_tys,
@@ -84,8 +85,9 @@ pub fn lift_closures(mut program: HirProgram, tcx: &mut gossamer_types::TyCtxt) 
     for item in &mut program.items {
         match &mut item.kind {
             HirItemKind::Fn(decl) => {
+                let params = decl.params.clone();
                 if let Some(body) = &mut decl.body {
-                    lifter.visit_block(&mut body.block);
+                    lifter.in_scope(&params, |l| l.visit_block(&mut body.block));
                 }
             }
             // Impl methods and trait default methods are still nested
@@ -95,15 +97,17 @@ pub fn lift_closures(mut program: HirProgram, tcx: &mut gossamer_types::TyCtxt) 
             // never lifts and the compiled tier lowers it to a null env.
             HirItemKind::Impl(imp) => {
                 for method in &mut imp.methods {
+                    let params = method.params.clone();
                     if let Some(body) = &mut method.body {
-                        lifter.visit_block(&mut body.block);
+                        lifter.in_scope(&params, |l| l.visit_block(&mut body.block));
                     }
                 }
             }
             HirItemKind::Trait(tr) => {
                 for method in &mut tr.methods {
+                    let params = method.params.clone();
                     if let Some(body) = &mut method.body {
-                        lifter.visit_block(&mut body.block);
+                        lifter.in_scope(&params, |l| l.visit_block(&mut body.block));
                     }
                 }
             }
@@ -277,10 +281,55 @@ fn note_path_receiver(expr: &HirExpr, out: &mut std::collections::HashSet<String
     }
 }
 
+/// Names the HIR lowerer emits for global helpers rather than for a binding:
+/// the format-macro entry points and the lowerer's own synthetic calls. A
+/// closure never captures one, because the named-callee dispatch is what
+/// resolves them to runtime helpers, while an env slot holds only raw bits.
+const SYNTHETIC_GLOBAL_NAMES: &[&str] = &[
+    "__concat",
+    "__debug",
+    "__struct",
+    "__fmt_prec",
+    "__update",
+    "format",
+    "println",
+    "print",
+    "eprintln",
+    "eprint",
+    "panic",
+];
+
+/// The global-helper names `is_bound` reports as bindings, in the shape
+/// [`collect_free_vars`] and its typed counterpart expect.
+#[must_use]
+pub fn shadowed_global_names(is_bound: impl Fn(&str) -> bool) -> HashSet<String> {
+    SYNTHETIC_GLOBAL_NAMES
+        .iter()
+        .filter(|name| is_bound(name))
+        .map(|name| (*name).to_string())
+        .collect()
+}
+
+/// Whether `name` reaches a global helper rather than a binding. `shadowed`
+/// carries the enclosing scope's bindings, so a parameter or local named
+/// `format` is a capture like any other name.
+fn is_synthetic_global<H: std::hash::BuildHasher>(
+    name: &str,
+    shadowed: &HashSet<String, H>,
+) -> bool {
+    if shadowed.contains(name) {
+        return false;
+    }
+    SYNTHETIC_GLOBAL_NAMES.contains(&name) || name.starts_with("__closure_")
+}
+
 struct Lifter {
     next_id: u32,
     lifted: Vec<HirItem>,
     ids: HirIdGenerator,
+    /// Names bound by the scopes enclosing the expression being visited, so a
+    /// binding that shares a global helper's name still captures.
+    scopes: Vec<HashSet<String>>,
     /// Ty handle for an i64 - used as the env parameter type
     /// of capturing closures so the lifted body sees env as a
     /// pointer-sized register, not a byte / sub-word.
@@ -301,6 +350,30 @@ struct ScalarTys {
 }
 
 impl Lifter {
+    /// Runs `body` with a fresh scope holding `params`' bindings.
+    fn in_scope(&mut self, params: &[HirParam], body: impl FnOnce(&mut Self)) {
+        let mut scope = HashSet::new();
+        for param in params {
+            collect_pattern_names(&param.pattern, &mut scope);
+        }
+        self.scopes.push(scope);
+        body(self);
+        self.scopes.pop();
+    }
+
+    /// Binds `pattern`'s names in the innermost scope.
+    fn bind(&mut self, pattern: &HirPat) {
+        if let Some(scope) = self.scopes.last_mut() {
+            collect_pattern_names(pattern, scope);
+        }
+    }
+
+    /// The global-helper names an enclosing binding shadows, which a closure
+    /// captures like any other name.
+    fn shadowed_globals(&self) -> HashSet<String> {
+        shadowed_global_names(|name| self.scopes.iter().any(|scope| scope.contains(name)))
+    }
+
     fn fresh_name(&mut self) -> Ident {
         let idx = self.next_id;
         self.next_id += 1;
@@ -318,10 +391,13 @@ impl Lifter {
 
     fn visit_stmt(&mut self, stmt: &mut HirStmt) {
         match &mut stmt.kind {
-            HirStmtKind::Let {
-                init: Some(expr), ..
-            } => self.visit_expr(expr),
-            HirStmtKind::Let { init: None, .. } => {}
+            HirStmtKind::Let { pattern, init, .. } => {
+                if let Some(expr) = init {
+                    self.visit_expr(expr);
+                }
+                let pattern = pattern.clone();
+                self.bind(&pattern);
+            }
             HirStmtKind::Expr { expr, .. } => self.visit_expr(expr),
             HirStmtKind::Go(inner) => self.lift_go_inner(inner),
             HirStmtKind::Defer(inner) => self.visit_expr(inner),
@@ -380,10 +456,14 @@ impl Lifter {
             HirExprKind::Match { scrutinee, arms } => {
                 self.visit_expr(scrutinee);
                 for arm in arms {
+                    let mut scope = HashSet::new();
+                    collect_pattern_names(&arm.pattern, &mut scope);
+                    self.scopes.push(scope);
                     if let Some(guard) = &mut arm.guard {
                         self.visit_expr(guard);
                     }
                     self.visit_expr(&mut arm.body);
+                    self.scopes.pop();
                 }
             }
             HirExprKind::Loop { body, .. } | HirExprKind::While { body, .. } => {
@@ -419,7 +499,10 @@ impl Lifter {
                     self.visit_expr(e);
                 }
             }
-            HirExprKind::Closure { body, .. } => self.visit_expr(body),
+            HirExprKind::Closure { params, body, .. } => {
+                let params = params.clone();
+                self.in_scope(&params, |lifter| lifter.visit_expr(body));
+            }
             HirExprKind::LiftedClosure { captures, .. } => {
                 for c in captures {
                     self.visit_expr(c);
@@ -460,7 +543,8 @@ impl Lifter {
             for param in params {
                 collect_pattern_names(&param.pattern, &mut bound);
             }
-            if is_closed(body, &bound) {
+            let shadowed = self.shadowed_globals();
+            if is_closed(body, &bound, &shadowed) {
                 let lifted_name = self.lift_closed(params, *ret, body, expr.span);
                 expr.kind = HirExprKind::Path {
                     segments: vec![lifted_name],
@@ -473,7 +557,7 @@ impl Lifter {
                 // closure expression into a `LiftedClosure` node
                 // that the MIR lowerer expands into the heap-alloc
                 // sequence.
-                let captures = collect_free_vars_typed(body, &bound);
+                let captures = collect_free_vars_typed(body, &bound, &shadowed);
                 if !captures.is_empty() {
                     let (name, capture_exprs) =
                         self.lift_capturing(params, *ret, body, &captures, expr.span);
@@ -872,9 +956,10 @@ pub fn collect_pattern_names<S: std::hash::BuildHasher + Clone>(
     }
 }
 
-fn is_closed<S: std::hash::BuildHasher + Clone>(
+fn is_closed<S: std::hash::BuildHasher + Clone, H: std::hash::BuildHasher>(
     expr: &HirExpr,
     bound: &HashSet<String, S>,
+    shadowed: &HashSet<String, H>,
 ) -> bool {
     match &expr.kind {
         HirExprKind::Path { segments, def, .. } => {
@@ -895,21 +980,7 @@ fn is_closed<S: std::hash::BuildHasher + Clone>(
                 // node for MIR to mishandle.
                 // Lifted closure bodies (`__closure_N`) and synthetic
                 // builtins are global items - never free variables.
-                if matches!(
-                    first.name.as_str(),
-                    "__concat"
-                        | "__debug"
-                        | "__struct"
-                        | "__fmt_prec"
-                        | "__update"
-                        | "format"
-                        | "println"
-                        | "print"
-                        | "eprintln"
-                        | "eprint"
-                        | "panic"
-                ) || first.name.starts_with("__closure_")
-                {
+                if is_synthetic_global(&first.name, shadowed) {
                     return true;
                 }
                 return bound.contains(&first.name);
@@ -917,82 +988,99 @@ fn is_closed<S: std::hash::BuildHasher + Clone>(
             true
         }
         HirExprKind::Literal(_) | HirExprKind::Continue { .. } | HirExprKind::Placeholder => true,
-        HirExprKind::Return(inner) => inner.as_ref().is_none_or(|e| is_closed(e, bound)),
-        HirExprKind::Break { value, .. } => value.as_ref().is_none_or(|e| is_closed(e, bound)),
+        HirExprKind::Return(inner) => inner.as_ref().is_none_or(|e| is_closed(e, bound, shadowed)),
+        HirExprKind::Break { value, .. } => {
+            value.as_ref().is_none_or(|e| is_closed(e, bound, shadowed))
+        }
         HirExprKind::Call { callee, args } => {
-            is_closed(callee, bound) && args.iter().all(|a| is_closed(a, bound))
+            is_closed(callee, bound, shadowed) && args.iter().all(|a| is_closed(a, bound, shadowed))
         }
         HirExprKind::MethodCall { receiver, args, .. } => {
-            is_closed(receiver, bound) && args.iter().all(|a| is_closed(a, bound))
+            is_closed(receiver, bound, shadowed)
+                && args.iter().all(|a| is_closed(a, bound, shadowed))
         }
         HirExprKind::Field { receiver, .. } | HirExprKind::TupleIndex { receiver, .. } => {
-            is_closed(receiver, bound)
+            is_closed(receiver, bound, shadowed)
         }
-        HirExprKind::Index { base, index } => is_closed(base, bound) && is_closed(index, bound),
-        HirExprKind::Unary { operand, .. } => is_closed(operand, bound),
-        HirExprKind::Binary { lhs, rhs, .. } => is_closed(lhs, bound) && is_closed(rhs, bound),
-        HirExprKind::Assign { place, value } => is_closed(place, bound) && is_closed(value, bound),
+        HirExprKind::Index { base, index } => {
+            is_closed(base, bound, shadowed) && is_closed(index, bound, shadowed)
+        }
+        HirExprKind::Unary { operand, .. } => is_closed(operand, bound, shadowed),
+        HirExprKind::Binary { lhs, rhs, .. } => {
+            is_closed(lhs, bound, shadowed) && is_closed(rhs, bound, shadowed)
+        }
+        HirExprKind::Assign { place, value } => {
+            is_closed(place, bound, shadowed) && is_closed(value, bound, shadowed)
+        }
         HirExprKind::If {
             condition,
             then_branch,
             else_branch,
         } => {
-            is_closed(condition, bound)
-                && is_closed(then_branch, bound)
-                && else_branch.as_ref().is_none_or(|e| is_closed(e, bound))
+            is_closed(condition, bound, shadowed)
+                && is_closed(then_branch, bound, shadowed)
+                && else_branch
+                    .as_ref()
+                    .is_none_or(|e| is_closed(e, bound, shadowed))
         }
         HirExprKind::Match { scrutinee, arms } => {
-            if !is_closed(scrutinee, bound) {
+            if !is_closed(scrutinee, bound, shadowed) {
                 return false;
             }
             for arm in arms {
                 let mut arm_bound = bound.clone();
                 collect_pattern_names(&arm.pattern, &mut arm_bound);
                 if let Some(guard) = &arm.guard {
-                    if !is_closed(guard, &arm_bound) {
+                    if !is_closed(guard, &arm_bound, shadowed) {
                         return false;
                     }
                 }
-                if !is_closed(&arm.body, &arm_bound) {
+                if !is_closed(&arm.body, &arm_bound, shadowed) {
                     return false;
                 }
             }
             true
         }
-        HirExprKind::Loop { body, .. } => is_closed(body, bound),
+        HirExprKind::Loop { body, .. } => is_closed(body, bound, shadowed),
         HirExprKind::While {
             condition, body, ..
-        } => is_closed(condition, bound) && is_closed(body, bound),
-        HirExprKind::Block(block) => is_closed_block(block, bound),
+        } => is_closed(condition, bound, shadowed) && is_closed(body, bound, shadowed),
+        HirExprKind::Block(block) => is_closed_block(block, bound, shadowed),
         HirExprKind::Closure { params, body, .. } => {
             let mut inner_bound = bound.clone();
             for param in params {
                 collect_pattern_names(&param.pattern, &mut inner_bound);
             }
-            is_closed(body, &inner_bound)
+            is_closed(body, &inner_bound, shadowed)
         }
-        HirExprKind::LiftedClosure { captures, .. } => captures.iter().all(|c| is_closed(c, bound)),
+        HirExprKind::LiftedClosure { captures, .. } => {
+            captures.iter().all(|c| is_closed(c, bound, shadowed))
+        }
         HirExprKind::Select { arms } => arms.iter().all(|arm| {
             let ops_closed = match &arm.op {
-                crate::tree::HirSelectOp::Recv { channel, .. } => is_closed(channel, bound),
+                crate::tree::HirSelectOp::Recv { channel, .. } => {
+                    is_closed(channel, bound, shadowed)
+                }
                 crate::tree::HirSelectOp::Send { channel, value } => {
-                    is_closed(channel, bound) && is_closed(value, bound)
+                    is_closed(channel, bound, shadowed) && is_closed(value, bound, shadowed)
                 }
                 crate::tree::HirSelectOp::Default => true,
             };
-            ops_closed && is_closed(&arm.body, bound)
+            ops_closed && is_closed(&arm.body, bound, shadowed)
         }),
-        HirExprKind::Tuple(elems) => elems.iter().all(|e| is_closed(e, bound)),
-        HirExprKind::Array(HirArrayExpr::List(elems)) => elems.iter().all(|e| is_closed(e, bound)),
+        HirExprKind::Tuple(elems) => elems.iter().all(|e| is_closed(e, bound, shadowed)),
+        HirExprKind::Array(HirArrayExpr::List(elems)) => {
+            elems.iter().all(|e| is_closed(e, bound, shadowed))
+        }
         HirExprKind::Array(HirArrayExpr::Repeat { value, count }) => {
-            is_closed(value, bound) && is_closed(count, bound)
+            is_closed(value, bound, shadowed) && is_closed(count, bound, shadowed)
         }
-        HirExprKind::Cast { value, .. } => is_closed(value, bound),
+        HirExprKind::Cast { value, .. } => is_closed(value, bound, shadowed),
         HirExprKind::Range { start, end, .. } => {
-            start.as_ref().is_none_or(|s| is_closed(s, bound))
-                && end.as_ref().is_none_or(|e| is_closed(e, bound))
+            start.as_ref().is_none_or(|s| is_closed(s, bound, shadowed))
+                && end.as_ref().is_none_or(|e| is_closed(e, bound, shadowed))
         }
-        HirExprKind::Go(inner) => is_closed(inner, bound),
+        HirExprKind::Go(inner) => is_closed(inner, bound, shadowed),
     }
 }
 
@@ -1003,11 +1091,12 @@ fn is_closed<S: std::hash::BuildHasher + Clone>(
 /// capture only the bindings they actually reference (instead of
 /// the full enclosing scope).
 #[must_use]
-pub fn collect_free_vars<S: std::hash::BuildHasher + Clone>(
+pub fn collect_free_vars<S: std::hash::BuildHasher + Clone, H: std::hash::BuildHasher>(
     expr: &HirExpr,
     bound: &HashSet<String, S>,
+    shadowed: &HashSet<String, H>,
 ) -> Vec<String> {
-    collect_free_vars_typed(expr, bound)
+    collect_free_vars_typed(expr, bound, shadowed)
         .into_iter()
         .map(|(name, _)| name)
         .collect()
@@ -1024,19 +1113,24 @@ pub fn collect_free_vars<S: std::hash::BuildHasher + Clone>(
 /// return type instead, and the compiled tiers then retained an `i64`
 /// as if it were a `String`.
 #[must_use]
-pub(crate) fn collect_free_vars_typed<S: std::hash::BuildHasher + Clone>(
+pub(crate) fn collect_free_vars_typed<
+    S: std::hash::BuildHasher + Clone,
+    H: std::hash::BuildHasher,
+>(
     expr: &HirExpr,
     bound: &HashSet<String, S>,
+    shadowed: &HashSet<String, H>,
 ) -> Vec<(String, gossamer_types::Ty)> {
     let mut out: Vec<(String, gossamer_types::Ty)> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    walk_free(expr, bound, &mut out, &mut seen);
+    walk_free(expr, bound, shadowed, &mut out, &mut seen);
     out
 }
 
-fn walk_free<S: std::hash::BuildHasher + Clone>(
+fn walk_free<S: std::hash::BuildHasher + Clone, H: std::hash::BuildHasher>(
     expr: &HirExpr,
     bound: &HashSet<String, S>,
+    shadowed: &HashSet<String, H>,
     out: &mut Vec<(String, gossamer_types::Ty)>,
     seen: &mut HashSet<String>,
 ) {
@@ -1057,21 +1151,7 @@ fn walk_free<S: std::hash::BuildHasher + Clone>(
                 // actually resolves these to runtime helpers.
                 // Lifted closure bodies (`__closure_N`) and synthetic
                 // builtins are global items, never free variables.
-                if matches!(
-                    first.name.as_str(),
-                    "__concat"
-                        | "__debug"
-                        | "__struct"
-                        | "__fmt_prec"
-                        | "__update"
-                        | "format"
-                        | "println"
-                        | "print"
-                        | "eprintln"
-                        | "eprint"
-                        | "panic"
-                ) || first.name.starts_with("__closure_")
-                {
+                if is_synthetic_global(&first.name, shadowed) {
                     return;
                 }
                 if !bound.contains(&first.name) && seen.insert(first.name.clone()) {
@@ -1082,135 +1162,137 @@ fn walk_free<S: std::hash::BuildHasher + Clone>(
         HirExprKind::Literal(_) | HirExprKind::Continue { .. } | HirExprKind::Placeholder => {}
         HirExprKind::Return(inner) => {
             if let Some(e) = inner {
-                walk_free(e, bound, out, seen);
+                walk_free(e, bound, shadowed, out, seen);
             }
         }
         HirExprKind::Break { value, .. } => {
             if let Some(e) = value {
-                walk_free(e, bound, out, seen);
+                walk_free(e, bound, shadowed, out, seen);
             }
         }
         HirExprKind::Call { callee, args } => {
-            walk_free(callee, bound, out, seen);
+            walk_free(callee, bound, shadowed, out, seen);
             for a in args {
-                walk_free(a, bound, out, seen);
+                walk_free(a, bound, shadowed, out, seen);
             }
         }
         HirExprKind::MethodCall { receiver, args, .. } => {
-            walk_free(receiver, bound, out, seen);
+            walk_free(receiver, bound, shadowed, out, seen);
             for a in args {
-                walk_free(a, bound, out, seen);
+                walk_free(a, bound, shadowed, out, seen);
             }
         }
         HirExprKind::Field { receiver, .. } | HirExprKind::TupleIndex { receiver, .. } => {
-            walk_free(receiver, bound, out, seen);
+            walk_free(receiver, bound, shadowed, out, seen);
         }
         HirExprKind::Index { base, index } => {
-            walk_free(base, bound, out, seen);
-            walk_free(index, bound, out, seen);
+            walk_free(base, bound, shadowed, out, seen);
+            walk_free(index, bound, shadowed, out, seen);
         }
-        HirExprKind::Unary { operand, .. } => walk_free(operand, bound, out, seen),
+        HirExprKind::Unary { operand, .. } => walk_free(operand, bound, shadowed, out, seen),
         HirExprKind::Binary { lhs, rhs, .. } => {
-            walk_free(lhs, bound, out, seen);
-            walk_free(rhs, bound, out, seen);
+            walk_free(lhs, bound, shadowed, out, seen);
+            walk_free(rhs, bound, shadowed, out, seen);
         }
         HirExprKind::Assign { place, value } => {
-            walk_free(place, bound, out, seen);
-            walk_free(value, bound, out, seen);
+            walk_free(place, bound, shadowed, out, seen);
+            walk_free(value, bound, shadowed, out, seen);
         }
         HirExprKind::If {
             condition,
             then_branch,
             else_branch,
         } => {
-            walk_free(condition, bound, out, seen);
-            walk_free(then_branch, bound, out, seen);
+            walk_free(condition, bound, shadowed, out, seen);
+            walk_free(then_branch, bound, shadowed, out, seen);
             if let Some(e) = else_branch {
-                walk_free(e, bound, out, seen);
+                walk_free(e, bound, shadowed, out, seen);
             }
         }
         HirExprKind::Match { scrutinee, arms } => {
-            walk_free(scrutinee, bound, out, seen);
+            walk_free(scrutinee, bound, shadowed, out, seen);
             for arm in arms {
                 let mut arm_bound = bound.clone();
                 collect_pattern_names(&arm.pattern, &mut arm_bound);
                 if let Some(g) = &arm.guard {
-                    walk_free_with(g, &arm_bound, out, seen);
+                    walk_free_with(g, &arm_bound, shadowed, out, seen);
                 }
-                walk_free_with(&arm.body, &arm_bound, out, seen);
+                walk_free_with(&arm.body, &arm_bound, shadowed, out, seen);
             }
         }
         HirExprKind::Loop { body, .. } => {
-            walk_free(body, bound, out, seen);
+            walk_free(body, bound, shadowed, out, seen);
         }
         HirExprKind::While {
             condition, body, ..
         } => {
-            walk_free(condition, bound, out, seen);
-            walk_free(body, bound, out, seen);
+            walk_free(condition, bound, shadowed, out, seen);
+            walk_free(body, bound, shadowed, out, seen);
         }
-        HirExprKind::Block(block) => walk_free_block(block, bound, out, seen),
+        HirExprKind::Block(block) => walk_free_block(block, bound, shadowed, out, seen),
         HirExprKind::Closure { params, body, .. } => {
             let mut inner_bound = bound.clone();
             for p in params {
                 collect_pattern_names(&p.pattern, &mut inner_bound);
             }
-            walk_free_with(body, &inner_bound, out, seen);
+            walk_free_with(body, &inner_bound, shadowed, out, seen);
         }
         HirExprKind::LiftedClosure { captures, .. } => {
             for c in captures {
-                walk_free(c, bound, out, seen);
+                walk_free(c, bound, shadowed, out, seen);
             }
         }
         HirExprKind::Select { arms } => {
             for arm in arms {
                 match &arm.op {
                     crate::tree::HirSelectOp::Recv { channel, .. } => {
-                        walk_free(channel, bound, out, seen);
+                        walk_free(channel, bound, shadowed, out, seen);
                     }
                     crate::tree::HirSelectOp::Send { channel, value } => {
-                        walk_free(channel, bound, out, seen);
-                        walk_free(value, bound, out, seen);
+                        walk_free(channel, bound, shadowed, out, seen);
+                        walk_free(value, bound, shadowed, out, seen);
                     }
                     crate::tree::HirSelectOp::Default => {}
                 }
-                walk_free(&arm.body, bound, out, seen);
+                walk_free(&arm.body, bound, shadowed, out, seen);
             }
         }
         HirExprKind::Tuple(elems) | HirExprKind::Array(HirArrayExpr::List(elems)) => {
             for e in elems {
-                walk_free(e, bound, out, seen);
+                walk_free(e, bound, shadowed, out, seen);
             }
         }
         HirExprKind::Array(HirArrayExpr::Repeat { value, count }) => {
-            walk_free(value, bound, out, seen);
-            walk_free(count, bound, out, seen);
+            walk_free(value, bound, shadowed, out, seen);
+            walk_free(count, bound, shadowed, out, seen);
         }
-        HirExprKind::Cast { value, .. } => walk_free(value, bound, out, seen),
+        HirExprKind::Cast { value, .. } => walk_free(value, bound, shadowed, out, seen),
         HirExprKind::Range { start, end, .. } => {
             if let Some(s) = start {
-                walk_free(s, bound, out, seen);
+                walk_free(s, bound, shadowed, out, seen);
             }
             if let Some(e) = end {
-                walk_free(e, bound, out, seen);
+                walk_free(e, bound, shadowed, out, seen);
             }
         }
-        HirExprKind::Go(inner) => walk_free(inner, bound, out, seen),
+        HirExprKind::Go(inner) => walk_free(inner, bound, shadowed, out, seen),
     }
 }
 
-fn walk_free_with<S: std::hash::BuildHasher + Clone>(
+fn walk_free_with<S: std::hash::BuildHasher + Clone, H: std::hash::BuildHasher>(
     expr: &HirExpr,
     bound: &HashSet<String, S>,
+    shadowed: &HashSet<String, H>,
     out: &mut Vec<(String, gossamer_types::Ty)>,
     seen: &mut HashSet<String>,
 ) {
-    walk_free(expr, bound, out, seen);
+    walk_free(expr, bound, shadowed, out, seen);
 }
 
-fn walk_free_block<S: std::hash::BuildHasher + Clone>(
+fn walk_free_block<S: std::hash::BuildHasher + Clone, H: std::hash::BuildHasher>(
     block: &HirBlock,
     bound: &HashSet<String, S>,
+    shadowed: &HashSet<String, H>,
     out: &mut Vec<(String, gossamer_types::Ty)>,
     seen: &mut HashSet<String>,
 ) {
@@ -1219,38 +1301,39 @@ fn walk_free_block<S: std::hash::BuildHasher + Clone>(
         match &stmt.kind {
             HirStmtKind::Let { pattern, init, .. } => {
                 if let Some(e) = init {
-                    walk_free(e, &local, out, seen);
+                    walk_free(e, &local, shadowed, out, seen);
                 }
                 collect_pattern_names(pattern, &mut local);
             }
             HirStmtKind::Expr { expr, .. } | HirStmtKind::Go(expr) | HirStmtKind::Defer(expr) => {
-                walk_free(expr, &local, out, seen);
+                walk_free(expr, &local, shadowed, out, seen);
             }
             HirStmtKind::Item(_) => {}
         }
     }
     if let Some(tail) = &block.tail {
-        walk_free(tail, &local, out, seen);
+        walk_free(tail, &local, shadowed, out, seen);
     }
 }
 
-fn is_closed_block<S: std::hash::BuildHasher + Clone>(
+fn is_closed_block<S: std::hash::BuildHasher + Clone, H: std::hash::BuildHasher>(
     block: &HirBlock,
     bound: &HashSet<String, S>,
+    shadowed: &HashSet<String, H>,
 ) -> bool {
     let mut local = bound.clone();
     for stmt in &block.stmts {
         match &stmt.kind {
             HirStmtKind::Let { pattern, init, .. } => {
                 if let Some(init) = init {
-                    if !is_closed(init, &local) {
+                    if !is_closed(init, &local, shadowed) {
                         return false;
                     }
                 }
                 collect_pattern_names(pattern, &mut local);
             }
             HirStmtKind::Expr { expr, .. } | HirStmtKind::Go(expr) | HirStmtKind::Defer(expr) => {
-                if !is_closed(expr, &local) {
+                if !is_closed(expr, &local, shadowed) {
                     return false;
                 }
             }
@@ -1260,5 +1343,5 @@ fn is_closed_block<S: std::hash::BuildHasher + Clone>(
     block
         .tail
         .as_ref()
-        .is_none_or(|tail| is_closed(tail, &local))
+        .is_none_or(|tail| is_closed(tail, &local, shadowed))
 }

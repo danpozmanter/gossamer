@@ -35,7 +35,7 @@ literal `--`. Put `gos run` options before `FILE`.
 | `gos` (no args) / `gos repl` | Start the interactive REPL |
 | `gos repl` then `%help` | List REPL commands |
 | `gos repl` then `%info strings::trim` | Show help and the relevant module or type listing |
-| `gos repl` then `%info trim` | Search public catalog entries |
+| `gos repl` then `%info *trim*` | Search public catalog entries by wildcard |
 | `gos repl` then `%explain value --details` | Inspect a binding's available methods with descriptions and examples |
 
 ## Entry file

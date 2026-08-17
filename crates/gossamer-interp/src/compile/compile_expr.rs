@@ -4525,9 +4525,11 @@ impl<'tcx> FnBuilder<'tcx> {
     /// reading argument against the live binding.
     fn mut_arg_move_safe(args: &[HirExpr], self_idx: usize, name: &str) -> bool {
         let bound: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let shadowed: std::collections::HashSet<String> =
+            gossamer_hir::shadowed_global_names(|candidate| candidate == name);
         args.iter().enumerate().all(|(j, other)| {
             j == self_idx
-                || !gossamer_hir::collect_free_vars(other, &bound)
+                || !gossamer_hir::collect_free_vars(other, &bound, &shadowed)
                     .iter()
                     .any(|v| v == name)
         })

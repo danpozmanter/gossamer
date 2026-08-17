@@ -4220,3 +4220,59 @@ fn a_call_of_a_field_names_the_field() {
         "the report should name `name` as a field: {d:?}"
     );
 }
+
+#[test]
+fn a_reference_pattern_parameter_over_a_value_type_names_the_type_spelling() {
+    let d = diagnostics_for(
+        "fn total(&m: Map<String, i64>) -> i64 { m.len() }\nfn main() { let _ = total({\"a\": 1}) }\n",
+    );
+    let found = d.iter().find_map(|diag| match &diag.error {
+        TypeError::ReferenceParameterPatternPosition {
+            binding,
+            reference_ty,
+            ..
+        } => Some((binding.clone(), reference_ty.clone())),
+        _ => None,
+    });
+    assert_eq!(
+        found,
+        Some(("m".to_string(), "&Map<String, i64>".to_string())),
+        "the report should name `m: &Map<String, i64>`: {d:?}"
+    );
+}
+
+#[test]
+fn a_mutable_reference_pattern_parameter_names_the_mutable_type_spelling() {
+    let d = diagnostics_for("fn bump(&mut n: i64) { let _ = n }\nfn main() { }\n");
+    let found = d.iter().find_map(|diag| match &diag.error {
+        TypeError::ReferenceParameterPatternPosition { reference_ty, .. } => {
+            Some(reference_ty.clone())
+        }
+        _ => None,
+    });
+    assert_eq!(
+        found,
+        Some("&mut i64".to_string()),
+        "the report should name `n: &mut i64`: {d:?}"
+    );
+}
+
+#[test]
+fn a_closure_reference_pattern_parameter_over_a_value_type_is_reported() {
+    let d = diagnostics_for("fn main() { let _ = #[1, 2].map(|&v: i64| v + 1) }\n");
+    assert!(
+        d.iter().any(|diag| matches!(
+            &diag.error,
+            TypeError::ReferenceParameterPatternPosition { .. }
+        )),
+        "a closure parameter should report GT0069 too: {d:?}"
+    );
+}
+
+#[test]
+fn a_reference_typed_parameter_keeps_its_referent() {
+    let d = diagnostics_for(
+        "fn total(m: &Map<String, i64>) -> i64 { m.len() }\nfn main() { let m = {\"a\": 1}\n let _ = total(&m) }\n",
+    );
+    assert!(d.is_empty(), "a reference parameter is the spelling: {d:?}");
+}

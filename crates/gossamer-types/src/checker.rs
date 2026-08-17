@@ -410,6 +410,15 @@ const OPTION_METHODS: &[&str] = &[
     "iter",
 ];
 
+/// Where a combinator's data argument sits in the call as written.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DataPosition {
+    /// The method receiver, written before the other arguments.
+    Receiver,
+    /// The trailing argument of a data-last free or piped call.
+    Last,
+}
+
 /// Expected type pushed down into an expression while it is checked -
 /// the "checking mode" of bidirectional typechecking. The expectation
 /// decides structural questions unification cannot settle after the
@@ -3997,6 +4006,7 @@ impl<'a> TypeChecker<'a> {
         match param {
             FnParam::Typed { pattern, ty, .. } => {
                 let param_ty = self.type_from_ast(ty);
+                self.check_param_reference_pattern(pattern, param_ty);
                 self.bind_pattern(pattern, param_ty);
             }
             FnParam::Receiver(recv) => {
@@ -6465,6 +6475,28 @@ impl<'a> TypeChecker<'a> {
     /// Names the value class when `ty` has no textual form, so a format
     /// macro over it is refused here rather than rendering a pointer whose
     /// bits differ on every run.
+    /// Types `x.to_string()` as the rendering `{}` gives the same value, for
+    /// any receiver that has one. A `String` is already its own text, and a
+    /// handle, a callable, or a concurrency type has no rendering, so both
+    /// keep whatever surface declares the name for them.
+    fn check_display_to_string(&mut self, method: &str, resolved: Ty, args: &[Expr]) -> Option<Ty> {
+        (method == "to_string"
+            && args.is_empty()
+            && !matches!(self.tcx.kind(resolved), Some(TyKind::String))
+            && self.is_displayable_value(resolved))
+        .then(|| self.tcx.string_ty())
+    }
+
+    /// Whether `ty` is a value with a rendering: what `{}` accepts, minus the
+    /// lazy cursors, which stand for a sequence rather than holding one.
+    fn is_displayable_value(&mut self, ty: Ty) -> bool {
+        let peeled = self.peel_refs(ty);
+        !matches!(
+            self.tcx.kind(peeled),
+            Some(TyKind::Iterator(_) | TyKind::Range(_))
+        ) && self.not_displayable(ty).is_none()
+    }
+
     fn not_displayable(&mut self, ty: Ty) -> Option<(String, crate::NotDisplayableClass)> {
         use crate::NotDisplayableClass as Class;
         let peeled = self.peel_refs(ty);
@@ -8077,6 +8109,9 @@ impl<'a> TypeChecker<'a> {
         if method == "clone" && args.is_empty() {
             return resolved;
         }
+        if let Some(ty) = self.check_display_to_string(method, resolved, args) {
+            return ty;
+        }
         if matches!(
             self.tcx.kind(resolved),
             Some(TyKind::Int(_) | TyKind::Var(_))
@@ -9037,6 +9072,12 @@ impl<'a> TypeChecker<'a> {
         // `SequenceResizeRequiresVec` diagnostic from the sibling check, so
         // it is left alone here. An iterator has no buffer to resize, so
         // its surface is decided by the combinator list alone.
+        // Every value `{}` renders answers `to_string`, whatever other surface
+        // its receiver declares. A lazy cursor is not a value, so it keeps the
+        // rejection its own surface gives it.
+        if method == "to_string" && args.is_empty() && self.is_displayable_value(resolved) {
+            return false;
+        }
         let (available, resize_reported_separately) = match self.tcx.kind(resolved) {
             Some(TyKind::Array { .. }) => (is_array_sequence_method(method), true),
             Some(TyKind::Slice(_)) => (is_slice_sequence_method(method), true),
@@ -9571,7 +9612,14 @@ impl<'a> TypeChecker<'a> {
                     return Some(self.pred_count_ty(arg_tys[0], elem, span));
                 }
                 let seq = self.tcx.intern(TyKind::Vec(elem));
-                return self.std_combinator_ty("iter", method, arg_tys, seq, span);
+                return self.std_combinator_ty_at(
+                    "iter",
+                    method,
+                    arg_tys,
+                    seq,
+                    DataPosition::Receiver,
+                    span,
+                );
             }
         }
         match self.tcx.kind(resolved) {
@@ -9605,7 +9653,14 @@ impl<'a> TypeChecker<'a> {
                     let elem = self.sequence_elem_ty(resolved, span)?;
                     return Some(self.pred_count_ty(arg_tys[0], elem, span));
                 }
-                return self.std_combinator_ty("iter", method, arg_tys, resolved, span);
+                return self.std_combinator_ty_at(
+                    "iter",
+                    method,
+                    arg_tys,
+                    resolved,
+                    DataPosition::Receiver,
+                    span,
+                );
             }
             // A collection already holds its values, so traversing it answers
             // eagerly with a materialised result. `iter()` is how a caller
@@ -9633,7 +9688,14 @@ impl<'a> TypeChecker<'a> {
                 1,
             )
             | (m @ ("enumerate" | "rev" | "dedup" | "flatten" | "pairwise"), 0)
-            | (m @ "fold", 2) => self.std_combinator_ty("iter", m, arg_tys, resolved, span),
+            | (m @ "fold", 2) => self.std_combinator_ty_at(
+                "iter",
+                m,
+                arg_tys,
+                resolved,
+                DataPosition::Receiver,
+                span,
+            ),
             _ => None,
         }
     }
@@ -9950,25 +10012,8 @@ impl<'a> TypeChecker<'a> {
                 }
                 let elem_resolved = self.infer.resolve(self.tcx, elem);
                 let elem_peeled = self.peel_refs(elem_resolved);
-                if !matches!(
-                    self.tcx.kind_of(elem_peeled),
-                    TyKind::String
-                        | TyKind::Int(_)
-                        | TyKind::Float(_)
-                        | TyKind::Bool
-                        | TyKind::Char
-                        | TyKind::Var(_)
-                ) {
-                    let ty = self.render_public_ty(resolved);
-                    self.emit(
-                        TypeError::UnresolvedMethod {
-                            ty,
-                            name: "join".to_string(),
-                            available: Vec::new(),
-                            field_of_same_name: false,
-                        },
-                        span,
-                    );
+                if let Some((ty, class)) = self.not_displayable(elem_peeled) {
+                    self.emit(TypeError::ValueNotDisplayable { ty, class }, span);
                     return Some(self.tcx.error_ty());
                 }
                 Some(self.tcx.string_ty())
@@ -10292,8 +10337,10 @@ impl<'a> TypeChecker<'a> {
             return Some(self.tcx.error_ty());
         }
         // `into` / `try_into` are conversions rather than surface the
-        // receiver has to declare, and are typed further down.
-        if matches!(method, "into" | "try_into") && args.is_empty() {
+        // receiver has to declare, and are typed further down. An opaque
+        // alias formats as its representation does, so `to_string` is its own
+        // Display surface rather than a representation method.
+        if matches!(method, "into" | "try_into" | "to_string") && args.is_empty() {
             return None;
         }
         self.reject_nominal_repr_method(receiver_ty, method, args, span)
@@ -11048,6 +11095,25 @@ impl<'a> TypeChecker<'a> {
         data_ty: Ty,
         span: Span,
     ) -> Option<Ty> {
+        self.std_combinator_ty_at(module, name, lead_tys, data_ty, DataPosition::Last, span)
+    }
+
+    /// [`Self::std_combinator_ty`] with the data argument's position in the
+    /// call as written. Only a combinator that pairs its two inputs - `zip` -
+    /// reads differently between the two spellings.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one row per std combinator; splitting the table would obscure the signature catalog"
+    )]
+    fn std_combinator_ty_at(
+        &mut self,
+        module: &str,
+        name: &str,
+        lead_tys: &[Ty],
+        data_ty: Ty,
+        data_position: DataPosition,
+        span: Span,
+    ) -> Option<Ty> {
         if Self::std_combinator_arity(module, name)? != lead_tys.len() + 1 {
             return None;
         }
@@ -11166,7 +11232,14 @@ impl<'a> TypeChecker<'a> {
                             Some(other) => other,
                             None => self.fresh(),
                         };
-                        let pair = self.tcx.intern(TyKind::Tuple(vec![payload, other]));
+                        let pair = match data_position {
+                            DataPosition::Receiver => {
+                                self.tcx.intern(TyKind::Tuple(vec![payload, other]))
+                            }
+                            DataPosition::Last => {
+                                self.tcx.intern(TyKind::Tuple(vec![other, payload]))
+                            }
+                        };
                         self.option_adt_ty(pair)
                     }
                     "flatten" => {
@@ -11270,7 +11343,15 @@ impl<'a> TypeChecker<'a> {
                         let other = self
                             .sequence_elem_ty(lead_tys[0], span)
                             .unwrap_or_else(|| self.fresh());
-                        let pair = self.tcx.intern(TyKind::Tuple(vec![elem, other]));
+                        // The pair carries the two sequences in the order the
+                        // call writes them, which a receiver leads and a
+                        // data-last free or piped call trails.
+                        let pair = match data_position {
+                            DataPosition::Receiver => {
+                                self.tcx.intern(TyKind::Tuple(vec![elem, other]))
+                            }
+                            DataPosition::Last => self.tcx.intern(TyKind::Tuple(vec![other, elem])),
+                        };
                         self.iter_adapter_result_ty(pair, lazy_result)
                     }
                     "flatten" => {
@@ -11609,7 +11690,14 @@ impl<'a> TypeChecker<'a> {
                 _ => self.check_expr(arg),
             })
             .collect();
-        self.std_combinator_ty(module, method, &lead_tys, resolved, span)
+        self.std_combinator_ty_at(
+            module,
+            method,
+            &lead_tys,
+            resolved,
+            DataPosition::Receiver,
+            span,
+        )
     }
 
     fn check_unary(
@@ -13290,21 +13378,77 @@ impl<'a> TypeChecker<'a> {
         let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) else {
             return;
         };
-        let inner = self.infer.resolve(self.tcx, *inner);
+        let inner = *inner;
+        self.check_reference_pattern_referent(pattern, inner);
+    }
+
+    /// A reference pattern copies its referent out of the reference, which
+    /// only a scalar representation supports.
+    fn check_reference_pattern_referent(&mut self, pattern: &Pattern, referent: Ty) {
+        let referent = self.infer.resolve(self.tcx, referent);
         if !matches!(
-            self.tcx.kind_of(inner),
+            self.tcx.kind_of(referent),
             TyKind::Bool
                 | TyKind::Char
                 | TyKind::Int(_)
                 | TyKind::Float(_)
                 | TyKind::Unit
                 | TyKind::Never
+                | TyKind::Var(_)
+                | TyKind::Error
         ) {
-            let ty = self.render_public_ty(inner);
+            let ty = self.render_public_ty(referent);
             self.emit(
                 TypeError::ReferencePatternAggregateUnsupported { ty },
                 pattern.span,
             );
+        }
+    }
+
+    /// A parameter's reference is declared in its type. A `&` pattern over a
+    /// declared type that is not a matching reference has no referent to
+    /// bind, so name the `name: &Ty` spelling the parameter meant.
+    fn check_param_reference_pattern(&mut self, pattern: &Pattern, param_ty: Ty) {
+        let PatternKind::Ref { mutability, inner } = &pattern.kind else {
+            return;
+        };
+        let expected = if mutability.is_mutable() {
+            Mutbl::Mut
+        } else {
+            Mutbl::Not
+        };
+        let resolved = self.infer.resolve(self.tcx, param_ty);
+        match self.tcx.kind(resolved).cloned() {
+            Some(TyKind::Ref {
+                mutability: actual,
+                inner: referent,
+            }) if actual == expected => {
+                self.check_reference_pattern_referent(pattern, referent);
+            }
+            Some(TyKind::Var(_) | TyKind::Error) => {}
+            _ => {
+                let ty = self.render_public_ty(resolved);
+                let (spelling, reference_ty) = if mutability.is_mutable() {
+                    ("&mut", format!("&mut {ty}"))
+                } else {
+                    ("&", format!("&{ty}"))
+                };
+                let mut names = Vec::new();
+                pattern_binding_names(inner, &mut names);
+                let binding = names
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "value".to_string());
+                self.emit(
+                    TypeError::ReferenceParameterPatternPosition {
+                        pattern: spelling,
+                        binding,
+                        reference_ty,
+                        ty,
+                    },
+                    pattern.span,
+                );
+            }
         }
     }
 
@@ -13389,6 +13533,7 @@ impl<'a> TypeChecker<'a> {
                 if let Some(want) = expected_inputs.as_ref().map(|inputs| inputs[i]) {
                     self.unify(ty, want, body.span);
                 }
+                self.check_param_reference_pattern(&param.pattern, ty);
                 self.bind_pattern(&param.pattern, ty);
                 self.register_reference_parameter_origins(&param.pattern);
                 ty
@@ -15185,10 +15330,25 @@ impl<'a> TypeChecker<'a> {
                     self.bind_local_mutability(&name, mutable);
                 }
             }
-            PatternKind::Ref { inner, .. } => {
+            PatternKind::Ref { inner, mutability } => {
                 let resolved = self.infer.resolve(self.tcx, ty);
                 let inner_ty = match self.tcx.kind(resolved).cloned() {
                     Some(TyKind::Ref { inner, .. }) => self.infer.resolve(self.tcx, inner),
+                    // The pattern is what says the value is a reference, so
+                    // an as-yet-unsolved type takes that shape from it.
+                    Some(TyKind::Var(_)) => {
+                        let referent = self.fresh();
+                        let ref_ty = self.tcx.intern(TyKind::Ref {
+                            mutability: if mutability.is_mutable() {
+                                Mutbl::Mut
+                            } else {
+                                Mutbl::Not
+                            },
+                            inner: referent,
+                        });
+                        self.unify(resolved, ref_ty, pattern.span);
+                        referent
+                    }
                     _ => self.tcx.error_ty(),
                 };
                 self.bind_pattern(inner, inner_ty);

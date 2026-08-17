@@ -3386,7 +3386,7 @@ impl<'a> Builder<'a> {
                     // falls to the single-slot i64 shape and either the
                     // tuple destructure has no slot address (panic) or
                     // `w[0]` indexes an i64 as if it were a vec.
-                    if let HirExprKind::Call { callee, .. } = &for_loop.iter_expr.kind {
+                    if let HirExprKind::Call { callee, args } = &for_loop.iter_expr.kind {
                         if let HirExprKind::Path { segments, .. } = &callee.kind {
                             let joined = segments
                                 .iter()
@@ -3397,12 +3397,23 @@ impl<'a> Builder<'a> {
                             let pair_ty = self
                                 .tcx
                                 .intern(gossamer_types::TyKind::Tuple(vec![i64_ty, i64_ty]));
+                            // `zip` pairs each side's own element, so the
+                            // binding's halves carry the sequences' types
+                            // rather than the word slot they share.
+                            let zip_pair_ty = match args.as_slice() {
+                                [a, b] => {
+                                    let (a_elem, _) = self.iter_elem_abi(a.ty);
+                                    let (b_elem, _) = self.iter_elem_abi(b.ty);
+                                    self.tcx
+                                        .intern(gossamer_types::TyKind::Tuple(vec![a_elem, b_elem]))
+                                }
+                                _ => pair_ty,
+                            };
                             let vec_i64 = self.tcx.intern(gossamer_types::TyKind::Vec(i64_ty));
                             for_vec_elem = match joined.as_str() {
+                                "iter::zip" | "std::iter::zip" => Some(zip_pair_ty),
                                 "iter::enumerate"
                                 | "std::iter::enumerate"
-                                | "iter::zip"
-                                | "std::iter::zip"
                                 | "iter::pairwise"
                                 | "std::iter::pairwise" => Some(pair_ty),
                                 "iter::windows" | "std::iter::windows" | "iter::chunks"

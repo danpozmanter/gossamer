@@ -1,0 +1,80 @@
+// Every value `{}` renders answers `to_string`, and `join` renders each
+// element the same way, so the three tiers agree on the text either builds.
+struct Point { x: i64, y: i64 }
+struct Cell { w: i64 }
+enum Shape { Circle(f64), Square }
+
+impl Shape {
+    fn label(&self) -> String {
+        match self {
+            Shape::Circle(_) => "circle"
+            Shape::Square => "square"
+        }
+    }
+}
+
+fn scalar_text() {
+    println!("{}", 7.to_string())
+    println!("{}", 1.5.to_string())
+    println!("{}", true.to_string())
+    println!("{}", 'g'.to_string())
+    println!("{}", (1, "a").to_string())
+}
+
+fn collection_text() {
+    println!("{}", #[1, 2].to_string())
+    println!("{}", { "a": 1 }.to_string())
+    println!("{}", #{ 1, 2 }.to_string())
+    println!("{}", Some(1).to_string())
+    println!("{}", #[Point { x: 1, y: 2 }].to_string())
+}
+
+fn aggregate_text() {
+    println!("{}", Point { x: 1, y: 2 }.to_string())
+    println!("{}", Cell { w: 9 }.to_string())
+    println!("{}", Shape::Square.to_string())
+    println!("{}", Shape::Circle(1.5).to_string())
+}
+
+fn scalar_joins() {
+    println!("{}", #[1, 2, 3].join(", "))
+    println!("{}", #["a", "b"].join("-"))
+    println!("{}", #[1.5, 2.5].join(" "))
+    println!("{}", #[true, false].join("|"))
+    println!("{}", #['x', 'y'].join(""))
+    println!("{}", [1, 2, 3].join("+"))
+}
+
+fn aggregate_joins() {
+    println!("{}", #[(1, "a"), (2, "b")].join("; "))
+    println!("{}", #[Point { x: 1, y: 2 }, Point { x: 3, y: 4 }].join(" / "))
+    println!("{}", #[Cell { w: 1 }, Cell { w: 2 }].join(" "))
+    println!("{}", #[Shape::Square, Shape::Circle(2.5)].join(", "))
+    println!("{}", #[Some(1), None].join(", "))
+    println!("{}", #[#[1, 2], #[3]].join(" "))
+}
+
+// A shared method on an enum binding reads the value it decodes.
+fn enum_receiver() {
+    let shape = Shape::Circle(0.5)
+    println!("{}", shape.label())
+    println!("{}", shape.fmt())
+}
+
+// A one-field struct element is read through its storage, so a callback
+// projects its field rather than the slot's bits.
+fn one_field_struct_elements() {
+    let cells = #[Cell { w: 4 }, Cell { w: 5 }]
+    println!("{:?}", cells.map(|c| c.w + 1))
+    println!("{:?}", cells.map(|c| Cell { w: c.w * 2 }))
+}
+
+fn main() {
+    scalar_text()
+    collection_text()
+    aggregate_text()
+    scalar_joins()
+    aggregate_joins()
+    enum_receiver()
+    one_field_struct_elements()
+}

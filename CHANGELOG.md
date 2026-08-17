@@ -1,5 +1,69 @@
 # Changelog
 
+## 0.51.4 - Reference parameters, Display, and exact REPL lookup
+
+- Render any value `{}` renders from `x.to_string()`: a struct, an enum, a
+  `Vec`, a `Map`, a `Set`, an `Option`, a `Result`, and every nesting of them,
+  where only a scalar and a tuple answered it.
+- Join a sequence of any element `{}` renders with `xs.join(sep)`, which
+  reported GT0002 for everything but a scalar or a `String`.
+- Report `to_string` and `join` on a value with no rendering - a handle, a
+  callable, a channel, a join handle - as GT0062, naming what it is.
+- Pair `iter::zip(a, b)` as the call writes it: the result's element read
+  `(b, a)` while the value held `(a, b)`, which iterating the result faulted
+  on for any element type wider than the slot they share.
+- Answer `xs.zip(ys)` and `xs.iter().zip(ys.iter())` in a compiled build,
+  which failed to link on an undefined `zip`, and `a.zip(b)` on two `Option`
+  values, which failed the same way.
+- Carry each side's own element type through `zip`, where the pairs were typed
+  `(i64, i64)` whatever the sequences held, so a `String` half rendered as its
+  address.
+- Read a one-field struct's field inside a combinator callback
+  (`xs.map(|c| c.w)`), which faulted in a compiled build: an element's storage
+  was classified by width alone, so a struct that fits one slot was handed to
+  the callback as that slot's bits rather than as its address.
+- Answer a struct, tuple, or array element from a combinator callback
+  (`xs.map(|n| Col { w: n })`) in a compiled build, which stored the callback's
+  answer as a word and rendered each element as an address.
+- Read a sequence's aggregate element from the element's own storage wherever
+  a combinator or a rendering reaches one, which a one-slot struct answered as
+  the reading pointer's bits in a JIT-compiled body.
+- Reach a `&self` method on an enum binding in a compiled build, which handed
+  the callee the address of the place holding the enum rather than the value it
+  decodes and panicked on a non-exhaustive match; `e.fmt()`, `e.tag()`, and
+  every other shared-receiver method on an enum answered that way.
+- Capture a binding that shares a global helper's name - `format`, `println`,
+  `panic`, and the rest - in a closure, which reached the helper instead of the
+  binding and failed at run time with GX0001.
+- Fail a `#[test]` declared `-> Result<(), E>` that returns `Err`, which was
+  reported as a pass.
+- Report a parameter that writes `&` in its pattern rather than its type -
+  `fn f(&m: Map<String, i64>)` - as GT0069, naming the `m: &Map<String, i64>`
+  spelling it meant; the binding was left untyped, so a method call on it
+  answered a value read out of the wrong shape.
+- Report the same pattern on a closure parameter, which was accepted in
+  silence.
+- Take a reference pattern's referent from the value it destructures when that
+  value's type is not yet solved, rather than leaving the binding untyped.
+- Answer `%info` / `%i` and `%explain` / `%e` for the name given, matched
+  exactly: `%i Set` reports the set type and its surface, and `%i Set::new`
+  reports that one associated function, where each previously answered every
+  catalog entry containing the text.
+- Widen either command's name with `*`: a prefix (`Set*`), a suffix (`*Set`,
+  which also reaches `BTreeSet` and `flag::Set`), or a substring (`*Set*`).
+- Match a name the way source spells it: a type, a macro, a prelude builtin,
+  and a method by its bare name, and a module item through the module that
+  declares it (`fs::read_to_string`).
+- Answer `%info` for a standard-library namespace (`%i archive`) without
+  `--details`, which listed nothing.
+- Clear every `.gos-cache/` at or below the working directory with `gos cache
+  --clear`, which reached only the directory it ran in, so a checkout's
+  examples and integration tests kept theirs.
+- Remove a project's link stamps with the rest of its cache; they belonged to
+  no cache class, so no command reclaimed them.
+- Stop the empty-directory sweep at the cache root it was given, which climbed
+  through every empty ancestor above it.
+
 ## 0.51.3 - Unordered sets and slot-container element types
 
 - Traverse a `Set` in no defined order: it answers membership, cardinality,

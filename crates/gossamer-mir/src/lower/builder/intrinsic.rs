@@ -1642,17 +1642,26 @@ impl<'a> Builder<'a> {
                 }
                 let a = self.lower_iter_vec_arg(&args[0])?;
                 let b = self.lower_iter_vec_arg(&args[1])?;
-                let pair = self.tcx.intern(TyKind::Tuple(vec![i64_ty, i64_ty]));
-                let dest_ty = self.tcx.intern(TyKind::Vec(pair));
-                Some(self.emit_combinator_call(
-                    "gos_rt_iter_zip_i64",
-                    vec![
-                        Operand::Copy(Place::local(a)),
-                        Operand::Copy(Place::local(b)),
-                    ],
-                    dest_ty,
-                    span,
-                ))
+                let (a_elem, _) = self.iter_elem_abi(args[0].ty);
+                let (b_elem, _) = self.iter_elem_abi(args[1].ty);
+                // The word-slot shim copies each side's slot verbatim, which
+                // is the element itself only for an integer-shaped scalar; a
+                // float, a String, or an aggregate carries a bit pattern or a
+                // managed address the pair has to take ownership of.
+                if self.zip_slot_is_the_element(a_elem) && self.zip_slot_is_the_element(b_elem) {
+                    let pair = self.tcx.intern(TyKind::Tuple(vec![a_elem, b_elem]));
+                    let dest_ty = self.tcx.intern(TyKind::Vec(pair));
+                    return Some(self.emit_combinator_call(
+                        "gos_rt_iter_zip_i64",
+                        vec![
+                            Operand::Copy(Place::local(a)),
+                            Operand::Copy(Place::local(b)),
+                        ],
+                        dest_ty,
+                        span,
+                    ));
+                }
+                Some(self.lower_zip_general(a, b, a_elem, b_elem, span))
             }
             ("iter::pairwise", 1) => {
                 let vec_local = self.lower_iter_vec_arg(&args[0])?;
@@ -1814,6 +1823,11 @@ impl<'a> Builder<'a> {
                 if declares_width {
                     let width = i128::from(self.elem_bytes_of(out_ty));
                     call_args.push(Operand::Const(ConstValue::Int(width)));
+                    // A mapped struct, tuple, or array is answered as the
+                    // address of its slots whatever its width, so the shim
+                    // copies the block rather than storing the word.
+                    let by_block = i128::from(self.elem_is_slot_addressed(out_ty));
+                    call_args.push(Operand::Const(ConstValue::Int(by_block)));
                 }
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
@@ -3262,10 +3276,29 @@ impl<'a> Builder<'a> {
                 ElemAbi::Float,
             );
         }
-        if self.elem_bytes_of(elem) > 8 {
+        // A struct, tuple, or array element is inline slot data the body
+        // reaches through its address, whatever its width; a one-field struct
+        // fits a slot but its field is still read at an offset, not from the
+        // slot's own bits.
+        if self.elem_bytes_of(elem) > 8 || self.elem_is_slot_addressed(elem) {
             return (elem, ElemAbi::Ptr);
         }
         (elem, ElemAbi::Word)
+    }
+
+    /// Whether an element's storage is read through its address rather than
+    /// as the value its slot spells. An enum stays a word: its value is the
+    /// inline tag or the RC node pointer the variant decoding reads directly.
+    pub(crate) fn elem_is_slot_addressed(&mut self, elem: Ty) -> bool {
+        use gossamer_types::TyKind;
+        match self.tcx.kind_of(elem) {
+            TyKind::Tuple(_) | TyKind::Array { .. } => true,
+            TyKind::Adt { def, .. } => {
+                let def = *def;
+                self.tcx.enum_variant_tys(def).is_none() && self.tcx.struct_field_tys(def).is_some()
+            }
+            _ => false,
+        }
     }
 
     /// ABI class of a combinator's result element (`map`'s output, `fold`'s
@@ -3465,6 +3498,247 @@ impl<'a> Builder<'a> {
     /// wider element keeps only its first field. Walking the source and
     /// building each `(index, element)` pair here gives every pair the
     /// element's own width.
+    /// Whether an element's 8-byte slot is the element's own value, which is
+    /// what lets the word-slot combinator shims copy it verbatim.
+    fn zip_slot_is_the_element(&mut self, elem: Ty) -> bool {
+        use gossamer_types::TyKind;
+        matches!(
+            self.tcx.kind_of(elem),
+            TyKind::Int(_) | TyKind::Bool | TyKind::Char
+        )
+    }
+
+    /// `iter::zip(a, b)` for any pair of element types: reads element `i` from
+    /// each side through the ordinary element path, so each pair owns its
+    /// halves and carries their declared types.
+    fn lower_zip_general(
+        &mut self,
+        a: Local,
+        b: Local,
+        a_elem: Ty,
+        b_elem: Ty,
+        span: Span,
+    ) -> Local {
+        use gossamer_types::TyKind;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let bool_ty = self.tcx.bool_ty();
+        let pair_ty = self.tcx.intern(TyKind::Tuple(vec![a_elem, b_elem]));
+        let out_ty = self.tcx.intern(TyKind::Vec(pair_ty));
+        let _ = self.ensure_aggr_copy_meta(pair_ty);
+        let elem_bytes = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(elem_bytes),
+            Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(
+                self.type_slot_bytes(pair_ty).max(1),
+            )))),
+            span,
+        );
+        let a_len = self.emit_combinator_call(
+            "gos_rt_vec_len",
+            vec![Operand::Copy(Place::local(a))],
+            i64_ty,
+            span,
+        );
+        let b_len = self.emit_combinator_call(
+            "gos_rt_vec_len",
+            vec![Operand::Copy(Place::local(b))],
+            i64_ty,
+            span,
+        );
+        // The pairing stops at the shorter input.
+        let shorter = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(shorter),
+            Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(a_len)),
+                rhs: Operand::Copy(Place::local(b_len)),
+            },
+            span,
+        );
+        let len = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(len),
+            Rvalue::Use(Operand::Copy(Place::local(b_len))),
+            span,
+        );
+        let take_a = self.new_block(span);
+        let after_len = self.new_block(span);
+        self.terminate(Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(shorter)),
+            arms: vec![(0, after_len)],
+            default: take_a,
+        });
+        self.set_current(take_a);
+        self.emit_assign(
+            Place::local(len),
+            Rvalue::Use(Operand::Copy(Place::local(a_len))),
+            span,
+        );
+        self.terminate(Terminator::Goto { target: after_len });
+        self.set_current(after_len);
+
+        let out = self.emit_combinator_call(
+            "gos_rt_vec_with_capacity",
+            vec![
+                Operand::Copy(Place::local(elem_bytes)),
+                Operand::Copy(Place::local(len)),
+            ],
+            out_ty,
+            span,
+        );
+        let index = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(index),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+        let header = self.new_block(span);
+        let body = self.new_block(span);
+        let exit = self.new_block(span);
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(header);
+        let more = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(more),
+            Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(index)),
+                rhs: Operand::Copy(Place::local(len)),
+            },
+            span,
+        );
+        self.terminate(Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(more)),
+            arms: vec![(0, exit)],
+            default: body,
+        });
+
+        self.set_current(body);
+        let left = self.zip_read_element(a, index, a_elem, span);
+        let right = self.zip_read_element(b, index, b_elem, span);
+        let pair = self.fresh(pair_ty);
+        self.emit_assign(
+            Place::local(pair),
+            Rvalue::Aggregate {
+                kind: crate::ir::AggregateKind::Tuple,
+                operands: vec![
+                    Operand::Copy(Place::local(left)),
+                    Operand::Copy(Place::local(right)),
+                ],
+            },
+            span,
+        );
+        let unit_ty = self.tcx.unit();
+        let _ = self.emit_combinator_call(
+            "gos_rt_vec_push",
+            vec![
+                Operand::Copy(Place::local(out)),
+                Operand::Copy(Place::local(pair)),
+            ],
+            unit_ty,
+            span,
+        );
+        let one = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(one),
+            Rvalue::Use(Operand::Const(ConstValue::Int(1))),
+            span,
+        );
+        let next_index = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(next_index),
+            Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(index)),
+                rhs: Operand::Copy(Place::local(one)),
+            },
+            span,
+        );
+        self.emit_assign(
+            Place::local(index),
+            Rvalue::Use(Operand::Copy(Place::local(next_index))),
+            span,
+        );
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(exit);
+        out
+    }
+
+    /// Element `index` of `source`, read through its slot address so the copy
+    /// carries the element's declared type and ownership.
+    pub(crate) fn element_slot_ptr(
+        &mut self,
+        source: Local,
+        index: Local,
+        elem_ty: Ty,
+        span: Span,
+    ) -> Local {
+        use gossamer_types::TyKind;
+        let ref_ty = self.tcx.intern(TyKind::Ref {
+            mutability: gossamer_types::Mutbl::Not,
+            inner: elem_ty,
+        });
+        self.emit_combinator_call(
+            "gos_rt_vec_get_ptr",
+            vec![
+                Operand::Copy(Place::local(source)),
+                Operand::Copy(Place::local(index)),
+            ],
+            ref_ty,
+            span,
+        )
+    }
+
+    /// Element `index` of `source` copied out of the sequence's own storage,
+    /// the way `let x = xs[i]` reads one. An aggregate element is inline slot
+    /// data, so the indexed place is what carries its width; reading it
+    /// through a raw slot pointer left a one-slot struct as the pointer's own
+    /// bits on the JIT.
+    pub(crate) fn read_element_place(
+        &mut self,
+        source: Local,
+        index: Local,
+        elem_ty: Ty,
+        span: Span,
+    ) -> Local {
+        let mut place = Place::local(source);
+        place.projection.push(crate::ir::Projection::Index(index));
+        let element = self.fresh(elem_ty);
+        self.emit_assign(
+            Place::local(element),
+            Rvalue::Use(Operand::Copy(place)),
+            span,
+        );
+        element
+    }
+
+    pub(crate) fn zip_read_element(
+        &mut self,
+        source: Local,
+        index: Local,
+        elem_ty: Ty,
+        span: Span,
+    ) -> Local {
+        // An aggregate is read from the indexed place, which carries its
+        // width; everything else is one slot the pointer path reads directly.
+        if self.elem_is_slot_addressed(elem_ty) {
+            return self.read_element_place(source, index, elem_ty, span);
+        }
+        let slot = self.element_slot_ptr(source, index, elem_ty, span);
+        let mut slot_place = Place::local(slot);
+        slot_place.projection.push(crate::ir::Projection::Deref);
+        let element = self.fresh(elem_ty);
+        self.emit_assign(
+            Place::local(element),
+            Rvalue::Use(Operand::Copy(slot_place)),
+            span,
+        );
+        element
+    }
+
     fn lower_enumerate_wide_elem(&mut self, source: Local, elem_ty: Ty, span: Span) -> Local {
         use gossamer_types::TyKind;
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);

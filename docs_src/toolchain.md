@@ -80,15 +80,21 @@ It starts with `gos <version> REPL [<architecture>-<os>]`. The REPL supports:
   expression sees previously-bound locals in scope. `%bindings`
   lists the active set.
 - `%help` lists REPL commands.
-- `%info [pattern]` (`%i`) searches the public language and standard-library
-  catalog and the current session. A type reports its fields, the traits
-  implemented for it, and its methods, each tagged with the trait it came from
-  or `[inherent]`; a trait reports its methods and the types implementing it. A
-  session `impl` on a builtin type adds to that type's catalog entry rather
-  than replacing it. `%explain NAME` (`%e`) inspects a persistent binding,
-  showing the same fields and traits with methods in receiver form, and filters
-  the catalog methods by the binding's type and mutability. Add `--details` for
-  descriptions and examples.
+- `%info [name]` (`%i`) answers the public language and standard-library
+  catalog and the current session for one name. The name is matched exactly, so
+  `%i Set` reports the set type and `%i Set::new` reports that one associated
+  function; a `*` widens it to a prefix (`Set*`), a suffix (`*Set`, which also
+  reaches `BTreeSet` and `flag::Set`), or a substring (`*Set*`). A name is
+  matched the way source spells it: a type, a macro, a prelude builtin, and a
+  method by its bare name, a module item through the module that declares it
+  (`fs::read_to_string`). A type reports its fields, the traits implemented for
+  it, and its methods, each tagged with the trait it came from or `[inherent]`;
+  a trait reports its methods and the types implementing it. A session `impl`
+  on a builtin type adds to that type's catalog entry rather than replacing it.
+  `%explain NAME` (`%e`) inspects a persistent binding under the same matching
+  rules, showing the same fields and traits with methods in receiver form, and
+  filters the catalog methods by the binding's type and mutability. Add
+  `--details` for descriptions and examples.
 - `%bindings [pattern]` (`%b`), `%declarations [pattern]` (`%d`), and
   `%history [regex]` (`%h`) show persistent bindings, declarations, and input
   history. `%bindings` filters binding names, and `%declarations` filters

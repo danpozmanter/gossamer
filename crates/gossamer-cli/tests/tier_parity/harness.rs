@@ -173,6 +173,12 @@ const SPECS: &[Spec] = &[
     // bytecode.
     spec("feature-testing-examples/jit_aggregate_key_map_promotion.gos"),
     spec("feature-testing-examples/string_append_self_consuming.gos"),
+    // `to_string` and `join` render through the same formatter `{}` uses, for
+    // every element shape either reaches.
+    spec("feature-testing-examples/display_rendering.gos"),
+    // `zip` pairs its sequences in the order the call writes them, and each
+    // half keeps its own element type.
+    spec("feature-testing-examples/zip_pair_elements.gos"),
     // A `Vec<String>` membership result computed beside a range-`for` in
     // the same body survives the loop. The JIT is the tier at risk: the
     // counted loop and the earlier call compete for the same frame slots.

@@ -1031,8 +1031,14 @@ fn run_tests_filtered_inner(
         };
         let tally = gossamer_interp::take_test_tally();
         let panicked = outcome.as_ref().err().map(ToString::to_string);
+        // A test declared `-> Result<(), E>` reports its failure by returning
+        // `Err`, which reaches here as an ordinary value.
+        let returned_err = outcome
+            .as_ref()
+            .ok()
+            .and_then(gossamer_interp::err_payload_message);
         let assertion_failure = tally.failures > 0;
-        let passed = panicked.is_none() && !assertion_failure;
+        let passed = panicked.is_none() && returned_err.is_none() && !assertion_failure;
         let status = if passed {
             TestStatus::Passed
         } else if panicked.is_some() {
@@ -1045,6 +1051,12 @@ fn run_tests_filtered_inner(
             let mut reason = String::new();
             if let Some(err) = panicked.as_deref() {
                 reason.push_str(&format!("panic: {err}"));
+            }
+            if let Some(err) = returned_err.as_deref() {
+                if !reason.is_empty() {
+                    reason.push_str(" · ");
+                }
+                reason.push_str(&format!("returned Err: {err}"));
             }
             if assertion_failure {
                 if !reason.is_empty() {

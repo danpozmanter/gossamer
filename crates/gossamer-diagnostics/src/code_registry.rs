@@ -1073,6 +1073,17 @@ pub const REGISTRY: &[(&str, &str)] = &[
             comparison orders.",
     ),
     (
+        "GT0069",
+        "A parameter wrote `&` in its pattern rather than in its type.\n\
+            `fn f(&m: Map<String, i64>)` declares a parameter that takes a\n\
+            map by value and then destructures it as a reference, where\n\
+            `fn f(m: &Map<String, i64>)` was meant. A parameter's type is\n\
+            what declares whether the call passes a reference; `&` in the\n\
+            pattern destructures a reference the type already names, so over\n\
+            a non-reference type it has no referent to bind. Move the `&`\n\
+            into the type, or drop it to take the value.",
+    ),
+    (
         "GX0001",
         "An operation received a value of an incompatible type. The\n\
                      diagnostic names the type that was required and the type\n\

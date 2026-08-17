@@ -206,6 +206,20 @@ pub enum TypeError {
         /// Source spelling of the reference pattern.
         pattern: &'static str,
     },
+    /// A parameter wrote `&` in its pattern rather than in its type.
+    #[error(
+        "parameter pattern `{pattern}` requires an `{pattern}` type, but `{binding}` is declared `{ty}`"
+    )]
+    ReferenceParameterPatternPosition {
+        /// Source spelling of the reference pattern.
+        pattern: &'static str,
+        /// Name the pattern binds.
+        binding: String,
+        /// Rendered declared parameter type.
+        ty: String,
+        /// Declared type with the pattern's reference applied.
+        reference_ty: String,
+    },
     /// A bare `[T]` slice was used where a sized owned value is required.
     #[error("slice type `[{element}]` is unsized and cannot be stored by value")]
     UnsizedSliceValue {
@@ -811,6 +825,9 @@ impl TypeError {
             Self::ReferencePatternRequiresReference { .. } => {
                 "reference-pattern-requires-reference"
             }
+            Self::ReferenceParameterPatternPosition { .. } => {
+                "reference-parameter-pattern-position"
+            }
             Self::UnsizedSliceValue { .. } => "unsized-slice-value",
             Self::SequenceResizeRequiresVec { .. } => "sequence-resize-requires-vec",
             Self::ArrayLengthNotConstant => "array-length-not-constant",
@@ -900,6 +917,7 @@ impl TypeError {
             Self::NonExhaustiveMatch { .. } => "GT0004",
             Self::CannotAssignToLiteral | Self::LetPatternMayNotMatch => "GT0047",
             Self::ReferencePatternRequiresReference { .. } => "GT0048",
+            Self::ReferenceParameterPatternPosition { .. } => "GT0069",
             Self::UnsizedSliceValue { .. } => "GT0049",
             Self::SequenceResizeRequiresVec { .. } => "GT0050",
             Self::ArrayLengthNotConstant => "GT0051",
@@ -1200,6 +1218,20 @@ impl TypeDiagnostic {
                     ))
                     .with_note(format!(
                         "`let {pattern} name = value` can only destructure an existing {pattern} reference"
+                    ));
+            }
+            TypeError::ReferenceParameterPatternPosition {
+                pattern,
+                binding,
+                reference_ty,
+                ..
+            } => {
+                out = out
+                    .with_help(format!(
+                        "write `{binding}: {reference_ty}` to take a reference, or remove `{pattern}` to take the value"
+                    ))
+                    .with_note(format!(
+                        "a parameter's reference is declared in its type; `{pattern}` in the pattern destructures a reference the type already names"
                     ));
             }
             TypeError::UnsizedSliceValue { .. } => {

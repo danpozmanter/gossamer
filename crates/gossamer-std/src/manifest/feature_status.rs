@@ -481,6 +481,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/string_method_surface.gos",
             "feature-testing-examples/temporary_wrap.gos",
             "feature-testing-examples/winb_coll_iter.gos",
+            "feature-testing-examples/zip_pair_elements.gos",
         ],
     ),
     ("std::jwt", &["feature-testing-examples/jwt_roundtrip.gos"]),

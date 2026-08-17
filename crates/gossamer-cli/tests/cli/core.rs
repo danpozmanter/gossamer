@@ -484,6 +484,63 @@ fn cache_clear_defaults_to_the_project_cache() {
 }
 
 #[test]
+fn cache_clear_reaches_every_project_cache_below_the_working_directory() {
+    // A checkout builds its examples and integration tests from their own
+    // directories, so each anchors a `.gos-cache/` of its own, and a link
+    // stamp is cache the same way an object file is.
+    let root = env::temp_dir().join(format!(
+        "gossamer-cache-nested-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let project = root.join("project");
+    let home = root.join("home");
+    let caches = [
+        project.join(".gos-cache"),
+        project.join("examples").join("crud").join(".gos-cache"),
+        project.join("tests").join("integration").join(".gos-cache"),
+    ];
+    for cache in &caches {
+        for class in ["frontend", "ir-cache", "link-stamps"] {
+            let dir = cache.join(class);
+            std::fs::create_dir_all(&dir).expect("create cache class");
+            std::fs::write(dir.join("entry"), b"cache").expect("write cache entry");
+        }
+    }
+    let artifact = project.join("target").join("release");
+    std::fs::create_dir_all(&artifact).expect("create target");
+    std::fs::write(artifact.join("app"), b"binary").expect("write artifact");
+
+    let out = Command::new(gos_bin())
+        .args(["cache", "--clear"])
+        .current_dir(&project)
+        .env("HOME", &home)
+        .env("LOCALAPPDATA", root.join("localappdata"))
+        .env_remove("GOSSAMER_CACHE_DIR")
+        .env_remove("XDG_CACHE_HOME")
+        .output()
+        .expect("spawn cache --clear");
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    for cache in &caches {
+        assert!(!cache.exists(), "cache remains: {}", cache.display());
+    }
+    assert!(
+        artifact.join("app").exists(),
+        "cache clear removed a build artifact"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn parse_subcommand_round_trips_hello_world() {
     let fixture = write_fixture("parse", "fn main() { println(\"hello\") }\n");
     let out = Command::new(gos_bin())

@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0069]: A parameter wrote `&` in its pattern rather than in its type. - here
+--- framed ---
+error[GT0069]: A parameter wrote `&` in its pattern rather than in its type.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

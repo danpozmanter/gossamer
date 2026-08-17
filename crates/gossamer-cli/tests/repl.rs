@@ -1031,7 +1031,7 @@ fn iterator_parameter_count_method_does_not_drain_range_binding() {
 
 #[test]
 fn repl_info_default_listing_has_no_blank_lines_between_entries() {
-    let out = run_repl("%i starts_with\n");
+    let out = run_repl("%i *starts_with\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout.contains(
@@ -2762,7 +2762,7 @@ fn repl_meta_info_finds_stdlib_symbol() {
 
 #[test]
 fn repl_meta_info_shows_complete_signatures_for_string_methods() {
-    let out = run_repl("%i starts_with -d\n");
+    let out = run_repl("%i *starts_with -d\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout
@@ -2788,7 +2788,7 @@ fn repl_meta_info_shows_complete_signatures_for_string_methods() {
 
 #[test]
 fn repl_meta_info_plain_text_searches_public_symbol_paths() {
-    let out = run_repl("%i start\n");
+    let out = run_repl("%i *start*\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
         "std::strings::starts_with(",
@@ -3132,7 +3132,7 @@ fn repl_meta_info_uses_checker_exposed_stdlib_signatures() {
 
 #[test]
 fn repl_meta_info_distinguishes_same_leaf_function_names_by_type() {
-    let out = run_repl("%info count -d\n");
+    let out = run_repl("%info *count -d\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
         out.stdout
@@ -3211,7 +3211,7 @@ fn repl_meta_info_for_qualified_function_is_focused() {
 
 #[test]
 fn repl_meta_info_for_shared_method_name_does_not_append_an_owner_listing() {
-    let out = run_repl("%i contains_key\n");
+    let out = run_repl("%i *contains_key\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
         "BTreeMap::contains_key<",
@@ -3233,7 +3233,7 @@ fn repl_meta_info_for_shared_method_name_does_not_append_an_owner_listing() {
 
 #[test]
 fn repl_meta_info_exact_short_name_still_matches_full_paths() {
-    let out = run_repl("%i scan\n");
+    let out = run_repl("%i *scan\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
         "Scanner::scan(self: bufio::Scanner) -> bool [method]",
@@ -3250,7 +3250,7 @@ fn repl_meta_info_exact_short_name_still_matches_full_paths() {
 
 #[test]
 fn repl_info_shows_every_sync_map_method_signature() {
-    for query in ["sync::Map", "Map"] {
+    for query in ["sync::Map", "*Map"] {
         let out = run_repl(&format!("%i {query}\n"));
         assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
         for expected in [
@@ -3903,6 +3903,87 @@ fn repl_traverses_a_keyed_collection_through_a_reference() {
     assert!(
         out.stdout.contains("Some(2)"),
         "a `&Set` walks through its iterator: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_info_names_one_type_exactly() {
+    let out = run_repl("%i Set\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("Set [type]") && out.stdout.contains("Set::union<"),
+        "%i Set should answer the set type and its surface: {}",
+        out.stdout
+    );
+    for other in ["BTreeSet", "flag::Set"] {
+        assert!(
+            !out.stdout.contains(other),
+            "%i Set should not answer `{other}`: {}",
+            out.stdout
+        );
+    }
+}
+
+#[test]
+fn repl_meta_info_names_one_method_exactly() {
+    let out = run_repl("%i Set::new\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("Set::new<T>() -> Set<T>"),
+        "%i Set::new should answer that method: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("BTreeSet::new") && !out.stdout.contains("Set::insert"),
+        "%i Set::new should answer nothing else: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_info_leading_wildcard_matches_a_suffix() {
+    let out = run_repl("%i *Set\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    for expected in ["Set [type]", "BTreeSet [type]", "flag::Set [type]"] {
+        assert!(
+            out.stdout.contains(expected),
+            "%i *Set omitted `{expected}`: {}",
+            out.stdout
+        );
+    }
+}
+
+#[test]
+fn repl_meta_info_trailing_wildcard_matches_a_prefix() {
+    let out = run_repl("%i Set*\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("Set [type]") && out.stdout.contains("Set::union<"),
+        "%i Set* should answer the set type and its surface: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("BTreeSet"),
+        "%i Set* should not answer a name it is not a prefix of: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_explain_names_one_binding_exactly_and_widens_with_a_wildcard() {
+    let out = run_repl("let total = 1\nlet tot = 2\n%e total\n%e tot*\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    let exact = out.stdout.matches("total: i64 [binding]").count();
+    assert_eq!(
+        exact, 2,
+        "`%e total` names one binding and `%e tot*` names it again: {}",
+        out.stdout
+    );
+    assert_eq!(
+        out.stdout.matches("tot: i64 [binding]").count(),
+        1,
+        "`%e tot*` should also answer `tot`: {}",
         out.stdout
     );
 }

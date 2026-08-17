@@ -48,6 +48,35 @@ use super::*;
 
 use super::Builder;
 
+impl Builder<'_> {
+    /// A struct or enum rendered through its derived `Type::fmt`, so a value
+    /// the concat planner cannot route reaches it as the String it renders
+    /// as. Any other local passes through unchanged.
+    pub(crate) fn adt_fmt_rendered(&mut self, local: Local, span: Span) -> Local {
+        let arg_ty = self.locals[local.0 as usize].ty;
+        let Some(sname) = self
+            .adt_dispatch_name(arg_ty)
+            .or_else(|| self.local_struct.get(&local).cloned())
+        else {
+            return local;
+        };
+        if !self.impl_methods.contains_key(&format!("{sname}::fmt")) {
+            return local;
+        }
+        let str_ty = self.tcx.string_ty();
+        let dest = self.fresh(str_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(format!("{sname}::fmt"))),
+            args: vec![Operand::Copy(Place::local(local))],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        dest
+    }
+}
+
 impl<'a> Builder<'a> {
     /// `true` if `ty` mentions a generic `Param` anywhere in its
     /// structure. A generic function's declared return type carries rigid
@@ -1099,26 +1128,7 @@ impl<'a> Builder<'a> {
             // its derived `Type::fmt` (a String), so a `println!("{:?}", s)`
             // compiles on Cranelift / LLVM instead of bailing on an aggregate.
             let local = if callee_renders_aggregates {
-                let arg_ty = self.locals[local.0 as usize].ty;
-                match self
-                    .adt_dispatch_name(arg_ty)
-                    .or_else(|| self.local_struct.get(&local).cloned())
-                {
-                    Some(sname) if self.impl_methods.contains_key(&format!("{sname}::fmt")) => {
-                        let str_ty = self.tcx.string_ty();
-                        let dest = self.fresh(str_ty);
-                        let next = self.new_block(span);
-                        self.terminate(Terminator::Call {
-                            callee: Operand::Const(ConstValue::Str(format!("{sname}::fmt"))),
-                            args: vec![Operand::Copy(Place::local(local))],
-                            destination: Place::local(dest),
-                            target: Some(next),
-                        });
-                        self.set_current(next);
-                        dest
-                    }
-                    _ => local,
-                }
+                self.adt_fmt_rendered(local, span)
             } else {
                 local
             };

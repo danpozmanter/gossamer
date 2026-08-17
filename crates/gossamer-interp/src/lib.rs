@@ -202,6 +202,27 @@ pub fn is_panic_error(err: &value::RuntimeError) -> bool {
     err.to_string().starts_with("error[GX0005]")
 }
 
+/// The rendered payload of an `Err` value, or `None` for any other value.
+///
+/// A fallible function reports its failure as a returned value rather than as
+/// a runtime error, so a caller that treats returning at all as success needs
+/// this to see the failure.
+#[must_use]
+pub fn err_payload_message(value: &value::Value) -> Option<String> {
+    let value::Value::Variant(inner) = value else {
+        return None;
+    };
+    if inner.name != "Err" {
+        return None;
+    }
+    Some(
+        inner
+            .fields
+            .first()
+            .map_or_else(|| "Err".to_string(), ToString::to_string),
+    )
+}
+
 /// Whether `err` is the stack-overflow fault. Reported like a panic -
 /// the compiled tiers raise it through the same path and exit 101 - so
 /// the exit status does not depend on which tier ran the program.

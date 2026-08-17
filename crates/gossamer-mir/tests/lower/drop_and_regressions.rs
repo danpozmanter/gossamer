@@ -178,14 +178,14 @@ fn numeric_to_string_chars_fuses_formatting_without_cloning_vec() {
     let source = r"
 fn digits_len(n: i64) -> i64 {
     let digits = n.to_string().chars()
-    digits.len()
+    digits.count()
 }
 
 fn inferred_range_digits() -> i64 {
     let mut total = 0
     for n in 1..=3 {
         let digits = n.to_string().chars()
-        total += digits.len()
+        total += digits.count()
     }
     total
 }

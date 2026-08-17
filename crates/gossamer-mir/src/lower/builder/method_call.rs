@@ -470,6 +470,38 @@ impl<'a> Builder<'a> {
             }
         }
 
+        // `x.to_string()` and `xs.join(sep)` render their values the way `{}`
+        // does. Both reach the same formatter for every element type; only
+        // the scalar shapes have a dedicated shim worth keeping.
+        if method.name.as_str() == "to_string"
+            && args.is_empty()
+            && self.display_to_string_receiver(receiver_ty)
+        {
+            return self.lower_display_to_string(receiver, span);
+        }
+        if method.name.as_str() == "join"
+            && args.len() == 1
+            && self.vec_join_symbol(receiver_ty).is_none()
+            && let Some(local) = self.lower_display_join(receiver, &args[0], span)
+        {
+            return Some(local);
+        }
+
+        // `a.zip(b)` on an `Option` receiver pairs the two payloads. The
+        // generic table would pass the second option's raw local, so route it
+        // to the same intrinsic the `option::zip(a, b)` free form takes, with
+        // the receiver leading as the call writes it.
+        if method.name.as_str() == "zip"
+            && args.len() == 1
+            && matches!(receiver_kind_flat, TyKind::Adt { .. })
+            && self.is_option_adt(receiver_ty)
+        {
+            let ordered = vec![receiver.clone(), args[0].clone()];
+            if let Some(local) = self.try_lower_combinator_call("option::zip", &ordered, ty, span) {
+                return Some(local);
+            }
+        }
+
         // Stage 3 - name-keyed runtime-symbol table; a user impl of the same
         // name shadows a bare-name runtime builtin.
         let mut runtime_symbol = match self.runtime_symbol_by_name(
@@ -554,7 +586,22 @@ impl<'a> Builder<'a> {
                     .get(&format!("{name}::{}", method.name))
                     .copied()
             })
-            .filter(|declared| matches!(self.tcx.kind_of(*declared), TyKind::Ref { .. }));
+            .filter(|declared| matches!(self.tcx.kind_of(*declared), TyKind::Ref { .. }))
+            // An enum's value is the single word its methods decode - an
+            // inline variant tag, or the RC node a payload variant points at -
+            // so a shared receiver hands over that word. Borrowing the place
+            // holding it has the callee decode a stack address instead. A
+            // `&mut self` receiver still borrows the place, which is what
+            // carries a write back.
+            .filter(|declared| {
+                !matches!(
+                    self.tcx.kind_of(*declared),
+                    TyKind::Ref {
+                        mutability: gossamer_types::Mutbl::Not,
+                        ..
+                    }
+                ) || !(self.receiver_is_enum(receiver_ty) || self.receiver_is_enum(*declared))
+            });
         let receiver_local = if let Some(declared_ref_ty) = user_receiver_ref_ty {
             // A chained by-value method result is not a source-level place,
             // but it is materialised in a MIR local and can be borrowed for
@@ -5187,6 +5234,7 @@ impl<'a> Builder<'a> {
     ) -> MethodLowering {
         let joined: Option<&str> = match (method.name.as_str(), args.len()) {
             ("chain", 1) => Some("iter::chain"),
+            ("zip", 1) => Some("iter::zip"),
             ("map", 1) => Some("iter::map"),
             ("filter", 1) => Some("iter::filter"),
             ("take_while", 1) => Some("iter::take_while"),
@@ -5246,10 +5294,20 @@ impl<'a> Builder<'a> {
         // The data-last free forms take the sequence in the last slot, which
         // is why the receiver goes there. `chain` reads its two sequences in
         // order, and the one written first in `xs.chain(ys)` is the receiver.
-        let mut reordered: Vec<HirExpr> = if method.name.as_str() == "chain" {
+        let mut reordered: Vec<HirExpr> = if matches!(method.name.as_str(), "chain" | "zip") {
+            // Both read their two sequences in order, and the one written
+            // first in `xs.chain(ys)` / `xs.zip(ys)` is the receiver.
             let mut ordered = vec![receiver.clone()];
             ordered.extend(args.iter().cloned());
-            return match self.try_lower_iter_call("iter::chain", &ordered, ty, span) {
+            let joined = if method.name.as_str() == "chain" {
+                "iter::chain"
+            } else {
+                "iter::zip"
+            };
+            return match self
+                .try_lower_iter_call(joined, &ordered, ty, span)
+                .or_else(|| self.try_lower_combinator_call(joined, &ordered, ty, span))
+            {
                 Some(dest) => MethodLowering::Handled(Some(dest)),
                 None => MethodLowering::Pass,
             };
@@ -5379,9 +5437,9 @@ impl<'a> Builder<'a> {
 
     /// The join shim for a sequence receiver, keyed on the element
     /// TyKind: String elements reuse `gos_rt_strings_join`, scalar
-    /// elements Display-render through the typed join shims, and an
-    /// aggregate element has no joinable rendering (`None` - rejected
-    /// upstream by the checker rather than joining pointer words).
+    /// elements Display-render through the typed join shims; every other
+    /// element type renders through the same formatter `{}` uses
+    /// ([`Self::lower_display_join`]).
     fn vec_join_symbol(&self, receiver_ty: Ty) -> Option<&'static str> {
         let mut ty = receiver_ty;
         while let TyKind::Ref { inner, .. } = self.tcx.kind_of(ty) {
@@ -5400,6 +5458,291 @@ impl<'a> Builder<'a> {
             TyKind::Int(_) | TyKind::Var(_) => Some("gos_rt_vec_join_i64"),
             _ => None,
         }
+    }
+
+    /// The derived `Type::fmt` of a struct-shaped element, which reads its
+    /// fields through the element's address. An enum's value is one word its
+    /// own formatter decodes, so it is not answered here.
+    fn element_fmt_symbol(&mut self, elem_ty: Ty) -> Option<String> {
+        if !self.elem_is_slot_addressed(elem_ty)
+            || !matches!(self.tcx.kind_of(elem_ty), TyKind::Adt { .. })
+        {
+            return None;
+        }
+        let name = self.adt_dispatch_name(elem_ty)?;
+        let symbol = format!("{name}::fmt");
+        self.impl_methods.contains_key(&symbol).then_some(symbol)
+    }
+
+    /// Whether the receiver's own type is a user enum, whose runtime value is
+    /// one word rather than the address of a slot buffer.
+    fn receiver_is_enum(&self, receiver_ty: Ty) -> bool {
+        let mut ty = receiver_ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(ty) {
+            ty = *inner;
+        }
+        if self.tcx.is_inline_enum_ty(ty) {
+            return true;
+        }
+        match self.tcx.kind_of(ty) {
+            // A struct registers its field layout; an enum does not, and its
+            // value is one word rather than a slot buffer.
+            TyKind::Adt { def, .. } => {
+                self.tcx.enum_variant_tys(*def).is_some()
+                    || self.tcx.struct_field_tys(*def).is_none()
+            }
+            _ => false,
+        }
+    }
+
+    /// Element `index` of `source` in the form its rendering reads it.
+    ///
+    /// Aggregate storage - a struct, a tuple, an array - is read through its
+    /// slot address, which is what a derived `fmt` and the tuple tag stream
+    /// take. Every other element's value is the slot itself: a float carries
+    /// its bits, and a handle, an enum, and a String carry one word. A struct
+    /// or enum then renders through its own `fmt`, since the concat planner
+    /// takes a rendered String for either.
+    fn read_display_element(
+        &mut self,
+        source: Local,
+        index: Local,
+        elem_ty: Ty,
+        span: Span,
+    ) -> Local {
+        // A struct renders through its derived `fmt`, which reads its fields
+        // from the element's own storage: borrowing `source[index]` is how the
+        // backends already hand over an element's address.
+        if let Some(symbol) = self.element_fmt_symbol(elem_ty) {
+            let mut place = Place::local(source);
+            place.projection.push(crate::ir::Projection::Index(index));
+            let ref_ty = self.tcx.intern(TyKind::Ref {
+                mutability: gossamer_types::Mutbl::Not,
+                inner: elem_ty,
+            });
+            let borrowed = self.fresh(ref_ty);
+            self.emit_assign(
+                Place::local(borrowed),
+                Rvalue::Ref {
+                    place,
+                    mutable: false,
+                },
+                span,
+            );
+            let string_ty = self.tcx.string_ty();
+            let dest = self.fresh(string_ty);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(symbol)),
+                args: vec![Operand::Copy(Place::local(borrowed))],
+                destination: Place::local(dest),
+                target: Some(next),
+            });
+            self.set_current(next);
+            return dest;
+        }
+        let element = if self.elem_is_slot_addressed(elem_ty)
+            || self.elem_bytes_of(elem_ty) > 8
+            || matches!(self.tcx.kind_of(elem_ty), TyKind::Float(_))
+        {
+            self.zip_read_element(source, index, elem_ty, span)
+        } else {
+            self.emit_combinator_call(
+                "gos_rt_vec_get_i64",
+                vec![
+                    Operand::Copy(Place::local(source)),
+                    Operand::Copy(Place::local(index)),
+                ],
+                elem_ty,
+                span,
+            )
+        };
+        self.adt_fmt_rendered(element, span)
+    }
+
+    /// Whether `to_string` on this receiver is the Display rendering rather
+    /// than a dedicated conversion. A scalar has its own shim, and a String
+    /// is already its own text.
+    fn display_to_string_receiver(&mut self, receiver_ty: Ty) -> bool {
+        let mut ty = receiver_ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(ty) {
+            ty = *inner;
+        }
+        matches!(
+            self.tcx.kind_of(ty),
+            TyKind::Vec(_)
+                | TyKind::Slice(_)
+                | TyKind::Array { .. }
+                | TyKind::HashMap { .. }
+                | TyKind::Tuple(_)
+                | TyKind::Adt { .. }
+                | TyKind::Nominal { .. }
+        )
+    }
+
+    /// `x.to_string()` as the one-piece concatenation `format!("{}", x)`
+    /// lowers to, so every element type renders through one formatter.
+    fn lower_display_to_string(&mut self, receiver: &HirExpr, span: Span) -> Option<Local> {
+        let value = self.lower_expr(receiver)?;
+        let value = self.adt_fmt_rendered(value, span);
+        let string_ty = self.tcx.string_ty();
+        let dest = self.fresh(string_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("__concat".to_string())),
+            args: vec![Operand::Copy(Place::local(value))],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
+    /// `xs.join(sep)` for an element the typed shims do not carry: renders
+    /// element `i` through the formatter `{}` uses and appends it after the
+    /// separator every element but the first is preceded by.
+    fn lower_display_join(
+        &mut self,
+        receiver: &HirExpr,
+        separator: &HirExpr,
+        span: Span,
+    ) -> Option<Local> {
+        let elem_ty = self
+            .iter_element_kind(receiver.ty)
+            .map(|k| self.tcx.intern(k))?;
+        let source = self.lower_iter_vec_arg(receiver)?;
+        let sep = self.lower_expr(separator)?;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let bool_ty = self.tcx.bool_ty();
+        let string_ty = self.tcx.string_ty();
+
+        let acc = self.fresh(string_ty);
+        self.emit_assign(
+            Place::local(acc),
+            Rvalue::Use(Operand::Const(ConstValue::Str(String::new()))),
+            span,
+        );
+        let len = self.emit_combinator_call(
+            "gos_rt_vec_len",
+            vec![Operand::Copy(Place::local(source))],
+            i64_ty,
+            span,
+        );
+        let index = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(index),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+        let header = self.new_block(span);
+        let body = self.new_block(span);
+        let exit = self.new_block(span);
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(header);
+        let more = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(more),
+            Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(index)),
+                rhs: Operand::Copy(Place::local(len)),
+            },
+            span,
+        );
+        self.terminate(Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(more)),
+            arms: vec![(0, exit)],
+            default: body,
+        });
+
+        self.set_current(body);
+        // A struct's derived `fmt` reads its fields out of the element's own
+        // storage, so it takes the slot's address rather than a copy of it.
+        let element = self.read_display_element(source, index, elem_ty, span);
+        let first = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(first),
+            Rvalue::BinaryOp {
+                op: BinOp::Eq,
+                lhs: Operand::Copy(Place::local(index)),
+                rhs: Operand::Const(ConstValue::Int(0)),
+            },
+            span,
+        );
+        let lead = self.new_block(span);
+        let rest = self.new_block(span);
+        let joined = self.new_block(span);
+        self.terminate(Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(first)),
+            arms: vec![(0, rest)],
+            default: lead,
+        });
+
+        self.set_current(lead);
+        let head = self.fresh(string_ty);
+        let after_head = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("__concat".to_string())),
+            args: vec![Operand::Copy(Place::local(element))],
+            destination: Place::local(head),
+            target: Some(after_head),
+        });
+        self.set_current(after_head);
+        self.emit_assign(
+            Place::local(acc),
+            Rvalue::Use(Operand::Copy(Place::local(head))),
+            span,
+        );
+        self.terminate(Terminator::Goto { target: joined });
+
+        self.set_current(rest);
+        let grown = self.fresh(string_ty);
+        let after_grown = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("__concat".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(acc)),
+                Operand::Copy(Place::local(sep)),
+                Operand::Copy(Place::local(element)),
+            ],
+            destination: Place::local(grown),
+            target: Some(after_grown),
+        });
+        self.set_current(after_grown);
+        self.emit_assign(
+            Place::local(acc),
+            Rvalue::Use(Operand::Copy(Place::local(grown))),
+            span,
+        );
+        self.terminate(Terminator::Goto { target: joined });
+
+        self.set_current(joined);
+        let one = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(one),
+            Rvalue::Use(Operand::Const(ConstValue::Int(1))),
+            span,
+        );
+        let next_index = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(next_index),
+            Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(index)),
+                rhs: Operand::Copy(Place::local(one)),
+            },
+            span,
+        );
+        self.emit_assign(
+            Place::local(index),
+            Rvalue::Use(Operand::Copy(Place::local(next_index))),
+            span,
+        );
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(exit);
+        Some(acc)
     }
 
     /// True when the `gos_rt_vec_*_i64` / `_str` search shims can represent

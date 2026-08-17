@@ -18,10 +18,10 @@ REPL commands
 
   %help
     Show this list of REPL commands.
-  %info (%i) [pattern] [-d|--details]
-    List language, standard-library, and session matches; a type reports its
-    fields, the traits implemented for it, and its methods, and a trait reports
-    its methods and implementors. Use -d for documentation.
+  %info (%i) [name] [-d|--details]
+    Show a language, standard-library, or session symbol by name; a type
+    reports its fields, the traits implemented for it, and its methods, and a
+    trait reports its methods and implementors. Use -d for documentation.
   %explain (%e) NAME [-d|--details]
     Inspect a persistent `let` binding or declaration, including its fields and
     implemented traits; use -d for methods and capability.
@@ -43,7 +43,9 @@ REPL commands
 
 Expressions print their value. Declarations and `let` bindings persist.
 
-Searches accept either fuzzy substrings or /regex/.
+%info and %explain name one symbol exactly; `*` widens that to a prefix
+(`Set*`), a suffix (`*Set`), or a substring (`*Set*`). %info also accepts
+/regex/. %bindings, %declarations, and %history search substrings or /regex/.
 
 Up/down cycles history.";
 
@@ -2654,17 +2656,62 @@ fn render_repl_bindings(
     lines
 }
 
+/// Every session binding whose name the `%explain` query matches, latest
+/// declaration of each name first.
+fn matching_repl_bindings<'a>(bindings: &'a [ReplBinding], query: &str) -> Vec<&'a ReplBindingVar> {
+    let mut out: Vec<&ReplBindingVar> = Vec::new();
+    for var in bindings.iter().flat_map(|binding| &binding.vars) {
+        if !symbol_query_matches(&var.name, query) {
+            continue;
+        }
+        match out.iter().position(|seen| seen.name == var.name) {
+            Some(index) => out[index] = var,
+            None => out.push(var),
+        }
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+/// Joins one rendering per matched binding, failing on the first that cannot
+/// be resolved.
+fn render_matched_repl_bindings(
+    bindings: &[ReplBinding],
+    query: &str,
+    mut render: impl FnMut(&ReplBindingVar) -> std::result::Result<String, String>,
+) -> Option<std::result::Result<String, String>> {
+    let matches = matching_repl_bindings(bindings, query);
+    if matches.is_empty() {
+        return None;
+    }
+    let mut sections = Vec::new();
+    for var in matches {
+        match render(var) {
+            Ok(text) => sections.push(text),
+            Err(message) => return Some(Err(message)),
+        }
+    }
+    Some(Ok(sections.join("\n")))
+}
+
 fn repl_binding_info(
     declarations: &[String],
     lets: &[String],
     bindings: &[ReplBinding],
-    name: &str,
+    query: &str,
 ) -> Option<std::result::Result<String, String>> {
-    let var = bindings
-        .iter()
-        .flat_map(|binding| &binding.vars)
-        .find(|var| var.name == name)?;
-    Some(resolve_repl_binding(declarations, lets, name).map(|(_, ty)| {
+    render_matched_repl_bindings(bindings, query, |var| {
+        repl_binding_info_for(declarations, lets, var)
+    })
+}
+
+fn repl_binding_info_for(
+    declarations: &[String],
+    lets: &[String],
+    var: &ReplBindingVar,
+) -> std::result::Result<String, String> {
+    let name = var.name.as_str();
+    resolve_repl_binding(declarations, lets, name).map(|(_, ty)| {
         let can_mutate = binding_can_mutate(var, &ty);
         let capability = match (var.mutable, ty.references.as_slice(), can_mutate) {
             (_, [], true) => "mutable binding",
@@ -2739,57 +2786,76 @@ fn repl_binding_info(
             ));
         }
         out.trim_end().to_string()
-    }))
+    })
 }
 
 fn repl_binding_listing(
     declarations: &[String],
     lets: &[String],
     bindings: &[ReplBinding],
-    name: &str,
+    query: &str,
 ) -> Option<std::result::Result<String, String>> {
-    let var = bindings
-        .iter()
-        .flat_map(|binding| &binding.vars)
-        .find(|var| var.name == name)?;
-    Some(
-        resolve_repl_binding(declarations, lets, name).map(|(_value, ty)| {
-            let prefix = if var.mutable { "mut " } else { "" };
-            let mut out = format!("{prefix}{name}: {} [binding]\n", ty.rendered);
-            for (index, elem) in ty.tuple_elements.iter().enumerate() {
-                out.push_str(&format!("{name}.{index}: {elem} [element]\n"));
-            }
-            if let Some(session) = render_session_type(
-                &session_index(declarations),
-                base_type_name(&ty.rendered),
-                Some(name),
-            ) {
-                out.push_str(&session);
-                out.push('\n');
-            }
-            let Some(ref owner) = ty.method_owner else {
-                return out.trim_end().to_string();
-            };
-            let can_mutate = binding_can_mutate(var, &ty);
-            for method in available_repl_binding_methods(&ty, owner, can_mutate) {
-                let signature = signature_suffix(&method.signature, &method.name);
-                out.push_str(&format!("{name}.{}{signature} [method]\n", method.name));
-            }
-            out.trim_end().to_string()
-        }),
-    )
+    render_matched_repl_bindings(bindings, query, |var| {
+        repl_binding_listing_for(declarations, lets, var)
+    })
 }
 
-fn repl_declaration_info(declarations: &[String], name: &str) -> Option<String> {
-    declarations
-        .iter()
-        .rev()
-        .find(|declaration| declaration_declares_name(declaration, name))
-        .map(|declaration| format!("{name} [declaration]\n  {declaration}"))
+fn repl_binding_listing_for(
+    declarations: &[String],
+    lets: &[String],
+    var: &ReplBindingVar,
+) -> std::result::Result<String, String> {
+    let name = var.name.as_str();
+    resolve_repl_binding(declarations, lets, name).map(|(_value, ty)| {
+        let prefix = if var.mutable { "mut " } else { "" };
+        let mut out = format!("{prefix}{name}: {} [binding]\n", ty.rendered);
+        for (index, elem) in ty.tuple_elements.iter().enumerate() {
+            out.push_str(&format!("{name}.{index}: {elem} [element]\n"));
+        }
+        if let Some(session) = render_session_type(
+            &session_index(declarations),
+            base_type_name(&ty.rendered),
+            Some(name),
+        ) {
+            out.push_str(&session);
+            out.push('\n');
+        }
+        let Some(ref owner) = ty.method_owner else {
+            return out.trim_end().to_string();
+        };
+        let can_mutate = binding_can_mutate(var, &ty);
+        for method in available_repl_binding_methods(&ty, owner, can_mutate) {
+            let signature = signature_suffix(&method.signature, &method.name);
+            out.push_str(&format!("{name}.{}{signature} [method]\n", method.name));
+        }
+        out.trim_end().to_string()
+    })
+}
+
+fn repl_declaration_info(declarations: &[String], query: &str) -> Option<String> {
+    let mut sections = Vec::new();
+    let mut seen = Vec::new();
+    for declaration in declarations.iter().rev() {
+        for name in declaration_matching_names(declaration, query) {
+            if seen.contains(&name) {
+                continue;
+            }
+            sections.push(format!("{name} [declaration]\n  {declaration}"));
+            seen.push(name);
+        }
+    }
+    (!sections.is_empty()).then(|| sections.join("\n"))
 }
 
 fn declaration_declares_name(declaration: &str, name: &str) -> bool {
     declaration_names(declaration).contains(&name.to_string())
+}
+
+fn declaration_matching_names(declaration: &str, query: &str) -> Vec<String> {
+    declaration_names(declaration)
+        .into_iter()
+        .filter(|name| symbol_query_matches(name, query))
+        .collect()
 }
 
 fn declaration_names(declaration: &str) -> Vec<String> {
@@ -3060,20 +3126,6 @@ fn strip_leading_outer_attributes(mut input: &str) -> &str {
 }
 
 fn repl_info(arg: &str) -> std::result::Result<String, String> {
-    let normalized = normalize_query(arg);
-    if matches!(normalized, "std" | "std::") {
-        return Ok(render_stdlib_dir());
-    }
-    if normalized.is_empty() {
-        return repl_info_listing("");
-    }
-    let query = info_search_query(arg);
-    if matching_modules(&query).is_empty() {
-        if let Some(namespace) = canonical_stdlib_namespace(normalized) {
-            let children = stdlib_namespace_children(&namespace);
-            return Ok(render_stdlib_namespace_dir(&namespace, &children));
-        }
-    }
     // The catalog listing is the canonical module rendering. Omitting module
     // help here prevents `%i gzip` from printing the same module twice while
     // retaining matching items, methods, and types from the search.
@@ -3085,11 +3137,22 @@ fn repl_info_listing(arg: &str) -> std::result::Result<String, String> {
 }
 
 fn repl_info_matches(arg: &str, details: bool) -> std::result::Result<String, String> {
+    let normalized = normalize_query(arg);
+    if matches!(normalized, "std" | "std::") {
+        return Ok(render_stdlib_dir());
+    }
     if arg.is_empty() {
         return Ok(render_module_matches(
             gossamer_std::registry::modules(),
             details,
         ));
+    }
+    let namespace_query = info_search_query(arg);
+    if matching_modules(&namespace_query).is_empty()
+        && let Some(namespace) = canonical_stdlib_namespace(normalized)
+    {
+        let children = stdlib_namespace_children(&namespace);
+        return Ok(render_stdlib_namespace_dir(&namespace, &children));
     }
     if let Some(pattern) = regex_argument(arg)? {
         let matches = render_catalog_matches(&pattern, details);
@@ -3318,6 +3381,16 @@ fn render_catalog_query_matches(query: &str, details: bool) -> String {
             details,
         );
         entries.push(entry);
+        // Naming a type is a request for the surface it owns; its methods
+        // carry the type's own spelling and never match it on their own.
+        for method in core_method_entries()
+            .into_iter()
+            .filter(|method| method.owner == core_type.name)
+        {
+            let mut entry = String::new();
+            push_core_method_match(&mut entry, &method, details);
+            entries.push(entry);
+        }
     }
     for owner in matching_core_namespaces(query) {
         let mut entry = String::new();
@@ -4472,24 +4545,21 @@ fn module_query_matches(module: &StdModule, query: &str) -> bool {
 }
 
 fn core_namespace_matches(owner: &str, query: &str) -> bool {
-    let (query, substring) = split_symbol_query(query);
-    let canonical_query = canonical_collection_owner(query);
-    if substring {
-        owner
-            .to_ascii_lowercase()
-            .contains(&query.to_ascii_lowercase())
-    } else {
-        owner == query || owner.eq_ignore_ascii_case(query) || owner == canonical_query
+    let (text, shape) = split_symbol_query(query);
+    if shape != QueryShape::Exact {
+        return shape_matches(owner, text, shape);
     }
+    owner == text || owner.eq_ignore_ascii_case(text) || owner == canonical_collection_owner(text)
 }
 
 fn item_query_matches(module: &StdModule, item: &StdItem, query: &str) -> bool {
-    // A listing names a macro the way it is called, so the same spelling is
-    // what a reader searches back with.
-    let names = [item.name.to_string(), item.call_name()];
-    if names.iter().any(|name| symbol_query_matches(name, query)) {
+    // A macro is written bare, so its calling form is a spelling of its own.
+    if item.kind == StdItemKind::Macro && symbol_query_matches(&item.call_name(), query) {
         return true;
     }
+    // Every other item is named through the module that declares it, so its
+    // spellings are the qualified ones.
+    let names = [item.name.to_string(), item.call_name()];
     module_aliases(module.path).iter().any(|alias| {
         names
             .iter()
@@ -4498,19 +4568,22 @@ fn item_query_matches(module: &StdModule, item: &StdItem, query: &str) -> bool {
 }
 
 fn core_method_query_matches(method: &CoreMethodEntry, query: &str) -> bool {
-    let (query, substring) = split_symbol_query(query);
-    if substring {
-        return method.name.contains(query)
-            || format!("{}::{}", method.owner, method.name).contains(query)
-            || core_lower_path(method).contains(query);
+    let (text, shape) = split_symbol_query(query);
+    let spellings = [
+        method.name.clone(),
+        format!("{}::{}", method.owner, method.name),
+        core_lower_path(method),
+    ];
+    if spellings
+        .iter()
+        .any(|spelling| shape_matches(spelling, text, shape))
+    {
+        return true;
     }
-    let alias_path_matches = query.rsplit_once("::").is_some_and(|(owner, name)| {
-        name == method.name && canonical_collection_owner(owner) == method.owner
-    });
-    method.name == query
-        || format!("{}::{}", method.owner, method.name) == query
-        || core_lower_path(method) == query
-        || alias_path_matches
+    shape == QueryShape::Exact
+        && text.rsplit_once("::").is_some_and(|(owner, name)| {
+            name == method.name && canonical_collection_owner(owner) == method.owner
+        })
 }
 
 fn core_lower_path(method: &CoreMethodEntry) -> String {
@@ -4522,23 +4595,44 @@ fn canonical_collection_owner(owner: &str) -> &str {
 }
 
 fn info_search_query(arg: &str) -> String {
-    let query = normalize_query(arg);
-    format!("\0{query}")
+    normalize_query(arg).to_string()
+}
+
+/// How a `%info` / `%explain` argument matches a candidate spelling. A bare
+/// argument names one symbol; a leading or trailing `*` widens it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QueryShape {
+    Exact,
+    Prefix,
+    Suffix,
+    Substring,
 }
 
 fn symbol_query_matches(candidate: &str, query: &str) -> bool {
-    let (query, substring) = split_symbol_query(query);
-    if substring {
-        candidate.contains(query)
-    } else {
-        candidate == query
+    let (text, shape) = split_symbol_query(query);
+    shape_matches(candidate, text, shape)
+}
+
+fn shape_matches(candidate: &str, text: &str, shape: QueryShape) -> bool {
+    match shape {
+        QueryShape::Exact => candidate == text,
+        QueryShape::Prefix => candidate.starts_with(text),
+        QueryShape::Suffix => candidate.ends_with(text),
+        QueryShape::Substring => candidate.contains(text),
     }
 }
 
-fn split_symbol_query(query: &str) -> (&str, bool) {
-    query
-        .strip_prefix('\0')
-        .map_or((query, false), |query| (query, true))
+fn split_symbol_query(query: &str) -> (&str, QueryShape) {
+    let leading = query.starts_with('*');
+    // A lone `*` is one wildcard, not both ends of an empty pattern.
+    let trailing = query.len() > 1 && query.ends_with('*');
+    let shape = match (leading, trailing) {
+        (true, true) => QueryShape::Substring,
+        (true, false) => QueryShape::Suffix,
+        (false, true) => QueryShape::Prefix,
+        (false, false) => QueryShape::Exact,
+    };
+    (query.trim_matches('*'), shape)
 }
 
 fn module_matches_regex(pattern: &Regex, module: &StdModule) -> bool {
@@ -5966,6 +6060,22 @@ impl SessionIndex {
             && !self.implementors.contains_key(name)
             && !self.methods.contains_key(name)
     }
+
+    /// Every name the session declares, in sorted order.
+    fn declared_names(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self
+            .kinds
+            .keys()
+            .chain(self.fields.keys())
+            .chain(self.implements.keys())
+            .chain(self.implementors.keys())
+            .chain(self.methods.keys())
+            .map(String::as_str)
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        names
+    }
 }
 
 /// Renders one AST type as source.
@@ -6186,9 +6296,19 @@ fn render_session_type(index: &SessionIndex, name: &str, receiver: Option<&str>)
     Some(out.trim_end().to_string())
 }
 
-/// The `%info` rendering for a name the session declares.
-fn repl_session_info(index: &SessionIndex, name: &str) -> Option<String> {
-    let body = render_session_type(index, name, None)?;
-    let kind = index.kinds.get(name).copied().unwrap_or("type");
-    Some(format!("{name} [{kind}]\n{body}"))
+/// The `%info` rendering for each name the session declares that `query`
+/// matches.
+fn repl_session_info(index: &SessionIndex, query: &str) -> Option<String> {
+    let mut sections = Vec::new();
+    for name in index.declared_names() {
+        if !symbol_query_matches(name, query) {
+            continue;
+        }
+        let Some(body) = render_session_type(index, name, None) else {
+            continue;
+        };
+        let kind = index.kinds.get(name).copied().unwrap_or("type");
+        sections.push(format!("{name} [{kind}]\n{body}"));
+    }
+    (!sections.is_empty()).then(|| sections.join("\n"))
 }

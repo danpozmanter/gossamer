@@ -26,7 +26,11 @@ impl<'tcx> FnBuilder<'tcx> {
         for param in params {
             collect_pattern_names(&param.pattern, &mut bound);
         }
-        let free = collect_free_vars(body, &bound);
+        // A binding that shares a global helper's name is captured like any
+        // other name; only the helper itself resolves through `vm.globals`.
+        let shadowed =
+            gossamer_hir::shadowed_global_names(|name| self.lookup_local(name).is_some());
+        let free = collect_free_vars(body, &bound, &shadowed);
 
         // Capture only free vars that are live enclosing locals; the rest
         // resolve as globals inside the body. Box typed (i64/f64) locals

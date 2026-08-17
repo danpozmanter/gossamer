@@ -22,6 +22,8 @@ pub enum CacheClass {
     Packages,
     /// Artifacts left behind by the retired build-graph cache.
     Build,
+    /// Stamps recording the inputs a linked binary was produced from.
+    LinkStamps,
 }
 
 impl CacheClass {
@@ -34,6 +36,7 @@ impl CacheClass {
             Self::Runners => "runners",
             Self::Packages => "packages",
             Self::Build => "build",
+            Self::LinkStamps => "link-stamps",
         }
     }
 
@@ -46,7 +49,20 @@ impl CacheClass {
             Self::Runners,
             Self::Packages,
             Self::Build,
+            Self::LinkStamps,
         ]
+    }
+
+    /// Directory name this class occupies inside a project's `.gos-cache/`,
+    /// or `None` for a class that lives only in a shared root.
+    #[must_use]
+    pub const fn project_dir_name(self) -> Option<&'static str> {
+        match self {
+            Self::Frontend => Some("frontend"),
+            Self::Ir => Some("ir-cache"),
+            Self::LinkStamps => Some("link-stamps"),
+            Self::Runners | Self::Packages | Self::Build => None,
+        }
     }
 
     /// Parses a command-line name.
@@ -157,8 +173,12 @@ impl CachePolicy {
             CacheClass::Ir => 5 * 1024 * 1024 * 1024,
             CacheClass::Frontend => 1024 * 1024 * 1024,
             CacheClass::Packages | CacheClass::Build => 2 * 1024 * 1024 * 1024,
+            CacheClass::LinkStamps => 64 * 1024 * 1024,
         };
-        let name = format!("GOS_CACHE_{}_MAX_BYTES", class.name().to_ascii_uppercase());
+        let name = format!(
+            "GOS_CACHE_{}_MAX_BYTES",
+            class.name().to_ascii_uppercase().replace('-', "_")
+        );
         env_u64(&name).unwrap_or(default)
     }
 }
@@ -185,16 +205,21 @@ pub fn paths(cwd: &Path) -> Vec<(CacheClass, PathBuf)> {
     // too; duplicates collapse below.
     if std::env::var_os("GOSSAMER_CACHE_DIR").is_none() {
         out.push((CacheClass::Frontend, shared.join("frontend")));
-        out.push((
-            CacheClass::Frontend,
-            cwd.join(".gos-cache").join("frontend"),
-        ));
     }
     out.extend([
         (CacheClass::Ir, shared.join("ir-cache")),
         (CacheClass::Runners, binding_root.join("runners")),
-        (CacheClass::Ir, cwd.join(".gos-cache").join("ir-cache")),
     ]);
+    // Each project anchors its `.gos-cache/` at its own `project.toml`, so a
+    // workspace, an examples directory, and an integration-test tree each
+    // carry one below the directory the command runs in.
+    for root in project_cache_roots(cwd) {
+        for class in CacheClass::all() {
+            if let Some(name) = class.project_dir_name() {
+                out.push((*class, root.join(name)));
+            }
+        }
+    }
     if let Some(root) = gossamer_pkg::default_cache_root() {
         out.push((CacheClass::Packages, root));
     }
@@ -217,6 +242,44 @@ pub fn paths_in_scope(cwd: &Path, scope: CacheScope) -> Vec<(CacheClass, PathBuf
         .into_iter()
         .filter(|(_, path)| scope.covers(path, cwd))
         .collect()
+}
+
+/// Every `.gos-cache/` at or below `cwd`, in path order.
+///
+/// The working directory's own root is always reported, present or not, so a
+/// status listing names it with zeroes rather than omitting it. Directories
+/// that hold a project's outputs or its dependencies' sources are skipped:
+/// neither writes a toolchain cache, and both can be large.
+#[must_use]
+pub fn project_cache_roots(cwd: &Path) -> Vec<PathBuf> {
+    const SKIPPED: &[&str] = &[".git", ".gos-bindings", "target", "vendor", "node_modules"];
+
+    let mut out = vec![cwd.join(".gos-cache")];
+    let mut pending = vec![cwd.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let cache = dir.join(".gos-cache");
+        if cache.is_dir() && !out.contains(&cache) {
+            out.push(cache);
+        }
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            // A symlink is followed by `is_dir`, so testing the entry's own
+            // type keeps the walk inside this tree.
+            if !entry.file_type().is_ok_and(|ty| ty.is_dir()) {
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name == ".gos-cache" || SKIPPED.contains(&name.as_ref()) {
+                continue;
+            }
+            pending.push(entry.path());
+        }
+    }
+    out.sort();
+    out
 }
 
 /// Directory the retired build-graph cache wrote to. Still reported and
@@ -271,6 +334,9 @@ pub fn remove(
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
                 Err(err) => return Err(err),
             }
+            // A `.gos-cache/` whose last class directory just went is itself
+            // cache, so it leaves with them.
+            cleanup_empty_cache_dirs(&path, &path);
         }
         removed.push(CacheEntry {
             class,
@@ -293,20 +359,21 @@ pub fn prune(
 ) -> std::io::Result<(u64, u64)> {
     let now = SystemTime::now();
     let mut files = Vec::new();
-    for (class, root) in paths_in_scope(cwd, scope) {
+    let roots: Vec<(CacheClass, PathBuf)> = paths_in_scope(cwd, scope);
+    for (index, (class, root)) in roots.iter().enumerate() {
         let mut root_files = Vec::new();
-        collect_files(&root, &mut root_files);
-        files.extend(root_files.into_iter().map(|entry| (class, entry)));
+        collect_files(root, &mut root_files);
+        files.extend(root_files.into_iter().map(|entry| (*class, index, entry)));
     }
-    files.sort_by_key(|(_, entry)| entry.modified);
-    let mut total: u64 = files.iter().map(|(_, entry)| entry.bytes).sum();
+    files.sort_by_key(|(_, _, entry)| entry.modified);
+    let mut total: u64 = files.iter().map(|(_, _, entry)| entry.bytes).sum();
     let mut class_totals: HashMap<CacheClass, u64> = HashMap::new();
-    for (class, entry) in &files {
+    for (class, _, entry) in &files {
         *class_totals.entry(*class).or_default() += entry.bytes;
     }
     let mut reclaimed = 0;
     let mut count = 0;
-    for (class, entry) in files {
+    for (class, root_index, entry) in files {
         let expired = now
             .duration_since(entry.modified)
             .is_ok_and(|age| age > policy.max_age);
@@ -320,7 +387,7 @@ pub fn prune(
         }
         if !dry_run {
             let _ = fs::remove_file(&entry.path);
-            cleanup_empty_parents(&entry.path);
+            cleanup_empty_cache_dirs(&entry.path, &roots[root_index].1);
         }
         total = total.saturating_sub(entry.bytes);
         let class_total = class_totals.entry(class).or_default();
@@ -359,7 +426,7 @@ pub fn prune_runner_root(
         }
         if !dry_run {
             let _ = fs::remove_file(&entry.path);
-            cleanup_empty_parents(&entry.path);
+            cleanup_empty_cache_dirs(&entry.path, root);
         }
         total = total.saturating_sub(entry.bytes);
         reclaimed = reclaimed.saturating_add(entry.bytes);
@@ -410,10 +477,21 @@ fn runner_locked(path: &Path) -> bool {
         .any(|ancestor| ancestor.join(".gos-build.lock").is_file())
 }
 
-fn cleanup_empty_parents(path: &Path) {
+/// Removes the now-empty directories `path` leaves behind, from its parent up
+/// to `root`, then the `.gos-cache/` that owns `root`. Nothing above a cache
+/// root is cache, so the sweep stays inside what the caller asked to reclaim.
+fn cleanup_empty_cache_dirs(path: &Path, root: &Path) {
     for parent in path.ancestors().skip(1) {
+        if !parent.starts_with(root) {
+            if parent.file_name().is_some_and(|name| name == ".gos-cache")
+                && root.parent() == Some(parent)
+            {
+                let _ = fs::remove_dir(parent);
+            }
+            return;
+        }
         if fs::remove_dir(parent).is_err() {
-            break;
+            return;
         }
     }
 }

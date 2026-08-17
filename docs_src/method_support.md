@@ -99,7 +99,7 @@ The literal spelling of each container is in
 | `v.max_by_key(f)` / `v.min_by_key(f)` | `Option<T>` | Extremum by derived key. |
 | `v.take(n)` | `Vec<T>` | First `n` elements (fewer if short). |
 | `v.step_by(n)` | `Vec<T>` | Every `n`-th element, starting at index 0. |
-| `v.join(sep)` | `String` | Scalar / `String` elements joined with `sep`; no traversal. |
+| `v.join(sep)` | `String` | Elements rendered as `{}` renders them and joined with `sep`; no traversal. |
 | `v.first()` / `v.last()` | `Option<T>` | |
 | `v.insert(i, item)` / `v.remove(i)` | `Result<_, errors::Error>` | Bounds-checked mutation helpers. |
 | `v.rev()` | `Vec<T>` | Non-mutating; `v.reverse()` is in-place. |
@@ -234,6 +234,20 @@ comparison: `push` inserts, `pop` removes the greatest (or least) element, and
 integer width, `u8` / `u16` / `u32`, `f32` / `f64`, `bool`, `char`. A `u64` or
 `usize` element is reported as GT0068: the heap compares slots as signed
 64-bit values, which that range outruns.
+
+## `to_string` and the Display rendering
+
+`x.to_string()` answers the text `{}` renders for the same value, through the
+same formatter: a scalar, a tuple, a struct, an enum, a `Vec`, a `Map`, a
+`Set`, an `Option`, a `Result`, and every nesting of them. A `String` is
+already its own text, so it carries `clone` rather than `to_string`.
+
+A handle, a closure, a channel, and a `JoinHandle` have no rendering; both
+`to_string` and `{}` on one report GT0062, naming what it is. A lazy iterator
+is a cursor rather than a value, so it is collected first (GT0041).
+
+`xs.join(sep)` uses the same rendering for every element, so any sequence whose
+element `{}` renders can be joined.
 
 ## Slot-backed container elements
 

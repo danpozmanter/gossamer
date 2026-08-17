@@ -569,8 +569,8 @@ fn mapped_stride(out_bytes: i64) -> u32 {
 /// A word-wide element is the value itself. A wider one is a flat slot block
 /// the callback returns the address of, so the block's bytes are copied into
 /// the element's own storage.
-unsafe fn push_mapped(out: *mut GosVec, y: i64, out_bytes: i64) {
-    if out_bytes > 8 {
+unsafe fn push_mapped(out: *mut GosVec, y: i64, out_bytes: i64, by_block: bool) {
+    if by_block || out_bytes > 8 {
         let block = std::ptr::with_exposed_provenance::<u8>(y as usize);
         if !block.is_null() {
             unsafe { crate::c_abi::vec::gos_rt_vec_push(out, block) };
@@ -1860,6 +1860,7 @@ pub unsafe extern "C" fn gos_rt_iter_map_i64(
     env: *const u8,
     v: *const GosVec,
     out_bytes: i64,
+    out_is_block: i64,
 ) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
         let out = unsafe { gos_rt_vec_new(mapped_stride(out_bytes)) };
@@ -1876,7 +1877,7 @@ pub unsafe extern "C" fn gos_rt_iter_map_i64(
         for i in 0..vec.len {
             let x = unsafe { gos_rt_vec_get_i64(v, i) };
             let y = unsafe { f(env, x) };
-            unsafe { push_mapped(out, y, out_bytes) };
+            unsafe { push_mapped(out, y, out_bytes, out_is_block != 0) };
         }
         out
     })
@@ -1889,6 +1890,7 @@ pub unsafe extern "C" fn gos_rt_iter_map_ptr_i64(
     env: *const u8,
     v: *const GosVec,
     out_bytes: i64,
+    out_is_block: i64,
 ) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
         let out = unsafe { gos_rt_vec_new(mapped_stride(out_bytes)) };
@@ -1905,7 +1907,7 @@ pub unsafe extern "C" fn gos_rt_iter_map_ptr_i64(
         for i in 0..len {
             let x = unsafe { gos_rt_vec_get_ptr(v, i) };
             let y = unsafe { f(env, x) };
-            unsafe { push_mapped(out, y, out_bytes) };
+            unsafe { push_mapped(out, y, out_bytes, out_is_block != 0) };
         }
         out
     })
@@ -2006,6 +2008,7 @@ pub unsafe extern "C" fn gos_rt_iter_map_f64_word(
     env: *const u8,
     v: *const GosVec,
     out_bytes: i64,
+    out_is_block: i64,
 ) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
         let out = unsafe { gos_rt_vec_new(mapped_stride(out_bytes)) };
@@ -2022,7 +2025,7 @@ pub unsafe extern "C" fn gos_rt_iter_map_f64_word(
         for i in 0..vec.len {
             let x = f64::from_bits(unsafe { gos_rt_vec_get_i64(v, i) } as u64);
             let y = unsafe { f(env, x) };
-            unsafe { push_mapped(out, y, out_bytes) };
+            unsafe { push_mapped(out, y, out_bytes, out_is_block != 0) };
         }
         out
     })
