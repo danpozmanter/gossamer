@@ -1688,7 +1688,7 @@ pub(super) fn lower_terminator(
                 for (i, _) in args.iter().enumerate() {
                     let want = match &fn_sig {
                         Some(sig_ref) if i < sig_ref.inputs.len() => {
-                            cl_type_of(tcx, sig_ref.inputs[i], module)
+                            callable_slot_ty(tcx, sig_ref.inputs[i], module)
                         }
                         _ => types::I64,
                     };
@@ -1697,11 +1697,23 @@ pub(super) fn lower_terminator(
                 }
                 let typed_ret_ty = match &fn_sig {
                     Some(sig_ref) if !matches!(tcx.kind_of(sig_ref.output), TyKind::Unit) => {
-                        Some(cl_type_of(tcx, sig_ref.output, module))
+                        Some(callable_slot_ty(tcx, sig_ref.output, module))
                     }
                     _ => Some(types::I64),
                 };
-                if let Some(t) = typed_ret_ty {
+                // The word at `env+0` is the entry the Rust runtime also
+                // calls, so it carries the platform's wire shape: a two-word
+                // carrier comes back in a vector register under the Win64
+                // ABI. A bare `fn` item value is called directly and keeps
+                // the shape Cranelift compiled it with.
+                let wire_ret_ty = typed_ret_ty.map(|t| {
+                    if is_plain_fn {
+                        t
+                    } else {
+                        win64_wire_return(module.target_config(), t)
+                    }
+                });
+                if let Some(t) = wire_ret_ty {
                     sig.returns.push(AbiParam::new(t));
                 }
                 // A callee returning a by-value aggregate was compiled with the
@@ -1757,6 +1769,13 @@ pub(super) fn lower_terminator(
                 }
                 let call = builder.ins().call_indirect(sig_ref, fn_ptr, &arg_values);
                 let results = builder.inst_results(call).to_vec();
+                let results: Vec<ir::Value> = match (typed_ret_ty, wire_ret_ty) {
+                    (Some(logical), Some(wire)) if logical != wire => results
+                        .into_iter()
+                        .map(|v| bitcast_same_width(builder, logical, v))
+                        .collect(),
+                    _ => results,
+                };
                 if let Some(&ret) = results.first() {
                     store_call_result(
                         module,

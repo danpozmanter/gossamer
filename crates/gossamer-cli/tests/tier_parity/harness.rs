@@ -172,6 +172,10 @@ const SPECS: &[Spec] = &[
     // expression reaches it and whatever the closure returns. The env
     // slot is reference-counted by that type on the compiled tiers.
     spec("feature-testing-examples/closure_capture_types.gos"),
+    // A callable's `Result` / `Option` return crosses the indirect call
+    // through its env blob as the two-word carrier the compiled body
+    // answers, rather than as the first of those two words.
+    spec("feature-testing-examples/callable_carrier_return.gos"),
     spec("feature-testing-examples/combinator_element_kinds.gos"),
     spec("feature-testing-examples/debugfmt_nested_adts.gos"),
     spec("feature-testing-examples/display_impl_dispatch.gos"),

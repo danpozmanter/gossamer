@@ -1,0 +1,46 @@
+// A callable whose signature carries a `Result` / `Option` across the
+// call: the value is two words, and the callable is reached through its
+// env blob rather than by name, so the indirect call has to agree with
+// the compiled body about the shape those words cross in.
+
+use std::{errors, option, result}
+
+fn apply_opt(f: Fn(i64) -> Option<i64>, x: i64) -> Option<i64> {
+    f(x)
+}
+
+fn apply_res(f: Fn(i64) -> Result<i64, errors::Error>, x: i64) -> Result<i64, errors::Error> {
+    f(x)
+}
+
+fn fold_opt(f: Fn(Option<i64>) -> i64, values: &[Option<i64>]) -> i64 {
+    let mut total = 0
+    for v in values {
+        total += f(v)
+    }
+    total
+}
+
+fn main() {
+    let tenfold = |x: i64| if x > 1 { Some(x * 10) } else { None }
+    let checked = |x: i64| -> Result<i64, errors::Error> {
+        if x % 2 == 0 {
+            Ok(x)
+        } else {
+            Err(errors::new("odd"))
+        }
+    }
+    let widen = |v: Option<i64>| v |> option::unwrap_or(-1)
+
+    let mut opt_total = 0
+    let mut res_total = 0
+    for i in 0..2000 {
+        opt_total += apply_opt(tenfold, i % 3) |> option::unwrap_or(0)
+        res_total += apply_res(checked, i % 4) |> result::unwrap_or(0)
+    }
+    println!("opt {opt_total} res {res_total}")
+
+    let values = #[Some(3), None, Some(4)]
+    println!("folded {}", fold_opt(widen, &values))
+    println!("direct {:?} {:?}", apply_opt(tenfold, 5), apply_opt(tenfold, 0))
+}

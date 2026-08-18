@@ -7,6 +7,10 @@
   `result::or_else`, or another combinator through a wrapper that answers in
   the register the runtime reads: a JIT-promoted body doing either faulted on
   Windows with an access violation at address zero.
+- Carry a `Result` / `Option` through a callable's own signature: a
+  JIT-promoted body calling `f(x)` through an `Fn(i64) -> Option<i64>` value
+  read back only the discriminant word, so the payload was lost and
+  `unwrap_or` answered its default.
 - Wind a nested cohort down when an enclosing one is cancelled: a child
   sleeping inside the inner cohort slept out its full duration instead, so a
   program with a failing sibling hung until the nap ended.

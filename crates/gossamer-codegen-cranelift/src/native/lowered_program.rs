@@ -336,102 +336,38 @@ pub(super) fn define_shape_thunk(
     Ok(thunk_id)
 }
 
-/// Collects the bodies whose address the Rust runtime later calls as
-/// `extern "C" fn(..) -> i128`: a closure handed to one of
-/// [`gossamer_abi::I128_CALLBACK_SHIMS`] through its env blob, and a handler
-/// stored by one of [`gossamer_abi::I128_HANDLER_REGISTRATIONS`].
+/// Collects every function whose address a body takes through the
+/// `gos_fn_addr` intrinsic.
 ///
-/// The address reaches the env blob through a `gos_fn_addr` intrinsic naming
-/// the body, so the collected names are what that lowering substitutes a
-/// vector-returning wrapper for on Win64.
-pub(super) fn collect_runtime_invoked_callbacks(bodies: &[Body]) -> HashSet<String> {
+/// An address taken this way is stored in a callable's env blob, and the word
+/// at the front of that blob is the entry both the Rust runtime and the
+/// closure-dispatch lowering call - so on Win64 each of these functions needs
+/// the wire shape rather than the one Cranelift compiled it with. Which
+/// runtime shims read a two-word carrier back is recorded in
+/// [`gossamer_abi::I128_CALLBACK_SHIMS`] and
+/// [`gossamer_abi::I128_HANDLER_REGISTRATIONS`]; the wrapper is emitted for
+/// every address-taken carrier body regardless, so the env word means one
+/// thing everywhere.
+pub(super) fn collect_fn_addr_targets(bodies: &[Body]) -> HashSet<String> {
     let mut names = HashSet::new();
+    let mut note = |rvalue: &Rvalue| {
+        if let Rvalue::CallIntrinsic { name, args } = rvalue
+            && *name == "gos_fn_addr"
+            && let Some(Operand::Const(ConstValue::Str(target))) = args.first()
+        {
+            names.insert(target.clone());
+        }
+    };
     for body in bodies {
         for block in &body.blocks {
-            let Terminator::Call { callee, args, .. } = &block.terminator else {
-                continue;
-            };
-            let Operand::Const(ConstValue::Str(sym)) = callee else {
-                continue;
-            };
-            if let Some((_, addr_index)) = gossamer_abi::I128_HANDLER_REGISTRATIONS
-                .iter()
-                .find(|(shim, _)| shim == sym)
-            {
-                if let Some(Operand::Copy(place)) = args.get(*addr_index)
-                    && let Some(name) = fn_addr_name_of(body, place.local)
-                {
-                    names.insert(name);
-                }
-            } else if gossamer_abi::I128_CALLBACK_SHIMS.contains(&sym.as_str()) {
-                for arg in args {
-                    let Operand::Copy(place) = arg else {
-                        continue;
-                    };
-                    names.extend(env_slot0_fn_name(body, place.local));
+            for stmt in &block.stmts {
+                if let StatementKind::Assign { rvalue, .. } = &stmt.kind {
+                    note(rvalue);
                 }
             }
         }
     }
     names
-}
-
-/// The function `local` holds the address of, when it was assigned by a
-/// `gos_fn_addr` intrinsic naming one.
-fn fn_addr_name_of(body: &Body, local: Local) -> Option<String> {
-    for block in &body.blocks {
-        for stmt in &block.stmts {
-            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
-                continue;
-            };
-            if place.local != local || !place.projection.is_empty() {
-                continue;
-            }
-            if let Rvalue::CallIntrinsic { name, args } = rvalue
-                && *name == "gos_fn_addr"
-                && let Some(Operand::Const(ConstValue::Str(target))) = args.first()
-            {
-                return Some(target.clone());
-            }
-        }
-    }
-    None
-}
-
-/// The function the closure env rooted at `env_local` calls, when its first
-/// word was filled from a `gos_fn_addr`.
-///
-/// The env blob is `[fn_addr, captures…]`, written one `gos_store` per word,
-/// and the runtime enters the callback through the word at offset zero.
-fn env_slot0_fn_name(body: &Body, env_local: Local) -> Option<String> {
-    for block in &body.blocks {
-        for stmt in &block.stmts {
-            let StatementKind::Assign { rvalue, .. } = &stmt.kind else {
-                continue;
-            };
-            let Rvalue::CallIntrinsic { name, args } = rvalue else {
-                continue;
-            };
-            if *name != "gos_store" {
-                continue;
-            }
-            let [
-                Operand::Copy(env),
-                Operand::Const(ConstValue::Int(0)),
-                Operand::Copy(fn_addr),
-            ] = args.as_slice()
-            else {
-                continue;
-            };
-            if env.local != env_local || !env.projection.is_empty() {
-                continue;
-            }
-            if let Some(name) = fn_addr_name_of(body, fn_addr.local) {
-                return Some(name);
-            }
-        }
-    }
-    None
 }
 
 /// Emits the Win64 vector-return wrapper `<name>$cabi` for a body whose

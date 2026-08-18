@@ -401,6 +401,23 @@ pub(super) fn body_returns_sret_aggregate(body: &Body, tcx: &TyCtxt) -> bool {
     ) && (type_slot_count(tcx, ret) > 1 || single_slot_addr_aggregate(tcx, ret))
 }
 
+/// Cranelift type of one slot in a callable's signature: an inline two-word
+/// enum (`Result` / `Option` / an inline user enum) crosses as the packed
+/// `i128` carrier, everything else as its own scalar shape. The declaration
+/// side of every body uses this rule, so an indirect call through a
+/// callable's signature has to use it too.
+pub(super) fn callable_slot_ty(
+    tcx: &TyCtxt,
+    ty: gossamer_types::Ty,
+    module: &dyn Module,
+) -> ir::Type {
+    if is_inline_two_word_ty(tcx, ty) {
+        types::I128
+    } else {
+        cl_type_of(tcx, ty, module)
+    }
+}
+
 pub(super) fn build_signature_from_types(
     module: &dyn Module,
     body: &Body,
@@ -700,21 +717,16 @@ pub(crate) fn lower_program_full(
             }
         }
     }
-    // Win64: every body the runtime enters as `extern "C" fn(..) -> i128`
-    // gets a vector-return wrapper, and `gos_fn_addr` hands that address over
-    // in place of the body's own. On every other target the carrier already
+    // Win64: a body whose address is taken answers its two-word carrier
+    // through a vector-return wrapper, and `gos_fn_addr` hands that address
+    // over in place of the body's own - so the word at the front of a
+    // callable's env means the same thing to the Rust runtime and to the
+    // closure-dispatch lowering. On every other target the carrier already
     // crosses in the registers both sides agree on.
     if is_win64_abi(module.target_config()) {
-        let mut callbacks: Vec<String> = collect_runtime_invoked_callbacks(bodies)
-            .into_iter()
-            .collect();
+        let mut callbacks: Vec<String> = collect_fn_addr_targets(bodies).into_iter().collect();
         callbacks.sort();
         for name in callbacks {
-            // A body this module only declares is defined - and wrapped -
-            // by the object that owns it.
-            if !body_should_be_defined(&name) {
-                continue;
-            }
             let Some(&id) = function_ids_by_name.get(&name) else {
                 continue;
             };
@@ -1385,11 +1397,131 @@ mod win64_abi_tests {
         vec![callback, caller]
     }
 
+    /// A body that calls a closure through its env blob: the callable's
+    /// `Fn(i64) -> Option<i64>` signature makes the call's return the
+    /// two-word carrier.
+    fn env_dispatch_body(tcx: &mut TyCtxt) -> Body {
+        let mut map = SourceMap::new();
+        let file = map.add_file("win64-dispatch.gos", "");
+        let span = Span::new(file, 0, 0);
+        let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+        let option_ty = tcx.intern(TyKind::Adt {
+            def: DefId::local(u32::MAX - 1),
+            substs: Substs::new(),
+        });
+        let callable_ty = tcx.intern(TyKind::FnTrait(gossamer_types::FnSig {
+            inputs: vec![i64_ty],
+            output: option_ty,
+        }));
+        let decl = |ty| LocalDecl {
+            ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        };
+        let stmt = |kind| Statement { kind, span };
+        Body {
+            name: "main".to_string(),
+            def: None,
+            arity: 0,
+            locals: vec![decl(i64_ty), decl(callable_ty), decl(option_ty)],
+            blocks: vec![
+                BasicBlock {
+                    id: BlockId(0),
+                    stmts: vec![stmt(StatementKind::Assign {
+                        place: Place::local(Local(1)),
+                        rvalue: Rvalue::CallIntrinsic {
+                            name: "gos_alloc",
+                            args: vec![Operand::Const(ConstValue::Int(8))],
+                        },
+                    })],
+                    terminator: Terminator::Call {
+                        callee: Operand::Copy(Place::local(Local(1))),
+                        args: vec![Operand::Const(ConstValue::Int(3))],
+                        destination: Place::local(Local(2)),
+                        target: Some(BlockId(1)),
+                    },
+                    span,
+                },
+                BasicBlock {
+                    id: BlockId(1),
+                    stmts: Vec::new(),
+                    terminator: Terminator::Return,
+                    span,
+                },
+            ],
+            span,
+        }
+    }
+
+    /// The word at the front of a callable's env is the entry the Rust
+    /// runtime calls, so on Win64 it answers a carrier in a vector register -
+    /// and the closure-dispatch lowering has to read it from there too, or
+    /// the two disagree about what that word means.
+    #[test]
+    fn env_dispatch_reads_a_carrier_from_the_wire_register_on_win64() {
+        let mut tcx = TyCtxt::new();
+        let body = env_dispatch_body(&mut tcx);
+        let mut module = win64_module();
+        let (lowered, clif) = super::capture_clif(|| {
+            lower_program_full(
+                &mut module,
+                std::slice::from_ref(&body),
+                &tcx,
+                Some("gos_main"),
+                false,
+                None,
+                LoweringMode::Serial,
+            )
+        });
+        lowered.expect("an env-dispatched carrier-returning call must lower for Win64");
+        let text = clif.get("main").expect("main lowered");
+        assert!(
+            text.contains("i8x16"),
+            "the carrier crosses in a vector register here:\n{text}"
+        );
+    }
+
+    /// System V returns the carrier in the register pair on both sides of the
+    /// same word, so the dispatch reads it as the `i128` it is.
+    #[test]
+    fn env_dispatch_reads_a_carrier_as_a_pair_on_system_v() {
+        let mut tcx = TyCtxt::new();
+        let body = env_dispatch_body(&mut tcx);
+        let mut module = sysv_module();
+        let (lowered, clif) = super::capture_clif(|| {
+            lower_program_full(
+                &mut module,
+                std::slice::from_ref(&body),
+                &tcx,
+                Some("gos_main"),
+                false,
+                None,
+                LoweringMode::Serial,
+            )
+        });
+        lowered.expect("an env-dispatched carrier-returning call must lower for System V");
+        let text = clif.get("main").expect("main lowered");
+        assert!(
+            !text.contains("i8x16"),
+            "no vector register is involved here:\n{text}"
+        );
+    }
+
     /// On Win64 the runtime reads a callback's two-word carrier from a vector
     /// register, so the address handed over is the callback's vector-return
     /// wrapper rather than the body itself.
     #[test]
     fn a_carrier_returning_callback_crosses_through_its_wrapper_on_win64() {
+        // The wrapper calls the body it wraps, and a local call from an
+        // aarch64 host lowers to a relocation the COFF writer has no
+        // encoding for. The convention under test - a two-word carrier
+        // returned in a vector register - is the x86-64 one, and
+        // `host-arch` is the only ISA a build carries, so the assertion
+        // lives on an x86-64 host.
+        if std::env::consts::ARCH != "x86_64" {
+            return;
+        }
         let mut tcx = TyCtxt::new();
         let bodies = combinator_callback_bodies(&mut tcx);
         let mut module = win64_module();

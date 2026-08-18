@@ -323,6 +323,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "examples/testing.gos",
             "examples/toml_demo.gos",
             "feature-testing-examples/autoderive_int_widths.gos",
+            "feature-testing-examples/callable_carrier_return.gos",
             "feature-testing-examples/closure_payload_typing.gos",
             "feature-testing-examples/cohort_basics.gos",
             "feature-testing-examples/cohort_cancel.gos",
@@ -541,6 +542,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
         "std::option",
         &[
             "examples/function_piping.gos",
+            "feature-testing-examples/callable_carrier_return.gos",
             "feature-testing-examples/closure_payload_typing.gos",
             "feature-testing-examples/combinator_sweep.gos",
             "feature-testing-examples/option_default.gos",
@@ -620,6 +622,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
     (
         "std::result",
         &[
+            "feature-testing-examples/callable_carrier_return.gos",
             "feature-testing-examples/closure_payload_typing.gos",
             "feature-testing-examples/combinator_sweep.gos",
             "feature-testing-examples/result_default.gos",
