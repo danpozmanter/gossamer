@@ -64,6 +64,56 @@ pub const DESC_ERROR: u8 = 18;
 /// value occupies where it is stored inline, as a tuple field is.
 pub const DESC_ADT: u8 = 19;
 
+/// Runtime shims that invoke a gossamer callback through
+/// `extern "C" fn(..) -> i128`, reading the callback's address from offset
+/// zero of the closure env blob handed to the shim.
+///
+/// The two-word `[disc, payload]` carrier comes back in a vector register
+/// under the Win64 ABI and in the integer-register pair under System V, so a
+/// backend targeting Windows hands the runtime a vector-returning wrapper in
+/// place of the callback's own address. Callbacks that answer `i64`, `bool`,
+/// or `f64` agree on the register already and are not listed.
+pub const I128_CALLBACK_SHIMS: &[&str] = &[
+    "gos_rt_fs_walk_dir",
+    "gos_rt_iter_filter_map_i64",
+    "gos_rt_iter_find_map_i64",
+    "gos_rt_iter_map_ptr_i64",
+    "gos_rt_option_and_then",
+    "gos_rt_option_or_else",
+    "gos_rt_result_and_then",
+    "gos_rt_result_or_else",
+];
+
+/// Runtime registration shims that store a gossamer handler's address and
+/// later invoke it as `extern "C" fn(..) -> i128`, paired with the position
+/// of the address argument in the shim's signature. Same carrier-register
+/// rule as [`I128_CALLBACK_SHIMS`], reached through a stored handler rather
+/// than an env blob.
+pub const I128_HANDLER_REGISTRATIONS: &[(&str, usize)] = &[
+    ("gos_rt_http2_bind_and_run_h2c", 2),
+    ("gos_rt_http3_serve", 4),
+    ("gos_rt_http_serve", 2),
+    ("gos_rt_http_serve_tls", 4),
+    ("gos_rt_middleware_new", 1),
+    ("gos_rt_middleware_new_kind", 1),
+    ("gos_rt_router_add", 4),
+    ("gos_rt_router_add_fn", 3),
+    ("gos_rt_router_delete", 3),
+    ("gos_rt_router_delete_fn", 2),
+    ("gos_rt_router_get", 3),
+    ("gos_rt_router_get_fn", 2),
+    ("gos_rt_router_head", 3),
+    ("gos_rt_router_head_fn", 2),
+    ("gos_rt_router_options", 3),
+    ("gos_rt_router_options_fn", 2),
+    ("gos_rt_router_patch", 3),
+    ("gos_rt_router_patch_fn", 2),
+    ("gos_rt_router_post", 3),
+    ("gos_rt_router_post_fn", 2),
+    ("gos_rt_router_put", 3),
+    ("gos_rt_router_put_fn", 2),
+];
+
 pub use registry::{REGISTRY, all_llvm_declarations, lookup};
 pub use types::{AbiSig, AbiType, RuntimeEntry, Tier};
 

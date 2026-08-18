@@ -102,6 +102,10 @@ struct Cohort {
     /// Cancelling drains the list and unparks each, so every one of them
     /// re-checks its own condition.
     waiters: Mutex<Vec<Gid>>,
+    /// Cohorts opened under this one, still live. A goroutine parked
+    /// inside a nested cohort is on that cohort's waiter list, so
+    /// cancelling reaches it by walking down this edge.
+    children: Mutex<Vec<i64>>,
 }
 
 static COHORTS: LazyLock<Mutex<HashMap<i64, Arc<Cohort>>>> =
@@ -209,22 +213,39 @@ pub fn deregister_waiter(id: i64, gid: Gid) {
 }
 
 /// Marks `id` cancelled and wakes everything waiting under it: the
-/// goroutines parked at a cancellation point, and any joiner.
+/// goroutines parked at a cancellation point, any joiner, and the same
+/// again for every cohort nested inside it.
+///
+/// A goroutine parked inside a nested cohort is registered on that
+/// cohort's waiter list, and a parked goroutine cannot consult the
+/// parent chain on its own, so the wake has to travel down every edge
+/// rather than rely on the walk each cancellation point does before it
+/// parks. The descendants are visited iteratively, so nesting depth
+/// costs heap rather than frames.
 fn cancel(id: i64) {
-    let Some(node) = cohort_at(id) else {
-        return;
-    };
-    if node.cancelled.swap(true, Ordering::AcqRel) {
-        return;
+    let mut pending = vec![id];
+    while let Some(current) = pending.pop() {
+        let Some(node) = cohort_at(current) else {
+            continue;
+        };
+        {
+            // The flag changes and the condvar wake are issued under the
+            // lock a joining OS thread holds while it tests `outstanding`,
+            // so a cancellation landing between one waiter's test and its
+            // wait still reaches it.
+            let _state = node.state.lock();
+            if node.cancelled.swap(true, Ordering::AcqRel) {
+                continue;
+            }
+            CANCELLED_COHORTS.fetch_add(1, Ordering::AcqRel);
+            node.progress.notify_all();
+        }
+        for gid in std::mem::take(&mut *node.waiters.lock()) {
+            crate::sched_global::scheduler().unpark(gid);
+        }
+        wake_joiners(&node);
+        pending.extend(node.children.lock().iter().copied());
     }
-    CANCELLED_COHORTS.fetch_add(1, Ordering::AcqRel);
-    for gid in std::mem::take(&mut *node.waiters.lock()) {
-        crate::sched_global::scheduler().unpark(gid);
-    }
-    node.progress.notify_all();
-    wake_joiners(&node);
-    // A nested cohort is cancelled through the parent chain its own
-    // cancellation check walks, so the walk stops here.
 }
 
 fn wake_joiners(node: &Cohort) {
@@ -254,9 +275,19 @@ fn push(policy: i64, timeout_ms: i64, context: i64) -> i64 {
         progress: Condvar::new(),
         joiners: Mutex::new(Vec::new()),
         waiters: Mutex::new(Vec::new()),
+        children: Mutex::new(Vec::new()),
     });
     COHORTS.lock().insert(id, node);
+    if let Some(enclosing) = cohort_at(parent) {
+        enclosing.children.lock().push(id);
+    }
     set_current_cohort(id);
+    // An enclosing cohort cancelled between reading `parent` and linking
+    // this one in never reaches the new cohort through that edge, so a
+    // cohort opened under a cancelled chain starts cancelled itself.
+    if parent != 0 && chain_is_cancelled(parent) {
+        cancel(id);
+    }
     if timeout_ms > 0 {
         // The deadline rides the scheduler's timer wheel, so a bounded
         // cohort costs an entry there rather than a thread parked on a
@@ -430,6 +461,9 @@ fn pop_current() {
     // A handle nobody joined has no one left to mark it observed, so its
     // entry retires with the cohort rather than living for the process.
     CHILD_HANDLES.lock().retain(|_, (cohort, _)| *cohort != id);
+    if let Some(enclosing) = cohort_at(node.parent) {
+        enclosing.children.lock().retain(|child| *child != id);
+    }
     COHORTS.lock().remove(&id);
 }
 

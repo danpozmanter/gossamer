@@ -1883,25 +1883,9 @@ fn collect_thunk_names_in_body(body: &Body, out: &mut std::collections::BTreeSet
 }
 
 /// Runtime shims whose closure callback returns the 2-word `i128`
-/// Option/Result. The rustc runtime invokes the callback through
-/// `extern "C" fn(..) -> i128`, reading the result from xmm0; the callback
-/// address lives at offset 0 of the closure env-blob passed as an argument.
-/// `map` / predicate / comparator callbacks return `i64` / `bool`, which
-/// already agree on the GP register, so they are not listed here.
-const CABI_I128_COMBINATORS: &[&str] = &[
-    // Aggregate iterator maps return i64 but still need a codegen-owned
-    // reference for the runtime dispatch-table parity gate.
-    "gos_rt_iter_map_ptr_i64",
-    "gos_rt_result_and_then",
-    "gos_rt_result_or_else",
-    "gos_rt_option_and_then",
-    "gos_rt_option_or_else",
-    "gos_rt_iter_filter_map_i64",
-    "gos_rt_iter_find_map_i64",
-    // The `fs::walk_dir` / `path::walk` visitor: its `Result<(),
-    // errors::Error>` decides whether the walk continues past each entry.
-    "gos_rt_fs_walk_dir",
-];
+/// Option/Result, from the shared ABI table so the Cranelift backend and
+/// this one agree on which callbacks cross that boundary.
+const CABI_I128_COMBINATORS: &[&str] = gossamer_abi::I128_CALLBACK_SHIMS;
 
 /// `spawn(f)`'s shim. Its callable crosses as `i128` only when it answers
 /// a two-word `Result` / `Option`; the runtime reads the `ret_words`
@@ -2060,30 +2044,7 @@ fn resolve_env_slot0_fn(body: &Body, env_local: gossamer_mir::Local) -> Option<S
 /// thunk. On every target the collected names also identify functions
 /// entered directly from the Rust runtime, whose opaque request params
 /// arrive as raw pointers.
-const CABI_HANDLER_REGISTRATIONS: &[(&str, usize)] = &[
-    ("gos_rt_http2_bind_and_run_h2c", 2),
-    ("gos_rt_http3_serve", 4),
-    ("gos_rt_http_serve", 2),
-    ("gos_rt_http_serve_tls", 4),
-    ("gos_rt_middleware_new", 1),
-    ("gos_rt_middleware_new_kind", 1),
-    ("gos_rt_router_add", 4),
-    ("gos_rt_router_add_fn", 3),
-    ("gos_rt_router_delete", 3),
-    ("gos_rt_router_delete_fn", 2),
-    ("gos_rt_router_get", 3),
-    ("gos_rt_router_get_fn", 2),
-    ("gos_rt_router_head", 3),
-    ("gos_rt_router_head_fn", 2),
-    ("gos_rt_router_options", 3),
-    ("gos_rt_router_options_fn", 2),
-    ("gos_rt_router_patch", 3),
-    ("gos_rt_router_patch_fn", 2),
-    ("gos_rt_router_post", 3),
-    ("gos_rt_router_post_fn", 2),
-    ("gos_rt_router_put", 3),
-    ("gos_rt_router_put_fn", 2),
-];
+const CABI_HANDLER_REGISTRATIONS: &[(&str, usize)] = gossamer_abi::I128_HANDLER_REGISTRATIONS;
 
 /// Collects the gossamer functions invoked by the rustc-compiled runtime
 /// through `extern "C" fn(..) -> i128`, mapped to their parameter arity:

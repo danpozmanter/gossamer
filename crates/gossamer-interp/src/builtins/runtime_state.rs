@@ -245,9 +245,12 @@ fn builtin_repl_discard(_: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_println(args: &[Value]) -> RuntimeResult<Value> {
-    let rendered = render_args(args);
+    // The line and its terminator reach the writer as one call, so two
+    // goroutines printing at once produce two lines rather than one
+    // spliced pair.
+    let mut rendered = render_args(args);
+    rendered.push('\n');
     write_stdout(&rendered);
-    write_stdout("\n");
     Ok(Value::Unit)
 }
 

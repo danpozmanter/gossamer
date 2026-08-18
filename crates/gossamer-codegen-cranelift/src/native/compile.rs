@@ -158,6 +158,9 @@ pub(super) fn build_offline_module(
     for &func_id in intrinsics.functions.values() {
         populate_fn(func_id);
     }
+    for &func_id in intrinsics.cabi_callbacks.values() {
+        populate_fn(func_id);
+    }
     let mut data_info: HashMap<u32, (bool, bool)> = HashMap::new();
     for &data_id in intrinsics.strings.values() {
         let decl = decls.get_data_decl(data_id);
@@ -697,6 +700,39 @@ pub(crate) fn lower_program_full(
             }
         }
     }
+    // Win64: every body the runtime enters as `extern "C" fn(..) -> i128`
+    // gets a vector-return wrapper, and `gos_fn_addr` hands that address over
+    // in place of the body's own. On every other target the carrier already
+    // crosses in the registers both sides agree on.
+    if is_win64_abi(module.target_config()) {
+        let mut callbacks: Vec<String> = collect_runtime_invoked_callbacks(bodies)
+            .into_iter()
+            .collect();
+        callbacks.sort();
+        for name in callbacks {
+            // A body this module only declares is defined - and wrapped -
+            // by the object that owns it.
+            if !body_should_be_defined(&name) {
+                continue;
+            }
+            let Some(&id) = function_ids_by_name.get(&name) else {
+                continue;
+            };
+            let returns_carrier = module
+                .declarations()
+                .get_function_decl(id)
+                .signature
+                .returns
+                .first()
+                .is_some_and(|r| r.value_type == types::I128);
+            if !returns_carrier {
+                continue;
+            }
+            let thunk_id = emit_cabi_vector_return_thunk(module, id, &name)?;
+            intrinsics.cabi_callbacks.insert(name, thunk_id);
+        }
+    }
+
     for body in bodies {
         for s in collect_body_str_consts(body) {
             if s.starts_with("__fn_thunk_") {
@@ -877,6 +913,7 @@ pub(crate) fn lower_program_full(
         if dump_clif {
             eprintln!("=== CLIF {name} ===\n{}", func.display());
         }
+        record_clif(&name, &func);
         let mut ctx = Context::for_function(func);
         module.define_function(id, &mut ctx).map_err(|e| {
             let detail = match &e {
@@ -902,10 +939,45 @@ pub(crate) fn lower_program_full(
     })
 }
 
+// Per-thread record of the CLIF each body lowered to, populated only while
+// `capture_clif` holds a sink. ABI-shape tests read the text back to assert how
+// a value crosses the boundary, which the emitted object no longer shows.
+#[cfg(test)]
+thread_local! {
+    static CLIF_SINK: std::cell::RefCell<Option<Vec<(String, String)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn record_clif(name: &str, func: &Function) {
+    CLIF_SINK.with(|sink| {
+        if let Some(entries) = sink.borrow_mut().as_mut() {
+            entries.push((name.to_string(), func.display().to_string()));
+        }
+    });
+}
+
+#[cfg(not(test))]
+#[inline]
+fn record_clif(_name: &str, _func: &Function) {}
+
+/// Runs `lower` with CLIF recording on and hands back what it lowered, keyed
+/// by body name.
+#[cfg(test)]
+pub(super) fn capture_clif<T>(lower: impl FnOnce() -> T) -> (T, HashMap<String, String>) {
+    CLIF_SINK.with(|sink| *sink.borrow_mut() = Some(Vec::new()));
+    let value = lower();
+    let entries = CLIF_SINK
+        .with(|sink| sink.borrow_mut().take())
+        .unwrap_or_default();
+    (value, entries.into_iter().collect())
+}
+
 #[cfg(test)]
 mod win64_abi_tests {
     use super::{LoweringMode, lower_program_full};
     use cranelift_codegen::settings::{self, Configurable};
+    use cranelift_module::Module;
     use cranelift_object::{ObjectBuilder, ObjectModule};
     use gossamer_lex::{SourceMap, Span};
     use gossamer_mir::{
@@ -936,6 +1008,30 @@ mod win64_abi_tests {
         let builder = ObjectBuilder::new(
             isa,
             b"win64-abi-test".to_vec(),
+            cranelift_module::default_libcall_names(),
+        )
+        .expect("object builder");
+        ObjectModule::new(builder)
+    }
+
+    /// The same module targeting System V, where an `extern "C"` `i128`
+    /// crosses in the integer-register pair both sides already agree on.
+    fn sysv_module() -> ObjectModule {
+        let arch = std::env::consts::ARCH;
+        let triple: Triple = format!("{arch}-unknown-linux-gnu").parse().expect("triple");
+        let mut fb = settings::builder();
+        fb.set("opt_level", "speed").unwrap();
+        fb.set("is_pic", "false").unwrap();
+        fb.set("use_colocated_libcalls", "false").unwrap();
+        fb.set("unwind_info", "false").unwrap();
+        fb.set("enable_llvm_abi_extensions", "true").unwrap();
+        let isa = cranelift_codegen::isa::lookup(triple)
+            .expect("linux isa")
+            .finish(settings::Flags::new(fb))
+            .expect("isa finish");
+        let builder = ObjectBuilder::new(
+            isa,
+            b"sysv-abi-test".to_vec(),
             cranelift_module::default_libcall_names(),
         )
         .expect("object builder");
@@ -1048,6 +1144,291 @@ mod win64_abi_tests {
         assert!(
             matches!(kind, crate::native::operand::PrintKind::Int),
             "a cyclic copy graph names no container, so the local prints as its integer"
+        );
+    }
+
+    /// A body that hands a `Result`/`Option` carrier to a registry helper it
+    /// names directly (rather than through a per-helper lowering arm).
+    fn registry_call_body(tcx: &mut TyCtxt) -> Body {
+        let mut map = SourceMap::new();
+        let file = map.add_file("win64-registry.gos", "");
+        let span = Span::new(file, 0, 0);
+        let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+        let option_ty = tcx.intern(TyKind::Adt {
+            def: DefId::local(u32::MAX - 1),
+            substs: Substs::new(),
+        });
+        let decl = |ty| LocalDecl {
+            ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        };
+        Body {
+            name: "main".to_string(),
+            def: None,
+            arity: 0,
+            locals: vec![decl(i64_ty), decl(option_ty), decl(i64_ty)],
+            blocks: vec![
+                BasicBlock {
+                    id: BlockId(0),
+                    stmts: vec![Statement {
+                        kind: StatementKind::Assign {
+                            place: Place::local(Local(1)),
+                            rvalue: Rvalue::CallIntrinsic {
+                                name: "gos_rt_result_new",
+                                args: vec![
+                                    Operand::Const(ConstValue::Int(0)),
+                                    Operand::Const(ConstValue::Int(7)),
+                                ],
+                            },
+                        },
+                        span,
+                    }],
+                    terminator: Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_option_default_i64".to_string(),
+                        )),
+                        args: vec![
+                            Operand::Const(ConstValue::Int(0)),
+                            Operand::Copy(Place::local(Local(1))),
+                        ],
+                        destination: Place::local(Local(2)),
+                        target: Some(BlockId(1)),
+                    },
+                    span,
+                },
+                BasicBlock {
+                    id: BlockId(1),
+                    stmts: Vec::new(),
+                    terminator: Terminator::Return,
+                    span,
+                },
+            ],
+            span,
+        }
+    }
+
+    /// The Win64 ABI hands an `extern "C"` `i128` over by pointer, so a
+    /// carrier argument is spilled to a 16-byte slot whose address crosses.
+    /// A registry helper named straight from MIR takes the same path as one
+    /// with a lowering arm of its own: truncating the carrier to its
+    /// discriminant word would hand the runtime that word as a pointer.
+    #[test]
+    fn a_registry_call_spills_its_carrier_argument_on_win64() {
+        let mut tcx = TyCtxt::new();
+        let body = registry_call_body(&mut tcx);
+        let mut module = win64_module();
+        let (lowered, clif) = super::capture_clif(|| {
+            lower_program_full(
+                &mut module,
+                std::slice::from_ref(&body),
+                &tcx,
+                Some("gos_main"),
+                false,
+                None,
+                LoweringMode::Serial,
+            )
+        });
+        lowered.expect("a registry call taking a carrier must lower for Win64");
+        let text = clif.get("main").expect("main lowered");
+        assert!(
+            text.contains("stack_addr"),
+            "the carrier must cross by pointer:\n{text}"
+        );
+    }
+
+    /// The same call on System V passes the carrier in the register pair, so
+    /// no spill is emitted and the `i128` reaches the callee by value.
+    #[test]
+    fn a_registry_call_passes_its_carrier_by_value_on_system_v() {
+        let mut tcx = TyCtxt::new();
+        let body = registry_call_body(&mut tcx);
+        let mut module = sysv_module();
+        let (lowered, clif) = super::capture_clif(|| {
+            lower_program_full(
+                &mut module,
+                std::slice::from_ref(&body),
+                &tcx,
+                Some("gos_main"),
+                false,
+                None,
+                LoweringMode::Serial,
+            )
+        });
+        lowered.expect("a registry call taking a carrier must lower for System V");
+        let text = clif.get("main").expect("main lowered");
+        assert!(
+            !text.contains("stack_addr"),
+            "the carrier crosses in registers here:\n{text}"
+        );
+    }
+
+    /// A closure body answering `Option<i64>`, plus a caller that stores its
+    /// address in a closure env and hands the env to `option::and_then` -
+    /// the shape whose callback the runtime enters as
+    /// `extern "C" fn(..) -> i128`.
+    fn combinator_callback_bodies(tcx: &mut TyCtxt) -> Vec<Body> {
+        let mut map = SourceMap::new();
+        let file = map.add_file("win64-callback.gos", "");
+        let span = Span::new(file, 0, 0);
+        let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+        let option_ty = tcx.intern(TyKind::Adt {
+            def: DefId::local(u32::MAX - 1),
+            substs: Substs::new(),
+        });
+        let decl = |ty| LocalDecl {
+            ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        };
+        let stmt = |kind| Statement { kind, span };
+        let callback = Body {
+            name: "__closure_0".to_string(),
+            def: None,
+            arity: 2,
+            locals: vec![decl(option_ty), decl(i64_ty), decl(i64_ty)],
+            blocks: vec![BasicBlock {
+                id: BlockId(0),
+                stmts: vec![stmt(StatementKind::Assign {
+                    place: Place::local(Local(0)),
+                    rvalue: Rvalue::CallIntrinsic {
+                        name: "gos_rt_result_new",
+                        args: vec![
+                            Operand::Const(ConstValue::Int(0)),
+                            Operand::Copy(Place::local(Local(2))),
+                        ],
+                    },
+                })],
+                terminator: Terminator::Return,
+                span,
+            }],
+            span,
+        };
+        let caller = Body {
+            name: "main".to_string(),
+            def: None,
+            arity: 0,
+            locals: vec![
+                decl(i64_ty),
+                decl(option_ty),
+                decl(i64_ty),
+                decl(i64_ty),
+                decl(i64_ty),
+                decl(option_ty),
+            ],
+            blocks: vec![
+                BasicBlock {
+                    id: BlockId(0),
+                    stmts: vec![
+                        stmt(StatementKind::Assign {
+                            place: Place::local(Local(1)),
+                            rvalue: Rvalue::CallIntrinsic {
+                                name: "gos_rt_result_new",
+                                args: vec![
+                                    Operand::Const(ConstValue::Int(0)),
+                                    Operand::Const(ConstValue::Int(7)),
+                                ],
+                            },
+                        }),
+                        stmt(StatementKind::Assign {
+                            place: Place::local(Local(2)),
+                            rvalue: Rvalue::CallIntrinsic {
+                                name: "gos_alloc",
+                                args: vec![Operand::Const(ConstValue::Int(8))],
+                            },
+                        }),
+                        stmt(StatementKind::Assign {
+                            place: Place::local(Local(3)),
+                            rvalue: Rvalue::CallIntrinsic {
+                                name: "gos_fn_addr",
+                                args: vec![Operand::Const(ConstValue::Str(
+                                    "__closure_0".to_string(),
+                                ))],
+                            },
+                        }),
+                        stmt(StatementKind::Assign {
+                            place: Place::local(Local(4)),
+                            rvalue: Rvalue::CallIntrinsic {
+                                name: "gos_store",
+                                args: vec![
+                                    Operand::Copy(Place::local(Local(2))),
+                                    Operand::Const(ConstValue::Int(0)),
+                                    Operand::Copy(Place::local(Local(3))),
+                                ],
+                            },
+                        }),
+                    ],
+                    terminator: Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_option_and_then".to_string(),
+                        )),
+                        args: vec![
+                            Operand::Copy(Place::local(Local(1))),
+                            Operand::Copy(Place::local(Local(2))),
+                        ],
+                        destination: Place::local(Local(5)),
+                        target: Some(BlockId(1)),
+                    },
+                    span,
+                },
+                BasicBlock {
+                    id: BlockId(1),
+                    stmts: Vec::new(),
+                    terminator: Terminator::Return,
+                    span,
+                },
+            ],
+            span,
+        };
+        vec![callback, caller]
+    }
+
+    /// On Win64 the runtime reads a callback's two-word carrier from a vector
+    /// register, so the address handed over is the callback's vector-return
+    /// wrapper rather than the body itself.
+    #[test]
+    fn a_carrier_returning_callback_crosses_through_its_wrapper_on_win64() {
+        let mut tcx = TyCtxt::new();
+        let bodies = combinator_callback_bodies(&mut tcx);
+        let mut module = win64_module();
+        lower_program_full(
+            &mut module,
+            &bodies,
+            &tcx,
+            Some("gos_main"),
+            false,
+            None,
+            LoweringMode::Serial,
+        )
+        .expect("a body handing a carrier-returning closure to a combinator must lower");
+        assert!(
+            module.declarations().get_name("__closure_0$cabi").is_some(),
+            "the callback needs a vector-return wrapper on Win64"
+        );
+    }
+
+    /// System V returns the carrier in the register pair the runtime already
+    /// reads, so the callback's own address crosses and no wrapper exists.
+    #[test]
+    fn a_carrier_returning_callback_crosses_directly_on_system_v() {
+        let mut tcx = TyCtxt::new();
+        let bodies = combinator_callback_bodies(&mut tcx);
+        let mut module = sysv_module();
+        lower_program_full(
+            &mut module,
+            &bodies,
+            &tcx,
+            Some("gos_main"),
+            false,
+            None,
+            LoweringMode::Serial,
+        )
+        .expect("a body handing a carrier-returning closure to a combinator must lower");
+        assert!(
+            module.declarations().get_name("__closure_0$cabi").is_none(),
+            "no wrapper is emitted where the registers already agree"
         );
     }
 

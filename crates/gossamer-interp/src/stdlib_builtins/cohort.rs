@@ -102,6 +102,10 @@ struct CohortNode {
     cancelled: AtomicBool,
     state: parking_lot::Mutex<CohortState>,
     progress: parking_lot::Condvar,
+    /// Cohorts opened under this one, still live. A child sleeping
+    /// inside a nested cohort waits on that cohort's own `progress`, so
+    /// cancelling reaches it by walking down this edge.
+    children: parking_lot::Mutex<Vec<i64>>,
 }
 
 static COHORTS: LazyLock<parking_lot::Mutex<HashMap<i64, Arc<CohortNode>>>> =
@@ -158,20 +162,43 @@ pub(crate) fn current_is_cancelled() -> bool {
     id != 0 && chain_is_cancelled(id)
 }
 
+/// Marks `id` cancelled, along with every cohort nested inside it, and
+/// wakes what each has waiting.
+///
+/// A sleeping child waits on the `progress` condvar of the cohort it is
+/// in, which is not the one an ancestor's failure cancels, so the wake
+/// travels down every edge rather than only to the cancelled cohort's
+/// own children. The descendants are visited iteratively, so nesting
+/// depth costs heap rather than frames.
 fn cancel(id: i64) {
-    let Some(node) = node_of(id) else {
-        return;
-    };
-    if node.cancelled.swap(true, Ordering::AcqRel) {
-        return;
+    let mut pending = vec![id];
+    let mut marked_any = false;
+    while let Some(current) = pending.pop() {
+        let Some(node) = node_of(current) else {
+            continue;
+        };
+        {
+            // The flag changes and the wake are issued under the lock a
+            // waiter holds while it tests the flag, so a cancellation
+            // landing between one waiter's test and its park still
+            // reaches it.
+            let _state = node.state.lock();
+            if node.cancelled.swap(true, Ordering::AcqRel) {
+                continue;
+            }
+            marked_any = true;
+            CANCELLED_COHORTS.fetch_add(1, Ordering::AcqRel);
+            node.progress.notify_all();
+        }
+        pending.extend(node.children.lock().iter().copied());
     }
-    CANCELLED_COHORTS.fetch_add(1, Ordering::AcqRel);
-    node.progress.notify_all();
-    // A cancelled cohort's children are waiting on channels of their
-    // own, so wake every channel waiter to re-check its condition. The
-    // channel layer answers `None` to a receiver under a cancelled
-    // cohort, which is the same answer a closed channel gives.
-    crate::value::wake_all_channel_waiters();
+    if marked_any {
+        // A cancelled cohort's children are waiting on channels of their
+        // own, so wake every channel waiter to re-check its condition. The
+        // channel layer answers `None` to a receiver under a cancelled
+        // cohort, which is the same answer a closed channel gives.
+        crate::value::wake_all_channel_waiters();
+    }
 }
 
 /// Deadlines waiting to fire, earliest last so the timer thread pops the
@@ -241,9 +268,19 @@ fn push(policy: i64, timeout_ms: i64, context: i64) -> i64 {
             timed_out: false,
         }),
         progress: parking_lot::Condvar::new(),
+        children: parking_lot::Mutex::new(Vec::new()),
     });
     COHORTS.lock().insert(id, node);
+    if let Some(enclosing) = node_of(parent) {
+        enclosing.children.lock().push(id);
+    }
     set_current(id);
+    // An enclosing cohort cancelled between reading `parent` and linking
+    // this one in never reaches the new cohort through that edge, so a
+    // cohort opened under a cancelled chain starts cancelled itself.
+    if parent != 0 && chain_is_cancelled(parent) {
+        cancel(id);
+    }
     if timeout_ms > 0 {
         schedule_deadline(
             Instant::now() + Duration::from_millis(timeout_ms as u64),
@@ -326,6 +363,13 @@ pub(crate) fn sleep_cancellable(duration: Duration) -> bool {
             return true;
         }
         let mut state = node.state.lock();
+        // Cancelling marks this cohort's own flag - an ancestor's
+        // cancellation cascades down to it - and does so under this
+        // lock, so testing the flag here rather than before taking the
+        // lock is what makes the wake impossible to miss.
+        if node.cancelled.load(Ordering::Acquire) {
+            return false;
+        }
         node.progress.wait_for(&mut state, deadline - now);
     }
 }
@@ -401,6 +445,9 @@ fn pop_current() {
     // A handle nobody joined has no one left to mark it observed, so its
     // entry retires with the cohort rather than living for the process.
     CHILD_HANDLES.lock().retain(|_, (cohort, _)| *cohort != id);
+    if let Some(enclosing) = node_of(node.parent) {
+        enclosing.children.lock().retain(|child| *child != id);
+    }
     COHORTS.lock().remove(&id);
 }
 

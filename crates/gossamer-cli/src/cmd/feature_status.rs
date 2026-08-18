@@ -217,12 +217,18 @@ fn derived_status_of(entry: &FeatureStatus) -> Status {
 pub fn load_tier_status(path: Option<&Path>) -> Result<BTreeMap<String, TierStatus>> {
     let path = path.map_or_else(default_sidecar_path, Path::to_path_buf);
     if !path.exists() {
-        return parse_sidecar(RELEASE_EVIDENCE)
-            .map_err(|e| anyhow!("parsing the recorded release evidence: {e}"));
+        return release_evidence();
     }
     let bytes = fs::read(&path)?;
     let text = String::from_utf8_lossy(&bytes).into_owned();
     parse_sidecar(&text).map_err(|e| anyhow!("parsing {}: {e}", path.display()))
+}
+
+/// The tier-parity evidence compiled into this binary - what an installed
+/// `gos` with no repository behind it reports.
+pub fn release_evidence() -> Result<BTreeMap<String, TierStatus>> {
+    parse_sidecar(RELEASE_EVIDENCE)
+        .map_err(|e| anyhow!("parsing the recorded release evidence: {e}"))
 }
 
 /// Tier-parity evidence recorded for this release by

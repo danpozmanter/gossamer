@@ -261,14 +261,17 @@ pub(super) fn define_shape_thunk(
     let ret_ty = shape_char_to_cl_type(ret_char, ptr_ty)
         .ok_or_else(|| anyhow!("define_shape_thunk: unknown ret shape `{ret_char}` in `{name}`"))?;
     let unit_ret = ret_char == 'u';
-    // Thunk signature: (env: ptr, typed args...) -> typed ret.
+    // Thunk signature: (env: ptr, typed args...) -> typed ret. The runtime is
+    // the caller, so the return crosses in the platform's wire shape: a
+    // two-word carrier comes back in a vector register under the Win64 ABI.
+    let wire_ret_ty = win64_wire_return(module.target_config(), ret_ty);
     let mut sig = module.make_signature();
     sig.params.push(AbiParam::new(ptr_ty));
     for t in &input_tys {
         sig.params.push(AbiParam::new(*t));
     }
     if !unit_ret {
-        sig.returns.push(AbiParam::new(ret_ty));
+        sig.returns.push(AbiParam::new(wire_ret_ty));
     }
     let static_name: &'static str = Box::leak(name.to_string().into_boxed_str());
     let thunk_id = module
@@ -311,14 +314,169 @@ pub(super) fn define_shape_thunk(
         if unit_ret {
             builder.ins().return_(&[]);
         } else {
-            let ret = builder.inst_results(call).first().copied();
-            if let Some(v) = ret {
-                builder.ins().return_(&[v]);
+            let value = builder
+                .inst_results(call)
+                .first()
+                .copied()
+                .unwrap_or_else(|| builder.ins().iconst(ret_ty, 0));
+            let wire = if wire_ret_ty == ret_ty {
+                value
             } else {
-                let zero = builder.ins().iconst(ret_ty, 0);
-                builder.ins().return_(&[zero]);
+                bitcast_same_width(&mut builder, wire_ret_ty, value)
+            };
+            builder.ins().return_(&[wire]);
+        }
+        builder.seal_all_blocks();
+        builder.finalize(module.target_config());
+    }
+    let mut ctx = Context::for_function(func);
+    module
+        .define_function(thunk_id, &mut ctx)
+        .map_err(|e| anyhow!("define {static_name}: {e}"))?;
+    Ok(thunk_id)
+}
+
+/// Collects the bodies whose address the Rust runtime later calls as
+/// `extern "C" fn(..) -> i128`: a closure handed to one of
+/// [`gossamer_abi::I128_CALLBACK_SHIMS`] through its env blob, and a handler
+/// stored by one of [`gossamer_abi::I128_HANDLER_REGISTRATIONS`].
+///
+/// The address reaches the env blob through a `gos_fn_addr` intrinsic naming
+/// the body, so the collected names are what that lowering substitutes a
+/// vector-returning wrapper for on Win64.
+pub(super) fn collect_runtime_invoked_callbacks(bodies: &[Body]) -> HashSet<String> {
+    let mut names = HashSet::new();
+    for body in bodies {
+        for block in &body.blocks {
+            let Terminator::Call { callee, args, .. } = &block.terminator else {
+                continue;
+            };
+            let Operand::Const(ConstValue::Str(sym)) = callee else {
+                continue;
+            };
+            if let Some((_, addr_index)) = gossamer_abi::I128_HANDLER_REGISTRATIONS
+                .iter()
+                .find(|(shim, _)| shim == sym)
+            {
+                if let Some(Operand::Copy(place)) = args.get(*addr_index)
+                    && let Some(name) = fn_addr_name_of(body, place.local)
+                {
+                    names.insert(name);
+                }
+            } else if gossamer_abi::I128_CALLBACK_SHIMS.contains(&sym.as_str()) {
+                for arg in args {
+                    let Operand::Copy(place) = arg else {
+                        continue;
+                    };
+                    names.extend(env_slot0_fn_name(body, place.local));
+                }
             }
         }
+    }
+    names
+}
+
+/// The function `local` holds the address of, when it was assigned by a
+/// `gos_fn_addr` intrinsic naming one.
+fn fn_addr_name_of(body: &Body, local: Local) -> Option<String> {
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                continue;
+            };
+            if place.local != local || !place.projection.is_empty() {
+                continue;
+            }
+            if let Rvalue::CallIntrinsic { name, args } = rvalue
+                && *name == "gos_fn_addr"
+                && let Some(Operand::Const(ConstValue::Str(target))) = args.first()
+            {
+                return Some(target.clone());
+            }
+        }
+    }
+    None
+}
+
+/// The function the closure env rooted at `env_local` calls, when its first
+/// word was filled from a `gos_fn_addr`.
+///
+/// The env blob is `[fn_addr, captures…]`, written one `gos_store` per word,
+/// and the runtime enters the callback through the word at offset zero.
+fn env_slot0_fn_name(body: &Body, env_local: Local) -> Option<String> {
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            let StatementKind::Assign { rvalue, .. } = &stmt.kind else {
+                continue;
+            };
+            let Rvalue::CallIntrinsic { name, args } = rvalue else {
+                continue;
+            };
+            if *name != "gos_store" {
+                continue;
+            }
+            let [
+                Operand::Copy(env),
+                Operand::Const(ConstValue::Int(0)),
+                Operand::Copy(fn_addr),
+            ] = args.as_slice()
+            else {
+                continue;
+            };
+            if env.local != env_local || !env.projection.is_empty() {
+                continue;
+            }
+            if let Some(name) = fn_addr_name_of(body, fn_addr.local) {
+                return Some(name);
+            }
+        }
+    }
+    None
+}
+
+/// Emits the Win64 vector-return wrapper `<name>$cabi` for a body whose
+/// two-word carrier return the Rust runtime reads.
+///
+/// Cranelift returns an `i128` in the integer-register pair; rustc's
+/// `extern "C" fn(..) -> i128` reads it from a 16-byte vector register under
+/// the Win64 ABI. The wrapper calls the body (Cranelift to Cranelift, so both
+/// sides agree) and re-emits the carrier as `I8X16`, which is the register
+/// the runtime reads. Its address is what `gos_fn_addr` hands over there.
+pub(super) fn emit_cabi_vector_return_thunk(
+    module: &mut dyn Module,
+    body_id: FuncId,
+    body_name: &str,
+) -> Result<FuncId> {
+    let body_sig = module
+        .declarations()
+        .get_function_decl(body_id)
+        .signature
+        .clone();
+    let param_tys: Vec<ir::Type> = body_sig.params.iter().map(|p| p.value_type).collect();
+    let mut sig = module.make_signature();
+    for t in &param_tys {
+        sig.params.push(AbiParam::new(*t));
+    }
+    sig.returns.push(AbiParam::new(types::I8X16));
+    let static_name: &'static str = Box::leak(format!("{body_name}$cabi").into_boxed_str());
+    let thunk_id = module
+        .declare_function(static_name, Linkage::Local, &sig)
+        .map_err(|e| anyhow!("declare {static_name}: {e}"))?;
+    let mut func = Function::with_name_signature(UserFuncName::user(0, thunk_id.as_u32()), sig);
+    let mut fb_ctx = FunctionBuilderContext::new();
+    {
+        let mut builder = FunctionBuilder::new(&mut func, &mut fb_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        let args: Vec<ir::Value> = (0..param_tys.len())
+            .map(|i| builder.block_params(entry)[i])
+            .collect();
+        let body_ref = module.declare_func_in_func(body_id, builder.func);
+        let call = builder.ins().call(body_ref, &args);
+        let carrier = builder.inst_results(call)[0];
+        let wide = bitcast_same_width(&mut builder, types::I8X16, carrier);
+        builder.ins().return_(&[wide]);
         builder.seal_all_blocks();
         builder.finalize(module.target_config());
     }

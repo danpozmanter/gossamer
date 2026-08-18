@@ -301,9 +301,11 @@ fn builtin_io_copy(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_eprintln(args: &[Value]) -> RuntimeResult<Value> {
-    let rendered = render_args(args);
+    // One call for the line and its terminator, so concurrent writers
+    // interleave whole lines rather than splicing one into another.
+    let mut rendered = render_args(args);
+    rendered.push('\n');
     write_stderr(&rendered);
-    write_stderr("\n");
     Ok(Value::Unit)
 }
 

@@ -713,13 +713,6 @@ pub(super) fn lower_intrinsic_call_io_math(
             Ok(true)
         }
         "gos_rt_stream_read_line" => {
-            let rt_fn = intrinsics.extern_fn(
-                module,
-                "gos_rt_stream_read_line",
-                &[ptr_ty, ptr_ty],
-                &[types::I128],
-            )?;
-            let fref = module.declare_func_in_func(rt_fn, builder.func);
             let stream = match args.first() {
                 Some(a) => lower_operand(
                     module,
@@ -746,8 +739,19 @@ pub(super) fn lower_intrinsic_call_io_math(
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
-            let call = builder.ins().call(fref, &[stream, buf]);
-            let result = builder.inst_results(call)[0];
+            // The `Option<String>` return is a two-word carrier, which the
+            // Win64 ABI hands back in a vector register: marshal it through
+            // the wire-shape call.
+            let result = emit_win64_rt_call(
+                module,
+                builder,
+                intrinsics,
+                "gos_rt_stream_read_line",
+                &[ptr_ty, ptr_ty],
+                Some(types::I128),
+                &[stream, buf],
+            )?
+            .unwrap_or_else(|| builder.ins().iconst(types::I128, 0));
             define_var_to(
                 builder,
                 locals,
@@ -874,7 +878,14 @@ pub(super) fn lower_intrinsic_call_io_math(
             // a heap env). Declare them through the module's
             // intrinsic-fn machinery so the linker resolves them
             // against `gossamer-runtime`.
-            let func_id = if let Some(id) = intrinsics.functions.get(name).copied() {
+            // Win64: a body the Rust runtime enters as
+            // `extern "C" fn(..) -> i128` answers its two-word carrier in the
+            // register pair, while the runtime reads a vector register. The
+            // wrapper emitted for exactly those bodies re-emits the carrier
+            // there, so its address is the one that crosses.
+            let func_id = if let Some(id) = intrinsics.cabi_callbacks.get(name).copied() {
+                id
+            } else if let Some(id) = intrinsics.functions.get(name).copied() {
                 id
             } else if let Some(id) = intrinsics.externs.get(name.as_str()).copied() {
                 // Runtime extern symbol - `gos_rt_router_serve` and
@@ -1007,10 +1018,16 @@ pub(super) fn lower_intrinsic_call_io_math(
                 call_args.push(coerce_arg_to(builder, w, types::I64).unwrap_or(w));
                 sig_params.push(types::I64);
             }
-            let f = intrinsics.extern_fn(module, static_name, &sig_params, &[ret_ty])?;
-            let fref = module.declare_func_in_func(f, builder.func);
-            let call = builder.ins().call(fref, &call_args);
-            let result = builder.inst_results(call)[0];
+            let result = emit_win64_rt_call(
+                module,
+                builder,
+                intrinsics,
+                static_name,
+                &sig_params,
+                Some(ret_ty),
+                &call_args,
+            )?
+            .unwrap_or_else(|| builder.ins().iconst(ret_ty, 0));
             define_var_to(
                 builder,
                 locals,

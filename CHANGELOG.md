@@ -2,6 +2,17 @@
 
 ## 0.52.0 - Display as a trait, lowering gaps, parity work, JIT admission
 
+- Pass a `Result` / `Option` carrier to a runtime helper the way Windows reads
+  it, and hand a carrier-returning closure to `option::and_then`,
+  `result::or_else`, or another combinator through a wrapper that answers in
+  the register the runtime reads: a JIT-promoted body doing either faulted on
+  Windows with an access violation at address zero.
+- Wind a nested cohort down when an enclosing one is cancelled: a child
+  sleeping inside the inner cohort slept out its full duration instead, so a
+  program with a failing sibling hung until the nap ended.
+- Print one line per `println!` from concurrent goroutines on the bytecode
+  tier, where two goroutines printing at once could splice one line into the
+  other.
 - Keep peak memory flat across builtin callbacks: a program whose closures run
   from `map`, `filter`, `fold`, `for_each`, `sort_by`, or a lazy `iter()`
   adapter no longer grows by one argument buffer per call (543 MB to 24 MB over

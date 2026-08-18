@@ -163,6 +163,12 @@ pub(super) struct IntrinsicContext {
     /// up the target function without threading the parent map
     /// through every call.
     pub(super) functions: HashMap<String, FuncId>,
+    /// Win64 vector-return wrappers (`<name>$cabi`) for bodies the Rust
+    /// runtime enters as `extern "C" fn(..) -> i128`, keyed by the body's
+    /// name. `gos_fn_addr` hands the wrapper's address over in place of the
+    /// body's own so the carrier comes back in the register the runtime
+    /// reads. Empty on every other target.
+    pub(super) cabi_callbacks: HashMap<String, FuncId>,
     /// Mirror of `function_ids_by_def` so `Operand::FnRef { def }`
     /// operands in non-call position (`let f = fib; f(5)`) can be
     /// materialised as function-pointer values.
@@ -256,6 +262,7 @@ impl IntrinsicContext {
             next_str_id: 0,
             functions: HashMap::new(),
             functions_by_def: HashMap::new(),
+            cabi_callbacks: HashMap::new(),
             sret_slots_by_name: HashMap::new(),
             sret_slots_by_def: HashMap::new(),
             ref_params_by_name: HashMap::new(),

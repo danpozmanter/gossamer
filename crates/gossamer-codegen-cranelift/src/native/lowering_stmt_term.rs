@@ -1866,37 +1866,38 @@ pub(super) fn lower_terminator(
                     return Ok(());
                 }
                 // Registry-known `gos_rt_*` symbol that wasn't pre-bound
-                // into `callees_by_name`. The ABI registry walk above
-                // declares the function via `extern_fn_by_name`, so all
-                // we have to do is fetch the FuncId, build a callsite
-                // ext-func ref, lower args, and emit the call. Without
-                // this branch every newly-added runtime helper that
-                // MIR references by name silently zeros at codegen time
-                // (cranelift_dispatch_table.md, 2026-04-28).
+                // into `callees_by_name`. The registry records the helper's
+                // logical signature; `emit_rt_call_by_name` declares and calls
+                // it in the platform's wire shape, so a two-word carrier
+                // crosses the way the runtime reads it on every target.
+                // Without this branch every newly-added runtime helper that
+                // MIR references by name silently zeros at codegen time.
                 if name.starts_with("gos_rt_") {
                     if let Some(entry) = gossamer_abi::lookup(name) {
-                        let id = intrinsics.extern_fn_by_name(module, entry.name)?;
-                        let func_ref = module.declare_func_in_func(id, builder.func);
-                        let expected = builder
-                            .func
-                            .dfg
-                            .signatures
-                            .get(builder.func.dfg.ext_funcs[func_ref].signature)
-                            .map(|s| s.params.iter().map(|p| p.value_type).collect::<Vec<_>>())
-                            .unwrap_or_default();
+                        let logical: Vec<ir::Type> = entry
+                            .sig
+                            .params
+                            .iter()
+                            .filter_map(|t| abi_type_to_cranelift(*t))
+                            .collect();
                         let mut arg_values: Vec<ir::Value> = Vec::with_capacity(args.len());
                         for (idx, op) in args.iter().enumerate() {
                             let mut v = lower_operand(
                                 module, builder, locals, body, tcx, op, None, intrinsics,
                             )?;
-                            if let Some(want) = expected.get(idx).copied() {
+                            if let Some(want) = logical.get(idx).copied() {
                                 v = coerce_arg_to(builder, v, want)?;
                             }
                             arg_values.push(v);
                         }
-                        let call = builder.ins().call(func_ref, &arg_values);
-                        let results = builder.inst_results(call).to_vec();
-                        if let Some(&ret) = results.first() {
+                        let result = emit_rt_call_by_name(
+                            module,
+                            builder,
+                            intrinsics,
+                            entry.name,
+                            &arg_values,
+                        )?;
+                        if let Some(ret) = result {
                             store_call_result(
                                 module,
                                 builder,

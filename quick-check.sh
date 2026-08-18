@@ -1,28 +1,36 @@
 #!/usr/bin/env bash
-# Fast pre-commit gate. Mirrors every CI validation except the complete
-# workspace test suite in `.github/workflows/`:
-# so failures surface locally before they hit a runner:
+# Fast pre-commit gate: the checks that catch what a session most often
+# breaks, in a couple of minutes.
 #
-#   ci.yml          → fmt, clippy, rustdoc (broken
-#                     intra-doc-links), cross-target check (wasm32 +
-#                     musl-via-zigbuild), audit, deny
-#   sanitizers.yml  → ASan + TSan on the unsafe-touching crates
-#   fuzz.yml        → 10 s smoke per target
+# Default gates, in the order a failure is cheapest to read:
 #
-# By default each step's chatter is suppressed; pass `--full` to see
-# every line. Any step's non-zero exit replays the captured output
-# before bailing so the failure is debuggable.
+#   core          fmt, clippy (`--workspace --all-targets -D warnings`)
+#   generated     the checked-in tables and pages that go stale when a
+#                 stdlib module, a CLI argument, or a doc line changes
+#   codegen       the ABI / dispatch unit gates - the boundary shapes that
+#                 only break on a platform this machine does not run
+#   portability   `cargo check` for wasm32 and for Windows, whose targets
+#                 are built in CI and not here
+#   behavior      every fixture through the VM and the JIT, compared
 #
-# Flags to skip slow gates on dev machines:
-#   --no-sanitizers   skip ASan / TSan (need nightly + rust-src)
-#   --no-fuzz         skip the fuzz smoke
-#   --no-cross        skip the wasm32 cross-target check + musl zigbuild check
-#   --no-audit        skip cargo-audit (needs cargo-audit installed)
-#   --no-deny         skip cargo-deny  (needs cargo-deny installed)
-#   --no-rustdoc      skip `cargo doc -D rustdoc::broken_intra_doc_links`
+# The slow gates that mirror the rest of CI are opt-in, since they take
+# tens of minutes and answer questions a dependency bump or an unsafe
+# block raises rather than an ordinary edit:
 #
-# Missing optional tools cause a clean skip rather than a failure;
-# everything that *can* run, runs.
+#   --rustdoc     `cargo doc` with broken-intra-doc-links denied
+#   --audit       cargo-audit (RUSTSEC advisories)
+#   --deny        cargo-deny (licenses, bans, sources)
+#   --musl        musl cross-compile through `cargo zigbuild`
+#   --sanitizers  ASan + TSan on the unsafe-touching crates
+#   --fuzz        the fuzz-target smoke run
+#   --all         every one of the above
+#
+# Other flags:
+#   --no-sweep    skip the VM-vs-JIT fixture sweep (the slowest default gate)
+#   --force-jit   sweep with every body promoted at its first call
+#   --verbose     show every line rather than warnings and errors only
+#
+# Missing optional tools cause a clean skip rather than a failure.
 set -euo pipefail
 
 # Force full backtraces so a panicking step (e.g. a failed `cargo test`)
@@ -30,24 +38,36 @@ set -euo pipefail
 # a note to set this. A caller's explicit RUST_BACKTRACE wins.
 export RUST_BACKTRACE="${RUST_BACKTRACE:-full}"
 
-full=0
-run_sanitizers=1
-run_fuzz=1
-run_cross=1
-run_audit=1
-run_deny=1
-run_rustdoc=1
+verbose=0
+run_sweep=1
+force_jit=0
+run_sanitizers=0
+run_fuzz=0
+run_musl=0
+run_audit=0
+run_deny=0
+run_rustdoc=0
 for arg in "$@"; do
     case "$arg" in
-        --full)          full=1 ;;
-        --no-sanitizers) run_sanitizers=0 ;;
-        --no-fuzz)       run_fuzz=0 ;;
-        --no-cross)      run_cross=0 ;;
-        --no-audit)      run_audit=0 ;;
-        --no-deny)       run_deny=0 ;;
-        --no-rustdoc)    run_rustdoc=0 ;;
+        --verbose|--full) verbose=1 ;;
+        --no-sweep)      run_sweep=0 ;;
+        --force-jit)     force_jit=1 ;;
+        --sanitizers)    run_sanitizers=1 ;;
+        --fuzz)          run_fuzz=1 ;;
+        --musl)          run_musl=1 ;;
+        --audit)         run_audit=1 ;;
+        --deny)          run_deny=1 ;;
+        --rustdoc)       run_rustdoc=1 ;;
+        --all)
+            run_sanitizers=1
+            run_fuzz=1
+            run_musl=1
+            run_audit=1
+            run_deny=1
+            run_rustdoc=1
+            ;;
         -h|--help)
-            sed -n '/^# Pre-commit gate/,/^set -euo pipefail/p' "$0" | sed 's/^# \{0,1\}//' | head -n -1
+            sed -n '2,/^set -euo pipefail/p' "$0" | sed 's/^# \{0,1\}//' | head -n -1
             exit 0
             ;;
         *)
@@ -56,6 +76,8 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+started_at=$SECONDS
 
 # Run a step and surface only warnings / errors by default. Each
 # step's stdout+stderr is captured to a temp file; if the step
@@ -66,10 +88,11 @@ done
 run_step() {
     local label="$1"
     shift
-    local log
+    local log step_started
     log="$(mktemp)"
+    step_started=$SECONDS
     echo "==> $label"
-    if [[ $full -eq 1 ]]; then
+    if [[ $verbose -eq 1 ]]; then
         if ! "$@" 2>&1 | tee "$log"; then
             rm -f "$log"
             exit 1
@@ -88,6 +111,7 @@ run_step() {
         grep -E -i -A 2 '^(warning|error)[:\[]|: warning:|: error:' "$log" || true
     fi
     rm -f "$log"
+    echo "    ($((SECONDS - step_started))s)"
 }
 
 phase() {
@@ -99,8 +123,71 @@ phase "core Rust gates"
 run_step "cargo fmt"                                       cargo fmt
 run_step "cargo clippy --workspace --all-targets"          cargo clippy --workspace --all-targets -- -D warnings
 
-phase "fast policy and documentation gates"
-run_step "cargo check --workspace"                          cargo check --workspace
+# The generated tables and pages that track the stdlib manifest and the
+# CLI surface. They run in seconds and are what an ordinary edit - a new
+# stdlib module, a reworded argument, a moved doc line - makes stale.
+phase "generated-artifact gates"
+run_step "cargo build --bin gos"                           cargo build --bin gos
+run_step "gos doc --emit-stdlib --check"                   ./target/debug/gos doc --emit-stdlib docs_src/stdlib --check
+run_step "cargo xtask docs-llm --check"                    cargo xtask docs-llm --check
+run_step "cargo xtask item-fixtures --check"               cargo xtask item-fixtures --check
+# Do not filter by status: a filtered check can hide a broken contract class.
+run_step "gos feature-status --check"                      ./target/debug/gos feature-status --check
+run_step "cargo test -p gossamer-std --test resolver_manifest_items" \
+    cargo test -p gossamer-std --test resolver_manifest_items
+run_step "cargo test -p gossamer-resolve --lib stdlib_exports" \
+    cargo test -p gossamer-resolve --lib stdlib_exports
+# The whole lib suite rather than one module: it also holds the check
+# that the committed tier-parity evidence still names every stdlib module
+# a fixture imports, and it finishes in under two seconds.
+run_step "cargo test -p gossamer-cli --lib" cargo test -p gossamer-cli --lib
+
+# The boundary shapes. A wrong one is invisible on this machine - it
+# miscompiles on a target the dev box never runs - so these unit gates
+# stand in for the platform: the Cranelift ABI tests build a Win64 ISA on
+# any host, and the dispatch-parity test proves every runtime helper the
+# codegen names is one the runtime defines.
+phase "codegen boundary gates"
+run_step "cargo test -p gossamer-codegen-cranelift --lib" \
+    cargo test -p gossamer-codegen-cranelift --lib
+run_step "cargo test -p gossamer-codegen-cranelift --test dispatch_parity" \
+    cargo test -p gossamer-codegen-cranelift --test dispatch_parity
+
+# Targets CI builds and this machine does not. `wasm32` breaks whenever a
+# crate picks up a native-only dependency; the Windows target catches the
+# `#[cfg(unix)]`-shaped edit that compiles fine here.
+phase "portability gates"
+if rustup target list --installed 2>/dev/null | grep -q '^wasm32-unknown-unknown$'; then
+    run_step "cargo check --target wasm32-unknown-unknown (wasm-portable crates)" \
+        cargo check -p gossamer-abi -p gossamer-binding-macros \
+        -p gossamer-interp -p gossamer-playground \
+        --target wasm32-unknown-unknown
+else
+    echo "wasm32 check skipped (run \`rustup target add wasm32-unknown-unknown\` to enable)"
+fi
+if rustup target list --installed 2>/dev/null | grep -q '^x86_64-pc-windows-gnu$'; then
+    run_step "cargo check --target x86_64-pc-windows-gnu (runtime + backends)" \
+        cargo check -p gossamer-runtime -p gossamer-codegen-cranelift \
+        -p gossamer-codegen-llvm -p gossamer-interp \
+        --target x86_64-pc-windows-gnu
+else
+    echo "windows check skipped (run \`rustup target add x86_64-pc-windows-gnu\` to enable)"
+fi
+
+# Every fixture through both execution paths of `gos run`. The full
+# tier-parity walk also builds each fixture natively and takes tens of
+# minutes; this compares the two paths that need no compiler invocation,
+# which is where a promotion-admission change lands first.
+if [[ $run_sweep -eq 1 ]]; then
+    phase "behavior gates"
+    sweep_args=()
+    [[ $force_jit -eq 1 ]] && sweep_args+=(--force-jit)
+    run_step "VM-vs-JIT fixture sweep" ./scripts/jit_parity_sweep.sh "${sweep_args[@]}"
+fi
+
+if [[ $run_deny -eq 1 || $run_audit -eq 1 || $run_rustdoc -eq 1 ]]; then
+    phase "policy and documentation gates"
+fi
 
 # cargo-deny - license + advisory + bans + sources gate
 # (`.github/workflows/ci.yml` deny job). Skip cleanly if
@@ -123,74 +210,31 @@ if [[ $run_audit -eq 1 ]]; then
     fi
 fi
 
-# Consistency gates - the checked-in tables that must track the stdlib
-# manifest and the CLI surface. They run in milliseconds and are the
-# gates most likely to break from an ordinary edit: adding a stdlib
-# module, or rewording an argument's help text. `quick-check.sh`
-# otherwise skips the workspace test suite, which is where these live.
-run_step "cargo test -p gossamer-std --test resolver_manifest_items" \
-    cargo test -p gossamer-std --test resolver_manifest_items
-run_step "cargo test -p gossamer-resolve --lib stdlib_exports" \
-    cargo test -p gossamer-resolve --lib stdlib_exports
-run_step "cargo test -p gossamer-cli --lib cli::tests" \
-    cargo test -p gossamer-cli --lib cli::tests
-run_step "cargo xtask item-fixtures --check" cargo xtask item-fixtures --check
-
-# Stdlib docs drift gate - verifies docs_src/stdlib/ pages match
-# what `manifest::ALL_MODULES` would emit. Build the binary first
-# so the check uses the freshly built crate.
-run_step "cargo build --bin gos"                           cargo build --bin gos
-run_step "gos doc --emit-stdlib --check"                   ./target/debug/gos doc --emit-stdlib docs_src/stdlib --check
-run_step "cargo xtask docs-llm --check"                    cargo xtask docs-llm --check
-# Feature-status contract gate. Stable items require docs plus an
-# all-tier sidecar entry; Shipped and Experimental items require docs.
-# Do not filter by status: a filtered check can hide a broken contract class.
-run_step "gos feature-status --check" ./target/debug/gos feature-status --check
-
 # Rustdoc broken-intra-doc-links gate - mirrors the docs job in
-# `.github/workflows/ci.yml`. Wired here so internal-doc drift
-# (links to renamed or now-private items) fails locally instead of
-# surfacing in CI as a red post-push status.
+# `.github/workflows/ci.yml`. `--document-private-items` matches that job
+# exactly: without it rustdoc skips private items, so a broken intra-doc
+# link in a private fn's doc comment would pass here and fail there.
 if [[ $run_rustdoc -eq 1 ]]; then
-    # `--document-private-items` matches the CI `cargo-doc` job exactly:
-    # without it rustdoc skips private items entirely, so a broken
-    # intra-doc link in a private fn's doc comment (as opposed to a pub
-    # one) would pass locally and only fail once it reached CI.
     RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links" \
         run_step "cargo doc --workspace --no-deps --document-private-items" \
         cargo doc --workspace --no-deps --document-private-items
 fi
 
-# Cross-target check - mirrors the cross-targets job's wasm32 leg.
-# Just the wasm-portable crates: rustls / corosensei / mio aren't
-# wasm-clean, so runtime / sched / binding / pkg can't be asked to
-# compile there. The Linux cross targets (aarch64-gnu, riscv64-gnu)
-# need a target-prefixed gcc that's hard to expect on dev machines
-# - those stay CI-only.
-if [[ $run_cross -eq 1 ]]; then
-    phase "cross-target gates"
-    if rustup target list --installed 2>/dev/null | grep -q '^wasm32-unknown-unknown$'; then
-        run_step "cargo check --target wasm32-unknown-unknown (wasm-portable crates)" \
-            cargo check -p gossamer-abi -p gossamer-binding-macros \
-            -p gossamer-interp -p gossamer-playground \
-            --target wasm32-unknown-unknown
-    else
-        echo "cross-target check skipped (run \`rustup target add wasm32-unknown-unknown\` to enable)"
-    fi
-
-    # Musl cross-compile check (via `cargo zigbuild`) - mirrors the "Build
-    # the target runtime archives" step shared by cross-from-linux/-macos/
-    # -windows in ci.yml. Exercises the native C deps (ring, mimalloc,
-    # zstd) that only fail to cross-compile at actual build time, not at
-    # `cargo check` time: a bare cross C compiler has no musl sysroot, and
-    # even `CC=zig cc` doesn't work standalone (cc-rs's own appended
-    # `--target=<rustc-triple>` flag is a form zig's parser rejects, and it
-    # wins over whatever `-target` we pass through `CC`) - `cargo zigbuild`
-    # is the maintained tool that reconciles the two. Skips cleanly when
-    # zig (>=0.9.0, cargo-zigbuild's own floor - a distro-packaged `zig`
-    # binary is commonly older), `cargo-zigbuild`, or the musl rustup
-    # targets aren't installed, so an unrelated stale system `zig` never
-    # turns into a hard failure here.
+# Musl cross-compile check (via `cargo zigbuild`) - mirrors the "Build
+# the target runtime archives" step shared by cross-from-linux/-macos/
+# -windows in ci.yml. Exercises the native C deps (ring, mimalloc,
+# zstd) that only fail to cross-compile at actual build time, not at
+# `cargo check` time: a bare cross C compiler has no musl sysroot, and
+# even `CC=zig cc` doesn't work standalone (cc-rs's own appended
+# `--target=<rustc-triple>` flag is a form zig's parser rejects, and it
+# wins over whatever `-target` we pass through `CC`) - `cargo zigbuild`
+# is the maintained tool that reconciles the two. Skips cleanly when
+# zig (>=0.9.0, cargo-zigbuild's own floor - a distro-packaged `zig`
+# binary is commonly older), `cargo-zigbuild`, or the musl rustup
+# targets aren't installed, so an unrelated stale system `zig` never
+# turns into a hard failure here.
+if [[ $run_musl -eq 1 ]]; then
+    phase "musl cross gate"
     zig_usable=0
     if command -v zig >/dev/null 2>&1 && command -v cargo-zigbuild >/dev/null 2>&1; then
         zig_minor="$(zig version 2>/dev/null | awk -F'[.-]' '{print ($1 > 0) ? 9 : $2}')"
@@ -216,13 +260,6 @@ fi
 # nightly date for reproducibility; locally we honor that pin when
 # it's installed and otherwise fall back to plain `nightly` so dev
 # machines stay usable without an extra rustup install.
-#
-# Discovery order:
-#   1. Pinned `nightly-2026-04-14` toolchain (matches CI exactly).
-#   2. Plain `nightly` (anything `rustup toolchain list` calls
-#      "nightly-..." that isn't the date pin) - runs the same gates,
-#      just under whatever nightly is on the dev box.
-#   3. Skip with a one-line install hint.
 if [[ $run_sanitizers -eq 1 ]]; then
     phase "sanitizer gates"
     asan_pinned="nightly-2026-04-14"
@@ -283,34 +320,34 @@ fi
 # Fuzz smoke - mirrors `.github/workflows/fuzz.yml` so adversarial
 # inputs that CI would flag also fail locally. Each target runs
 # briefly (10 s by default; override with GOSSAMER_FUZZ_SECS) and
-# replays its seed corpus. Skip cleanly when cargo-fuzz or the
-# nightly toolchain isn't installed so the rest of `quick-check.sh`
-# stays useful on dev machines that haven't set the harness up.
-fuzz_secs="${GOSSAMER_FUZZ_SECS:-10}"
-if [[ $run_fuzz -eq 1 ]] && command -v cargo-fuzz >/dev/null 2>&1 && rustup toolchain list 2>/dev/null | grep -q '^nightly'; then
-    phase "fuzz smoke gates"
-    echo "==> fuzz smoke (${fuzz_secs}s per target)"
-    fuzz_log="$(mktemp -d)/fuzz.log"
-    for target in lex parse manifest http_request typecheck resolve mir_lower hir_lower vm_compile vm_run; do
-        if [[ $full -eq 1 ]]; then
-            echo "  -> $target"
-            if ! ( cd fuzz && cargo +nightly fuzz run "$target" -- \
-                    -max_total_time="$fuzz_secs" -max_len=65536 -rss_limit_mb=2048 -malloc_limit_mb=2048 -timeout=30 ); then
-                exit 1
+# replays its seed corpus.
+if [[ $run_fuzz -eq 1 ]]; then
+    fuzz_secs="${GOSSAMER_FUZZ_SECS:-10}"
+    if command -v cargo-fuzz >/dev/null 2>&1 && rustup toolchain list 2>/dev/null | grep -q '^nightly'; then
+        phase "fuzz smoke gates"
+        echo "==> fuzz smoke (${fuzz_secs}s per target)"
+        fuzz_log="$(mktemp -d)/fuzz.log"
+        for target in lex parse manifest http_request typecheck resolve mir_lower hir_lower vm_compile vm_run; do
+            if [[ $verbose -eq 1 ]]; then
+                echo "  -> $target"
+                if ! ( cd fuzz && cargo +nightly fuzz run "$target" -- \
+                        -max_total_time="$fuzz_secs" -max_len=65536 -rss_limit_mb=2048 -malloc_limit_mb=2048 -timeout=30 ); then
+                    exit 1
+                fi
+            else
+                if ! ( cd fuzz && cargo +nightly fuzz run "$target" -- \
+                        -max_total_time="$fuzz_secs" -max_len=65536 -rss_limit_mb=2048 -malloc_limit_mb=2048 -timeout=30 ) \
+                        >"$fuzz_log" 2>&1; then
+                    echo "fuzz target '$target' failed:" >&2
+                    tail -c 4096 "$fuzz_log" >&2
+                    exit 1
+                fi
             fi
-        else
-            if ! ( cd fuzz && cargo +nightly fuzz run "$target" -- \
-                    -max_total_time="$fuzz_secs" -max_len=65536 -rss_limit_mb=2048 -malloc_limit_mb=2048 -timeout=30 ) \
-                    >"$fuzz_log" 2>&1; then
-                echo "fuzz target '$target' failed:" >&2
-                tail -c 4096 "$fuzz_log" >&2
-                exit 1
-            fi
-        fi
-    done
-    rm -f "$fuzz_log"
-elif [[ $run_fuzz -eq 1 ]]; then
-    echo "fuzz smoke skipped (need nightly toolchain + 'cargo install cargo-fuzz')"
+        done
+        rm -f "$fuzz_log"
+    else
+        echo "fuzz smoke skipped (need nightly toolchain + 'cargo install cargo-fuzz')"
+    fi
 fi
 
 # `set -e` aborts on the first failing step, so reaching here means every gate
@@ -318,4 +355,4 @@ fi
 # signals failure, but piping this script (e.g. `./quick-check.sh | tail`) discards
 # its exit code, so the banner is the in-stream success/failure signal.
 echo
-echo "quick-check.sh: ALL QUICK GATES PASSED"
+echo "quick-check.sh: ALL QUICK GATES PASSED in $((SECONDS - started_at))s"
