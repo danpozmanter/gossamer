@@ -261,15 +261,17 @@ fn every_sequence_traverses_its_own_values() {
     ] {
         assert_accepted(
             &format!("array {method}"),
-            &format!("let values = [1, 2, 3]\nvalues.{method}"),
+            &format!("let values = [1, 2, 3]\nlet _ = values.{method}"),
         );
         assert_accepted(
             &format!("slice {method}"),
-            &format!("let storage = #[1, 2, 3]\nlet values: &[i64] = &storage\nvalues.{method}"),
+            &format!(
+                "let storage = #[1, 2, 3]\nlet values: &[i64] = &storage\nlet _ = values.{method}"
+            ),
         );
         assert_accepted(
             &format!("vec {method}"),
-            &format!("let values = #[1, 2, 3]\nvalues.{method}"),
+            &format!("let values = #[1, 2, 3]\nlet _ = values.{method}"),
         );
     }
 

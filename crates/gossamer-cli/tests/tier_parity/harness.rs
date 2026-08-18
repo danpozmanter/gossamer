@@ -177,6 +177,7 @@ const SPECS: &[Spec] = &[
     // answers, rather than as the first of those two words.
     spec("feature-testing-examples/callable_carrier_return.gos"),
     spec("feature-testing-examples/combinator_element_kinds.gos"),
+    spec("feature-testing-examples/debug_impl_dispatch.gos"),
     spec("feature-testing-examples/debugfmt_nested_adts.gos"),
     spec("feature-testing-examples/display_impl_dispatch.gos"),
     spec("feature-testing-examples/jit_admission_shapes.gos"),

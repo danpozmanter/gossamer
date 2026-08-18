@@ -502,6 +502,14 @@ pub const REGISTRY: &[(&str, &str)] = &[
             function.",
     ),
     (
+        "GP0040",
+        "A `use` path was written with the hyphens a package name may carry.\n\
+            `-` is subtraction, never part of an identifier, so the path stops\n\
+            at the first one and the rest reads as an expression. A\n\
+            dependency's module name is its package name with each `-`\n\
+            replaced by `_`, so `pgsql-gos` is imported as `use pgsql_gos`.",
+    ),
+    (
         "GR0001",
         "A name used in source could not be resolved to a declaration.\n\
                      Check the spelling, whether a `use` brings the name into scope,\n\
@@ -623,6 +631,16 @@ pub const REGISTRY: &[(&str, &str)] = &[
             expands where it is written and the runtime binds no callable\n\
             for it, so the path has nothing to call or pass as a value.\n\
             Write it as `name!(..)`; a macro needs no import.",
+    ),
+    (
+        "GR0019",
+        "Two dependency packages are reached under one module name. A `-` is\n\
+            not part of an identifier, so a package name carrying one is\n\
+            reached from source as the same name with `_` in its place -\n\
+            which two packages can share (`a/pgsql-gos` and `b/pgsql_gos`\n\
+            both become `pgsql_gos`). Every path headed by that name would be\n\
+            ambiguous. Give one of them a name of its own in\n\
+            `[dependencies]`, or import each through `use \"id\" as name`.",
     ),
     (
         "GT0001",
@@ -1102,6 +1120,33 @@ pub const REGISTRY: &[(&str, &str)] = &[
             so there is no value whose type a bare trait is. Bound a generic\n\
             parameter by the trait instead - `fn f<T: Display>(x: T)` - or\n\
             name the concrete type the parameter takes.",
+    ),
+    (
+        "GT0072",
+        "An `impl Trait for Type` block defined an item the trait does not\n\
+            declare. The header promises exactly the trait's contract, so an\n\
+            extra `fn` would become an inherent method under a misleading\n\
+            heading - `impl Display for Point { fn show(..) }` reads as part\n\
+            of `Display` while nothing dispatches to it through the trait.\n\
+            Move the item into an inherent `impl Point { .. }` block, or\n\
+            declare it in the trait so every implementor supplies it.",
+    ),
+    (
+        "GT0073",
+        "Two implementations supply the same trait for the same type, so a\n\
+            call through the trait has two bodies to reach and no rule picks\n\
+            one. A `#[derive(Debug)]` counts as one of them: the derive\n\
+            synthesizes the same rendering a written `impl Debug for T`\n\
+            supplies. Keep one - merge the blocks, or drop the derive.",
+    ),
+    (
+        "GT0074",
+        "A function body answers a value through a signature that declares no\n\
+            return type. The signature is what a caller reads, so the value\n\
+            the tail expression (or a `return`) produces is discarded and the\n\
+            call hands back a unit. Declare the type the body answers with\n\
+            `-> T`, or end the body with a statement when nothing is\n\
+            returned.",
     ),
     (
         "GX0001",

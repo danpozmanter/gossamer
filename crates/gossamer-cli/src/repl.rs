@@ -1958,6 +1958,9 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                                             for dropped in &plan.dropped_names {
                                                 helper.forget_binding(dropped);
                                             }
+                                            helper.set_session_type_names(session_type_names(
+                                                &declarations,
+                                            ));
                                         }
                                         let dropped =
                                             render_dropped_declaration_names(&plan.dropped_names);
@@ -2153,6 +2156,9 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
             declarations.push(trimmed.to_string());
             match rebuild_session(&declarations) {
                 Ok(()) => {
+                    if let Some(helper) = editor.helper_mut() {
+                        helper.set_session_type_names(session_type_names(&declarations));
+                    }
                     if verbose {
                         println!("    added {} declarations", declarations.len());
                     }
@@ -6088,12 +6094,15 @@ struct SessionIndex {
     trait_methods: BTreeMap<String, Vec<String>>,
     /// Declared item name to the kind label `%info` prints for it.
     kinds: BTreeMap<String, &'static str>,
+    /// Type-alias name to the type it stands for, as written.
+    aliases: BTreeMap<String, String>,
 }
 
 impl SessionIndex {
     /// `true` when nothing in the session declares `name`.
     fn is_empty_for(&self, name: &str) -> bool {
         !self.kinds.contains_key(name)
+            && !self.aliases.contains_key(name)
             && !self.fields.contains_key(name)
             && !self.implements.contains_key(name)
             && !self.implementors.contains_key(name)
@@ -6105,6 +6114,7 @@ impl SessionIndex {
         let mut names: Vec<&str> = self
             .kinds
             .keys()
+            .chain(self.aliases.keys())
             .chain(self.fields.keys())
             .chain(self.implements.keys())
             .chain(self.implementors.keys())
@@ -6226,6 +6236,12 @@ fn session_index(declarations: &[String]) -> SessionIndex {
                 ItemKind::Fn(decl) => {
                     index.kinds.insert(decl.name.name.clone(), "fn");
                 }
+                ItemKind::TypeAlias(decl) => {
+                    index.kinds.insert(decl.name.name.clone(), "type");
+                    index
+                        .aliases
+                        .insert(decl.name.name.clone(), render_type(&decl.ty));
+                }
                 ItemKind::Impl(decl) => {
                     let owner = self_type_name(&decl.self_ty);
                     let trait_name = decl.trait_ref.as_ref().map(render_trait_path);
@@ -6260,6 +6276,17 @@ fn session_index(declarations: &[String]) -> SessionIndex {
     index
 }
 
+/// Names the session declares that a type position may name, for the
+/// highlighter: structs, enums, traits, and aliases.
+fn session_type_names(declarations: &[String]) -> std::collections::HashSet<String> {
+    session_index(declarations)
+        .kinds
+        .into_iter()
+        .filter(|(_, kind)| matches!(*kind, "struct" | "enum" | "trait" | "type"))
+        .map(|(name, _)| name)
+        .collect()
+}
+
 /// Appends `value` unless the list already carries it.
 fn push_unique(list: &mut Vec<String>, value: String) {
     if !list.contains(&value) {
@@ -6279,6 +6306,9 @@ fn render_session_type(index: &SessionIndex, name: &str, receiver: Option<&str>)
         return None;
     }
     let mut out = String::new();
+    if let Some(target) = index.aliases.get(name) {
+        out.push_str(&format!("  alias of\n    {target}\n"));
+    }
     if let Some(fields) = index.fields.get(name)
         && !fields.is_empty()
     {

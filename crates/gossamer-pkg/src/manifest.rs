@@ -256,6 +256,11 @@ pub enum ManifestError {
     /// `[rust-bindings]` entry mixed `path`, `git`, and version-only.
     #[error("ambiguous rust-binding for {0}: pick exactly one of path/git/version")]
     AmbiguousRustBinding(String),
+    /// A `[dependencies]` git entry carried a `version` range.
+    #[error(
+        "dependency {0}: a git source is versioned by `tag` / `branch` / `rev`, not by `version`"
+    )]
+    GitDependencyVersion(String),
     /// `[rust-bindings]` git source mixed branch/tag/rev.
     #[error("rust-binding {0} git source: pick at most one of branch/tag/rev")]
     AmbiguousGitRef(String),
@@ -494,7 +499,11 @@ impl Manifest {
         if !self.dependencies.is_empty() {
             out.push_str("\n[dependencies]\n");
             for (id, spec) in &self.dependencies {
-                out.push_str(&format!("\"{id}\" = {}\n", render_dependency(spec)));
+                out.push_str(&format!(
+                    "{} = {}\n",
+                    render_table_key(id),
+                    render_dependency(spec)
+                ));
             }
         }
         if !self.registries.is_empty() {
@@ -779,6 +788,22 @@ fn parse_bins(value: Option<&toml::Value>) -> Result<Vec<BinTarget>, ManifestErr
         .collect()
 }
 
+/// A TOML table key as written: bare when it spells an identifier, quoted
+/// otherwise. A dependency keyed by its module name reads back the way the
+/// source imports it.
+fn render_table_key(key: &str) -> String {
+    let bare = !key.is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        && !key.chars().next().is_some_and(|c| c.is_ascii_digit());
+    if bare {
+        key.to_string()
+    } else {
+        format!("\"{key}\"")
+    }
+}
+
 fn parse_dependency_toml(value: &toml::Value, key: &str) -> Result<DependencySpec, ManifestError> {
     if let Some(literal) = value.as_str() {
         return Ok(DependencySpec::Registry(CaretRange::parse(literal)?));
@@ -801,6 +826,12 @@ fn parse_dependency_toml(value: &toml::Value, key: &str) -> Result<DependencySpe
     }
     if let Some(url) = git_url {
         validate_url_with_scheme(&url, &format!("{key}.git"), &["https", "ssh"])?;
+        // A git source is versioned by the reference it is checked out at,
+        // so a caret range beside it has nothing to resolve against; leaving
+        // it unread would pin whatever the default branch happens to hold.
+        if optional_toml_str(table, "version", &format!("{key}.version"))?.is_some() {
+            return Err(ManifestError::GitDependencyVersion(key.to_string()));
+        }
         let git_ref = ["tag", "branch", "rev"]
             .iter()
             .find_map(|field| {

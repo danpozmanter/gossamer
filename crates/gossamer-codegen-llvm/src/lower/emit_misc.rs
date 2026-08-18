@@ -290,7 +290,7 @@ impl<'a> Lowerer<'a> {
                     writeln!(self.out, "  call void @gos_rt_print_str(ptr {name})").unwrap();
                 }
             }
-            let kind = self.concat_print_kind(arg);
+            let kind = self.concat_print_kind(arg, "to_string");
             if matches!(kind, ConcatKind::Unsupported) {
                 // Surface a generic "unsupported" so the driver
                 // routes this body to Cranelift, whose `bail!`

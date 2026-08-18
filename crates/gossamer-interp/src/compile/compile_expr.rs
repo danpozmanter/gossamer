@@ -3225,15 +3225,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 .tcx
                 .def_name(*def)
                 .map(|type_name| format!("{type_name}::{}", name.name))
-                .filter(|qualified| self.fn_param_tys.contains_key(qualified))
-                // `x.to_string()` is the `Display` spelling, and a type that
-                // supplies only the `Debug` `fmt` still names one rendering,
-                // which is the one both compiled tiers reach for.
-                .or_else(|| {
-                    (name.name == "to_string")
-                        .then(|| self.user_rendering_qualified_name(resolved_receiver_ty))
-                        .flatten()
-                }),
+                .filter(|qualified| self.fn_param_tys.contains_key(qualified)),
             // A non-`Adt` receiver still reaches an `impl Trait for i64` /
             // `for String` / `for Vec<T>` through the name that `impl`
             // block spells.
@@ -3981,6 +3973,14 @@ impl<'tcx> FnBuilder<'tcx> {
         // mirrors the compiled tiers' printer choice from declared type and
         // MIR cast provenance.
         let render_call = Self::callee_renders_args(callee);
+        // `__debug` is the `{:?}` channel and answers through `impl Debug`;
+        // every other rendering callee is `{}` and answers through
+        // `impl Display`.
+        let render_method = if Self::callee_is_debug(callee) {
+            "fmt"
+        } else {
+            "to_string"
+        };
         let callee_param_tys = self.callee_param_tys(callee);
         for (i, arg) in args.iter().enumerate() {
             let expected_ty = callee_param_tys
@@ -4047,7 +4047,9 @@ impl<'tcx> FnBuilder<'tcx> {
                     place_takes.push((place, cell));
                 }
                 arg_regs.push(cell);
-            } else if render_call && let Some(reg) = self.compile_user_rendering(arg)? {
+            } else if render_call
+                && let Some(reg) = self.compile_user_rendering(arg, render_method)?
+            {
                 arg_regs.push(reg);
             } else if render_call && self.expr_has_uint_display_provenance(arg) {
                 let tr = self.compile_expr_ex(arg)?;
@@ -4399,6 +4401,14 @@ impl<'tcx> FnBuilder<'tcx> {
         })
     }
 
+    /// Whether `callee` is the `{:?}` rendering channel.
+    fn callee_is_debug(callee: &HirExpr) -> bool {
+        let HirExprKind::Path { segments, .. } = &callee.kind else {
+            return false;
+        };
+        segments.last().is_some_and(|s| s.name == "__debug")
+    }
+
     fn callee_is_concat(callee: &HirExpr) -> bool {
         let HirExprKind::Path { segments, .. } = &callee.kind else {
             return false;
@@ -4646,7 +4656,7 @@ impl<'tcx> FnBuilder<'tcx> {
             Some(TyKind::Vec(elem) | TyKind::Slice(elem) | TyKind::Array { elem, .. }) => *elem,
             _ => return Ok(None),
         };
-        let Some(method) = self.user_rendering_qualified_name(elem_ty) else {
+        let Some(method) = self.user_rendering_qualified_name(elem_ty, "to_string") else {
             return Ok(None);
         };
         let receiver_reg = self.compile_expr(receiver)?;
@@ -4689,8 +4699,11 @@ impl<'tcx> FnBuilder<'tcx> {
     }
 
     /// The fully qualified `Type::method` a user `impl` supplies to render
-    /// values of `ty`, or `None` when nothing overrides the synthesized form.
-    fn user_rendering_qualified_name(&self, ty: Ty) -> Option<String> {
+    /// values of `ty` on `method`'s channel, or `None` when nothing overrides
+    /// the synthesized form. `method` is `to_string` for `Display` (`{}`) and
+    /// `fmt` for `Debug` (`{:?}`); the two channels never borrow each other's
+    /// method, exactly as `Display` and `Debug` stay distinct traits.
+    fn user_rendering_qualified_name(&self, ty: Ty, method: &str) -> Option<String> {
         let mut resolved = ty;
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
             resolved = *inner;
@@ -4699,36 +4712,28 @@ impl<'tcx> FnBuilder<'tcx> {
             Some(TyKind::Adt { def, .. }) => self.tcx.def_name(*def)?.to_string(),
             _ => return None,
         };
-        ["to_string", "fmt"]
-            .into_iter()
-            .map(|method| format!("{type_name}::{method}"))
-            .find(|qualified| self.fn_param_tys.contains_key(qualified))
+        let qualified = format!("{type_name}::{method}");
+        self.fn_param_tys
+            .contains_key(&qualified)
+            .then_some(qualified)
     }
 
-    /// The method a user `impl` supplies to render values of `ty`, if any:
-    /// `to_string` is the `Display` contract and `fmt` the `Debug` one, and
-    /// an inherent method of either name serves the same purpose. `None`
-    /// leaves the value to the synthesized rendering.
-    pub(crate) fn user_rendering_method(&self, ty: Ty) -> Option<&'static str> {
-        let mut resolved = ty;
-        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
-            resolved = *inner;
-        }
-        let type_name = match self.tcx.kind(resolved) {
-            Some(TyKind::Adt { def, .. }) => self.tcx.def_name(*def)?.to_string(),
-            _ => return None,
-        };
-        ["to_string", "fmt"].into_iter().find(|method| {
-            self.fn_param_tys
-                .contains_key(&format!("{type_name}::{method}"))
-        })
+    /// Whether a user `impl` supplies `method` for `ty`, so a value of it
+    /// renders through that body rather than the synthesized form.
+    pub(crate) fn has_user_rendering(&self, ty: Ty, method: &str) -> bool {
+        self.user_rendering_qualified_name(ty, method).is_some()
     }
 
-    /// Renders `arg` through its type's own `Display` / `Debug` method when
-    /// one exists, so `{}`, `format!`, and `println!` show what the type says
-    /// rather than the synthesized shape. `Ok(None)` when nothing overrides.
-    fn compile_user_rendering(&mut self, arg: &HirExpr) -> RuntimeResult<Option<Reg>> {
-        if let Some(method) = self.user_rendering_method(arg.ty) {
+    /// Renders `arg` through its type's own method for this channel when one
+    /// exists, so `{}` shows what `impl Display` says and `{:?}` what
+    /// `impl Debug` says, rather than the synthesized shape. `Ok(None)` when
+    /// nothing overrides.
+    fn compile_user_rendering(
+        &mut self,
+        arg: &HirExpr,
+        method: &str,
+    ) -> RuntimeResult<Option<Reg>> {
+        if self.has_user_rendering(arg.ty, method) {
             let name = Ident {
                 name: method.to_string(),
             };
@@ -4738,7 +4743,7 @@ impl<'tcx> FnBuilder<'tcx> {
         // elements the same way, at any depth. The value carries its type
         // name at run time, so the walk resolves each element's method
         // itself; this only decides whether the walk is worth entering.
-        if !self.ty_contains_user_rendering(arg.ty, 0) {
+        if !self.ty_contains_user_rendering(arg.ty, 0, method) {
             return Ok(None);
         }
         let idx = self.global_idx("__render_display");
@@ -4753,7 +4758,7 @@ impl<'tcx> FnBuilder<'tcx> {
         // knows both, and hands over `Variant=Type::method` lines for every
         // enum nested in the operand.
         let mut aliases = String::new();
-        self.collect_variant_rendering_aliases(arg.ty, 0, &mut aliases);
+        self.collect_variant_rendering_aliases(arg.ty, 0, method, &mut aliases);
         let alias_reg = self.alloc_reg();
         let const_idx = self.const_idx(
             ConstKey::String(aliases.clone()),
@@ -4763,12 +4768,21 @@ impl<'tcx> FnBuilder<'tcx> {
             dst: alias_reg,
             idx: const_idx,
         });
+        let method_reg = self.alloc_reg();
+        let method_idx = self.const_idx(
+            ConstKey::String(method.to_string()),
+            Value::String(method.into()),
+        );
+        self.emit(Op::LoadConst {
+            dst: method_reg,
+            idx: method_idx,
+        });
         let args_start = self.next_reg;
         self.next_reg = self
             .next_reg
-            .checked_add(2)
+            .checked_add(3)
             .expect("register overflow reserving render args");
-        self.ensure_reg_slot(args_start + 1);
+        self.ensure_reg_slot(args_start + 2);
         self.emit(Op::Move {
             dst: args_start,
             src: value,
@@ -4777,13 +4791,17 @@ impl<'tcx> FnBuilder<'tcx> {
             dst: args_start + 1,
             src: alias_reg,
         });
+        self.emit(Op::Move {
+            dst: args_start + 2,
+            src: method_reg,
+        });
         let dst = self.alloc_reg();
         let cache_idx = self.alloc_cache_idx();
         self.emit(Op::Call {
             dst,
             callee: callee_reg,
             args: args_start,
-            argc: 2,
+            argc: 3,
             cache_idx,
             may_have_cells: true,
         });
@@ -4793,7 +4811,13 @@ impl<'tcx> FnBuilder<'tcx> {
     /// Appends one `Variant=Type::method` line per variant of every enum
     /// nested in `ty` whose own type supplies a rendering, so the runtime
     /// walk can resolve a variant value back to its enum.
-    fn collect_variant_rendering_aliases(&self, ty: Ty, depth: u32, out: &mut String) {
+    fn collect_variant_rendering_aliases(
+        &self,
+        ty: Ty,
+        depth: u32,
+        method: &str,
+        out: &mut String,
+    ) {
         if depth > 8 {
             return;
         }
@@ -4804,7 +4828,7 @@ impl<'tcx> FnBuilder<'tcx> {
         match self.tcx.kind(resolved) {
             Some(TyKind::Adt { def, substs }) => {
                 let (def, substs) = (*def, substs.clone());
-                if let Some(qualified) = self.user_rendering_qualified_name(resolved)
+                if let Some(qualified) = self.user_rendering_qualified_name(resolved, method)
                     && let Some(names) = self.tcx.enum_variant_names(def)
                 {
                     for variant in names {
@@ -4815,28 +4839,29 @@ impl<'tcx> FnBuilder<'tcx> {
                     }
                 }
                 for arg in substs.types() {
-                    self.collect_variant_rendering_aliases(arg, depth + 1, out);
+                    self.collect_variant_rendering_aliases(arg, depth + 1, method, out);
                 }
             }
             Some(TyKind::Vec(elem) | TyKind::Slice(elem) | TyKind::Array { elem, .. }) => {
-                self.collect_variant_rendering_aliases(*elem, depth + 1, out);
+                self.collect_variant_rendering_aliases(*elem, depth + 1, method, out);
             }
             Some(TyKind::Tuple(elems)) => {
                 for elem in elems.clone() {
-                    self.collect_variant_rendering_aliases(elem, depth + 1, out);
+                    self.collect_variant_rendering_aliases(elem, depth + 1, method, out);
                 }
             }
             Some(TyKind::HashMap { key, value, .. }) => {
                 let (key, value) = (*key, *value);
-                self.collect_variant_rendering_aliases(key, depth + 1, out);
-                self.collect_variant_rendering_aliases(value, depth + 1, out);
+                self.collect_variant_rendering_aliases(key, depth + 1, method, out);
+                self.collect_variant_rendering_aliases(value, depth + 1, method, out);
             }
             _ => {}
         }
     }
 
-    /// Whether `ty`, or a type nested inside it, supplies its own rendering.
-    fn ty_contains_user_rendering(&self, ty: Ty, depth: u32) -> bool {
+    /// Whether `ty`, or a type nested inside it, supplies its own rendering
+    /// for this channel.
+    fn ty_contains_user_rendering(&self, ty: Ty, depth: u32, method: &str) -> bool {
         // A recursive type would otherwise walk forever; a rendering method
         // that only appears below this many levels is rare enough that the
         // synthesized form is the honest answer.
@@ -4847,27 +4872,27 @@ impl<'tcx> FnBuilder<'tcx> {
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
             resolved = *inner;
         }
-        if self.user_rendering_method(resolved).is_some() {
+        if self.has_user_rendering(resolved, method) {
             return true;
         }
         match self.tcx.kind(resolved) {
             Some(TyKind::Vec(elem) | TyKind::Slice(elem) | TyKind::Array { elem, .. }) => {
-                self.ty_contains_user_rendering(*elem, depth + 1)
+                self.ty_contains_user_rendering(*elem, depth + 1, method)
             }
             Some(TyKind::Tuple(elems)) => elems
                 .clone()
                 .iter()
-                .any(|elem| self.ty_contains_user_rendering(*elem, depth + 1)),
+                .any(|elem| self.ty_contains_user_rendering(*elem, depth + 1, method)),
             Some(TyKind::HashMap { key, value, .. }) => {
                 let (key, value) = (*key, *value);
-                self.ty_contains_user_rendering(key, depth + 1)
-                    || self.ty_contains_user_rendering(value, depth + 1)
+                self.ty_contains_user_rendering(key, depth + 1, method)
+                    || self.ty_contains_user_rendering(value, depth + 1, method)
             }
             Some(TyKind::Adt { substs, .. }) => substs
                 .types()
                 .clone()
                 .into_iter()
-                .any(|arg| self.ty_contains_user_rendering(arg, depth + 1)),
+                .any(|arg| self.ty_contains_user_rendering(arg, depth + 1, method)),
             _ => false,
         }
     }

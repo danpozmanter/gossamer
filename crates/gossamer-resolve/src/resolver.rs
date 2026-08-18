@@ -137,6 +137,11 @@ struct Resolver {
     dependency_modules: std::collections::HashMap<String, String>,
     /// Dependency module names some `use "id"` in this file bound.
     imported_dependencies: std::collections::HashSet<String>,
+    /// Head segment of every module-form `use` target in this file. A
+    /// dependency's inlined module carries the package's normalized name, so
+    /// a `use` naming it head-on is the import that states the provenance,
+    /// whether it is written bare, aliased, or with a list.
+    imported_module_heads: std::collections::HashSet<String>,
     /// Depth of enclosing compiler-synthesized items. Visibility is a
     /// property of source the user wrote, so checks pause inside them.
     synthesized_depth: usize,
@@ -172,6 +177,7 @@ impl Resolver {
             current_module: Vec::new(),
             dependency_modules: std::collections::HashMap::new(),
             imported_dependencies: std::collections::HashSet::new(),
+            imported_module_heads: std::collections::HashSet::new(),
             synthesized_depth: 0,
             synthesized_scope: std::collections::HashMap::new(),
             ambiguous_variants: std::collections::HashMap::new(),
@@ -266,10 +272,22 @@ impl Resolver {
 
     fn collect_imports(&mut self, uses: &[UseDecl]) {
         for use_decl in uses {
+            self.record_imported_module_head(use_decl);
             match &use_decl.list {
                 Some(list) => self.register_use_list(use_decl, list),
                 None => self.register_use_simple(use_decl),
             }
+        }
+    }
+
+    /// Records the head segment of a module-form `use` target, which is the
+    /// name a dependency's inlined module is reached by.
+    fn record_imported_module_head(&mut self, use_decl: &UseDecl) {
+        let gossamer_ast::UseTarget::Module(path) = &use_decl.target else {
+            return;
+        };
+        if let Some(head) = path.segments.first() {
+            self.imported_module_heads.insert(head.name.clone());
         }
     }
 
@@ -709,6 +727,30 @@ impl Resolver {
         module_path: &mut Vec<String>,
         vis: Visibility,
     ) {
+        let dependency_id = item
+            .attrs
+            .outer
+            .iter()
+            .find_map(|attr| attr.string_argument("dependency"));
+        // Two packages whose names normalize to one module name both inline
+        // under it, and every path headed by it would be ambiguous. The
+        // first claim stands, and the second is reported as the collision it
+        // is rather than as a duplicate declaration nobody wrote.
+        if let Some(id) = dependency_id
+            && let Some(first) = self.dependency_modules.get(&decl.name.name)
+            && first != id
+        {
+            let first = first.clone();
+            self.emit(
+                ResolveError::DependencyModuleCollision {
+                    module: decl.name.name.clone(),
+                    first,
+                    second: id.to_string(),
+                },
+                item.span,
+            );
+            return;
+        }
         self.register_item(
             item.id,
             &decl.name,
@@ -717,14 +759,10 @@ impl Resolver {
             module_path,
             vis,
         );
-        if let Some(id) = item
-            .attrs
-            .outer
-            .iter()
-            .find_map(|attr| attr.string_argument("dependency"))
-        {
+        if let Some(id) = dependency_id {
             self.dependency_modules
-                .insert(decl.name.name.clone(), id.to_string());
+                .entry(decl.name.name.clone())
+                .or_insert_with(|| id.to_string());
         }
         module_path.push(decl.name.name.clone());
         self.module_visibility.insert(module_path.join("::"), vis);
@@ -1731,6 +1769,7 @@ impl Resolver {
             return;
         };
         if self.imported_dependencies.contains(*head)
+            || self.imported_module_heads.contains(*head)
             || self.project_alias_modules.contains_key(*head)
             || self.current_module.first().is_some_and(|m| m == *head)
         {

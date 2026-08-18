@@ -107,6 +107,7 @@ feature-testing-examples/cycle_shared_goroutines.gos	bytecode-only local
 feature-testing-examples/debug_option_result.gos	no hot body
 feature-testing-examples/debugfmt_aggregates.gos	bytecode-only local
 feature-testing-examples/debugfmt_floats.gos	no hot body
+feature-testing-examples/debug_impl_dispatch.gos	bytecode-only local
 feature-testing-examples/debugfmt_nested_adts.gos	bytecode-only local
 feature-testing-examples/debugfmt_nested_floats.gos	bytecode-only local
 feature-testing-examples/deref_string_concat.gos	string append

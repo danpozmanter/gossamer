@@ -205,7 +205,7 @@ impl<'a> Lowerer<'a> {
         ] {
             declare_rt(&mut self.runtime_refs, sym);
         }
-        let kind = self.concat_print_kind(arg);
+        let kind = self.concat_print_kind(arg, "to_string");
         if matches!(kind, ConcatKind::Unsupported) {
             return Err(BuildError::InternalLoweringBug(
                 "stringify of aggregate or variant types",
@@ -454,7 +454,10 @@ impl<'a> Lowerer<'a> {
         // (a C string pointer), but MIR emits the char code as `i32`. Convert
         // via `gos_rt_char_to_str` first, mirroring the Cranelift backend.
         if name == "gos_rt_str_split" && args.len() == 2 {
-            if matches!(self.concat_print_kind(&args[1]), ConcatKind::Char) {
+            if matches!(
+                self.concat_print_kind(&args[1], "to_string"),
+                ConcatKind::Char
+            ) {
                 declare_rt(&mut self.runtime_refs, "gos_rt_char_to_str");
                 declare_rt(&mut self.runtime_refs, "gos_rt_str_split");
                 let s = self.lower_operand(&args[0])?;

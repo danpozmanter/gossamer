@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0073]: Two implementations supply the same trait for the same type, so a - here
+--- framed ---
+error[GT0073]: Two implementations supply the same trait for the same type, so a
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

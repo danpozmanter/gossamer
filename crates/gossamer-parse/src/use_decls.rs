@@ -67,7 +67,46 @@ impl Parser<'_> {
     }
 
     fn parse_module_use_target(&mut self) -> UseTarget {
-        UseTarget::Module(self.parse_module_path())
+        let path = self.parse_module_path();
+        self.reject_hyphenated_use_path(&path);
+        UseTarget::Module(path)
+    }
+
+    /// Reports a `use` path written with the hyphens a package name may carry
+    /// (`use pgsql-gos`). A `-` is subtraction, never part of an identifier,
+    /// so the path stops at the first one and the rest would parse as an
+    /// expression. The segments are consumed here so that misreading does not
+    /// produce a second, unrelated diagnostic.
+    fn reject_hyphenated_use_path(&mut self, path: &ModulePath) {
+        if !self.at_punct(Punct::Minus)
+            || self.newline_before_peek()
+            || !matches!(self.peek_nth(1).kind, TokenKind::Ident)
+        {
+            return;
+        }
+        let start = self.peek_span();
+        let mut written = path
+            .segments
+            .iter()
+            .map(|segment| segment.name.as_str())
+            .collect::<Vec<_>>()
+            .join("::");
+        while self.at_punct(Punct::Minus)
+            && !self.newline_before_peek()
+            && matches!(self.peek_nth(1).kind, TokenKind::Ident)
+        {
+            self.bump();
+            let span = self.peek_span();
+            self.bump();
+            written.push('-');
+            written.push_str(self.slice(span));
+        }
+        let end = self.last_span();
+        let module = written.replace('-', "_");
+        self.record(
+            ParseError::HyphenInUsePath { written, module },
+            self.join(start, end),
+        );
     }
 
     fn parse_module_path(&mut self) -> ModulePath {

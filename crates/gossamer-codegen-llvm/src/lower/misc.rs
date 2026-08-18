@@ -542,7 +542,7 @@ impl<'a> Lowerer<'a> {
         Some(heap_i64)
     }
 
-    pub(crate) fn concat_print_kind(&self, op: &Operand) -> ConcatKind {
+    pub(crate) fn concat_print_kind(&self, op: &Operand, method: &str) -> ConcatKind {
         match op {
             Operand::Const(ConstValue::Str(_)) => ConcatKind::StrPtr,
             Operand::Const(ConstValue::Int(_)) => ConcatKind::Int,
@@ -568,7 +568,7 @@ impl<'a> Lowerer<'a> {
                     Some(TyKind::String | TyKind::Ref { .. }) => ConcatKind::StrPtr,
                     Some(TyKind::Int(int_ty)) => {
                         if p.projection.is_empty()
-                            && let Some(kind) = self.set_handle_print_kind(p.local, 0)
+                            && let Some(kind) = self.set_handle_print_kind(p.local, 0, method)
                         {
                             return kind;
                         }
@@ -630,7 +630,7 @@ impl<'a> Lowerer<'a> {
                             }
                             // Array rows are inline, so element `i` starts at
                             // `base + i * slots * 8`.
-                            _ => match self.adt_debug_fmt_symbol(elem) {
+                            _ => match self.adt_debug_fmt_symbol(elem, method) {
                                 Some(sym) => {
                                     let slots = i64::from(
                                         crate::ty::slot_count(self.tcx, elem).unwrap_or(1).max(1),
@@ -661,7 +661,7 @@ impl<'a> Lowerer<'a> {
                                     Some(TyKind::Float(_)) => ConcatKind::VecVecF64,
                                     Some(TyKind::String) => ConcatKind::VecVecString,
                                     _ => self
-                                        .value_descriptor(elem)
+                                        .value_descriptor(elem, method)
                                         .map_or(ConcatKind::Unsupported, ConcatKind::VecDesc),
                                 }
                             }
@@ -679,16 +679,16 @@ impl<'a> Lowerer<'a> {
                                     // flat tag, so the whole element renders
                                     // through its descriptor instead.
                                     _ => self
-                                        .value_descriptor(elem)
+                                        .value_descriptor(elem, method)
                                         .map_or(ConcatKind::Unsupported, ConcatKind::VecDesc),
                                 }
                             }
-                            _ => match self.adt_debug_fmt_symbol(elem) {
+                            _ => match self.adt_debug_fmt_symbol(elem, method) {
                                 Some(sym) => {
                                     ConcatKind::VecAdt(sym, self.adt_fmt_takes_slot_address(elem))
                                 }
                                 None => self
-                                    .value_descriptor(elem)
+                                    .value_descriptor(elem, method)
                                     .map_or(ConcatKind::Unsupported, ConcatKind::VecDesc),
                             },
                         }
@@ -705,7 +705,7 @@ impl<'a> Lowerer<'a> {
                         } else {
                             // A field needing a derived `fmt` renders through
                             // the descriptor walk, which reaches one.
-                            self.value_descriptor(ty)
+                            self.value_descriptor(ty, method)
                                 .map_or(ConcatKind::Unsupported, ConcatKind::TupleDesc)
                         }
                     }
@@ -722,7 +722,7 @@ impl<'a> Lowerer<'a> {
                         if !self.map_kv_supported(*key) {
                             // An aggregate key is stored as its slot bytes,
                             // which the key's own descriptor renders.
-                            self.map_aggregate_value_kind(*key, *value)
+                            self.map_aggregate_value_kind(*key, *value, method)
                         } else if unsigned_kv && self.map_kv_supported(*value) {
                             // The plain map formatter reads every integer slot
                             // as signed; the tags carry each side's declared
@@ -743,7 +743,7 @@ impl<'a> Lowerer<'a> {
                             // `fmt` or the tuple tags render.
                             match self.tuple_elem_tag(*value) {
                                 Some(tag) => ConcatKind::MapTagged(0, tag),
-                                None => self.map_aggregate_value_kind(*key, *value),
+                                None => self.map_aggregate_value_kind(*key, *value, method),
                             }
                         }
                     }
@@ -767,7 +767,7 @@ impl<'a> Lowerer<'a> {
                             // An aggregate element is stored as its slot
                             // bytes, which its descriptor renders.
                             None => elem
-                                .and_then(|elem| self.value_descriptor(elem))
+                                .and_then(|elem| self.value_descriptor(elem, method))
                                 .map_or(ConcatKind::Unsupported, |desc| {
                                     ConcatKind::SetDesc(desc, is_btree)
                                 }),
@@ -784,14 +784,18 @@ impl<'a> Lowerer<'a> {
                     {
                         let tys = substs.types();
                         if def.local == u32::MAX - 1 {
-                            match tys.first().and_then(|t| self.debug_payload_plan(*t)) {
+                            match tys
+                                .first()
+                                .and_then(|t| self.debug_payload_plan(*t, method))
+                            {
                                 Some(k) => ConcatKind::Option(k),
                                 None => ConcatKind::Unsupported,
                             }
                         } else {
                             match (
-                                tys.first().and_then(|t| self.debug_payload_plan(*t)),
-                                tys.get(1).and_then(|t| self.debug_payload_plan(*t)),
+                                tys.first()
+                                    .and_then(|t| self.debug_payload_plan(*t, method)),
+                                tys.get(1).and_then(|t| self.debug_payload_plan(*t, method)),
                             ) {
                                 (Some(ok), Some(err)) => ConcatKind::Result(ok, err),
                                 _ => ConcatKind::Unsupported,
@@ -852,7 +856,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn set_handle_print_kind(&self, local: Local, depth: u8) -> Option<ConcatKind> {
+    fn set_handle_print_kind(&self, local: Local, depth: u8, method: &str) -> Option<ConcatKind> {
         if depth > 8 {
             return None;
         }
@@ -866,7 +870,7 @@ impl<'a> Lowerer<'a> {
                     && place.projection.is_empty()
                     && let Rvalue::Use(Operand::Copy(src)) = rvalue
                     && src.projection.is_empty()
-                    && let Some(kind) = self.set_handle_print_kind(src.local, depth + 1)
+                    && let Some(kind) = self.set_handle_print_kind(src.local, depth + 1, method)
                 {
                     return Some(kind);
                 }
@@ -900,7 +904,7 @@ impl<'a> Lowerer<'a> {
                             | "gos_rt_set_symmetric_difference"
                     ) && let Some(Operand::Copy(src)) = args.first()
                         && src.projection.is_empty()
-                        && let Some(kind) = self.set_handle_print_kind(src.local, depth + 1)
+                        && let Some(kind) = self.set_handle_print_kind(src.local, depth + 1, method)
                     {
                         return Some(kind);
                     }
@@ -965,7 +969,8 @@ impl<'a> Lowerer<'a> {
                         // renders them.
                         "gos_rt_set_insert_skey" => {
                             if let Some(Operand::Copy(place)) = args.get(1)
-                                && let Some(desc) = self.value_descriptor(self.place_leaf_ty(place))
+                                && let Some(desc) =
+                                    self.value_descriptor(self.place_leaf_ty(place), method)
                             {
                                 elem_kind = Some(ConcatKind::SetDesc(desc, is_btree));
                             }
@@ -986,7 +991,7 @@ impl<'a> Lowerer<'a> {
     /// when `ty` is not a user ADT or the unit defines no such formatter.
     /// Built-in generic ADTs (`Option`, `Result`, the set types) never carry
     /// one, so they fall out through the same lookup.
-    pub(crate) fn adt_debug_fmt_symbol(&self, ty: Ty) -> Option<String> {
+    pub(crate) fn adt_debug_fmt_symbol(&self, ty: Ty, method: &str) -> Option<String> {
         let ty = self.unwrap_ref(ty);
         if !matches!(self.tcx.kind(ty), Some(TyKind::Adt { .. })) {
             return None;
@@ -1000,13 +1005,11 @@ impl<'a> Lowerer<'a> {
         if bare.starts_with("adt#") {
             return None;
         }
-        // `to_string` is the `Display` contract a user `impl` supplies and
-        // `fmt` the `Debug` one; either overrides the synthesized rendering
-        // wherever a value of this type is shown.
-        ["to_string", "fmt"]
-            .into_iter()
-            .map(|method| format!("{bare}::{method}"))
-            .find(|sym| self.param_tys_by_name.contains_key(sym))
+        // `to_string` is the `Display` contract (`{}`) and `fmt` the `Debug`
+        // one (`{:?}`); each channel reaches only its own method, so a type
+        // implementing one keeps the synthesized rendering on the other.
+        let sym = format!("{bare}::{method}");
+        self.param_tys_by_name.contains_key(&sym).then_some(sym)
     }
 
     /// True when `ty`'s derived `fmt` receives the address of the value's
@@ -1023,18 +1026,18 @@ impl<'a> Lowerer<'a> {
     /// Rendering plan for an `Option` / `Result` payload: a fixed runtime tag
     /// for scalars, Strings, and collections, or the payload ADT's derived
     /// `fmt`. `None` for a payload no formatter reaches.
-    pub(crate) fn debug_payload_plan(&self, ty: Ty) -> Option<DebugPayload> {
+    pub(crate) fn debug_payload_plan(&self, ty: Ty, method: &str) -> Option<DebugPayload> {
         if let Some(tag) = self.debug_payload_kind(ty) {
             return Some(DebugPayload::Tag(tag));
         }
-        if let Some(sym) = self.adt_debug_fmt_symbol(ty) {
+        if let Some(sym) = self.adt_debug_fmt_symbol(ty, method) {
             return Some(DebugPayload::Fmt(sym));
         }
         // A tuple payload carries its own self-describing tag stream.
         if let Some(TyKind::Tuple(_)) = self.tcx.kind(self.unwrap_ref(ty)) {
             return self.tuple_elem_tags(ty).map(DebugPayload::Tuple);
         }
-        self.value_descriptor(ty).map(DebugPayload::Desc)
+        self.value_descriptor(ty, method).map(DebugPayload::Desc)
     }
 
     /// Maps an `Option` / `Result` payload type to the `gos_rt_debug_*`
@@ -1090,11 +1093,11 @@ impl<'a> Lowerer<'a> {
     /// tuple whose slots are flattened into the parent's buffer.
     /// Rendering plan for a map value the tag encoding cannot name: a struct
     /// or enum through its derived `fmt`, a tuple through its element tags.
-    fn map_aggregate_value_kind(&self, key: Ty, value: Ty) -> ConcatKind {
+    fn map_aggregate_value_kind(&self, key: Ty, value: Ty, method: &str) -> ConcatKind {
         // The value-only shortcuts render the key from a fixed scalar tag, so
         // they only apply while the key is one of those scalars.
         if self.map_kv_supported(key) {
-            if let Some(sym) = self.adt_debug_fmt_symbol(value) {
+            if let Some(sym) = self.adt_debug_fmt_symbol(value, method) {
                 return ConcatKind::MapAdt(sym);
             }
             if let Some(TyKind::Tuple(nested)) = self.tcx.kind(self.unwrap_ref(value)) {
@@ -1109,8 +1112,8 @@ impl<'a> Lowerer<'a> {
         }
         let mut fns = Vec::new();
         match (
-            self.value_descriptor_into(key, &mut fns),
-            self.value_descriptor_into(value, &mut fns),
+            self.value_descriptor_into(key, &mut fns, method),
+            self.value_descriptor_into(value, &mut fns, method),
         ) {
             (Some(mut bytes), Some(val)) => {
                 let val_at = bytes.len();
@@ -1124,16 +1127,21 @@ impl<'a> Lowerer<'a> {
     /// Recursive rendering descriptor for `ty`: the scalar tags a tuple stream
     /// already uses, plus container tags whose element descriptors follow. A
     /// shape with no descriptor - anything needing a derived `fmt` - is `None`.
-    pub(crate) fn value_descriptor(&self, ty: Ty) -> Option<ValueDesc> {
+    pub(crate) fn value_descriptor(&self, ty: Ty, method: &str) -> Option<ValueDesc> {
         let mut fns = Vec::new();
-        let bytes = self.value_descriptor_into(ty, &mut fns)?;
+        let bytes = self.value_descriptor_into(ty, &mut fns, method)?;
         Some(ValueDesc { bytes, fns })
     }
 
     /// [`Self::value_descriptor`] writing into a shared formatter table, so
     /// descriptors that are concatenated (a map's key and value) index into
     /// one table.
-    pub(crate) fn value_descriptor_into(&self, ty: Ty, fns: &mut Vec<String>) -> Option<Vec<u8>> {
+    pub(crate) fn value_descriptor_into(
+        &self,
+        ty: Ty,
+        fns: &mut Vec<String>,
+        method: &str,
+    ) -> Option<Vec<u8>> {
         let ty = self.unwrap_ref(ty);
         match self.tcx.kind(ty) {
             Some(TyKind::Tuple(elems)) => {
@@ -1143,21 +1151,21 @@ impl<'a> Lowerer<'a> {
                 }
                 let mut out = vec![gossamer_abi::TUPLE_TAG_NESTED, elems.len() as u8];
                 for e in &elems {
-                    out.extend(self.value_descriptor_into(*e, fns)?);
+                    out.extend(self.value_descriptor_into(*e, fns, method)?);
                 }
                 Some(out)
             }
             Some(TyKind::Vec(elem) | TyKind::Slice(elem)) => {
                 let elem = *elem;
                 let mut out = vec![gossamer_abi::DESC_VEC];
-                out.extend(self.value_descriptor_into(elem, fns)?);
+                out.extend(self.value_descriptor_into(elem, fns, method)?);
                 Some(out)
             }
             Some(TyKind::HashMap { key, value, .. }) => {
                 let (key, value) = (*key, *value);
                 let mut out = vec![gossamer_abi::DESC_MAP];
-                out.extend(self.value_descriptor_into(key, fns)?);
-                out.extend(self.value_descriptor_into(value, fns)?);
+                out.extend(self.value_descriptor_into(key, fns, method)?);
+                out.extend(self.value_descriptor_into(value, fns, method)?);
                 Some(out)
             }
             Some(TyKind::Adt { def, substs }) if matches!(def.local, n if n == u32::MAX - 7 || n == u32::MAX - 18) =>
@@ -1185,9 +1193,9 @@ impl<'a> Lowerer<'a> {
                 } else {
                     gossamer_abi::DESC_RESULT
                 }];
-                out.extend(self.value_descriptor_into(*tys.first()?, fns)?);
+                out.extend(self.value_descriptor_into(*tys.first()?, fns, method)?);
                 if !is_option {
-                    out.extend(self.value_descriptor_into(*tys.get(1)?, fns)?);
+                    out.extend(self.value_descriptor_into(*tys.get(1)?, fns, method)?);
                 }
                 Some(out)
             }
@@ -1201,7 +1209,7 @@ impl<'a> Lowerer<'a> {
                 if let Some(tag) = self.tuple_elem_tag(ty) {
                     return Some(vec![tag]);
                 }
-                let sym = self.adt_debug_fmt_symbol(ty)?;
+                let sym = self.adt_debug_fmt_symbol(ty, method)?;
                 let idx = fns.iter().position(|s| *s == sym).unwrap_or_else(|| {
                     fns.push(sym);
                     fns.len() - 1

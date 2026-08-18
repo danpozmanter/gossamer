@@ -49,10 +49,14 @@ use super::*;
 use super::Builder;
 
 impl Builder<'_> {
-    /// A struct or enum rendered through its derived `Type::fmt`, so a value
-    /// the concat planner cannot route reaches it as the String it renders
-    /// as. Any other local passes through unchanged.
-    pub(crate) fn adt_fmt_rendered(&mut self, local: Local, span: Span) -> Local {
+    /// A struct or enum rendered through the method its channel names, so a
+    /// value the concat planner cannot route reaches it as the String it
+    /// renders as. Any other local passes through unchanged.
+    ///
+    /// `method` is `to_string` for `Display` (`{}`) and `fmt` for `Debug`
+    /// (`{:?}`); a struct with no `impl Display` still carries the
+    /// synthesized structural `fmt`, so the two channels stay distinct.
+    pub(crate) fn adt_fmt_rendered(&mut self, local: Local, method: &str, span: Span) -> Local {
         let arg_ty = self.locals[local.0 as usize].ty;
         let Some(sname) = self
             .adt_dispatch_name(arg_ty)
@@ -60,15 +64,12 @@ impl Builder<'_> {
         else {
             return local;
         };
-        // A user `impl Display for T` supplies `to_string`; `fmt` is the
-        // `Debug` contract and the older inherent spelling. Either overrides
-        // the synthesized rendering, so both are looked for here.
-        let Some(method) = ["to_string", "fmt"].into_iter().find(|method| {
-            self.impl_methods
-                .contains_key(&format!("{sname}::{method}"))
-        }) else {
+        if !self
+            .impl_methods
+            .contains_key(&format!("{sname}::{method}"))
+        {
             return local;
-        };
+        }
         let str_ty = self.tcx.string_ty();
         let dest = self.fresh(str_ty);
         let next = self.new_block(span);
@@ -954,6 +955,17 @@ impl<'a> Builder<'a> {
         // A program may declare its own `print` / `println`, which takes its
         // argument as written; only the prelude builtins (no user `def`
         // behind the name) render their arguments.
+        // `__debug` is the `{:?}` channel and answers through `impl Debug`;
+        // every other rendering callee is `{}` and answers through
+        // `impl Display`.
+        let renders_debug_channel_method = match &callee.kind {
+            HirExprKind::Path { segments, .. }
+                if segments.len() == 1 && segments[0].name.as_str() == "__debug" =>
+            {
+                "fmt"
+            }
+            _ => "to_string",
+        };
         let callee_renders_aggregates = matches!(
             &callee.kind,
             HirExprKind::Path { segments, def, .. }
@@ -1130,11 +1142,11 @@ impl<'a> Builder<'a> {
                     local
                 }
             };
-            // Debug routing: render a struct/enum `__concat` argument through
-            // its derived `Type::fmt` (a String), so a `println!("{:?}", s)`
-            // compiles on Cranelift / LLVM instead of bailing on an aggregate.
+            // Render a struct / enum argument of a rendering callee through
+            // the method its channel names (a String), so a `println!` of an
+            // aggregate compiles on Cranelift / LLVM instead of bailing.
             let local = if callee_renders_aggregates {
-                self.adt_fmt_rendered(local, span)
+                self.adt_fmt_rendered(local, renders_debug_channel_method, span)
             } else {
                 local
             };

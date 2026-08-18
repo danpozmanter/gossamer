@@ -91,7 +91,7 @@ pub use publish::{
 pub use resolver::{
     CacheBackedLoader, CatalogueEntry, FnLoader, NoopLoader, Requirement, RequirementSpec,
     ResolveError, Resolved, ResolvedSource, Resolver, TransitiveLoader, VersionCatalogue,
-    resolve_transitive,
+    dependency_identity, resolve_transitive,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use scaffold::{render_initial_manifest, render_main_source};

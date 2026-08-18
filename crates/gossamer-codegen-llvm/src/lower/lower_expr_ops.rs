@@ -963,9 +963,12 @@ impl<'a> Lowerer<'a> {
         // formatter can re-enter it (a derived `fmt` builds its string
         // through the same buffer), so every aggregate argument is rendered
         // to a c-string here, before the buffer is opened below.
+        // The channel names the method a user `impl` supplies for it:
+        // `to_string` for `Display` (`{}`), `fmt` for `Debug` (`{:?}`).
+        let method = if debug { "fmt" } else { "to_string" };
         let mut plans: Vec<(ConcatKind, String)> = Vec::with_capacity(args.len());
         for arg in args {
-            let kind = self.concat_print_kind(arg);
+            let kind = self.concat_print_kind(arg, method);
             if matches!(kind, ConcatKind::Unsupported) {
                 return Err(BuildError::InternalLoweringBug(
                     "println/format of aggregate or variant types",

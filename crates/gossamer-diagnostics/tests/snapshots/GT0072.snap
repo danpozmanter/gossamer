@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0072]: An `impl Trait for Type` block defined an item the trait does not - here
+--- framed ---
+error[GT0072]: An `impl Trait for Type` block defined an item the trait does not
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

@@ -71,6 +71,11 @@ impl Area for Shape {
 }
 ```
 
+A function that answers a value declares the type it answers with. A body
+whose tail expression produces one through a signature with no `-> T`
+reports `GT0074`, since the caller reads the signature and would take back a
+unit. A body with no tail expression answers a unit and declares nothing.
+
 ## Top-level statements
 
 The entry file may skip the `fn main` wrapper. Bare statements at file
@@ -476,6 +481,19 @@ impl Display for Tagged {
 `join(sep)`, and wherever one sits inside a `Vec`, `Map`, tuple, `Option`, or
 struct field. `impl Debug for T { fn fmt(&self) -> String }` is the same
 override for `{:?}`.
+
+`Display` and `Debug` are distinct contracts: `{}` reaches only `to_string`
+and `{:?}` only `fmt`. A type implementing one keeps the synthesized
+rendering on the other channel, so `println!("{:?}", Tagged { id: 1 })`
+shows `Tagged { id: 1 }`.
+
+An `impl Trait for Type` block defines the items the trait declares and
+nothing else. A `fn` outside that contract reports `GT0072`: it would
+otherwise become an inherent method under a misleading header, reachable by
+name but never through the trait. Write it in an inherent `impl Type { .. }`
+block, or declare it in the trait. One trait reaches one type through one
+block, so a second `impl` of the same pair - or an `impl Debug for T` over a
+`#[derive(Debug)]` - reports `GT0073`.
 
 A trait names behaviour, never a value's type. There is no `dyn`, so
 `fn width(x: Display)` reports `GT0071`; bound a generic by the trait instead

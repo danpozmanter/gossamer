@@ -394,8 +394,7 @@ impl Resolver {
     pub fn resolve(&self, manifest: &Manifest) -> Result<Vec<Resolved>, ResolveError> {
         let mut requirements: BTreeMap<String, (ProjectId, Vec<RequirementSpec>)> = BTreeMap::new();
         for (raw_id, spec) in &manifest.dependencies {
-            let id = ProjectId::parse(raw_id)
-                .map_err(|_| ResolveError::Unsatisfiable { id: raw_id.clone() })?;
+            let id = dependency_identity(raw_id, spec)?;
             let req = Requirement::from_spec(id.clone(), spec);
             let entry = requirements
                 .entry(raw_id.clone())
@@ -483,6 +482,44 @@ impl Resolver {
     }
 }
 
+/// The project identity of one `[dependencies]` entry.
+///
+/// The key is the identity when it spells one, which is how a registry
+/// dependency is written. A git dependency carries its identity in the URL
+/// instead, so its key is free to be the module name source reaches it by -
+/// `pgsql_gos = { git = "https://github.com/danpozmanter/pgsql-gos" }` is the
+/// same package as `"github.com/danpozmanter/pgsql-gos"`.
+///
+/// # Errors
+///
+/// Returns [`ResolveError::Unsatisfiable`] when neither the key nor the
+/// source names a project identity.
+pub fn dependency_identity(key: &str, spec: &DependencySpec) -> Result<ProjectId, ResolveError> {
+    if let Ok(id) = ProjectId::parse(key) {
+        return Ok(id);
+    }
+    if let DependencySpec::Inline(InlineDependency::Git { url, .. }) = spec
+        && let Some(id) = git_url_identity(url)
+    {
+        return Ok(id);
+    }
+    Err(ResolveError::Unsatisfiable {
+        id: key.to_string(),
+    })
+}
+
+/// The project identity a git URL names: its host and repository path, with
+/// the scheme, any userinfo, and a trailing `.git` removed.
+fn git_url_identity(url: &str) -> Option<ProjectId> {
+    let rest = url
+        .split_once("://")
+        .map_or(url, |(_, rest)| rest)
+        .trim_end_matches('/');
+    let rest = rest.rsplit_once('@').map_or(rest, |(_, host)| host);
+    let rest = rest.strip_suffix(".git").unwrap_or(rest);
+    ProjectId::parse(rest).ok()
+}
+
 /// Tooling to resolve a dependency graph transitively.
 pub trait TransitiveLoader {
     /// Returns the manifest of the dependency rooted at `resolved`,
@@ -505,8 +542,7 @@ pub fn resolve_transitive(
     let mut work: Vec<Manifest> = vec![root.clone()];
     while let Some(m) = work.pop() {
         for (raw_id, spec) in &m.dependencies {
-            let id = ProjectId::parse(raw_id)
-                .map_err(|_| ResolveError::Unsatisfiable { id: raw_id.clone() })?;
+            let id = dependency_identity(raw_id, spec)?;
             id_index.entry(raw_id.clone()).or_insert(id.clone());
             match spec {
                 DependencySpec::Registry(range) => {

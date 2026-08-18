@@ -1,0 +1,10 @@
+// ERROR: GT0073
+struct Point(i64)
+
+impl Display for Point {
+    fn to_string(&self) -> String { "a" }
+}
+
+impl Display for Point {
+    fn to_string(&self) -> String { "b" }
+}

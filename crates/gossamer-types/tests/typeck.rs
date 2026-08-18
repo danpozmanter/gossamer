@@ -1204,8 +1204,9 @@ fn vec_from_repeat_array_is_explicit_and_accepted() {
 
 #[test]
 fn vec_return_requires_explicit_construction() {
-    let checked =
-        run("fn make() -> Vec<String> { Vec::from([\"x\", \"y\"]) }\nfn main() { make()\n }\n");
+    let checked = run(
+        "fn make() -> Vec<String> { Vec::from([\"x\", \"y\"]) }\nfn main() { let _ = make()\n }\n",
+    );
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
 
@@ -3843,6 +3844,124 @@ fn impl_omitting_a_required_assoc_item_is_reported() {
             TypeError::MissingTraitImplAssocItems { missing, .. }
                 if missing == &["type Item".to_string(), "const MAX".to_string()]
         )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn impl_defining_an_item_outside_the_trait_is_reported() {
+    let checked = run("struct Point { id: i64 }\n\
+         impl Display for Point { fn to_string(&self) -> String { \"p\" }\n\
+             fn show(&self) -> String { \"s\" } }\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::ImplItemNotInTrait { trait_name, item, .. }
+                if trait_name == "Display" && item == "show"
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn impl_defining_only_the_traits_own_items_is_accepted() {
+    let checked = run(
+        "trait Area { fn area(&self) -> i64\n    fn name(&self) -> String }\n\
+         struct Square { side: i64 }\n\
+         impl Area for Square { fn area(&self) -> i64 { self.side * self.side }\n\
+             fn name(&self) -> String { \"square\" } }\n",
+    );
+    assert!(
+        !checked
+            .diagnostics
+            .iter()
+            .any(|d| matches!(&d.error, TypeError::ImplItemNotInTrait { .. })),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn a_trait_implemented_twice_for_one_type_is_reported() {
+    let checked = run("struct Point { id: i64 }\n\
+         impl Display for Point { fn to_string(&self) -> String { \"a\" } }\n\
+         impl Display for Point { fn to_string(&self) -> String { \"b\" } }\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::ConflictingTraitImpl { trait_name, derived, .. }
+                if trait_name == "Display" && !*derived
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn an_impl_competing_with_a_derive_is_reported() {
+    let checked = run("#[derive(Debug)]\n\
+         struct Point { id: i64 }\n\
+         impl Debug for Point { fn fmt(&self) -> String { \"a\" } }\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::ConflictingTraitImpl { trait_name, derived, .. }
+                if trait_name == "Debug" && *derived
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+/// A `(trait, type)` pair is the type's own identity, so two modules each
+/// declaring a `Point` implement two distinct pairs.
+#[test]
+fn two_modules_declaring_one_name_implement_distinct_pairs() {
+    let checked = run("mod a {\n\
+             pub struct Point { pub x: i64 }\n\
+             impl Display for Point { pub fn to_string(&self) -> String { \"a\" } }\n\
+         }\n\
+         mod b {\n\
+             #[derive(Debug)]\n\
+             pub struct Point { pub x: i64 }\n\
+         }\n\
+         mod c {\n\
+             pub struct Point { pub x: i64 }\n\
+             impl Debug for Point { pub fn fmt(&self) -> String { \"c\" } }\n\
+         }\n");
+    assert!(
+        !checked
+            .diagnostics
+            .iter()
+            .any(|d| matches!(&d.error, TypeError::ConflictingTraitImpl { .. })),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn a_body_answering_a_value_without_a_declared_return_is_reported() {
+    let checked = run("fn add(a: i64, b: i64) { a + b }\n");
+    assert!(
+        checked.diagnostics.iter().any(|d| matches!(
+            &d.error,
+            TypeError::MissingReturnType { name, found } if name == "add" && found == "i64"
+        )),
+        "{:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn a_body_answering_a_unit_needs_no_declared_return() {
+    let checked = run("fn shout(a: i64) { println!(\"{}\", a) }\n");
+    assert!(
+        !checked
+            .diagnostics
+            .iter()
+            .any(|d| matches!(&d.error, TypeError::MissingReturnType { .. })),
         "{:?}",
         checked.diagnostics
     );

@@ -505,6 +505,40 @@ pub enum TypeError {
         /// Missing items rendered as `type Item` / `const MAX`.
         missing: Vec<String>,
     },
+    /// A trait impl defines an item the trait does not declare. The block
+    /// promises one contract, so anything outside it would silently become
+    /// an inherent method under a misleading header.
+    #[error("`{item}` is not a member of trait `{trait_name}`")]
+    ImplItemNotInTrait {
+        /// Trait being implemented.
+        trait_name: String,
+        /// Type the impl attaches to.
+        ty: String,
+        /// Item the block defines that the trait does not declare.
+        item: String,
+        /// Item names the trait does declare, in declaration order.
+        declared: Vec<String>,
+    },
+    /// Two `impl` blocks supply the same trait for the same type, so every
+    /// call through the trait has two bodies to reach and no rule picks one.
+    #[error("conflicting implementations of trait `{trait_name}` for type `{ty}`")]
+    ConflictingTraitImpl {
+        /// Trait implemented more than once.
+        trait_name: String,
+        /// Type both blocks attach to.
+        ty: String,
+        /// Whether the first implementation is a `#[derive(...)]`.
+        derived: bool,
+    },
+    /// A function body answers a value through a signature that declares no
+    /// return type, so its callers read a unit where a value is handed back.
+    #[error("`{name}` returns a value but declares no return type")]
+    MissingReturnType {
+        /// Function or method name as written.
+        name: String,
+        /// Type the body's answer has, for the suggested `-> T`.
+        found: String,
+    },
     /// A path projected an associated item that nothing in scope declares.
     #[error("no associated item named `{name}` on `{base}`")]
     UnknownAssocItem {
@@ -878,6 +912,9 @@ impl TypeError {
             Self::OperatorNotOnBound { .. } => "operator-not-on-bound",
             Self::MissingTraitImplMethods { .. } => "missing-trait-impl-methods",
             Self::MissingTraitImplAssocItems { .. } => "missing-trait-impl-assoc-items",
+            Self::ImplItemNotInTrait { .. } => "impl-item-not-in-trait",
+            Self::ConflictingTraitImpl { .. } => "conflicting-trait-impl",
+            Self::MissingReturnType { .. } => "missing-return-type",
             Self::UnknownAssocItem { .. } => "unknown-assoc-item",
             Self::AmbiguousAssocItem { .. } => "ambiguous-assoc-item",
             Self::BuiltinIteratorNotGeneric { .. } => "builtin-iterator-not-generic",
@@ -979,6 +1016,9 @@ impl TypeError {
             Self::MethodNotOnBound { .. } | Self::OperatorNotOnBound { .. } => "GT0056",
             Self::MissingTraitImplMethods { .. } => "GT0058",
             Self::MissingTraitImplAssocItems { .. } => "GT0059",
+            Self::ImplItemNotInTrait { .. } => "GT0072",
+            Self::ConflictingTraitImpl { .. } => "GT0073",
+            Self::MissingReturnType { .. } => "GT0074",
             Self::UnknownAssocItem { .. } => "GT0060",
             Self::AmbiguousAssocItem { .. } => "GT0061",
             Self::BuiltinIteratorNotGeneric { .. } => "GT0057",
@@ -1471,6 +1511,46 @@ impl TypeDiagnostic {
                     ))
                     .with_note(
                         "a projection through the trait has to land on a concrete item in this impl",
+                    );
+            }
+            TypeError::ImplItemNotInTrait {
+                trait_name,
+                ty,
+                item,
+                declared,
+            } => {
+                out = out
+                    .with_help(format!(
+                        "move it to an inherent `impl {ty} {{ fn {item} .. }}` block, or \
+                         declare `fn {item}` in `trait {trait_name}`"
+                    ))
+                    .with_note(match declared.as_slice() {
+                        [] => format!("`{trait_name}` declares no items of its own"),
+                        _ => format!("`{trait_name}` declares: `{}`", declared.join("`, `")),
+                    });
+            }
+            TypeError::ConflictingTraitImpl {
+                trait_name,
+                ty,
+                derived,
+            } => {
+                out = out.with_help(if *derived {
+                    format!(
+                        "`{ty}` already gets `{trait_name}` from its `#[derive({trait_name})]`; \
+                         drop the derive to keep the written `impl`, or drop the `impl`"
+                    )
+                } else {
+                    format!(
+                        "keep one `impl {trait_name} for {ty}` block and merge the other into it"
+                    )
+                });
+            }
+            TypeError::MissingReturnType { name, found } => {
+                out = out
+                    .with_help(format!("declare it: `fn {name}(..) -> {found}`"))
+                    .with_note(
+                        "a signature is what a caller reads; a body that answers a value \
+                         through an undeclared return hands back a unit",
                     );
             }
             TypeError::UnknownAssocItem {

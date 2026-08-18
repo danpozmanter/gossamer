@@ -1,0 +1,8 @@
+// ERROR: GT0072
+struct Point(i64)
+
+impl Display for Point {
+    fn to_string(&self) -> String { "p" }
+
+    fn show(&self) -> String { "s" }
+}

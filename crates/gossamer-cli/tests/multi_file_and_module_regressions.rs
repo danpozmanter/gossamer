@@ -1766,6 +1766,151 @@ fn path_dependency_links_at_run() {
     assert_eq!(out.0.trim(), "hi gos", "stdout: {:?}", out.0);
 }
 
+/// A package name may carry `-`, which no identifier may, so its module
+/// name is the final path segment with each `-` replaced by `_`. Every
+/// spelling of the import that names that module reaches the package: the
+/// bare form, an item path, a list, an alias, and the package id itself.
+#[test]
+fn every_import_spelling_reaches_a_hyphenated_package() {
+    let root = fresh_dir("dep-import-spellings");
+    write_dep_project(
+        &root,
+        "pgsql-gos",
+        "example.com/pgsql-gos",
+        "pub fn greet(name: &String) -> String { format!(\"hi {}\", name) }\n",
+    );
+    for (label, main) in [
+        (
+            "bare",
+            "use pgsql_gos\n\nfn main() { println!(\"{}\", pgsql_gos::greet(&\"gos\")) }\n",
+        ),
+        (
+            "item path",
+            "use pgsql_gos::greet\n\nfn main() { println!(\"{}\", greet(&\"gos\")) }\n",
+        ),
+        (
+            "list",
+            "use pgsql_gos::{greet}\n\nfn main() { println!(\"{}\", greet(&\"gos\")) }\n",
+        ),
+        (
+            "alias",
+            "use pgsql_gos as pg\n\nfn main() { println!(\"{}\", pg::greet(&\"gos\")) }\n",
+        ),
+        (
+            "package id",
+            "use \"example.com/pgsql-gos\"\n\nfn main() { println!(\"{}\", pgsql_gos::greet(&\"gos\")) }\n",
+        ),
+    ] {
+        let app = write_app_project(&root, "pgsql_gos = { path = \"../pgsql-gos\" }\n", main);
+        let out = project_run_vm(&app);
+        assert_eq!(out.2, Some(0), "{label}: stderr: {}", out.1);
+        assert_eq!(out.0.trim(), "hi gos", "{label}: stdout: {:?}", out.0);
+    }
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// `-` is subtraction, never part of an identifier, so the package name is
+/// not the module path. The diagnostic names the spelling that is.
+#[test]
+fn a_hyphenated_use_path_is_rejected_with_the_module_spelling() {
+    let root = fresh_dir("dep-import-hyphen");
+    write_dep_project(
+        &root,
+        "pgsql-gos",
+        "example.com/pgsql-gos",
+        "pub fn greet(name: &String) -> String { format!(\"hi {}\", name) }\n",
+    );
+    let app = write_app_project(
+        &root,
+        "pgsql_gos = { path = \"../pgsql-gos\" }\n",
+        "use pgsql-gos\n\nfn main() { println!(\"{}\", pgsql_gos::greet(&\"gos\")) }\n",
+    );
+    let out = project_run_vm(&app);
+    let _ = fs::remove_dir_all(&root);
+    assert_ne!(out.2, Some(0), "a hyphenated use path must not run");
+    let combined = format!("{}{}", out.0, out.1);
+    assert!(
+        combined.contains("GP0040"),
+        "expected GP0040, got: {combined}"
+    );
+    assert!(
+        combined.contains("use pgsql_gos"),
+        "the diagnostic names the module spelling: {combined}"
+    );
+}
+
+/// Two packages whose names normalize to one module name are reported as
+/// the collision they are, naming both ids.
+#[test]
+fn two_packages_normalizing_to_one_module_name_collide() {
+    let root = fresh_dir("dep-import-collision");
+    write_dep_project(
+        &root,
+        "hyphened",
+        "one.example.com/pgsql-gos",
+        "pub fn a() -> i64 { 1 }\n",
+    );
+    write_dep_project(
+        &root,
+        "underscored",
+        "two.example.com/pgsql_gos",
+        "pub fn b() -> i64 { 2 }\n",
+    );
+    let app = write_app_project(
+        &root,
+        "first = { path = \"../hyphened\" }\nsecond = { path = \"../underscored\" }\n",
+        "use pgsql_gos\n\nfn main() { println!(\"{}\", pgsql_gos::a()) }\n",
+    );
+    let out = project_run_vm(&app);
+    let _ = fs::remove_dir_all(&root);
+    assert_ne!(out.2, Some(0), "a colliding module name must not run");
+    let combined = format!("{}{}", out.0, out.1);
+    assert!(
+        combined.contains("GR0019"),
+        "expected GR0019, got: {combined}"
+    );
+    for id in ["one.example.com/pgsql-gos", "two.example.com/pgsql_gos"] {
+        assert!(
+            combined.contains(id),
+            "diagnostic must name {id}: {combined}"
+        );
+    }
+}
+
+/// `gos tidy` reads the imports a file actually writes, so a dependency
+/// reached through its bare module name is kept.
+#[test]
+fn tidy_keeps_a_dependency_reached_by_its_module_name() {
+    let root = fresh_dir("dep-import-tidy");
+    write_dep_project(
+        &root,
+        "pgsql-gos",
+        "example.com/pgsql-gos",
+        "pub fn greet(name: &String) -> String { format!(\"hi {}\", name) }\n",
+    );
+    let app = write_app_project(
+        &root,
+        "pgsql_gos = { path = \"../pgsql-gos\" }\n",
+        "use pgsql_gos\n\nfn main() { println!(\"{}\", pgsql_gos::greet(&\"gos\")) }\n",
+    );
+    let child = Command::new(gos_bin())
+        .arg("tidy")
+        .current_dir(&app)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn gos");
+    let out = run_with_timeout(child);
+    let manifest = fs::read_to_string(app.join("project.toml")).unwrap();
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert!(
+        manifest.contains("pgsql_gos"),
+        "tidy dropped a dependency the source imports: {manifest}"
+    );
+}
+
 /// A dependency's module is reached only through the import naming the
 /// package it comes from, so the bare `dep::item` path is rejected.
 #[test]

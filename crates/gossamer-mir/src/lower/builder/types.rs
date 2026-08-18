@@ -607,10 +607,10 @@ impl<'a> Builder<'a> {
 
     /// Returns `true` when `&mut <place>` over an operand of type
     /// `operand_ty`, materialised in a local of type `local_ty`, must take
-    /// the place's slot address rather than pass its value. Scalars and
-    /// `String` are the shapes a callee rebinds wholesale through the
-    /// reference, so the caller hands over the slot and reloads from it
-    /// after the call.
+    /// the place's slot address rather than pass its value. Scalars,
+    /// `String`, and the `Option` / `Result` carriers are the shapes a
+    /// callee rebinds wholesale through the reference, so the caller hands
+    /// over the slot and reloads from it after the call.
     ///
     /// The local's type answers only for an operand the checker left
     /// unresolved: a handle-backed container (`Set`, `Deque`, `Stack`, an
@@ -620,16 +620,20 @@ impl<'a> Builder<'a> {
     pub(crate) fn mut_ref_takes_slot_address(&self, operand_ty: Ty, local_ty: Ty) -> bool {
         use gossamer_types::TyKind;
         let rebindable = |ty: Ty| {
-            matches!(
-                self.tcx.kind_of(ty),
+            match self.tcx.kind_of(ty) {
                 TyKind::Int(_)
-                    | TyKind::Float(_)
-                    | TyKind::Bool
-                    | TyKind::Char
-                    | TyKind::String
-                    | TyKind::Duration
-                    | TyKind::Instant
-            )
+                | TyKind::Float(_)
+                | TyKind::Bool
+                | TyKind::Char
+                | TyKind::String
+                | TyKind::Duration
+                | TyKind::Instant => true,
+                // An `Option` / `Result` is a carrier the callee replaces
+                // whole (`*o = Some(v)`), so the reference has to name the
+                // caller's slot rather than a copy of the carrier.
+                TyKind::Adt { def, .. } => def.local == u32::MAX || def.local == u32::MAX - 1,
+                _ => false,
+            }
         };
         if matches!(self.tcx.kind_of(operand_ty), TyKind::Var(_)) {
             rebindable(local_ty)

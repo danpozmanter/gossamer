@@ -8,7 +8,7 @@
 #![forbid(unsafe_code)]
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use gossamer_lex::{Punct, SourceMap, TokenKind, tokenize};
 use rustyline::completion::Completer;
@@ -31,6 +31,7 @@ const DIM: &str = "\x1b[2m";
 #[derive(Default)]
 pub(crate) struct GosReplHelper {
     binding_method_owners: HashMap<String, String>,
+    session_type_names: HashSet<String>,
 }
 
 impl GosReplHelper {
@@ -38,6 +39,19 @@ impl GosReplHelper {
     #[must_use]
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    /// Replaces the set of type names the session declares, so the
+    /// highlighter paints a type where the editor's semantic tokens would
+    /// and leaves every other identifier alone.
+    pub(crate) fn set_session_type_names(&mut self, names: HashSet<String>) {
+        self.session_type_names = names;
+    }
+
+    /// Whether `name` names a type here: one the session declared, or one
+    /// the language and its standard library provide.
+    fn is_type_name(&self, name: &str) -> bool {
+        self.session_type_names.contains(name) || is_known_type_name(name)
     }
 
     /// Records the core method receiver owner for a persistent binding.
@@ -58,7 +72,63 @@ impl GosReplHelper {
     /// Clears all completion metadata with the rest of the REPL session.
     pub(crate) fn reset_session(&mut self) {
         self.binding_method_owners.clear();
+        self.session_type_names.clear();
     }
+}
+
+/// Type names the language itself provides: the primitives, the core
+/// generic containers, and the shapes syntax alone builds. A name outside
+/// this set and outside the session's own declarations is left uncoloured,
+/// matching the editor, which paints a type only where one resolves.
+fn is_known_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "bool"
+            | "char"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "usize"
+            | "f32"
+            | "f64"
+            | "String"
+            | "Vec"
+            | "Map"
+            | "BTreeMap"
+            | "Set"
+            | "BTreeSet"
+            | "Deque"
+            | "Queue"
+            | "Stack"
+            | "MaxHeap"
+            | "MinHeap"
+            | "Option"
+            | "Result"
+            | "Box"
+            | "Arc"
+            | "Rc"
+            | "Weak"
+            | "Sender"
+            | "Receiver"
+            | "JoinHandle"
+            | "Self"
+    ) || STDLIB_TYPE_NAMES.with(|names| names.contains(name))
+}
+
+thread_local! {
+    /// Type names the standard library exports, read once from its manifest.
+    static STDLIB_TYPE_NAMES: HashSet<String> = gossamer_std::registry::modules()
+        .iter()
+        .flat_map(|module| module.items)
+        .filter(|item| matches!(item.kind, gossamer_std::registry::StdItemKind::Type))
+        .map(|item| item.name.to_string())
+        .collect();
 }
 
 impl Helper for GosReplHelper {}
@@ -366,7 +436,7 @@ impl Highlighter for GosReplHelper {
                     out.push_str(RESET);
                 }
                 TokenKind::Ident => {
-                    if text.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+                    if self.is_type_name(text) {
                         out.push_str(MAGENTA);
                         out.push_str(text);
                         out.push_str(RESET);
@@ -398,8 +468,43 @@ impl Highlighter for GosReplHelper {
 
 #[cfg(test)]
 mod repl_helper_tests {
-    use super::{GosReplHelper, complete_at, continuation_indent, incomplete_reason};
-    use std::collections::HashMap;
+    use super::{GosReplHelper, MAGENTA, complete_at, continuation_indent, incomplete_reason};
+    use rustyline::highlight::Highlighter;
+    use std::collections::{HashMap, HashSet};
+
+    /// The editor paints a type where one resolves, so the REPL does too: a
+    /// capitalised word nothing declares is an ordinary identifier, and
+    /// colouring it would claim a resolution the session does not have.
+    #[test]
+    fn only_a_name_that_resolves_to_a_type_is_painted_as_one() {
+        let mut helper = GosReplHelper::new();
+        helper.set_session_type_names(HashSet::from(["Point".to_string()]));
+
+        let painted = helper.highlight("Point", 0);
+        assert!(
+            painted.contains(MAGENTA),
+            "a session-declared type is painted: {painted:?}"
+        );
+
+        let builtin = helper.highlight("Vec", 0);
+        assert!(
+            builtin.contains(MAGENTA),
+            "a language type is painted: {builtin:?}"
+        );
+
+        let unknown = helper.highlight("Bogus", 0);
+        assert!(
+            !unknown.contains(MAGENTA),
+            "a capitalised name nothing declares is left alone: {unknown:?}"
+        );
+
+        helper.reset_session();
+        let dropped = helper.highlight("Point", 0);
+        assert!(
+            !dropped.contains(MAGENTA),
+            "clearing the session forgets its types: {dropped:?}"
+        );
+    }
 
     /// A cursor sitting straight after the dot is the moment the whole method
     /// surface is worth offering, so an empty prefix lists every method the

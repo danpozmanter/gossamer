@@ -113,6 +113,20 @@ fixture_test!(gr0003_duplicate_item, "GR0003_duplicate_item.gos");
 fixture_test!(gt0001_type_mismatch, "GT0001_type_mismatch.gos");
 fixture_test!(gm0003_arena_escape, "GM0003_arena_escape.gos");
 fixture_test!(gr0017_unknown_loop_label, "GR0017_unknown_loop_label.gos");
+fixture_test!(gt0070_unknown_impl_trait, "GT0070_unknown_impl_trait.gos");
+fixture_test!(
+    gt0071_trait_in_type_position,
+    "GT0071_trait_in_type_position.gos"
+);
+fixture_test!(
+    gt0072_impl_item_not_in_trait,
+    "GT0072_impl_item_not_in_trait.gos"
+);
+fixture_test!(
+    gt0073_conflicting_trait_impl,
+    "GT0073_conflicting_trait_impl.gos"
+);
+fixture_test!(gt0074_missing_return_type, "GT0074_missing_return_type.gos");
 
 #[test]
 fn all_fixtures_have_error_marker() {

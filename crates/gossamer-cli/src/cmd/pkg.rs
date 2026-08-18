@@ -73,7 +73,7 @@ fn build_fetcher(
     let mut catalogue = gossamer_pkg::VersionCatalogue::new();
     for (raw_id, spec) in &manifest.dependencies {
         if matches!(spec, gossamer_pkg::DependencySpec::Registry(_)) {
-            let id = gossamer_pkg::ProjectId::parse(raw_id)
+            let id = gossamer_pkg::dependency_identity(raw_id, spec)
                 .with_context(|| format!("invalid id `{raw_id}`"))?;
             if let Err(err) =
                 catalogue.load_from_registry(transport.as_ref(), &options.registry_url, &id)
@@ -368,7 +368,11 @@ pub(crate) fn tidy(manifest: Option<PathBuf>) -> Result<()> {
     let used = project_imports(&source_files)?;
     let declared: Vec<String> = m.dependencies.keys().cloned().collect();
     if !source_files.is_empty() {
-        m.dependencies.retain(|id, _| used.contains(id));
+        // A dependency is reached by its key or by the module name its
+        // package normalizes to, so either spelling keeps it.
+        m.dependencies.retain(|id, _| {
+            used.contains(id) || used.contains(&gossamer_resolve::project_dep_module_name(id))
+        });
     }
     let removed: Vec<String> = declared
         .into_iter()
@@ -426,8 +430,20 @@ fn project_imports(files: &[PathBuf]) -> Result<BTreeSet<String>> {
             ));
         }
         for declaration in parsed.uses {
-            if let gossamer_ast::UseTarget::Project { id, .. } = declaration.target {
-                imports.insert(id);
+            match declaration.target {
+                // `use "id"` names the package outright.
+                gossamer_ast::UseTarget::Project { id, .. } => {
+                    imports.insert(gossamer_resolve::project_dep_module_name(&id));
+                    imports.insert(id);
+                }
+                // `use module`, `use module::item`, and `use module::{..}`
+                // all name the dependency through the module its package
+                // normalizes to.
+                gossamer_ast::UseTarget::Module(path) => {
+                    if let Some(head) = path.segments.first() {
+                        imports.insert(head.name.clone());
+                    }
+                }
             }
         }
     }

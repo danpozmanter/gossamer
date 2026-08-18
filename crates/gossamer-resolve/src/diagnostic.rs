@@ -293,6 +293,19 @@ pub enum ResolveError {
         /// Project id the dependency is published under.
         id: String,
     },
+    /// Two dependency packages whose names normalize to one module name.
+    /// A `-` is not part of an identifier, so a package name carrying one is
+    /// reached through the same name with `_` in its place - which two
+    /// packages can share.
+    #[error("dependencies `{first}` and `{second}` are both reached as `{module}`")]
+    DependencyModuleCollision {
+        /// Module name both packages normalize to.
+        module: String,
+        /// Project id of the package that claimed the name.
+        first: String,
+        /// Project id of the package that collides with it.
+        second: String,
+    },
     /// A `mod name;` declaration with no source behind it.
     #[error("no source file for module `{name}`")]
     MissingModuleSource {
@@ -326,6 +339,7 @@ impl ResolveError {
             Self::AmbiguousVariant { .. } => "ambiguous-variant",
             Self::NotImported { .. } => "not-imported",
             Self::DependencyNotImported { .. } => "dependency-not-imported",
+            Self::DependencyModuleCollision { .. } => "dependency-module-collision",
             Self::MissingModuleSource { .. } => "missing-module-source",
             Self::LoopControlOutsideLoop { .. } => "loop-control-outside-loop",
             Self::UnknownLoopLabel { .. } => "unknown-loop-label",
@@ -363,6 +377,7 @@ impl ResolveError {
             | Self::LoopControlOutsideLoop { .. }
             | Self::UnknownLoopLabel { .. } => return false,
             Self::DependencyNotImported { module, .. } => module,
+            Self::DependencyModuleCollision { module, .. } => module,
             Self::AmbiguousNamedArgument { method, .. } => method,
             Self::UnknownModulePath { path }
             | Self::RemovedStdItem { path, .. }
@@ -411,6 +426,7 @@ impl ResolveError {
             Self::DependencyNotImported { .. } => "GR0016",
             Self::LoopControlOutsideLoop { .. } | Self::UnknownLoopLabel { .. } => "GR0017",
             Self::StdMacroAsValue { .. } => "GR0018",
+            Self::DependencyModuleCollision { .. } => "GR0019",
         }
     }
 }
@@ -530,6 +546,35 @@ impl ResolveDiagnostic {
         }
     }
 
+    /// Help for the diagnostics about which package a path comes from: the
+    /// import that names it, and the name two packages cannot share.
+    fn with_dependency_help(
+        &self,
+        out: gossamer_diagnostics::Diagnostic,
+    ) -> gossamer_diagnostics::Diagnostic {
+        match &self.error {
+            ResolveError::DependencyNotImported { module, id } => out.with_help(format!(
+                "a dependency's items are reached through the import that names the \
+                 package; add `use {module}` to this file, or \
+                 `use \"{id}\" as {module}` to choose the name"
+            )),
+            ResolveError::DependencyModuleCollision {
+                module,
+                first,
+                second,
+            } => out
+                .with_help(format!(
+                    "give one of them a module name of its own in `[dependencies]`, or \
+                     reach each through `use \"{first}\" as ..` / `use \"{second}\" as ..`"
+                ))
+                .with_note(format!(
+                    "a package name's `-` is not part of an identifier, so both reach \
+                     source as `{module}`"
+                )),
+            _ => out,
+        }
+    }
+
     fn with_error_specific_help(
         &self,
         out: gossamer_diagnostics::Diagnostic,
@@ -603,11 +648,8 @@ impl ResolveDiagnostic {
                     "a module's items are reached through a path or an import; add \
                      `use {module}::{name}` to name it directly"
                 )),
-            ResolveError::DependencyNotImported { module, id } => out.with_help(format!(
-                "a dependency's items are reached through the import that names the \
-                 package; add `use \"{id}\"` to this file, or \
-                 `use \"{id}\" as {module}` to choose the name"
-            )),
+            ResolveError::DependencyNotImported { .. }
+            | ResolveError::DependencyModuleCollision { .. } => self.with_dependency_help(out),
             ResolveError::MissingModuleSource { name } => out.with_help(format!(
                 "`mod {name};` names a module whose source the build never supplied; \
                  add `{name}.gos` (or `{name}/mod.gos`) beside the entry inside a \

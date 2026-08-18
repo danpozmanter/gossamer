@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.52.1 - Display/Debug as distinct contracts, trait-impl membership, function signature consistency, import normalization
+
+- Render `{}` through a type's `impl Display` and `{:?}` through its
+  `impl Debug`, on every tier and at every nesting depth: either impl used to
+  answer both channels, so `println!("{:?}", p)` on a type with only
+  `impl Display for Point` showed the Display text instead of the derived
+  `Point(1)`.
+- Reach a type's own `impl Debug for T { fn fmt }`, which was shadowed by the
+  synthesized rendering on the bytecode tier and made `gos build` fail
+  outright with a duplicate `T::fmt` definition.
+- Reject an item an `impl Trait for Type` block defines that the trait does not
+  declare (`GT0072`): `fn show` inside `impl Display for Point` became an
+  inherent method under a misleading header, reachable by name but never
+  through the trait.
+- Reject a second `impl` of one `(trait, type)` pair, and an `impl Debug for T`
+  competing with a `#[derive(Debug)]` on `T` (`GT0073`); the duplicate used to
+  win silently or fail the native build with a redefined symbol.
+- Render a struct or enum whose field is typed by a transparent alias, which
+  failed the native build outright: `type Meters = f64` behind a `struct M { r:
+  Meters }` left `println!("{}", m)` with no formatter to reach.
+- Render a tuple struct's float field with its fractional part on every tier:
+  `T(2.0, 1)` showed as `T(2, 1)`, where the same field in a named struct or an
+  enum payload already kept the point.
+- Reject a function whose body answers a value through a signature with no
+  return type (`GT0074`): `fn add(a: i64, b: i64) { a + b }` handed its caller
+  a unit.
+- Colour an identifier as a type in the REPL only where one resolves - the
+  session's own structs, enums, traits, and aliases, plus the language and
+  standard-library types - rather than every capitalised word, matching what
+  an editor shows through the LSP.
+- Report a session type alias through `%info` / `%explain`, naming the type it
+  stands for; a `type Id = i64` answered "nothing found".
+- Import a dependency by the module name its package normalizes to: bare
+  `use pgsql_gos` now registers the import it reads as, where it parsed clean
+  and then reported the package as un-imported (`GR0016`) on first use.
+- Name the module spelling when a `use` path is written with a package's
+  hyphens (`GP0040`), where `use pgsql-gos` reported an unrelated
+  top-level-statement error several lines away.
+- Report two dependencies whose names reach source as one module (`GR0019`)
+  instead of a duplicate declaration nobody wrote.
+- Key a dependency by the module name source imports it as: `pgsql_gos = { git
+  = "https://github.com/danpozmanter/pgsql-gos" }` resolves through the
+  identity its URL names, and `gos tidy` keeps a dependency reached that way
+  rather than dropping it as unused.
+- Reject a `version` range on a git dependency, which was read and discarded;
+  a git source is versioned by `tag` / `branch` / `rev`.
+- Write a `*o = Some(..)` through a `&mut Option<T>` / `&mut Result<T, E>`
+  parameter, which the native build compiled into a store through the carrier
+  read as a pointer and crashed on.
+- Answer `n.to_string().chars()` with the cursor its type names, which the
+  native build crashed on through `collect`, `count`, and a `for` loop alike.
+
 ## 0.52.0 - Display as a trait, lowering gaps, parity work, JIT admission
 
 - Pass a `Result` / `Option` carrier to a runtime helper the way Windows reads

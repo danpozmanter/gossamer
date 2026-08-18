@@ -51,6 +51,36 @@ name = "widget"
 path = "src/lib.gos"
 ```
 
+A dependency is keyed by the project id it publishes under, or - when its
+source names its own identity, as a `git`, `path`, or `tarball` entry does -
+by the module name source imports it as:
+
+```toml
+[dependencies]
+pgsql_gos = { git = "https://github.com/danpozmanter/pgsql-gos" }
+```
+
+A package name may carry `-`, which no identifier may, so its module name is
+the final path segment with each `-` replaced by `_`. Every import spelling
+that names that module reaches the package: `use pgsql_gos`,
+`use pgsql_gos::greet`, `use pgsql_gos::{greet}`, `use pgsql_gos as pg`, and
+`use "github.com/danpozmanter/pgsql-gos"`. A `use pgsql-gos` is rejected
+(`GP0040`) - `-` is subtraction, never part of an identifier - and two
+dependencies reaching source under one module name are rejected (`GR0019`),
+which an explicit alias or a distinct key resolves.
+
+A git source is versioned by the reference it is checked out at: `tag`,
+`branch`, or `rev`, defaulting to `main`. The resolved reference is written to
+`project.lock`, so a build repeats the same checkout.
+
+```toml
+[dependencies]
+pgsql_gos = { git = "https://github.com/danpozmanter/pgsql-gos", tag = "v1.2.3" }
+```
+
+A `version` range belongs to a registry dependency, which resolves within it;
+writing one beside `git` is rejected rather than silently ignored.
+
 `gos add example.org/lib@1.2.3` appends the dependency.
 `gos remove example.org/lib` drops it. `gos update` refreshes selected versions
 within declared ranges. `gos tidy` parses project sources, removes direct

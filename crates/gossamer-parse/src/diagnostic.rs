@@ -166,6 +166,17 @@ pub enum ParseError {
     /// A use declaration target could not be parsed.
     #[error("malformed `use` declaration")]
     MalformedUse,
+    /// A `use` path was written with the hyphens a package name may carry.
+    /// `-` is subtraction, never part of an identifier, so the path would
+    /// stop at the first one and the rest would read as an expression.
+    #[error("`-` is not part of an identifier, so `{written}` is not a module path")]
+    HyphenInUsePath {
+        /// The path as written, hyphens included.
+        written: String,
+        /// The module name the package is reached by: the same path with
+        /// each `-` replaced by `_`.
+        module: String,
+    },
     /// Two consecutive tokens formed something the parser does not recognise.
     #[error("unexpected construct")]
     UnexpectedConstruct,
@@ -493,6 +504,13 @@ impl ParseError {
                     "write an attribute as `#[name]` or `#[name(value)]` immediately before its item"
                         .to_string(),
                 ),
+            ),
+            ParseError::HyphenInUsePath { written, module } => (
+                "GP0040",
+                format!("`-` is not part of an identifier, so `{written}` is not a module path"),
+                Some(format!(
+                    "a package's module name replaces each `-` with `_`: write `use {module}`"
+                )),
             ),
             ParseError::MalformedUse => (
                 "GP0014",

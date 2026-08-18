@@ -1865,3 +1865,80 @@ fn dir(cmd: i64) -> (i64, i64) {
     assert_eq!(vm.0, "0\n1\n", "vm stdout");
     assert_eq!(native.0, vm.0, "tier parity");
 }
+
+/// A `&mut Option<T>` names the caller's slot, so a `*o = Some(..)` through
+/// it publishes into that slot rather than writing through the carrier read
+/// as a pointer.
+#[test]
+fn a_deref_write_through_a_mut_option_reference_publishes_to_the_caller() {
+    let src = r#"
+fn set_pair(o: &mut Option<(i64, i64)>) {
+    *o = Some((1, 2))
+}
+
+fn set_scalar(o: &mut Option<i64>) {
+    *o = Some(7)
+}
+
+fn set_result(r: &mut Result<i64, String>) {
+    *r = Ok(9)
+}
+
+fn main() {
+    let mut pair = Some((0, 0))
+    set_pair(&mut pair)
+    println!("{}", pair)
+    let mut scalar = Some(0)
+    set_scalar(&mut scalar)
+    println!("{}", scalar)
+    let mut answer: Result<i64, String> = Ok(0)
+    set_result(&mut answer)
+    println!("{}", answer)
+}
+"#;
+    let dir = fresh_dir("option_deref_write");
+    let path = write_source(&dir, "option_deref_write", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+
+    let vm = run_vm(&path);
+    let bin = build_native(&path, &scratch).expect("native build");
+    let native = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, "Some((1, 2))\nSome(7)\nOk(9)\n", "vm stdout");
+    assert_eq!(native.0, vm.0, "tier parity");
+}
+
+/// `n.to_string().chars()` answers the same cursor a `String` receiver's
+/// `chars()` does, so every consumer of it reads iterator state rather than
+/// the formatted scalars as one.
+#[test]
+fn numeric_chars_answers_a_cursor_every_consumer_reads() {
+    let src = r#"
+fn main() {
+    let digits = 123_456.to_string().chars().collect()
+    println!("{}", digits.len())
+    println!("{}", 123_456.to_string().chars().count())
+    let mut seen = 0
+    for c in 123.to_string().chars() {
+        seen += 1
+    }
+    println!("{}", seen)
+}
+"#;
+    let dir = fresh_dir("numeric_chars_cursor");
+    let path = write_source(&dir, "numeric_chars_cursor", src);
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+
+    let vm = run_vm(&path);
+    let bin = build_native(&path, &scratch).expect("native build");
+    let native = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, "6\n6\n3\n", "vm stdout");
+    assert_eq!(native.0, vm.0, "tier parity");
+}

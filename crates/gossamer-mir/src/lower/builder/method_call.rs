@@ -184,16 +184,26 @@ impl<'a> Builder<'a> {
         };
         if let Some(numeric) = numeric_chars_receiver {
             let numeric = self.lower_expr(numeric)?;
-            let dest = self.fresh(ty);
+            let char_ty = self.tcx.char_ty();
+            let vec_ty = self.tcx.intern(TyKind::Vec(char_ty));
+            let scalars = self.fresh(vec_ty);
             let next = self.new_block(span);
             self.terminate(Terminator::Call {
                 callee: Operand::Const(ConstValue::Str("gos_rt_i64_chars".to_string())),
                 args: vec![Operand::Copy(Place::local(numeric))],
-                destination: Place::local(dest),
+                destination: Place::local(scalars),
                 target: Some(next),
             });
             self.set_current(next);
-            return Some(dest);
+            // `chars()` answers a cursor, so the formatted scalars are handed
+            // over as a borrowed lazy iterator over them - the same shape a
+            // `String` receiver's `chars()` produces.
+            return Some(self.emit_combinator_call(
+                "gos_rt_lazy_iter_from_vec_i64",
+                vec![Operand::Copy(Place::local(scalars))],
+                ty,
+                span,
+            ));
         }
 
         // A pair element rides the dedicated two-word state that `zip` and
@@ -5477,22 +5487,18 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// The derived `Type::fmt` of a struct-shaped element, which reads its
-    /// fields through the element's address. An enum's value is one word its
-    /// own formatter decodes, so it is not answered here.
-    fn element_fmt_symbol(&mut self, elem_ty: Ty) -> Option<String> {
+    /// The rendering method of a struct-shaped element on `method`'s channel,
+    /// which reads its fields through the element's address. An enum's value
+    /// is one word its own formatter decodes, so it is not answered here.
+    fn element_fmt_symbol(&mut self, elem_ty: Ty, method: &str) -> Option<String> {
         if !self.elem_is_slot_addressed(elem_ty)
             || !matches!(self.tcx.kind_of(elem_ty), TyKind::Adt { .. })
         {
             return None;
         }
         let name = self.adt_dispatch_name(elem_ty)?;
-        // `to_string` is the `Display` contract and `fmt` the `Debug` one;
-        // either overrides the synthesized rendering of an element.
-        ["to_string", "fmt"]
-            .into_iter()
-            .map(|method| format!("{name}::{method}"))
-            .find(|symbol| self.impl_methods.contains_key(symbol))
+        let symbol = format!("{name}::{method}");
+        self.impl_methods.contains_key(&symbol).then_some(symbol)
     }
 
     /// Whether the receiver's own type is a user enum, whose runtime value is
@@ -5529,12 +5535,13 @@ impl<'a> Builder<'a> {
         source: Local,
         index: Local,
         elem_ty: Ty,
+        method: &str,
         span: Span,
     ) -> Local {
         // A struct renders through its derived `fmt`, which reads its fields
         // from the element's own storage: borrowing `source[index]` is how the
         // backends already hand over an element's address.
-        if let Some(symbol) = self.element_fmt_symbol(elem_ty) {
+        if let Some(symbol) = self.element_fmt_symbol(elem_ty, method) {
             let mut place = Place::local(source);
             place.projection.push(crate::ir::Projection::Index(index));
             let ref_ty = self.tcx.intern(TyKind::Ref {
@@ -5578,7 +5585,7 @@ impl<'a> Builder<'a> {
                 span,
             )
         };
-        self.adt_fmt_rendered(element, span)
+        self.adt_fmt_rendered(element, "to_string", span)
     }
 
     /// Whether `to_string` on this receiver is the Display rendering rather
@@ -5612,7 +5619,7 @@ impl<'a> Builder<'a> {
     /// lowers to, so every element type renders through one formatter.
     fn lower_display_to_string(&mut self, receiver: &HirExpr, span: Span) -> Option<Local> {
         let value = self.lower_expr(receiver)?;
-        let value = self.adt_fmt_rendered(value, span);
+        let value = self.adt_fmt_rendered(value, "to_string", span);
         let string_ty = self.tcx.string_ty();
         let dest = self.fresh(string_ty);
         let next = self.new_block(span);
@@ -5687,7 +5694,7 @@ impl<'a> Builder<'a> {
         self.set_current(body);
         // A struct's derived `fmt` reads its fields out of the element's own
         // storage, so it takes the slot's address rather than a copy of it.
-        let element = self.read_display_element(source, index, elem_ty, span);
+        let element = self.read_display_element(source, index, elem_ty, "to_string", span);
         let first = self.fresh(bool_ty);
         self.emit_assign(
             Place::local(first),

@@ -91,10 +91,15 @@ Write clear, low-complexity, concise code.
   import brings its names in. A bare name some module declares reports
   GR0011 with the exact `use` line to add. A `[dependencies]` package is
   a stronger case: its module is reached ONLY through the import that
-  names the package, so write `use "example.com/intcode"` (or
-  `use "example.com/intcode" as ic`) before any `intcode::` path - a bare
-  one reports GR0016. Primitive and core collection types, variants,
-  macros, and the documented prelude need no import.
+  names it, so write `use intcode` (or `use "example.com/intcode"`,
+  `use intcode::run`, `use intcode::{run}`, `use intcode as ic`) before
+  any `intcode::` path - an un-imported one reports GR0016. A package
+  name may carry `-`, which no identifier may: its module name is the
+  final path segment with each `-` replaced by `_`, so `pgsql-gos` is
+  imported as `use pgsql_gos` and a written `use pgsql-gos` reports
+  GP0040. Two packages reaching source under one module name report
+  GR0019. Primitive and core collection types, variants, macros, and the
+  documented prelude need no import.
 - **Default to immutable.** `let` first; `let mut` only for a binding
   that genuinely changes, kept near a single update site. `if` /
   `match` / `loop ... break v` are expressions - bind their result.
@@ -141,9 +146,20 @@ Write clear, low-complexity, concise code.
   synthesized, and `impl Display for T { fn to_string(&self) -> String }`
   overrides it everywhere a value of that type is shown, including inside a
   `Vec`, `Map`, tuple, `Option`, or struct field. `impl Debug for T { fn fmt }`
-  is the same override for `{:?}`. A trait names behaviour, never a value's
-  type: `fn f(x: Display)` reports GT0071, and an `impl` header naming a trait
-  nothing declares reports GT0070.
+  is the same override for `{:?}`. The two are distinct contracts, exactly as
+  in Rust: `{}` reaches only `to_string` and `{:?}` only `fmt`, so a type
+  implementing one keeps the synthesized rendering on the other channel. A
+  trait names behaviour, never a value's type: `fn f(x: Display)` reports
+  GT0071, and an `impl` header naming a trait nothing declares reports GT0070.
+- **An `impl Trait for Type` block defines the trait's items and nothing
+  else.** A `fn` the trait does not declare reports GT0072 - write it in an
+  inherent `impl Type { .. }` block, or declare it in the trait. One trait
+  reaches one type through one block: a second `impl` of the same pair, or an
+  `impl Debug for T` over a `#[derive(Debug)]`, reports GT0073.
+- **A function that answers a value declares its type.** `fn add(a: i64, b:
+  i64) { a + b }` reports GT0074: the signature is what a caller reads, so
+  write `-> i64`. A body with no tail expression answers a unit and needs no
+  return type.
 - **A collection traverses eagerly; `iter()` makes it lazy.** `xs.map(f)`
   on a `Vec`, array, or slice walks the values it already holds and
   answers a `Vec`. `xs.iter()` answers an `Iterator`, for when you do not

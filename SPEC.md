@@ -814,7 +814,9 @@ ImplDeclTrait = "impl" [ Generics ] TraitRef "for" Type [ WhereClause ] "{" Impl
 ```
 
 Inherent impls attach methods/associated items to a type. Trait impls
-declare that a type satisfies a trait.
+declare that a type satisfies a trait, and define exactly the items the trait
+declares: an item outside that contract is `GT0072`, and a `(trait, type)`
+pair implemented twice is `GT0073` (§3.13).
 
 Method receivers:
 
@@ -961,13 +963,28 @@ and `Ord`:
 - `Default` - `Type::default()` builds a zero-valued instance (`0` / `false` /
   `""` / `[]` / each field type's own default; skipped when a field type has no
   derivable default).
-- `Debug` - `{:?}` / `{}` render `Name { field: value, … }`.
+- `Debug` - `{:?}` renders `Name { field: value, … }`.
 
-A plain struct or enum whose fields all render gets a `fmt` with no derive at
-all, including one recursive through `Box`. A **generic** type does not: what
-its fields render as depends on the arguments each instantiation supplies, so
-the declaration asks for the `fmt` with `#[derive(Debug)]`. Formatting a
-generic type without one is `GT0062`, on every tier.
+A plain struct or enum whose fields all render gets that structural rendering
+with no derive at all, including one recursive through `Box`, under both
+channel spellings: `to_string` for `Display` (`{}`) and `fmt` for `Debug`
+(`{:?}`). A **generic** type does not: what its fields render as depends on
+the arguments each instantiation supplies, so the declaration asks for the
+rendering with `#[derive(Debug)]`. Formatting a generic type without one is
+`GT0062`, on every tier.
+
+`Display` and `Debug` are distinct contracts, exactly as in Rust. `{}` reaches
+a type's `to_string` and `{:?}` its `fmt`; neither channel borrows the other's
+method, so `impl Display for T { fn to_string }` leaves `{:?}` showing the
+synthesized shape and `impl Debug for T { fn fmt }` leaves `{}` showing it.
+
+An `impl Trait for Type` block defines exactly the items the trait declares. A
+`fn` the trait does not declare is `GT0072` - it would become an inherent
+method under a misleading header, reachable by name but never through the
+trait - and belongs in an inherent `impl Type { … }` block or in the trait's
+own declaration. One `(trait, type)` pair is implemented once: a second block
+for the same pair, or an `impl Debug for T` competing with a
+`#[derive(Debug)]` on `T`, is `GT0073`.
 
 `Clone` is **not** derivable (`GT0025`): structs copy by value, so `let b = a`
 copies and `a.clone()` is a universal builtin. `Hash`, `Copy`, `Display`, and
@@ -2828,6 +2845,9 @@ Item         = FnDecl | StructDecl | EnumDecl | TraitDecl | ImplDecl
 
 FnDecl       = [Attrs] [ "pub" ] [ "unsafe" ] "fn" Ident [ Generics ]
                "(" [ ParamList ] ")" [ "->" Type ] [ WhereClause ] Block
+               // `-> Type` is omitted only when the body answers a unit;
+               // a body whose tail expression yields a value without it
+               // is GT0074
 ParamList    = SingleLineParams | MultiLineParams
 SingleLineParams = Param { "," Param }
 MultiLineParams  = newline Param { [ "," ] newline Param } [ "," ] newline

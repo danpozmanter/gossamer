@@ -884,6 +884,14 @@ struct TypeChecker<'a> {
     /// declaration order. Every `impl Trait for Type` has to supply them;
     /// monomorphisation emits a direct call to each one.
     trait_required_methods: HashMap<String, Vec<String>>,
+    /// Every method name a trait declares, defaults included, in declaration
+    /// order. An `impl` of the trait may define these and nothing else.
+    trait_declared_methods: HashMap<String, Vec<String>>,
+    /// `(trait, type)` pairs an `impl` block already claimed, with the span
+    /// of that block, so a second one for the same pair is reported.
+    claimed_trait_impls: HashMap<(String, String), Span>,
+    /// Trait names each struct / enum derives, keyed by declared type name.
+    derived_traits: HashMap<String, std::collections::HashSet<String>>,
     /// Supertrait names of each trait, keyed by trait name, from the
     /// `trait Pet: Animal` clause.
     trait_supertraits: HashMap<String, Vec<String>>,
@@ -1002,6 +1010,9 @@ impl<'a> TypeChecker<'a> {
             current_module: Vec::new(),
             trait_own_methods: HashMap::new(),
             trait_required_methods: builtin_trait_required_methods(),
+            trait_declared_methods: HashMap::new(),
+            claimed_trait_impls: HashMap::new(),
+            derived_traits: HashMap::new(),
             trait_supertraits: HashMap::new(),
             pipe_stage_callees: std::collections::HashSet::new(),
             pipe_stage_arg_tys: HashMap::new(),
@@ -1376,13 +1387,7 @@ impl<'a> TypeChecker<'a> {
         else {
             return;
         };
-        let self_ty = match &decl.self_ty.kind {
-            gossamer_ast::ty::TypeKind::Path(path) => path
-                .segments
-                .last()
-                .map_or_else(|| "this type".to_string(), |s| s.name.name.clone()),
-            _ => "this type".to_string(),
-        };
+        let self_ty = impl_self_ty_name(decl);
         // A header naming a trait nothing declares promises a contract that
         // cannot be checked, so the block's methods would silently become
         // inherent ones - which is how a misspelled name compiles clean.
@@ -1422,6 +1427,113 @@ impl<'a> TypeChecker<'a> {
             },
             span,
         );
+    }
+
+    /// Reports every item an `impl Trait for Type` block defines that the
+    /// trait does not declare. The header promises exactly the trait's
+    /// contract, so anything outside it would become an inherent method
+    /// under a misleading heading and never dispatch through the trait.
+    fn check_trait_impl_membership(&mut self, decl: &ImplDecl, span: Span) {
+        let Some(trait_name) = decl
+            .trait_ref
+            .as_ref()
+            .and_then(|trait_ref| trait_ref.path.segments.last())
+            .map(|segment| segment.name.name.clone())
+        else {
+            return;
+        };
+        let Some(declared) = self.trait_declared_item_names(&trait_name) else {
+            return;
+        };
+        let self_ty = impl_self_ty_name(decl);
+        for item in &decl.items {
+            let name = match item {
+                ImplItem::Fn(fn_decl) => fn_decl.name.name.clone(),
+                ImplItem::Type { name, .. } | ImplItem::Const { name, .. } => name.name.clone(),
+            };
+            if declared.contains(&name) {
+                continue;
+            }
+            self.emit(
+                TypeError::ImplItemNotInTrait {
+                    trait_name: trait_name.clone(),
+                    ty: self_ty.clone(),
+                    item: name,
+                    declared: declared.clone(),
+                },
+                span,
+            );
+        }
+    }
+
+    /// Every item name an `impl` of `trait_name` may define, in declaration
+    /// order. `None` means the trait's surface is not known here, so nothing
+    /// the block defines can be ruled out.
+    fn trait_declared_item_names(&self, trait_name: &str) -> Option<Vec<String>> {
+        if let Some(methods) = self.trait_declared_methods.get(trait_name) {
+            let mut names = methods.clone();
+            names.extend(
+                self.assoc
+                    .declared_assoc_names(trait_name)
+                    .into_iter()
+                    .map(ToString::to_string),
+            );
+            return Some(names);
+        }
+        builtin_trait_impl_items(trait_name)
+            .map(|items| items.iter().map(ToString::to_string).collect())
+    }
+
+    /// Reports a second `impl Trait for Type` for a pair one block already
+    /// claimed, and a written `impl` that duplicates what a `#[derive(..)]`
+    /// on the type already supplies. Either way a call through the trait
+    /// has two bodies to reach and no rule picks one.
+    fn check_trait_impl_uniqueness(&mut self, decl: &ImplDecl, module_path: &[String], span: Span) {
+        let Some(trait_name) = decl
+            .trait_ref
+            .as_ref()
+            .and_then(|trait_ref| trait_ref.path.segments.last())
+            .map(|segment| segment.name.name.clone())
+        else {
+            return;
+        };
+        let self_ty = impl_self_ty_name(decl);
+        let key = (
+            trait_name.clone(),
+            qualified_type_name(module_path, &self_ty),
+        );
+        // The collection pass is idempotent, so the same block may be visited
+        // more than once; only a block at a different span is a second impl.
+        match self.claimed_trait_impls.get(&key) {
+            Some(claimed) if *claimed == span => return,
+            Some(_) => {
+                self.emit(
+                    TypeError::ConflictingTraitImpl {
+                        trait_name,
+                        ty: self_ty,
+                        derived: false,
+                    },
+                    span,
+                );
+                return;
+            }
+            None => {}
+        }
+        if self
+            .derived_traits
+            .get(&key.1)
+            .is_some_and(|derives| derives.contains(&trait_name))
+        {
+            self.emit(
+                TypeError::ConflictingTraitImpl {
+                    trait_name,
+                    ty: self_ty,
+                    derived: true,
+                },
+                span,
+            );
+        }
+        self.claimed_trait_impls.insert(key, span);
     }
 
     /// Reports every associated type and constant a trait declares without
@@ -2387,7 +2499,7 @@ impl<'a> TypeChecker<'a> {
         // validate `<T: Bound>` bounds, reject name-global method
         // mis-dispatch, and detect supertrait-through-bound calls
         // regardless of declaration order relative to impl blocks.
-        self.collect_trait_names(items);
+        self.collect_trait_names_in(items, module_path);
         // Register alias targets before any type lowering so a struct
         // field / let / param naming `X` (where `type X = T`) expands to
         // `T` regardless of declaration order.
@@ -2436,7 +2548,7 @@ impl<'a> TypeChecker<'a> {
         // Every user type is registered by now, so an `impl` block can be
         // matched to the declaration its self type names regardless of the
         // order the two appear in.
-        self.collect_impl_obligations(items);
+        self.collect_impl_obligations_in(items, module_path);
     }
 
     /// Indexes one struct / enum under both the identity it is reached by
@@ -2455,19 +2567,24 @@ impl<'a> TypeChecker<'a> {
     }
 
     /// Attaches each `impl` block's generic bounds to the type it targets
-    /// and verifies every trait impl supplies the methods its trait
-    /// requires.
-    fn collect_impl_obligations(&mut self, items: &[Item]) {
+    /// and verifies every trait impl supplies exactly the items its trait
+    /// declares. Tracks the module path so two modules each declaring a
+    /// `Point` claim distinct `(trait, type)` pairs.
+    fn collect_impl_obligations_in(&mut self, items: &[Item], module_path: &mut Vec<String>) {
         for item in items {
             match &item.kind {
                 ItemKind::Impl(decl) => {
                     self.record_impl_param_bounds(decl);
                     self.check_trait_impl_completeness(decl, item.span);
+                    self.check_trait_impl_membership(decl, item.span);
+                    self.check_trait_impl_uniqueness(decl, module_path, item.span);
                     self.check_trait_impl_assoc_items(decl, item.span);
                 }
                 ItemKind::Mod(decl) => {
                     if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
-                        self.collect_impl_obligations(inner);
+                        module_path.push(decl.name.name.clone());
+                        self.collect_impl_obligations_in(inner, module_path);
+                        module_path.pop();
                     }
                 }
                 _ => {}
@@ -2481,12 +2598,8 @@ impl<'a> TypeChecker<'a> {
     /// supertrait-through-bound check), and every user struct / enum
     /// name (to tell a real user Adt receiver from a synthesized
     /// sentinel one). Idempotent - re-calling adds to the existing sets.
-    fn collect_trait_names(&mut self, items: &[Item]) {
-        self.collect_trait_names_in(items, &mut Vec::new());
-    }
-
-    /// As [`Self::collect_trait_names`], tracking the module path so a type
-    /// registers under the identity it is reached by.
+    /// Tracks the module path so a type registers under the identity it is
+    /// reached by.
     fn collect_trait_names_in(&mut self, items: &[Item], module_path: &mut Vec<String>) {
         for item in items {
             match &item.kind {
@@ -2516,6 +2629,17 @@ impl<'a> TypeChecker<'a> {
                             required.push(fn_decl.name.name.clone());
                         }
                     }
+                    let declared = self
+                        .trait_declared_methods
+                        .entry(decl.name.name.clone())
+                        .or_default();
+                    for it in &decl.items {
+                        if let TraitItem::Fn(fn_decl) = it
+                            && !declared.contains(&fn_decl.name.name)
+                        {
+                            declared.push(fn_decl.name.name.clone());
+                        }
+                    }
                     for item in &decl.items {
                         if let TraitItem::Fn(fn_decl) = item {
                             let requires_mut = fn_decl.params.iter().any(|param| {
@@ -2539,9 +2663,17 @@ impl<'a> TypeChecker<'a> {
                 }
                 ItemKind::Struct(decl) => {
                     self.register_adt_name(item.id, &decl.name.name, module_path);
+                    self.record_derived_traits(
+                        &qualified_type_name(module_path, &decl.name.name),
+                        &item.attrs,
+                    );
                 }
                 ItemKind::Enum(decl) => {
                     self.register_adt_name(item.id, &decl.name.name, module_path);
+                    self.record_derived_traits(
+                        &qualified_type_name(module_path, &decl.name.name),
+                        &item.attrs,
+                    );
                 }
                 ItemKind::Mod(decl) => {
                     if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
@@ -2551,6 +2683,25 @@ impl<'a> TypeChecker<'a> {
                     }
                 }
                 _ => {}
+            }
+        }
+    }
+
+    /// Records the trait names a declaration's `#[derive(..)]` attributes
+    /// supply, keyed by the identity the type is reached by, so a written
+    /// `impl` of one of them is reported rather than silently competing with
+    /// the synthesized body.
+    fn record_derived_traits(&mut self, ty_name: &str, attrs: &gossamer_ast::Attrs) {
+        for attr in &attrs.outer {
+            if attr.path.segments.len() != 1 || attr.path.segments[0].name.name != "derive" {
+                continue;
+            }
+            let Some(tokens) = &attr.tokens else {
+                continue;
+            };
+            let entry = self.derived_traits.entry(ty_name.to_string()).or_default();
+            for name in tokens.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+                entry.insert(name.to_string());
             }
         }
     }
@@ -3691,6 +3842,7 @@ impl<'a> TypeChecker<'a> {
                 } else {
                     self.report_discarded_result(body, None);
                 }
+                self.check_undeclared_return(decl, body, body_ty);
                 body_ty
             };
             self.current_fn_ret = prev_ret;
@@ -3702,6 +3854,46 @@ impl<'a> TypeChecker<'a> {
         self.current_param_bounds = prior_bounds;
         self.current_assoc_bindings = prior_assoc_bindings;
         self.leave_generic_scope(prior_scope);
+    }
+
+    /// Reports a body that answers a value through a signature declaring no
+    /// return type. The signature is what a caller reads, so an undeclared
+    /// return hands the caller a unit while the body computed a value.
+    fn check_undeclared_return(&mut self, decl: &FnDecl, body: &Expr, body_ty: Ty) {
+        // A wrapper the front end synthesized around an expression - the
+        // REPL's per-input entry point, the binding-type probe - answers that
+        // expression by construction, and its caller reads the value back
+        // rather than the signature.
+        if is_compiler_generated(&decl.name.name) {
+            return;
+        }
+        // A body with no tail expression answers a unit whatever its
+        // statements compute, so only a tail can hand a value back.
+        if !matches!(&body.kind, ExprKind::Block(block) if block.tail.is_some()) {
+            return;
+        }
+        let resolved = self.infer.resolve(self.tcx, body_ty);
+        if !self.ty_is_returnable_value(resolved) {
+            return;
+        }
+        let found = self.render_public_ty(resolved);
+        self.emit(
+            TypeError::MissingReturnType {
+                name: decl.name.name.clone(),
+                found,
+            },
+            body_value_span(body),
+        );
+    }
+
+    /// Whether a body's answer is a value a caller could read back, as
+    /// opposed to a unit, a diverging path, or a type inference never
+    /// settled (which already has its own diagnostic).
+    fn ty_is_returnable_value(&self, ty: Ty) -> bool {
+        !matches!(
+            self.tcx.kind(ty),
+            None | Some(TyKind::Unit | TyKind::Never | TyKind::Error | TyKind::Var(_))
+        )
     }
 
     fn ty_contains_reference(&self, ty: Ty) -> bool {
@@ -17471,6 +17663,59 @@ fn builtin_trait_needs_impl(name: &str) -> bool {
             | "Index"
             | "IndexMut"
     )
+}
+
+/// Head name of the type an `impl` block attaches to, as written.
+fn impl_self_ty_name(decl: &ImplDecl) -> String {
+    match &decl.self_ty.kind {
+        gossamer_ast::ty::TypeKind::Path(path) => path
+            .segments
+            .last()
+            .map_or_else(|| "this type".to_string(), |s| s.name.name.clone()),
+        _ => "this type".to_string(),
+    }
+}
+
+/// Every item an `impl` of a built-in trait may define. `None` means the
+/// trait's surface is not known here - a stdlib trait whose declaration
+/// lives outside the checked source - so nothing the block writes can be
+/// ruled out.
+fn builtin_trait_impl_items(name: &str) -> Option<&'static [&'static str]> {
+    Some(match name {
+        "Display" => &["to_string"],
+        "Debug" => &["fmt"],
+        "Iterator" => ITERATOR_METHODS,
+        "IntoIterator" => &["into_iter"],
+        "Clone" => &["clone"],
+        "Default" => &["default"],
+        "Hash" | "Hashable" => &["hash"],
+        "PartialEq" | "Eq" => &["eq", "ne"],
+        "PartialOrd" | "Ord" => &["cmp", "partial_cmp"],
+        "From" => &["from"],
+        "Into" => &["into"],
+        "TryFrom" => &["try_from"],
+        "TryInto" => &["try_into"],
+        "Add" => &["add"],
+        "Sub" => &["sub"],
+        "Mul" => &["mul"],
+        "Div" => &["div"],
+        "Rem" => &["rem"],
+        "Neg" => &["neg"],
+        "Not" => &["not"],
+        "BitAnd" => &["bitand"],
+        "BitOr" => &["bitor"],
+        "BitXor" => &["bitxor"],
+        "Shl" => &["shl"],
+        "Shr" => &["shr"],
+        "Index" | "IndexMut" => &["index"],
+        "AsRef" => &["as_ref"],
+        "AsMut" => &["as_mut"],
+        "Drop" => &["drop"],
+        "Handler" => &["serve"],
+        // Marker traits carry no items of their own.
+        "Copy" | "Sized" | "Send" | "Sync" => &[],
+        _ => return None,
+    })
 }
 
 /// Methods a built-in trait requires an `impl` block to supply. `Display`

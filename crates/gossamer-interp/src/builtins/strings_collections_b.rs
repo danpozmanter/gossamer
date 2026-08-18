@@ -975,13 +975,14 @@ fn native_sort_by(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeR
 }
 
 /// Renders `value` the way `{}` does, except that a struct or enum whose own
-/// type supplies `to_string` (the `Display` contract) or `fmt` (the `Debug`
-/// one) answers through that method - at any depth, since a value carries its
-/// type name at run time.
+/// type supplies `method` answers through it - at any depth, since a value
+/// carries its type name at run time. `method` is the channel's contract:
+/// `to_string` for `Display` (`{}`), `fmt` for `Debug` (`{:?}`).
 fn render_display(
     dispatch: &mut dyn NativeDispatch,
     value: &Value,
     aliases: &std::collections::HashMap<String, String>,
+    method: &str,
 ) -> RuntimeResult<String> {
     let own_name = match value {
         Value::Struct(inner) => Some(inner.name.to_string()),
@@ -990,10 +991,8 @@ fn render_display(
     };
     let own_method = own_name.and_then(|name| {
         aliases.get(&name).cloned().or_else(|| {
-            ["to_string", "fmt"]
-                .into_iter()
-                .map(|method| format!("{name}::{method}"))
-                .find(|qualified| dispatch.has_fn(qualified))
+            let qualified = format!("{name}::{method}");
+            dispatch.has_fn(&qualified).then_some(qualified)
         })
     });
     if let Some(method) = own_method {
@@ -1005,7 +1004,7 @@ fn render_display(
     let joined = |dispatch: &mut dyn NativeDispatch, items: &[Value]| -> RuntimeResult<Vec<String>> {
         let mut out = Vec::with_capacity(items.len());
         for item in items {
-            out.push(render_display(dispatch, item, aliases)?);
+            out.push(render_display(dispatch, item, aliases, method)?);
         }
         Ok(out)
     };
@@ -1021,7 +1020,7 @@ fn render_display(
         Value::Struct(inner) => {
             let mut parts = Vec::with_capacity(inner.fields.len());
             for (name, field) in &inner.fields {
-                parts.push(format!("{name}: {}", render_display(dispatch, field, aliases)?));
+                parts.push(format!("{name}: {}", render_display(dispatch, field, aliases, method)?));
             }
             Ok(format!("{} {{ {} }}", inner.name, parts.join(", ")))
         }
@@ -1037,9 +1036,9 @@ fn render_display(
                 // form and both compiled tiers show one.
                 let key = match key.to_value() {
                     Value::String(text) => format!("{:?}", text.as_str()),
-                    other => render_display(dispatch, &other, aliases)?,
+                    other => render_display(dispatch, &other, aliases, method)?,
                 };
-                parts.push(format!("{key}: {}", render_display(dispatch, entry, aliases)?));
+                parts.push(format!("{key}: {}", render_display(dispatch, entry, aliases, method)?));
             }
             Ok(format!("{{{}}}", parts.join(", ")))
         }
@@ -1047,13 +1046,19 @@ fn render_display(
     }
 }
 
-/// `{}` over a value whose type, or one nested inside it, renders itself.
+/// `{}` / `{:?}` over a value whose type, or one nested inside it, renders
+/// itself. The third argument names the channel's contract - `to_string` for
+/// `Display`, `fmt` for `Debug` - and defaults to `Display`.
 fn native_render_display(
     dispatch: &mut dyn NativeDispatch,
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let Some(value) = args.first() else {
         return Ok(Value::String(String::new().into()));
+    };
+    let method = match args.get(2) {
+        Some(Value::String(name)) => name.as_str().to_string(),
+        _ => "to_string".to_string(),
     };
     let aliases: std::collections::HashMap<String, String> = match args.get(1) {
         Some(Value::String(text)) => text
@@ -1064,7 +1069,9 @@ fn native_render_display(
             .collect(),
         _ => std::collections::HashMap::new(),
     };
-    Ok(Value::String(render_display(dispatch, value, &aliases)?.into()))
+    Ok(Value::String(
+        render_display(dispatch, value, &aliases, &method)?.into(),
+    ))
 }
 
 /// `xs.join(sep)` where the elements' own type supplies the rendering: the

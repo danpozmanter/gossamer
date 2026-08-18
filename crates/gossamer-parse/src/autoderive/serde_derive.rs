@@ -379,25 +379,6 @@ fn type_head_name(ty: &gossamer_ast::Type) -> Option<&str> {
     }
 }
 
-/// Types for which the user already wrote an `impl Type { fn fmt(&self) -> ... }`,
-/// so the synthesizer must not emit a conflicting structural `fmt`.
-fn types_with_user_fmt(parsed: &SourceFile) -> HashSet<String> {
-    let mut out = HashSet::new();
-    for item in flatten_items(&parsed.items) {
-        if let ItemKind::Impl(decl) = &item.kind
-            && decl.trait_ref.is_none()
-            && let Some(name) = type_head_name(&decl.self_ty)
-            && decl
-                .items
-                .iter()
-                .any(|i| matches!(i, gossamer_ast::ImplItem::Fn(f) if f.name.name == "fmt"))
-        {
-            out.insert(name.to_string());
-        }
-    }
-    out
-}
-
 /// Scalar field types a synthesized `fmt` can render directly via
 /// `format!("{}", field)` on every tier.
 fn is_scalar_fmt_name(name: &str) -> bool {
@@ -442,6 +423,19 @@ fn ty_is_renderable(
     ty: &gossamer_ast::Type,
     formattable: &HashSet<String>,
     params: &HashSet<String>,
+    aliases: &HashMap<String, gossamer_ast::Type>,
+) -> bool {
+    ty_is_renderable_within(ty, formattable, params, aliases, 0)
+}
+
+/// [`ty_is_renderable`] with `depth` bounding alias expansion, per
+/// [`MAX_ALIAS_DEPTH`].
+fn ty_is_renderable_within(
+    ty: &gossamer_ast::Type,
+    formattable: &HashSet<String>,
+    params: &HashSet<String>,
+    aliases: &HashMap<String, gossamer_ast::Type>,
+    depth: u32,
 ) -> bool {
     match &ty.kind {
         TypeKind::Path(path) if path.segments.len() == 1 => {
@@ -461,7 +455,7 @@ fn ty_is_renderable(
             if matches!(name, "Box" | "Arc" | "Rc") {
                 return match seg.generics.as_slice() {
                     [gossamer_ast::GenericArg::Type(inner)] => {
-                        ty_is_renderable(inner, formattable, params)
+                        ty_is_renderable_within(inner, formattable, params, aliases, depth)
                     }
                     _ => false,
                 };
@@ -469,9 +463,21 @@ fn ty_is_renderable(
             if !seg.generics.is_empty() {
                 return false;
             }
-            is_scalar_fmt_name(name) || formattable.contains(name)
+            if is_scalar_fmt_name(name) || formattable.contains(name) {
+                return true;
+            }
+            // A transparent alias stands for its target, so a field typed by
+            // one renders exactly as a field of the target does.
+            match aliases.get(name) {
+                Some(target) if depth < MAX_ALIAS_DEPTH => {
+                    ty_is_renderable_within(target, formattable, params, aliases, depth + 1)
+                }
+                _ => false,
+            }
         }
-        TypeKind::Ref { inner, .. } => ty_is_renderable(inner, formattable, params),
+        TypeKind::Ref { inner, .. } => {
+            ty_is_renderable_within(inner, formattable, params, aliases, depth)
+        }
         _ => false,
     }
 }
@@ -551,9 +557,67 @@ fn ty_is_orderable(ty: &gossamer_ast::Type, orderable: &HashSet<String>) -> bool
     }
 }
 
+/// Marker the synthesizer pushes for the `Display` spelling of the
+/// structural rendering. `#[derive(..)]` never names it, so it cannot
+/// collide with a written attribute.
+const IMPLICIT_DISPLAY: &str = "__ImplicitDisplay";
+
+/// Method names the structural rendering is emitted under for this derive
+/// set: `fmt` is the `Debug` channel (`{:?}`) and `to_string` the `Display`
+/// one (`{}`). Both render the same text.
+fn rendering_method_names(derives: &[String]) -> Vec<&'static str> {
+    let mut names = Vec::new();
+    if derives.iter().any(|d| d == "Debug") {
+        names.push("fmt");
+    }
+    if derives.iter().any(|d| d == IMPLICIT_DISPLAY) {
+        names.push("to_string");
+    }
+    names
+}
+
+/// Placeholder a synthesized rendering uses for one field of type `ty` on
+/// `method`'s channel.
+///
+/// A scalar keeps `{:?}` on both channels, which is what makes a float field
+/// carry its fractional part and a `char` its quoting. A struct or enum field
+/// shows through its own rendering for the channel, so `{}` reaches the
+/// field's `impl Display` and `{:?}` its `impl Debug`.
+fn field_placeholder(
+    method: &str,
+    ty: &gossamer_ast::Type,
+    aliases: &HashMap<String, gossamer_ast::Type>,
+) -> &'static str {
+    if method == "fmt" || ty_head_is_scalar(ty, aliases, 0) {
+        "{:?}"
+    } else {
+        "{}"
+    }
+}
+
+/// Whether `ty`'s head names a scalar, expanding transparent aliases so a
+/// `type Meters = f64` field reads as the `f64` it stands for. `depth`
+/// bounds that expansion, per [`MAX_ALIAS_DEPTH`].
+fn ty_head_is_scalar(
+    ty: &gossamer_ast::Type,
+    aliases: &HashMap<String, gossamer_ast::Type>,
+    depth: u32,
+) -> bool {
+    let Some(name) = type_head_name(ty) else {
+        return false;
+    };
+    if is_scalar_fmt_name(name) {
+        return true;
+    }
+    match aliases.get(name) {
+        Some(target) if depth < MAX_ALIAS_DEPTH => ty_head_is_scalar(target, aliases, depth + 1),
+        _ => false,
+    }
+}
+
 /// Types for which the user already wrote a method named `method` (in an
 /// inherent or trait `impl`), so the synthesizer must not emit a conflicting
-/// structural one. Mirrors [`types_with_user_fmt`] for `eq` / `cmp`.
+/// structural one.
 fn types_with_user_method(parsed: &SourceFile, method: &str) -> HashSet<String> {
     let mut out = HashSet::new();
     for item in flatten_items(&parsed.items) {
@@ -582,7 +646,8 @@ fn types_with_user_method(parsed: &SourceFile, method: &str) -> HashSet<String> 
 pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
     let struct_names: HashMap<String, TyId> = struct_identities(&parsed.items);
     let aliases = alias_targets(&parsed.items);
-    let user_fmt = types_with_user_fmt(parsed);
+    let user_fmt = types_with_user_method(parsed, "fmt");
+    let user_to_string = types_with_user_method(parsed, "to_string");
     let user_eq = types_with_user_method(parsed, "eq");
     let user_cmp = types_with_user_method(parsed, "cmp");
 
@@ -630,7 +695,9 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
             _ => None,
         };
         if let Some(n) = name
-            && (derives.iter().any(|d| d == "Debug") || user_fmt.contains(n))
+            && (derives.iter().any(|d| d == "Debug")
+                || user_fmt.contains(n)
+                || user_to_string.contains(n))
         {
             formattable.insert(n.clone());
         }
@@ -649,7 +716,7 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
             reachable.insert(name.clone());
             if tys
                 .iter()
-                .all(|ty| ty_is_renderable(ty, &reachable, &params))
+                .all(|ty| ty_is_renderable(ty, &reachable, &params, &aliases))
             {
                 formattable.insert(name.clone());
                 changed = true;
@@ -719,10 +786,28 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
         };
         if let Some(tn) = implicit_target
             && formattable.contains(tn)
-            && !user_fmt.contains(tn)
             && !derives.iter().any(|d| d == "Debug")
         {
             derives.push("Debug".to_string());
+        }
+        // `Display` and `Debug` are separate channels: `{}` reaches
+        // `to_string` and `{:?}` reaches `fmt`. A type with no `impl Display`
+        // still shows through `{}`, so it carries the structural rendering
+        // under that spelling too.
+        if let Some(tn) = implicit_target
+            && formattable.contains(tn)
+        {
+            derives.push(IMPLICIT_DISPLAY.to_string());
+        }
+        // A method the source already supplies is never re-emitted, whatever
+        // a `#[derive(..)]` asks for: one name, one body.
+        if let Some(tn) = implicit_target {
+            if user_fmt.contains(tn) {
+                derives.retain(|d| d != "Debug");
+            }
+            if user_to_string.contains(tn) {
+                derives.retain(|d| d != IMPLICIT_DISPLAY);
+            }
         }
         // Synthesize `eq` / `cmp` for every by-value-comparable struct / enum
         // that has no user-written one, so structural `==` and `<` work with no
@@ -770,7 +855,7 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
             },
             ItemKind::Enum(decl) => {
                 let ty = TyId::new(&module, &decl.name.name);
-                emit_enum_derive_impl(&mut out, decl, &ty, &derives);
+                emit_enum_derive_impl(&mut out, decl, &ty, &derives, &aliases);
             }
             _ => {}
         }
@@ -836,15 +921,22 @@ fn variant_shape(ty: &TyId, v: &EnumVariant, prefix: &str) -> (String, String, V
     clippy::too_many_lines,
     reason = "one block per derived trait (clone/eq/cmp/debug/default); splitting scatters the emit"
 )]
-fn emit_enum_derive_impl(out: &mut String, decl: &EnumDecl, ty: &TyId, derives: &[String]) {
+fn emit_enum_derive_impl(
+    out: &mut String,
+    decl: &EnumDecl,
+    ty: &TyId,
+    derives: &[String],
+    aliases: &HashMap<String, gossamer_ast::Type>,
+) {
     let name = ty.path.as_str();
     let has = |t: &str| derives.iter().any(|d| d == t);
     let want_clone = has("Clone");
     let want_eq = has("PartialEq") || has("Eq");
     let want_cmp = has("PartialOrd") || has("Ord");
     let want_default = has("Default");
-    let want_debug = has("Debug");
-    if !(want_clone || want_eq || want_cmp || want_default || want_debug) {
+    let render_methods = rendering_method_names(derives);
+    let want_rendering = !render_methods.is_empty();
+    if !(want_clone || want_eq || want_cmp || want_default || want_rendering) {
         return;
     }
     // A generic enum's derived methods live on `impl<T> Name<T>`, the same
@@ -934,17 +1026,19 @@ fn emit_enum_derive_impl(out: &mut String, decl: &EnumDecl, ty: &TyId, derives: 
         }
         out.push_str("        }\n    }\n");
     }
-    if want_debug {
-        out.push_str("    fn fmt(&self) -> String {\n        match self {\n");
+    for render_method in &render_methods {
+        out.push_str(&format!(
+            "    fn {render_method}(&self) -> String {{\n        match self {{\n"
+        ));
         for v in &decl.variants {
             let (pat, _, binds) = variant_shape(ty, v, "__d");
             let vn = &v.name.name;
             let arm = match &v.body {
                 StructBody::Unit => format!("\"{vn}\""),
-                StructBody::Tuple(_) => {
-                    let holes = binds
+                StructBody::Tuple(payload) => {
+                    let holes = payload
                         .iter()
-                        .map(|_| "{:?}")
+                        .map(|f| field_placeholder(render_method, &f.ty, aliases))
                         .collect::<Vec<_>>()
                         .join(", ");
                     format!("format!(\"{vn}({holes})\", {})", binds.join(", "))
@@ -952,7 +1046,13 @@ fn emit_enum_derive_impl(out: &mut String, decl: &EnumDecl, ty: &TyId, derives: 
                 StructBody::Named(fields) => {
                     let parts: Vec<String> = fields
                         .iter()
-                        .map(|f| format!("{}: {{:?}}", f.name.name))
+                        .map(|f| {
+                            format!(
+                                "{}: {}",
+                                f.name.name,
+                                field_placeholder(render_method, &f.ty, aliases)
+                            )
+                        })
                         .collect();
                     format!(
                         "format!(\"{vn} {{{{ {} }}}}\", {})",
@@ -988,8 +1088,10 @@ fn emit_enum_derive_impl(out: &mut String, decl: &EnumDecl, ty: &TyId, derives: 
 fn emit_named_struct_fmt_impl(
     out: &mut String,
     name: &str,
+    method: &str,
     field_names: &[&str],
     fields: &[gossamer_ast::StructField],
+    aliases: &HashMap<String, gossamer_ast::Type>,
 ) {
     let mut tmpl = String::new();
     tmpl.push_str(name);
@@ -999,9 +1101,10 @@ fn emit_named_struct_fmt_impl(
             tmpl.push_str(", ");
         }
         tmpl.push_str(f);
-        // `{:?}` so a float field keeps a fractional part, matching how a
-        // struct field renders in the VM.
-        tmpl.push_str(": {:?}");
+        tmpl.push_str(": ");
+        tmpl.push_str(fields.get(i).map_or("{:?}", |field| {
+            field_placeholder(method, &field.ty, aliases)
+        }));
     }
     tmpl.push_str(" }}");
     let argvals: Vec<String> = fields
@@ -1016,11 +1119,11 @@ fn emit_named_struct_fmt_impl(
         .collect();
     if field_names.is_empty() {
         out.push_str(&format!(
-            "    fn fmt(&self) -> String {{ format!(\"{tmpl}\") }}\n"
+            "    fn {method}(&self) -> String {{ format!(\"{tmpl}\") }}\n"
         ));
     } else {
         out.push_str(&format!(
-            "    fn fmt(&self) -> String {{ format!(\"{tmpl}\", {}) }}\n",
+            "    fn {method}(&self) -> String {{ format!(\"{tmpl}\", {}) }}\n",
             argvals.join(", ")
         ));
     }
@@ -1093,8 +1196,9 @@ fn emit_tuple_struct_derive_impl(
     let want_eq = has("PartialEq") || has("Eq");
     let want_cmp = has("PartialOrd") || has("Ord");
     let want_default = has("Default");
-    let want_debug = has("Debug");
-    if !(want_clone || want_eq || want_cmp || want_default || want_debug) {
+    let render_methods = rendering_method_names(derives);
+    let want_rendering = !render_methods.is_empty();
+    if !(want_clone || want_eq || want_cmp || want_default || want_rendering) {
         return;
     }
     let (gen_decl, self_ty) = struct_generics(decl, name);
@@ -1144,8 +1248,11 @@ fn emit_tuple_struct_derive_impl(
             ));
         }
     }
-    if want_debug {
-        let placeholders: Vec<&str> = (0..n).map(|_| "{}").collect();
+    for render_method in &render_methods {
+        let placeholders: Vec<&str> = fields
+            .iter()
+            .map(|f| field_placeholder(render_method, &f.ty, aliases))
+            .collect();
         let argvals: Vec<String> = fields
             .iter()
             .enumerate()
@@ -1158,7 +1265,7 @@ fn emit_tuple_struct_derive_impl(
             })
             .collect();
         out.push_str(&format!(
-            "    fn fmt(&self) -> String {{ format!(\"{bare}({})\", {}) }}\n",
+            "    fn {render_method}(&self) -> String {{ format!(\"{bare}({})\", {}) }}\n",
             placeholders.join(", "),
             argvals.join(", ")
         ));
@@ -1181,8 +1288,9 @@ fn emit_struct_derive_impl(
     let want_eq = has("PartialEq") || has("Eq");
     let want_cmp = has("PartialOrd") || has("Ord");
     let want_default = has("Default");
-    let want_debug = has("Debug");
-    if !(want_clone || want_eq || want_cmp || want_default || want_debug) {
+    let render_methods = rendering_method_names(derives);
+    let want_rendering = !render_methods.is_empty();
+    if !(want_clone || want_eq || want_cmp || want_default || want_rendering) {
         return;
     }
     // `(gen_decl, self_ty)` = ("<T>", "Pair<T>") for a generic struct, else
@@ -1262,8 +1370,15 @@ fn emit_struct_derive_impl(
             ));
         }
     }
-    if want_debug {
-        emit_named_struct_fmt_impl(out, &decl.name.name, &field_names, fields);
+    for render_method in &render_methods {
+        emit_named_struct_fmt_impl(
+            out,
+            &decl.name.name,
+            render_method,
+            &field_names,
+            fields,
+            aliases,
+        );
     }
     out.push_str("}\n\n");
 }
