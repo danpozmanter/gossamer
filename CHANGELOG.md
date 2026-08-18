@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.52.0 - Display as a trait, lowering gaps, combinator parity, JIT admission
+## 0.52.0 - Display as a trait, lowering gaps, parity work, JIT admission
 
 - Keep peak memory flat across builtin callbacks: a program whose closures run
   from `map`, `filter`, `fold`, `for_each`, `sort_by`, or a lazy `iter()`

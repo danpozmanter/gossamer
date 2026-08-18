@@ -19,6 +19,21 @@
 
 use std::collections::HashMap;
 
+/// Mirrors `gossamer_codegen_cranelift::ResultScalarKind` so the shared
+/// dispatch code in `jit_call` type-checks on wasm; no instance is ever
+/// constructed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResultScalarKind {
+    /// The word is the integer itself.
+    I64,
+    /// The word is the double's bit pattern.
+    F64,
+    /// The low bit of the word is the boolean.
+    Bool,
+    /// The word is the Unicode scalar's code point.
+    Char,
+}
+
 /// ABI classification of a JIT slot. Mirrors the cranelift enum so the
 /// VM's trampoline (`jit_call`) type-checks; no instance is ever
 /// constructed on wasm because no body is JIT-compiled.
@@ -44,6 +59,12 @@ pub enum JitKind {
     ResultEnumPtr(u32),
     /// `Result<String, _>` return as the by-value two-word `i128`.
     ResultNativeStr,
+    /// `Result<scalar, _>` return on the two-word carrier; payload names the
+    /// scalar the `Ok` word carries.
+    ResultScalar(ResultScalarKind),
+    /// `Option<scalar>` return on the two-word carrier; payload names the
+    /// scalar the `Some` word carries.
+    OptionScalar(ResultScalarKind),
     /// All-scalar user struct as a pointer to its flat field-slot block;
     /// payload is the VM struct-shape-table index.
     StructPtr(u32),
@@ -53,6 +74,8 @@ pub enum JitKind {
     NativeVecI64,
     /// `Vec<f64>` as a native `GosVec` pointer.
     NativeVecF64,
+    /// `Vec<String>` as a native `GosVec` of owned cstring slots.
+    NativeVecStr,
     /// `Vec<(i64, f64)>` as a native `GosVec` of 16-byte primitive slots.
     NativeVecTupleIF,
     /// `Vec<Vec<i64>>` as a native outer `GosVec` of inner `GosVec` pointers.

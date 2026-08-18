@@ -186,6 +186,7 @@ fn guard_copy(dst: &mut [u8], src: &[u8]) -> usize {
 /// The one text every tier reports when recursion runs past the stack. The
 /// bytecode tier appends its own frame count; the platform guards below write
 /// exactly this, from a signal context where formatting is not available.
+#[cfg(any(unix, windows))]
 pub(crate) const STACK_OVERFLOW_MESSAGE: &[u8] =
     b"error[GX0008]: stack overflow - recursion exceeded the available stack\n";
 

@@ -1,6 +1,6 @@
 # `std::fmt`
 
-Status: unproven
+Status: experimental
 
 Formatted printing and string interpolation.
 

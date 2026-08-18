@@ -39,9 +39,9 @@ use std::mem;
 use std::sync::Arc;
 
 #[cfg(target_arch = "wasm32")]
-use crate::jit_stub::{ArrayElem, JitFn, JitKind, TupleElem};
+use crate::jit_stub::{ArrayElem, JitFn, JitKind, ResultScalarKind, TupleElem};
 #[cfg(not(target_arch = "wasm32"))]
-use gossamer_codegen_cranelift::{ArrayElem, JitFn, JitKind, TupleElem};
+use gossamer_codegen_cranelift::{ArrayElem, JitFn, JitKind, ResultScalarKind, TupleElem};
 use gossamer_runtime::c_abi as rt;
 
 use crate::value::{
@@ -1069,17 +1069,9 @@ fn free_native_enum(ptr: i64, shape: &crate::value::NativeEnumShape) {
     }
 }
 
-/// Reads a native `*mut GosError` (the `Err` payload of a `Result` return)
-/// into the VM's `errors::Error` struct value. The native error's leaked
-/// message copy is freed; the error node itself is left to process teardown
-/// (the `Err` path is the cold branch and never aliases the trampoline's
-/// owned inputs).
 /// The VM value a two-word carrier's payload word stands for.
-fn decode_carrier_scalar(
-    kind: gossamer_codegen_cranelift::ResultScalarKind,
-    payload: i64,
-) -> Value {
-    use gossamer_codegen_cranelift::ResultScalarKind as K;
+fn decode_carrier_scalar(kind: ResultScalarKind, payload: i64) -> Value {
+    use ResultScalarKind as K;
     match kind {
         K::I64 => Value::Int(payload),
         K::F64 => Value::Float(f64::from_bits(payload as u64)),
@@ -1088,6 +1080,11 @@ fn decode_carrier_scalar(
     }
 }
 
+/// Reads a native `*mut GosError` (the `Err` payload of a `Result` return)
+/// into the VM's `errors::Error` struct value. The native error's leaked
+/// message copy is freed; the error node itself is left to process teardown
+/// (the `Err` path is the cold branch and never aliases the trampoline's
+/// owned inputs).
 fn read_native_error(ptr: i64) -> Value {
     // A wrapped error is a chain, and `{}` prints every link colon-joined, so
     // the whole chain crosses back - a `cause: None` here would silently

@@ -142,6 +142,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
     (
         "std::collections",
         &[
+            "examples/collection_patterns.gos",
             "examples/data_structures.gos",
             "examples/map_hashable_keys.gos",
             "feature-testing-examples/aggregate_binding.gos",
@@ -316,6 +317,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "examples/file_io.gos",
             "examples/grep.gos",
             "examples/json_derive_test.gos",
+            "examples/json_structs.gos",
             "examples/list_dir.gos",
             "examples/structured_concurrency.gos",
             "examples/testing.gos",
@@ -325,11 +327,13 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/cohort_basics.gos",
             "feature-testing-examples/cohort_cancel.gos",
             "feature-testing-examples/combinator_sweep.gos",
+            "feature-testing-examples/debugfmt_nested_adts.gos",
             "feature-testing-examples/entry_result_err.gos",
             "feature-testing-examples/entry_toplevel_err.gos",
             "feature-testing-examples/error_chain_inspection.gos",
             "feature-testing-examples/from_json_infer.gos",
             "feature-testing-examples/fs_temp_file_lifecycle.gos",
+            "feature-testing-examples/jit_admission_shapes.gos",
             "feature-testing-examples/json_parse_jit.gos",
             "feature-testing-examples/method_name_collision.gos",
             "feature-testing-examples/nested_struct_variant_payload.gos",
@@ -364,6 +368,10 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/aggregate_binding.gos",
             "feature-testing-examples/flag_cell_duration.gos",
         ],
+    ),
+    (
+        "std::fmt",
+        &["feature-testing-examples/display_impl_dispatch.gos"],
     ),
     (
         "std::fs",
@@ -488,6 +496,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
     (
         "std::math",
         &[
+            "examples/big_numbers.gos",
             "feature-testing-examples/callback_shorthands.gos",
             "feature-testing-examples/inline_scalar_kernel.gos",
             "feature-testing-examples/misc_class_a.gos",
@@ -499,6 +508,10 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/trait_object_dispatch.gos",
             "feature-testing-examples/winb_data_math.gos",
         ],
+    ),
+    (
+        "std::math::bits",
+        &["feature-testing-examples/combinator_element_kinds.gos"],
     ),
     (
         "std::math::rand",
@@ -708,7 +721,9 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
         "std::testing",
         &[
             "examples/defer_cleanup.gos",
+            "examples/derive.gos",
             "examples/testing.gos",
+            "examples/tuples.gos",
             "feature-testing-examples/array_bounds_probe.gos",
             "feature-testing-examples/array_literal_vec_methods.gos",
             "feature-testing-examples/channel_close_drain.gos",
