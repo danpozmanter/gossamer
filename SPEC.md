@@ -2994,8 +2994,9 @@ The first index response alone must never establish publisher identity.
 
 ### 17.1 Editions and language compatibility
 
-- The manifest defaults to `edition = "2026"`; this toolchain also accepts
-  `edition = "2027"`.
+- The manifest defaults to `gossamer-version = "2026"`; this toolchain also
+  accepts `gossamer-version = "2027"`. `edition` is Rust's spelling and is
+  rejected by name.
 - A compiler accepts editions it explicitly supports; accepting a manifest is
   not a promise that a future edition's semantics are understood.
 - Breaking Stable-language changes require a new edition. Diagnostics must

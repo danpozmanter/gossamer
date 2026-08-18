@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GR0019]: Two dependency packages are reached under one module name. A `-` is - here
+--- framed ---
+error[GR0019]: Two dependency packages are reached under one module name. A `-` is
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

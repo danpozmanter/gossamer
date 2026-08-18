@@ -687,7 +687,7 @@ struct Item { name: String, tags: Vec<String>, n: i64 }
 
 fn insert_item() {
     let mut m: Map<i64, Item> = Map::new()
-    m.insert(1i64, Item { name: "item", tags: Vec::new(), n: 1i64 })
+    let _ = m.insert(1i64, Item { name: "item", tags: Vec::new(), n: 1i64 })
 }
 "#;
     let (bodies, tcx) = build(source);

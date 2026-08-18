@@ -100,7 +100,7 @@ impl Edition {
         match value {
             "2026" => Ok(Self::E2026),
             "2027" => Ok(Self::E2027),
-            _ => Err(ManifestError::UnsupportedEdition(value.to_string())),
+            _ => Err(ManifestError::UnsupportedGossamerVersion(value.to_string())),
         }
     }
 }
@@ -244,9 +244,17 @@ pub enum ManifestError {
     /// The version literal failed validation.
     #[error("invalid version: {0}")]
     BadVersion(#[from] VersionError),
-    /// The manifest requested a language edition this compiler cannot parse.
-    #[error("unsupported language edition {0:?}; supported editions are \"2026\" and \"2027\"")]
-    UnsupportedEdition(String),
+    /// A `[project]` key the manifest format has renamed.
+    #[error("`{old}` is not a project key; write `{new}`")]
+    RenamedProjectKey {
+        /// Key as written.
+        old: &'static str,
+        /// Key that replaces it.
+        new: &'static str,
+    },
+    /// The manifest requested a language version this compiler cannot parse.
+    #[error("unsupported gossamer-version {0:?}; supported versions are \"2026\" and \"2027\"")]
+    UnsupportedGossamerVersion(String),
     /// An inline dependency table mixed incompatible keys.
     #[error("ambiguous dependency for {0}: pick at most one of git/path/tarball")]
     AmbiguousDependency(String),
@@ -340,7 +348,16 @@ impl Manifest {
             "project.version",
             "project.version",
         )?)?;
-        let edition = optional_toml_str(project, "edition", "project.edition")?
+        // `edition` is Rust's spelling; a Gossamer project states the
+        // language version its source is written against instead. A manifest
+        // still carrying the old key is named rather than silently ignored.
+        if project.contains_key("edition") {
+            return Err(ManifestError::RenamedProjectKey {
+                old: "edition",
+                new: "gossamer-version",
+            });
+        }
+        let edition = optional_toml_str(project, "gossamer-version", "project.gossamer-version")?
             .as_deref()
             .map_or(Ok(Edition::E2026), Edition::parse)?;
         let authors =
@@ -477,7 +494,7 @@ impl Manifest {
         out.push_str(&format!("id = \"{}\"\n", self.project.id));
         out.push_str(&format!("version = \"{}\"\n", self.project.version));
         out.push_str(&format!(
-            "edition = \"{}\"\n",
+            "gossamer-version = \"{}\"\n",
             self.project.edition.as_str()
         ));
         if !self.project.authors.is_empty() {
@@ -1022,17 +1039,17 @@ mod entry_field_tests {
 }
 
 #[cfg(test)]
-mod edition_tests {
+mod gossamer_version_tests {
     use super::*;
 
     #[test]
-    fn edition_defaults_to_eager_2026_and_round_trips_2027() {
-        let legacy =
+    fn gossamer_version_defaults_to_eager_2026_and_round_trips_2027() {
+        let bare =
             Manifest::parse("[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\n").unwrap();
-        assert_eq!(legacy.project.edition, Edition::E2026);
+        assert_eq!(bare.project.edition, Edition::E2026);
 
         let staged = Manifest::parse(
-            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\nedition = \"2027\"\n",
+            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\ngossamer-version = \"2027\"\n",
         )
         .unwrap();
         assert_eq!(staged.project.edition, Edition::E2027);
@@ -1040,11 +1057,30 @@ mod edition_tests {
     }
 
     #[test]
-    fn unknown_edition_is_rejected() {
+    fn an_unknown_gossamer_version_is_rejected() {
         let error = Manifest::parse(
-            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\nedition = \"2028\"\n",
+            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\ngossamer-version = \"2028\"\n",
         )
         .unwrap_err();
-        assert!(matches!(error, ManifestError::UnsupportedEdition(value) if value == "2028"));
+        assert!(
+            matches!(error, ManifestError::UnsupportedGossamerVersion(value) if value == "2028")
+        );
+    }
+
+    /// `edition` is Rust's spelling, so a manifest still carrying it is named
+    /// rather than read as a project with no language version at all.
+    #[test]
+    fn the_rust_edition_key_is_rejected_by_name() {
+        let error = Manifest::parse(
+            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\nedition = \"2027\"\n",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            ManifestError::RenamedProjectKey {
+                old: "edition",
+                new: "gossamer-version"
+            }
+        ));
     }
 }

@@ -1225,7 +1225,7 @@ fn main() {
         let tree = Node::Pair(Node::Leaf(1), Node::Leaf(2))
         count(&tree)
     }
-    answer
+    let _ = answer
 }
 ";
     let (bodies, _) = build(source);
@@ -1256,7 +1256,7 @@ enum Node { Leaf(i64), Pair(Node, Node) }
 
 fn main() {
     let tree = { Node::Pair(Node::Leaf(1), Node::Leaf(2)) }
-    match tree { Node::Leaf(n) => n, Node::Pair(_, _) => 2 }
+    let _ = match tree { Node::Leaf(n) => n, Node::Pair(_, _) => 2 }
 }
 ";
     let (bodies, _) = build(escaping);

@@ -639,7 +639,7 @@ mod tests {
     fn entry_edition_comes_from_entry_project_not_cwd() {
         let root = scratch_project(
             "entryedition",
-            "[project]\nid = \"example.com/lazy\"\nversion = \"0.1.0\"\nedition = \"2027\"\n",
+            "[project]\nid = \"example.com/lazy\"\nversion = \"0.1.0\"\ngossamer-version = \"2027\"\n",
             &["main.gos"],
         );
         assert_eq!(
@@ -653,7 +653,7 @@ mod tests {
     fn entry_project_context_comes_from_entry_not_cwd() {
         let root = scratch_project(
             "entryctx",
-            "[project]\nid = \"example.com/entryctx\"\nversion = \"0.1.0\"\nedition = \"2026\"\n[rust-bindings]\naddlib = { path = \"bindings/addlib\" }\n",
+            "[project]\nid = \"example.com/entryctx\"\nversion = \"0.1.0\"\ngossamer-version = \"2026\"\n[rust-bindings]\naddlib = { path = \"bindings/addlib\" }\n",
             &["src/main.gos"],
         );
         let ctx = project_context_for_entry(&root.join("src").join("main.gos"));

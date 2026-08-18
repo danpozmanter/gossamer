@@ -791,7 +791,7 @@ fn run_absolute_project_uses_entry_edition_for_lazy_iterators() {
     std::fs::create_dir_all(&dir).expect("create project dir");
     std::fs::write(
         dir.join("project.toml"),
-        "[project]\nid = \"example.com/lazy-edition\"\nversion = \"0.1.0\"\nedition = \"2027\"\n",
+        "[project]\nid = \"example.com/lazy-edition\"\nversion = \"0.1.0\"\ngossamer-version = \"2027\"\n",
     )
     .expect("write manifest");
     std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_TIER_SOURCE).expect("write source");
@@ -834,7 +834,7 @@ fn build_absolute_project_uses_entry_edition_for_lazy_iterators() {
     std::fs::create_dir_all(&dir).expect("create project dir");
     std::fs::write(
         dir.join("project.toml"),
-        "[project]\nid = \"example.com/native-lazy-edition\"\nversion = \"0.1.0\"\nedition = \"2027\"\n",
+        "[project]\nid = \"example.com/native-lazy-edition\"\nversion = \"0.1.0\"\ngossamer-version = \"2027\"\n",
     )
     .expect("write manifest");
     std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_TIER_SOURCE).expect("write source");
@@ -902,7 +902,7 @@ fn edition_2026_iterator_surface_remains_eager_on_all_tiers() {
     std::fs::create_dir_all(&dir).expect("create project dir");
     std::fs::write(
         dir.join("project.toml"),
-        "[project]\nid = \"example.com/eager-iter-2026\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+        "[project]\nid = \"example.com/eager-iter-2026\"\nversion = \"0.1.0\"\ngossamer-version = \"2026\"\n",
     )
     .expect("write manifest");
     std::fs::write(dir.join("main.gos"), EAGER_2026_COMPAT_SOURCE).expect("write source");
@@ -972,7 +972,7 @@ fn lazy_pipeline_allocates_only_its_collected_vec_on_llvm() {
     std::fs::create_dir_all(&dir).expect("create project dir");
     std::fs::write(
         dir.join("project.toml"),
-        "[project]\nid = \"example.com/lazy-iter-allocs\"\nversion = \"0.1.0\"\nedition = \"2027\"\n",
+        "[project]\nid = \"example.com/lazy-iter-allocs\"\nversion = \"0.1.0\"\ngossamer-version = \"2027\"\n",
     )
     .expect("write manifest");
     std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_ALLOCATION_SOURCE).expect("write source");
@@ -1017,7 +1017,7 @@ fn borrowed_lazy_vec_structural_mutation_fails_on_all_tiers() {
     std::fs::create_dir_all(&dir).expect("create project dir");
     std::fs::write(
         dir.join("project.toml"),
-        "[project]\nid = \"example.com/lazy-iter-invalidation\"\nversion = \"0.1.0\"\nedition = \"2027\"\n",
+        "[project]\nid = \"example.com/lazy-iter-invalidation\"\nversion = \"0.1.0\"\ngossamer-version = \"2027\"\n",
     )
     .expect("write manifest");
     std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_INVALIDATION_SOURCE).expect("write source");
@@ -1084,7 +1084,7 @@ fn lazy_adapter_panic_propagates_on_all_tiers() {
     std::fs::create_dir_all(&dir).expect("create project dir");
     std::fs::write(
         dir.join("project.toml"),
-        "[project]\nid = \"example.com/lazy-iter-panic\"\nversion = \"0.1.0\"\nedition = \"2027\"\n",
+        "[project]\nid = \"example.com/lazy-iter-panic\"\nversion = \"0.1.0\"\ngossamer-version = \"2027\"\n",
     )
     .expect("write manifest");
     std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_PANIC_SOURCE).expect("write source");

@@ -104,7 +104,7 @@ fn source_for_edition(
     fs::write(
         dir.join("project.toml"),
         format!(
-            "[project]\nid = \"conformance.local/{label}\"\nversion = \"0.0.0\"\nedition = \"{edition}\"\n"
+            "[project]\nid = \"conformance.local/{label}\"\nversion = \"0.0.0\"\ngossamer-version = \"{edition}\"\n"
         ),
     )
     .expect("write fixture project manifest");

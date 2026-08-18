@@ -109,7 +109,7 @@ eager collection surface and pins equal output.
 ## Migration
 
 The existing eager signatures remain the edition-2026 default. Projects that
-select `edition = "2027"` receive iterator-returning signatures. Code that
+select `gossamer-version = "2027"` receive iterator-returning signatures. Code that
 depends on eager materialization inserts `iter::collect` at the materialization
 boundary, or traverses the collection through its own methods (`xs.map(f)`,
 `xs.sum()`), which answer eagerly in every edition.

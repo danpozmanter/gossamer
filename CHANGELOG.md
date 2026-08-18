@@ -51,6 +51,8 @@
   read as a pointer and crashed on.
 - Answer `n.to_string().chars()` with the cursor its type names, which the
   native build crashed on through `collect`, `count`, and a `for` loop alike.
+- State a project's language version as `gossamer-version` in `project.toml`;
+  `edition` is Rust's spelling and is now rejected by name rather than read.
 
 ## 0.52.0 - Display as a trait, lowering gaps, parity work, JIT admission
 
