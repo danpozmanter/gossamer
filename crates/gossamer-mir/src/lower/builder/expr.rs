@@ -719,6 +719,23 @@ impl<'a> Builder<'a> {
         // FnRef/string fallback below - printing the literal "math::PI"
         // and feeding a string-tag pointer into arithmetic. Inline the
         // IEEE value so every tier folds them identically.
+        // `fs::SEEK_SET` / `SEEK_CUR` / `SEEK_END` name the `whence`
+        // selector `File::seek` takes. The interpreter binds them as
+        // integer globals; the compiled tiers see no `const` def, so
+        // fold the value here for one meaning on every tier.
+        if strip_std.len() == 2
+            && strip_std[0] == "fs"
+            && let Some(value) = seek_whence_value(strip_std[1])
+        {
+            let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+            let local = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(local),
+                Rvalue::Use(Operand::Const(ConstValue::Int(value))),
+                span,
+            );
+            return Some(local);
+        }
         if strip_std.len() == 2
             && strip_std[0] == "math"
             && let Some(bits) = math_const_bits(strip_std[1])
@@ -3344,6 +3361,16 @@ impl<'a> Builder<'a> {
 /// if `name` is not one. Mirrors `gossamer_std::math`'s constants so
 /// the compiled tiers fold them identically to the interpreter's
 /// `Value::Float` globals.
+/// Value of a `fs::SEEK_*` whence selector.
+fn seek_whence_value(name: &str) -> Option<i128> {
+    match name {
+        "SEEK_SET" => Some(0),
+        "SEEK_CUR" => Some(1),
+        "SEEK_END" => Some(2),
+        _ => None,
+    }
+}
+
 fn math_const_bits(name: &str) -> Option<u64> {
     let v: f64 = match name {
         "PI" => std::f64::consts::PI,

@@ -27,7 +27,7 @@ pub use binding_runner::{
     parse_signature_dump,
 };
 
-pub use frontend::{FrontendOutcome, check_frontend, check_frontend_with_edition};
+pub use frontend::{FrontendOutcome, check_frontend};
 pub use frontend_cache::{
     CachedFrontend, FrontendCacheKey, cache_dir, cache_enabled, frontend_key, load_blob,
     load_blob_in, raw_blob_path, raw_blob_path_in, store_blob, store_blob_in, store_frontend,

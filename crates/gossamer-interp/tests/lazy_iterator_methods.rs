@@ -3,11 +3,11 @@
 use std::cell::RefCell;
 
 use gossamer_hir::lower_source_file;
-use gossamer_interp::{Vm, set_lazy_iterators_enabled, set_stdout_writer};
+use gossamer_interp::{Vm, reset_lazy_iterator_state, set_stdout_writer};
 use gossamer_lex::SourceMap;
 use gossamer_parse::autoderive::parse_with_autoderive;
 use gossamer_resolve::resolve_source_file;
-use gossamer_types::{TyCtxt, typecheck_source_file_with_lazy_iterators};
+use gossamer_types::{TyCtxt, typecheck_source_file};
 
 thread_local! {
     static CAPTURED: RefCell<String> = const { RefCell::new(String::new()) };
@@ -25,19 +25,17 @@ fn run_lazy_program(source: &str) -> String {
     let (resolutions, resolve_diags) = resolve_source_file(&sf);
     assert!(resolve_diags.is_empty(), "resolve: {resolve_diags:?}");
     let mut tcx = TyCtxt::new();
-    let (table, type_diags) =
-        typecheck_source_file_with_lazy_iterators(&sf, &resolutions, &mut tcx, true);
+    let (table, type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     assert!(type_diags.is_empty(), "type: {type_diags:?}");
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
 
-    set_lazy_iterators_enabled(true);
+    reset_lazy_iterator_state();
     let mut vm = Vm::new();
     vm.load(&program, tcx, true).expect("vm load");
     CAPTURED.with(|cell| cell.borrow_mut().clear());
     let previous = set_stdout_writer(capture_writer);
     let result = vm.call("main", Vec::new());
     set_stdout_writer(previous);
-    set_lazy_iterators_enabled(false);
     result.expect("main returned an error");
     CAPTURED.with(|cell| cell.borrow().clone())
 }

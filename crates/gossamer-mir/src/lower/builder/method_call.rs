@@ -1377,6 +1377,19 @@ impl<'a> Builder<'a> {
         {
             return MethodLowering::Handled(Some(local));
         }
+        if method.name.as_str() == "resize"
+            && let [new_len, value] = args
+            && let Some(local) = self.try_lower_vec_resize(receiver, new_len, value, span)
+        {
+            return MethodLowering::Handled(Some(local));
+        }
+        if matches!(
+            method.name.as_str(),
+            "copy_within" | "copy_from_slice" | "binary_search"
+        ) && let Some(local) = self.try_lower_vec_bulk_method(receiver, method, args, span)
+        {
+            return MethodLowering::Handled(Some(local));
+        }
         // `xs.sort_by(closure)` for `[i64; N]` / `[i64]` / `Vec<i64>`.
         // Routes through one of two runtime helpers depending on
         // the receiver shape: fixed buffers go through
@@ -3317,6 +3330,19 @@ impl<'a> Builder<'a> {
             (Some("fs::File"), "read") => Some("gos_rt_fs_file_read"),
             (Some("fs::File"), "read_to_string") => Some("gos_rt_fs_file_read_to_string"),
             (Some("fs::File"), "write" | "write_all") => Some("gos_rt_fs_file_write"),
+            (Some("fs::File"), "write_bytes") => Some("gos_rt_fs_file_write_bytes"),
+            (Some("fs::File"), "read_at") => Some("gos_rt_fs_file_read_at"),
+            (Some("fs::File"), "write_at") => Some("gos_rt_fs_file_write_at"),
+            (Some("fs::File"), "seek") => Some("gos_rt_fs_file_seek"),
+            (Some("fs::File"), "set_len") => Some("gos_rt_fs_file_set_len"),
+            (Some("fs::File"), "len") => Some("gos_rt_fs_file_len"),
+            (Some("fs::File"), "sync_all") => Some("gos_rt_fs_file_sync_all"),
+            (Some("fs::File"), "sync_data") => Some("gos_rt_fs_file_sync_data"),
+            (Some("fs::File"), "try_lock_range") => Some("gos_rt_fs_file_try_lock_range"),
+            (Some("fs::File"), "unlock_range") => Some("gos_rt_fs_file_unlock_range"),
+            (Some("fs::File"), "try_lock_shared") => Some("gos_rt_fs_file_try_lock_shared"),
+            (Some("fs::File"), "try_lock_exclusive") => Some("gos_rt_fs_file_try_lock_exclusive"),
+            (Some("fs::File"), "unlock") => Some("gos_rt_fs_file_unlock"),
             (Some("fs::File"), "flush") => Some("gos_rt_fs_file_flush"),
             (Some("fs::File"), "close") => Some("gos_rt_fs_file_close"),
             (Some("fs::OpenOptions"), "read") => Some("gos_rt_fs_open_options_read"),
@@ -3906,14 +3932,34 @@ impl<'a> Builder<'a> {
             | "gos_rt_fs_file_open"
             | "gos_rt_fs_open_options_open"
             | "gos_rt_fs_file_write"
+            | "gos_rt_fs_file_write_bytes"
+            | "gos_rt_fs_file_write_at"
+            | "gos_rt_fs_file_seek"
+            | "gos_rt_fs_file_len"
             | "gos_rt_fs_file_flush"
             | "gos_rt_unix_stream_write"
             | "gos_rt_udp_send_to"
             | "gos_rt_tcp_start_tls"
             | "gos_rt_tcp_start_tls_insecure"
             | "gos_rt_tcp_start_tls_ca" => self.result_i64_error_adt_ty(),
-            "gos_rt_tcp_stream_read" | "gos_rt_unix_stream_read" | "gos_rt_fs_file_read" => {
-                self.result_vec_u8_error_ty()
+            "gos_rt_tcp_stream_read"
+            | "gos_rt_unix_stream_read"
+            | "gos_rt_fs_file_read"
+            | "gos_rt_fs_file_read_at" => self.result_vec_u8_error_ty(),
+            "gos_rt_fs_file_set_len"
+            | "gos_rt_fs_file_sync_all"
+            | "gos_rt_fs_file_sync_data"
+            | "gos_rt_fs_file_unlock_range"
+            | "gos_rt_fs_file_unlock"
+            | "gos_rt_fs_sync_dir" => {
+                let unit = self.tcx.unit();
+                self.result_of(unit)
+            }
+            "gos_rt_fs_file_try_lock_range"
+            | "gos_rt_fs_file_try_lock_shared"
+            | "gos_rt_fs_file_try_lock_exclusive" => {
+                let b = self.tcx.bool_ty();
+                self.result_of(b)
             }
             "gos_rt_fs_file_read_to_string" => self.result_string_error_adt_ty(),
             "gos_rt_tcp_listener_accept" | "gos_rt_unix_listener_accept" => {
@@ -4330,6 +4376,19 @@ impl<'a> Builder<'a> {
             (Some("fs::File"), "read") => Some("gos_rt_fs_file_read"),
             (Some("fs::File"), "read_to_string") => Some("gos_rt_fs_file_read_to_string"),
             (Some("fs::File"), "write" | "write_all") => Some("gos_rt_fs_file_write"),
+            (Some("fs::File"), "write_bytes") => Some("gos_rt_fs_file_write_bytes"),
+            (Some("fs::File"), "read_at") => Some("gos_rt_fs_file_read_at"),
+            (Some("fs::File"), "write_at") => Some("gos_rt_fs_file_write_at"),
+            (Some("fs::File"), "seek") => Some("gos_rt_fs_file_seek"),
+            (Some("fs::File"), "set_len") => Some("gos_rt_fs_file_set_len"),
+            (Some("fs::File"), "len") => Some("gos_rt_fs_file_len"),
+            (Some("fs::File"), "sync_all") => Some("gos_rt_fs_file_sync_all"),
+            (Some("fs::File"), "sync_data") => Some("gos_rt_fs_file_sync_data"),
+            (Some("fs::File"), "try_lock_range") => Some("gos_rt_fs_file_try_lock_range"),
+            (Some("fs::File"), "unlock_range") => Some("gos_rt_fs_file_unlock_range"),
+            (Some("fs::File"), "try_lock_shared") => Some("gos_rt_fs_file_try_lock_shared"),
+            (Some("fs::File"), "try_lock_exclusive") => Some("gos_rt_fs_file_try_lock_exclusive"),
+            (Some("fs::File"), "unlock") => Some("gos_rt_fs_file_unlock"),
             (Some("fs::File"), "flush") => Some("gos_rt_fs_file_flush"),
             (Some("fs::File"), "close") => Some("gos_rt_fs_file_close"),
             (Some("fs::OpenOptions"), "read") => Some("gos_rt_fs_open_options_read"),

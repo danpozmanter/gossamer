@@ -1,21 +1,20 @@
 // End-to-end tests for MIR lowering + optimisation passes.
 
-use gossamer_hir::{lower_source_file, lower_source_file_with_edition};
+use gossamer_hir::lower_source_file;
 use gossamer_lex::SourceMap;
 use gossamer_mir::{
     BinOp, ConstValue, Local, Operand, Rvalue, StatementKind, Terminator, const_value_of,
     lower_program, optimise,
 };
 use gossamer_parse::{autoderive::parse_with_autoderive, parse_source_file};
-use gossamer_pkg::Edition;
 use gossamer_resolve::resolve_source_file;
-use gossamer_types::{TyCtxt, typecheck_source_file, typecheck_source_file_with_edition};
+use gossamer_types::{TyCtxt, typecheck_source_file};
 
 fn build(source: &str) -> (Vec<gossamer_mir::Body>, TyCtxt) {
-    build_with_edition(source, Edition::E2026)
+    build_inner(source)
 }
 
-fn build_with_edition(source: &str, edition: Edition) -> (Vec<gossamer_mir::Body>, TyCtxt) {
+fn build_inner(source: &str) -> (Vec<gossamer_mir::Body>, TyCtxt) {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
     let (sf, parse_diags) = parse_with_autoderive(source, file);
@@ -23,9 +22,9 @@ fn build_with_edition(source: &str, edition: Edition) -> (Vec<gossamer_mir::Body
     let (resolutions, _) = resolve_source_file(&sf);
     let mut tcx = TyCtxt::new();
     let (table, diagnostics) =
-        typecheck_source_file_with_edition(&sf, &resolutions, &mut tcx, edition);
+        typecheck_source_file(&sf, &resolutions, &mut tcx);
     assert!(diagnostics.is_empty(), "typecheck: {diagnostics:?}");
-    let hir = lower_source_file_with_edition(&sf, &resolutions, &table, &mut tcx, edition);
+    let hir = lower_source_file(&sf, &resolutions, &table, &mut tcx);
     let bodies = lower_program(&hir, &mut tcx);
     (bodies, tcx)
 }
@@ -179,58 +178,6 @@ fn caller() -> i64 { helper() }
         .iter()
         .any(|b| matches!(b.terminator, Terminator::Call { .. }));
     assert!(has_call, "expected a Call terminator");
-}
-
-#[test]
-fn edition_2027_lazy_iterator_pipelines_lower_to_runtime_handles() {
-    let source = r"use std::iter
-
-fn main() {
-    let collected = iter::range(0, 10)
-        |> iter::map(|x| x + 1)
-        |> iter::filter(|x| x % 2 == 0)
-        |> iter::take(3)
-        |> iter::collect
-    let chained = iter::chain(iter::range(0, 1), iter::range(1, 2)) |> iter::count
-    let zipped = iter::zip(iter::range(0, 2), iter::range(2, 4)) |> iter::collect
-    let enumerated = iter::range(3, 5) |> iter::enumerate |> iter::collect
-    let found = iter::range(0, 4) |> iter::find(|x| x == 2) |> option::unwrap_or(-1)
-    let folded = (2..=4).fold(1, |acc, x| acc * x)
-    let borrowed = #[1, 2, 3]
-    let borrowed_out = borrowed |> iter::take(1) |> iter::collect
-    let _ = collected
-    let _ = chained
-    let _ = zipped
-    let _ = enumerated
-    let _ = found
-    let _ = folded
-    let _ = borrowed_out
-}
-
-";
-    let (bodies, _) = build_with_edition(source, Edition::E2027);
-    let main = bodies.iter().find(|body| body.name == "main").expect("main");
-    let names = call_symbol_names(main);
-    for expected in [
-        "gos_rt_lazy_iter_range_i64",
-        "gos_rt_lazy_iter_map_i64",
-        "gos_rt_lazy_iter_filter_i64",
-        "gos_rt_lazy_iter_take_i64",
-        "gos_rt_lazy_iter_collect_i64",
-        "gos_rt_lazy_iter_chain_i64",
-        "gos_rt_lazy_iter_count_i64",
-        "gos_rt_lazy_iter_zip_i64",
-        "gos_rt_lazy_iter_collect_pair_i64",
-        "gos_rt_lazy_iter_enumerate_i64",
-        "gos_rt_lazy_iter_find_i64",
-        "gos_rt_lazy_iter_fold_i64",
-        "gos_rt_lazy_iter_from_vec_i64",
-    ] {
-        assert!(
-            names.iter().any(|name| name == expected),
-            "expected {expected} in MIR calls: {names:?}"
-        );
-    }
 }
 
 #[test]

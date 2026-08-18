@@ -381,6 +381,66 @@ pub const ENCODING_BINARY: StdModule = StdModule {
             doc: "Writes a little-endian u64.",
         },
         StdItem {
+            name: "get_u16_be_at",
+            kind: StdItemKind::Function,
+            doc: "Reads a big-endian u16 at a byte offset of an existing buffer. An offset plus width past the end is an Err, never a zero-fill.",
+        },
+        StdItem {
+            name: "put_u16_be_at",
+            kind: StdItemKind::Function,
+            doc: "Writes a big-endian u16 at a byte offset, in place through the caller's buffer. An offset plus width past the end is an Err.",
+        },
+        StdItem {
+            name: "get_u16_le_at",
+            kind: StdItemKind::Function,
+            doc: "Reads a little-endian u16 at a byte offset of an existing buffer. An offset plus width past the end is an Err, never a zero-fill.",
+        },
+        StdItem {
+            name: "put_u16_le_at",
+            kind: StdItemKind::Function,
+            doc: "Writes a little-endian u16 at a byte offset, in place through the caller's buffer. An offset plus width past the end is an Err.",
+        },
+        StdItem {
+            name: "get_u32_be_at",
+            kind: StdItemKind::Function,
+            doc: "Reads a big-endian u32 at a byte offset of an existing buffer. An offset plus width past the end is an Err, never a zero-fill.",
+        },
+        StdItem {
+            name: "put_u32_be_at",
+            kind: StdItemKind::Function,
+            doc: "Writes a big-endian u32 at a byte offset, in place through the caller's buffer. An offset plus width past the end is an Err.",
+        },
+        StdItem {
+            name: "get_u32_le_at",
+            kind: StdItemKind::Function,
+            doc: "Reads a little-endian u32 at a byte offset of an existing buffer. An offset plus width past the end is an Err, never a zero-fill.",
+        },
+        StdItem {
+            name: "put_u32_le_at",
+            kind: StdItemKind::Function,
+            doc: "Writes a little-endian u32 at a byte offset, in place through the caller's buffer. An offset plus width past the end is an Err.",
+        },
+        StdItem {
+            name: "get_u64_be_at",
+            kind: StdItemKind::Function,
+            doc: "Reads a big-endian u64 at a byte offset of an existing buffer. An offset plus width past the end is an Err, never a zero-fill.",
+        },
+        StdItem {
+            name: "put_u64_be_at",
+            kind: StdItemKind::Function,
+            doc: "Writes a big-endian u64 at a byte offset, in place through the caller's buffer. An offset plus width past the end is an Err.",
+        },
+        StdItem {
+            name: "get_u64_le_at",
+            kind: StdItemKind::Function,
+            doc: "Reads a little-endian u64 at a byte offset of an existing buffer. An offset plus width past the end is an Err, never a zero-fill.",
+        },
+        StdItem {
+            name: "put_u64_le_at",
+            kind: StdItemKind::Function,
+            doc: "Writes a little-endian u64 at a byte offset, in place through the caller's buffer. An offset plus width past the end is an Err.",
+        },
+        StdItem {
             name: "uvarint",
             kind: StdItemKind::Function,
             doc: "Decodes an unsigned varint.",

@@ -352,6 +352,54 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_bin_put_uvarint as *const u8,
         ),
         (
+            "gos_rt_bin_get_u16_be_at",
+            crate::c_abi::gos_rt_bin_get_u16_be_at as *const u8,
+        ),
+        (
+            "gos_rt_bin_put_u16_be_at",
+            crate::c_abi::gos_rt_bin_put_u16_be_at as *const u8,
+        ),
+        (
+            "gos_rt_bin_get_u16_le_at",
+            crate::c_abi::gos_rt_bin_get_u16_le_at as *const u8,
+        ),
+        (
+            "gos_rt_bin_put_u16_le_at",
+            crate::c_abi::gos_rt_bin_put_u16_le_at as *const u8,
+        ),
+        (
+            "gos_rt_bin_get_u32_be_at",
+            crate::c_abi::gos_rt_bin_get_u32_be_at as *const u8,
+        ),
+        (
+            "gos_rt_bin_put_u32_be_at",
+            crate::c_abi::gos_rt_bin_put_u32_be_at as *const u8,
+        ),
+        (
+            "gos_rt_bin_get_u32_le_at",
+            crate::c_abi::gos_rt_bin_get_u32_le_at as *const u8,
+        ),
+        (
+            "gos_rt_bin_put_u32_le_at",
+            crate::c_abi::gos_rt_bin_put_u32_le_at as *const u8,
+        ),
+        (
+            "gos_rt_bin_get_u64_be_at",
+            crate::c_abi::gos_rt_bin_get_u64_be_at as *const u8,
+        ),
+        (
+            "gos_rt_bin_put_u64_be_at",
+            crate::c_abi::gos_rt_bin_put_u64_be_at as *const u8,
+        ),
+        (
+            "gos_rt_bin_get_u64_le_at",
+            crate::c_abi::gos_rt_bin_get_u64_le_at as *const u8,
+        ),
+        (
+            "gos_rt_bin_put_u64_le_at",
+            crate::c_abi::gos_rt_bin_put_u64_le_at as *const u8,
+        ),
+        (
             "gos_rt_bin_put_varint",
             crate::c_abi::gos_rt_bin_put_varint as *const u8,
         ),
@@ -1129,12 +1177,28 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         ),
         ("gos_rt_exit", crate::c_abi::gos_rt_exit as *const u8),
         (
+            "gos_rt_f32_from_bits",
+            crate::c_abi::gos_rt_f32_from_bits as *const u8,
+        ),
+        (
+            "gos_rt_f32_to_bits",
+            crate::c_abi::gos_rt_f32_to_bits as *const u8,
+        ),
+        (
+            "gos_rt_f64_from_bits",
+            crate::c_abi::gos_rt_f64_from_bits as *const u8,
+        ),
+        (
             "gos_rt_f64_prec_to_str",
             crate::c_abi::gos_rt_f64_prec_to_str as *const u8,
         ),
         (
             "gos_rt_f64_to_str",
             crate::c_abi::gos_rt_f64_to_str as *const u8,
+        ),
+        (
+            "gos_rt_f64_to_bits",
+            crate::c_abi::gos_rt_f64_to_bits as *const u8,
         ),
         (
             "gos_rt_field_error_code",
@@ -1284,6 +1348,62 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_fs_file_write",
             crate::c_abi::gos_rt_fs_file_write as *const u8,
+        ),
+        (
+            "gos_rt_fs_file_len",
+            crate::c_abi::gos_rt_fs_file_len as *const u8,
+        ),
+        (
+            "gos_rt_fs_file_read_at",
+            crate::c_abi::gos_rt_fs_file_read_at as *const u8,
+        ),
+        (
+            "gos_rt_fs_file_seek",
+            crate::c_abi::gos_rt_fs_file_seek as *const u8,
+        ),
+        (
+            "gos_rt_fs_file_set_len",
+            crate::c_abi::gos_rt_fs_file_set_len as *const u8,
+        ),
+        (
+            "gos_rt_fs_file_sync_all",
+            crate::c_abi::gos_rt_fs_file_sync_all as *const u8,
+        ),
+        (
+            "gos_rt_fs_file_sync_data",
+            crate::c_abi::gos_rt_fs_file_sync_data as *const u8,
+        ),
+        (
+            "gos_rt_fs_file_try_lock_exclusive",
+            crate::c_abi::gos_rt_fs_file_try_lock_exclusive as *const u8,
+        ),
+        (
+            "gos_rt_fs_file_try_lock_range",
+            crate::c_abi::gos_rt_fs_file_try_lock_range as *const u8,
+        ),
+        (
+            "gos_rt_fs_file_try_lock_shared",
+            crate::c_abi::gos_rt_fs_file_try_lock_shared as *const u8,
+        ),
+        (
+            "gos_rt_fs_file_unlock",
+            crate::c_abi::gos_rt_fs_file_unlock as *const u8,
+        ),
+        (
+            "gos_rt_fs_file_unlock_range",
+            crate::c_abi::gos_rt_fs_file_unlock_range as *const u8,
+        ),
+        (
+            "gos_rt_fs_file_write_at",
+            crate::c_abi::gos_rt_fs_file_write_at as *const u8,
+        ),
+        (
+            "gos_rt_fs_file_write_bytes",
+            crate::c_abi::gos_rt_fs_file_write_bytes as *const u8,
+        ),
+        (
+            "gos_rt_fs_sync_dir",
+            crate::c_abi::gos_rt_fs_sync_dir as *const u8,
         ),
         (
             "gos_rt_fs_temp_dir",
@@ -6150,6 +6270,26 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_vec_pop_front_i64",
             crate::c_abi::gos_rt_vec_pop_front_i64 as *const u8,
+        ),
+        (
+            "gos_rt_vec_binary_search_f64",
+            crate::c_abi::gos_rt_vec_binary_search_f64 as *const u8,
+        ),
+        (
+            "gos_rt_vec_binary_search_i64",
+            crate::c_abi::gos_rt_vec_binary_search_i64 as *const u8,
+        ),
+        (
+            "gos_rt_vec_binary_search_str",
+            crate::c_abi::gos_rt_vec_binary_search_str as *const u8,
+        ),
+        (
+            "gos_rt_vec_copy_from_slice",
+            crate::c_abi::gos_rt_vec_copy_from_slice as *const u8,
+        ),
+        (
+            "gos_rt_vec_copy_within",
+            crate::c_abi::gos_rt_vec_copy_within as *const u8,
         ),
         (
             "gos_rt_vec_push",

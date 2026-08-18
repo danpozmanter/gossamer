@@ -549,7 +549,7 @@ impl<'a> Lowerer<'a> {
             Operand::Const(ConstValue::Float(_)) => ConcatKind::Float,
             Operand::Const(ConstValue::Bool(_)) => ConcatKind::Bool,
             Operand::Const(ConstValue::Char(_)) => ConcatKind::Char,
-            Operand::Const(ConstValue::Unit) => ConcatKind::Int,
+            Operand::Const(ConstValue::Unit) => ConcatKind::Unit,
             Operand::Copy(p) => {
                 let ty = self.unwrap_ref(self.place_leaf_ty(p));
                 let ty = self.tcx.peel_nominal(ty);
@@ -562,6 +562,7 @@ impl<'a> Lowerer<'a> {
                     return ConcatKind::HandleFormat(sym);
                 }
                 match self.tcx.kind(ty) {
+                    Some(TyKind::Unit) => ConcatKind::Unit,
                     Some(TyKind::Bool) => ConcatKind::Bool,
                     Some(TyKind::Char) => ConcatKind::Char,
                     Some(TyKind::Float(_)) => ConcatKind::Float,
@@ -589,9 +590,7 @@ impl<'a> Lowerer<'a> {
                     }
                     // `time::Duration` / `time::Instant` are transparent
                     // `i64`s; print them as the integer they carry.
-                    Some(TyKind::Unit | TyKind::Never | TyKind::Duration | TyKind::Instant) => {
-                        ConcatKind::Int
-                    }
+                    Some(TyKind::Never | TyKind::Duration | TyKind::Instant) => ConcatKind::Int,
                     // Unresolved inference variable: the dominant
                     // producer that flows into println is
                     // `__concat`, which returns a String pointer

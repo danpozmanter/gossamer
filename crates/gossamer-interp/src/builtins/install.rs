@@ -101,6 +101,10 @@ fn install_math_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("pow", builtin("pow", builtin_math_pow)));
     globals.push(("math::pow", builtin("math::pow", builtin_math_pow)));
     for (name, function) in [
+        ("f64::to_bits", builtin_f64_to_bits as BuiltinFn),
+        ("f64::from_bits", builtin_f64_from_bits as BuiltinFn),
+        ("f32::to_bits", builtin_f32_to_bits as BuiltinFn),
+        ("f32::from_bits", builtin_f32_from_bits as BuiltinFn),
         ("wrapping_add", builtin_i64_wrapping_add as BuiltinFn),
         ("wrapping_mul", builtin_i64_wrapping_mul as BuiltinFn),
         ("i8::wrapping_add", builtin_i8_wrapping_add as BuiltinFn),
@@ -1182,6 +1186,19 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
         builtin("extend_from_slice", builtin_extend),
     ));
     globals.push(("truncate", builtin("truncate", builtin_truncate)));
+    globals.push(("resize", builtin("resize", builtin_resize)));
+    globals.push((
+        "copy_within",
+        builtin("copy_within", builtin_copy_within),
+    ));
+    globals.push((
+        "copy_from_slice",
+        builtin("copy_from_slice", builtin_copy_from_slice),
+    ));
+    globals.push((
+        "binary_search",
+        builtin("binary_search", builtin_binary_search),
+    ));
     globals.push(("reserve", builtin("reserve", builtin_vec_reserve)));
     globals.push((
         "reserve_exact",

@@ -4,10 +4,7 @@ use gossamer_ast::{ExprKind, ItemKind, SourceFile, StmtKind};
 use gossamer_lex::SourceMap;
 use gossamer_parse::parse_source_file;
 use gossamer_resolve::resolve_source_file;
-use gossamer_types::{
-    IntTy, TyCtxt, TyKind, TypeError, TypeTable, typecheck_source_file,
-    typecheck_source_file_with_lazy_iterators,
-};
+use gossamer_types::{IntTy, TyCtxt, TyKind, TypeError, TypeTable, typecheck_source_file};
 
 struct Checked {
     source: SourceFile,
@@ -17,10 +14,6 @@ struct Checked {
 }
 
 fn run(source: &str) -> Checked {
-    run_with_lazy_iterators(source, false)
-}
-
-fn run_with_lazy_iterators(source: &str, lazy_iterators: bool) -> Checked {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
     let (sf, parse_diags) = parse_source_file(source, file);
@@ -37,11 +30,7 @@ fn run_with_lazy_iterators(source: &str, lazy_iterators: bool) -> Checked {
         .collect();
     assert!(unresolved.is_empty(), "resolve errors: {unresolved:?}");
     let mut tcx = TyCtxt::new();
-    let (table, diagnostics) = if lazy_iterators {
-        typecheck_source_file_with_lazy_iterators(&sf, &resolutions, &mut tcx, true)
-    } else {
-        typecheck_source_file(&sf, &resolutions, &mut tcx)
-    };
+    let (table, diagnostics) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     Checked {
         source: sf,
         table,
@@ -258,47 +247,85 @@ fn integer_comparisons_accept_different_declared_widths() {
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
 
+/// `fs::File::write` is text-typed, so a byte vector is a type error at
+/// check time. Answering it as an `Err` at run time left a storage engine's
+/// write silently producing nothing.
 #[test]
-fn range_values_are_lazy_iterators_in_every_edition() {
-    for lazy_iterators in [false, true] {
-        let checked = run_with_lazy_iterators("fn main() { let r = 10.. }\n", lazy_iterators);
-        assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
-        let ItemKind::Fn(decl) = &checked.source.items[0].kind else {
-            panic!("expected fn");
-        };
-        let ExprKind::Block(block) = &decl.body.as_ref().expect("body").kind else {
-            panic!("expected block");
-        };
-        let StmtKind::Let {
-            init: Some(init), ..
-        } = &block.stmts[0].kind
-        else {
-            panic!("expected initialized let");
-        };
-        let ty = checked.table.get(init.id).expect("range typed");
-        let Some(TyKind::Range(elem)) = checked.tcx.kind(ty) else {
-            panic!("expected Range, got {:?}", checked.tcx.kind(ty));
-        };
-        assert!(matches!(
-            checked.tcx.kind(*elem),
-            Some(TyKind::Int(IntTy::I64))
-        ));
+fn a_byte_vector_is_rejected_by_the_text_write() {
+    let d = diagnostics_for(
+        "use std::fs\n\
+         fn main() { match fs::File::create(\"x.dat\") {\n\
+         Ok(f) => { let data: Vec<u8> = #[1]\n\
+         let _ = f.write(data) }\n\
+         Err(e) => println!(\"{}\", e)\n\
+         } }\n",
+    );
+    assert!(has_code(&d, "GT0001"), "{d:?}");
+}
 
-        let consumed = run_with_lazy_iterators(
-            "use Iterator\n\
-             fn total(it: Iterator<i64>) -> i64 { let mut sum = 0\n\
-             for value in it { sum += value }\n\
-             sum }\n\
-             fn main() { let r = 10..12\n\
-             let _ = total(r) }\n",
-            lazy_iterators,
-        );
-        assert!(
-            consumed.diagnostics.is_empty(),
-            "{:?}",
-            consumed.diagnostics
-        );
-    }
+/// A method the handle does not answer is reported where it is written,
+/// not as an unresolved name at run time.
+#[test]
+fn a_method_the_file_handle_lacks_is_rejected() {
+    let d = diagnostics_for(
+        "use std::fs\n\
+         fn main() { match fs::File::create(\"x.dat\") {\n\
+         Ok(f) => { let _ = f.zonk() }\n\
+         Err(e) => println!(\"{}\", e)\n\
+         } }\n",
+    );
+    assert!(has_code(&d, "GT0002"), "{d:?}");
+}
+
+/// Opening a file can fail, so the constructors answer a `Result` that `?`
+/// propagates rather than the bare handle.
+#[test]
+fn the_file_constructors_answer_a_result() {
+    let d = diagnostics_for(
+        "use std::{errors, fs}\n\
+         fn main() -> Result<(), errors::Error> { let f = fs::File::create(\"x.dat\")?\n\
+         f.close()\n\
+         Ok(()) }\n",
+    );
+    assert!(d.is_empty(), "{d:?}");
+}
+
+#[test]
+fn a_range_is_a_lazy_iterator() {
+    let checked = run("fn main() { let r = 10.. }\n");
+    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
+    let ItemKind::Fn(decl) = &checked.source.items[0].kind else {
+        panic!("expected fn");
+    };
+    let ExprKind::Block(block) = &decl.body.as_ref().expect("body").kind else {
+        panic!("expected block");
+    };
+    let StmtKind::Let {
+        init: Some(init), ..
+    } = &block.stmts[0].kind
+    else {
+        panic!("expected initialized let");
+    };
+    let ty = checked.table.get(init.id).expect("range typed");
+    let Some(TyKind::Range(elem)) = checked.tcx.kind(ty) else {
+        panic!("expected Range, got {:?}", checked.tcx.kind(ty));
+    };
+    assert!(matches!(
+        checked.tcx.kind(*elem),
+        Some(TyKind::Int(IntTy::I64))
+    ));
+
+    let consumed = run("use Iterator\n\
+         fn total(it: Iterator<i64>) -> i64 { let mut sum = 0\n\
+         for value in it { sum += value }\n\
+         sum }\n\
+         fn main() { let r = 10..12\n\
+         let _ = total(r) }\n");
+    assert!(
+        consumed.diagnostics.is_empty(),
+        "{:?}",
+        consumed.diagnostics
+    );
 }
 
 #[test]
@@ -1523,83 +1550,6 @@ fn piped_iter_map_closure_param_pins_to_elem_type() {
 }
 
 #[test]
-fn lazy_iter_map_types_as_iterator_when_enabled() {
-    let checked = run_with_lazy_iterators(
-        "use std::iter\n\
-         fn main() { let xs: Vec<String> = Vec::from([\"a\"])\n\
-         let ys = xs |> iter::map(|s| format!(\"({s})\")) }\n",
-        true,
-    );
-    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
-    let init = let_init(&checked, "main", 1);
-    assert!(
-        matches!(closure_param_kind(&checked, init), TyKind::String),
-        "lazy iter::map closure param must pin to the Vec element String"
-    );
-    let pipe_ty = checked.table.get(init.id).expect("pipe typed");
-    let Some(TyKind::Iterator(elem)) = checked.tcx.kind(pipe_ty) else {
-        panic!("lazy iter::map must type as Iterator");
-    };
-    assert!(matches!(checked.tcx.kind(*elem), Some(TyKind::String)));
-}
-
-#[test]
-fn lazy_range_take_enumerate_collect_pipeline_types() {
-    let checked = run_with_lazy_iterators(
-        "use std::iter\n\
-         fn main() { let xs = iter::range(0, 10) |> iter::take(3) |> iter::enumerate()\n\
-         let out = iter::collect(xs)\n\
-         let _ = out }\n",
-        true,
-    );
-    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
-
-    let lazy_stage = let_init(&checked, "main", 0);
-    let Some(TyKind::Iterator(pair)) = checked.tcx.kind(checked.table.get(lazy_stage.id).unwrap())
-    else {
-        panic!("range/take/enumerate pipeline must type as Iterator");
-    };
-    let Some(TyKind::Tuple(parts)) = checked.tcx.kind(*pair) else {
-        panic!("enumerate item must be a tuple");
-    };
-    assert_eq!(parts.len(), 2);
-    assert!(matches!(checked.tcx.kind(parts[0]), Some(TyKind::Int(_))));
-    assert!(matches!(checked.tcx.kind(parts[1]), Some(TyKind::Int(_))));
-
-    let collected = let_init(&checked, "main", 1);
-    let Some(TyKind::Vec(_)) = checked.tcx.kind(checked.table.get(collected.id).unwrap()) else {
-        panic!("iter::collect must materialize a Vec");
-    };
-}
-
-#[test]
-fn lazy_source_and_scalar_terminal_rows_type() {
-    let checked = run_with_lazy_iterators(
-        "use std::iter\n\
-         fn main() { let one = iter::once(7)\n\
-         let total = iter::sum(one)\n\
-         let xs = iter::range(0, 3)\n\
-         let best = iter::max(xs)\n\
-         let _ = total\n\
-         let _ = best }\n",
-        true,
-    );
-    assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
-
-    let one = let_init(&checked, "main", 0);
-    let Some(TyKind::Iterator(elem)) = checked.tcx.kind(checked.table.get(one.id).unwrap()) else {
-        panic!("iter::once must type as Iterator in lazy mode");
-    };
-    assert!(matches!(checked.tcx.kind(*elem), Some(TyKind::Int(_))));
-
-    let total = let_init(&checked, "main", 1);
-    assert!(matches!(
-        checked.tcx.kind(checked.table.get(total.id).unwrap()),
-        Some(TyKind::Int(_))
-    ));
-}
-
-#[test]
 fn piped_result_default_with_closure_param_pins_to_err_type() {
     let checked = run("use std::result\n\
          fn fail() -> Result<i64, String> { Err(\"boom\") }\n\
@@ -1734,24 +1684,13 @@ fn bool_and_char_casts_pass_the_whitelist() {
 // ---------------------------------------------------------------
 
 fn diagnostics_for(source: &str) -> Vec<gossamer_types::TypeDiagnostic> {
-    diagnostics_for_with_lazy_iterators(source, false)
-}
-
-fn diagnostics_for_with_lazy_iterators(
-    source: &str,
-    lazy_iterators: bool,
-) -> Vec<gossamer_types::TypeDiagnostic> {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
     let (sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse errors: {parse_diags:?}");
     let (resolutions, _) = resolve_source_file(&sf);
     let mut tcx = TyCtxt::new();
-    let (_, diagnostics) = if lazy_iterators {
-        typecheck_source_file_with_lazy_iterators(&sf, &resolutions, &mut tcx, true)
-    } else {
-        typecheck_source_file(&sf, &resolutions, &mut tcx)
-    };
+    let (_, diagnostics) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     diagnostics
 }
 
@@ -1868,46 +1807,29 @@ fn index_on_scalar_is_rejected() {
 }
 
 #[test]
-fn index_on_lazy_iterator_is_rejected() {
-    let d = diagnostics_for_with_lazy_iterators(
-        "use std::iter\nfn main() { let xs = iter::range(0, 3)\n let y = xs[0]\n let _ = y }\n",
-        true,
-    );
+fn index_on_a_lazy_iterator_is_rejected() {
+    let d = diagnostics_for("fn main() { let xs = 0..3\n let y = xs[0]\n let _ = y }\n");
     assert!(has_code(&d, "GT0021"), "{d:?}");
 }
 
 #[test]
-fn formatting_lazy_iterator_is_rejected() {
-    let d = diagnostics_for_with_lazy_iterators(
-        "use std::iter\nfn main() { let xs = iter::range(0, 3)\n println!(\"{}\", xs) }\n",
-        true,
-    );
+fn formatting_a_lazy_iterator_is_rejected() {
+    let d = diagnostics_for("fn main() { let xs = 0..3\n println!(\"{}\", xs) }\n");
     assert!(has_code(&d, "GT0041"), "{d:?}");
 }
 
 #[test]
 fn lazy_iterator_step_by_is_accepted() {
-    let d = diagnostics_for_with_lazy_iterators(
+    let d = diagnostics_for(
         "use std::iter\nfn main() { let xs = iter::range(0, 9) |> iter::step_by(2)\n let _ = xs }\n",
-        true,
     );
     assert!(d.is_empty(), "{d:?}");
 }
 
 #[test]
-fn lazy_terminal_rejects_a_materialized_vec() {
-    let d = diagnostics_for_with_lazy_iterators(
-        "use std::iter\nfn main() { let xs = [1, 2, 3]\n let n = iter::sum(xs)\n let _ = n }\n",
-        true,
-    );
-    assert!(has_code(&d, "GT0001"), "{d:?}");
-}
-
-#[test]
 fn reusing_consumed_lazy_iterator_is_rejected() {
-    let d = diagnostics_for_with_lazy_iterators(
-        "use std::iter\nfn main() { let xs = iter::range(0, 3)\n let out = iter::collect(xs)\n let _ = xs\n let _ = out }\n",
-        true,
+    let d = diagnostics_for(
+        "use std::iter\nfn main() { let xs = 0..3\n let out = iter::collect(xs)\n let _ = xs\n let _ = out }\n",
     );
     assert!(has_code(&d, "GT0042"), "{d:?}");
 }
@@ -1918,16 +1840,15 @@ fn iterator_parameters_cannot_be_reused_after_consuming_methods_or_for_loops() {
         "use Iterator\nfn consume(r: Iterator<i64>) { let n = r.count()\n let _ = r\n let _ = n }\n",
         "use Iterator\nfn consume(r: Iterator<i64>) { for i in r { let _ = i }\n let _ = r }\n",
     ] {
-        let d = diagnostics_for_with_lazy_iterators(source, true);
+        let d = diagnostics_for(source);
         assert!(has_code(&d, "GT0042"), "{source}: {d:?}");
     }
 }
 
 #[test]
 fn reusing_pipe_consumed_lazy_iterator_is_rejected() {
-    let d = diagnostics_for_with_lazy_iterators(
-        "use std::iter\nfn main() { let xs = iter::range(0, 3)\n let out = xs |> iter::take(1)\n let _ = xs\n let _ = out }\n",
-        true,
+    let d = diagnostics_for(
+        "use std::iter\nfn main() { let xs = 0..3\n let out = xs |> iter::take(1)\n let _ = xs\n let _ = out }\n",
     );
     assert!(has_code(&d, "GT0042"), "{d:?}");
 }
@@ -2014,7 +1935,7 @@ fn rebinding_a_consumed_iterator_name_starts_a_fresh_binding() {
         "use std::iter\nfn main() { let xs = iter::range(0, 3)\n let out = iter::collect(xs)\n let xs = iter::range(0, 4)\n let _ = iter::collect(xs)\n let _ = out }\n",
         "use std::iter\nfn main() { let xs = iter::range(0, 3)\n let out = iter::collect(xs)\n let xs = 10\n let _ = xs\n let _ = out }\n",
     ] {
-        let d = diagnostics_for_with_lazy_iterators(source, true);
+        let d = diagnostics_for(source);
         assert!(!has_code(&d, "GT0042"), "{source}: {d:?}");
     }
 }
@@ -3185,17 +3106,14 @@ fn constant_repeat_literal_can_flow_into_vec_of_fixed_arrays() {
 
 #[test]
 fn std_iter_skip_while_full_import_and_methods_typecheck() {
-    let checked = run_with_lazy_iterators(
-        "use std::iter::skip_while\n\
+    let checked = run("use std::iter::skip_while\n\
          fn main() {\n\
          let xs = #[1, 2, 3, 1]\n\
          let a = skip_while(|x: i64| x < 3, xs)\n\
          let b = xs.iter().skip_while(|x: i64| x < 3)\n\
          let c = (1..5).skip_while(|x: i64| x < 3).collect()\n\
          println!(\"{} {} {}\", a.count(), b.count(), c.len())\n\
-         }\n",
-        true,
-    );
+         }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
 
@@ -3947,7 +3865,7 @@ fn a_body_answering_a_value_without_a_declared_return_is_reported() {
     assert!(
         checked.diagnostics.iter().any(|d| matches!(
             &d.error,
-            TypeError::MissingReturnType { name, found } if name == "add" && found == "i64"
+            TypeError::UndeclaredReturnValue { name, found } if name == "add" && found == "i64"
         )),
         "{:?}",
         checked.diagnostics
@@ -3961,7 +3879,7 @@ fn a_body_answering_a_unit_needs_no_declared_return() {
         !checked
             .diagnostics
             .iter()
-            .any(|d| matches!(&d.error, TypeError::MissingReturnType { .. })),
+            .any(|d| matches!(&d.error, TypeError::UndeclaredReturnValue { .. })),
         "{:?}",
         checked.diagnostics
     );

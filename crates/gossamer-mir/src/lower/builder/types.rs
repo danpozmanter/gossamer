@@ -896,6 +896,17 @@ impl<'a> Builder<'a> {
         })
     }
 
+    /// `Result<ok, err>` for an arbitrary error type - the shape
+    /// `binary_search` answers, whose `Err` carries an insertion index
+    /// rather than a diagnostic.
+    pub(crate) fn result_adt_of(&mut self, ok: Ty, err: Ty) -> Ty {
+        let substs = gossamer_types::Substs::from_types([ok, err]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX),
+            substs,
+        })
+    }
+
     /// The x509 `CertInfo` leaf tuple: `(String, String, [u8], i64,
     /// i64, [String], [u8])`.
     pub(crate) fn tuple_cert_info_ty(&mut self) -> Ty {

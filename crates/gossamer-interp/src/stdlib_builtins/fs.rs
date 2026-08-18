@@ -104,6 +104,11 @@ use crate::builtins::{
 };
 use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeError, RuntimeResult, Value};
 
+use gossamer_runtime::c_abi::fs::{
+    classify_io_error, read_at_offset, sync_directory, try_lock_range_on, unlock_range_on,
+    write_at_offset,
+};
+
 /// Entry point invoked from `builtins::install`.
 use super::*;
 
@@ -122,6 +127,7 @@ pub(crate) fn install_fs_extras(globals: &mut Vec<(&'static str, Value)>) {
             ("canonicalize", builtin_os_canonicalize),
             ("temp_dir", builtin_fs_temp_dir),
             ("temp_file", builtin_fs_temp_file),
+            ("sync_dir", builtin_fs_sync_dir),
         ],
         globals,
     );
@@ -132,6 +138,15 @@ pub(crate) fn install_fs_extras(globals: &mut Vec<(&'static str, Value)>) {
         let q = "__gos_fs_metadata_raw";
         globals.push((q, crate::builtins::builtin_pub(q, builtin_fs_metadata_raw)));
     }
+    // `whence` selectors for `File::seek`, bound as integer globals so
+    // call sites name the position rather than a bare 0/1/2.
+    for (name, value) in [
+        ("fs::SEEK_SET", 0),
+        ("fs::SEEK_CUR", 1),
+        ("fs::SEEK_END", 2),
+    ] {
+        globals.push((name, Value::Int(value)));
+    }
     let methods: &[(&str, BuiltinFnPub)] = &[
         ("File::open", builtin_fs_file_open),
         ("File::create", builtin_fs_file_create),
@@ -139,6 +154,22 @@ pub(crate) fn install_fs_extras(globals: &mut Vec<(&'static str, Value)>) {
         ("File::read_to_string", builtin_fs_file_read_to_string),
         ("File::write", builtin_fs_file_write),
         ("File::write_all", builtin_fs_file_write),
+        ("File::write_bytes", builtin_fs_file_write_bytes),
+        ("File::read_at", builtin_fs_file_read_at),
+        ("File::write_at", builtin_fs_file_write_at),
+        ("File::seek", builtin_fs_file_seek),
+        ("File::set_len", builtin_fs_file_set_len),
+        ("File::len", builtin_fs_file_len),
+        ("File::sync_all", builtin_fs_file_sync_all),
+        ("File::sync_data", builtin_fs_file_sync_data),
+        ("File::try_lock_range", builtin_fs_file_try_lock_range),
+        ("File::unlock_range", builtin_fs_file_unlock_range),
+        ("File::try_lock_shared", builtin_fs_file_try_lock_shared),
+        (
+            "File::try_lock_exclusive",
+            builtin_fs_file_try_lock_exclusive,
+        ),
+        ("File::unlock", builtin_fs_file_unlock),
         ("File::flush", builtin_fs_file_flush),
         ("File::close", builtin_fs_file_close),
         ("OpenOptions::new", builtin_fs_open_options_new),
@@ -209,17 +240,39 @@ fn fetch_file_handle(id: i64) -> Option<Arc<parking_lot::Mutex<std::fs::File>>> 
     FS_FILE_REGISTRY.with(|r| r.borrow().get(&id).cloned())
 }
 
-/// Duplicate a handle while holding its registry/object locks only briefly.
-/// The duplicate can then move to the scheduler blocking pool without making a
-/// second goroutine wait on the language-level file handle for the duration of
-/// an OS syscall.
-fn clone_file_handle(id: i64) -> Result<std::fs::File, Value> {
+/// Run `op` on the handle's own descriptor in the blocking pool.
+///
+/// The descriptor is reached through the registry `Arc` rather than a
+/// `try_clone`: POSIX record locks are released when any descriptor for
+/// the file is closed by the process, so a handle owns exactly one for
+/// its lifetime and a lock taken through it survives later reads and
+/// writes.
+fn with_file_blocking<T, F>(id: i64, label: &'static str, context: &str, op: F) -> Result<T, Value>
+where
+    T: Send + 'static,
+    F: FnOnce(&mut std::fs::File) -> T + Send + 'static,
+{
     let Some(file) = fetch_file_handle(id) else {
-        return Err(err_variant("File: stale handle"));
+        return Err(err_variant(format!("{context}: stale handle")));
     };
-    file.lock()
-        .try_clone()
-        .map_err(|e| err_variant(e.to_string()))
+    gossamer_runtime::sched_global::run_blocking(label, move || {
+        let mut guard = file.lock();
+        op(&mut guard)
+    })
+    .map_err(err_variant)
+}
+
+/// Byte offset a `whence` selector names, or the diagnostic for an
+/// unknown one.
+fn seek_from(offset: i64, whence: i64) -> Result<std::io::SeekFrom, Value> {
+    match whence {
+        0 => Ok(std::io::SeekFrom::Start(offset.max(0) as u64)),
+        1 => Ok(std::io::SeekFrom::Current(offset)),
+        2 => Ok(std::io::SeekFrom::End(offset)),
+        _ => Err(err_variant(
+            "File::seek: whence must be SEEK_SET, SEEK_CUR, or SEEK_END",
+        )),
+    }
 }
 
 fn fetch_open_options_handle(id: i64) -> Option<Arc<parking_lot::Mutex<FsOpenOptionsState>>> {
@@ -242,11 +295,12 @@ pub(crate) fn builtin_fs_file_open(args: &[Value]) -> RuntimeResult<Value> {
         Ok(s) => s,
         Err(v) => return Ok(v),
     };
+    let path_context = path.clone();
     match gossamer_runtime::sched_global::run_blocking("fs-file-open", move || {
         std::fs::File::open(path)
     }) {
         Ok(Ok(file)) => Ok(ok_variant(insert_file_handle(file))),
-        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, &path_context))),
         Err(e) => Ok(err_variant(e)),
     }
 }
@@ -256,11 +310,12 @@ pub(crate) fn builtin_fs_file_create(args: &[Value]) -> RuntimeResult<Value> {
         Ok(s) => s,
         Err(v) => return Ok(v),
     };
+    let path_context = path.clone();
     match gossamer_runtime::sched_global::run_blocking("fs-file-create", move || {
         std::fs::File::create(path)
     }) {
         Ok(Ok(file)) => Ok(ok_variant(insert_file_handle(file))),
-        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, &path_context))),
         Err(e) => Ok(err_variant(e)),
     }
 }
@@ -272,13 +327,14 @@ pub(crate) fn builtin_fs_temp_dir(args: &[Value]) -> RuntimeResult<Value> {
         Ok(s) => s,
         Err(v) => return Ok(v),
     };
+    let path_context = prefix.clone();
     match gossamer_runtime::sched_global::run_blocking("fs-temp-dir", move || {
         gossamer_std::fs::temp_dir(&prefix)
     }) {
         Ok(Ok(path)) => Ok(ok_variant(Value::String(
             path.to_string_lossy().into_owned().into(),
         ))),
-        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, &path_context))),
         Err(e) => Ok(err_variant(e)),
     }
 }
@@ -290,6 +346,7 @@ pub(crate) fn builtin_fs_temp_file(args: &[Value]) -> RuntimeResult<Value> {
         Ok(s) => s,
         Err(v) => return Ok(v),
     };
+    let path_context = prefix.clone();
     match gossamer_runtime::sched_global::run_blocking("fs-temp-file", move || {
         gossamer_std::fs::temp_file(&prefix)
     }) {
@@ -300,7 +357,7 @@ pub(crate) fn builtin_fs_temp_file(args: &[Value]) -> RuntimeResult<Value> {
             ]
             .into(),
         ))),
-        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, &path_context))),
         Err(e) => Ok(err_variant(e)),
     }
 }
@@ -353,13 +410,14 @@ pub(crate) fn builtin_fs_open_options_open(args: &[Value]) -> RuntimeResult<Valu
         Ok(s) => s,
         Err(v) => return Ok(v),
     };
+    let path_context = path.clone();
     let Some(opts) = fetch_open_options_handle(id) else {
         return Ok(err_variant("OpenOptions::open: stale handle"));
     };
     let open = std_open_options(&opts.lock());
     match gossamer_runtime::sched_global::run_blocking("fs-open-options", move || open.open(path)) {
         Ok(Ok(file)) => Ok(ok_variant(insert_file_handle(file))),
-        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, &path_context))),
         Err(e) => Ok(err_variant(e)),
     }
 }
@@ -377,22 +435,16 @@ pub(crate) fn builtin_fs_file_read(args: &[Value]) -> RuntimeResult<Value> {
         Some(n) => n.min(1 << 24),
         None => 4096,
     };
-    let mut file = match clone_file_handle(id) {
-        Ok(file) => file,
-        Err(_) => return Ok(err_variant("File::read: stale handle")),
-    };
-    match gossamer_runtime::sched_global::run_blocking("fs-file-read", move || {
+    match with_file_blocking(id, "fs-file-read", "File::read", move |file| {
         let mut buf = vec![0u8; max as usize];
         file.read(&mut buf).map(|n| {
             buf.truncate(n);
             buf
         })
     }) {
-        Ok(Ok(buf)) => Ok(ok_variant(Value::Array(Arc::new(
-            buf.into_iter().map(|b| Value::Int(i64::from(b))).collect(),
-        )))),
-        Ok(Err(e)) => Ok(err_variant(e.to_string())),
-        Err(e) => Ok(err_variant(e)),
+        Ok(Ok(buf)) => Ok(ok_variant(bytes_value(&buf))),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, "File::read"))),
+        Err(v) => Ok(v),
     }
 }
 
@@ -400,17 +452,18 @@ pub(crate) fn builtin_fs_file_read_to_string(args: &[Value]) -> RuntimeResult<Va
     let Some(id) = args.first().and_then(handle_id) else {
         return Ok(err_variant("File::read_to_string: missing handle"));
     };
-    let mut file = match clone_file_handle(id) {
-        Ok(file) => file,
-        Err(_) => return Ok(err_variant("File::read_to_string: stale handle")),
-    };
-    match gossamer_runtime::sched_global::run_blocking("fs-file-read-string", move || {
-        let mut out = String::new();
-        file.read_to_string(&mut out).map(|_| out)
-    }) {
+    match with_file_blocking(
+        id,
+        "fs-file-read-string",
+        "File::read_to_string",
+        move |file| {
+            let mut out = String::new();
+            file.read_to_string(&mut out).map(|_| out)
+        },
+    ) {
         Ok(Ok(out)) => Ok(ok_variant(Value::String(out.into()))),
-        Ok(Err(e)) => Ok(err_variant(e.to_string())),
-        Err(e) => Ok(err_variant(e)),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, "File::read_to_string"))),
+        Err(v) => Ok(v),
     }
 }
 
@@ -418,43 +471,256 @@ pub(crate) fn builtin_fs_file_write(args: &[Value]) -> RuntimeResult<Value> {
     let Some(id) = args.first().and_then(handle_id) else {
         return Ok(err_variant("File::write: missing handle"));
     };
-    let bytes: Vec<u8> = match args.get(1) {
-        Some(Value::String(s)) => s.as_bytes().to_vec(),
-        Some(Value::Array(arr)) => arr
-            .iter()
-            .filter_map(|v| match v {
-                Value::Int(n) => u8::try_from(*n).ok(),
-                _ => None,
-            })
-            .collect(),
-        _ => return Ok(err_variant("File::write: expected string or byte array")),
-    };
-    let mut file = match clone_file_handle(id) {
-        Ok(file) => file,
-        Err(_) => return Ok(err_variant("File::write: stale handle")),
-    };
+    let bytes = crate::stdlib_builtins::crypto::value_to_bytes(args.get(1).unwrap_or(&Value::Unit));
     let written = bytes.len() as i64;
-    match gossamer_runtime::sched_global::run_blocking("fs-file-write", move || {
+    match with_file_blocking(id, "fs-file-write", "File::write", move |file| {
         file.write_all(&bytes)
     }) {
         Ok(Ok(())) => Ok(ok_variant(Value::Int(written))),
-        Ok(Err(e)) => Ok(err_variant(e.to_string())),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, "File::write"))),
+        Err(v) => Ok(v),
+    }
+}
+
+/// `fs::File::write_bytes(data) -> Result<i64, Error>`: one write against
+/// the handle's cursor, answering the byte count it transferred.
+pub(crate) fn builtin_fs_file_write_bytes(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("File::write_bytes: missing handle"));
+    };
+    let bytes = crate::stdlib_builtins::crypto::value_to_bytes(args.get(1).unwrap_or(&Value::Unit));
+    match with_file_blocking(
+        id,
+        "fs-file-write-bytes",
+        "File::write_bytes",
+        move |file| file.write(&bytes),
+    ) {
+        Ok(Ok(n)) => Ok(ok_variant(Value::Int(n as i64))),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, "File::write_bytes"))),
+        Err(v) => Ok(v),
+    }
+}
+
+/// `fs::File::read_at(len, offset) -> Result<Vec<u8>, Error>`.
+pub(crate) fn builtin_fs_file_read_at(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("File::read_at: missing handle"));
+    };
+    let len = args.get(1).and_then(value_to_int).unwrap_or(0);
+    let offset = args.get(2).and_then(value_to_int).unwrap_or(0);
+    if len < 0 || offset < 0 {
+        return Ok(err_variant(
+            "File::read_at: length and offset must be non-negative",
+        ));
+    }
+    let cap = len.min(1 << 24) as usize;
+    let at = offset as u64;
+    match with_file_blocking(id, "fs-file-read-at", "File::read_at", move |file| {
+        let mut buf = vec![0u8; cap];
+        read_at_offset(file, &mut buf, at).map(|n| {
+            buf.truncate(n);
+            buf
+        })
+    }) {
+        Ok(Ok(buf)) => Ok(ok_variant(bytes_value(&buf))),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, "File::read_at"))),
+        Err(v) => Ok(v),
+    }
+}
+
+/// `fs::File::write_at(data, offset) -> Result<i64, Error>`.
+pub(crate) fn builtin_fs_file_write_at(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("File::write_at: missing handle"));
+    };
+    let bytes = crate::stdlib_builtins::crypto::value_to_bytes(args.get(1).unwrap_or(&Value::Unit));
+    let offset = args.get(2).and_then(value_to_int).unwrap_or(0);
+    if offset < 0 {
+        return Ok(err_variant("File::write_at: offset must be non-negative"));
+    }
+    let at = offset as u64;
+    match with_file_blocking(id, "fs-file-write-at", "File::write_at", move |file| {
+        write_at_offset(file, &bytes, at)
+    }) {
+        Ok(Ok(n)) => Ok(ok_variant(Value::Int(n as i64))),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, "File::write_at"))),
+        Err(v) => Ok(v),
+    }
+}
+
+/// `fs::File::seek(offset, whence) -> Result<i64, Error>`.
+pub(crate) fn builtin_fs_file_seek(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("File::seek: missing handle"));
+    };
+    let offset = args.get(1).and_then(value_to_int).unwrap_or(0);
+    let whence = args.get(2).and_then(value_to_int).unwrap_or(0);
+    let from = match seek_from(offset, whence) {
+        Ok(from) => from,
+        Err(v) => return Ok(v),
+    };
+    match with_file_blocking(id, "fs-file-seek", "File::seek", move |file| {
+        std::io::Seek::seek(file, from)
+    }) {
+        Ok(Ok(pos)) => Ok(ok_variant(Value::Int(pos as i64))),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, "File::seek"))),
+        Err(v) => Ok(v),
+    }
+}
+
+/// `fs::File::set_len(len) -> Result<(), Error>`.
+pub(crate) fn builtin_fs_file_set_len(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("File::set_len: missing handle"));
+    };
+    let len = args.get(1).and_then(value_to_int).unwrap_or(0);
+    if len < 0 {
+        return Ok(err_variant("File::set_len: length must be non-negative"));
+    }
+    let len = len as u64;
+    match with_file_blocking(id, "fs-file-set-len", "File::set_len", move |file| {
+        file.set_len(len)
+    }) {
+        Ok(Ok(())) => Ok(ok_variant(Value::Unit)),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, "File::set_len"))),
+        Err(v) => Ok(v),
+    }
+}
+
+/// `fs::File::len() -> Result<i64, Error>`.
+pub(crate) fn builtin_fs_file_len(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("File::len: missing handle"));
+    };
+    match with_file_blocking(id, "fs-file-len", "File::len", |file| {
+        file.metadata().map(|m| m.len())
+    }) {
+        Ok(Ok(len)) => Ok(ok_variant(Value::Int(len as i64))),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, "File::len"))),
+        Err(v) => Ok(v),
+    }
+}
+
+/// `fs::File::sync_all() -> Result<(), Error>`.
+pub(crate) fn builtin_fs_file_sync_all(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("File::sync_all: missing handle"));
+    };
+    match with_file_blocking(id, "fs-file-sync-all", "File::sync_all", |file| {
+        file.sync_all()
+    }) {
+        Ok(Ok(())) => Ok(ok_variant(Value::Unit)),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, "File::sync_all"))),
+        Err(v) => Ok(v),
+    }
+}
+
+/// `fs::File::sync_data() -> Result<(), Error>`.
+pub(crate) fn builtin_fs_file_sync_data(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("File::sync_data: missing handle"));
+    };
+    match with_file_blocking(id, "fs-file-sync-data", "File::sync_data", |file| {
+        file.sync_data()
+    }) {
+        Ok(Ok(())) => Ok(ok_variant(Value::Unit)),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, "File::sync_data"))),
+        Err(v) => Ok(v),
+    }
+}
+
+/// `fs::sync_dir(path) -> Result<(), Error>`.
+pub(crate) fn builtin_fs_sync_dir(args: &[Value]) -> RuntimeResult<Value> {
+    let path = match arg_str_at(args, 0, "fs::sync_dir", "path") {
+        Ok(s) => s,
+        Err(v) => return Ok(v),
+    };
+    let path_context = path.clone();
+    match gossamer_runtime::sched_global::run_blocking("fs-sync-dir", move || sync_directory(&path))
+    {
+        Ok(Ok(())) => Ok(ok_variant(Value::Unit)),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, &path_context))),
         Err(e) => Ok(err_variant(e)),
     }
+}
+
+/// `fs::File::try_lock_range(start, len, exclusive) -> Result<bool, Error>`.
+pub(crate) fn builtin_fs_file_try_lock_range(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("File::try_lock_range: missing handle"));
+    };
+    let start = args.get(1).and_then(value_to_int).unwrap_or(0);
+    let len = args.get(2).and_then(value_to_int).unwrap_or(0);
+    let exclusive = matches!(args.get(3), Some(Value::Bool(true)));
+    if start < 0 || len < 0 {
+        return Ok(err_variant(
+            "File::try_lock_range: start and len must be non-negative",
+        ));
+    }
+    let (start, len) = (start as u64, len as u64);
+    match with_file_blocking(id, "fs-file-lock", "File::try_lock_range", move |file| {
+        try_lock_range_on(file, start, len, exclusive)
+    }) {
+        Ok(Ok(acquired)) => Ok(ok_variant(Value::Bool(acquired))),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, "File::try_lock_range"))),
+        Err(v) => Ok(v),
+    }
+}
+
+/// `fs::File::unlock_range(start, len) -> Result<(), Error>`.
+pub(crate) fn builtin_fs_file_unlock_range(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("File::unlock_range: missing handle"));
+    };
+    let start = args.get(1).and_then(value_to_int).unwrap_or(0);
+    let len = args.get(2).and_then(value_to_int).unwrap_or(0);
+    if start < 0 || len < 0 {
+        return Ok(err_variant(
+            "File::unlock_range: start and len must be non-negative",
+        ));
+    }
+    let (start, len) = (start as u64, len as u64);
+    match with_file_blocking(id, "fs-file-unlock", "File::unlock_range", move |file| {
+        unlock_range_on(file, start, len)
+    }) {
+        Ok(Ok(())) => Ok(ok_variant(Value::Unit)),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, "File::unlock_range"))),
+        Err(v) => Ok(v),
+    }
+}
+
+/// `fs::File::try_lock_shared() -> Result<bool, Error>`.
+pub(crate) fn builtin_fs_file_try_lock_shared(args: &[Value]) -> RuntimeResult<Value> {
+    let handle = args.first().cloned().unwrap_or(Value::Unit);
+    builtin_fs_file_try_lock_range(&[handle, Value::Int(0), Value::Int(0), Value::Bool(false)])
+}
+
+/// `fs::File::try_lock_exclusive() -> Result<bool, Error>`.
+pub(crate) fn builtin_fs_file_try_lock_exclusive(args: &[Value]) -> RuntimeResult<Value> {
+    let handle = args.first().cloned().unwrap_or(Value::Unit);
+    builtin_fs_file_try_lock_range(&[handle, Value::Int(0), Value::Int(0), Value::Bool(true)])
+}
+
+/// `fs::File::unlock() -> Result<(), Error>`.
+pub(crate) fn builtin_fs_file_unlock(args: &[Value]) -> RuntimeResult<Value> {
+    let handle = args.first().cloned().unwrap_or(Value::Unit);
+    builtin_fs_file_unlock_range(&[handle, Value::Int(0), Value::Int(0)])
+}
+
+/// Byte sequence in the packed `Vec<u8>` representation the rest of the
+/// byte surface hands back.
+fn bytes_value(bytes: &[u8]) -> Value {
+    Value::ByteVec(Arc::new(bytes.to_vec()))
 }
 
 pub(crate) fn builtin_fs_file_flush(args: &[Value]) -> RuntimeResult<Value> {
     let Some(id) = args.first().and_then(handle_id) else {
         return Ok(err_variant("File::flush: missing handle"));
     };
-    let mut file = match clone_file_handle(id) {
-        Ok(file) => file,
-        Err(_) => return Ok(err_variant("File::flush: stale handle")),
-    };
-    match gossamer_runtime::sched_global::run_blocking("fs-file-flush", move || file.flush()) {
+    match with_file_blocking(id, "fs-file-flush", "File::flush", |file| file.flush()) {
         Ok(Ok(())) => Ok(ok_variant(Value::Unit)),
-        Ok(Err(e)) => Ok(err_variant(e.to_string())),
-        Err(e) => Ok(err_variant(e)),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, "File::flush"))),
+        Err(v) => Ok(v),
     }
 }
 

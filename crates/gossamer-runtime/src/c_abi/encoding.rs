@@ -665,6 +665,122 @@ macro_rules! get_u64 {
 get_u64!(gos_rt_bin_get_u64_be, from_be_bytes);
 get_u64!(gos_rt_bin_get_u64_le, from_le_bytes);
 
+// ---------------------------------------------------------------
+// encoding::binary - offset-taking in-place accessors.
+// A pager reads a u16 at offset 5 of a 4 KiB page and writes a u32
+// at offset 8, so the `_at` family reads and writes through the
+// caller's own buffer instead of returning a fresh one. An offset
+// plus width that runs past the end is an `Err`, never a zero-fill.
+// ---------------------------------------------------------------
+
+/// Bytes `[offset, offset + width)` of `data`, or the diagnostic when
+/// that window is not entirely inside the buffer.
+unsafe fn window_of(
+    data: *const super::vec::GosVec,
+    offset: i64,
+    width: usize,
+) -> Result<Vec<u8>, i128> {
+    if offset < 0 {
+        return Err(err_result("binary: offset must be non-negative"));
+    }
+    let bytes = unsafe { gosvec_u8(data) };
+    let start = offset as usize;
+    let end = start
+        .checked_add(width)
+        .ok_or_else(|| err_result("binary: offset overflows the buffer"))?;
+    if end > bytes.len() {
+        return Err(err_result("binary: read past the end of the buffer"));
+    }
+    Ok(bytes[start..end].to_vec())
+}
+
+/// Writes `bytes` into `[offset, offset + bytes.len())` of a GosVec whose
+/// elements are single bytes, or answers the diagnostic when that window
+/// is not entirely inside the buffer.
+unsafe fn write_window(
+    data: *mut super::vec::GosVec,
+    offset: i64,
+    bytes: &[u8],
+) -> Result<(), i128> {
+    if offset < 0 {
+        return Err(err_result("binary: offset must be non-negative"));
+    }
+    if data.is_null() {
+        return Err(err_result("binary: null buffer"));
+    }
+    let header = unsafe { &*data };
+    if header.elem_bytes != 1 || header.ptr.is_null() {
+        return Err(err_result("binary: buffer is not a byte sequence"));
+    }
+    let len = header.len.max(0) as usize;
+    let start = offset as usize;
+    let end = start
+        .checked_add(bytes.len())
+        .ok_or_else(|| err_result("binary: offset overflows the buffer"))?;
+    if end > len {
+        return Err(err_result("binary: write past the end of the buffer"));
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), header.ptr.as_ptr().add(start), bytes.len());
+    }
+    Ok(())
+}
+
+/// `binary::get_<width>_<endian>_at(bytes, offset) -> Result<T, Error>`:
+/// reads the fixed-width integer at a byte offset of the caller's buffer.
+macro_rules! get_fixed_at {
+    ($name:ident, $ty:ty, $from:ident, $n:expr) => {
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $name(data: *const super::vec::GosVec, offset: i64) -> i128 {
+            ffi_entry!(0i128, {
+                let window = match unsafe { window_of(data, offset, $n) } {
+                    Ok(window) => window,
+                    Err(packed) => return packed,
+                };
+                let mut arr = [0u8; $n];
+                arr.copy_from_slice(&window);
+                unsafe { super::vec::gos_rt_result_new(0, <$ty>::$from(arr) as i64) }
+            })
+        }
+    };
+}
+
+get_fixed_at!(gos_rt_bin_get_u16_be_at, u16, from_be_bytes, 2);
+get_fixed_at!(gos_rt_bin_get_u16_le_at, u16, from_le_bytes, 2);
+get_fixed_at!(gos_rt_bin_get_u32_be_at, u32, from_be_bytes, 4);
+get_fixed_at!(gos_rt_bin_get_u32_le_at, u32, from_le_bytes, 4);
+get_fixed_at!(gos_rt_bin_get_u64_be_at, u64, from_be_bytes, 8);
+get_fixed_at!(gos_rt_bin_get_u64_le_at, u64, from_le_bytes, 8);
+
+/// `binary::put_<width>_<endian>_at(buf, offset, value) -> Result<(), Error>`:
+/// writes the fixed-width integer in place at a byte offset of the caller's
+/// buffer.
+macro_rules! put_fixed_at {
+    ($name:ident, $ty:ty, $to:ident) => {
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $name(
+            buf: *mut super::vec::GosVec,
+            offset: i64,
+            value: i64,
+        ) -> i128 {
+            ffi_entry!(0i128, {
+                let bytes = (value as $ty).$to();
+                match unsafe { write_window(buf, offset, &bytes) } {
+                    Ok(()) => unsafe { super::vec::gos_rt_result_new(0, 0) },
+                    Err(packed) => packed,
+                }
+            })
+        }
+    };
+}
+
+put_fixed_at!(gos_rt_bin_put_u16_be_at, u16, to_be_bytes);
+put_fixed_at!(gos_rt_bin_put_u16_le_at, u16, to_le_bytes);
+put_fixed_at!(gos_rt_bin_put_u32_be_at, u32, to_be_bytes);
+put_fixed_at!(gos_rt_bin_put_u32_le_at, u32, to_le_bytes);
+put_fixed_at!(gos_rt_bin_put_u64_be_at, u64, to_be_bytes);
+put_fixed_at!(gos_rt_bin_put_u64_le_at, u64, to_le_bytes);
+
 fn uvarint_decode(buf: &[u8]) -> Result<(u64, usize), String> {
     let mut x = 0u64;
     let mut s = 0u32;

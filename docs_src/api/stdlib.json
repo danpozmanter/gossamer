@@ -253,7 +253,7 @@
       "name": "std::bytes::Buffer",
       "kind": "type",
       "signature": null,
-      "description": "Growable byte buffer.",
+      "description": "Growable byte buffer for incremental assembly: new, with_capacity, write_str, push, len, is_empty, clear, to_string. A buffer you index, slice, or edit at an offset is a Vec<u8>.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -272,7 +272,7 @@
       "name": "std::bytes::Builder",
       "kind": "type",
       "signature": null,
-      "description": "Incremental string builder.",
+      "description": "Incremental string builder: new, write, write_char, len, build, as_str. Cheaper than repeated `+` on a String, which copies.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -2624,11 +2624,49 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-encoding-binary-get-u16-be-at",
+      "name": "std::encoding::binary::get_u16_be_at",
+      "kind": "function",
+      "signature": "fn get_u16_be_at(bytes: &Vec<u8>, offset: i64) -> Result<u16, errors::Error>",
+      "description": "Reads a big-endian u16 at a byte offset of an existing buffer. An offset plus width past the end is an Err, never a zero-fill.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdencodingbinary",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-encoding-binary-get-u16-le",
       "name": "std::encoding::binary::get_u16_le",
       "kind": "function",
       "signature": "fn get_u16_le(bytes: Vec<u8>) -> Result<i64, errors::Error>",
       "description": "Reads a little-endian u16.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdencodingbinary",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-encoding-binary-get-u16-le-at",
+      "name": "std::encoding::binary::get_u16_le_at",
+      "kind": "function",
+      "signature": "fn get_u16_le_at(bytes: &Vec<u8>, offset: i64) -> Result<u16, errors::Error>",
+      "description": "Reads a little-endian u16 at a byte offset of an existing buffer. An offset plus width past the end is an Err, never a zero-fill.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -2662,11 +2700,49 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-encoding-binary-get-u32-be-at",
+      "name": "std::encoding::binary::get_u32_be_at",
+      "kind": "function",
+      "signature": "fn get_u32_be_at(bytes: &Vec<u8>, offset: i64) -> Result<u32, errors::Error>",
+      "description": "Reads a big-endian u32 at a byte offset of an existing buffer. An offset plus width past the end is an Err, never a zero-fill.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdencodingbinary",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-encoding-binary-get-u32-le",
       "name": "std::encoding::binary::get_u32_le",
       "kind": "function",
       "signature": "fn get_u32_le(bytes: Vec<u8>) -> Result<i64, errors::Error>",
       "description": "Reads a little-endian u32.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdencodingbinary",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-encoding-binary-get-u32-le-at",
+      "name": "std::encoding::binary::get_u32_le_at",
+      "kind": "function",
+      "signature": "fn get_u32_le_at(bytes: &Vec<u8>, offset: i64) -> Result<u32, errors::Error>",
+      "description": "Reads a little-endian u32 at a byte offset of an existing buffer. An offset plus width past the end is an Err, never a zero-fill.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -2700,11 +2776,49 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-encoding-binary-get-u64-be-at",
+      "name": "std::encoding::binary::get_u64_be_at",
+      "kind": "function",
+      "signature": "fn get_u64_be_at(bytes: &Vec<u8>, offset: i64) -> Result<u64, errors::Error>",
+      "description": "Reads a big-endian u64 at a byte offset of an existing buffer. An offset plus width past the end is an Err, never a zero-fill.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdencodingbinary",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-encoding-binary-get-u64-le",
       "name": "std::encoding::binary::get_u64_le",
       "kind": "function",
       "signature": "fn get_u64_le(bytes: Vec<u8>) -> Result<i64, errors::Error>",
       "description": "Reads a little-endian u64.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdencodingbinary",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-encoding-binary-get-u64-le-at",
+      "name": "std::encoding::binary::get_u64_le_at",
+      "kind": "function",
+      "signature": "fn get_u64_le_at(bytes: &Vec<u8>, offset: i64) -> Result<u64, errors::Error>",
+      "description": "Reads a little-endian u64 at a byte offset of an existing buffer. An offset plus width past the end is an Err, never a zero-fill.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -2757,11 +2871,49 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-encoding-binary-put-u16-be-at",
+      "name": "std::encoding::binary::put_u16_be_at",
+      "kind": "function",
+      "signature": "fn put_u16_be_at(buf: &mut Vec<u8>, offset: i64, value: u16) -> Result<(), errors::Error>",
+      "description": "Writes a big-endian u16 at a byte offset, in place through the caller's buffer. An offset plus width past the end is an Err.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdencodingbinary",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-encoding-binary-put-u16-le",
       "name": "std::encoding::binary::put_u16_le",
       "kind": "function",
       "signature": "fn put_u16_le(buf: Vec<u8>, value: i64) -> Vec<u8>",
       "description": "Writes a little-endian u16.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdencodingbinary",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-encoding-binary-put-u16-le-at",
+      "name": "std::encoding::binary::put_u16_le_at",
+      "kind": "function",
+      "signature": "fn put_u16_le_at(buf: &mut Vec<u8>, offset: i64, value: u16) -> Result<(), errors::Error>",
+      "description": "Writes a little-endian u16 at a byte offset, in place through the caller's buffer. An offset plus width past the end is an Err.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -2795,11 +2947,49 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-encoding-binary-put-u32-be-at",
+      "name": "std::encoding::binary::put_u32_be_at",
+      "kind": "function",
+      "signature": "fn put_u32_be_at(buf: &mut Vec<u8>, offset: i64, value: u32) -> Result<(), errors::Error>",
+      "description": "Writes a big-endian u32 at a byte offset, in place through the caller's buffer. An offset plus width past the end is an Err.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdencodingbinary",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-encoding-binary-put-u32-le",
       "name": "std::encoding::binary::put_u32_le",
       "kind": "function",
       "signature": "fn put_u32_le(buf: Vec<u8>, value: i64) -> Vec<u8>",
       "description": "Writes a little-endian u32.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdencodingbinary",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-encoding-binary-put-u32-le-at",
+      "name": "std::encoding::binary::put_u32_le_at",
+      "kind": "function",
+      "signature": "fn put_u32_le_at(buf: &mut Vec<u8>, offset: i64, value: u32) -> Result<(), errors::Error>",
+      "description": "Writes a little-endian u32 at a byte offset, in place through the caller's buffer. An offset plus width past the end is an Err.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -2833,11 +3023,49 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-encoding-binary-put-u64-be-at",
+      "name": "std::encoding::binary::put_u64_be_at",
+      "kind": "function",
+      "signature": "fn put_u64_be_at(buf: &mut Vec<u8>, offset: i64, value: u64) -> Result<(), errors::Error>",
+      "description": "Writes a big-endian u64 at a byte offset, in place through the caller's buffer. An offset plus width past the end is an Err.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdencodingbinary",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-encoding-binary-put-u64-le",
       "name": "std::encoding::binary::put_u64_le",
       "kind": "function",
       "signature": "fn put_u64_le(buf: Vec<u8>, value: i64) -> Vec<u8>",
       "description": "Writes a little-endian u64.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdencodingbinary",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-encoding-binary-put-u64-le-at",
+      "name": "std::encoding::binary::put_u64_le_at",
+      "kind": "function",
+      "signature": "fn put_u64_le_at(buf: &mut Vec<u8>, offset: i64, value: u64) -> Result<(), errors::Error>",
+      "description": "Writes a little-endian u64 at a byte offset, in place through the caller's buffer. An offset plus width past the end is an Err.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -4471,7 +4699,7 @@
       "name": "std::fs::File",
       "kind": "type",
       "signature": null,
-      "description": "Streaming file handle; supports read, read_to_string, write, flush, and close.",
+      "description": "Streaming file handle. Reads and writes at the handle's own cursor (read, read_to_string, write, write_bytes, seek), positionally (read_at, write_at), and reports size (len, set_len). Durability is sync_all / sync_data; multi-process safety is the try_lock_* / unlock family.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -4491,6 +4719,63 @@
       "kind": "type",
       "signature": null,
       "description": "Builder for opening files with read/write/append/create/truncate flags.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdfs",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-fs-SEEK-CUR",
+      "name": "std::fs::SEEK_CUR",
+      "kind": "const",
+      "signature": null,
+      "description": "File::seek whence: the offset is relative to the current position.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdfs",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-fs-SEEK-END",
+      "name": "std::fs::SEEK_END",
+      "kind": "const",
+      "signature": null,
+      "description": "File::seek whence: the offset is relative to the end of the file.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdfs",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-fs-SEEK-SET",
+      "name": "std::fs::SEEK_SET",
+      "kind": "const",
+      "signature": null,
+      "description": "File::seek whence: the offset is absolute from the start of the file.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -4852,6 +5137,25 @@
       "kind": "function",
       "signature": "fn rename(src: String, dst: String) -> Result<(), io::Error>",
       "description": "Renames a file or directory.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdfs",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-fs-sync-dir",
+      "name": "std::fs::sync_dir",
+      "kind": "function",
+      "signature": "fn sync_dir(path: String) -> Result<(), errors::Error>",
+      "description": "Makes a directory's own entries durable - the barrier a create, rename, or delete needs after the file itself is synced. On Windows this is satisfied by NTFS metadata ordering and performs no flush.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",

@@ -42,7 +42,6 @@ use crate::loaders::profile_rss_stage;
 use crate::paths::{
     default_unit_name, platform_exe_name, read_entry_unit, resolve_entry_arg, resolve_output_path,
 };
-use gossamer_pkg::Edition;
 
 /// User-selected native-build options collected at the CLI boundary.
 pub(crate) struct BuildRequest<'a> {
@@ -222,7 +221,6 @@ fn run(file: &PathBuf, request: &BuildRequest<'_>) -> Result<()> {
     let started = Instant::now();
     let mut build_timings = BuildTimings::default();
     warn_if_pgo_profile_is_stale(file);
-    let edition = crate::paths::project_edition_for_entry(file);
     // Resolve `--target`. `None` or the host triple takes the host
     // build path. A registered, Linux-target triple cross-builds
     // through the same `try_native_build` pipeline; the codegen target
@@ -269,7 +267,7 @@ fn run(file: &PathBuf, request: &BuildRequest<'_>) -> Result<()> {
     let source = unit.source;
     build_timings.bundle = phase_started.elapsed();
     let phase_started = Instant::now();
-    let build_key = build_artifact_key(file, &source, edition, cross_target, opts, &out_path);
+    let build_key = build_artifact_key(file, &source, cross_target, opts, &out_path);
     let stamp_path = build_stamp_path(file, &out_path);
     if let Some(outcome) = load_unchanged_build(&stamp_path, &out_path, &build_key) {
         build_timings.stamp = phase_started.elapsed();
@@ -292,14 +290,12 @@ fn run(file: &PathBuf, request: &BuildRequest<'_>) -> Result<()> {
     let (sf, resolutions, table, tcx) = validate_source(
         file,
         source,
-        edition,
         &mut build_timings,
         (unit.entry.as_path(), unit.origins.as_slice()),
     )?;
     build_timings.frontend = phase_started.elapsed();
     profile_rss_stage("build_frontend_released");
     let checked = gossamer_driver::CheckedFrontend {
-        edition,
         sf,
         resolutions,
         table,
@@ -423,7 +419,6 @@ const BUILD_STAMP_VERSION: &str = "gossamer-linked-artifact-v1";
 fn build_artifact_key(
     file: &Path,
     source: &str,
-    edition: Edition,
     target: Option<&str>,
     opts: LinkOptions,
     out_path: &Path,
@@ -448,7 +443,7 @@ fn build_artifact_key(
     add(
         "options",
         format!(
-            "edition={edition:?}|target={}|release={}|debug={}|dynamic={}|static_musl={static_musl}|reproducible={}",
+            "target={}|release={}|debug={}|dynamic={}|static_musl={static_musl}|reproducible={}",
             target.unwrap_or("host"),
             opts.release,
             opts.debug_info,
@@ -604,7 +599,6 @@ fn store_successful_build(
 fn validate_source(
     file: &Path,
     source: String,
-    edition: Edition,
     timings: &mut BuildTimings,
     origins: (&Path, &[gossamer_pkg::bundle::BundledSpan]),
 ) -> Result<(
@@ -637,8 +631,7 @@ fn validate_source(
     // otherwise compile to a binary that segfaults on the unmatched arm)
     // and the canonical-`std`-path check (GR0005). Anything the gate
     // rejects must never reach codegen.
-    let outcome =
-        gossamer_driver::check_frontend_with_edition(map.source(file_id), file_id, edition);
+    let outcome = gossamer_driver::check_frontend(map.source(file_id), file_id);
     timings.parse = outcome.timings.parse;
     timings.resolve = outcome.timings.resolve;
     timings.typecheck = outcome.timings.typecheck;
@@ -669,7 +662,6 @@ fn validate_source(
     // only the live frontend artifacts.
     drop(map);
     let gossamer_driver::CheckedFrontend {
-        edition: _,
         sf,
         resolutions,
         table,
@@ -1973,30 +1965,16 @@ mod tests {
             debug_info: false,
             dynamic: true,
         };
-        let first = super::build_artifact_key(
-            &entry,
-            "fn main() {}\n",
-            gossamer_pkg::Edition::E2026,
-            None,
-            debug,
-            &output,
-        );
+        let first = super::build_artifact_key(&entry, "fn main() {}\n", None, debug, &output);
         let source_changed = super::build_artifact_key(
             &entry,
             "fn main() { println(\"changed\") }\n",
-            gossamer_pkg::Edition::E2026,
             None,
             debug,
             &output,
         );
-        let profile_changed = super::build_artifact_key(
-            &entry,
-            "fn main() {}\n",
-            gossamer_pkg::Edition::E2026,
-            None,
-            release,
-            &output,
-        );
+        let profile_changed =
+            super::build_artifact_key(&entry, "fn main() {}\n", None, release, &output);
         assert_ne!(first, source_changed);
         assert_ne!(first, profile_changed);
         std::fs::remove_dir_all(root).expect("remove scratch");

@@ -35,7 +35,6 @@ fn stable_root() -> PathBuf {
 struct FixtureRow {
     source: PathBuf,
     expected: String,
-    edition: Option<String>,
 }
 
 fn fixture_rows() -> Vec<FixtureRow> {
@@ -48,11 +47,10 @@ fn fixture_rows() -> Vec<FixtureRow> {
             let fields = line.split('\t').collect::<Vec<_>>();
             assert!(
                 matches!(fields.len(), 2 | 3),
-                "invalid fixture row {line:?}; expected source<TAB>stdout[<TAB>edition]"
+                "invalid fixture row {line:?}; expected source<TAB>stdout"
             );
             let source = fields[0];
             let expected = fields[1];
-            let edition = fields.get(2).map(|value| (*value).to_string());
             assert!(
                 !source.contains('/')
                     && !source.contains('\\')
@@ -75,7 +73,6 @@ fn fixture_rows() -> Vec<FixtureRow> {
             FixtureRow {
                 source: source_path,
                 expected: fs::read_to_string(expected_path).expect("read expected output"),
-                edition,
             }
         })
         .collect()
@@ -90,27 +87,6 @@ fn fresh_dir(label: &str) -> PathBuf {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("create scratch directory");
     dir
-}
-
-fn source_for_edition(
-    source: &Path,
-    edition: Option<&str>,
-    label: &str,
-) -> (PathBuf, Option<PathBuf>) {
-    let Some(edition) = edition else {
-        return (source.to_path_buf(), None);
-    };
-    let dir = fresh_dir(&format!("{label}-edition"));
-    fs::write(
-        dir.join("project.toml"),
-        format!(
-            "[project]\nid = \"conformance.local/{label}\"\nversion = \"0.0.0\"\ngossamer-version = \"{edition}\"\n"
-        ),
-    )
-    .expect("write fixture project manifest");
-    let copied = dir.join(source.file_name().expect("fixture source file name"));
-    fs::copy(source, &copied).expect("copy edition fixture source");
-    (copied, Some(dir))
 }
 
 fn assert_success(mode: &str, output: Output, expected: &str) {
@@ -159,17 +135,11 @@ fn stable_fixture_manifest_runs_on_every_execution_tier() {
         "keep at least eleven focused Stable conformance fixtures"
     );
 
-    for FixtureRow {
-        source,
-        expected,
-        edition,
-    } in fixtures
-    {
+    for FixtureRow { source, expected } in fixtures {
         let name = source
             .file_stem()
             .and_then(|stem| stem.to_str())
             .expect("fixture stem");
-        let (source, edition_dir) = source_for_edition(&source, edition.as_deref(), name);
 
         let vm = Command::new(gos_binary())
             .arg("run")
@@ -210,9 +180,6 @@ fn stable_fixture_manifest_runs_on_every_execution_tier() {
             .unwrap_or_else(|error| panic!("run AOT fixture {}: {error}", binary.display()));
         assert_success(&format!("AOT fixture {name}"), aot, &expected);
         let _ = fs::remove_dir_all(output_dir);
-        if let Some(dir) = edition_dir {
-            let _ = fs::remove_dir_all(dir);
-        }
     }
 }
 

@@ -2440,6 +2440,104 @@ pub unsafe extern "C" fn gos_rt_main_exit_code_err(disc: i64, payload: i64) -> i
     })
 }
 
+/// `v.copy_within(src, dest, len)` - move `len` elements from `src` to
+/// `dest` inside one Vec.
+///
+/// The source and destination ranges may overlap, which is the whole
+/// reason the operation exists: a page defragment shifts a region over
+/// itself. The bytes are staged through a temporary so an overlapping
+/// move reads the original contents, and every element the destination
+/// range drops is released before the copy lands on it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_copy_within(v: *mut GosVec, src: i64, dest: i64, len: i64) {
+    ffi_entry!((), {
+        if v.is_null() {
+            unsafe { gos_rt_panic(c"copy_within: null vector".as_ptr()) };
+        }
+        let vec_len = unsafe { (*v).len.max(0) };
+        if src < 0 || dest < 0 || len < 0 || src + len > vec_len || dest + len > vec_len {
+            unsafe { gos_rt_panic(c"copy_within: range outside the vector".as_ptr()) };
+        }
+        if len == 0 || src == dest {
+            return;
+        }
+        let stride = unsafe { (*v).elem_bytes } as usize;
+        let base = unsafe { (*v).ptr };
+        if stride == 0 || base.is_null() {
+            return;
+        }
+        unsafe { bump_vec_mutation_generation(&mut *v) };
+        for offset in 0..len {
+            if !unsafe { vec_retain_elem_at_for_copy(v, src + offset) } {
+                unsafe { gos_rt_panic(c"copy_within: element type cannot be copied".as_ptr()) };
+            }
+        }
+        let span = (len as usize) * stride;
+        let mut staged = vec![0u8; span];
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                base.add((src as usize) * stride),
+                staged.as_mut_ptr(),
+                span,
+            );
+        }
+        for offset in 0..len {
+            unsafe { vec_release_elem_at(v, dest + offset) };
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                staged.as_ptr(),
+                base.add((dest as usize) * stride),
+                span,
+            );
+        }
+    });
+}
+
+/// `dst.copy_from_slice(src)` - overwrite every element of `dst` with the
+/// matching element of `src`. Both sequences must have the same length,
+/// exactly as the operation reads.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_copy_from_slice(dst: *mut GosVec, src: *const GosVec) {
+    ffi_entry!((), {
+        if dst.is_null() || src.is_null() {
+            unsafe { gos_rt_panic(c"copy_from_slice: null vector".as_ptr()) };
+        }
+        if std::ptr::addr_eq(dst.cast_const(), src) {
+            return;
+        }
+        let dst_len = unsafe { (*dst).len.max(0) };
+        let src_len = unsafe { (*src).len.max(0) };
+        if dst_len != src_len {
+            unsafe {
+                gos_rt_panic(c"copy_from_slice: source and destination differ in length".as_ptr());
+            }
+        }
+        let stride = unsafe { (*dst).elem_bytes } as usize;
+        if unsafe { (*src).elem_bytes } as usize != stride
+            || unsafe { (*src).elem_kind } != unsafe { (*dst).elem_kind }
+        {
+            unsafe { gos_rt_panic(c"copy_from_slice: element shapes differ".as_ptr()) };
+        }
+        let (dst_base, src_base) = unsafe { ((*dst).ptr.as_ptr(), (*src).ptr.as_const_ptr()) };
+        if stride == 0 || dst_base.is_null() || src_base.is_null() || dst_len == 0 {
+            return;
+        }
+        unsafe { bump_vec_mutation_generation(&mut *dst) };
+        for idx in 0..src_len {
+            if !unsafe { vec_retain_elem_at_for_copy(src, idx) } {
+                unsafe { gos_rt_panic(c"copy_from_slice: element type cannot be copied".as_ptr()) };
+            }
+        }
+        for idx in 0..dst_len {
+            unsafe { vec_release_elem_at(dst, idx) };
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(src_base, dst_base, (src_len as usize) * stride);
+        }
+    });
+}
+
 #[cfg(test)]
 mod packed_row_tests {
     use super::*;

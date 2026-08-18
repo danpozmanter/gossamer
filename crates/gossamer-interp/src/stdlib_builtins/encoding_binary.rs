@@ -128,6 +128,18 @@ pub(crate) fn install_encoding_binary(globals: &mut Vec<(&'static str, Value)>) 
             ("put_u64_le", builtin_bin_put_u64_le),
             ("uvarint", builtin_bin_uvarint),
             ("varint", builtin_bin_varint),
+            ("get_u16_be_at", builtin_bin_get_u16_be_at),
+            ("get_u16_le_at", builtin_bin_get_u16_le_at),
+            ("get_u32_be_at", builtin_bin_get_u32_be_at),
+            ("get_u32_le_at", builtin_bin_get_u32_le_at),
+            ("get_u64_be_at", builtin_bin_get_u64_be_at),
+            ("get_u64_le_at", builtin_bin_get_u64_le_at),
+            ("put_u16_be_at", builtin_bin_put_u16_be_at),
+            ("put_u16_le_at", builtin_bin_put_u16_le_at),
+            ("put_u32_be_at", builtin_bin_put_u32_be_at),
+            ("put_u32_le_at", builtin_bin_put_u32_le_at),
+            ("put_u64_be_at", builtin_bin_put_u64_be_at),
+            ("put_u64_le_at", builtin_bin_put_u64_le_at),
         ],
         globals,
     );
@@ -191,6 +203,170 @@ pub(crate) fn bytes_from_value(v: &Value) -> Vec<u8> {
         _ => Vec::new(),
     }
 }
+
+/// Reads the `width`-byte window at `offset`, or the diagnostic when it
+/// is not entirely inside the buffer.
+fn window_at(args: &[Value], width: usize) -> Result<Vec<u8>, Value> {
+    let bytes = bytes_from_value(args.first().unwrap_or(&Value::Unit));
+    let offset = args.get(1).and_then(value_to_int).unwrap_or(0);
+    if offset < 0 {
+        return Err(err_variant(
+            "binary: offset must be non-negative".to_string(),
+        ));
+    }
+    let start = offset as usize;
+    let Some(end) = start.checked_add(width) else {
+        return Err(err_variant(
+            "binary: offset overflows the buffer".to_string(),
+        ));
+    };
+    if end > bytes.len() {
+        return Err(err_variant(
+            "binary: read past the end of the buffer".to_string(),
+        ));
+    }
+    Ok(bytes[start..end].to_vec())
+}
+
+/// Writes `bytes` at `offset` through the caller's own buffer, which the
+/// VM hands over as a write-back cell for a `&mut` argument.
+fn write_at(args: &[Value], offset_index: usize, bytes: &[u8]) -> Result<(), Value> {
+    let offset = args.get(offset_index).and_then(value_to_int).unwrap_or(0);
+    if offset < 0 {
+        return Err(err_variant(
+            "binary: offset must be non-negative".to_string(),
+        ));
+    }
+    let Some(Value::MutCell(cell)) = args.first() else {
+        return Err(err_variant(
+            "binary: destination must be a `&mut` byte buffer".to_string(),
+        ));
+    };
+    let mut guard = cell.lock();
+    let mut buf = bytes_from_value(&guard);
+    let start = offset as usize;
+    let Some(end) = start.checked_add(bytes.len()) else {
+        return Err(err_variant(
+            "binary: offset overflows the buffer".to_string(),
+        ));
+    };
+    if end > buf.len() {
+        return Err(err_variant(
+            "binary: write past the end of the buffer".to_string(),
+        ));
+    }
+    buf[start..end].copy_from_slice(bytes);
+    *guard = Value::ByteVec(Arc::new(buf));
+    Ok(())
+}
+
+macro_rules! bin_get_at {
+    ($name:ident, $ty:ty, $from:ident, $n:expr, $doc:literal) => {
+        #[doc = $doc]
+        pub(crate) fn $name(args: &[Value]) -> RuntimeResult<Value> {
+            let window = match window_at(args, $n) {
+                Ok(window) => window,
+                Err(v) => return Ok(v),
+            };
+            let mut arr = [0u8; $n];
+            arr.copy_from_slice(&window);
+            Ok(ok_variant(Value::Int(<$ty>::$from(arr) as i64)))
+        }
+    };
+}
+
+bin_get_at!(
+    builtin_bin_get_u16_be_at,
+    u16,
+    from_be_bytes,
+    2,
+    "`binary::get_u16_be_at(bytes, offset) -> Result<u16, Error>`."
+);
+bin_get_at!(
+    builtin_bin_get_u16_le_at,
+    u16,
+    from_le_bytes,
+    2,
+    "`binary::get_u16_le_at(bytes, offset) -> Result<u16, Error>`."
+);
+bin_get_at!(
+    builtin_bin_get_u32_be_at,
+    u32,
+    from_be_bytes,
+    4,
+    "`binary::get_u32_be_at(bytes, offset) -> Result<u32, Error>`."
+);
+bin_get_at!(
+    builtin_bin_get_u32_le_at,
+    u32,
+    from_le_bytes,
+    4,
+    "`binary::get_u32_le_at(bytes, offset) -> Result<u32, Error>`."
+);
+bin_get_at!(
+    builtin_bin_get_u64_be_at,
+    u64,
+    from_be_bytes,
+    8,
+    "`binary::get_u64_be_at(bytes, offset) -> Result<u64, Error>`."
+);
+bin_get_at!(
+    builtin_bin_get_u64_le_at,
+    u64,
+    from_le_bytes,
+    8,
+    "`binary::get_u64_le_at(bytes, offset) -> Result<u64, Error>`."
+);
+
+macro_rules! bin_put_at {
+    ($name:ident, $ty:ty, $to:ident, $doc:literal) => {
+        #[doc = $doc]
+        pub(crate) fn $name(args: &[Value]) -> RuntimeResult<Value> {
+            let value = args.get(2).and_then(value_to_int).unwrap_or(0) as $ty;
+            match write_at(args, 1, &value.$to()) {
+                Ok(()) => Ok(ok_variant(Value::Unit)),
+                Err(v) => Ok(v),
+            }
+        }
+    };
+}
+
+bin_put_at!(
+    builtin_bin_put_u16_be_at,
+    u16,
+    to_be_bytes,
+    "`binary::put_u16_be_at(buf, offset, value) -> Result<(), Error>`."
+);
+bin_put_at!(
+    builtin_bin_put_u16_le_at,
+    u16,
+    to_le_bytes,
+    "`binary::put_u16_le_at(buf, offset, value) -> Result<(), Error>`."
+);
+bin_put_at!(
+    builtin_bin_put_u32_be_at,
+    u32,
+    to_be_bytes,
+    "`binary::put_u32_be_at(buf, offset, value) -> Result<(), Error>`."
+);
+bin_put_at!(
+    builtin_bin_put_u32_le_at,
+    u32,
+    to_le_bytes,
+    "`binary::put_u32_le_at(buf, offset, value) -> Result<(), Error>`."
+);
+bin_put_at!(
+    builtin_bin_put_u64_be_at,
+    u64,
+    to_be_bytes,
+    "`binary::put_u64_be_at(buf, offset, value) -> Result<(), Error>`."
+);
+bin_put_at!(
+    builtin_bin_put_u64_le_at,
+    u64,
+    to_le_bytes,
+    "`binary::put_u64_le_at(buf, offset, value) -> Result<(), Error>`."
+);
 
 pub(crate) fn builtin_bin_put_u16_be(args: &[Value]) -> RuntimeResult<Value> {
     let v = args.get(1).and_then(value_to_int).unwrap_or(0) as u16;

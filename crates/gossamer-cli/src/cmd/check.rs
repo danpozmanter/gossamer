@@ -110,13 +110,9 @@ pub(crate) fn run(
     // gate is what keeps `check` from drifting looser than the tiers it
     // is meant to guard.
     let stage = std::time::Instant::now();
-    let outcome = gossamer_driver::check_frontend_with_edition(
-        &source,
-        file_id,
-        crate::paths::project_edition(),
-    );
+    let outcome = gossamer_driver::check_frontend(&source, file_id);
     let elapsed = stage.elapsed();
-    for diag in &outcome.diagnostics {
+    for diag in outcome.diagnostics.iter().chain(&outcome.warnings) {
         emit_diag(diag, &map, render_opts, message_format);
     }
     if fix {
@@ -292,8 +288,7 @@ fn recheck(file: &Path, candidate: &str) -> usize {
     };
     let mut map = gossamer_lex::SourceMap::new();
     let id = map.add_file(file.to_string_lossy().into_owned(), folded.clone());
-    let outcome =
-        gossamer_driver::check_frontend_with_edition(&folded, id, crate::paths::project_edition());
+    let outcome = gossamer_driver::check_frontend(&folded, id);
     outcome.diagnostics.len()
 }
 

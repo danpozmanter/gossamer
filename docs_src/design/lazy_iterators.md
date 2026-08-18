@@ -1,10 +1,9 @@
 # Lazy iterator protocol
 
-Integer range expressions produce lazy iterators in every edition, and adapters
-applied to those iterator values remain lazy. The lazy
-`std::iter` constructor and Vec adapter surface is enabled in edition 2027;
-projects using edition 2026 otherwise keep the historical eager `std::iter`
-behavior.
+Integer range expressions produce lazy iterators, and adapters applied to those
+iterator values remain lazy. A collection already holds its values, so it
+traverses them eagerly: `xs.map(f)` and `iter::map(f, xs)` answer a `Vec`, and
+`xs.iter()` is how a caller asks for the lazy walk instead.
 
 ## Goals
 
@@ -43,9 +42,9 @@ source element exactly once. Exhausted iterators remain exhausted. Calling
 A borrowed `Vec` iterator records the source allocation identity and structural
 generation. Element replacement that preserves length and capacity is visible
 on the next read. Push, pop, insert, remove, clear, reserve, and reallocation
-invalidate an outstanding borrowed iterator and produce a runtime error in
-Experimental editions. A future Stable edition should reject these mutations
-statically once region facts are available.
+invalidate an outstanding borrowed iterator and produce a runtime error. A
+future release should reject these mutations statically once region facts are
+available.
 
 An owning iterator is unaffected by later bindings that referred to the moved
 source, because those bindings are unavailable after the move. Captured mutable
@@ -103,13 +102,13 @@ order. Promotion requires identical output and no intermediate Vec allocation
 for `range.map.filter.take.collect`.
 
 The runnable `examples/projects/lazy_iterators` project shows the normal
-materialization boundary. `benchmarks/lazy_iterators` compares it with the
-eager collection surface and pins equal output.
+materialization boundary. `benchmarks/lazy_iterators` compares a lazy pipeline
+with the eager collection surface and pins equal output.
 
-## Migration
+## Reaching the lazy surface
 
-The existing eager signatures remain the edition-2026 default. Projects that
-select `gossamer-version = "2027"` receive iterator-returning signatures. Code that
-depends on eager materialization inserts `iter::collect` at the materialization
-boundary, or traverses the collection through its own methods (`xs.map(f)`,
-`xs.sum()`), which answer eagerly in every edition.
+A lazy pipeline starts from a value that is already an iterator: a range
+literal (`0..n`, `10..`), or `xs.iter()` over a collection. Every adapter
+applied to one stays lazy until a terminal (`collect`, `sum`, `count`, ...)
+pulls it. Code that wants eager materialization traverses the collection
+through its own methods, which answer a `Vec` directly.

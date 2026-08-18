@@ -8,7 +8,7 @@ collections_and_result.gos	collections_and_result.out
 callbacks.gos	callbacks.out
 channel_roundtrip.gos	channel_roundtrip.out
 result_propagation.gos	result_propagation.out
-lazy_iterators.gos	lazy_iterators.out	2027
+lazy_iterators.gos	lazy_iterators.out
 float_iterators.gos	float_iterators.out
 aggregate_iterators.gos	aggregate_iterators.out
 struct_keyed_maps.gos	struct_keyed_maps.out

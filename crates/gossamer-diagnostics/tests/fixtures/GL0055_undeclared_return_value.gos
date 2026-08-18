@@ -1,4 +1,4 @@
-// ERROR: GT0074
+// ERROR: GL0055
 fn add(a: i64, b: i64) {
     a + b
 }

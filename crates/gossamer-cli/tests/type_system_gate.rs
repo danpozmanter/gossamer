@@ -313,6 +313,34 @@ fn declared_traits_are_checked_even_when_named_like_a_builtin() {
 fn names_without_a_type_behind_them_are_rejected() {
     // A name in scope that binds to no type would accept any value and
     // defer the failure to run time.
+    // A scalar primitive's associated surface is entirely the standard
+    // library's, so a member it does not declare is definitively unresolved
+    // - reported at check time, never as a runtime GX0002.
+    gate(
+        "phantom associated path on a primitive",
+        &[
+            (
+                "an undeclared f64 associated function is rejected",
+                "fn main() { println!(\"{}\", f64::nonexistent(1.0)) }\n",
+                Expect::Reject("GR0001"),
+            ),
+            (
+                "an undeclared bool associated function is rejected",
+                "fn main() { println!(\"{}\", bool::nonexistent(1)) }\n",
+                Expect::Reject("GR0001"),
+            ),
+            (
+                "an undeclared char associated function is rejected",
+                "fn main() { println!(\"{}\", char::nonexistent(1)) }\n",
+                Expect::Reject("GR0001"),
+            ),
+            (
+                "the IEEE-754 reinterpretations resolve",
+                "fn main() { println!(\"{}\", f64::from_bits(f64::to_bits(1.5))) }\n",
+                Expect::Accept,
+            ),
+        ],
+    );
     gate(
         "phantom type name",
         &[

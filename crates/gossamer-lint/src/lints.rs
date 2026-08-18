@@ -2077,6 +2077,17 @@ fn lint_fn_returns_unit_explicit(sf: &SourceFile) -> Vec<Finding> {
             continue;
         };
         let Some(ret) = &func.ret else { continue };
+        // A body whose tail computes a value says something with `-> ()`:
+        // the discard is deliberate. That is the fix GL0055 offers, so the
+        // two lints must not pull in opposite directions.
+        if func
+            .body
+            .as_deref()
+            .and_then(as_block_ref)
+            .is_some_and(|block| block.tail.is_some())
+        {
+            continue;
+        }
         if matches!(ret.kind, gossamer_ast::TypeKind::Unit) {
             out.push((
                 ret.span,

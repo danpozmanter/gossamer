@@ -33,7 +33,6 @@ use gossamer_ast::{
     TypeKind as AstTypeKind, TypePath, UnaryOp, Visibility,
 };
 use gossamer_lex::Span;
-use gossamer_pkg::Edition;
 use gossamer_resolve::{DefId, FloatWidth, IntWidth, PrimitiveTy, Resolution, Resolutions};
 
 use crate::context::TyCtxt;
@@ -51,18 +50,7 @@ pub fn typecheck_source_file(
     resolutions: &Resolutions,
     tcx: &mut TyCtxt,
 ) -> (TypeTable, Vec<TypeDiagnostic>) {
-    typecheck_source_file_with_edition(source, resolutions, tcx, Edition::E2026)
-}
-
-/// Runs type inference using the stdlib signatures selected by `edition`.
-#[must_use]
-pub fn typecheck_source_file_with_edition(
-    source: &SourceFile,
-    resolutions: &Resolutions,
-    tcx: &mut TyCtxt,
-    edition: Edition,
-) -> (TypeTable, Vec<TypeDiagnostic>) {
-    let checker = TypeChecker::new(tcx, resolutions, edition);
+    let checker = TypeChecker::new(tcx, resolutions);
     checker.run(source)
 }
 
@@ -79,7 +67,7 @@ pub fn typecheck_source_file_for_repl_inspection(
     resolutions: &Resolutions,
     tcx: &mut TyCtxt,
 ) -> (TypeTable, Vec<TypeDiagnostic>) {
-    let mut checker = TypeChecker::new(tcx, resolutions, Edition::E2026);
+    let mut checker = TypeChecker::new(tcx, resolutions);
     checker.suppressed.borrow_read_conflict = true;
     checker.suppressed.consumed_iterator_read = true;
     checker.run(source)
@@ -131,24 +119,6 @@ impl TypeChecker<'_> {
             })
             .collect()
     }
-}
-
-/// Runs type inference with the lazy iterator surface enabled when
-/// `lazy_iterators` is true. The default public entry point keeps the 2026
-/// eager `iter::*` compatibility behavior.
-#[must_use]
-pub fn typecheck_source_file_with_lazy_iterators(
-    source: &SourceFile,
-    resolutions: &Resolutions,
-    tcx: &mut TyCtxt,
-    lazy_iterators: bool,
-) -> (TypeTable, Vec<TypeDiagnostic>) {
-    let edition = if lazy_iterators {
-        Edition::E2027
-    } else {
-        Edition::E2026
-    };
-    typecheck_source_file_with_edition(source, resolutions, tcx, edition)
 }
 
 /// Hard limit on type-checker recursion depth. Mirrors the parser's
@@ -233,11 +203,10 @@ const PURE_HANDLES: &[HandleRow] = &[
         ],
     ),
     (43, "bufio::Scanner", &[(&["bufio", "Scanner"], "new")]),
-    (
-        44,
-        "fs::File",
-        &[(&["fs", "File"], "open"), (&["fs", "File"], "create")],
-    ),
+    // `File::open` / `File::create` answer their handle through a
+    // `Result`, so they are typed by `fs_file_ctor` rather than as bare
+    // handle constructors here.
+    (44, "fs::File", &[]),
     (45, "fs::OpenOptions", &[(&["fs", "OpenOptions"], "new")]),
     (
         46,
@@ -533,7 +502,6 @@ struct TypeChecker<'a> {
     table: TypeTable,
     diagnostics: Vec<TypeDiagnostic>,
     resolutions: &'a Resolutions,
-    edition: Edition,
     scopes: Vec<HashMap<Box<str>, Ty>>,
     /// Declared mutability of each in-scope value binding, kept in
     /// lockstep with `scopes`. A place rooted at an immutable binding
@@ -921,7 +889,7 @@ struct GenericScope {
 }
 
 impl<'a> TypeChecker<'a> {
-    fn new(tcx: &'a mut TyCtxt, resolutions: &'a Resolutions, edition: Edition) -> Self {
+    fn new(tcx: &'a mut TyCtxt, resolutions: &'a Resolutions) -> Self {
         register_stdlib_struct_fields(tcx);
         let mut checker_struct_fields = HashMap::new();
         seed_checker_stdlib_struct_fields(tcx, &mut checker_struct_fields);
@@ -931,7 +899,6 @@ impl<'a> TypeChecker<'a> {
             table: TypeTable::new(),
             diagnostics: Vec::new(),
             resolutions,
-            edition,
             scopes: vec![HashMap::new()],
             mut_scopes: vec![HashMap::new()],
             binding_types: HashMap::new(),
@@ -3825,30 +3792,8 @@ impl<'a> TypeChecker<'a> {
                 );
             }
         }
-        let ret = declared_ret.unwrap_or_else(|| self.tcx.unit());
         if let Some(body) = &decl.body {
-            self.collect_write_arg_bindings(body);
-            let prev_ret = self.current_fn_ret.replace(ret);
-            // The declared return type flows into the body as its expectation
-            // to constrain literals and conversions. Container identity does
-            // not change: an array literal remains `[T; N]` even when `Vec<T>`
-            // is expected, and unification reports the mismatch.
-            let body_ty = if let Some(ret) = declared_ret {
-                self.check_expr_expecting(body, Expectation::HasType(ret))
-            } else {
-                let body_ty = self.check_expr(body);
-                if !self.unused_result_allowed && self.is_result_ty(body_ty) {
-                    self.emit(TypeError::DiscardedResult, body_value_span(body));
-                } else {
-                    self.report_discarded_result(body, None);
-                }
-                self.check_undeclared_return(decl, body, body_ty);
-                body_ty
-            };
-            self.current_fn_ret = prev_ret;
-            if declared_ret.is_some() {
-                self.unify(ret, body_ty, body.span);
-            }
+            self.check_fn_body(decl, body, declared_ret);
         }
         self.pop_scope();
         self.current_param_bounds = prior_bounds;
@@ -3856,9 +3801,48 @@ impl<'a> TypeChecker<'a> {
         self.leave_generic_scope(prior_scope);
     }
 
-    /// Reports a body that answers a value through a signature declaring no
-    /// return type. The signature is what a caller reads, so an undeclared
-    /// return hands the caller a unit while the body computed a value.
+    /// Checks one function body against the return type its signature
+    /// declares, or against the unit a missing one answers.
+    fn check_fn_body(&mut self, decl: &FnDecl, body: &Expr, declared_ret: Option<Ty>) {
+        let ret = declared_ret.unwrap_or_else(|| self.tcx.unit());
+        self.collect_write_arg_bindings(body);
+        let prev_ret = self.current_fn_ret.replace(ret);
+        // The declared return type flows into the body as its expectation
+        // to constrain literals and conversions. Container identity does
+        // not change: an array literal remains `[T; N]` even when `Vec<T>`
+        // is expected, and unification reports the mismatch.
+        let body_ty = if let Some(ret) = declared_ret {
+            self.check_expr_expecting(body, Expectation::HasType(ret))
+        } else {
+            let body_ty = self.check_expr(body);
+            if !self.unused_result_allowed && self.is_result_ty(body_ty) {
+                self.emit(TypeError::DiscardedResult, body_value_span(body));
+            } else {
+                self.report_discarded_result(body, None);
+            }
+            self.check_undeclared_return(decl, body, body_ty);
+            body_ty
+        };
+        self.current_fn_ret = prev_ret;
+        // A declared `-> ()` says the discard is deliberate, so a body whose
+        // tail computes a value is accepted and the value dropped - the same
+        // shape a signature with no return type has, written out. Every
+        // other declared return unifies with the body.
+        let discards_tail = declared_ret.is_some_and(|declared| {
+            matches!(
+                self.tcx.kind(self.infer.resolve(self.tcx, declared)),
+                Some(TyKind::Unit)
+            )
+        });
+        if declared_ret.is_some() && !discards_tail {
+            self.unify(ret, body_ty, body.span);
+        }
+    }
+
+    /// Reports a body whose tail answers a value through a signature that
+    /// declares no return type. A missing return type is a unit, so the
+    /// value the tail computed is discarded; the report says how to return
+    /// it and how to mark the discard deliberate.
     fn check_undeclared_return(&mut self, decl: &FnDecl, body: &Expr, body_ty: Ty) {
         // A wrapper the front end synthesized around an expression - the
         // REPL's per-input entry point, the binding-type probe - answers that
@@ -3878,7 +3862,7 @@ impl<'a> TypeChecker<'a> {
         }
         let found = self.render_public_ty(resolved);
         self.emit(
-            TypeError::MissingReturnType {
+            TypeError::UndeclaredReturnValue {
                 name: decl.name.name.clone(),
                 found,
             },
@@ -5429,6 +5413,13 @@ impl<'a> TypeChecker<'a> {
         if let Some(ty) = self.stdlib_signature_return_ty(module, last) {
             return Some(ty);
         }
+        // The IEEE-754 reinterpretations are associated functions on a
+        // primitive rather than module members, so they carry their
+        // contract here: the bit pattern is the unsigned integer of the
+        // float's own width, in both directions.
+        if let Some(ty) = self.float_bits_assoc_ret(module, last) {
+            return Some(ty);
+        }
         // `String::from_utf8` is an associated function on a primitive
         // rather than a module member, so it has no catalogue row; pin
         // its `Result` here or `?` sees an unresolved variable.
@@ -6128,12 +6119,17 @@ impl<'a> TypeChecker<'a> {
                 }),
             ),
             (Some((p, Mutbl::Mut)), None) => {
-                self.emit(
-                    TypeError::MutableArgumentRequiresReference {
-                        argument: Self::place_display(arg),
-                    },
-                    arg.span,
-                );
+                // An argument whose own type already failed carries no
+                // evidence about how it was passed; a second report here
+                // would describe the wrong thing.
+                if !matches!(self.tcx.kind(arg_ty), Some(TyKind::Error)) {
+                    self.emit(
+                        TypeError::MutableArgumentRequiresReference {
+                            argument: Self::place_display(arg),
+                        },
+                        arg.span,
+                    );
+                }
                 (p, arg_ty)
             }
             (Some((p, Mutbl::Not)), None) => (p, arg_ty),
@@ -6742,6 +6738,12 @@ impl<'a> TypeChecker<'a> {
             let socket = self.stdlib_handle_ty(offset, handle);
             return Some(self.fallible(socket));
         }
+        // Same shape for the streaming filesystem handle: opening a file
+        // can fail, so `fs::File::open(p)?` propagates.
+        if fs_file_ctor(module, last) {
+            let file = self.stdlib_handle_ty(44, "fs::File");
+            return Some(self.fallible(file));
+        }
         let is_middleware = matches!(
             module,
             ["middleware"] | ["http", "middleware"] | ["std", "http", "middleware"]
@@ -6854,6 +6856,88 @@ impl<'a> TypeChecker<'a> {
     fn fallible(&mut self, ok: Ty) -> Ty {
         let err = self.tcx.dyn_error_ty();
         self.result_adt_ty(ok, err)
+    }
+
+    /// Return type of a method on the streaming filesystem handles, with
+    /// the parameter list each one declares.
+    ///
+    /// Without a contract here every `f.write(..)` typed as a fresh
+    /// variable: a `Vec<u8>` passed to the text `write` reached the
+    /// runtime as an argument-shape error rather than a type error, and
+    /// `?` on a fallible call saw no `Result` at all.
+    fn fs_handle_method_ret(
+        &mut self,
+        method: &str,
+        args: &[Expr],
+        arg_tys: &[Ty],
+        resolved: Ty,
+        span: Span,
+    ) -> Option<Ty> {
+        let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved) else {
+            return None;
+        };
+        let owner = self.tcx.def_name(*def)?.to_string();
+        if !matches!(owner.as_str(), "fs::File" | "fs::OpenOptions") {
+            return None;
+        }
+        let i64_ty = self.tcx.int_ty(IntTy::I64);
+        let bool_ty = self.tcx.bool_ty();
+        let string = self.tcx.string_ty();
+        let unit = self.tcx.unit();
+        let bytes = self.byte_vec_ty();
+        let (params, ret) = match (owner.as_str(), method) {
+            ("fs::File", "read") => (vec![i64_ty], self.fallible(bytes)),
+            ("fs::File", "read_at") => (vec![i64_ty, i64_ty], self.fallible(bytes)),
+            ("fs::File", "read_to_string") => (vec![], self.fallible(string)),
+            ("fs::File", "write" | "write_all") => (vec![string], self.fallible(i64_ty)),
+            ("fs::File", "write_bytes") => (vec![bytes], self.fallible(i64_ty)),
+            ("fs::File", "write_at") => (vec![bytes, i64_ty], self.fallible(i64_ty)),
+            ("fs::File", "seek") => (vec![i64_ty, i64_ty], self.fallible(i64_ty)),
+            ("fs::File", "set_len") => (vec![i64_ty], self.fallible(unit)),
+            ("fs::File", "len") => (vec![], self.fallible(i64_ty)),
+            ("fs::File", "flush" | "sync_all" | "sync_data") => (vec![], self.fallible(unit)),
+            ("fs::File", "try_lock_range") => {
+                (vec![i64_ty, i64_ty, bool_ty], self.fallible(bool_ty))
+            }
+            ("fs::File", "unlock_range") => (vec![i64_ty, i64_ty], self.fallible(unit)),
+            ("fs::File", "try_lock_shared" | "try_lock_exclusive") => {
+                (vec![], self.fallible(bool_ty))
+            }
+            ("fs::File", "unlock") => (vec![], self.fallible(unit)),
+            ("fs::File", "close") => (vec![], unit),
+            (
+                "fs::OpenOptions",
+                "read" | "write" | "append" | "truncate" | "create" | "create_new",
+            ) => {
+                let opts = self.stdlib_handle_ty(45, "fs::OpenOptions");
+                (vec![bool_ty], opts)
+            }
+            ("fs::OpenOptions", "open") => {
+                let file = self.stdlib_handle_ty(44, "fs::File");
+                (vec![string], self.fallible(file))
+            }
+            _ => {
+                let error = self.unresolved_method_call(owner, method, resolved, args.len());
+                self.emit(error, span);
+                return Some(self.tcx.error_ty());
+            }
+        };
+        if args.len() != params.len() {
+            self.emit(
+                TypeError::CallArityMismatch {
+                    callee: format!("{owner}::{method}"),
+                    expected: params.len(),
+                    found: args.len(),
+                },
+                span,
+            );
+            return Some(self.tcx.error_ty());
+        }
+        for (param, (arg_ty, arg)) in params.iter().zip(arg_tys.iter().zip(args)) {
+            self.check_expected_integer_literal_range(arg, Expectation::HasType(*param), *arg_ty);
+            self.check_sig_param_arg(*param, *arg_ty, arg);
+        }
+        Some(ret)
     }
 
     fn bytes_handle_method_ret(
@@ -7546,10 +7630,12 @@ impl<'a> TypeChecker<'a> {
         let tail = src.rsplit("::").next().unwrap_or(src);
         if let Some(offset) = stdlib_handle_def_offset(tail) {
             let def = gossamer_resolve::DefId::local(u32::MAX - offset);
-            // A socket handle keeps the qualified name the annotation path
-            // registers, so one `DefId` never carries two spellings.
-            let name =
-                stdlib_net_handle(tail).map_or_else(|| tail.to_string(), |(_, n)| n.to_string());
+            // A socket or filesystem handle keeps the qualified name the
+            // annotation path registers, so one `DefId` never carries two
+            // spellings.
+            let name = stdlib_net_handle(tail)
+                .or_else(|| stdlib_fs_handle(tail))
+                .map_or_else(|| tail.to_string(), |(_, n)| n.to_string());
             self.tcx.register_def_name(def, &name);
             return Some(self.tcx.intern(TyKind::Adt {
                 def,
@@ -8443,6 +8529,10 @@ impl<'a> TypeChecker<'a> {
         {
             return ty;
         }
+        if let Some(ty) = self.fs_handle_method_ret(method, args, &arg_tys, resolved, receiver.span)
+        {
+            return ty;
+        }
         if let Some(ty) = self.net_handle_method_ret(method, resolved) {
             return ty;
         }
@@ -8490,6 +8580,9 @@ impl<'a> TypeChecker<'a> {
         arg_count: usize,
         span: Span,
     ) -> Ty {
+        if let Some(ty) = self.float_bits_method_ret(method, resolved, arg_count) {
+            return ty;
+        }
         if let Some(ty) = self.check_numeric_receiver_method(method, resolved, arg_count) {
             return ty;
         }
@@ -8556,6 +8649,40 @@ impl<'a> TypeChecker<'a> {
     /// the answer both come from the `math` signature row. `abs`, `min`,
     /// `max`, and `clamp` answer in the receiver's own type; every other
     /// row computes in floating point whatever it was handed.
+    /// Return type of `f64::to_bits` / `f64::from_bits` and their `f32`
+    /// siblings, written as associated functions on the primitive.
+    fn float_bits_assoc_ret(&mut self, module: &[&str], last: &str) -> Option<Ty> {
+        match (module, last) {
+            (["f64"], "to_bits") => Some(self.tcx.int_ty(IntTy::U64)),
+            (["f64"], "from_bits") => Some(self.tcx.float_ty(FloatTy::F64)),
+            (["f32"], "to_bits") => Some(self.tcx.int_ty(IntTy::U32)),
+            (["f32"], "from_bits") => Some(self.tcx.float_ty(FloatTy::F32)),
+            _ => None,
+        }
+    }
+
+    /// `x.to_bits()` on a float receiver: the method spelling of
+    /// [`Self::float_bits_assoc_ret`], answering the unsigned integer of
+    /// the receiver's own width.
+    fn float_bits_method_ret(
+        &mut self,
+        method: &str,
+        resolved: Ty,
+        arg_count: usize,
+    ) -> Option<Ty> {
+        if method != "to_bits" || arg_count != 0 {
+            return None;
+        }
+        match self.tcx.kind(resolved) {
+            Some(TyKind::Float(FloatTy::F32)) => Some(self.tcx.int_ty(IntTy::U32)),
+            Some(TyKind::Float(FloatTy::F64)) => Some(self.tcx.int_ty(IntTy::U64)),
+            Some(TyKind::Var(_)) if self.infer.is_float_literal_var(self.tcx, resolved) => {
+                Some(self.tcx.int_ty(IntTy::U64))
+            }
+            _ => None,
+        }
+    }
+
     fn check_numeric_receiver_method(
         &mut self,
         method: &str,
@@ -10105,10 +10232,11 @@ impl<'a> TypeChecker<'a> {
         };
         let expected_arity = match method {
             "push" | "remove" | "truncate" | "extend" | "extend_from_slice" | "reserve"
-            | "reserve_exact" | "get" | "fill" => Some(1),
-            "insert" | "swap" => Some(2),
+            | "reserve_exact" | "get" | "fill" | "copy_from_slice" | "binary_search" => Some(1),
+            "insert" | "swap" | "resize" => Some(2),
             "pop" | "clear" | "sort" | "reverse" | "capacity" | "iter" => Some(0),
             "sort_by" | "sort_by_key" => Some(1),
+            "copy_within" => Some(3),
             _ => None,
         };
         if let Some(expected) = expected_arity
@@ -10128,7 +10256,8 @@ impl<'a> TypeChecker<'a> {
         // peel them before comparing the pushed element to the slot type.
         let push_arg = match (method, arg_tys.len()) {
             ("push" | "fill", 1) => arg_tys.first().copied(),
-            ("insert", 2) => arg_tys.get(1).copied(),
+            ("insert" | "resize", 2) => arg_tys.get(1).copied(),
+            ("binary_search", 1) => arg_tys.first().copied(),
             _ => None,
         };
         if let Some(arg_ty) = push_arg {
@@ -10140,7 +10269,7 @@ impl<'a> TypeChecker<'a> {
         // type. Unifying it pins a literal argument to that element type, so
         // `Vec<u8>.extend(#[4, 5])` appends bytes rather than leaving the
         // literal at the default integer width.
-        if matches!(method, "extend" | "extend_from_slice")
+        if matches!(method, "extend" | "extend_from_slice" | "copy_from_slice")
             && let Some(arg_ty) = arg_tys.first().copied()
         {
             let sequence = self.tcx.intern(TyKind::Vec(elem));
@@ -10156,9 +10285,15 @@ impl<'a> TypeChecker<'a> {
             (
                 "push" | "clear" | "truncate" | "extend" | "extend_from_slice" | "reserve"
                 | "reserve_exact" | "sort" | "sort_by" | "sort_by_key" | "reverse" | "fill"
-                | "swap",
+                | "swap" | "resize" | "copy_within" | "copy_from_slice",
                 _,
             ) => Some(self.tcx.unit()),
+            // `Ok(i)` is the found index and `Err(i)` the position an
+            // insert would keep sorted, so both arms carry an index.
+            ("binary_search", 1) => {
+                let i64_ty = self.tcx.int_ty(IntTy::I64);
+                Some(self.result_adt_ty(i64_ty, i64_ty))
+            }
             ("insert", 2) => {
                 let error_ty = self.tcx.dyn_error_ty();
                 let unit_ty = self.tcx.unit();
@@ -11402,14 +11537,17 @@ impl<'a> TypeChecker<'a> {
                         self.unify(s, message, span);
                         ok
                     }
-                    // The Ok payload and the handler's return mix at
-                    // runtime (`Ok(v)` yields `v`, `Err(e)` yields
-                    // `f(e)`), and the dominant shape is a discarded
-                    // call with a unit handler - pin only the param
-                    // and leave the result free.
+                    // `Ok(v)` yields `v` and `Err(e)` yields `f(e)`, so
+                    // both arms answer the Ok payload and the handler
+                    // is pinned to produce one. A handler that diverges
+                    // contributes no value and is left alone.
                     "unwrap_or_else" => {
-                        let _ = self.callable_output(lead_tys[0], &[err], span);
-                        self.fresh()
+                        let out = self.callable_output(lead_tys[0], &[err], span);
+                        let resolved_out = self.infer.resolve(self.tcx, out);
+                        if !matches!(self.tcx.kind(resolved_out), Some(TyKind::Never)) {
+                            self.unify(ok, out, span);
+                        }
+                        ok
                     }
                     "ok" => self.option_adt_ty(ok),
                     "err" => self.option_adt_ty(err),
@@ -11497,9 +11635,9 @@ impl<'a> TypeChecker<'a> {
                 Some(ty)
             }
             "iter" => {
-                let all_tier_lazy = matches!(name, "range" | "range_inclusive" | "once" | "repeat")
-                    || iterator_adapter_is_lazy(name);
-                let edition_lazy_result = self.edition == Edition::E2027 && all_tier_lazy;
+                // A constructor or adapter answers an iterator only when it
+                // was handed one; a collection traverses eagerly.
+                let edition_lazy_result = false;
                 let i64_ty = self.tcx.int_ty(IntTy::I64);
                 if matches!(name, "range" | "range_inclusive") {
                     self.unify(i64_ty, lead_tys[0], span);
@@ -11523,21 +11661,6 @@ impl<'a> TypeChecker<'a> {
                 // handed, in every edition.
                 let lazy_result =
                     edition_lazy_result || data_is_iterator || matches!(name, "enumerate");
-                let iterator_terminal = matches!(
-                    name,
-                    "fold" | "any" | "all" | "find" | "count" | "sum" | "collect"
-                );
-                if self.edition == Edition::E2027 && iterator_terminal && !data_is_iterator {
-                    let found = self.render_public_ty(data_ty);
-                    self.emit(
-                        TypeError::TypeMismatch {
-                            expected: "Iterator<T>".to_string(),
-                            found,
-                        },
-                        span,
-                    );
-                    return Some(self.tcx.error_ty());
-                }
                 if data_is_iterator && !all_tier_iterator_input {
                     let found = self.render_public_ty(data_ty);
                     self.emit(
@@ -12039,6 +12162,9 @@ impl<'a> TypeChecker<'a> {
 
     fn check_reference_unary(&mut self, op: UnaryOp, operand: &Expr, operand_ty: Ty) -> Ty {
         let root = Self::place_root_name(operand).unwrap_or_else(|| "value".to_string());
+        if self.reject_range_borrow(op, operand) {
+            return self.tcx.error_ty();
+        }
         let mutability = if op == UnaryOp::RefMut {
             let conflict = self
                 .active_mutable_borrower(&root)
@@ -12638,6 +12764,40 @@ impl<'a> TypeChecker<'a> {
 
     /// Leftmost path-segment name of a place, naming the root binding in
     /// the immutability diagnostic.
+    /// Rejects `&xs[a..b]` / `&mut xs[a..b]`. The index answers a fresh copy
+    /// of the range, so borrowing it hands out a reference to a temporary
+    /// nothing owns - which the tiers disagree about at run time rather than
+    /// diagnosing. A window into part of a sequence has no value shape yet.
+    fn reject_range_borrow(&mut self, op: UnaryOp, operand: &Expr) -> bool {
+        let ExprKind::Index { base, index } = &operand.kind else {
+            return false;
+        };
+        if !matches!(index.kind, ExprKind::Range { .. }) {
+            return false;
+        }
+        let Some(recorded) = self.table.get(base.id) else {
+            return false;
+        };
+        let base_ty = self.infer.resolve(self.tcx, recorded);
+        let base_ty = self.peel_refs(base_ty);
+        if !matches!(
+            self.tcx.kind(base_ty),
+            Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. })
+        ) {
+            return false;
+        }
+        let base_text = Self::place_root_name(base).unwrap_or_else(|| "xs".to_string());
+        self.emit(
+            TypeError::RangeBorrow {
+                mutability: if op == UnaryOp::RefMut { "mut " } else { "" },
+                base: base_text,
+                range: "start..end".to_string(),
+            },
+            operand.span,
+        );
+        true
+    }
+
     fn place_root_name(place: &Expr) -> Option<String> {
         match &place.kind {
             ExprKind::Path(path) => path.segments.first().map(|s| s.name.name.clone()),
@@ -14394,6 +14554,14 @@ impl<'a> TypeChecker<'a> {
         let joined = segments.join("::");
         if let Some((int_ty, _value)) = int_assoc_const(&segments) {
             return self.tcx.int_ty(int_ty);
+        }
+        // `fs::SEEK_SET` / `SEEK_CUR` / `SEEK_END` name the `whence`
+        // selector `File::seek` takes.
+        if matches!(
+            segments.as_slice(),
+            ["fs", "SEEK_SET" | "SEEK_CUR" | "SEEK_END"]
+        ) {
+            return self.tcx.int_ty(IntTy::I64);
         }
         if let Some(entry) = crate::std_fn_values::std_fn_value(
             joined.strip_prefix("std::").unwrap_or(joined.as_str()),
@@ -17215,6 +17383,9 @@ pub fn is_vec_only_sequence_method(name: &str) -> bool {
 /// The length- and capacity-changing sequence methods, which only a
 /// `Vec<T>` receiver carries.
 const VEC_ONLY_SEQUENCE_METHODS: &[&str] = &[
+    "binary_search",
+    "copy_from_slice",
+    "copy_within",
     "push",
     "pop",
     "insert",
@@ -17941,7 +18112,23 @@ fn stdlib_handle_def_offset(tail: &str) -> Option<u32> {
         "Output" => 3,
         "ResponseStream" => 4,
         "Response" => 5,
-        _ => return stdlib_net_handle(tail).map(|(offset, _)| offset),
+        _ => {
+            return stdlib_net_handle(tail)
+                .map(|(offset, _)| offset)
+                .or_else(|| stdlib_fs_handle(tail).map(|(offset, _)| offset));
+        }
+    })
+}
+
+/// `(sentinel offset, canonical name)` for the streaming filesystem
+/// handles. One `DefId` per handle carries one registered spelling, so a
+/// written `let f: fs::File` and a signature slot naming the same type
+/// land on the same `Adt`.
+fn stdlib_fs_handle(tail: &str) -> Option<(u32, &'static str)> {
+    Some(match tail {
+        "File" => (44, "fs::File"),
+        "OpenOptions" => (45, "fs::OpenOptions"),
+        _ => return None,
     })
 }
 
@@ -17949,6 +18136,18 @@ fn stdlib_handle_def_offset(tail: &str) -> Option<u32> {
 /// answers. The path may name the type alone (`TcpStream::connect`) or
 /// carry its module (`net::TcpStream::connect`), so only the type segment
 /// the method hangs off is matched.
+/// Whether `module::last` is one of the constructors that answers an
+/// `fs::File` through a `Result`: the two `File` associated functions and
+/// the terminal `OpenOptions::open`.
+fn fs_file_ctor(module: &[&str], last: &str) -> bool {
+    let module = module.strip_prefix(&["std"]).unwrap_or(module);
+    matches!(
+        (module, last),
+        (["fs", "File"] | ["File"], "open" | "create")
+            | (["fs", "OpenOptions"] | ["OpenOptions"], "open")
+    )
+}
+
 fn net_socket_ctor(module: &[&str], last: &str) -> Option<(u32, &'static str)> {
     let type_name = *module.last()?;
     let expected = match (type_name, last) {

@@ -110,7 +110,6 @@ use crate::value::{
 use super::*;
 
 thread_local! {
-    static LAZY_ITERATORS_ENABLED: RefCell<bool> = const { RefCell::new(false) };
     static NEXT_LAZY_ITER_ID: RefCell<i64> = const { RefCell::new(1) };
     static LAZY_ITER_STATES: RefCell<StdHashMap<i64, LazyIterState>> = RefCell::new(StdHashMap::new());
     static LAZY_VEC_BORROW_COUNT: Cell<usize> = const { Cell::new(0) };
@@ -226,7 +225,10 @@ enum LazyIterState {
     },
 }
 
-pub fn set_lazy_iterators_enabled(enabled: bool) {
+/// Discards every live lazy-iterator state and the Vec-borrow bookkeeping
+/// around it. Called between programs in one process so a fresh run never
+/// observes a previous one's cursors.
+pub fn reset_lazy_iterator_state() {
     let stale = LAZY_ITER_STATES.with(|states| {
         states
             .borrow_mut()
@@ -241,11 +243,6 @@ pub fn set_lazy_iterators_enabled(enabled: bool) {
     LAZY_VEC_BORROWERS.with(|borrowers| borrowers.borrow_mut().clear());
     LAZY_VEC_GENERATIONS.with(|generations| generations.borrow_mut().clear());
     LAZY_VEC_REPLACEMENTS.with(|replacements| replacements.borrow_mut().clear());
-    LAZY_ITERATORS_ENABLED.with(|cell| *cell.borrow_mut() = enabled);
-}
-
-fn lazy_iterators_enabled() -> bool {
-    LAZY_ITERATORS_ENABLED.with(|cell| *cell.borrow())
 }
 
 fn new_lazy_iter(state: LazyIterState) -> Value {
@@ -1611,11 +1608,6 @@ pub(crate) fn builtin_iter_collect(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_iter_once(args: &[Value]) -> RuntimeResult<Value> {
-    if lazy_iterators_enabled() {
-        return Ok(new_lazy_iter(LazyIterState::Once {
-            item: Some(args.first().cloned().unwrap_or(Value::Unit)),
-        }));
-    }
     Ok(Value::Array(Arc::new(vec![
         args.first().cloned().unwrap_or(Value::Unit),
     ])))
@@ -1627,7 +1619,7 @@ pub(crate) fn builtin_iter_empty(_args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_iter_step_by(args: &[Value]) -> RuntimeResult<Value> {
     let step = positive_count(args, 0, "iter::step_by")?;
-    if lazy_iterators_enabled() || matches!(args.get(1), Some(Value::LazyIter(_))) {
+    if matches!(args.get(1), Some(Value::LazyIter(_))) {
         return Ok(new_lazy_iter(LazyIterState::StepBy {
             upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
             step,
@@ -1654,7 +1646,7 @@ pub(crate) fn builtin_iter_count(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_iter_take(args: &[Value]) -> RuntimeResult<Value> {
     let n = non_negative_count(args, 0, "iter::take")?;
-    if lazy_iterators_enabled() || matches!(args.get(1), Some(Value::LazyIter(_))) {
+    if matches!(args.get(1), Some(Value::LazyIter(_))) {
         return Ok(new_lazy_iter(LazyIterState::Take {
             upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
             remaining: n,
@@ -1667,7 +1659,7 @@ pub(crate) fn builtin_iter_take(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_iter_skip(args: &[Value]) -> RuntimeResult<Value> {
     let n = non_negative_count(args, 0, "iter::skip")?;
-    if lazy_iterators_enabled() || matches!(args.get(1), Some(Value::LazyIter(_))) {
+    if matches!(args.get(1), Some(Value::LazyIter(_))) {
         return Ok(new_lazy_iter(LazyIterState::Skip {
             upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
             remaining: n,
@@ -1679,8 +1671,7 @@ pub(crate) fn builtin_iter_skip(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_iter_zip(args: &[Value]) -> RuntimeResult<Value> {
-    if lazy_iterators_enabled()
-        || matches!(args.first(), Some(Value::LazyIter(_)))
+    if matches!(args.first(), Some(Value::LazyIter(_)))
         || matches!(args.get(1), Some(Value::LazyIter(_)))
     {
         return Ok(new_lazy_iter(LazyIterState::Zip {
@@ -1710,8 +1701,7 @@ pub(crate) fn builtin_iter_enumerate(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_iter_chain(args: &[Value]) -> RuntimeResult<Value> {
-    if lazy_iterators_enabled()
-        || matches!(args.first(), Some(Value::LazyIter(_)))
+    if matches!(args.first(), Some(Value::LazyIter(_)))
         || matches!(args.get(1), Some(Value::LazyIter(_)))
     {
         return Ok(new_lazy_iter(LazyIterState::Chain {
@@ -1776,7 +1766,7 @@ pub(crate) fn builtin_iter_reversed(args: &[Value]) -> RuntimeResult<Value> {
     let source_is_lazy = matches!(source, Value::LazyIter(_));
     let mut xs = collect_array(source);
     xs.reverse();
-    if source_is_lazy || lazy_iterators_enabled() {
+    if source_is_lazy {
         return Ok(new_lazy_iter(LazyIterState::Array {
             items: Arc::new(xs),
             source_id: 0,
@@ -1944,7 +1934,7 @@ pub(crate) fn native_iter_map(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let f = args.first().cloned().unwrap_or(Value::Unit);
-    if lazy_iterators_enabled() || matches!(args.get(1), Some(Value::LazyIter(_))) {
+    if matches!(args.get(1), Some(Value::LazyIter(_))) {
         return Ok(new_lazy_iter(LazyIterState::Map {
             f,
             upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
@@ -1971,7 +1961,7 @@ pub(crate) fn native_iter_filter(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let p = args.first().cloned().unwrap_or(Value::Unit);
-    if lazy_iterators_enabled() || matches!(args.get(1), Some(Value::LazyIter(_))) {
+    if matches!(args.get(1), Some(Value::LazyIter(_))) {
         return Ok(new_lazy_iter(LazyIterState::Filter {
             p,
             upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
@@ -2000,7 +1990,7 @@ pub(crate) fn native_iter_filter_map(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let f = args.first().cloned().unwrap_or(Value::Unit);
-    if lazy_iterators_enabled() || matches!(args.get(1), Some(Value::LazyIter(_))) {
+    if matches!(args.get(1), Some(Value::LazyIter(_))) {
         return Ok(new_lazy_iter(LazyIterState::FilterMap {
             f,
             upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
@@ -2059,7 +2049,7 @@ pub(crate) fn native_iter_scan(
     // Signature: scan(init, f, xs).
     let mut acc = args.first().cloned().unwrap_or(Value::Unit);
     let f = args.get(1).cloned().unwrap_or(Value::Unit);
-    if lazy_iterators_enabled() || matches!(args.get(2), Some(Value::LazyIter(_))) {
+    if matches!(args.get(2), Some(Value::LazyIter(_))) {
         return Ok(new_lazy_iter(LazyIterState::Scan {
             acc,
             f,
@@ -2209,7 +2199,7 @@ pub(crate) fn native_iter_take_while(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let p = args.first().cloned().unwrap_or(Value::Unit);
-    if lazy_iterators_enabled() || matches!(args.get(1), Some(Value::LazyIter(_))) {
+    if matches!(args.get(1), Some(Value::LazyIter(_))) {
         return Ok(new_lazy_iter(LazyIterState::TakeWhile {
             p,
             upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
@@ -2233,7 +2223,7 @@ pub(crate) fn native_iter_skip_while(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let p = args.first().cloned().unwrap_or(Value::Unit);
-    if lazy_iterators_enabled() || matches!(args.get(1), Some(Value::LazyIter(_))) {
+    if matches!(args.get(1), Some(Value::LazyIter(_))) {
         return Ok(new_lazy_iter(LazyIterState::SkipWhile {
             p,
             upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
@@ -2462,7 +2452,7 @@ pub(crate) fn native_iter_flat_map(
     args: &[Value],
 ) -> RuntimeResult<Value> {
     let f = args.first().cloned().unwrap_or(Value::Unit);
-    if lazy_iterators_enabled() || matches!(args.get(1), Some(Value::LazyIter(_))) {
+    if matches!(args.get(1), Some(Value::LazyIter(_))) {
         return Ok(new_lazy_iter(LazyIterState::FlatMap {
             f,
             upstream: lazy_source(args.get(1).unwrap_or(&Value::Unit)),
@@ -2565,18 +2555,12 @@ pub(crate) fn builtin_iter_max(args: &[Value]) -> RuntimeResult<Value> {
 pub(crate) fn builtin_iter_range(args: &[Value]) -> RuntimeResult<Value> {
     let start = args.first().and_then(value_to_int).unwrap_or(0);
     let end = args.get(1).and_then(value_to_int).unwrap_or(0);
-    if lazy_iterators_enabled() {
-        return Ok(new_range_iter(start, end, false, false, false));
-    }
     Ok(Value::IntArray(Arc::new(iter_std::range(start, end))))
 }
 
 pub(crate) fn builtin_iter_range_inclusive(args: &[Value]) -> RuntimeResult<Value> {
     let start = args.first().and_then(value_to_int).unwrap_or(0);
     let end = args.get(1).and_then(value_to_int).unwrap_or(0);
-    if lazy_iterators_enabled() {
-        return Ok(new_range_iter(start, end, true, false, false));
-    }
     Ok(Value::IntArray(Arc::new(iter_std::range_inclusive(
         start, end,
     ))))
@@ -2585,12 +2569,6 @@ pub(crate) fn builtin_iter_range_inclusive(args: &[Value]) -> RuntimeResult<Valu
 pub(crate) fn builtin_iter_repeat(args: &[Value]) -> RuntimeResult<Value> {
     let v = args.first().cloned().unwrap_or(Value::Unit);
     let n = non_negative_count(args, 1, "iter::repeat")?;
-    if lazy_iterators_enabled() {
-        return Ok(new_lazy_iter(LazyIterState::Repeat {
-            item: v,
-            remaining: n,
-        }));
-    }
     let out: Vec<Value> = (0..n).map(|_| v.clone()).collect();
     Ok(Value::Array(Arc::new(out)))
 }
@@ -2688,7 +2666,6 @@ mod lazy_cleanup_tests {
 
     #[test]
     fn ordinary_vec_mutation_does_not_allocate_lazy_tracking_state() {
-        set_lazy_iterators_enabled(true);
         let source = Value::IntArray(Arc::new(vec![1i64, 2, 3]));
 
         note_vec_element_replacement(&source, 1, &Value::Int(9));
@@ -2698,12 +2675,10 @@ mod lazy_cleanup_tests {
         assert!(LAZY_VEC_BORROWERS.with(|borrowers| borrowers.borrow().is_empty()));
         assert!(LAZY_VEC_GENERATIONS.with(|generations| generations.borrow().is_empty()));
         assert!(LAZY_VEC_REPLACEMENTS.with(|replacements| replacements.borrow().is_empty()));
-        set_lazy_iterators_enabled(false);
     }
 
     #[test]
     fn last_vec_iterator_reclaims_mutation_tracking_state() {
-        set_lazy_iterators_enabled(true);
         let source = Value::IntArray(Arc::new(vec![1i64, 2, 3]));
         let iter = lazy_source(&source);
 
@@ -2716,7 +2691,6 @@ mod lazy_cleanup_tests {
         discard_lazy_value(&iter);
         assert!(!has_lazy_vec_borrowers());
         assert!(LAZY_VEC_REPLACEMENTS.with(|replacements| replacements.borrow().is_empty()));
-        set_lazy_iterators_enabled(false);
     }
 
     fn source_id(value: &Value) -> usize {

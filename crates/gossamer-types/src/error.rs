@@ -17,6 +17,14 @@ pub struct TypeDiagnostic {
 }
 
 impl TypeDiagnostic {
+    /// Whether this finding is advisory rather than fatal: a lint the
+    /// checker is the only pass with enough type information to make, so it
+    /// reports at warning severity and never moves the exit code.
+    #[must_use]
+    pub const fn is_advisory(&self) -> bool {
+        matches!(self.error, TypeError::UndeclaredReturnValue { .. })
+    }
+
     /// Constructs a diagnostic from its error and span.
     #[must_use]
     pub const fn new(error: TypeError, span: Span) -> Self {
@@ -530,14 +538,27 @@ pub enum TypeError {
         /// Whether the first implementation is a `#[derive(...)]`.
         derived: bool,
     },
-    /// A function body answers a value through a signature that declares no
-    /// return type, so its callers read a unit where a value is handed back.
-    #[error("`{name}` returns a value but declares no return type")]
-    MissingReturnType {
+    /// A function body's tail answers a value through a signature that
+    /// declares no return type, so the value is discarded and the caller
+    /// reads the unit the signature promises.
+    #[error("the tail value of `{name}` is discarded; it declares no return type")]
+    UndeclaredReturnValue {
         /// Function or method name as written.
         name: String,
         /// Type the body's answer has, for the suggested `-> T`.
         found: String,
+    },
+    /// A `&` / `&mut` applied to a range index. A window into part of a
+    /// sequence is not a value this release can produce, and the copy the
+    /// index would otherwise make is not the alias the borrow asks for.
+    #[error("`&{mutability}{base}[{range}]` would borrow a window into part of a sequence")]
+    RangeBorrow {
+        /// `mut ` for a mutable borrow, empty otherwise.
+        mutability: &'static str,
+        /// Base expression as written, for the message.
+        base: String,
+        /// Range as written, for the message.
+        range: String,
     },
     /// A path projected an associated item that nothing in scope declares.
     #[error("no associated item named `{name}` on `{base}`")]
@@ -914,7 +935,8 @@ impl TypeError {
             Self::MissingTraitImplAssocItems { .. } => "missing-trait-impl-assoc-items",
             Self::ImplItemNotInTrait { .. } => "impl-item-not-in-trait",
             Self::ConflictingTraitImpl { .. } => "conflicting-trait-impl",
-            Self::MissingReturnType { .. } => "missing-return-type",
+            Self::UndeclaredReturnValue { .. } => "undeclared-return-value",
+            Self::RangeBorrow { .. } => "range-borrow",
             Self::UnknownAssocItem { .. } => "unknown-assoc-item",
             Self::AmbiguousAssocItem { .. } => "ambiguous-assoc-item",
             Self::BuiltinIteratorNotGeneric { .. } => "builtin-iterator-not-generic",
@@ -1018,7 +1040,8 @@ impl TypeError {
             Self::MissingTraitImplAssocItems { .. } => "GT0059",
             Self::ImplItemNotInTrait { .. } => "GT0072",
             Self::ConflictingTraitImpl { .. } => "GT0073",
-            Self::MissingReturnType { .. } => "GT0074",
+            Self::UndeclaredReturnValue { .. } => "GL0055",
+            Self::RangeBorrow { .. } => "GT0075",
             Self::UnknownAssocItem { .. } => "GT0060",
             Self::AmbiguousAssocItem { .. } => "GT0061",
             Self::BuiltinIteratorNotGeneric { .. } => "GT0057",
@@ -1148,8 +1171,12 @@ impl TypeDiagnostic {
         use gossamer_diagnostics::{Code, Diagnostic, Location};
         let location = Location::new(self.span.file, self.span);
         let title = format!("{}", self.error);
-        let mut out =
-            Diagnostic::error(Code(self.error.code()), title.clone()).with_primary(location, title);
+        let mut out = if self.is_advisory() {
+            Diagnostic::warning(Code(self.error.code()), title.clone())
+        } else {
+            Diagnostic::error(Code(self.error.code()), title.clone())
+        }
+        .with_primary(location, title);
         match &self.error {
             // Both titles already carry the expected and found types, so a
             // note repeating them would double the diagnostic's length
@@ -1545,13 +1572,24 @@ impl TypeDiagnostic {
                     )
                 });
             }
-            TypeError::MissingReturnType { name, found } => {
+            TypeError::RangeBorrow { base, range, .. } => {
                 out = out
-                    .with_help(format!("declare it: `fn {name}(..) -> {found}`"))
                     .with_note(
-                        "a signature is what a caller reads; a body that answers a value \
-                         through an undeclared return hands back a unit",
-                    );
+                        "a sequence's elements live in its own buffer; a borrow of part of \
+                         one would have to alias that buffer, which no value shape carries yet",
+                    )
+                    .with_help(format!(
+                        "read a copy with `{base}[{range}]` or `{base}.slice(..)`, or edit in \
+                         place with `copy_within` / `copy_from_slice` / an indexed write"
+                    ));
+            }
+            TypeError::UndeclaredReturnValue { name, found } => {
+                out = out
+                    .with_help(format!(
+                        "return it: `fn {name}(..) -> {found}`, or say the discard is \
+                         deliberate: `fn {name}(..) -> ()`"
+                    ))
+                    .with_note("lint: undeclared_return_value");
             }
             TypeError::UnknownAssocItem {
                 base,

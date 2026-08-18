@@ -3628,6 +3628,36 @@ pub(crate) fn unwrap_mut_cells(mut args: Vec<Value>) -> Vec<Value> {
     args
 }
 
+/// Same as [`unwrap_mut_cells`], except for the builtins whose contract
+/// is to write through a `&mut` argument rather than answer a new value.
+/// Those receive the cell itself, so the mutation the compiled tiers make
+/// through the caller's pointer is the mutation the VM makes too.
+pub(crate) fn unwrap_mut_cells_unless_writer(name: &str, args: Vec<Value>) -> Vec<Value> {
+    if builtin_writes_through_mut_ref(name) {
+        args
+    } else {
+        unwrap_mut_cells(args)
+    }
+}
+
+/// Whether the builtin `name` mutates through a `&mut` parameter.
+///
+/// Every other builtin takes aggregates by value, so a write-back cell is
+/// unwrapped before the call and the unchanged value flows back to the
+/// caller afterwards.
+pub(crate) fn builtin_writes_through_mut_ref(name: &str) -> bool {
+    let short = name.rsplit("::").next().unwrap_or(name);
+    matches!(
+        short,
+        "put_u16_be_at"
+            | "put_u16_le_at"
+            | "put_u32_be_at"
+            | "put_u32_le_at"
+            | "put_u64_be_at"
+            | "put_u64_le_at"
+    )
+}
+
 /// Result type used throughout the interpreter for operations that can
 /// abort with a runtime error.
 pub type RuntimeResult<T> = Result<T, RuntimeError>;

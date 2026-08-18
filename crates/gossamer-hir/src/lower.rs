@@ -35,25 +35,6 @@ pub fn lower_source_file(
     table: &TypeTable,
     tcx: &mut TyCtxt,
 ) -> HirProgram {
-    lower_source_file_with_edition(
-        source,
-        resolutions,
-        table,
-        tcx,
-        gossamer_pkg::Edition::E2026,
-    )
-}
-
-/// Lowers a resolved AST source file while retaining its selected edition in
-/// HIR for MIR lowering and cache/debug consumers.
-#[must_use]
-pub fn lower_source_file_with_edition(
-    source: &SourceFile,
-    resolutions: &Resolutions,
-    table: &TypeTable,
-    tcx: &mut TyCtxt,
-    edition: gossamer_pkg::Edition,
-) -> HirProgram {
     let mut module_fn_paths = std::collections::HashMap::new();
     collect_module_fn_paths(
         resolutions,
@@ -94,7 +75,7 @@ pub fn lower_source_file_with_edition(
     let mut module_path: Vec<String> = Vec::new();
     lower_items(&mut lowerer, &source.items, &mut items, &mut module_path);
     items.append(&mut lowerer.promoted_items);
-    let mut program = HirProgram { edition, items };
+    let mut program = HirProgram { items };
     // Fuse `iter::` range pipelines into loops before returning, so every
     // consumer (the bytecode VM, and the native path that lifts closures
     // next) sees the same fused HIR. Runs before closure lifting, so
@@ -661,6 +642,20 @@ impl Lowerer<'_> {
     /// Name of the opaque alias a method receiver is declared as, when it is
     /// one. Its impl methods are filed under this name, and the erasure that
     /// follows lowering replaces the type with its representation.
+    /// Primitive name of a float receiver (`"f32"` / `"f64"`), for the
+    /// method spellings that route to an associated function on it.
+    fn float_receiver_width(&mut self, receiver: NodeId) -> Option<&'static str> {
+        let mut recv = self.table.get(receiver)?;
+        while let Some(gossamer_types::TyKind::Ref { inner, .. }) = self.tcx.kind(recv) {
+            recv = *inner;
+        }
+        match self.tcx.kind(recv)? {
+            gossamer_types::TyKind::Float(gossamer_types::FloatTy::F32) => Some("f32"),
+            gossamer_types::TyKind::Float(gossamer_types::FloatTy::F64) => Some("f64"),
+            _ => None,
+        }
+    }
+
     fn nominal_impl_owner(&mut self, receiver: NodeId) -> Option<String> {
         let mut recv = self.table.get(receiver)?;
         while let Some(gossamer_types::TyKind::Ref { inner, .. }) = self.tcx.kind(recv) {
@@ -819,6 +814,7 @@ impl Lowerer<'_> {
                 stmts.append(&mut block.stmts);
                 block.stmts = stmts;
             }
+            self.discard_undeclared_tail(&decl.name.name, ret, &mut block);
             HirBody { block }
         });
         self.current_fn_ret_ty = saved_ret;
@@ -832,6 +828,48 @@ impl Lowerer<'_> {
             has_self,
             origin: FnOrigin::Declared,
         }
+    }
+
+    /// Demotes a value-producing tail to a statement when the signature
+    /// answers a unit - written `-> ()` or left off. The value is computed
+    /// for its effects and dropped, so every tier agrees with the signature
+    /// the caller reads; the checker reports the undeclared spelling as a
+    /// lint.
+    ///
+    /// A wrapper the front end synthesized around an expression - the REPL's
+    /// per-input entry point, the binding-type probe - answers that
+    /// expression by construction, and its caller reads the value back
+    /// rather than the signature. A tail that already answers a unit has no
+    /// value to discard and keeps its place.
+    fn discard_undeclared_tail(
+        &mut self,
+        name: &str,
+        ret: Option<gossamer_types::Ty>,
+        block: &mut HirBlock,
+    ) {
+        if name.starts_with("__") {
+            return;
+        }
+        let answers_unit =
+            ret.is_none_or(|ty| matches!(self.tcx.kind(ty), Some(gossamer_types::TyKind::Unit)));
+        let tail_holds_value = block.tail.as_ref().is_some_and(|tail| {
+            !matches!(self.tcx.kind(tail.ty), Some(gossamer_types::TyKind::Unit))
+        });
+        if !answers_unit || !tail_holds_value {
+            return;
+        }
+        let Some(tail) = block.tail.take() else {
+            return;
+        };
+        block.ty = self.unit();
+        block.stmts.push(HirStmt {
+            id: self.fresh(),
+            span: tail.span,
+            kind: HirStmtKind::Expr {
+                expr: *tail,
+                has_semi: true,
+            },
+        });
     }
 
     /// Lowers one typed parameter. A non-trivial pattern (`(a, b)`,
@@ -1158,6 +1196,29 @@ impl Lowerer<'_> {
                     return HirExprKind::Call {
                         callee: Box::new(callee),
                         args: call_args,
+                    };
+                }
+                // `x.to_bits()` is the method spelling of
+                // `f64::to_bits(x)`; routing it to the associated form
+                // keeps one lowering for both spellings on every tier.
+                if name.name == "to_bits"
+                    && args.is_empty()
+                    && let Some(owner) = self.float_receiver_width(receiver.id)
+                {
+                    let span = expr.span;
+                    let ty = self.ty_of(expr.id);
+                    let callee = HirExpr {
+                        id: self.fresh(),
+                        span,
+                        ty,
+                        kind: HirExprKind::Path {
+                            segments: vec![Ident::new(owner), name.clone()],
+                            def: None,
+                        },
+                    };
+                    return HirExprKind::Call {
+                        callee: Box::new(callee),
+                        args: vec![self.lower_expr(receiver)],
                     };
                 }
                 // A map or set traverses eagerly, and the compiled tiers reach

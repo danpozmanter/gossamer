@@ -339,3 +339,30 @@ pub extern "C" fn gos_rt_bits_div(hi: i64, lo: i64, y: i64) -> *mut u8 {
     }
     alloc_pair(q as u64 as i64, (dividend % u128::from(y)) as u64 as i64)
 }
+
+/// `f64::to_bits(x) -> u64`: the value's IEEE-754 binary64 encoding.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_f64_to_bits(x: f64) -> i64 {
+    x.to_bits() as i64
+}
+
+/// `f64::from_bits(b) -> f64`: the binary64 value `b` encodes.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_f64_from_bits(bits: i64) -> f64 {
+    f64::from_bits(bits as u64)
+}
+
+/// `f32::to_bits(x) -> u32`: the binary32 encoding of `x` rounded to
+/// single precision. Gossamer holds every float in a 64-bit slot, so the
+/// rounding is part of the contract rather than a lossy step around it.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_f32_to_bits(x: f64) -> i64 {
+    i64::from((x as f32).to_bits())
+}
+
+/// `f32::from_bits(b) -> f32`: the binary32 value the low 32 bits of `b`
+/// encode, widened to the 64-bit float slot without further rounding.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_f32_from_bits(bits: i64) -> f64 {
+    f64::from(f32::from_bits(bits as u64 as u32))
+}

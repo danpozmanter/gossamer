@@ -92,14 +92,17 @@ const ALLOWED_UNMANIFESTED: &[&str] = &[
 /// not to a `std::` module manifest. Keep this recognition structural and
 /// closed so an unrelated lowercase runtime owner cannot bypass the manifest
 /// audit merely by looking like a primitive type.
-fn is_primitive_integer_method(name: &str) -> bool {
+fn is_primitive_scalar_method(name: &str) -> bool {
     let Some((owner, method)) = name.split_once("::") else {
         return false;
     };
-    matches!(
-        owner,
-        "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
-    ) && matches!(method, "wrapping_add" | "wrapping_mul")
+    match owner {
+        "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize" => {
+            matches!(method, "wrapping_add" | "wrapping_mul")
+        }
+        "f32" | "f64" => matches!(method, "to_bits" | "from_bits"),
+        _ => false,
+    }
 }
 
 /// Every registered `module::fn` must name a member the canonical
@@ -136,7 +139,7 @@ fn registry_members_match_manifest() {
         .filter(|n| n.contains("::") && n.chars().next().is_some_and(char::is_lowercase))
         .filter(|n| !n.contains("::__gos_"))
         .filter(|n| !ALLOWED_UNMANIFESTED.contains(n))
-        .filter(|n| !is_primitive_integer_method(n))
+        .filter(|n| !is_primitive_scalar_method(n))
         .filter(|n| {
             let mut segs: Vec<&str> = n.split("::").collect();
             // A leading `std` segment is just the crate root.

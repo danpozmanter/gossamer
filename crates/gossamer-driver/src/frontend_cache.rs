@@ -192,7 +192,7 @@ fn exe_fingerprint() -> &'static str {
 /// signatures. Imports need no separate term because the CLI hands the gate
 /// a single bundled source containing every sibling module.
 #[must_use]
-pub fn frontend_key(source: &str, edition: &str, file_id: FileId) -> FrontendCacheKey {
+pub fn frontend_key(source: &str, file_id: FileId) -> FrontendCacheKey {
     let bindings = gossamer_resolve::all_external_modules();
     let bindings_digest = if bindings.is_empty() {
         String::new()
@@ -200,7 +200,7 @@ pub fn frontend_key(source: &str, edition: &str, file_id: FileId) -> FrontendCac
         sha256::hex(format!("{bindings:?}").as_bytes())
     };
     let context = format!(
-        "edition={edition}|file={}|target={}|cfg_test={}|bindings={bindings_digest}",
+        "file={}|target={}|cfg_test={}|bindings={bindings_digest}",
         file_id.as_u32(),
         gossamer_codegen_llvm::active_target_triple(),
         gossamer_resolve::test_cfg_enabled(),
@@ -409,22 +409,21 @@ mod tests {
     }
 
     #[test]
-    fn cache_key_changes_when_edition_changes() {
-        let eager = FrontendCacheKey::new_with_context("fn main() {}\n", "0.0.0", "edition=2026");
-        let lazy = FrontendCacheKey::new_with_context("fn main() {}\n", "0.0.0", "edition=2027");
-        assert_ne!(eager, lazy);
+    fn cache_key_changes_when_the_context_changes() {
+        let host = FrontendCacheKey::new_with_context("fn main() {}\n", "0.0.0", "target=host");
+        let cross = FrontendCacheKey::new_with_context("fn main() {}\n", "0.0.0", "target=cross");
+        assert_ne!(host, cross);
     }
 
     #[test]
-    fn frontend_key_separates_editions_and_file_ids() {
+    fn frontend_key_separates_sources_and_file_ids() {
         let mut map = gossamer_lex::SourceMap::new();
         let first = map.add_file("a.gos", "fn main() {}\n".to_string());
         let second = map.add_file("b.gos", "fn main() {}\n".to_string());
-        let base = frontend_key("fn main() {}\n", "2026", first);
-        assert_eq!(base, frontend_key("fn main() {}\n", "2026", first));
-        assert_ne!(base, frontend_key("fn main() {}\n", "2027", first));
-        assert_ne!(base, frontend_key("fn main() {}\n", "2026", second));
-        assert_ne!(base, frontend_key("fn main() { }\n", "2026", first));
+        let base = frontend_key("fn main() {}\n", first);
+        assert_eq!(base, frontend_key("fn main() {}\n", first));
+        assert_ne!(base, frontend_key("fn main() {}\n", second));
+        assert_ne!(base, frontend_key("fn main() { }\n", first));
     }
 
     #[test]

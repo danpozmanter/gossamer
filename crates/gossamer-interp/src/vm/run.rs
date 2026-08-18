@@ -951,7 +951,10 @@ impl Vm {
                         // write-back cells (free builtins take aggregates by
                         // value) and return the pooled arg buffer - both
                         // things `apply`'s builtin arm does, minus the alloc.
-                        let call_args = crate::value::unwrap_mut_cells(arg_values);
+                        let call_args = crate::value::unwrap_mut_cells_unless_writer(
+                            callee_name.unwrap_or_default(),
+                            arg_values,
+                        );
                         let r = call_fn(&call_args)?;
                         self.pool.borrow_mut().give_args(call_args);
                         r

@@ -252,6 +252,9 @@ impl StringPool {
 #[derive(Debug, Clone)]
 pub(super) enum ConcatKind {
     StrPtr,
+    /// A unit value renders as the literal `()`, the same text every
+    /// other tier prints for it.
+    Unit,
     Int,
     /// Unsigned integer (u8/u16/u32/u64/u128/usize). Routed to
     /// `gos_rt_print_u64` / `gos_rt_concat_u64` so values

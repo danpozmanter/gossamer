@@ -17,7 +17,7 @@ use gossamer_std::exec;
 use gossamer_std::fs::{Event, Watcher};
 use gossamer_std::signal::{self, Notifier, sigs};
 
-use crate::paths::{project_edition_for_entry, resolve_entry_arg, stderr_supports_colour};
+use crate::paths::{resolve_entry_arg, stderr_supports_colour};
 
 const MAX_BATCH: Duration = Duration::from_secs(2);
 
@@ -152,15 +152,11 @@ fn validate(entry: &Path, locked: bool, status: &Status) -> Result<()> {
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(entry.to_string_lossy().into_owned(), source.clone());
     crate::paths::register_unit_origins(&mut map, file_id, &unit.entry, &unit.origins);
-    let outcome = gossamer_driver::check_frontend_with_edition(
-        &source,
-        file_id,
-        project_edition_for_entry(entry),
-    );
+    let outcome = gossamer_driver::check_frontend(&source, file_id);
     let render_opts = gossamer_diagnostics::RenderOptions {
         colour: stderr_supports_colour(),
     };
-    for diag in &outcome.diagnostics {
+    for diag in outcome.diagnostics.iter().chain(&outcome.warnings) {
         eprintln!("{}", gossamer_diagnostics::render(diag, &map, render_opts));
     }
     if !outcome.diagnostics.is_empty() {

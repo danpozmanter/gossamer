@@ -50,6 +50,9 @@ pub fn project_dep_module_name(id: &str) -> String {
 /// dependency module instead of an opaque import.
 struct DeferredProjectUse {
     alias: String,
+    /// Package id as the `use` spelled it, so the module the bundler
+    /// actually emitted for it can be found by id.
+    project_id: String,
     module_name: String,
     use_id: NodeId,
     span: Span,
@@ -203,6 +206,24 @@ impl Resolver {
     /// entry bundler does not inline).
     fn bind_project_imports(&mut self) {
         let deferred = std::mem::take(&mut self.deferred_project_uses);
+        // The bundler names each inlined dependency module, honouring a
+        // `module = "..."` manifest override, and stamps the package id on
+        // it. Reading the name back from that stamp is what lets a quoted
+        // `use "id"` find a module the id alone would not derive.
+        let by_id: std::collections::HashMap<&str, &str> = self
+            .dependency_modules
+            .iter()
+            .map(|(module, id)| (id.as_str(), module.as_str()))
+            .collect();
+        let deferred: Vec<DeferredProjectUse> = deferred
+            .into_iter()
+            .map(|mut du| {
+                if let Some(module) = by_id.get(du.project_id.as_str()) {
+                    du.module_name = (*module).to_string();
+                }
+                du
+            })
+            .collect();
         for du in deferred {
             let module_binding = self
                 .scopes
@@ -308,6 +329,7 @@ impl Resolver {
                 .insert(project_dep_module_name(id));
             self.deferred_project_uses.push(DeferredProjectUse {
                 alias: name,
+                project_id: id.clone(),
                 module_name: project_dep_module_name(id),
                 use_id: use_decl.id,
                 span: use_decl.span,
@@ -741,13 +763,18 @@ impl Resolver {
             && first != id
         {
             let first = first.clone();
+            // The colliding declaration is the bundler's, not the user's, so
+            // reporting at its span would point into generated text. What
+            // the reader edits is the manifest; anchor the report at the
+            // start of the file they opened.
+            let anchor = Span::new(item.span.file, 0, 0);
             self.emit(
                 ResolveError::DependencyModuleCollision {
                     module: decl.name.name.clone(),
                     first,
                     second: id.to_string(),
                 },
-                item.span,
+                anchor,
             );
             return;
         }
@@ -2396,7 +2423,9 @@ fn starts_lowercase(seg: &str) -> bool {
 /// path at all.
 fn path_shape_is_validated(effective: &[&str]) -> bool {
     match effective {
-        [head, _member] => crate::stdlib_exports::is_stdlib_module_name(head),
+        [head, _member] => {
+            crate::stdlib_exports::is_stdlib_module_name(head) || is_scalar_primitive_name(head)
+        }
         [head, sub, member] if starts_lowercase(sub) && starts_lowercase(member) => {
             crate::stdlib_exports::is_stdlib_module_name(head)
         }
@@ -2408,6 +2437,32 @@ fn path_shape_is_validated(effective: &[&str]) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether `name` is a scalar primitive type. Its associated surface is
+/// closed and entirely the standard library's, so a member absent from
+/// the export table is definitively unresolved rather than an item the
+/// resolver simply cannot see.
+fn is_scalar_primitive_name(name: &str) -> bool {
+    matches!(
+        name,
+        "bool"
+            | "char"
+            | "f32"
+            | "f64"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+    )
 }
 
 /// Canonical `::`-joined spelling of a `use` target, used to tell a repeated

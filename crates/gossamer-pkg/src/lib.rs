@@ -18,10 +18,10 @@
 // tarball I/O, manifest/lockfile editing - is inert in a browser and
 // pulls native-only crypto/network crates (rustls, ed25519-dalek), so
 // it is gated out of the wasm build. Native is unaffected.
-mod edition;
+mod language_version;
 pub mod sha256;
 
-pub use edition::Edition;
+pub use language_version::{parse_gossamer_version, toolchain_version};
 
 /// Security advisories: the feed format and matching it against a
 /// resolved dependency set. Native-only, like the version and JSON

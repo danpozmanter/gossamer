@@ -6,7 +6,7 @@
 use anyhow::anyhow;
 use gossamer_ast::SourceFile;
 use gossamer_codegen_cranelift::{NativeObject, compile_to_object, emit_module};
-use gossamer_hir::{lift_closures, lower_source_file_with_edition};
+use gossamer_hir::{lift_closures, lower_source_file};
 use gossamer_lex::SourceMap;
 use gossamer_mir::{
     Body, check_generic_layouts, inline_general, inline_small_callees, inline_trivial_wrappers,
@@ -33,8 +33,6 @@ pub fn compile_source(source: &str, unit_name: &str, options: &LinkerOptions) ->
 /// Created once by `gos build`'s validation pass and consumed by
 /// the codegen path, avoiding a redundant frontend round-trip.
 pub struct CheckedFrontend {
-    /// Source edition selected by the project manifest.
-    pub edition: gossamer_pkg::Edition,
     /// Parsed AST.
     pub sf: SourceFile,
     /// Name-resolution map.
@@ -227,13 +225,12 @@ fn lower_to_mir_from_frontend(
     profile: MirProfile,
 ) -> (Vec<Body>, TyCtxt) {
     let CheckedFrontend {
-        edition,
         sf,
         resolutions,
         table,
         mut tcx,
     } = checked;
-    let hir = lower_source_file_with_edition(&sf, &resolutions, &table, &mut tcx, edition);
+    let hir = lower_source_file(&sf, &resolutions, &table, &mut tcx);
     let hir = lift_closures(hir, &mut tcx);
     let mut bodies = lower_program(&hir, &mut tcx);
     gossamer_mir::monomorphise(&mut bodies, &mut tcx);

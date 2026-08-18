@@ -283,6 +283,13 @@ pub const REGISTRY: &[(&str, &str)] = &[
             cohort, which joins it and reports its panic or `Err`.",
     ),
     (
+        "GL0055",
+        "A signature with no return type answers a unit, so the value the\n\
+            body's tail expression produces is discarded and the caller reads\n\
+            the unit the signature promises. Return it with `-> T`, or write\n\
+            `-> ()` to say the discard is deliberate.",
+    ),
+    (
         "GM0001",
         "Generic monomorphization received a type substitution that the\n\
                      compiler does not yet support - typically a generic parameter\n\
@@ -1140,13 +1147,13 @@ pub const REGISTRY: &[(&str, &str)] = &[
             supplies. Keep one - merge the blocks, or drop the derive.",
     ),
     (
-        "GT0074",
-        "A function body answers a value through a signature that declares no\n\
-            return type. The signature is what a caller reads, so the value\n\
-            the tail expression (or a `return`) produces is discarded and the\n\
-            call hands back a unit. Declare the type the body answers with\n\
-            `-> T`, or end the body with a statement when nothing is\n\
-            returned.",
+        "GT0075",
+        "A `&` or `&mut` applied to a range index. The index answers a fresh\n\
+            copy of that range, so borrowing it would hand out a reference to\n\
+            a temporary nothing owns; a window aliasing part of a sequence's\n\
+            buffer has no value shape yet. Read a copy through the bare index\n\
+            or `slice`, or edit in place with `copy_within`,\n\
+            `copy_from_slice`, or an indexed write.",
     ),
     (
         "GX0001",

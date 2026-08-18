@@ -10,13 +10,17 @@ The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/c
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`File`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `type File` | Streaming file handle; supports read, read_to_string, write, flush, and close. |
+| [`File`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `type File` | Streaming file handle. Reads and writes at its own cursor (`read`, `read_to_string`, `write`, `write_bytes`, `seek`), positionally (`read_at`, `write_at`), and reports size (`len`, `set_len`). Durability is `sync_all` / `sync_data`; multi-process safety is the `try_lock_*` / `unlock` family. |
 | [`OpenOptions`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `type OpenOptions` | Builder for opening files with read/write/append/create/truncate flags. |
 | [`canonicalize`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `fn canonicalize(path: String) -> Result<String, io::Error>` | Resolves a path to an absolute, symlink-free canonical form. |
 | [`copy`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `fn copy(src: String, dst: String) -> Result<i64, io::Error>` | Copies a file, creating parent dirs as needed. |
 | [`create`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `fn create(path: String) -> Result<fs::File, io::Error>` | Creates or truncates a file and returns a streaming file handle. |
 | [`create_dir`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `fn create_dir(path: String) -> Result<(), io::Error>` | Creates a single directory. Fails if any parent is missing. |
 | [`create_dir_all`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `fn create_dir_all(path: String) -> Result<(), io::Error>` | Creates a directory and any missing ancestors. |
+| [`sync_dir`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `fn sync_dir(path: String) -> Result<(), errors::Error>` | Makes a directory's own entries durable - the barrier a create, rename, or delete needs after the file itself is synced. On Windows NTFS metadata ordering supplies it and the call performs no flush. |
+| [`SEEK_SET`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `const SEEK_SET: i64` | `File::seek` whence: the offset is absolute from the start of the file. |
+| [`SEEK_CUR`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `const SEEK_CUR: i64` | `File::seek` whence: the offset is relative to the current position. |
+| [`SEEK_END`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `const SEEK_END: i64` | `File::seek` whence: the offset is relative to the end of the file. |
 | [`temp_dir`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `fn temp_dir(prefix: String) -> Result<String, io::Error>` | Creates a unique directory under the system temporary root. The caller removes it explicitly. |
 | [`temp_file`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `fn temp_file(prefix: String) -> Result<(fs::File, String), io::Error>` | Creates a unique temporary file and returns its streaming handle plus path. Close and remove it explicitly. |
 | [`exists`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/fs.rs) | `fn exists(path: String) -> bool` | Returns whether a path exists on the filesystem. |

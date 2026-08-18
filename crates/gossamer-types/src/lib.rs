@@ -39,7 +39,6 @@ pub use checker::{
     is_set_method, is_slice_sequence_method, is_tuple_method, is_tuple_rejected_method,
     is_vec_only_sequence_method, iterator_adapter_is_lazy, iterator_receiver_accepts_method,
     typecheck_source_file, typecheck_source_file_for_repl_inspection,
-    typecheck_source_file_with_edition, typecheck_source_file_with_lazy_iterators,
 };
 pub use context::TyCtxt;
 pub use error::{NotDisplayableClass, TypeDiagnostic, TypeError};
@@ -95,6 +94,8 @@ pub fn is_mutating_method_name(name: &str) -> bool {
             | "reverse"
             | "swap"
             | "fill"
+            | "copy_within"
+            | "copy_from_slice"
             | "append"
             | "resize"
             | "resize_with"

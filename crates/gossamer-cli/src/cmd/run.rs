@@ -9,9 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
-use gossamer_pkg::Edition;
 
-use crate::loaders::{load_and_check_with_edition, profile_rss_stage};
+use crate::loaders::{load_and_check, profile_rss_stage};
 use crate::paths::resolve_entry_arg;
 
 /// Runs a source file through the bytecode VM.
@@ -38,32 +37,27 @@ fn run(file: &Path, main_thread: bool, forwarded: &[String]) -> Result<()> {
 }
 
 fn run_on_vm(file: &Path, forwarded: &[String]) -> Result<()> {
-    let edition = crate::paths::project_edition_for_entry(file);
     let file_label = file.to_string_lossy();
     let unit = crate::paths::read_entry_unit(file)?;
     run_source_on_vm(
         &unit.source,
         &file_label,
         forwarded,
-        edition,
         Some((unit.entry.as_path(), unit.origins.as_slice())),
     )
 }
 
 /// Executes inline source passed through `gos -e` or `gos --eval`.
 pub(crate) fn command(source: String) -> Result<()> {
-    let edition = crate::paths::project_edition();
-    crate::cmd::with_vm_stack(move || run_source_on_vm(&source, "<command>", &[], edition, None))
+    crate::cmd::with_vm_stack(move || run_source_on_vm(&source, "<command>", &[], None))
 }
 
 fn run_source_on_vm(
     user_source: &str,
     file_label: &str,
     forwarded: &[String],
-    edition: Edition,
     origins: Option<(&Path, &[gossamer_pkg::bundle::BundledSpan])>,
 ) -> Result<()> {
-    let lazy_iterators = edition == Edition::E2027;
     // Compile-time codegen pass: synthesize `from_json` / `to_json`
     // for every user struct so the resulting program has real
     // methods (no VM-only intercept).
@@ -81,10 +75,10 @@ fn run_source_on_vm(
     // Static checks always run first. A program with parse / resolve /
     // type errors has no business reaching the VM - execution would
     // either crash or produce unsound output.
-    let (program, tcx) = load_and_check_with_edition(map.source(file_id), file_id, &map, edition)?;
+    let (program, tcx) = load_and_check(map.source(file_id), file_id, &map)?;
     gossamer_interp::set_program_name(file_label);
     gossamer_interp::set_program_args(forwarded);
-    gossamer_interp::set_lazy_iterators_enabled(lazy_iterators);
+    gossamer_interp::reset_lazy_iterator_state();
     let mut vm = gossamer_interp::Vm::new();
     // The bytecode compiler resolves expression spans into compact chunk-local
     // locations during load. The full source map can then be released before

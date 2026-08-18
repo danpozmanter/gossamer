@@ -1877,6 +1877,94 @@ fn two_packages_normalizing_to_one_module_name_collide() {
     }
 }
 
+/// Two packages whose ids share a final segment coexist once one names its
+/// own module in the manifest. Both the manifest name and the package id
+/// reach their own package.
+#[test]
+fn a_module_override_lets_two_same_named_packages_coexist() {
+    let root = fresh_dir("dep-module-override");
+    write_dep_project(
+        &root,
+        "first",
+        "ownera.example.com/pgsql-gos",
+        "pub fn who() -> String { \"a\" }\n",
+    );
+    write_dep_project(
+        &root,
+        "second",
+        "ownerb.example.com/pgsql-gos",
+        "pub fn who() -> String { \"b\" }\n",
+    );
+    let app = write_app_project(
+        &root,
+        "\"ownera.example.com/pgsql-gos\" = { path = \"../first\", module = \"pg_a\" }\n\
+         \"ownerb.example.com/pgsql-gos\" = { path = \"../second\" }\n",
+        "use pg_a\nuse pgsql_gos\n\n\
+         fn main() { println!(\"{} {}\", pg_a::who(), pgsql_gos::who()) }\n",
+    );
+    let out = project_run_vm(&app);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert_eq!(out.0.trim(), "a b", "stdout: {:?}", out.0);
+
+    // The package id reaches the overridden module too, so a caller may
+    // name either spelling.
+    fs::write(
+        app.join("main.gos"),
+        "use \"ownera.example.com/pgsql-gos\" as pa\n\
+         use \"ownerb.example.com/pgsql-gos\" as pb\n\n\
+         fn main() { println!(\"{} {}\", pa::who(), pb::who()) }\n",
+    )
+    .unwrap();
+    let out = project_run_vm(&app);
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert_eq!(out.0.trim(), "a b", "stdout: {:?}", out.0);
+}
+
+/// A dependency whose public structs make the autoderive stage synthesize
+/// serde glue is reachable through every import spelling: the generated
+/// source names the package by the module the bundler emitted, which no
+/// spelling at the call site changes.
+#[test]
+fn a_serde_bearing_dependency_checks_under_every_import_spelling() {
+    let root = fresh_dir("dep-serde-spellings");
+    write_dep_project(
+        &root,
+        "pgsql-gos",
+        "example.com/pgsql-gos",
+        "pub struct Transaction { pub id: i64, pub label: String }\n\
+         pub fn begin() -> Transaction { Transaction { id: 1, label: \"tx\" } }\n",
+    );
+    for (label, main) in [
+        (
+            "bare",
+            "use pgsql_gos\n\nfn main() { println!(\"{}\", pgsql_gos::begin().id) }\n",
+        ),
+        (
+            "alias",
+            "use pgsql_gos as pg\n\nfn main() { println!(\"{}\", pg::begin().id) }\n",
+        ),
+        (
+            "list",
+            "use pgsql_gos::{begin}\n\nfn main() { println!(\"{}\", begin().id) }\n",
+        ),
+        (
+            "package id",
+            "use \"example.com/pgsql-gos\"\n\nfn main() { println!(\"{}\", pgsql_gos::begin().id) }\n",
+        ),
+        (
+            "aliased package id",
+            "use \"example.com/pgsql-gos\" as pg\n\nfn main() { println!(\"{}\", pg::begin().id) }\n",
+        ),
+    ] {
+        let app = write_app_project(&root, "pgsql_gos = { path = \"../pgsql-gos\" }\n", main);
+        let out = project_run_vm(&app);
+        assert_eq!(out.2, Some(0), "{label}: stderr: {}", out.1);
+        assert_eq!(out.0.trim(), "1", "{label}: stdout: {:?}", out.0);
+    }
+    let _ = fs::remove_dir_all(&root);
+}
+
 /// `gos tidy` reads the imports a file actually writes, so a dependency
 /// reached through its bare module name is kept.
 #[test]

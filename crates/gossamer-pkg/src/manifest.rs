@@ -12,7 +12,6 @@ use std::collections::BTreeMap;
 
 use thiserror::Error;
 
-use crate::Edition;
 use crate::id::{ProjectId, ProjectIdError};
 use crate::version::{CaretRange, Version, VersionError};
 
@@ -25,6 +24,11 @@ pub struct Manifest {
     pub project: ProjectTable,
     /// `[dependencies]` map keyed by project id.
     pub dependencies: BTreeMap<String, DependencySpec>,
+    /// Module-name overrides from a dependency's `module = "..."` key,
+    /// keyed by project id. A dependency without one is reached under the
+    /// name derived from the final segment of its id, so two packages
+    /// sharing that segment need one of these to coexist.
+    pub dependency_modules: BTreeMap<String, String>,
     /// `[registries]` map keyed by DNS prefix.
     pub registries: BTreeMap<String, String>,
     /// `[trusted-publishers]` map from package id to the hex Ed25519
@@ -72,9 +76,10 @@ pub struct ProjectTable {
     pub id: ProjectId,
     /// `project.version`.
     pub version: Version,
-    /// Language edition selecting source-compatible semantics. Projects that
-    /// omit this field retain the current 2026 eager-iterator behavior.
-    pub edition: Edition,
+    /// `project.gossamer-version` - the exact toolchain version this
+    /// project is written against, matching the release tag. Absent when
+    /// the manifest does not state one.
+    pub gossamer_version: Option<Version>,
     /// `project.authors`. Empty when omitted.
     pub authors: Vec<String>,
     /// `project.license`. Empty string when omitted.
@@ -92,17 +97,6 @@ pub struct ProjectTable {
     /// once that canonical formatting is part of passing rather than a
     /// separate step someone has to remember.
     pub enforce_format: bool,
-}
-
-impl Edition {
-    /// Parses the manifest spelling for a supported edition.
-    fn parse(value: &str) -> Result<Self, ManifestError> {
-        match value {
-            "2026" => Ok(Self::E2026),
-            "2027" => Ok(Self::E2027),
-            _ => Err(ManifestError::UnsupportedGossamerVersion(value.to_string())),
-        }
-    }
 }
 
 /// One entry in `[dependencies]`.
@@ -252,9 +246,20 @@ pub enum ManifestError {
         /// Key that replaces it.
         new: &'static str,
     },
-    /// The manifest requested a language version this compiler cannot parse.
-    #[error("unsupported gossamer-version {0:?}; supported versions are \"2026\" and \"2027\"")]
+    /// The manifest's `gossamer-version` is not a toolchain version.
+    #[error(
+        "unsupported gossamer-version {0:?}; state the exact toolchain version, \
+         such as \"v0.52.2\", matching the release tag"
+    )]
     UnsupportedGossamerVersion(String),
+    /// The manifest names a toolchain newer than the one running.
+    #[error("this project requires gossamer v{required}; this toolchain is v{running}")]
+    GossamerVersionTooNew {
+        /// Version the manifest states.
+        required: String,
+        /// Version of the running toolchain.
+        running: String,
+    },
     /// An inline dependency table mixed incompatible keys.
     #[error("ambiguous dependency for {0}: pick at most one of git/path/tarball")]
     AmbiguousDependency(String),
@@ -357,9 +362,26 @@ impl Manifest {
                 new: "gossamer-version",
             });
         }
-        let edition = optional_toml_str(project, "gossamer-version", "project.gossamer-version")?
-            .as_deref()
-            .map_or(Ok(Edition::E2026), Edition::parse)?;
+        // The stated toolchain version is exact and matches the release
+        // tag. A project written against a newer toolchain than the one
+        // running is named here rather than failing later on a surface
+        // this build does not have.
+        let gossamer_version =
+            match optional_toml_str(project, "gossamer-version", "project.gossamer-version")? {
+                Some(text) => {
+                    let parsed = crate::parse_gossamer_version(&text)
+                        .map_err(ManifestError::UnsupportedGossamerVersion)?;
+                    let running = crate::toolchain_version();
+                    if parsed > running {
+                        return Err(ManifestError::GossamerVersionTooNew {
+                            required: parsed.to_string(),
+                            running: running.to_string(),
+                        });
+                    }
+                    Some(parsed)
+                }
+                None => None,
+            };
         let authors =
             optional_toml_string_array(project, "authors", "project.authors")?.unwrap_or_default();
         let license = optional_toml_str(project, "license", "project.license")?.unwrap_or_default();
@@ -371,9 +393,13 @@ impl Manifest {
             .unwrap_or(false);
 
         let mut deps: BTreeMap<String, DependencySpec> = BTreeMap::new();
+        let mut dep_modules: BTreeMap<String, String> = BTreeMap::new();
         if let Some(table) = optional_toml_table(root, "dependencies")? {
             for (key, value) in table {
                 deps.insert(key.clone(), parse_dependency_toml(value, key)?);
+                if let Some(module) = parse_dependency_module(value, key)? {
+                    dep_modules.insert(key.clone(), module);
+                }
             }
         }
 
@@ -439,7 +465,7 @@ impl Manifest {
             project: ProjectTable {
                 id,
                 version,
-                edition,
+                gossamer_version,
                 authors,
                 license,
                 output,
@@ -447,6 +473,7 @@ impl Manifest {
                 enforce_format,
             },
             dependencies: deps,
+            dependency_modules: dep_modules,
             registries,
             trusted_publishers,
             rust_bindings,
@@ -493,10 +520,9 @@ impl Manifest {
         out.push_str("[project]\n");
         out.push_str(&format!("id = \"{}\"\n", self.project.id));
         out.push_str(&format!("version = \"{}\"\n", self.project.version));
-        out.push_str(&format!(
-            "gossamer-version = \"{}\"\n",
-            self.project.edition.as_str()
-        ));
+        if let Some(version) = &self.project.gossamer_version {
+            out.push_str(&format!("gossamer-version = \"v{version}\"\n"));
+        }
         if !self.project.authors.is_empty() {
             out.push_str("authors = [");
             for (i, a) in self.project.authors.iter().enumerate() {
@@ -878,6 +904,36 @@ fn parse_dependency_toml(value: &toml::Value, key: &str) -> Result<DependencySpe
     }))
 }
 
+/// Reads a dependency's `module = "..."` override: the name its source is
+/// reached under, in place of the one derived from its id. Two packages
+/// whose ids share a final segment need one of these to coexist.
+fn parse_dependency_module(
+    value: &toml::Value,
+    key: &str,
+) -> Result<Option<String>, ManifestError> {
+    let Some(table) = value.as_table() else {
+        return Ok(None);
+    };
+    let Some(module) = optional_toml_str(table, "module", &format!("{key}.module"))? else {
+        return Ok(None);
+    };
+    let valid = !module.is_empty()
+        && module
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && module
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !valid {
+        return Err(ManifestError::WrongType {
+            field: format!("{key}.module"),
+            expected: "an identifier (letters, digits, and `_`, not starting with a digit)",
+        });
+    }
+    Ok(Some(module))
+}
+
 fn parse_rust_binding_toml(
     value: &toml::Value,
     key: &str,
@@ -1043,28 +1099,51 @@ mod gossamer_version_tests {
     use super::*;
 
     #[test]
-    fn gossamer_version_defaults_to_eager_2026_and_round_trips_2027() {
+    fn an_absent_gossamer_version_is_none_and_an_exact_one_round_trips() {
         let bare =
             Manifest::parse("[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\n").unwrap();
-        assert_eq!(bare.project.edition, Edition::E2026);
+        assert_eq!(bare.project.gossamer_version, None);
 
-        let staged = Manifest::parse(
-            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\ngossamer-version = \"2027\"\n",
-        )
+        let running = crate::toolchain_version();
+        let stated = Manifest::parse(&format!(
+            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\ngossamer-version = \"v{running}\"\n",
+        ))
         .unwrap();
-        assert_eq!(staged.project.edition, Edition::E2027);
-        assert_eq!(Manifest::parse(&staged.render()).unwrap(), staged);
+        assert_eq!(stated.project.gossamer_version, Some(running));
+        assert_eq!(Manifest::parse(&stated.render()).unwrap(), stated);
+    }
+
+    /// The `v` the release tag carries is optional in the manifest.
+    #[test]
+    fn a_bare_version_spelling_parses_to_the_same_value() {
+        let running = crate::toolchain_version();
+        let stated = Manifest::parse(&format!(
+            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\ngossamer-version = \"{running}\"\n",
+        ))
+        .unwrap();
+        assert_eq!(stated.project.gossamer_version, Some(running));
     }
 
     #[test]
-    fn an_unknown_gossamer_version_is_rejected() {
+    fn an_edition_year_is_no_longer_a_gossamer_version() {
         let error = Manifest::parse(
-            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\ngossamer-version = \"2028\"\n",
+            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\ngossamer-version = \"2026\"\n",
         )
         .unwrap_err();
         assert!(
-            matches!(error, ManifestError::UnsupportedGossamerVersion(value) if value == "2028")
+            matches!(error, ManifestError::UnsupportedGossamerVersion(value) if value == "2026")
         );
+    }
+
+    #[test]
+    fn a_newer_toolchain_than_this_one_is_named() {
+        let running = crate::toolchain_version();
+        let error = Manifest::parse(&format!(
+            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\ngossamer-version = \"v{}.0.0\"\n",
+            running.major + 1,
+        ))
+        .unwrap_err();
+        assert!(matches!(error, ManifestError::GossamerVersionTooNew { .. }));
     }
 
     /// `edition` is Rust's spelling, so a manifest still carrying it is named

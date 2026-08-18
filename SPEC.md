@@ -1822,6 +1822,21 @@ kind:
 - **URL tarball**: `{ url = "https://...", sha256 = "..." }`. Plain
   fetch of an archive with a required checksum.
 
+A dependency's source is reached under a module name derived from the final
+segment of its id, with each `-` replaced by `_`, so
+`github.com/owner/pgsql-gos` is written `pgsql_gos`. Two dependencies whose
+ids share that segment would reach source under one name; `module = "..."` in
+the entry names one of them explicitly:
+
+```toml
+[dependencies]
+"github.com/ownera/pgsql-gos" = { path = "../first", module = "pg_a" }
+"github.com/ownerb/pgsql-gos" = { path = "../second" }
+```
+
+Either spelling reaches the package: the module name, or the package id
+through `use "github.com/ownera/pgsql-gos" as ..`.
+
 ### 6.8 Reproducibility
 
 On first resolution the tool writes `project.lock` recording, for
@@ -2992,17 +3007,19 @@ The first index response alone must never establish publisher identity.
 
 ## 17. Versioning and compatibility
 
-### 17.1 Editions and language compatibility
+### 17.1 Language version and compatibility
 
-- The manifest defaults to `gossamer-version = "2026"`; this toolchain also
-  accepts `gossamer-version = "2027"`. `edition` is Rust's spelling and is
+- `gossamer-version` in the manifest states the exact toolchain a project is
+  written against, spelled the way the release tag is: `gossamer-version =
+  "v0.52.2"`. The leading `v` is optional. `edition` is Rust's spelling and is
   rejected by name.
-- A compiler accepts editions it explicitly supports; accepting a manifest is
-  not a promise that a future edition's semantics are understood.
-- Breaking Stable-language changes require a new edition. Diagnostics must
-  name the edition or migration rule when rejecting an older source form.
-- Experimental syntax may change without an edition change, but it must be
-  reported as Experimental by `gos feature-status` before it is accepted.
+- The field is optional. A project that states a version newer than the
+  running toolchain is rejected by name, so a missing surface is reported
+  against the manifest rather than the source that uses it.
+- One toolchain has one source language: there is no edition selector, and no
+  two projects built by the same `gos` see different semantics.
+- Experimental syntax may change between versions, but it must be reported as
+  Experimental by `gos feature-status` before it is accepted.
 
 Edition 2026 keeps the historical eager `std::iter` signatures. In edition
 2027, `iter::range`, `range_inclusive`, `map`, `filter`, `take`, `skip`,

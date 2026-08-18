@@ -61,15 +61,6 @@ fn file_clone(h: i64) -> Option<Arc<Mutex<std::fs::File>>> {
         .and_then(|m| m.get(&h).cloned())
 }
 
-/// Take an independent OS handle before queueing a blocking operation. This
-/// keeps both the registry lock and the per-handle mutex out of the blocking
-/// pool closure, so another goroutine can close or use the original handle.
-fn duplicate_file(h: i64) -> std::io::Result<Option<std::fs::File>> {
-    file_clone(h)
-        .map(|file| file.lock().try_clone())
-        .transpose()
-}
-
 fn insert_open_options(opts: GosOpenOptions) -> i64 {
     let h = next_fs_handle();
     OPEN_OPTIONS_HANDLES
@@ -245,7 +236,10 @@ pub unsafe extern "C" fn gos_rt_os_remove_file(path: *const c_char) -> i64 {
 /// `gossamer-runtime` cannot depend on `gossamer-std` (the dependency
 /// points the other way), so the three-arm mapping is replicated here;
 /// the cross-tier fixture suite pins the parity.
-fn classify_io_error(err: &std::io::Error, context: &str) -> String {
+/// Uniform text for an OS error reached through the filesystem surface:
+/// the same classification `io::Error::from_std` applies, so a diagnostic
+/// reads identically whichever tier produced it.
+pub fn classify_io_error(err: &std::io::Error, context: &str) -> String {
     use std::io::ErrorKind;
     match err.kind() {
         ErrorKind::NotFound => format!("not found: {context}"),
@@ -395,14 +389,8 @@ pub unsafe extern "C" fn gos_rt_fs_open_options_open(h: i64, path: *const c_char
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_fs_file_read(h: i64, max: i64) -> i128 {
     ffi_entry!(0i128, {
-        let Some(mut file) = (match duplicate_file(h) {
-            Ok(file) => file,
-            Err(e) => return fs_io_err(&e, "File::read"),
-        }) else {
-            return fs_err("File::read: stale handle");
-        };
         let cap = max.clamp(1, 1 << 24) as usize;
-        match crate::sched_global::run_blocking("fs-file-read", move || {
+        match with_file_blocking(h, "fs-file-read", "File::read", move |file| {
             let mut buf = vec![0u8; cap];
             file.read(&mut buf).map(|n| {
                 buf.truncate(n);
@@ -413,7 +401,7 @@ pub unsafe extern "C" fn gos_rt_fs_file_read(h: i64, max: i64) -> i128 {
                 gos_rt_result_new(0, super::encoding::bytes_to_gosvec(&buf) as i64)
             },
             Ok(Err(e)) => fs_io_err(&e, "File::read"),
-            Err(e) => fs_err(&e),
+            Err(packed) => packed,
         }
     })
 }
@@ -422,42 +410,33 @@ pub unsafe extern "C" fn gos_rt_fs_file_read(h: i64, max: i64) -> i128 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_fs_file_read_to_string(h: i64) -> i128 {
     ffi_entry!(0i128, {
-        let Some(mut file) = (match duplicate_file(h) {
-            Ok(file) => file,
-            Err(e) => return fs_io_err(&e, "File::read_to_string"),
-        }) else {
-            return fs_err("File::read_to_string: stale handle");
-        };
-        match crate::sched_global::run_blocking("fs-file-read-string", move || {
+        match with_file_blocking(h, "fs-file-read-string", "File::read_to_string", |file| {
             let mut text = String::new();
             file.read_to_string(&mut text).map(|_| text)
         }) {
             Ok(Ok(text)) => unsafe { gos_rt_result_new(0, alloc_cstring(text.as_bytes()) as i64) },
             Ok(Err(e)) => fs_io_err(&e, "File::read_to_string"),
-            Err(e) => fs_err(&e),
+            Err(packed) => packed,
         }
     })
 }
 
-/// `fs::File::write(data: Vec<u8>) -> Result<i64, Error>`.
+/// `fs::File::write(data: String) -> Result<i64, Error>`: the whole text
+/// is written, so the answer is its byte length.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_fs_file_write(
-    h: i64,
-    data: *const crate::c_abi::vec::GosVec,
-) -> i128 {
+pub unsafe extern "C" fn gos_rt_fs_file_write(h: i64, data: *const c_char) -> i128 {
     ffi_entry!(0i128, {
-        let Some(mut file) = (match duplicate_file(h) {
-            Ok(file) => file,
-            Err(e) => return fs_io_err(&e, "File::write"),
-        }) else {
-            return fs_err("File::write: stale handle");
-        };
-        let bytes = unsafe { super::encoding::gosvec_u8(data) };
+        if data.is_null() {
+            return fs_err("File::write: null data");
+        }
+        let bytes = unsafe { crate::c_abi::gos_str_arg_string(data) }.into_bytes();
         let len = bytes.len();
-        match crate::sched_global::run_blocking("fs-file-write", move || file.write_all(&bytes)) {
+        match with_file_blocking(h, "fs-file-write", "File::write", move |file| {
+            file.write_all(&bytes)
+        }) {
             Ok(Ok(())) => unsafe { gos_rt_result_new(0, len as i64) },
             Ok(Err(e)) => fs_io_err(&e, "File::write"),
-            Err(e) => fs_err(&e),
+            Err(packed) => packed,
         }
     })
 }
@@ -466,16 +445,10 @@ pub unsafe extern "C" fn gos_rt_fs_file_write(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_fs_file_flush(h: i64) -> i128 {
     ffi_entry!(0i128, {
-        let Some(mut file) = (match duplicate_file(h) {
-            Ok(file) => file,
-            Err(e) => return fs_io_err(&e, "File::flush"),
-        }) else {
-            return fs_err("File::flush: stale handle");
-        };
-        match crate::sched_global::run_blocking("fs-file-flush", move || file.flush()) {
+        match with_file_blocking(h, "fs-file-flush", "File::flush", std::io::Write::flush) {
             Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
             Ok(Err(e)) => fs_io_err(&e, "File::flush"),
-            Err(e) => fs_err(&e),
+            Err(packed) => packed,
         }
     })
 }
@@ -1621,6 +1594,439 @@ pub unsafe extern "C" fn gos_rt_path_glob(pattern: *const c_char) -> i128 {
             Err(e) => err_io(&e),
         }
     })
+}
+
+// ---------------------------------------------------------------
+// Positional I/O, durability barriers, and advisory range locks
+// ---------------------------------------------------------------
+//
+// Every operation below reaches the handle's own descriptor through
+// its registry `Arc` rather than a `try_clone`. POSIX record locks are
+// released when *any* descriptor for the file is closed by the
+// process, so a handle owns exactly one descriptor for its lifetime
+// and a lock taken through it stays held across later reads and
+// writes.
+
+/// Run `op` on the handle's file in the blocking pool, or answer the
+/// stale-handle error when the handle has already been closed.
+fn with_file_blocking<T, F>(h: i64, label: &'static str, context: &str, op: F) -> Result<T, i128>
+where
+    T: Send + 'static,
+    F: FnOnce(&mut std::fs::File) -> T + Send + 'static,
+{
+    let Some(file) = file_clone(h) else {
+        return Err(fs_err(&format!("{context}: stale handle")));
+    };
+    match crate::sched_global::run_blocking(label, move || {
+        let mut guard = file.lock();
+        op(&mut guard)
+    }) {
+        Ok(value) => Ok(value),
+        Err(error) => Err(fs_err(&error)),
+    }
+}
+
+/// `fs::File::read_at(len, offset) -> Result<Vec<u8>, Error>`. The answer
+/// is what the one positional read transferred, which may be shorter than
+/// `len` at end of file.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_file_read_at(h: i64, len: i64, offset: i64) -> i128 {
+    ffi_entry!(0i128, {
+        if len < 0 || offset < 0 {
+            return fs_err("File::read_at: length and offset must be non-negative");
+        }
+        let cap = len.min(1 << 24) as usize;
+        let offset = offset as u64;
+        let read = with_file_blocking(h, "fs-file-read-at", "File::read_at", move |file| {
+            let mut buf = vec![0u8; cap];
+            read_at_offset(file, &mut buf, offset).map(|n| {
+                buf.truncate(n);
+                buf
+            })
+        });
+        match read {
+            Ok(Ok(buf)) => unsafe {
+                gos_rt_result_new(0, super::encoding::bytes_to_gosvec(&buf) as i64)
+            },
+            Ok(Err(e)) => fs_io_err(&e, "File::read_at"),
+            Err(packed) => packed,
+        }
+    })
+}
+
+/// `fs::File::write_at(data, offset) -> Result<i64, Error>`. Answers the
+/// byte count the one positional write transferred; a short write is
+/// reported rather than looped over.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_file_write_at(
+    h: i64,
+    data: *const crate::c_abi::vec::GosVec,
+    offset: i64,
+) -> i128 {
+    ffi_entry!(0i128, {
+        if offset < 0 {
+            return fs_err("File::write_at: offset must be non-negative");
+        }
+        let bytes = unsafe { super::encoding::gosvec_u8(data) };
+        let at = offset as u64;
+        let written = with_file_blocking(h, "fs-file-write-at", "File::write_at", move |file| {
+            write_at_offset(file, &bytes, at)
+        });
+        match written {
+            Ok(Ok(n)) => unsafe { gos_rt_result_new(0, n as i64) },
+            Ok(Err(e)) => fs_io_err(&e, "File::write_at"),
+            Err(packed) => packed,
+        }
+    })
+}
+
+/// `fs::File::write_bytes(data) -> Result<i64, Error>`: the byte-oriented
+/// write against the handle's own cursor.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_file_write_bytes(
+    h: i64,
+    data: *const crate::c_abi::vec::GosVec,
+) -> i128 {
+    ffi_entry!(0i128, {
+        let bytes = unsafe { super::encoding::gosvec_u8(data) };
+        let written = with_file_blocking(h, "fs-file-write-bytes", "File::write_bytes", move |f| {
+            f.write(&bytes)
+        });
+        match written {
+            Ok(Ok(n)) => unsafe { gos_rt_result_new(0, n as i64) },
+            Ok(Err(e)) => fs_io_err(&e, "File::write_bytes"),
+            Err(packed) => packed,
+        }
+    })
+}
+
+/// `fs::File::seek(offset, whence) -> Result<i64, Error>`, answering the
+/// new absolute position. `whence` is one of `fs::SEEK_SET`,
+/// `fs::SEEK_CUR`, `fs::SEEK_END`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_file_seek(h: i64, offset: i64, whence: i64) -> i128 {
+    ffi_entry!(0i128, {
+        let from = match whence {
+            0 => std::io::SeekFrom::Start(offset.max(0) as u64),
+            1 => std::io::SeekFrom::Current(offset),
+            2 => std::io::SeekFrom::End(offset),
+            _ => return fs_err("File::seek: whence must be SEEK_SET, SEEK_CUR, or SEEK_END"),
+        };
+        match with_file_blocking(h, "fs-file-seek", "File::seek", move |file| {
+            std::io::Seek::seek(file, from)
+        }) {
+            Ok(Ok(pos)) => unsafe { gos_rt_result_new(0, pos as i64) },
+            Ok(Err(e)) => fs_io_err(&e, "File::seek"),
+            Err(packed) => packed,
+        }
+    })
+}
+
+/// `fs::File::set_len(len) -> Result<(), Error>`: truncate or extend.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_file_set_len(h: i64, len: i64) -> i128 {
+    ffi_entry!(0i128, {
+        if len < 0 {
+            return fs_err("File::set_len: length must be non-negative");
+        }
+        let len = len as u64;
+        match with_file_blocking(h, "fs-file-set-len", "File::set_len", move |file| {
+            file.set_len(len)
+        }) {
+            Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
+            Ok(Err(e)) => fs_io_err(&e, "File::set_len"),
+            Err(packed) => packed,
+        }
+    })
+}
+
+/// `fs::File::len() -> Result<i64, Error>`: the open file's current size.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_file_len(h: i64) -> i128 {
+    ffi_entry!(0i128, {
+        match with_file_blocking(h, "fs-file-len", "File::len", |file| {
+            file.metadata().map(|m| m.len())
+        }) {
+            Ok(Ok(len)) => unsafe { gos_rt_result_new(0, len as i64) },
+            Ok(Err(e)) => fs_io_err(&e, "File::len"),
+            Err(packed) => packed,
+        }
+    })
+}
+
+/// `fs::File::sync_all() -> Result<(), Error>`: flush the file's data and
+/// metadata to the storage device.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_file_sync_all(h: i64) -> i128 {
+    ffi_entry!(0i128, {
+        match with_file_blocking(h, "fs-file-sync-all", "File::sync_all", |file| {
+            file.sync_all()
+        }) {
+            Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
+            Ok(Err(e)) => fs_io_err(&e, "File::sync_all"),
+            Err(packed) => packed,
+        }
+    })
+}
+
+/// `fs::File::sync_data() -> Result<(), Error>`: flush the file's data,
+/// leaving metadata the platform considers inessential unwritten.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_file_sync_data(h: i64) -> i128 {
+    ffi_entry!(0i128, {
+        match with_file_blocking(h, "fs-file-sync-data", "File::sync_data", |file| {
+            file.sync_data()
+        }) {
+            Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
+            Ok(Err(e)) => fs_io_err(&e, "File::sync_data"),
+            Err(packed) => packed,
+        }
+    })
+}
+
+/// `fs::sync_dir(path) -> Result<(), Error>`: make a directory's own
+/// entries durable, the barrier a rename or unlink needs after its own
+/// file sync.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_sync_dir(path: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        if path.is_null() {
+            return fs_err("fs::sync_dir: null path");
+        }
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
+        let context = p.clone();
+        match crate::sched_global::run_blocking("fs-sync-dir", move || sync_directory(&p)) {
+            Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
+            Ok(Err(e)) => fs_io_err(&e, &context),
+            Err(e) => fs_err(&e),
+        }
+    })
+}
+
+/// `fs::File::try_lock_range(start, len, exclusive) -> Result<bool, Error>`.
+/// `len` of 0 covers the range from `start` to end of file, however the
+/// file later grows.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_file_try_lock_range(
+    h: i64,
+    start: i64,
+    len: i64,
+    exclusive: i32,
+) -> i128 {
+    ffi_entry!(0i128, {
+        if start < 0 || len < 0 {
+            return fs_err("File::try_lock_range: start and len must be non-negative");
+        }
+        let exclusive = exclusive != 0;
+        match with_file_blocking(h, "fs-file-lock", "File::try_lock_range", move |file| {
+            try_lock_range_on(file, start as u64, len as u64, exclusive)
+        }) {
+            Ok(Ok(acquired)) => unsafe { gos_rt_result_new(0, i64::from(acquired)) },
+            Ok(Err(e)) => fs_io_err(&e, "File::try_lock_range"),
+            Err(packed) => packed,
+        }
+    })
+}
+
+/// `fs::File::unlock_range(start, len) -> Result<(), Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_file_unlock_range(h: i64, start: i64, len: i64) -> i128 {
+    ffi_entry!(0i128, {
+        if start < 0 || len < 0 {
+            return fs_err("File::unlock_range: start and len must be non-negative");
+        }
+        match with_file_blocking(h, "fs-file-unlock", "File::unlock_range", move |file| {
+            unlock_range_on(file, start as u64, len as u64)
+        }) {
+            Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
+            Ok(Err(e)) => fs_io_err(&e, "File::unlock_range"),
+            Err(packed) => packed,
+        }
+    })
+}
+
+/// `fs::File::try_lock_shared() -> Result<bool, Error>`: the whole file as
+/// one shared range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_file_try_lock_shared(h: i64) -> i128 {
+    unsafe { gos_rt_fs_file_try_lock_range(h, 0, 0, 0) }
+}
+
+/// `fs::File::try_lock_exclusive() -> Result<bool, Error>`: the whole file
+/// as one exclusive range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_file_try_lock_exclusive(h: i64) -> i128 {
+    unsafe { gos_rt_fs_file_try_lock_range(h, 0, 0, 1) }
+}
+
+/// `fs::File::unlock() -> Result<(), Error>`: release the whole-file range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_file_unlock(h: i64) -> i128 {
+    unsafe { gos_rt_fs_file_unlock_range(h, 0, 0) }
+}
+
+/// One positional read at `offset`, independent of the file cursor.
+#[cfg(unix)]
+pub fn read_at_offset(file: &std::fs::File, buf: &mut [u8], offset: u64) -> std::io::Result<usize> {
+    std::os::unix::fs::FileExt::read_at(file, buf, offset)
+}
+
+/// One positional read at `offset`, independent of the file cursor.
+#[cfg(windows)]
+pub fn read_at_offset(file: &std::fs::File, buf: &mut [u8], offset: u64) -> std::io::Result<usize> {
+    std::os::windows::fs::FileExt::seek_read(file, buf, offset)
+}
+
+/// One positional write at `offset`, independent of the file cursor.
+#[cfg(unix)]
+pub fn write_at_offset(file: &std::fs::File, buf: &[u8], offset: u64) -> std::io::Result<usize> {
+    std::os::unix::fs::FileExt::write_at(file, buf, offset)
+}
+
+/// One positional write at `offset`, independent of the file cursor.
+#[cfg(windows)]
+pub fn write_at_offset(file: &std::fs::File, buf: &[u8], offset: u64) -> std::io::Result<usize> {
+    std::os::windows::fs::FileExt::seek_write(file, buf, offset)
+}
+
+/// Make a directory's own entries durable.
+#[cfg(unix)]
+pub fn sync_directory(path: &str) -> std::io::Result<()> {
+    std::fs::File::open(path)?.sync_all()
+}
+
+/// Windows keeps a directory's entries consistent through NTFS metadata
+/// ordering and offers no handle a program can flush for one, so the
+/// barrier is satisfied by the platform rather than by this call.
+#[cfg(windows)]
+pub fn sync_directory(path: &str) -> std::io::Result<()> {
+    std::fs::metadata(path).map(|_| ())
+}
+
+/// POSIX record lock over `[start, start + len)`, or `[start, EOF)` when
+/// `len` is zero. `Ok(false)` reports a conflicting holder; every other
+/// failure is a real error.
+#[cfg(unix)]
+pub fn try_lock_range_on(
+    file: &std::fs::File,
+    start: u64,
+    len: u64,
+    exclusive: bool,
+) -> std::io::Result<bool> {
+    let fd = std::os::unix::io::AsRawFd::as_raw_fd(file);
+    let mut lock: libc::flock = unsafe { std::mem::zeroed() };
+    lock.l_type = if exclusive {
+        libc::F_WRLCK as libc::c_short
+    } else {
+        libc::F_RDLCK as libc::c_short
+    };
+    lock.l_whence = libc::SEEK_SET as libc::c_short;
+    lock.l_start = start as libc::off_t;
+    lock.l_len = len as libc::off_t;
+    // SAFETY: `lock` is a fully initialised `flock` and `fd` is owned by
+    // the borrowed `File` for the duration of the call.
+    let rc = unsafe { libc::fcntl(fd, libc::F_SETLK, &raw const lock) };
+    if rc == 0 {
+        return Ok(true);
+    }
+    let error = std::io::Error::last_os_error();
+    match error.raw_os_error() {
+        Some(libc::EACCES | libc::EAGAIN) => Ok(false),
+        _ => Err(error),
+    }
+}
+
+#[cfg(unix)]
+pub fn unlock_range_on(file: &std::fs::File, start: u64, len: u64) -> std::io::Result<()> {
+    let fd = std::os::unix::io::AsRawFd::as_raw_fd(file);
+    let mut lock: libc::flock = unsafe { std::mem::zeroed() };
+    lock.l_type = libc::F_UNLCK as libc::c_short;
+    lock.l_whence = libc::SEEK_SET as libc::c_short;
+    lock.l_start = start as libc::off_t;
+    lock.l_len = len as libc::off_t;
+    // SAFETY: as in `try_lock_range_on`.
+    let rc = unsafe { libc::fcntl(fd, libc::F_SETLK, &raw const lock) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// `LockFileEx` over the same range, with `LOCKFILE_FAIL_IMMEDIATELY` so a
+/// held lock answers `Ok(false)` instead of blocking the scheduler thread.
+/// A zero `len` covers the whole 64-bit range, matching the POSIX
+/// "to end of file" spelling.
+#[cfg(windows)]
+pub fn try_lock_range_on(
+    file: &std::fs::File,
+    start: u64,
+    len: u64,
+    exclusive: bool,
+) -> std::io::Result<bool> {
+    use windows_sys::Win32::Foundation::{ERROR_LOCK_VIOLATION, HANDLE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, LockFileEx,
+    };
+    use windows_sys::Win32::System::IO::OVERLAPPED;
+
+    let handle = std::os::windows::io::AsRawHandle::as_raw_handle(file) as HANDLE;
+    let span = if len == 0 { u64::MAX } else { len };
+    let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+    overlapped.Anonymous.Anonymous.Offset = start as u32;
+    overlapped.Anonymous.Anonymous.OffsetHigh = (start >> 32) as u32;
+    let mut flags = LOCKFILE_FAIL_IMMEDIATELY;
+    if exclusive {
+        flags |= LOCKFILE_EXCLUSIVE_LOCK;
+    }
+    // SAFETY: `handle` is owned by the borrowed `File` and `overlapped` is
+    // a fully initialised structure that outlives the call.
+    let ok = unsafe {
+        LockFileEx(
+            handle,
+            flags,
+            0,
+            span as u32,
+            (span >> 32) as u32,
+            &raw mut overlapped,
+        )
+    };
+    if ok != 0 {
+        return Ok(true);
+    }
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(ERROR_LOCK_VIOLATION as i32) {
+        Ok(false)
+    } else {
+        Err(error)
+    }
+}
+
+#[cfg(windows)]
+pub fn unlock_range_on(file: &std::fs::File, start: u64, len: u64) -> std::io::Result<()> {
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::Storage::FileSystem::UnlockFileEx;
+    use windows_sys::Win32::System::IO::OVERLAPPED;
+
+    let handle = std::os::windows::io::AsRawHandle::as_raw_handle(file) as HANDLE;
+    let span = if len == 0 { u64::MAX } else { len };
+    let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+    overlapped.Anonymous.Anonymous.Offset = start as u32;
+    overlapped.Anonymous.Anonymous.OffsetHigh = (start >> 32) as u32;
+    // SAFETY: as in `try_lock_range_on`.
+    let ok = unsafe {
+        UnlockFileEx(
+            handle,
+            0,
+            span as u32,
+            (span >> 32) as u32,
+            &raw mut overlapped,
+        )
+    };
+    if ok == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 #[cfg(test)]

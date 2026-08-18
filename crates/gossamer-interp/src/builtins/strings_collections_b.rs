@@ -22,6 +22,151 @@ fn packed_bytes_receiver(recv: &Value) -> Option<PackedBytes> {
     }
 }
 
+/// Rebuilds a sequence in the receiver's own representation when the new
+/// elements still fit it, so a packed `Vec<u8>` or `Vec<i64>` stays
+/// packed instead of widening to boxed values on every bulk edit.
+fn rebuild_sequence(receiver: &Value, values: Vec<Value>) -> Value {
+    fn all_bytes(values: &[Value]) -> Option<Vec<u8>> {
+        values
+            .iter()
+            .map(|v| match v {
+                Value::Int(n) => u8::try_from(*n).ok(),
+                _ => None,
+            })
+            .collect()
+    }
+    match receiver {
+        Value::IntArray(_) => {
+            let ints: Option<Vec<i64>> = values
+                .iter()
+                .map(|v| match v {
+                    Value::Int(n) => Some(*n),
+                    _ => None,
+                })
+                .collect();
+            ints.map_or_else(
+                || Value::Array(Arc::new(values.clone())),
+                |ints| Value::IntArray(Arc::new(ints)),
+            )
+        }
+        Value::FloatVec(_) => {
+            let floats: Option<Vec<f64>> = values
+                .iter()
+                .map(|v| match v {
+                    Value::Float(f) => Some(*f),
+                    Value::Int(n) => Some(*n as f64),
+                    _ => None,
+                })
+                .collect();
+            floats.map_or_else(
+                || Value::Array(Arc::new(values.clone())),
+                |floats| Value::FloatVec(Arc::new(floats)),
+            )
+        }
+        Value::ByteVec(_) => all_bytes(&values).map_or_else(
+            || Value::Array(Arc::new(values.clone())),
+            |bytes| Value::ByteVec(Arc::new(bytes)),
+        ),
+        Value::ByteArray(_) => all_bytes(&values).map_or_else(
+            || Value::Array(Arc::new(values.clone())),
+            |bytes| Value::ByteArray(Arc::new(bytes.into())),
+        ),
+        Value::InlineByteArray(_) => all_bytes(&values).map_or_else(
+            || Value::Array(Arc::new(values.clone())),
+            |bytes| Value::InlineByteArray(Arc::new(smallvec::SmallVec::from_vec(bytes))),
+        ),
+        _ => Value::Array(Arc::new(values)),
+    }
+}
+
+/// `xs.copy_within(src, dest, len)`. The ranges may overlap, which is the
+/// operation's whole purpose, so the source is read before any write.
+fn builtin_copy_within(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(receiver) = args.first() else {
+        return Ok(Value::Unit);
+    };
+    let Some(mut values) = array_as_values(receiver) else {
+        return Ok(receiver.clone());
+    };
+    let read = |idx: usize| -> RuntimeResult<i64> {
+        args.get(idx)
+            .and_then(crate::builtins::value_to_int)
+            .ok_or_else(|| RuntimeError::Type("copy_within: indices must be integers".to_string()))
+    };
+    let (src, dest, len) = (read(1)?, read(2)?, read(3)?);
+    let vec_len = values.len() as i64;
+    if src < 0 || dest < 0 || len < 0 || src + len > vec_len || dest + len > vec_len {
+        return Err(RuntimeError::Panic(
+            "copy_within: range outside the vector".to_string(),
+        ));
+    }
+    let staged: Vec<Value> = values[src as usize..(src + len) as usize].to_vec();
+    values[dest as usize..(dest + len) as usize].clone_from_slice(&staged);
+    Ok(rebuild_sequence(receiver, values))
+}
+
+/// `dst.copy_from_slice(src)`. Both sequences must have the same length.
+fn builtin_copy_from_slice(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(receiver) = args.first() else {
+        return Ok(Value::Unit);
+    };
+    let Some(values) = array_as_values(receiver) else {
+        return Ok(receiver.clone());
+    };
+    let source = args.get(1).and_then(array_as_values).unwrap_or_default();
+    if values.len() != source.len() {
+        return Err(RuntimeError::Panic(
+            "copy_from_slice: source and destination differ in length".to_string(),
+        ));
+    }
+    Ok(rebuild_sequence(receiver, source))
+}
+
+/// `xs.resize(new_len, value)` - truncate, or append copies of `value`.
+fn builtin_resize(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(receiver) = args.first() else {
+        return Ok(Value::Unit);
+    };
+    let Some(mut values) = array_as_values(receiver) else {
+        return Ok(receiver.clone());
+    };
+    let new_len = args
+        .get(1)
+        .and_then(crate::builtins::value_to_int)
+        .ok_or_else(|| RuntimeError::Type("resize: length must be an integer".to_string()))?;
+    if new_len < 0 {
+        return Err(RuntimeError::Panic(
+            "resize: length must be non-negative".to_string(),
+        ));
+    }
+    let fill = args.get(2).cloned().unwrap_or(Value::Unit);
+    values.resize(new_len as usize, fill);
+    Ok(rebuild_sequence(receiver, values))
+}
+
+/// `xs.binary_search(needle)` over an already-ascending sequence:
+/// `Ok(index)` when found, `Err(index)` at the position an insert would
+/// keep sorted.
+fn builtin_binary_search(args: &[Value]) -> RuntimeResult<Value> {
+    let values = args
+        .first()
+        .and_then(array_as_values)
+        .unwrap_or_default();
+    let needle = args.get(1).cloned().unwrap_or(Value::Unit);
+    let (mut lo, mut hi) = (0usize, values.len());
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        match crate::vm::value_ordering(&values[mid], &needle)? {
+            std::cmp::Ordering::Less => lo = mid + 1,
+            _ => hi = mid,
+        }
+    }
+    let found = lo < values.len()
+        && crate::vm::value_ordering(&values[lo], &needle)? == std::cmp::Ordering::Equal;
+    let index = Value::Int(lo as i64);
+    Ok(Value::variant(if found { "Ok" } else { "Err" }, vec![index]))
+}
+
 fn builtin_remove(args: &[Value]) -> RuntimeResult<Value> {
     if matches!(
         args.first(),

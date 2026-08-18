@@ -51,7 +51,7 @@ pub use jit_call::{
     force_jit_disabled as set_jit_disabled, force_jit_enable as set_jit_enabled,
     jit_force_disabled_state,
 };
-pub use stdlib_builtins::iter::set_lazy_iterators_enabled;
+pub use stdlib_builtins::iter::reset_lazy_iterator_state;
 
 /// Pushes `args` into the runtime's `ARGS_PTR` so JIT-compiled
 /// `gos_rt_os_args` reads see the same list `os::args()` returns

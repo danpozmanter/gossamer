@@ -564,12 +564,15 @@ impl ResolveDiagnostic {
                 second,
             } => out
                 .with_help(format!(
-                    "give one of them a module name of its own in `[dependencies]`, or \
-                     reach each through `use \"{first}\" as ..` / `use \"{second}\" as ..`"
+                    "name one of them in the manifest: \
+                     `\"{second}\" = {{ .., module = \"..\" }}`, then reach it under \
+                     that name (or through `use \"{second}\" as ..`)"
                 ))
+                .with_note(format!("`{first}` claimed `{module}` first"))
                 .with_note(format!(
                     "a package name's `-` is not part of an identifier, so both reach \
-                     source as `{module}`"
+                     source as `{module}`; the pairing is declared in `project.toml`, \
+                     not in this file"
                 )),
             _ => out,
         }

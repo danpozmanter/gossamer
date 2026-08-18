@@ -605,6 +605,66 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::encoding::binary",
+        name: "get_u16_be_at",
+        signature: "fn get_u16_be_at(bytes: &Vec<u8>, offset: i64) -> Result<u16, errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::encoding::binary",
+        name: "put_u16_be_at",
+        signature: "fn put_u16_be_at(buf: &mut Vec<u8>, offset: i64, value: u16) -> Result<(), errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::encoding::binary",
+        name: "get_u16_le_at",
+        signature: "fn get_u16_le_at(bytes: &Vec<u8>, offset: i64) -> Result<u16, errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::encoding::binary",
+        name: "put_u16_le_at",
+        signature: "fn put_u16_le_at(buf: &mut Vec<u8>, offset: i64, value: u16) -> Result<(), errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::encoding::binary",
+        name: "get_u32_be_at",
+        signature: "fn get_u32_be_at(bytes: &Vec<u8>, offset: i64) -> Result<u32, errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::encoding::binary",
+        name: "put_u32_be_at",
+        signature: "fn put_u32_be_at(buf: &mut Vec<u8>, offset: i64, value: u32) -> Result<(), errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::encoding::binary",
+        name: "get_u32_le_at",
+        signature: "fn get_u32_le_at(bytes: &Vec<u8>, offset: i64) -> Result<u32, errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::encoding::binary",
+        name: "put_u32_le_at",
+        signature: "fn put_u32_le_at(buf: &mut Vec<u8>, offset: i64, value: u32) -> Result<(), errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::encoding::binary",
+        name: "get_u64_be_at",
+        signature: "fn get_u64_be_at(bytes: &Vec<u8>, offset: i64) -> Result<u64, errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::encoding::binary",
+        name: "put_u64_be_at",
+        signature: "fn put_u64_be_at(buf: &mut Vec<u8>, offset: i64, value: u64) -> Result<(), errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::encoding::binary",
+        name: "get_u64_le_at",
+        signature: "fn get_u64_le_at(bytes: &Vec<u8>, offset: i64) -> Result<u64, errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::encoding::binary",
+        name: "put_u64_le_at",
+        signature: "fn put_u64_le_at(buf: &mut Vec<u8>, offset: i64, value: u64) -> Result<(), errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::encoding::binary",
         name: "get_u16_be",
         signature: "fn get_u16_be(bytes: Vec<u8>) -> Result<i64, errors::Error>",
     },
@@ -992,6 +1052,11 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         module_path: "std::fs",
         name: "create",
         signature: "fn create(path: String) -> Result<fs::File, io::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::fs",
+        name: "sync_dir",
+        signature: "fn sync_dir(path: String) -> Result<(), errors::Error>",
     },
     StdFunctionSignature {
         module_path: "std::fs",

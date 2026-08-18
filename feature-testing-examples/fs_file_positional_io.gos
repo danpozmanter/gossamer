@@ -1,0 +1,83 @@
+// Positional file I/O, durability barriers, and range locks on one open
+// handle. A pager writes and reads whole pages by offset rather than
+// through a shared cursor, so the same program must produce the same
+// bytes on every tier. Only paths under the system temporary root are
+// touched, and every one is removed before the program exits.
+
+use std::{errors, fs, path}
+
+const PAGE: i64 = 4096
+
+fn build_page(marker: u8, value: f64) -> Vec<u8> {
+    let mut page: Vec<u8> = #[0; 4096]
+    page[0] = marker
+    page[4095] = 42
+    let bits = f64::to_bits(value)
+    let mut i = 0
+    while i < 8 {
+        page[8 + i] = ((bits >> (((7 - i) * 8) as u64)) & 255) as u8
+        i += 1
+    }
+    page
+}
+
+fn read_f64(page: &Vec<u8>, at: i64) -> f64 {
+    let mut bits: u64 = 0
+    let mut i = 0
+    while i < 8 {
+        bits = (bits << 8) | (page[at + i] as u64)
+        i += 1
+    }
+    f64::from_bits(bits)
+}
+
+fn main() -> Result<(), errors::Error> {
+    let dir = fs::temp_dir("gossamer-fs-positional")?
+    let db = path::join(&dir, &"pages.db")
+
+    let writer = fs::create(db)?
+    let page = build_page(13, 3.141592653589793)
+    println!("write_at {}", writer.write_at(page, PAGE * 2)?)
+    println!("len after write_at {}", writer.len()?)
+    writer.sync_all()?
+    writer.sync_data()?
+    println!("write_bytes {}", writer.write_bytes(#[1, 2, 3])?)
+    println!("len after write_bytes {}", writer.len()?)
+    writer.set_len(PAGE * 3)?
+    println!("len after set_len {}", writer.len()?)
+    writer.close()
+
+    let opts = fs::OpenOptions::new()
+    let opts = opts.read(true)
+    let opts = opts.write(true)
+    let handle = opts.open(db)?
+
+    let back = handle.read_at(PAGE, PAGE * 2)?
+    println!("read_at {}", back.len())
+    println!("page identical {}", back == page)
+    println!("payload {}", read_f64(&back, 8))
+
+    // A read that starts past the end is short, not an error.
+    let beyond = handle.read_at(PAGE, PAGE * 8)?
+    println!("beyond end {}", beyond.len())
+
+    println!("seek set {}", handle.seek(16, fs::SEEK_SET)?)
+    println!("seek cur {}", handle.seek(4, fs::SEEK_CUR)?)
+    println!("seek end {}", handle.seek(0, fs::SEEK_END)?)
+
+    println!("range lock {}", handle.try_lock_range(0, 16, true)?)
+    println!("disjoint lock {}", handle.try_lock_range(64, 16, true)?)
+    handle.unlock_range(0, 16)?
+    handle.unlock_range(64, 16)?
+    println!("whole file lock {}", handle.try_lock_exclusive()?)
+    handle.unlock()?
+    println!("shared lock {}", handle.try_lock_shared()?)
+    handle.unlock()?
+    handle.close()
+
+    fs::sync_dir(dir)?
+    let _ = fs::remove_file(db)
+    let _ = fs::remove_dir_all(dir)
+    println!("cleaned {}", !fs::exists(dir))
+    Ok(())
+}

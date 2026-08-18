@@ -659,30 +659,30 @@ fn main() {
         |> iter::collect
     println!("{}", xs.sum())
 
-    let skipped = iter::range(1, 8) |> iter::skip(3) |> iter::take(2) |> iter::sum
+    let skipped = (1..8) |> iter::skip(3) |> iter::take(2) |> iter::sum
     println!("{skipped}")
 
-    let chained = iter::chain(iter::range(1, 3), iter::range(5, 7)) |> iter::sum
+    let chained = iter::chain((1..3), (5..7)) |> iter::sum
     println!("{chained}")
 
-    let folded = iter::range(1, 5) |> iter::fold(10i64, |acc: i64, x: i64| acc + x)
+    let folded = (1..5) |> iter::fold(10i64, |acc: i64, x: i64| acc + x)
     println!("{folded}")
 
-    let any_hit = iter::range(1, 100)
+    let any_hit = (1..100)
         |> iter::any(|x| {
             if x > 4 { panic("any was eager") }
             x == 3
         })
     println!("{any_hit}")
 
-    let all_hit = iter::range(1, 100)
+    let all_hit = (1..100)
         |> iter::all(|x| {
             if x > 4 { panic("all was eager") }
             x < 3
         })
     println!("{all_hit}")
 
-    let found = iter::range(1, 100)
+    let found = (1..100)
         |> iter::find(|x| {
             if x > 5 { panic("find was eager") }
             x == 4
@@ -693,22 +693,22 @@ fn main() {
     let once_sum = iter::once(41) |> iter::sum
     println!("{once_sum}")
 
-    let product = iter::range(2, 5) |> iter::product
+    let product = (2..5) |> iter::product
     println!("{product}")
 
-    let min_value = iter::range(4, 7) |> iter::min |> option::unwrap_or(-1)
+    let min_value = (4..7) |> iter::min |> option::unwrap_or(-1)
     println!("{min_value}")
 
-    let max_value = iter::range(4, 7) |> iter::max |> option::unwrap_or(-1)
+    let max_value = (4..7) |> iter::max |> option::unwrap_or(-1)
     println!("{max_value}")
 
-    let enumerated = iter::range(3, 6) |> iter::enumerate |> iter::collect
+    let enumerated = (3..6) |> iter::enumerate |> iter::collect
     println!("{}", enumerated.len())
 
-    let zipped = iter::zip(iter::range(1, 4), iter::range(10, 20)) |> iter::collect
+    let zipped = iter::zip((1..4), (10..20)) |> iter::collect
     println!("{}", zipped.len())
 
-    let pair_count = iter::range(1, 4) |> iter::enumerate |> iter::count
+    let pair_count = (1..4) |> iter::enumerate |> iter::count
     println!("{pair_count}")
 
     let borrowed = [1, 2, 3, 4]
@@ -732,9 +732,9 @@ fn main() {
 "#;
 
 const LAZY_ITERATOR_TIER_OUTPUT: &str =
-    "6\n9\n14\n20\ntrue\nfalse\n4\n41\n24\n4\n6\n3\n3\n3\n14\n13\n4\n";
+    "6\n9\n14\n20\ntrue\nfalse\n4\n41\n24\n4\n6\n3\n3\n3\n14\n6\n4\n";
 
-const EAGER_2026_COMPAT_SOURCE: &str = r#"use std::iter
+const EAGER_COLLECTION_SOURCE: &str = r#"use std::iter
 
 fn main() {
     let range = iter::range(2, 6)
@@ -745,7 +745,7 @@ fn main() {
 }
 "#;
 
-const EAGER_2026_COMPAT_OUTPUT: &str = "2 6 6 14\n";
+const EAGER_COLLECTION_OUTPUT: &str = "2 6 6 14\n";
 
 // Allocation telemetry prints through the runtime's Unix-only `libc::atexit`
 // hook; Windows still exercises lazy pipelines in the cross-tier tests.
@@ -753,7 +753,7 @@ const EAGER_2026_COMPAT_OUTPUT: &str = "2 6 6 14\n";
 const LAZY_ITERATOR_ALLOCATION_SOURCE: &str = r#"use std::iter
 
 fn main() {
-    let out = iter::range(0, 100)
+    let out = (0..100)
         |> iter::map(|x| x + 1)
         |> iter::filter(|x| x % 2 == 0)
         |> iter::take(3)
@@ -766,7 +766,7 @@ const LAZY_ITERATOR_INVALIDATION_SOURCE: &str = r#"use std::iter
 
 fn main() {
     let mut xs: Vec<i64> = Vec::from([1, 2, 3])
-    let pending = xs |> iter::map(|x| x)
+    let pending = xs.iter() |> iter::map(|x| x)
     xs.push(4)
     println!("{}", pending |> iter::sum)
 }
@@ -775,7 +775,7 @@ fn main() {
 const LAZY_ITERATOR_PANIC_SOURCE: &str = r#"use std::iter
 
 fn main() {
-    let _ = iter::range(0, 8)
+    let _ = (0..8)
         |> iter::map(|x| {
             if x == 3 { panic("lazy adapter panic sentinel") }
             x
@@ -785,13 +785,13 @@ fn main() {
 "#;
 
 #[test]
-fn run_absolute_project_uses_entry_edition_for_lazy_iterators() {
-    let dir = env::temp_dir().join(format!("gos-lazy-edition-{}", std::process::id()));
+fn run_absolute_project_runs_lazy_iterator_pipelines() {
+    let dir = env::temp_dir().join(format!("gos-lazy-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create project dir");
     std::fs::write(
         dir.join("project.toml"),
-        "[project]\nid = \"example.com/lazy-edition\"\nversion = \"0.1.0\"\ngossamer-version = \"2027\"\n",
+        "[project]\nid = \"example.com/lazy-pipelines\"\nversion = \"0.1.0\"\n",
     )
     .expect("write manifest");
     std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_TIER_SOURCE).expect("write source");
@@ -828,13 +828,13 @@ fn run_absolute_project_uses_entry_edition_for_lazy_iterators() {
 }
 
 #[test]
-fn build_absolute_project_uses_entry_edition_for_lazy_iterators() {
-    let dir = env::temp_dir().join(format!("gos-lazy-build-edition-{}", std::process::id()));
+fn build_absolute_project_builds_lazy_iterator_pipelines() {
+    let dir = env::temp_dir().join(format!("gos-lazy-build-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create project dir");
     std::fs::write(
         dir.join("project.toml"),
-        "[project]\nid = \"example.com/native-lazy-edition\"\nversion = \"0.1.0\"\ngossamer-version = \"2027\"\n",
+        "[project]\nid = \"example.com/native-lazy-pipelines\"\nversion = \"0.1.0\"\n",
     )
     .expect("write manifest");
     std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_TIER_SOURCE).expect("write source");
@@ -849,9 +849,9 @@ fn build_absolute_project_uses_entry_edition_for_lazy_iterators() {
         String::from_utf8_lossy(&build.stderr)
     );
     let bin = dir.join("target").join("debug").join(if cfg!(windows) {
-        "native-lazy-edition.exe"
+        "native-lazy-pipelines.exe"
     } else {
-        "native-lazy-edition"
+        "native-lazy-pipelines"
     });
     let out = Command::new(&bin).output().expect("run built binary");
     assert!(
@@ -875,9 +875,9 @@ fn build_absolute_project_uses_entry_edition_for_lazy_iterators() {
         String::from_utf8_lossy(&release_build.stderr)
     );
     let release_bin = dir.join("target").join("release").join(if cfg!(windows) {
-        "native-lazy-edition.exe"
+        "native-lazy-pipelines.exe"
     } else {
-        "native-lazy-edition"
+        "native-lazy-pipelines"
     });
     let release_out = Command::new(release_bin)
         .output()
@@ -896,16 +896,16 @@ fn build_absolute_project_uses_entry_edition_for_lazy_iterators() {
 
 
 #[test]
-fn edition_2026_iterator_surface_remains_eager_on_all_tiers() {
-    let dir = env::temp_dir().join(format!("gos-eager-iter-2026-{}", std::process::id()));
+fn the_collection_iterator_surface_remains_eager_on_all_tiers() {
+    let dir = env::temp_dir().join(format!("gos-eager-iter-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create project dir");
     std::fs::write(
         dir.join("project.toml"),
-        "[project]\nid = \"example.com/eager-iter-2026\"\nversion = \"0.1.0\"\ngossamer-version = \"2026\"\n",
+        "[project]\nid = \"example.com/eager-iter\"\nversion = \"0.1.0\"\n",
     )
     .expect("write manifest");
-    std::fs::write(dir.join("main.gos"), EAGER_2026_COMPAT_SOURCE).expect("write source");
+    std::fs::write(dir.join("main.gos"), EAGER_COLLECTION_SOURCE).expect("write source");
 
     for mut command in [
         {
@@ -930,7 +930,7 @@ fn edition_2026_iterator_surface_remains_eager_on_all_tiers() {
         );
         assert_eq!(
             String::from_utf8_lossy(&out.stdout),
-            EAGER_2026_COMPAT_OUTPUT
+            EAGER_COLLECTION_OUTPUT
         );
     }
 
@@ -945,9 +945,9 @@ fn edition_2026_iterator_surface_remains_eager_on_all_tiers() {
         String::from_utf8_lossy(&build.stderr)
     );
     let bin = dir.join("target").join("debug").join(if cfg!(windows) {
-        "eager-iter-2026.exe"
+        "eager-iter.exe"
     } else {
-        "eager-iter-2026"
+        "eager-iter"
     });
     let llvm = Command::new(bin).output().expect("run LLVM fixture");
     assert!(
@@ -957,7 +957,7 @@ fn edition_2026_iterator_surface_remains_eager_on_all_tiers() {
     );
     assert_eq!(
         String::from_utf8_lossy(&llvm.stdout),
-        EAGER_2026_COMPAT_OUTPUT
+        EAGER_COLLECTION_OUTPUT
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -972,7 +972,7 @@ fn lazy_pipeline_allocates_only_its_collected_vec_on_llvm() {
     std::fs::create_dir_all(&dir).expect("create project dir");
     std::fs::write(
         dir.join("project.toml"),
-        "[project]\nid = \"example.com/lazy-iter-allocs\"\nversion = \"0.1.0\"\ngossamer-version = \"2027\"\n",
+        "[project]\nid = \"example.com/lazy-iter-allocs\"\nversion = \"0.1.0\"\n",
     )
     .expect("write manifest");
     std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_ALLOCATION_SOURCE).expect("write source");
@@ -1017,7 +1017,7 @@ fn borrowed_lazy_vec_structural_mutation_fails_on_all_tiers() {
     std::fs::create_dir_all(&dir).expect("create project dir");
     std::fs::write(
         dir.join("project.toml"),
-        "[project]\nid = \"example.com/lazy-iter-invalidation\"\nversion = \"0.1.0\"\ngossamer-version = \"2027\"\n",
+        "[project]\nid = \"example.com/lazy-iter-invalidation\"\nversion = \"0.1.0\"\n",
     )
     .expect("write manifest");
     std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_INVALIDATION_SOURCE).expect("write source");
@@ -1084,7 +1084,7 @@ fn lazy_adapter_panic_propagates_on_all_tiers() {
     std::fs::create_dir_all(&dir).expect("create project dir");
     std::fs::write(
         dir.join("project.toml"),
-        "[project]\nid = \"example.com/lazy-iter-panic\"\nversion = \"0.1.0\"\ngossamer-version = \"2027\"\n",
+        "[project]\nid = \"example.com/lazy-iter-panic\"\nversion = \"0.1.0\"\n",
     )
     .expect("write manifest");
     std::fs::write(dir.join("main.gos"), LAZY_ITERATOR_PANIC_SOURCE).expect("write source");

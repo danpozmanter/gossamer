@@ -387,6 +387,11 @@ pub const HANDLE_SIGNATURES: &[(&str, &str, &str)] = &[
     ),
     (
         "File",
+        "len",
+        "fn len(self: fs::File) -> Result<i64, errors::Error>",
+    ),
+    (
+        "File",
         "open",
         "fn open(path: String) -> Result<fs::File, errors::Error>",
     ),
@@ -397,8 +402,59 @@ pub const HANDLE_SIGNATURES: &[(&str, &str, &str)] = &[
     ),
     (
         "File",
+        "read_at",
+        "fn read_at(self: fs::File, len: i64, offset: i64) -> Result<Vec<u8>, errors::Error>",
+    ),
+    (
+        "File",
         "read_to_string",
         "fn read_to_string(self: fs::File) -> Result<String, errors::Error>",
+    ),
+    (
+        "File",
+        "seek",
+        "fn seek(self: fs::File, offset: i64, whence: i64) -> Result<i64, errors::Error>",
+    ),
+    (
+        "File",
+        "set_len",
+        "fn set_len(self: fs::File, len: i64) -> Result<(), errors::Error>",
+    ),
+    (
+        "File",
+        "sync_all",
+        "fn sync_all(self: fs::File) -> Result<(), errors::Error>",
+    ),
+    (
+        "File",
+        "sync_data",
+        "fn sync_data(self: fs::File) -> Result<(), errors::Error>",
+    ),
+    (
+        "File",
+        "try_lock_exclusive",
+        "fn try_lock_exclusive(self: fs::File) -> Result<bool, errors::Error>",
+    ),
+    (
+        "File",
+        "try_lock_range",
+        "fn try_lock_range(self: fs::File, start: i64, len: i64, exclusive: bool) \
+         -> Result<bool, errors::Error>",
+    ),
+    (
+        "File",
+        "try_lock_shared",
+        "fn try_lock_shared(self: fs::File) -> Result<bool, errors::Error>",
+    ),
+    (
+        "File",
+        "unlock",
+        "fn unlock(self: fs::File) -> Result<(), errors::Error>",
+    ),
+    (
+        "File",
+        "unlock_range",
+        "fn unlock_range(self: fs::File, start: i64, len: i64) -> Result<(), errors::Error>",
     ),
     (
         "File",
@@ -409,6 +465,16 @@ pub const HANDLE_SIGNATURES: &[(&str, &str, &str)] = &[
         "File",
         "write_all",
         "fn write_all(self: fs::File, data: String) -> Result<i64, errors::Error>",
+    ),
+    (
+        "File",
+        "write_at",
+        "fn write_at(self: fs::File, data: Vec<u8>, offset: i64) -> Result<i64, errors::Error>",
+    ),
+    (
+        "File",
+        "write_bytes",
+        "fn write_bytes(self: fs::File, data: Vec<u8>) -> Result<i64, errors::Error>",
     ),
     (
         "FileServer",

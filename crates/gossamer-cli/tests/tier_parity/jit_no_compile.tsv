@@ -8,6 +8,8 @@
 # is a second bytecode-VM run. A listed fixture that starts compiling fails the
 #                         marshal back to the caller
 # must install at least one native entry, otherwise its "cranelift" parity row
+#   aggregate ref arg     passes a `&Vec<T>` / `&mut Vec<T>` the admission gate
+#                         cannot lower at the call boundary
 #   &mut aggregate param  a `&mut` aggregate parameter the trampoline cannot
 #                         no closure-invocation lowering; deliberate)
 #   no hot body           no loop or recursion reaches the promotion threshold
@@ -62,6 +64,7 @@ feature-testing-examples/assoc_type_default.gos	bytecode-only local
 feature-testing-examples/assoc_type_through_bound.gos	bytecode-only local
 feature-testing-examples/atomic_bool.gos	cross-goroutine
 feature-testing-examples/autoderive_int_widths.gos	bytecode-only local
+feature-testing-examples/binary_offset_accessors.gos	aggregate ref arg
 feature-testing-examples/borrowed_option_result.gos	bytecode-only local
 feature-testing-examples/bounded_channel.gos	bytecode-only local
 feature-testing-examples/break_unknown_label.gos	no hot body
@@ -138,6 +141,7 @@ feature-testing-examples/format_spec.gos	no hot body
 feature-testing-examples/from_json_infer.gos	bytecode-only local
 feature-testing-examples/fs_dir_ops.gos	no hot body
 feature-testing-examples/fs_error_text.gos	no hot body
+feature-testing-examples/fs_file_positional_io.gos	bytecode-only local
 feature-testing-examples/fs_metadata.gos	bytecode-only local
 feature-testing-examples/fs_read_to_string_missing.gos	no hot body
 feature-testing-examples/fs_temp_file_lifecycle.gos	bytecode-only local

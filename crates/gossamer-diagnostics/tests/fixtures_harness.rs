@@ -126,7 +126,10 @@ fixture_test!(
     gt0073_conflicting_trait_impl,
     "GT0073_conflicting_trait_impl.gos"
 );
-fixture_test!(gt0074_missing_return_type, "GT0074_missing_return_type.gos");
+fixture_test!(
+    gl0055_undeclared_return_value,
+    "GL0055_undeclared_return_value.gos"
+);
 
 #[test]
 fn all_fixtures_have_error_marker() {

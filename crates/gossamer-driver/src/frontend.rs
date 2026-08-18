@@ -20,11 +20,10 @@
 use gossamer_ast::{ItemKind, SourceFile};
 use gossamer_diagnostics::Diagnostic;
 use gossamer_lex::FileId;
-use gossamer_pkg::Edition;
 use gossamer_resolve::resolve_source_file;
 use gossamer_types::{
     ExhaustivenessError, TyCtxt, check_arena_escapes, check_exhaustiveness,
-    normalize_caller_side_spellings, typecheck_source_file_with_edition,
+    normalize_caller_side_spellings, typecheck_source_file,
 };
 use std::time::{Duration, Instant};
 
@@ -45,6 +44,9 @@ pub struct FrontendOutcome {
     pub checked: CheckedFrontend,
     /// Fatal diagnostics under the unified policy; empty == accepted.
     pub diagnostics: Vec<Diagnostic>,
+    /// Advisory findings the checker is the only pass with the types to
+    /// make. Reported at warning severity; they never move the exit code.
+    pub warnings: Vec<Diagnostic>,
     /// Wall-clock timings for the frontend stages that produced this outcome.
     pub timings: FrontendTimings,
 }
@@ -90,45 +92,11 @@ impl FrontendOutcome {
 /// applies `autoderive::augment_source` before calling.
 #[must_use]
 pub fn check_frontend(source: &str, file_id: FileId) -> FrontendOutcome {
-    check_frontend_with_edition(source, file_id, Edition::E2026)
-}
-
-/// Runs the shared frontend under a project-selected language edition. The
-/// current edition reaches cache partitioning and later lowering; eager 2026
-/// remains the compatibility default for callers without a project manifest.
-#[must_use]
-pub fn check_frontend_with_edition(
-    source: &str,
-    file_id: FileId,
-    edition: Edition,
-) -> FrontendOutcome {
-    let trace = std::env::var_os("GOSSAMER_CACHE_TRACE").is_some();
-    let cache_key = cache_enabled().then(|| frontend_key(source, edition.as_str(), file_id));
-
-    let restore_started = Instant::now();
+    let cache_key = cache_enabled().then(|| frontend_key(source, file_id));
     if let Some(key) = &cache_key
-        && let Some(cached) = load_blob::<CachedFrontend>(key)
+        && let Some(restored) = restore_frontend(key)
     {
-        if trace {
-            eprintln!("cache: frontend restored for {}", key.as_hex());
-        }
-        // Only a pass that produced zero diagnostics publishes a blob, so a
-        // hit is proof the program was accepted under this exact key.
-        return FrontendOutcome {
-            checked: CheckedFrontend {
-                edition,
-                sf: cached.sf,
-                resolutions: cached.resolutions,
-                table: cached.table,
-                tcx: cached.tcx,
-            },
-            diagnostics: Vec::new(),
-            timings: FrontendTimings {
-                parse: restore_started.elapsed(),
-                parse_cache_hit: true,
-                ..FrontendTimings::default()
-            },
-        };
+        return restored;
     }
 
     let phase_started = Instant::now();
@@ -139,6 +107,14 @@ pub fn check_frontend_with_edition(
         .iter()
         .map(gossamer_parse::ParseDiagnostic::to_diagnostic)
         .collect();
+    // A program that does not parse is not the program the later passes
+    // see: `autoderive::augment_source` declines to synthesize from a
+    // recovered tree, so the derived `fmt` / `to_string` / serde surface a
+    // clean parse would carry is absent, and every pass below would report
+    // its absence somewhere the user did not write. The parse diagnostics
+    // are the actionable report; the passes still run so the LSP keeps a
+    // type table to answer from.
+    let parse_failed = !parse_diags.is_empty();
 
     let phase_started = Instant::now();
     let (resolutions, resolve_diags) = resolve_source_file(&sf);
@@ -152,34 +128,42 @@ pub fn check_frontend_with_edition(
     // codegen only ever see a positional call.
     let named_arg_diags = normalize_caller_side_spellings(&mut sf, &resolutions);
     let in_scope = collect_top_level_names(&sf);
-    diagnostics.extend(
-        named_arg_diags
-            .iter()
-            .map(|diag| diag.to_diagnostic(&in_scope)),
-    );
-    diagnostics.extend(
-        resolve_diags
-            .iter()
-            .map(|diag| diag.to_diagnostic(&in_scope)),
-    );
+    if !parse_failed {
+        diagnostics.extend(
+            named_arg_diags
+                .iter()
+                .map(|diag| diag.to_diagnostic(&in_scope)),
+        );
+        diagnostics.extend(
+            resolve_diags
+                .iter()
+                .map(|diag| diag.to_diagnostic(&in_scope)),
+        );
+    }
 
     let phase_started = Instant::now();
     let mut tcx = TyCtxt::new();
-    let (table, type_diags) =
-        typecheck_source_file_with_edition(&sf, &resolutions, &mut tcx, edition);
+    let (table, type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let typecheck = phase_started.elapsed();
-    diagnostics.extend(
-        type_diags
-            .iter()
-            .map(gossamer_types::TypeDiagnostic::to_diagnostic),
-    );
+    let mut warnings: Vec<Diagnostic> = Vec::new();
+    if !parse_failed {
+        for diag in &type_diags {
+            if diag.is_advisory() {
+                warnings.push(diag.to_diagnostic());
+            } else {
+                diagnostics.push(diag.to_diagnostic());
+            }
+        }
+    }
 
     let phase_started = Instant::now();
     let exhaustive_diags = check_exhaustiveness(&sf, &resolutions, &table, &tcx);
     let exhaustiveness = phase_started.elapsed();
-    for diag in &exhaustive_diags {
-        if matches!(diag.error, ExhaustivenessError::NonExhaustive { .. }) {
-            diagnostics.push(diag.to_diagnostic());
+    if !parse_failed {
+        for diag in &exhaustive_diags {
+            if matches!(diag.error, ExhaustivenessError::NonExhaustive { .. }) {
+                diagnostics.push(diag.to_diagnostic());
+            }
         }
     }
 
@@ -188,7 +172,9 @@ pub fn check_frontend_with_edition(
     // be rejected on every tier, exactly like a type error.
     let phase_started = Instant::now();
     for diag in check_arena_escapes(&sf, &resolutions, &table, &tcx) {
-        diagnostics.push(diag.to_diagnostic());
+        if !parse_failed {
+            diagnostics.push(diag.to_diagnostic());
+        }
     }
     let arena_escape = phase_started.elapsed();
 
@@ -196,7 +182,6 @@ pub fn check_frontend_with_edition(
     // makes a later invocation's hit proof of acceptance. A rejected program
     // therefore never reaches the cache.
     let checked = CheckedFrontend {
-        edition,
         sf,
         resolutions,
         table,
@@ -217,6 +202,7 @@ pub fn check_frontend_with_edition(
     FrontendOutcome {
         checked,
         diagnostics,
+        warnings,
         timings: FrontendTimings {
             parse,
             resolve,
@@ -226,6 +212,33 @@ pub fn check_frontend_with_edition(
             parse_cache_hit: false,
         },
     }
+}
+
+/// Answers a cached frontend for `key`, when one was published.
+///
+/// Only a pass that produced zero diagnostics publishes a blob, so a hit is
+/// proof the program was accepted under this exact key.
+fn restore_frontend(key: &crate::FrontendCacheKey) -> Option<FrontendOutcome> {
+    let restore_started = Instant::now();
+    let cached = load_blob::<CachedFrontend>(key)?;
+    if std::env::var_os("GOSSAMER_CACHE_TRACE").is_some() {
+        eprintln!("cache: frontend restored for {}", key.as_hex());
+    }
+    Some(FrontendOutcome {
+        checked: CheckedFrontend {
+            sf: cached.sf,
+            resolutions: cached.resolutions,
+            table: cached.table,
+            tcx: cached.tcx,
+        },
+        diagnostics: Vec::new(),
+        warnings: Vec::new(),
+        timings: FrontendTimings {
+            parse: restore_started.elapsed(),
+            parse_cache_hit: true,
+            ..FrontendTimings::default()
+        },
+    })
 }
 
 /// Every top-level item name declared in `sf`, used to seed the

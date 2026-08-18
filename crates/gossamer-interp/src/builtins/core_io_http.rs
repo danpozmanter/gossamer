@@ -80,6 +80,36 @@ wrapping_int_builtins!(builtin_u16_wrapping_add, builtin_u16_wrapping_mul, 16, f
 wrapping_int_builtins!(builtin_u32_wrapping_add, builtin_u32_wrapping_mul, 32, false);
 wrapping_int_builtins!(builtin_u64_wrapping_add, builtin_u64_wrapping_mul, 64, false);
 
+/// `f64::to_bits(x) -> u64`: the value's IEEE-754 binary64 encoding.
+fn builtin_f64_to_bits(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Int(math_arg(args).to_bits() as i64))
+}
+
+/// `f64::from_bits(b) -> f64`: the binary64 value `b` encodes.
+fn builtin_f64_from_bits(args: &[Value]) -> RuntimeResult<Value> {
+    let bits = match args.first() {
+        Some(Value::Int(n)) => *n as u64,
+        _ => 0,
+    };
+    Ok(Value::Float(f64::from_bits(bits)))
+}
+
+/// `f32::to_bits(x) -> u32`: the binary32 encoding of `x` rounded to
+/// single precision, since every float occupies a 64-bit slot.
+fn builtin_f32_to_bits(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Int(i64::from((math_arg(args) as f32).to_bits())))
+}
+
+/// `f32::from_bits(b) -> f32`: the binary32 value the low 32 bits of `b`
+/// encode, widened to the 64-bit float slot.
+fn builtin_f32_from_bits(args: &[Value]) -> RuntimeResult<Value> {
+    let bits = match args.first() {
+        Some(Value::Int(n)) => *n as u64 as u32,
+        _ => 0,
+    };
+    Ok(Value::Float(f64::from(f32::from_bits(bits))))
+}
+
 fn builtin_math_sqrt(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Float(math_arg(args).sqrt()))
 }

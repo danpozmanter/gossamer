@@ -911,6 +911,9 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_json_set" => Some("gos_rt_json_set"),
         "gos_rt_arr_iter" => Some("gos_rt_arr_iter"),
         "gos_rt_arr_iter_next" => Some("gos_rt_arr_iter_next"),
-        _ => None,
+        // The registry owns the canonical `&'static str` for every
+        // runtime symbol, so a helper the arms above do not spell still
+        // interns here rather than dropping out of native lowering.
+        _ => gossamer_abi::lookup(name).map(|entry| entry.name),
     }
 }

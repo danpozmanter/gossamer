@@ -138,7 +138,7 @@ fn diagnostics_for(file: &Path, candidate: &str) -> usize {
     };
     let mut map = gossamer_lex::SourceMap::new();
     let id = map.add_file(file.to_string_lossy().into_owned(), folded.clone());
-    gossamer_driver::check_frontend_with_edition(&folded, id, crate::paths::project_edition())
+    gossamer_driver::check_frontend(&folded, id)
         .diagnostics
         .len()
 }

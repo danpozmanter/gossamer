@@ -22,7 +22,7 @@ pub use lift::{
     collect_free_vars, collect_pattern_names, is_capture_env_load, lift_closures,
     shadowed_global_names,
 };
-pub use lower::{lower_source_file, lower_source_file_with_edition};
+pub use lower::lower_source_file;
 pub use tree::FnOrigin;
 pub use tree::{
     HirAdt, HirAdtKind, HirArrayExpr, HirBinaryOp, HirBlock, HirBody, HirConst, HirExpr,

@@ -222,3 +222,46 @@ pub unsafe extern "C" fn gos_rt_sort_partition_point_f64(v: *const GosVec, pivot
         lower_bound(slots.len(), |mid| slots[mid].total_cmp(&pivot)) as i64
     })
 }
+
+/// `xs.binary_search(needle) -> Result<i64, i64>` over a sorted
+/// `Vec<i64>`: `Ok(index)` of a matching element, `Err(index)` of the
+/// position an insert would keep sorted.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_binary_search_i64(v: *const GosVec, target: i64) -> i128 {
+    ffi_entry!(unsafe { gos_rt_result_new(1, 0) }, {
+        let slots = unsafe { i64_slots(v) };
+        let at = lower_bound(slots.len(), |mid| slots[mid].cmp(&target));
+        let found = at < slots.len() && slots[at] == target;
+        unsafe { gos_rt_result_new(i64::from(!found), at as i64) }
+    })
+}
+
+/// `xs.binary_search(needle) -> Result<i64, i64>` over a sorted
+/// `Vec<f64>`, ordered by `total_cmp` like every other float sort.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_binary_search_f64(v: *const GosVec, target: f64) -> i128 {
+    ffi_entry!(unsafe { gos_rt_result_new(1, 0) }, {
+        let slots = unsafe { f64_slots(v) };
+        let at = lower_bound(slots.len(), |mid| slots[mid].total_cmp(&target));
+        let found = at < slots.len() && slots[at].total_cmp(&target) == std::cmp::Ordering::Equal;
+        unsafe { gos_rt_result_new(i64::from(!found), at as i64) }
+    })
+}
+
+/// `xs.binary_search(needle) -> Result<i64, i64>` over a sorted
+/// `Vec<String>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_binary_search_str(
+    v: *const GosVec,
+    target: *const c_char,
+) -> i128 {
+    ffi_entry!(unsafe { gos_rt_result_new(1, 0) }, {
+        let slots = unsafe { i64_slots(v) };
+        let needle = unsafe { borrowed_str(target) };
+        let at = lower_bound(slots.len(), |mid| unsafe {
+            str_slot(slots, mid).cmp(needle)
+        });
+        let found = at < slots.len() && unsafe { str_slot(slots, at) } == needle;
+        unsafe { gos_rt_result_new(i64::from(!found), at as i64) }
+    })
+}

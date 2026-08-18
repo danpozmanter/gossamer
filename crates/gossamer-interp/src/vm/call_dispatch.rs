@@ -395,11 +395,11 @@ impl Vm {
                 // plain aggregate (the unchanged value flows back to
                 // the caller through the cell afterwards).
                 Value::Builtin(inner) => {
-                    let args = crate::value::unwrap_mut_cells(args);
+                    let args = crate::value::unwrap_mut_cells_unless_writer(inner.name, args);
                     (inner.call)(&args)
                 }
                 Value::Native(inner) => {
-                    let args = crate::value::unwrap_mut_cells(args);
+                    let args = crate::value::unwrap_mut_cells_unless_writer(inner.name, args);
                     let mut dispatch = super::native_dispatch::VmDispatch::new(self);
                     (inner.call)(&mut dispatch, &args)
                 }
@@ -567,7 +567,7 @@ impl Vm {
     pub(crate) fn dispatch_call(&self, callee: &Value, args: Vec<Value>) -> RuntimeResult<Value> {
         match callee {
             Value::Builtin(inner) => {
-                let args = crate::value::unwrap_mut_cells(args);
+                let args = crate::value::unwrap_mut_cells_unless_writer(inner.name, args);
                 (inner.call)(&args)
             }
             Value::String(name) => {
@@ -584,7 +584,7 @@ impl Vm {
             // VM's own call machinery through `VmDispatch`, so the user
             // callables they invoke run on the VM.
             Value::Native(inner) => {
-                let args = crate::value::unwrap_mut_cells(args);
+                let args = crate::value::unwrap_mut_cells_unless_writer(inner.name, args);
                 let mut dispatch = super::native_dispatch::VmDispatch::new(self);
                 (inner.call)(&mut dispatch, &args)
             }

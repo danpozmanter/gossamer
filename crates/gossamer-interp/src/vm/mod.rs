@@ -2230,6 +2230,13 @@ fn seq_elements(v: &Value) -> Option<Vec<Value>> {
         Value::Array(xs) => Some(xs.as_ref().clone()),
         Value::IntArray(xs) => Some(xs.iter().map(|&i| Value::Int(i)).collect()),
         Value::FloatVec(xs) => Some(xs.iter().map(|&f| Value::Float(f)).collect()),
+        // A byte sequence has four packed spellings, and which one a value
+        // carries follows how it was built rather than what it means: a
+        // literal, a slice borrow, and a runtime read of the same bytes are
+        // one value and compare as one.
+        Value::ByteArray(xs) => Some(xs.iter().map(|&b| Value::Int(i64::from(b))).collect()),
+        Value::InlineByteArray(xs) => Some(xs.iter().map(|&b| Value::Int(i64::from(b))).collect()),
+        Value::ByteVec(xs) => Some(xs.iter().map(|&b| Value::Int(i64::from(b))).collect()),
         _ => None,
     }
 }

@@ -1146,6 +1146,10 @@ impl<'a> Builder<'a> {
         args: &[HirExpr],
     ) -> Option<(&'static str, gossamer_types::Ty)> {
         Some(match joined {
+            "fs::sync_dir" => {
+                let unit = self.tcx.unit();
+                ("gos_rt_fs_sync_dir", self.result_of(unit))
+            }
             // `fs::read_to_string(path) -> Result<String, errors::Error>`.
             // Routes to the Result-shaped shim (not the bare-string
             // `gos_rt_fs_read_to_string`, which returns "" on failure) so a
@@ -1811,6 +1815,22 @@ impl<'a> Builder<'a> {
         _args: &[HirExpr],
     ) -> Option<(&'static str, gossamer_types::Ty)> {
         Some(match joined {
+            "f64::to_bits" => (
+                "gos_rt_f64_to_bits",
+                self.tcx.int_ty(gossamer_types::IntTy::U64),
+            ),
+            "f64::from_bits" => (
+                "gos_rt_f64_from_bits",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            "f32::to_bits" => (
+                "gos_rt_f32_to_bits",
+                self.tcx.int_ty(gossamer_types::IntTy::U32),
+            ),
+            "f32::from_bits" => (
+                "gos_rt_f32_from_bits",
+                self.tcx.float_ty(gossamer_types::FloatTy::F32),
+            ),
             // 0.10.0 - math::bits::* scalar primitives previously
             // VM-only. The carrying add/sub/mul/div (tuple returns)
             // stay on the VM until aggregate-return ABI lands.
@@ -2344,6 +2364,53 @@ impl<'a> Builder<'a> {
                     _ => "gos_rt_bin_get_u64_le",
                 };
                 (sym, self.result_i64_error_adt_ty())
+            }
+            // The `_at` family reads and writes through the caller's own
+            // buffer, so it answers the natural unsigned width rather than
+            // the lossy `i64` the append-and-return forms use.
+            "encoding::binary::get_u16_be_at"
+            | "encoding::binary::get_u16_le_at"
+            | "encoding::binary::get_u32_be_at"
+            | "encoding::binary::get_u32_le_at"
+            | "encoding::binary::get_u64_be_at"
+            | "encoding::binary::get_u64_le_at" => {
+                let (sym, width) = match joined {
+                    "encoding::binary::get_u16_be_at" => {
+                        ("gos_rt_bin_get_u16_be_at", gossamer_types::IntTy::U16)
+                    }
+                    "encoding::binary::get_u16_le_at" => {
+                        ("gos_rt_bin_get_u16_le_at", gossamer_types::IntTy::U16)
+                    }
+                    "encoding::binary::get_u32_be_at" => {
+                        ("gos_rt_bin_get_u32_be_at", gossamer_types::IntTy::U32)
+                    }
+                    "encoding::binary::get_u32_le_at" => {
+                        ("gos_rt_bin_get_u32_le_at", gossamer_types::IntTy::U32)
+                    }
+                    "encoding::binary::get_u64_be_at" => {
+                        ("gos_rt_bin_get_u64_be_at", gossamer_types::IntTy::U64)
+                    }
+                    _ => ("gos_rt_bin_get_u64_le_at", gossamer_types::IntTy::U64),
+                };
+                let value = self.tcx.int_ty(width);
+                (sym, self.result_of(value))
+            }
+            "encoding::binary::put_u16_be_at"
+            | "encoding::binary::put_u16_le_at"
+            | "encoding::binary::put_u32_be_at"
+            | "encoding::binary::put_u32_le_at"
+            | "encoding::binary::put_u64_be_at"
+            | "encoding::binary::put_u64_le_at" => {
+                let sym = match joined {
+                    "encoding::binary::put_u16_be_at" => "gos_rt_bin_put_u16_be_at",
+                    "encoding::binary::put_u16_le_at" => "gos_rt_bin_put_u16_le_at",
+                    "encoding::binary::put_u32_be_at" => "gos_rt_bin_put_u32_be_at",
+                    "encoding::binary::put_u32_le_at" => "gos_rt_bin_put_u32_le_at",
+                    "encoding::binary::put_u64_be_at" => "gos_rt_bin_put_u64_be_at",
+                    _ => "gos_rt_bin_put_u64_le_at",
+                };
+                let unit = self.tcx.unit();
+                (sym, self.result_of(unit))
             }
             "encoding::binary::uvarint" => ("gos_rt_bin_uvarint", self.result_pair_i64_error_ty()),
             "encoding::binary::varint" => ("gos_rt_bin_varint", self.result_pair_i64_error_ty()),

@@ -216,22 +216,10 @@ pub(crate) fn project_context() -> ProjectContext {
 }
 
 /// Returns the project context containing `entry`, independent of the process
-/// cwd. Explicit path builds/checks use this so project-local bindings and
-/// edition settings follow the source file the user named.
+/// cwd. Explicit path builds/checks use this so project-local bindings follow
+/// the source file the user named.
 pub(crate) fn project_context_for_entry(entry: &Path) -> ProjectContext {
     load_project_context(entry)
-}
-
-/// The current project's source edition, falling back to the compatibility
-/// edition for loose-file invocations and malformed or absent manifests.
-#[must_use]
-pub(crate) fn project_edition() -> gossamer_pkg::Edition {
-    project_context()
-        .manifest_result()
-        .and_then(Result::ok)
-        .map_or(gossamer_pkg::Edition::E2026, |manifest| {
-            manifest.project.edition
-        })
 }
 
 /// Whether the project asks `gos test` to fail on non-canonical
@@ -242,22 +230,6 @@ pub(crate) fn project_enforces_format() -> bool {
         .manifest_result()
         .and_then(Result::ok)
         .is_some_and(|manifest| manifest.project.enforce_format)
-}
-
-/// The source edition for the project containing `entry`, falling back to the
-/// compatibility edition for loose-file invocations and malformed manifests.
-#[must_use]
-pub(crate) fn project_edition_for_entry(entry: &Path) -> gossamer_pkg::Edition {
-    let Some(root) = project_root_for_entry(entry) else {
-        return gossamer_pkg::Edition::E2026;
-    };
-    let path = root.join("project.toml");
-    fs::read_to_string(&path)
-        .ok()
-        .and_then(|text| Manifest::parse(&text).ok())
-        .map_or(gossamer_pkg::Edition::E2026, |manifest| {
-            manifest.project.edition
-        })
 }
 
 /// Walks up from the cwd looking for the nearest `project.toml`.
@@ -636,24 +608,14 @@ mod tests {
     }
 
     #[test]
-    fn entry_edition_comes_from_entry_project_not_cwd() {
-        let root = scratch_project(
-            "entryedition",
-            "[project]\nid = \"example.com/lazy\"\nversion = \"0.1.0\"\ngossamer-version = \"2027\"\n",
-            &["main.gos"],
-        );
-        assert_eq!(
-            project_edition_for_entry(&root.join("main.gos")),
-            gossamer_pkg::Edition::E2027
-        );
-        let _ = fs::remove_dir_all(&root);
-    }
-
-    #[test]
     fn entry_project_context_comes_from_entry_not_cwd() {
         let root = scratch_project(
             "entryctx",
-            "[project]\nid = \"example.com/entryctx\"\nversion = \"0.1.0\"\ngossamer-version = \"2026\"\n[rust-bindings]\naddlib = { path = \"bindings/addlib\" }\n",
+            &format!(
+                "[project]\nid = \"example.com/entryctx\"\nversion = \"0.1.0\"\n\
+                 gossamer-version = \"v{}\"\n[rust-bindings]\naddlib = {{ path = \"bindings/addlib\" }}\n",
+                env!("CARGO_PKG_VERSION")
+            ),
             &["src/main.gos"],
         );
         let ctx = project_context_for_entry(&root.join("src").join("main.gos"));

@@ -439,6 +439,10 @@ pub(super) fn lower_generic_rt_call(
         return Ok(());
     }
     let ptr_ty = module.target_config().pointer_type();
+    // Holds the registry-derived parameter list for a helper the table
+    // below does not spell; the borrow taken in that arm outlives the
+    // match, so the storage is declared here.
+    let registry_params: Vec<ir::Type>;
     // Signature table: arg cl-types + return cl-type. `None`
     // return means void.
     let (params, ret): (&[ir::Type], Option<ir::Type>) = match name {
@@ -1214,7 +1218,23 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_lazy_iter_sum_f64" => (&[ptr_ty], Some(types::F64)),
         "gos_rt_arr_iter" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_arr_iter_next" => (&[ptr_ty], Some(ptr_ty)),
-        _ => unreachable!("unhandled rt name {name}"),
+        // The ABI registry is the single source of truth for a helper's
+        // shape, so one that predates no bespoke arm here still lowers
+        // with the declared signature rather than aborting the build.
+        _ => {
+            let entry = gossamer_abi::lookup(name)
+                .ok_or_else(|| anyhow!("lower_generic_rt_call: unknown runtime symbol {name}"))?;
+            registry_params = entry
+                .sig
+                .params
+                .iter()
+                .filter_map(|t| abi_type_to_cranelift(*t))
+                .collect();
+            (
+                registry_params.as_slice(),
+                abi_type_to_cranelift(entry.sig.ret),
+            )
+        }
     };
     let mut arg_values = Vec::with_capacity(params.len());
     for (i, param_ty) in params.iter().enumerate() {

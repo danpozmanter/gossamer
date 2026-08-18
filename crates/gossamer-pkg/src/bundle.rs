@@ -11,6 +11,7 @@
 //! source unchanged, so diagnostics map back to the file the user is
 //! editing.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -88,7 +89,8 @@ pub fn bundle_path_dependencies_traced(
     let mut out = source;
     let mut spans = Vec::new();
     let mut worklist: Vec<(PathBuf, PathBuf)> = Vec::new();
-    collect_path_deps(entry, visited, &mut worklist);
+    let mut dep_modules: BTreeMap<String, String> = BTreeMap::new();
+    collect_path_deps_with_modules(entry, visited, &mut worklist, &mut dep_modules);
     let mut i = 0;
     while i < worklist.len() {
         let (dep_root, dep_entry) = worklist[i].clone();
@@ -100,8 +102,14 @@ pub fn bundle_path_dependencies_traced(
             continue;
         };
         let (dep_bundled, dep_spans) = bundle_sibling_modules_traced(&dep_entry, dep_source);
-        collect_path_deps(&dep_entry, visited, &mut worklist);
-        let mod_name = gossamer_resolve::project_dep_module_name(&dep_id);
+        collect_path_deps_with_modules(&dep_entry, visited, &mut worklist, &mut dep_modules);
+        // A `module = "..."` override in the manifest that declares the
+        // dependency names the module its source is reached under; without
+        // one the final segment of its id does.
+        let mod_name = dep_modules
+            .get(&dep_id)
+            .cloned()
+            .unwrap_or_else(|| gossamer_resolve::project_dep_module_name(&dep_id));
         // The attribute is what tells the resolver this module came from
         // another package, so a reference to it needs the matching import.
         let header = format!(
@@ -131,6 +139,17 @@ pub fn collect_path_deps(
     visited: &mut Vec<PathBuf>,
     worklist: &mut Vec<(PathBuf, PathBuf)>,
 ) {
+    collect_path_deps_with_modules(entry, visited, worklist, &mut BTreeMap::new());
+}
+
+/// As [`collect_path_deps`], also recording each dependency's
+/// `module = "..."` override from the manifest that declares it.
+pub fn collect_path_deps_with_modules(
+    entry: &Path,
+    visited: &mut Vec<PathBuf>,
+    worklist: &mut Vec<(PathBuf, PathBuf)>,
+    modules: &mut BTreeMap<String, String>,
+) {
     let Some(dir) = entry.parent() else {
         return;
     };
@@ -148,6 +167,9 @@ pub fn collect_path_deps(
         return;
     };
     let manifest_dir = manifest_path.parent().unwrap_or(dir);
+    for (id, module) in &manifest.dependency_modules {
+        modules.insert(id.clone(), module.clone());
+    }
     for spec in manifest.dependencies.values() {
         let Some(rel) = dependency_path(spec) else {
             continue;

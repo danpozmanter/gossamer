@@ -3433,6 +3433,9 @@ impl<'tcx> FnBuilder<'tcx> {
                     | "drain"
                     | "swap"
                     | "fill"
+                    | "resize"
+                    | "copy_within"
+                    | "copy_from_slice"
             ),
             Some(TyKind::Array { .. }) => matches!(
                 name.name.as_str(),

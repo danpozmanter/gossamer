@@ -257,7 +257,7 @@ pub const FS: StdModule = StdModule {
         StdItem {
             name: "File",
             kind: StdItemKind::Type,
-            doc: "Streaming file handle; supports read, read_to_string, write, flush, and close.",
+            doc: "Streaming file handle. Reads and writes at the handle's own cursor (read, read_to_string, write, write_bytes, seek), positionally (read_at, write_at), and reports size (len, set_len). Durability is sync_all / sync_data; multi-process safety is the try_lock_* / unlock family.",
         },
         StdItem {
             name: "DirInfo",
@@ -380,6 +380,26 @@ pub const FS: StdModule = StdModule {
             doc: "Returns filesystem metadata for a path.",
         },
         StdItem {
+            name: "sync_dir",
+            kind: StdItemKind::Function,
+            doc: "Makes a directory's own entries durable - the barrier a create, rename, or delete needs after the file itself is synced. On Windows this is satisfied by NTFS metadata ordering and performs no flush.",
+        },
+        StdItem {
+            name: "SEEK_SET",
+            kind: StdItemKind::Const,
+            doc: "File::seek whence: the offset is absolute from the start of the file.",
+        },
+        StdItem {
+            name: "SEEK_CUR",
+            kind: StdItemKind::Const,
+            doc: "File::seek whence: the offset is relative to the current position.",
+        },
+        StdItem {
+            name: "SEEK_END",
+            kind: StdItemKind::Const,
+            doc: "File::seek whence: the offset is relative to the end of the file.",
+        },
+        StdItem {
             name: "canonicalize",
             kind: StdItemKind::Function,
             doc: "Resolves a path to an absolute, symlink-free canonical form.",
@@ -394,12 +414,12 @@ pub const BYTES: StdModule = StdModule {
         StdItem {
             name: "Buffer",
             kind: StdItemKind::Type,
-            doc: "Growable byte buffer.",
+            doc: "Growable byte buffer for incremental assembly: new, with_capacity, write_str, push, len, is_empty, clear, to_string. A buffer you index, slice, or edit at an offset is a Vec<u8>.",
         },
         StdItem {
             name: "Builder",
             kind: StdItemKind::Type,
-            doc: "Incremental string builder.",
+            doc: "Incremental string builder: new, write, write_char, len, build, as_str. Cheaper than repeated `+` on a String, which copies.",
         },
         StdItem {
             name: "index_of",

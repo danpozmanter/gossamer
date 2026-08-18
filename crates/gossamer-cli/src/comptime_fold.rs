@@ -55,7 +55,6 @@ fn fold_comptime_on_vm(augmented: String, file_label: String) -> Result<String> 
     }
 
     let gossamer_driver::CheckedFrontend {
-        edition: _,
         sf,
         resolutions,
         table,

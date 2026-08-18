@@ -650,6 +650,37 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
     },
     CoreMethodHelp {
         owner: "Vec",
+        name: "binary_search",
+        kind: "method",
+        signature: "fn binary_search<T>(self: &Vec<T>, needle: T) -> Result<i64, i64>",
+        doc: "Index of a matching element in an already-ascending sequence; \
+              `Err` carries the position an insert would keep sorted.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "copy_from_slice",
+        kind: "method",
+        signature: "fn copy_from_slice<T>(self: &mut Vec<T>, source: &Vec<T>) -> ()",
+        doc: "Overwrites every element with the matching one of `source`; \
+              the lengths must match.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "copy_within",
+        kind: "method",
+        signature: "fn copy_within<T>(self: &mut Vec<T>, src: i64, dest: i64, len: i64) -> ()",
+        doc: "Moves `len` elements from `src` to `dest` inside one Vec, \
+              correct when the ranges overlap.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
+        name: "resize",
+        kind: "method",
+        signature: "fn resize<T>(self: &mut Vec<T>, new_len: i64, value: T) -> ()",
+        doc: "Shrinks by dropping the tail, or grows by appending copies of `value`.",
+    },
+    CoreMethodHelp {
+        owner: "Vec",
         name: "fill",
         kind: "method",
         signature: "fn fill<T>(self: &mut Vec<T>, value: T) -> ()",
@@ -3463,6 +3494,20 @@ fn render_catalog_query_matches(query: &str, details: bool) -> String {
         let mut entry = String::new();
         push_item_match(&mut entry, &module, &item, details);
         entries.push(entry);
+        // Naming a type through its module is the same request as naming it
+        // bare: the surface it owns. Without this a qualified
+        // `%i bytes::Buffer` answered with the type alone, reading as a type
+        // with nothing callable on it.
+        if matches!(item.kind, gossamer_std::registry::StdItemKind::Type) {
+            for method in core_method_entries()
+                .into_iter()
+                .filter(|method| method.owner == item.name)
+            {
+                let mut entry = String::new();
+                push_core_method_match(&mut entry, &method, details);
+                entries.push(entry);
+            }
+        }
     }
     render_catalog_entries(entries, "")
 }

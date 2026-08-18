@@ -22,7 +22,7 @@ fn main() {
 
     match fs::temp_file("gossamer-temp-resource") {
         Ok((file, file_path)) => {
-            let _ = file.write("temporary file".as_bytes())
+            let _ = file.write_bytes("temporary file".as_bytes())
             let _ = file.close()
             println!("temp file exists: {}", fs::exists(file_path))
             let _ = fs::remove_file(file_path)

@@ -1,5 +1,70 @@
 # Changelog
 
+## 0.52.2 - Binary and positional file I/O, durability barriers, range locks, exact toolchain version
+
+- Read and write a `fs::File` by offset with `read_at` / `write_at`, past the
+  handle's own cursor, and move that cursor with `seek` over the named
+  `fs::SEEK_SET` / `SEEK_CUR` / `SEEK_END` selectors. Short transfers are
+  reported rather than looped over.
+- Write bytes through a file handle with `write_bytes`; `write` stays
+  text-typed and now says so at check time instead of answering `Err` at run
+  time.
+- Size an open handle with `len` and `set_len`, so a journal rollback and a
+  database shrink no longer race the path-based `fs::metadata`.
+- Make a commit durable with `fs::File::sync_all` / `sync_data` and
+  `fs::sync_dir`, the barrier a create, rename, or delete needs after its own
+  file sync. On Windows NTFS metadata ordering supplies the directory barrier,
+  so `sync_dir` performs no flush there.
+- Coordinate across processes with advisory range locks:
+  `try_lock_range` / `unlock_range` over specific bytes, and
+  `try_lock_shared` / `try_lock_exclusive` / `unlock` over the whole file. A
+  lock another holder owns answers `Ok(false)` rather than an error, and no
+  variant blocks the scheduler thread.
+- Reinterpret a float as its IEEE-754 bits and back with `f64::to_bits` /
+  `f64::from_bits`, `x.to_bits()`, and the `f32` pair. The round trip is
+  bit-identical for negative zero, both infinities, and NaN payloads.
+- Edit a `Vec` in bulk with `copy_within` (correct for overlapping ranges),
+  `copy_from_slice`, and `resize`, and search a sorted one with
+  `binary_search`, whose `Err` carries the insertion point.
+- Read and write integers at a byte offset of an existing buffer with the
+  `encoding::binary` `_at` family, in both endiannesses and at the natural
+  unsigned width. A window past the end answers `Err`.
+- Declare the whole `fs::File` and `fs::OpenOptions` contract to the checker:
+  a wrong argument type, a wrong argument count, and a method the handle does
+  not answer are all reported by `gos check`, and `fs::open` / `fs::create` /
+  `File::open` / `File::create` answer a `Result` that `?` propagates.
+- Reject an unresolvable associated path on a scalar primitive
+  (`bool::`, `char::`, `f32::`, `f64::`, and the integer widths) at check time
+  instead of at run time.
+- State a project's toolchain as an exact version - `gossamer-version =
+  "v0.52.2"`, matching the release tag. A project naming a newer toolchain than
+  the one running is reported against the manifest. The `"2026"` / `"2027"`
+  edition spellings and the eager/lazy iterator split they selected are gone:
+  one toolchain now has one source language, with laziness reached through a
+  range literal or `.iter()`.
+- Let two dependencies whose ids share a final segment coexist: a
+  `module = "..."` key in `[dependencies]` names the module one is reached
+  under, and the package id reaches it too.
+- Answer a function with no declared return type as a unit on every tier -
+  the LLVM build used to fail outright and the interpreter handed the tail
+  value back. A tail that computes a value reports the new `GL0055` lint,
+  which names both fixes; `-> ()` states the discard deliberately.
+- Compare byte sequences by value in the interpreter whatever packing they
+  carry, so a `Vec<u8>` literal and one read back from a file are equal on
+  every tier.
+- Report only the parse error when a file does not parse: the passes below it
+  analyse a program the synthesizer declined to complete, and reported its
+  absence somewhere the user did not write.
+- Reject `&xs[a..b]` and `&mut xs[a..b]` at check time. Borrowing a range
+  answered a copy the interpreter read and the native build indexed out of
+  bounds.
+- Render a unit as `()` in a native build's `{}` / `{:?}`, which previously
+  refused to compile.
+- Give a stdlib type's methods to its module-qualified `%info` spelling, so
+  `%i bytes::Buffer` lists the same surface `%i Buffer` does.
+- Report a filesystem error with the same text on every tier; the interpreter
+  used to hand back the raw OS message for handle operations.
+
 ## 0.52.1 - Display/Debug as distinct contracts, trait-impl membership, function signature consistency, import normalization
 
 - Render `{}` through a type's `impl Display` and `{:?}` through its

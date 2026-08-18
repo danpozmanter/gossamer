@@ -211,6 +211,184 @@ impl<'a> Builder<'a> {
         Some(self.lower_unit(span))
     }
 
+    /// `xs.copy_within(src, dest, len)`, `xs.copy_from_slice(src)`, and
+    /// `xs.binary_search(needle)` on a Vec receiver.
+    pub(crate) fn try_lower_vec_bulk_method(
+        &mut self,
+        receiver: &HirExpr,
+        method: &Ident,
+        args: &[HirExpr],
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::{IntTy, TyKind};
+
+        let recv_place = self.lower_place_expr(receiver)?;
+        let recv_ty = self.locals[recv_place.local.0 as usize].ty;
+        let mut peeled = recv_ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
+            peeled = *inner;
+        }
+        let elem = match self.tcx.kind_of(peeled) {
+            TyKind::Vec(elem) | TyKind::Slice(elem) => *elem,
+            _ => return None,
+        };
+        let unit_ty = self.tcx.unit();
+        let (symbol, ret_ty) = match (method.name.as_str(), args.len()) {
+            ("copy_within", 3) => ("gos_rt_vec_copy_within", unit_ty),
+            ("copy_from_slice", 1) => ("gos_rt_vec_copy_from_slice", unit_ty),
+            ("binary_search", 1) => {
+                let i64_ty = self.tcx.int_ty(IntTy::I64);
+                let ret = self.result_adt_of(i64_ty, i64_ty);
+                let symbol = match self.tcx.kind_of(self.peel_ref_ty(elem)) {
+                    TyKind::Int(_) | TyKind::Char => "gos_rt_vec_binary_search_i64",
+                    TyKind::Float(_) => "gos_rt_vec_binary_search_f64",
+                    TyKind::String => "gos_rt_vec_binary_search_str",
+                    _ => return None,
+                };
+                (symbol, ret)
+            }
+            _ => return None,
+        };
+        let mut call_args = vec![Operand::Copy(recv_place)];
+        for arg in args {
+            let local = self.lower_expr(arg)?;
+            call_args.push(Operand::Copy(Place::local(local)));
+        }
+        let dest = self.fresh(ret_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(symbol.to_string())),
+            args: call_args,
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
+    /// `xs.resize(new_len, value)` - shrink by truncation, or grow by
+    /// appending copies of `value`.
+    ///
+    /// Lowered here rather than in a runtime helper because appending
+    /// reaches `gos_rt_vec_push`, whose element argument each backend
+    /// already spills for the element's own width; a helper taking the
+    /// value would need that same treatment repeated per backend.
+    pub(crate) fn try_lower_vec_resize(
+        &mut self,
+        receiver: &HirExpr,
+        new_len: &HirExpr,
+        value: &HirExpr,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::{IntTy, TyKind};
+
+        let recv_place = self.lower_place_expr(receiver)?;
+        let recv_ty = self.locals[recv_place.local.0 as usize].ty;
+        let mut peeled = recv_ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
+            peeled = *inner;
+        }
+        if !matches!(self.tcx.kind_of(peeled), TyKind::Vec(_)) {
+            return None;
+        }
+        let target_len = self.lower_expr(new_len)?;
+        let value_local = self.lower_expr(value)?;
+        let i64_ty = self.tcx.int_ty(IntTy::I64);
+        let unit_ty = self.tcx.unit();
+
+        let len_local = self.fresh(i64_ty);
+        let after_len = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_len".to_string())),
+            args: vec![Operand::Copy(recv_place.clone())],
+            destination: Place::local(len_local),
+            target: Some(after_len),
+        });
+        self.set_current(after_len);
+
+        // Truncation is a no-op when the target is at or above the
+        // current length, so the shrink case needs no branch of its own.
+        let trunc_dest = self.fresh(unit_ty);
+        let after_trunc = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_truncate".to_string())),
+            args: vec![
+                Operand::Copy(recv_place.clone()),
+                Operand::Copy(Place::local(target_len)),
+            ],
+            destination: Place::local(trunc_dest),
+            target: Some(after_trunc),
+        });
+        self.set_current(after_trunc);
+
+        let index = self.push_local(i64_ty, None, true);
+        self.emit_assign(
+            Place::local(index),
+            Rvalue::Use(Operand::Copy(Place::local(len_local))),
+            span,
+        );
+        let header = self.new_block(span);
+        let body = self.new_block(span);
+        let exit = self.new_block(span);
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(header);
+        let bool_ty = self.tcx.bool_ty();
+        let condition = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(condition),
+            Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(index)),
+                rhs: Operand::Copy(Place::local(target_len)),
+            },
+            span,
+        );
+        self.terminate(Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(condition)),
+            arms: vec![(0, exit)],
+            default: body,
+        });
+
+        self.set_current(body);
+        let push_dest = self.fresh(unit_ty);
+        let after_push = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_push".to_string())),
+            args: vec![
+                Operand::Copy(recv_place.clone()),
+                Operand::Copy(Place::local(value_local)),
+            ],
+            destination: Place::local(push_dest),
+            target: Some(after_push),
+        });
+        self.set_current(after_push);
+        let one = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(one),
+            Rvalue::Use(Operand::Const(ConstValue::Int(1))),
+            span,
+        );
+        let next_index = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(next_index),
+            Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(index)),
+                rhs: Operand::Copy(Place::local(one)),
+            },
+            span,
+        );
+        self.emit_assign(
+            Place::local(index),
+            Rvalue::Use(Operand::Copy(Place::local(next_index))),
+            span,
+        );
+        self.terminate(Terminator::Goto { target: header });
+        self.set_current(exit);
+        Some(self.lower_unit(span))
+    }
+
     /// `xs.sort()` where the element type is a tuple. A tuple element
     /// spans several slots, so the scalar slot-wise sort would reorder
     /// slots rather than the tuples they belong to; this routes to the

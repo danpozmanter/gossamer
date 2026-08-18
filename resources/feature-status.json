@@ -14,6 +14,7 @@
   {"name":"std::crypto::sha256","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::database::sql","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::encoding::base64","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
+  {"name":"std::encoding::binary","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::encoding::csv","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::encoding::hex","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::encoding::json","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},

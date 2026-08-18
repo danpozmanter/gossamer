@@ -1,13 +1,13 @@
 use std::{iter, option}
 
 fn main() {
-    let empty_count = iter::range(0, 0) |> iter::count
+    let empty_count = (0..0) |> iter::count
     println!("{empty_count}")
 
-    let bounded = iter::repeat(7, 1000000) |> iter::take(3) |> iter::sum
+    let bounded = (7..) |> iter::take(3) |> iter::sum
     println!("{bounded}")
 
-    let pulled = iter::range(1, 100)
+    let pulled = (1..100)
         |> iter::map(|x| {
             if x > 3 { panic("map pulled past take") }
             x
@@ -16,30 +16,30 @@ fn main() {
         |> iter::collect
     println!("{}", pulled.sum())
 
-    let skipped = iter::range(1, 8) |> iter::skip(3) |> iter::take(2) |> iter::sum
+    let skipped = (1..8) |> iter::skip(3) |> iter::take(2) |> iter::sum
     println!("{skipped}")
 
-    let chained = iter::chain(iter::range(1, 3), iter::range(5, 7)) |> iter::sum
+    let chained = iter::chain(1..3, 5..7) |> iter::sum
     println!("{chained}")
 
-    let zipped = iter::zip(iter::range(1, 4), iter::range(10, 20)) |> iter::collect
+    let zipped = iter::zip(1..4, 10..20) |> iter::collect
     println!("{}", zipped.len())
 
-    let any_hit = iter::range(1, 100)
+    let any_hit = (1..100)
         |> iter::any(|x| {
             if x > 4 { panic("any was eager") }
             x == 3
         })
     println!("{any_hit}")
 
-    let all_hit = iter::range(1, 100)
+    let all_hit = (1..100)
         |> iter::all(|x| {
             if x > 4 { panic("all was eager") }
             x < 3
         })
     println!("{all_hit}")
 
-    let found = iter::range(1, 100)
+    let found = (1..100)
         |> iter::find(|x| {
             if x > 5 { panic("find was eager") }
             x == 4

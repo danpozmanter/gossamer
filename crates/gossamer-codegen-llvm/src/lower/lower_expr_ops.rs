@@ -976,6 +976,7 @@ impl<'a> Lowerer<'a> {
             }
             let value = self.lower_operand(arg)?;
             let value = match kind {
+                ConcatKind::Unit => String::new(),
                 ConcatKind::StrPtr
                 | ConcatKind::Int
                 | ConcatKind::Uint
@@ -990,6 +991,10 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "  call void @gos_rt_concat_init()").unwrap();
         for (arg, (kind, value)) in args.iter().zip(plans) {
             match kind {
+                ConcatKind::Unit => {
+                    let (name, _len) = self.strings.borrow_mut().intern("()");
+                    writeln!(self.out, "  call void @gos_rt_concat_str(ptr {name})").unwrap();
+                }
                 ConcatKind::StrPtr => {
                     writeln!(self.out, "  call void @gos_rt_concat_str(ptr {value})").unwrap();
                 }
