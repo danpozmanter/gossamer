@@ -223,6 +223,53 @@ fn local_live_after(
 /// single share into that holder without changing the object's reference
 /// count at any point outside the bracket. Both members are removed or
 /// neither; a missed pair only keeps the original (correct) timing.
+/// Drops RC accounting on a place the block just set to the null constant.
+/// Every `gos_rt_*` release null-checks its argument, so such a call cannot do
+/// anything; removing it is a pure win at the drop-elaboration entry a
+/// constructor emits. Block-local and conservative: any write reaching the
+/// place, or its root local, forgets the fact.
+pub(crate) fn elide_null_rc_accounting(body: &mut Body) {
+    for block in &mut body.blocks {
+        let mut null_places: Vec<Place> = Vec::new();
+        let mut drop_at: Vec<usize> = Vec::new();
+        for (index, stmt) in block.stmts.iter().enumerate() {
+            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                continue;
+            };
+            if let Rvalue::CallIntrinsic { name, args } = rvalue
+                && rc_release_only(name)
+                && let [Operand::Copy(target)] = args.as_slice()
+                && null_places.iter().any(|known| known == target)
+            {
+                drop_at.push(index);
+                continue;
+            }
+            // The statement writes `place`; anything previously known about
+            // it, or about a place rooted in the same local, no longer holds.
+            null_places.retain(|known| known.local != place.local);
+            if matches!(rvalue, Rvalue::Use(Operand::Const(ConstValue::Int(0)))) {
+                null_places.push(place.clone());
+            }
+        }
+        for index in drop_at.into_iter().rev() {
+            block.stmts.remove(index);
+        }
+    }
+}
+
+/// Whether `name` is an RC release whose argument the runtime null-checks.
+fn rc_release_only(name: &str) -> bool {
+    matches!(
+        name,
+        "gos_rt_rc_release"
+            | "gos_rt_vec_free"
+            | "gos_rt_str_free"
+            | "gos_rt_str_free_typed"
+            | "gos_rt_map_free"
+            | "gos_rt_error_free"
+    )
+}
+
 pub(crate) fn elide_redundant_rc_pairs(body: &mut Body, tcx: &TyCtxt) {
     let n_blocks = body.blocks.len();
     if n_blocks == 0 {

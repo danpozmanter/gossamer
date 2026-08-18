@@ -492,6 +492,79 @@ impl<'a> Builder<'a> {
     ///
     /// Returns `None` for anything but a materialised sequence of 2-tuples,
     /// leaving the fixed-array fast path each backend unrolls to run.
+    /// `Map::from([(k, v), ...])` where `k` is a struct, tuple, or fixed
+    /// array. Such a key is content-hashed through its slot descriptor, which
+    /// only the `skey` entry points accept, so the literal's entries are
+    /// inserted one by one here rather than through a backend's array walk.
+    fn lower_map_from_aggregate_key_literal(
+        &mut self,
+        arg: &HirExpr,
+        span: Span,
+        ordered: bool,
+    ) -> Option<Local> {
+        use gossamer_types::TyKind;
+        let HirExprKind::Array(gossamer_hir::HirArrayExpr::List(items)) = &arg.kind else {
+            return None;
+        };
+        if items.is_empty() {
+            return None;
+        }
+        let elem_ty = self.peel_ref_ty(items.first()?.ty);
+        let TyKind::Tuple(fields) = self.tcx.kind_of(elem_ty).clone() else {
+            return None;
+        };
+        let [key_ty, val_ty] = fields.as_slice() else {
+            return None;
+        };
+        let (key_ty, val_ty) = (*key_ty, *val_ty);
+        if !self.is_aggregate_key(key_ty) {
+            return None;
+        }
+        let descriptor = self.key_descriptor(key_ty)?;
+        let map_ty = self.tcx.intern(TyKind::HashMap {
+            key: key_ty,
+            value: val_ty,
+            ordered,
+        });
+        let ctor = if ordered { "BTreeMap::new" } else { "Map::new" };
+        let map = self.emit_stdlib_free_call(ctor, map_ty, &[], span)?;
+        let prior_ty = self.option_payload_adt_ty(val_ty);
+        let items = items.clone();
+        for item in &items {
+            let pair = self.lower_expr(item)?;
+            let key = self.fresh(key_ty);
+            self.emit_assign(
+                Place::local(key),
+                Rvalue::Use(Operand::Copy(Place {
+                    local: pair,
+                    projection: vec![crate::ir::Projection::Field(0)],
+                })),
+                span,
+            );
+            let value = self.fresh(val_ty);
+            self.emit_assign(
+                Place::local(value),
+                Rvalue::Use(Operand::Copy(Place {
+                    local: pair,
+                    projection: vec![crate::ir::Projection::Field(1)],
+                })),
+                span,
+            );
+            let _ = self.emit_combinator_call(
+                "gos_rt_map_insert_skey_opt",
+                vec![
+                    Operand::Copy(Place::local(map)),
+                    Operand::Copy(Place::local(key)),
+                    Operand::Const(ConstValue::Str(descriptor.clone())),
+                    Operand::Copy(Place::local(value)),
+                ],
+                prior_ty,
+                span,
+            );
+        }
+        Some(map)
+    }
+
     fn lower_map_from_sequence(
         &mut self,
         arg: &HirExpr,
@@ -499,9 +572,6 @@ impl<'a> Builder<'a> {
         ordered: bool,
     ) -> Option<Local> {
         use gossamer_types::TyKind;
-        if matches!(&arg.kind, HirExprKind::Array(_)) {
-            return None;
-        }
         let raw_elem_ty = self.for_loop_elem_ty(arg)?;
         let elem_ty = self.peel_ref_ty(raw_elem_ty);
         let TyKind::Tuple(fields) = self.tcx.kind_of(elem_ty).clone() else {
@@ -511,6 +581,12 @@ impl<'a> Builder<'a> {
             return None;
         };
         let (key_ty, val_ty) = (*key_ty, *val_ty);
+        // An array literal is a flat slot buffer, not a `GosVec`, so the
+        // indexed walk below cannot read it; each backend lowers it directly
+        // instead.
+        if matches!(&arg.kind, HirExprKind::Array(_)) {
+            return None;
+        }
         let map_ty = self.tcx.intern(TyKind::HashMap {
             key: key_ty,
             value: val_ty,
@@ -704,10 +780,14 @@ impl<'a> Builder<'a> {
                 | "BTreeMap::from"
                 | "collections::BTreeMap::from"
         ) && let [arg] = args
-            && let Some(map) =
-                self.lower_map_from_sequence(arg, span, joined.as_str().ends_with("BTreeMap::from"))
         {
-            return Some(map);
+            let ordered = joined.as_str().ends_with("BTreeMap::from");
+            if let Some(map) = self.lower_map_from_aggregate_key_literal(arg, span, ordered) {
+                return Some(map);
+            }
+            if let Some(map) = self.lower_map_from_sequence(arg, span, ordered) {
+                return Some(map);
+            }
         }
         if matches!(
             joined.as_str(),

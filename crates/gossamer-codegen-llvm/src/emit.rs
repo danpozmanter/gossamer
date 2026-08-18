@@ -509,45 +509,7 @@ fn active_cache_dir() -> Option<PathBuf> {
 /// `linkonce_odr` lets the linker keep one copy and discard the rest
 /// without a duplicate-symbol error.
 fn render_shape_thunk_linkonce(name: &str) -> Option<String> {
-    let suffix = name.strip_prefix("__fn_thunk_")?;
-    let (inputs_str, ret_str) = suffix.rsplit_once('_')?;
-    let ret_char = ret_str.chars().next()?;
-    let ret_ty = shape_char_to_llvm_ty(ret_char)?;
-    let mut input_tys: Vec<&'static str> = Vec::with_capacity(inputs_str.len());
-    for c in inputs_str.chars() {
-        input_tys.push(shape_char_to_llvm_ty(c)?);
-    }
-    let unit_ret = ret_char == 'u';
-    let mut out = String::new();
-    let header_ret = if unit_ret { "void" } else { ret_ty };
-    let mut params = String::from("ptr %env");
-    for (i, t) in input_tys.iter().enumerate() {
-        let _ = write!(params, ", {t} %a{i}");
-    }
-    // `linkonce_odr` - identical definitions across objects; linker keeps one.
-    let _ = writeln!(
-        out,
-        "define linkonce_odr {header_ret} @\"{name}\"({params}) {{"
-    );
-    writeln!(out, "entry:").unwrap();
-    writeln!(out, "  %fn_ptr_addr = getelementptr i8, ptr %env, i64 8").unwrap();
-    writeln!(out, "  %fn_ptr = load ptr, ptr %fn_ptr_addr").unwrap();
-    let mut call_args = String::new();
-    for (i, t) in input_tys.iter().enumerate() {
-        if i > 0 {
-            call_args.push_str(", ");
-        }
-        let _ = write!(call_args, "{t} %a{i}");
-    }
-    if unit_ret {
-        let _ = writeln!(out, "  call void %fn_ptr({call_args})");
-        writeln!(out, "  ret void").unwrap();
-    } else {
-        let _ = writeln!(out, "  %r = call {ret_ty} %fn_ptr({call_args})");
-        let _ = writeln!(out, "  ret {ret_ty} %r");
-    }
-    writeln!(out, "}}").unwrap();
-    Some(out)
+    render_shape_thunk_with_linkage(name, "linkonce_odr ")
 }
 
 /// Shared, program-wide context threaded into each per-body renderer.
@@ -1482,6 +1444,9 @@ fn render_module_to_path(
 /// would require `unsafe` to set on stable Rust 2024).
 static DEBUG_INFO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Unit name and line-start offsets registered by [`set_source_lines`].
+static SOURCE_LINES: std::sync::RwLock<Option<(String, Vec<u32>)>> = std::sync::RwLock::new(None);
+
 /// Process-wide flag toggled by [`set_reproducible`] requesting
 /// bit-identical builds across runs. Sets `SOURCE_DATE_EPOCH`
 /// (read by `llc`), strips embedded paths from the IR module
@@ -1545,6 +1510,37 @@ pub fn pgo_mode() -> Option<PgoMode> {
 /// Called by the `gos build --release -g` flag.
 pub fn set_debug_info(enabled: bool) {
     DEBUG_INFO.store(enabled, std::sync::atomic::Ordering::Release);
+}
+
+/// Records where each source file's lines begin, so the backend can turn a
+/// MIR span's byte offset into the line a panic report names. The source map
+/// itself does not survive the frontend, so the driver hands over this
+/// compact form before codegen runs.
+pub fn set_source_lines(unit: &str, line_starts: Vec<u32>) {
+    let mut slot = SOURCE_LINES
+        .write()
+        .expect("source-line table lock poisoned");
+    *slot = Some((unit.to_string(), line_starts));
+}
+
+/// The registered file name and the one-based line for `offset`, or `None`
+/// when no table has been registered for this build.
+pub(crate) fn source_position(offset: u32) -> Option<(String, u32)> {
+    let slot = SOURCE_LINES
+        .read()
+        .expect("source-line table lock poisoned");
+    let (unit, starts) = slot.as_ref()?;
+    // `partition_point` gives the count of line starts at or before the
+    // offset, which is exactly the one-based line number.
+    let line = starts.partition_point(|start| *start <= offset);
+    Some((unit.clone(), line.max(1) as u32))
+}
+
+/// `true` when the build should maintain the runtime call-stack a panic
+/// report walks. Debug profile only - the bookkeeping is a call per function
+/// entry, per return, and per source line.
+pub(crate) fn want_stack_frames() -> bool {
+    matches!(opt_profile(), OptProfile::Debug)
 }
 
 /// Enables (or disables) reproducible-build mode. Used by
@@ -2174,6 +2170,12 @@ fn render_cabi_handler_thunk(name: &str, arity: usize) -> String {
 /// backend's `define_shape_thunk` so capturing closures and
 /// fn-item refs flow through identical lowering.
 fn render_shape_thunk(name: &str) -> Option<String> {
+    render_shape_thunk_with_linkage(name, "")
+}
+
+/// Body shared by both shape-thunk renderers; `linkage` is the empty string
+/// for a plain `define` and `"linkonce_odr "` for the per-body modules.
+fn render_shape_thunk_with_linkage(name: &str, linkage: &str) -> Option<String> {
     let suffix = name.strip_prefix("__fn_thunk_")?;
     let (inputs_str, ret_str) = suffix.rsplit_once('_')?;
     let ret_char = ret_str.chars().next()?;
@@ -2189,20 +2191,33 @@ fn render_shape_thunk(name: &str) -> Option<String> {
     for (i, t) in input_tys.iter().enumerate() {
         let _ = write!(params, ", {t} %a{i}");
     }
-    let _ = writeln!(out, "define {header_ret} @\"{name}\"({params}) {{");
+    let _ = writeln!(out, "define {linkage}{header_ret} @\"{name}\"({params}) {{");
     writeln!(out, "entry:").unwrap();
     writeln!(out, "  %fn_ptr_addr = getelementptr i8, ptr %env, i64 8").unwrap();
     writeln!(out, "  %fn_ptr = load ptr, ptr %fn_ptr_addr").unwrap();
+    // A `bool` crosses the ABI as a whole byte holding the canonical `0` or
+    // `1` that callers store and compare against, while the body LLVM defines
+    // takes and returns the `i1` its branches are built on. The thunk is where
+    // the two meet: narrow on the way in, zero-extend on the way out.
     let mut call_args = String::new();
-    for (i, t) in input_tys.iter().enumerate() {
+    for (i, (t, c)) in input_tys.iter().zip(inputs_str.chars()).enumerate() {
         if i > 0 {
             call_args.push_str(", ");
         }
-        let _ = write!(call_args, "{t} %a{i}");
+        if c == 'b' {
+            let _ = writeln!(out, "  %b{i} = trunc i8 %a{i} to i1");
+            let _ = write!(call_args, "i1 %b{i}");
+        } else {
+            let _ = write!(call_args, "{t} %a{i}");
+        }
     }
     if unit_ret {
         let _ = writeln!(out, "  call void %fn_ptr({call_args})");
         writeln!(out, "  ret void").unwrap();
+    } else if ret_char == 'b' {
+        let _ = writeln!(out, "  %r = call i1 %fn_ptr({call_args})");
+        let _ = writeln!(out, "  %rb = zext i1 %r to i8");
+        let _ = writeln!(out, "  ret i8 %rb");
     } else {
         let _ = writeln!(out, "  %r = call {ret_ty} %fn_ptr({call_args})");
         let _ = writeln!(out, "  ret {ret_ty} %r");

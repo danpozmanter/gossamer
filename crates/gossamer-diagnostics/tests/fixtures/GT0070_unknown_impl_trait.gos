@@ -1,0 +1,3 @@
+// ERROR: GT0070
+struct S { a: i64 }
+impl Bogus for S { fn zzz(self) -> i64 { self.a } }

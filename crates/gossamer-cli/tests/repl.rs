@@ -3987,3 +3987,39 @@ fn repl_meta_explain_names_one_binding_exactly_and_widens_with_a_wildcard() {
         out.stdout
     );
 }
+
+#[test]
+fn repl_info_names_a_bare_stdlib_trait_and_the_method_to_implement() {
+    let out = run_repl("%i Display\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("std::fmt::Display") && out.stdout.contains("[trait]"),
+        "a bare trait name should reach its manifest entry: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("to_string"),
+        "the entry should name the method an impl supplies: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_info_calls_an_implemented_trait_a_trait_not_a_type() {
+    let out = run_repl(
+        "struct P { a: i64 }\n\
+         impl Display for P { fn to_string(&self) -> String { \"p\" } }\n\
+         %i Display\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("Display [trait]"),
+        "a name known through an `impl X for Y` header is a trait: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("Display [type]"),
+        "`Display` is a trait, never a type: {}",
+        out.stdout
+    );
+}

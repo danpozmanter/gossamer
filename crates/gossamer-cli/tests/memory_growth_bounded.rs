@@ -518,6 +518,87 @@ fn main() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Every closure the VM invokes from a builtin combinator (`map`, `filter`,
+/// `fold`, `for_each`, `sort_by`, and the lazy `iter()` adapters) marshals its
+/// arguments through the frame pool's argument free list. The pool is a cache,
+/// so its depth must stay bounded no matter how many callbacks a goroutine
+/// runs: 12M callback invocations here must not move peak RSS off the
+/// interpreter's baseline. Runs on the bytecode VM, where every such body is
+/// refused by JIT admission anyway.
+#[test]
+fn vm_builtin_callback_loop_stays_under_rss_cap() {
+    if !std::path::Path::new("/usr/bin/time").exists() {
+        eprintln!("skipping: /usr/bin/time not available on this host");
+        return;
+    }
+    let probe = Command::new("/usr/bin/time").arg("-v").arg("true").output();
+    let is_gnu_time = probe
+        .as_ref()
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stderr).contains("Maximum resident set size"));
+    if !is_gnu_time {
+        eprintln!("skipping: /usr/bin/time does not support GNU -v on this host");
+        return;
+    }
+    let dir = env::temp_dir().join(format!("gos-cbpool-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("cbpool.gos");
+    std::fs::write(
+        &source,
+        "
+fn work(xs: &Vec<i64>) -> i64 {
+    xs.iter().filter(|x| x > 5).count()
+}
+
+fn main() {
+    let mut xs: Vec<i64> = #[]
+    let mut i = 0
+    while i < 1000 {
+        xs.push(i)
+        i += 1
+    }
+    let mut total = 0
+    let mut k = 0
+    while k < 12000 {
+        total += work(&xs)
+        k += 1
+    }
+    println!(\"total = {}\", total)
+}
+",
+    )
+    .unwrap();
+
+    let out = Command::new("/usr/bin/time")
+        .arg("-v")
+        .arg(gos_bin())
+        .arg("run")
+        .arg(&source)
+        .env("GOS_JIT", "0")
+        .output()
+        .expect("spawn /usr/bin/time");
+    assert!(
+        out.status.success(),
+        "gos run failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("total = 11928000"),
+        "unexpected output: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let kb = parse_max_rss_kb(&stderr)
+        .unwrap_or_else(|| panic!("could not parse Maximum resident set size:\n{stderr}"));
+    let cap_kb = 64 * 1024;
+    assert!(
+        kb < cap_kb,
+        "RSS {kb} KiB exceeded {cap_kb} KiB cap; the frame pool's argument free list is \
+         growing once per builtin-to-closure call"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 fn parse_max_rss_kb(stderr: &str) -> Option<u64> {
     for line in stderr.lines() {
         let trimmed = line.trim();

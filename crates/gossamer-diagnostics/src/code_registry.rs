@@ -1084,6 +1084,26 @@ pub const REGISTRY: &[(&str, &str)] = &[
             into the type, or drop it to take the value.",
     ),
     (
+        "GT0070",
+        "An `impl` header named a trait nothing declares. `impl Bogus for S`\n\
+            reads as a promise to satisfy `Bogus`, but with no declaration to\n\
+            check against, the block's methods are only inherent methods under\n\
+            a misleading header - a misspelled trait name compiles clean and\n\
+            nothing dispatches through it. Declare the trait, correct the\n\
+            spelling, or drop the trait name to write a plain `impl S` block.\n\
+            The built-in traits an `impl` may name are the operator traits\n\
+            (`Add`, `Index`, `Neg`, ...), the conversions (`From`, `TryFrom`,\n\
+            `Into`, `TryInto`), and `Display` / `Debug`.",
+    ),
+    (
+        "GT0071",
+        "A trait name was written where a type belongs. `fn f(x: Display)`\n\
+            names behaviour, not a value's shape, and Gossamer has no `dyn`,\n\
+            so there is no value whose type a bare trait is. Bound a generic\n\
+            parameter by the trait instead - `fn f<T: Display>(x: T)` - or\n\
+            name the concrete type the parameter takes.",
+    ),
+    (
         "GX0001",
         "An operation received a value of an incompatible type. The\n\
                      diagnostic names the type that was required and the type\n\

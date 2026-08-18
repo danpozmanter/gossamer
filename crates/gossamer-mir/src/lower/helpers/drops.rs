@@ -658,7 +658,10 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 args,
                 ..
             } = &block.terminator
-                && *name == "gos_rt_result_unwrap"
+                && matches!(
+                    name.as_str(),
+                    "gos_rt_option_unwrap" | "gos_rt_result_unwrap"
+                )
                 && destination.projection.is_empty()
                 && is_str(destination.local)
                 && !enum_arg_is_borrowed(args)

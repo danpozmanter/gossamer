@@ -1190,6 +1190,14 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("capacity", builtin("capacity", builtin_vec_capacity)));
     globals.push(("sort", builtin("sort", builtin_sort)));
     globals.push(("sort_by", native("sort_by", native_sort_by)));
+    globals.push((
+        "__join_rendered",
+        native("__join_rendered", native_join_rendered),
+    ));
+    globals.push((
+        "__render_display",
+        native("__render_display", native_render_display),
+    ));
     globals.push(("reverse", builtin("reverse", builtin_reverse)));
     globals.push(("swap", builtin("swap", builtin_swap)));
     globals.push(("fill", builtin("fill", builtin_fill)));

@@ -754,6 +754,21 @@ impl Vm {
                     return Ok(());
                 }
                 compact_jit_bodies(&mut bodies);
+                // The same gate `gos build` runs before any native backend
+                // sees MIR. A Cranelift lowering failure degrades silently to
+                // bytecode, so without this a malformed body would be a
+                // miscompile with no signal; refusing the whole promoted set
+                // keeps the program on the tier that is always correct.
+                if let Err(errors) = gossamer_mir::verify::verify_program(&bodies, &jit_tcx) {
+                    if jit_call::jit_trace() {
+                        for err in &errors {
+                            eprintln!("jit: MIR invariant violation: {err:?}");
+                        }
+                    }
+                    self.jit.write().compiled = JitCompileState::Failed;
+                    *self.jit_eager_names.borrow_mut() = Arc::new(std::collections::HashSet::new());
+                    return Ok(());
+                }
                 self.jit_counters
                     .retained_preparation_bytes(jit_preparation_bytes(
                         &bodies,

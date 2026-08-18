@@ -451,23 +451,25 @@ mod unix {
         addr >= guard_bottom && addr < guard_top
     }
 
+    /// The one text every tier reports when recursion runs past the stack.
+    const STACK_OVERFLOW_MESSAGE: &[u8] =
+        b"error[GX0008]: stack overflow - recursion exceeded the available stack\n";
+
     fn report_overflow_and_abort(addr: usize) -> ! {
         // Compose the message on a stack scratch buffer. We can't
         // use `format!` or `eprintln!` - both allocate / take
         // locks. `itoa::Buffer` writes into a stack-resident
         // array.
         //
-        // The code and the exit status match what the bytecode VM
-        // reports for the same program, so a stack overflow reads the
-        // same whichever tier ran it. The faulting address is the one
-        // detail only this path can supply.
-        let prefix = b"error[GX0008]: stack overflow at 0x";
-        let suffix = b"; recursion exceeded the stack\n";
+        // The text, the code, and the exit status match what the bytecode
+        // VM reports for the same program, so a stack overflow reads the same
+        // whichever tier ran it. The faulting address is deliberately left
+        // out: it varies run to run, and a report that differs between two
+        // runs of one binary is not one a test or a reader can rely on.
+        let _ = addr;
         let mut scratch = [0_u8; 96];
         let mut len = 0;
-        len += copy_into(&mut scratch[len..], prefix);
-        len += hex_into(&mut scratch[len..], addr);
-        len += copy_into(&mut scratch[len..], suffix);
+        len += copy_into(&mut scratch[len..], STACK_OVERFLOW_MESSAGE);
         // SAFETY: `write(2)` is async-signal-safe. fd 2 is
         // stderr; `scratch` outlives the call.
         let _ = unsafe {
@@ -511,50 +513,9 @@ mod unix {
         n
     }
 
-    fn hex_into(dst: &mut [u8], mut value: usize) -> usize {
-        if value == 0 {
-            if !dst.is_empty() {
-                dst[0] = b'0';
-                return 1;
-            }
-            return 0;
-        }
-        // Render high-nibble first into a scratch slot, then copy.
-        let mut tmp = [0_u8; 16];
-        let mut idx = tmp.len();
-        while value != 0 {
-            idx -= 1;
-            let nibble = (value & 0xF) as u8;
-            tmp[idx] = if nibble < 10 {
-                b'0' + nibble
-            } else {
-                b'a' + (nibble - 10)
-            };
-            value >>= 4;
-        }
-        let written = tmp.len() - idx;
-        let copy_len = written.min(dst.len());
-        dst[..copy_len].copy_from_slice(&tmp[idx..idx + copy_len]);
-        copy_len
-    }
-
     #[cfg(test)]
     mod tests {
         use super::*;
-
-        #[test]
-        fn hex_zero() {
-            let mut buf = [0_u8; 4];
-            let n = hex_into(&mut buf, 0);
-            assert_eq!(&buf[..n], b"0");
-        }
-
-        #[test]
-        fn hex_arbitrary() {
-            let mut buf = [0_u8; 16];
-            let n = hex_into(&mut buf, 0xdead_beef);
-            assert_eq!(&buf[..n], b"deadbeef");
-        }
 
         #[test]
         fn copy_truncates() {
@@ -833,7 +794,7 @@ mod windows {
     }
 
     fn write_message() {
-        const MSG: &[u8] = b"error[GX0008]: stack overflow; recursion exceeded the stack\n";
+        const MSG: &[u8] = STACK_OVERFLOW_MESSAGE;
         write_bytes(MSG);
     }
 

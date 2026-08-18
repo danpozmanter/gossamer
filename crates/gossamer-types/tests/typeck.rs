@@ -4276,3 +4276,23 @@ fn a_reference_typed_parameter_keeps_its_referent() {
     );
     assert!(d.is_empty(), "a reference parameter is the spelling: {d:?}");
 }
+
+#[test]
+fn json_value_method_form_types_from_the_same_table_as_the_free_form() {
+    let d = diagnostics_for(
+        "use std::encoding::json\nfn main() { let v = json::parse(\"{}\").unwrap()\n let b: i64 = v.get(\"a\") }\n",
+    );
+    assert!(
+        d.iter()
+            .any(|diag| matches!(&diag.error, TypeError::TypeMismatch { .. })),
+        "`v.get(k)` is `Option<json::Value>`, not whatever the caller annotates: {d:?}"
+    );
+}
+
+#[test]
+fn json_value_accessor_methods_typecheck_clean() {
+    let d = diagnostics_for(
+        "use std::encoding::json\nfn main() { let v = json::parse(\"{}\").unwrap()\n let n: Option<i64> = v.as_i64()\n let s: Option<String> = v.as_str()\n let k: Option<json::Value> = v.get(\"a\")\n let l: i64 = v.len()\n let z: bool = v.is_null()\n println!(\"{:?} {:?} {:?} {} {}\", n, s, k, l, z) }\n",
+    );
+    assert!(d.is_empty(), "the json accessor surface types: {d:?}");
+}

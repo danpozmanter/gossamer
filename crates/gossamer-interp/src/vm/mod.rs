@@ -667,6 +667,14 @@ pub(crate) enum JitCompileState {
     Failed,
 }
 
+/// The out-of-range index panic every sequence access reports, worded the way
+/// the compiled tiers' bounds assert words it so a program's failure text does
+/// not depend on which tier ran it.
+pub(crate) fn index_oob_panic(index: i64, len: usize) -> RuntimeError {
+    RuntimeError::Panic(format!(
+        "vec index out of bounds: the len is {len} but the index is {index}"
+    ))
+}
 /// Per-VM free list of register-file `Vec`s. Stack-discipline:
 /// `take_*` pops a Vec sized to the requested length (or
 /// allocates a fresh one when the list is empty); `give_*`
@@ -716,6 +724,12 @@ const HYSTERESIS_RUNS: u32 = 4;
 /// re-use win without the next `take_*` having to grow.
 const SHRINK_FLOOR: usize = 16;
 
+/// Free-list depth per buffer class. Only one buffer per active
+/// nested call is ever in flight, so this covers realistic call
+/// nesting while keeping the pool's own footprint constant for a
+/// goroutine that never completes a task.
+const MAX_POOLED_BUFFERS: usize = 64;
+
 impl FramePool {
     fn take_values(&mut self, n: usize) -> Vec<Value> {
         // Fast path: pool hit. We rely on the prior owner's
@@ -746,7 +760,9 @@ impl FramePool {
         // 32-byte enum that's a tag dispatch + per-variant
         // Arc decrement, fast in the common Void/Int/Float case.
         v.clear();
-        self.values.push(v);
+        if self.values.len() < MAX_POOLED_BUFFERS {
+            self.values.push(v);
+        }
     }
     fn take_floats(&mut self, n: usize) -> Vec<f64> {
         if n > self.peak_float {
@@ -771,7 +787,9 @@ impl FramePool {
     }
     fn give_floats(&mut self, mut v: Vec<f64>) {
         v.clear();
-        self.floats.push(v);
+        if self.floats.len() < MAX_POOLED_BUFFERS {
+            self.floats.push(v);
+        }
     }
     fn take_ints(&mut self, n: usize) -> Vec<i64> {
         if n > self.peak_int {
@@ -792,7 +810,9 @@ impl FramePool {
     }
     fn give_ints(&mut self, mut v: Vec<i64>) {
         v.clear();
-        self.ints.push(v);
+        if self.ints.len() < MAX_POOLED_BUFFERS {
+            self.ints.push(v);
+        }
     }
     fn take_args(&mut self, capacity: usize) -> Vec<Value> {
         if capacity > self.peak_args {
@@ -817,7 +837,9 @@ impl FramePool {
     }
     fn give_args(&mut self, mut v: Vec<Value>) {
         v.clear();
-        self.args.push(v);
+        if self.args.len() < MAX_POOLED_BUFFERS {
+            self.args.push(v);
+        }
     }
 
     /// Drains pool buffers above `keep_per_kind`, dropping the
@@ -1185,7 +1207,7 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
         }
     };
     if raw < 0 || raw as usize >= len {
-        return Err(RuntimeError::Panic("index out of bounds".to_string()));
+        return Err(crate::vm::index_oob_panic(raw, len));
     }
     let i = raw as usize;
     match base {
@@ -1295,7 +1317,7 @@ fn index_get_consume(base: &mut Value, raw: i64) -> RuntimeResult<Value> {
         Value::Array(arc) | Value::Tuple(arc) => {
             let len = arc.len();
             if raw < 0 || raw as usize >= len {
-                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                return Err(crate::vm::index_oob_panic(raw, len));
             }
             let i = raw as usize;
             match std::sync::Arc::get_mut(arc) {

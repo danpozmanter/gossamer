@@ -38,6 +38,20 @@ pub enum ArrayElem {
     Char,
 }
 
+/// The scalar an `Ok` payload word carries in a [`JitKind::ResultScalar`]
+/// return, which is what the trampoline re-wraps it as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResultScalarKind {
+    /// The word is the integer itself.
+    I64,
+    /// The word is the double's bit pattern.
+    F64,
+    /// The low bit of the word is the boolean.
+    Bool,
+    /// The word is the Unicode scalar's code point.
+    Char,
+}
+
 /// Cranelift register class for one parameter or return slot of a
 /// JIT-compiled body. Used by the dispatch trampoline to pick the
 /// right marshalling shape per slot.
@@ -80,6 +94,15 @@ pub enum JitKind {
     /// owned native string pointer; on `Err`, a native `*mut GosError`.
     /// Return-only.
     ResultNativeStr,
+    /// A `Result<i64 | f64 | bool | char, errors::Error>` RETURN on the same
+    /// two-word carrier. On `Ok` the payload word is the scalar itself (an
+    /// `f64` as its bit pattern); on `Err` a native `*mut GosError`. This is
+    /// the shape every `?`-using arithmetic helper returns. Return-only.
+    ResultScalar(ResultScalarKind),
+    /// An `Option<i64 | f64 | bool | char>` RETURN on the same two-word
+    /// carrier: `disc` 0 is `Some` and the payload word is the scalar, any
+    /// other disc is `None`. Return-only.
+    OptionScalar(ResultScalarKind),
     /// An all-scalar user struct (`&self` / `&mut self` / by-value)
     /// crossing the boundary as a pointer to a flat field-slot block
     /// (one 8-byte slot per field, field `i` at byte offset `i * 8`, NO
@@ -113,6 +136,11 @@ pub enum JitKind {
     /// builds a fresh owned `GosVec` from the VM vec for a param, and
     /// reads back + frees a returned `GosVec`. Integer register class.
     NativeVecI64,
+    /// A `Vec<String>` / `[String]` crossing as the runtime's `*mut GosVec`
+    /// tagged [`vec_elem_kind::STRING`], each slot an owned cstring. The
+    /// trampoline builds one from the VM sequence and frees it after the
+    /// call; a returned one is read back and freed the same way.
+    NativeVecStr,
     /// A `Vec<f64>` crossing as a native `*mut GosVec` (8-byte float
     /// slots). Same marshalling as [`Self::NativeVecI64`], f64 elements.
     NativeVecF64,
@@ -270,6 +298,19 @@ impl JitArtifact {
 /// second tuple slot reports an UNRESOLVABLE `FnRef` (a def with no
 /// MIR body - e.g. a prelude scalar): such a body cannot be compiled
 /// (the lowering refuses zero-stubs) and must be excluded.
+/// A body named by a const-string operand, which is how a closure reaches
+/// its code without a call terminator.
+fn referenced_body<'a>(
+    operand: &gossamer_mir::Operand,
+    all_names: &std::collections::HashSet<&'a str>,
+) -> Option<&'a str> {
+    use gossamer_mir::{ConstValue, Operand};
+    match operand {
+        Operand::Const(ConstValue::Str(name)) => all_names.get(name.as_str()).copied(),
+        _ => None,
+    }
+}
+
 fn body_user_calls<'a>(
     body: &'a Body,
     all_names: &std::collections::HashSet<&'a str>,
@@ -278,7 +319,38 @@ fn body_user_calls<'a>(
     use gossamer_mir::{ConstValue, Operand, Terminator};
     let mut calls = Vec::new();
     let mut unresolved = false;
+    // A closure reaches its body by address rather than through a call
+    // terminator: the body is named in an operand and invoked indirectly. It
+    // still has to travel into the same compile unit, or the module cannot
+    // resolve the address at all.
+
     for block in &body.blocks {
+        for stmt in &block.stmts {
+            let gossamer_mir::StatementKind::Assign { rvalue, .. } = &stmt.kind else {
+                continue;
+            };
+            match rvalue {
+                gossamer_mir::Rvalue::Use(op) => {
+                    calls.extend(referenced_body(op, all_names));
+                }
+                gossamer_mir::Rvalue::Aggregate { operands, .. } => {
+                    for op in operands {
+                        calls.extend(referenced_body(op, all_names));
+                    }
+                }
+                gossamer_mir::Rvalue::CallIntrinsic { args, .. } => {
+                    for op in args {
+                        calls.extend(referenced_body(op, all_names));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Terminator::Call { args, .. } = &block.terminator {
+            for arg in args {
+                calls.extend(referenced_body(arg, all_names));
+            }
+        }
         let Terminator::Call { callee, .. } = &block.terminator else {
             continue;
         };
@@ -1146,7 +1218,13 @@ fn compile_bodies(
     for body in filtered {
         if !matches!(
             body_kinds(body, tcx, enum_shapes, struct_shapes),
-            Some((_, JitKind::ResultEnumPtr(_) | JitKind::ResultNativeStr))
+            Some((
+                _,
+                JitKind::ResultEnumPtr(_)
+                    | JitKind::ResultNativeStr
+                    | JitKind::ResultScalar(_)
+                    | JitKind::OptionScalar(_)
+            ))
         ) {
             continue;
         }
@@ -1460,21 +1538,54 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
                 }
                 return true;
             }
-            // Native String writeback currently loses the builder's unique
-            // ownership proof between successive appends. The runtime then
-            // preserves value semantics by copying the full prefix, turning
-            // an otherwise linear builder loop quadratic. Bytecode preserves
-            // the builder representation and is faster and leaner here.
+            // Appending into a `&mut String` PARAMETER writes through a
+            // reference the caller still holds, so the runtime cannot take
+            // the accumulator's buffer and each append copies the prefix -
+            // linear work per step, quadratic over a builder loop. An
+            // accumulator that is the body's own local has no second holder
+            // and grows in place, which is what the self-consuming append
+            // lowering builds.
             if matches!(callee, Operand::Const(ConstValue::Str(name)) if name == "gos_rt_str_append_bytes")
+                && append_target_is_mut_ref_param(body, tcx, args)
             {
                 if std::env::var("GOS_JIT_TRACE").is_ok() {
-                    eprintln!("jit: unsupported {} string append bytes", body.name);
+                    eprintln!(
+                        "jit: unsupported {} string append into a &mut param",
+                        body.name
+                    );
                 }
                 return true;
             }
         }
     }
     false
+}
+
+/// Whether a `gos_rt_str_append_bytes` call writes into a `&mut String`
+/// parameter rather than into a local the body owns outright.
+fn append_target_is_mut_ref_param(
+    body: &Body,
+    tcx: &TyCtxt,
+    args: &[gossamer_mir::Operand],
+) -> bool {
+    use gossamer_mir::Operand;
+    let Some(target) = args.first() else {
+        return false;
+    };
+    let local = match target {
+        Operand::Copy(place) => place.local,
+        _ => return false,
+    };
+    if local.0 == 0 || body.arity < local.0 {
+        return false;
+    }
+    matches!(
+        tcx.kind_of(body.local_ty(local)),
+        TyKind::Ref {
+            mutability: gossamer_types::Mutbl::Mut,
+            ..
+        }
+    )
 }
 
 const JIT_MAX_FIXED_AGGREGATE_SLOTS: u64 = (64 * 1024) / 8;
@@ -1659,13 +1770,19 @@ fn jit_local_ty_needs_bytecode_inner(
         // A callable value is one machine word: either a raw code address
         // (`FnDef`) or an env pointer whose first word is the code address
         // (`FnPtr` / `FnTrait` / `Closure`, post the MIR's coercion). The
-        // indirect-dispatch lowering for those shapes exists below, but the
-        // combinator surface built on them does not yet agree with the
-        // bytecode tier for every element type, so a body holding one stays
-        // on bytecode until that surface is proven across tiers.
-        TyKind::FnDef { .. } | TyKind::FnPtr(_) | TyKind::FnTrait(_) | TyKind::Closure { .. } => {
-            true
+        // combinator surface built on them renders and reads every element
+        // class the same way the bytecode tier does, so a body holding one
+        // compiles; only a signature mentioning a type with no native
+        // representation keeps it back.
+        TyKind::FnDef { .. } => false,
+        TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
+            let sig = sig.clone();
+            sig.inputs
+                .iter()
+                .chain(std::iter::once(&sig.output))
+                .any(|ty| jit_local_ty_needs_bytecode_inner(tcx, *ty, visiting))
         }
+        TyKind::Closure { .. } => false,
         TyKind::Adt { def, substs } if def.local < u32::MAX - 64 => {
             let struct_unsafe = tcx.adt_field_tys(*def, substs).is_some_and(|fields| {
                 fields
@@ -1702,17 +1819,30 @@ fn jit_local_ty_needs_bytecode_inner(
                 || jit_map_enum_key_ok(tcx, *key))
                 || !jit_map_component_ok(tcx, *value)
         }
+        // An `errors::Error` is a `*mut GosError` handle the runtime owns, the
+        // same one word the LLVM tier lowers with no special casing, so a
+        // local that never crosses the boundary needs no bytecode
+        // representation. The boundary itself is decided by `ty_to_kind`.
+        TyKind::DynError => false,
         // Options, other tagged standard-library carriers, and opaque handles
         // still need the bytecode path. Ordinary user aggregates are safe as
         // internal native locals and are checked recursively above.
-        TyKind::Adt { .. }
-        | TyKind::Iterator(_)
+        // A lazy iterator is a runtime handle - the one word
+        // `gos_rt_lazy_iter_*` hands back - built and consumed entirely
+        // inside the body. It has no boundary shape (`ty_to_kind` answers
+        // nothing for it), so it stays an internal local only.
+        TyKind::Iterator(elem) => jit_local_ty_needs_bytecode_inner(tcx, *elem, visiting),
+        // A `json::Value` is a runtime handle - one word, declared non-RC -
+        // so a local holding one has a native representation. It stays on
+        // bytecode all the same: the derived `__gos_serde_from_json_*` bodies
+        // are the ones that hold it, and their lowering answers a different
+        // total once compiled alongside their callers.
+        TyKind::JsonValue
+        | TyKind::Adt { .. }
         | TyKind::Range(_)
         | TyKind::Sender(_)
         | TyKind::Receiver(_)
         | TyKind::JoinHandle(_)
-        | TyKind::JsonValue
-        | TyKind::DynError
         | TyKind::Alias { .. }
         | TyKind::Dyn(_)
         | TyKind::Error => true,
@@ -1931,13 +2061,25 @@ fn body_kinds(
     let mut params = Vec::with_capacity(body.arity as usize);
     for pidx in 1..=body.arity {
         let local = gossamer_mir::Local(pidx);
-        let kind = ty_to_kind(tcx, body.local_ty(local), enum_shapes, struct_shapes)?;
+        let ty = body.local_ty(local);
+        let kind = ty_to_kind(tcx, ty, enum_shapes, struct_shapes)?;
+        // A `Vec<String>` the trampoline built is freed - strings and all -
+        // after the call, so it may only be lent to the body. Taken by value
+        // the body owns its elements and may consume them, and the free would
+        // then read storage the body already released.
+        if matches!(kind, JitKind::NativeVecStr) && !matches!(tcx.kind_of(ty), TyKind::Ref { .. }) {
+            return None;
+        }
         // Result carriers / `TupleReturn` are return-only marshalling shapes;
         // the trampoline has no inbound parameter path for them, so a body
         // taking one as a parameter stays on bytecode.
         if matches!(
             kind,
-            JitKind::ResultEnumPtr(_) | JitKind::ResultNativeStr | JitKind::TupleReturn(_)
+            JitKind::ResultEnumPtr(_)
+                | JitKind::ResultNativeStr
+                | JitKind::ResultScalar(_)
+                | JitKind::OptionScalar(_)
+                | JitKind::TupleReturn(_)
         ) {
             return None;
         }
@@ -2002,6 +2144,42 @@ fn is_i64_vec(tcx: &TyCtxt, ty: Ty) -> bool {
     )
 }
 
+/// Reports the peeled shape `ty_to_kind` is about to classify, under
+/// `GOS_TYDUMP`.
+fn trace_ty_to_kind(tcx: &TyCtxt, ty: Ty) {
+    if std::env::var("GOS_TYDUMP").is_err() {
+        return;
+    }
+    let inner = match tcx.kind_of(ty) {
+        TyKind::Vec(e) | TyKind::Slice(e) => Some(tcx.kind_of(*e).clone()),
+        _ => None,
+    };
+    let is_i64_vec_of_elem = match tcx.kind_of(ty) {
+        TyKind::Vec(e) | TyKind::Slice(e) => is_i64_vec(tcx, *e),
+        _ => false,
+    };
+    eprintln!(
+        "TYDUMP ty_to_kind peeled kind = {:?} inner = {inner:?} is_i64_vec_of_elem = {is_i64_vec_of_elem:?}",
+        tcx.kind_of(ty),
+    );
+}
+
+/// The scalar shape a two-word carrier's payload word holds for `ty`, or
+/// `None` when the payload is not a scalar the word can stand for.
+fn carrier_scalar_kind(tcx: &TyCtxt, ty: Ty) -> Option<ResultScalarKind> {
+    let mut ty = ty;
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+        ty = *inner;
+    }
+    match tcx.kind_of(ty) {
+        TyKind::Int(_) => Some(ResultScalarKind::I64),
+        TyKind::Float(gossamer_types::FloatTy::F64) => Some(ResultScalarKind::F64),
+        TyKind::Bool => Some(ResultScalarKind::Bool),
+        TyKind::Char => Some(ResultScalarKind::Char),
+        _ => None,
+    }
+}
+
 fn ty_to_kind(
     tcx: &TyCtxt,
     ty: Ty,
@@ -2011,24 +2189,12 @@ fn ty_to_kind(
     // References to heap enums / structs are the same native pointer at
     // the ABI (compiled convention) - peel before classifying.
     let mut ty = ty;
+    let mut was_borrowed = false;
     while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
         ty = *inner;
+        was_borrowed = true;
     }
-    if std::env::var("GOS_TYDUMP").is_ok() {
-        let inner = match tcx.kind_of(ty) {
-            TyKind::Vec(e) | TyKind::Slice(e) => Some(tcx.kind_of(*e).clone()),
-            _ => None,
-        };
-        eprintln!(
-            "TYDUMP ty_to_kind peeled kind = {:?} inner = {:?} is_i64_vec_of_elem = {:?}",
-            tcx.kind_of(ty),
-            inner,
-            match tcx.kind_of(ty) {
-                TyKind::Vec(e) | TyKind::Slice(e) => is_i64_vec(tcx, *e),
-                _ => false,
-            }
-        );
-    }
+    trace_ty_to_kind(tcx, ty);
     match tcx.kind_of(ty) {
         TyKind::Bool => Some(JitKind::Bool),
         TyKind::Int(_) => Some(JitKind::I64),
@@ -2050,6 +2216,11 @@ fn ty_to_kind(
         // so classify by the `Ok` type's shape. Return-only; a `Result`
         // parameter keeps a body on bytecode (no `ty_to_kind` for it as a
         // param is wired in the trampoline).
+        // `Option<scalar>`: the same `[disc, payload]` carrier a `Result`
+        // rides, with `Some` in the zero discriminant.
+        TyKind::Adt { def, substs } if def.local == u32::MAX - 1 => {
+            carrier_scalar_kind(tcx, *substs.types().first()?).map(JitKind::OptionScalar)
+        }
         TyKind::Adt { def, substs } if def.local == u32::MAX => {
             let ok_ty = *substs.types().first()?;
             let mut ok_ty = ok_ty;
@@ -2061,7 +2232,7 @@ fn ty_to_kind(
                     .get(&ok_def.local)
                     .map(|idx| JitKind::ResultEnumPtr(*idx)),
                 TyKind::String => Some(JitKind::ResultNativeStr),
-                _ => None,
+                _ => carrier_scalar_kind(tcx, ok_ty).map(JitKind::ResultScalar),
             }
         }
         // An all-scalar user struct with a registered VM-side shape
@@ -2108,6 +2279,15 @@ fn ty_to_kind(
         }
         TyKind::Vec(elem) | TyKind::Slice(elem) if is_i64_f64_tuple(tcx, *elem) => {
             Some(JitKind::NativeVecTupleIF)
+        }
+        // `&Vec<String>` / `&[String]`: a `STRING`-kind `GosVec` whose slots
+        // hold owned cstrings, which is the layout both compiled tiers build.
+        // Borrowed only - the trampoline owns the vec it builds and deep-frees
+        // its strings afterwards, so a body that could consume an element
+        // would leave that free reading storage it no longer owns.
+        TyKind::Vec(elem) | TyKind::Slice(elem) if matches!(tcx.kind_of(*elem), TyKind::String) => {
+            let _ = was_borrowed;
+            Some(JitKind::NativeVecStr)
         }
         // `Vec<Vec<i64>>` / `[[i64]]`: an outer vec / slice whose elements are
         // themselves `Vec<i64>` / `[i64]`. Crosses as the AOT nested layout
@@ -2629,6 +2809,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_vec_format_vec_i64"  => rt::gos_rt_vec_format_vec_i64,
         "gos_rt_vec_format_vec_string" => rt::gos_rt_vec_format_vec_string,
         "gos_rt_tuple_format"        => rt::gos_rt_tuple_format,
+        "gos_rt_tuple_format_desc"   => rt::gos_rt_tuple_format_desc,
         "gos_rt_concat_init"         => rt::gos_rt_concat_init,
         "gos_rt_concat_str"          => rt::gos_rt_concat_str,
         "gos_rt_concat_i64"          => rt::gos_rt_concat_i64,
@@ -2649,6 +2830,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_strconv_parse_i64_bytes" => rt::gos_rt_strconv_parse_i64_bytes,
         "gos_rt_strconv_parse_f64"   => rt::gos_rt_strconv_parse_f64,
         "gos_rt_strconv_parse_f64_bytes" => rt::gos_rt_strconv_parse_f64_bytes,
+        "gos_rt_option_unwrap"       => rt::gos_rt_option_unwrap,
         "gos_rt_result_unwrap"       => rt::gos_rt_result_unwrap,
         "gos_rt_result_unwrap_or"    => rt::gos_rt_result_unwrap_or,
         "gos_rt_result_payload_i128" => rt::gos_rt_result_payload_i128,
@@ -2757,11 +2939,13 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         // Closure-callback combinators (Vec::sort_by / iter::map / ...).
         // Adds these to the JIT dispatch table so user bodies that
         // call them stop falling through to the bytecode VM.
+        "gos_rt_arr_sort_by_f64"     => rt::gos_rt_arr_sort_by_f64,
         "gos_rt_arr_sort_by_i64"     => rt::gos_rt_arr_sort_by_i64,
         "gos_rt_arr_reverse"         => rt::gos_rt_arr_reverse,
         "gos_rt_arr_sort_i64"        => rt::gos_rt_arr_sort_i64,
         "gos_rt_arr_sort_str"        => rt::gos_rt_arr_sort_str,
         "gos_rt_arr_sort_tuple"      => rt::gos_rt_arr_sort_tuple,
+        "gos_rt_vec_sort_by_f64"     => rt::gos_rt_vec_sort_by_f64,
         "gos_rt_vec_sort_by_i64"     => rt::gos_rt_vec_sort_by_i64,
         "gos_rt_vec_sort_i64"        => rt::gos_rt_vec_sort_i64,
         "gos_rt_vec_sort_str"        => rt::gos_rt_vec_sort_str,
@@ -2835,9 +3019,11 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_iter_flat_map_arr_i64" => rt::gos_rt_iter_flat_map_arr_i64,
         "gos_rt_iter_group_by_i64" => rt::gos_rt_iter_group_by_i64,
         "gos_rt_iter_max_by_i64" => rt::gos_rt_iter_max_by_i64,
+        "gos_rt_iter_max_by_key_f64" => rt::gos_rt_iter_max_by_key_f64,
         "gos_rt_iter_max_by_key_i64" => rt::gos_rt_iter_max_by_key_i64,
         "gos_rt_iter_max_by_key_ptr" => rt::gos_rt_iter_max_by_key_ptr,
         "gos_rt_iter_min_by_i64" => rt::gos_rt_iter_min_by_i64,
+        "gos_rt_iter_min_by_key_f64" => rt::gos_rt_iter_min_by_key_f64,
         "gos_rt_iter_min_by_key_i64" => rt::gos_rt_iter_min_by_key_i64,
         "gos_rt_iter_min_by_key_ptr" => rt::gos_rt_iter_min_by_key_ptr,
         "gos_rt_iter_partition_i64" => rt::gos_rt_iter_partition_i64,
@@ -2860,6 +3046,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_iter_scan_i64" => rt::gos_rt_iter_scan_i64,
         "gos_rt_iter_skip_while_i64" => rt::gos_rt_iter_skip_while_i64,
         "gos_rt_iter_sorted_by_i64" => rt::gos_rt_iter_sorted_by_i64,
+        "gos_rt_iter_sorted_by_key_f64" => rt::gos_rt_iter_sorted_by_key_f64,
         "gos_rt_iter_sorted_by_key_i64" => rt::gos_rt_iter_sorted_by_key_i64,
         "gos_rt_iter_take_while_i64" => rt::gos_rt_iter_take_while_i64,
         "gos_rt_option_and_then" => rt::gos_rt_option_and_then,
@@ -2881,6 +3068,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_flag_cell_load_bool" => rt::gos_rt_flag_cell_load_bool,
         "gos_rt_flag_cell_load_f64"  => rt::gos_rt_flag_cell_load_f64,
         "gos_rt_flag_cell_load_vec"  => rt::gos_rt_flag_cell_load_vec,
+        "gos_rt_json_free"           => rt::gos_rt_json_free,
         "gos_rt_json_value_string"   => rt::gos_rt_json_value_string,
         "gos_rt_json_value_int"      => rt::gos_rt_json_value_int,
         "gos_rt_json_value_float"    => rt::gos_rt_json_value_float,

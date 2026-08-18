@@ -3165,11 +3165,33 @@ fn repl_info_matches(arg: &str, details: bool) -> std::result::Result<String, St
 
     let query = info_search_query(arg);
     let matches = render_catalog_query_matches(&query, details);
-    if matches.is_empty() {
-        Ok(format!("nothing found for `{arg}`"))
-    } else {
-        Ok(matches)
+    if !matches.is_empty() {
+        return Ok(matches);
     }
+    // A module item is named through its module, except a trait: `Display`
+    // and `Handler` are written bare in the `impl` header and the bound that
+    // reach for them, so that is the spelling `%i` has to answer.
+    if let Some(path) = stdlib_trait_path(arg) {
+        let matches = render_catalog_query_matches(&info_search_query(&path), details);
+        if !matches.is_empty() {
+            return Ok(matches);
+        }
+    }
+    Ok(format!("nothing found for `{arg}`"))
+}
+
+/// The canonical path of a stdlib trait named bare, or `None` when `name`
+/// does not name one.
+fn stdlib_trait_path(name: &str) -> Option<String> {
+    gossamer_std::registry::modules().iter().find_map(|module| {
+        module
+            .items
+            .iter()
+            .find(|item| {
+                item.name == name && matches!(item.kind, gossamer_std::registry::StdItemKind::Trait)
+            })
+            .map(|item| format!("{}::{}", module.path, item.name))
+    })
 }
 
 fn stdlib_namespace_children(namespace: &str) -> Vec<StdModule> {
@@ -3730,9 +3752,16 @@ fn push_module_match(out: &mut String, module: &StdModule, details: bool) {
 }
 
 fn push_item_match(out: &mut String, module: &StdModule, item: &StdItem, details: bool) {
-    let signature = gossamer_types::stdlib_function_signature(module.path, item.name)
-        .map(|signature| signature_suffix(signature, item.name).to_string())
-        .unwrap_or_default();
+    // A trait's surface is the method an `impl` supplies, which is what a
+    // reader looking one up needs, exactly as a type's listing names its
+    // methods.
+    let signature = if matches!(item.kind, StdItemKind::Trait) {
+        trait_required_signature(item.name).unwrap_or_default()
+    } else {
+        gossamer_types::stdlib_function_signature(module.path, item.name)
+            .map(|signature| signature_suffix(signature, item.name).to_string())
+            .unwrap_or_default()
+    };
     push_catalog_match(
         out,
         &format!("{}::{}", module.path, item.call_name()),
@@ -4660,6 +4689,16 @@ fn module_aliases(path: &'static str) -> Vec<&'static str> {
 
 fn normalize_query(arg: &str) -> &str {
     arg.trim_matches('`').trim()
+}
+
+/// The method an `impl` of a stdlib trait must supply, rendered as the
+/// listing's signature suffix. `None` for a trait with no required method.
+fn trait_required_signature(name: &str) -> Option<String> {
+    match name {
+        "Display" => Some(" { fn to_string(&self) -> String }".to_string()),
+        "Debug" => Some(" { fn fmt(&self) -> String }".to_string()),
+        _ => None,
+    }
 }
 
 fn item_kind_label(kind: StdItemKind) -> &'static str {
@@ -6199,6 +6238,10 @@ fn session_index(declarations: &[String]) -> SessionIndex {
                             index.implementors.entry(trait_name.clone()).or_default(),
                             owner.clone(),
                         );
+                        // A name reached only through an `impl X for Y` header
+                        // is a trait; without this it would fall to the
+                        // default kind and be listed as a type.
+                        index.kinds.entry(trait_name.clone()).or_insert("trait");
                     }
                     let methods = index.methods.entry(owner).or_default();
                     for impl_item in &decl.items {

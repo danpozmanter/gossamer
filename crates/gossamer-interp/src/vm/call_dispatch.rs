@@ -31,6 +31,18 @@ impl Vm {
             .collect()
     }
 
+    /// Points the active-VM slot at this VM for the duration of `body`, so a
+    /// fault raised inside compiled code can render the interpreted frames
+    /// that reached it. Restores the previous value, which is what keeps a
+    /// nested run (a goroutine, a REPL replay) from clearing an outer one.
+    pub fn with_active_trace<R>(&self, body: impl FnOnce() -> R) -> R {
+        install_trace_hook();
+        let previous = ACTIVE_VM.with(|slot| slot.replace(std::ptr::from_ref(self).cast()));
+        let out = body();
+        ACTIVE_VM.with(|slot| slot.set(previous));
+        out
+    }
+
     /// Snapshot of the in-flight (or last failing) call stack with source
     /// positions for frames whose bytecode was compiled with a source map.
     #[must_use]
@@ -618,7 +630,13 @@ impl Vm {
                 found: args.len(),
             });
         }
-        let mut full = Vec::with_capacity(closure.capture_values.len() + args.len());
+        // Take the argument buffer from the frame pool, as `Op::Call`
+        // does, so the buffer `run` donates on frame entry is the one
+        // the next callback reuses.
+        let mut full = self
+            .pool
+            .borrow_mut()
+            .take_args(closure.capture_values.len() + args.len());
         full.extend(closure.capture_values.iter().cloned());
         full.extend(args);
         self.apply(Global::Fn(Arc::clone(chunk)), full)
@@ -683,4 +701,59 @@ mod tests {
         assert_eq!(result.fields.get(1).unwrap().0, positional_field_name(1));
         assert!(matches!(result.fields[1], Value::Int(5)));
     }
+}
+
+thread_local! {
+    /// The VM whose frames a compiled-code fault reports. Null outside a run.
+    static ACTIVE_VM: std::cell::Cell<*const Vm> = const { std::cell::Cell::new(std::ptr::null()) };
+}
+
+/// Registers [`render_active_vm_trace`] with the runtime once per process.
+fn install_trace_hook() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        // SAFETY: the hook has the C-ABI signature the runtime declares for
+        // `TraceHookFn` and answers an owned runtime string the runtime frees.
+        unsafe {
+            gossamer_runtime::c_abi::gos_rt_install_trace_hook(render_active_vm_trace);
+        }
+    });
+}
+
+/// The active VM's call stack in the same shape `gos` prints for an
+/// interpreted fault, as an owned runtime string. Null when no VM is running.
+extern "C" fn render_active_vm_trace() -> *mut std::ffi::c_char {
+    let ptr = ACTIVE_VM.with(std::cell::Cell::get);
+    if ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: the slot holds a borrow of a VM live for the whole of
+    // `with_active_trace`, which is the only window this hook runs in.
+    let frames = unsafe { &*ptr }.call_stack_frames();
+    if frames.is_empty() {
+        return std::ptr::null_mut();
+    }
+    let mut out = String::from("  call stack (outermost first):\n");
+    let mut index = 0usize;
+    while index < frames.len() {
+        let frame = &frames[index];
+        let mut repeats = 1usize;
+        while index + repeats < frames.len() && frames[index + repeats] == *frame {
+            repeats += 1;
+        }
+        out.push_str("    at ");
+        out.push_str(&frame.function);
+        if let (Some(file), Some(line)) = (&frame.file, frame.line) {
+            match frame.column {
+                Some(column) => out.push_str(&format!(" ({file}:{line}:{column})")),
+                None => out.push_str(&format!(" ({file}:{line})")),
+            }
+        }
+        if repeats > 1 {
+            out.push_str(&format!(" x{repeats}"));
+        }
+        out.push('\n');
+        index += repeats;
+    }
+    gossamer_runtime::c_abi::string::alloc_cstring(out.as_bytes())
 }

@@ -1330,7 +1330,15 @@ pub(super) fn lower_binop(
         let fail = builder.create_block();
         builder.ins().brif(overflow, fail, &[], pass, &[]);
         builder.switch_to_block(fail);
-        emit_runtime_panic(module, builder, intrinsics, "arithmetic overflow\n")?;
+        // Name the operation, the way the bytecode tier and Rust both do: a
+        // bare "arithmetic overflow" leaves the reader to find which operator
+        // in the expression produced it.
+        let overflow_text = match op {
+            BinOp::Add => "attempt to add with overflow\n",
+            BinOp::Sub => "attempt to subtract with overflow\n",
+            _ => "attempt to multiply with overflow\n",
+        };
+        emit_runtime_panic(module, builder, intrinsics, overflow_text)?;
         builder.switch_to_block(pass);
         let value = if checked_ty == a_ty {
             value

@@ -1,0 +1,46 @@
+// `{:?}` over shapes that nest a user struct or enum inside a container,
+// tuple, or `Option`, and maps keyed by an aggregate - including the two
+// construction spellings, a literal and `Map::from`.
+
+use std::errors
+
+struct Item {
+    id: i64,
+    tag: String,
+}
+
+enum Kind {
+    Numbered(i64),
+    Plain,
+}
+
+fn main() {
+    println!("{:?}", #[#[Item { id: 1, tag: "a" }], #[]])
+    println!("{:?}", #[#[Kind::Numbered(1), Kind::Plain]])
+    println!("{:?}", #[Some(Item { id: 2, tag: "b" }), None])
+    println!("{:?}", #[Some(Kind::Numbered(3)), None])
+    println!("{:?}", #[(1, Item { id: 3, tag: "c" })])
+    println!("{:?}", (Item { id: 4, tag: "d" }, 5))
+    println!("{:?}", (Kind::Numbered(6), 7))
+
+    let mut tuple_keyed: Map<(i64, i64), String> = Map::new()
+    tuple_keyed.insert((1, 2), "x")
+    println!("{:?}", tuple_keyed)
+
+    let literal = {(3, 4): "y"}
+    println!("{:?}", literal)
+
+    let built = Map::from([((5, 6), 7)])
+    println!("{:?}", built)
+
+    let mut struct_keyed: Map<Item, i64> = Map::new()
+    struct_keyed.insert(Item { id: 8, tag: "e" }, 9)
+    println!("{:?}", struct_keyed)
+
+    let mut enum_keyed: Map<Kind, i64> = Map::new()
+    enum_keyed.insert(Kind::Numbered(10), 11)
+    println!("{:?}", enum_keyed)
+
+    let results: Vec<Result<Item, errors::Error>> = #[Ok(Item { id: 12, tag: "f" })]
+    println!("{:?}", results)
+}

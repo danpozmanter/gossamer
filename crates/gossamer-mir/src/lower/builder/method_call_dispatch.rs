@@ -860,7 +860,10 @@ impl<'a> Builder<'a> {
             // Var for chained calls; consult the lowered
             // local's MIR type as a fallback before defaulting
             // to i64.
-            "gos_rt_result_unwrap" | "gos_rt_result_unwrap_or" | "gos_rt_result_ok" => self
+            "gos_rt_option_unwrap"
+            | "gos_rt_result_unwrap"
+            | "gos_rt_result_unwrap_or"
+            | "gos_rt_result_ok" => self
                 .first_generic_of(receiver_ty)
                 .or_else(|| self.first_generic_of(lowered_recv_ty))
                 .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64)),
@@ -1027,7 +1030,10 @@ impl<'a> Builder<'a> {
         // so `compile(..).unwrap().replace_all(..)` keeps dispatching
         // on the pattern kind after the unwrap.
         if dest_kind.is_none()
-            && matches!(sym, "gos_rt_result_unwrap" | "gos_rt_result_unwrap_or")
+            && matches!(
+                sym,
+                "gos_rt_option_unwrap" | "gos_rt_result_unwrap" | "gos_rt_result_unwrap_or"
+            )
             && let Some(rk) = self.local_runtime_kind.get(&receiver_local).copied()
         {
             self.local_runtime_kind.insert(dest, rk);

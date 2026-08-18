@@ -181,8 +181,9 @@ pub(crate) fn builtin_option_default(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_option_unwrap(args: &[Value]) -> RuntimeResult<Value> {
     let opt = args.first().unwrap_or(&Value::Unit);
-    some_payload(opt)
-        .ok_or_else(|| crate::value::RuntimeError::Panic("called unwrap on None".to_string()))
+    some_payload(opt).ok_or_else(|| {
+        crate::value::RuntimeError::Panic("called `Option::unwrap()` on a `None` value".to_string())
+    })
 }
 
 pub(crate) fn builtin_option_expect(args: &[Value]) -> RuntimeResult<Value> {

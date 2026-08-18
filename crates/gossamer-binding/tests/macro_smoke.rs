@@ -41,6 +41,10 @@ impl NativeDispatch for NullDispatch {
     fn call_fn(&mut self, _name: &str, _args: Vec<Value>) -> RuntimeResult<Value> {
         Err(RuntimeError::Unsupported("call_fn"))
     }
+    fn has_fn(&self, _name: &str) -> bool {
+        false
+    }
+
     fn call_value(&mut self, _callee: &Value, _args: Vec<Value>) -> RuntimeResult<Value> {
         Err(RuntimeError::Unsupported("call_value"))
     }
@@ -221,6 +225,10 @@ impl NativeDispatch for CountingDispatch {
     fn call_fn(&mut self, _name: &str, args: Vec<Value>) -> RuntimeResult<Value> {
         Ok(Value::Int(i64::try_from(args.len()).unwrap_or(i64::MAX)))
     }
+    fn has_fn(&self, _name: &str) -> bool {
+        false
+    }
+
     fn call_value(&mut self, _callee: &Value, args: Vec<Value>) -> RuntimeResult<Value> {
         Ok(Value::Int(i64::try_from(args.len()).unwrap_or(i64::MAX)))
     }

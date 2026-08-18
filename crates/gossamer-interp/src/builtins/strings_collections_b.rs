@@ -373,7 +373,8 @@ fn builtin_reverse(args: &[Value]) -> RuntimeResult<Value> {
 fn builtin_swap(args: &[Value]) -> RuntimeResult<Value> {
     fn oob(i: i64, j: i64, len: usize) -> RuntimeError {
         RuntimeError::Panic(format!(
-            "swap: indexes {i} and {j} out of bounds for length {len}"
+            "vec swap index out of bounds: the len is {len} but the index is {}",
+            if i < 0 || i as usize >= len { i } else { j }
         ))
     }
     let raw_i = match args.get(1) {
@@ -689,13 +690,17 @@ fn builtin_variant_unwrap(args: &[Value]) -> RuntimeResult<Value> {
                 RuntimeError::Panic(format!("unwrap on empty `{}` variant", inner.name))
             })
         }
+        // `None` and `Err` are the two shapes `unwrap` refuses, and each
+        // names itself the way the compiled tiers' shims do.
+        Some(Value::Variant(inner)) if inner.name == "None" => Err(RuntimeError::Panic(
+            "called `Option::unwrap()` on a `None` value".to_string(),
+        )),
         Some(Value::Variant(inner)) => Err(RuntimeError::Panic(format!(
-            "unwrap on `{}` variant: {}",
-            inner.name,
+            "called `Result::unwrap()` on an `Err` value{}",
             inner
                 .fields
                 .first()
-                .map(|v| format!("{v}"))
+                .map(|v| format!(": {v}"))
                 .unwrap_or_default()
         ))),
         Some(other) => Ok(other.clone()),
@@ -949,12 +954,147 @@ fn native_sort_by(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeR
             owned.sort_by(|a, b| cmp_with(Value::Float(*a), Value::Float(*b), &mut sort_err));
             Value::FloatVec(Arc::new(owned))
         }
+        Some(recv) if packed_bytes_receiver(recv).is_some() => {
+            let (mut bytes, rebuild) =
+                packed_bytes_receiver(recv).expect("packed receiver checked above");
+            bytes.sort_by(|a, b| {
+                cmp_with(
+                    Value::Int(i64::from(*a)),
+                    Value::Int(i64::from(*b)),
+                    &mut sort_err,
+                )
+            });
+            rebuild(bytes)
+        }
         other => return Ok(other.cloned().unwrap_or(Value::Unit)),
     };
     if let Some(err) = sort_err {
         return Err(err);
     }
     Ok(result)
+}
+
+/// Renders `value` the way `{}` does, except that a struct or enum whose own
+/// type supplies `to_string` (the `Display` contract) or `fmt` (the `Debug`
+/// one) answers through that method - at any depth, since a value carries its
+/// type name at run time.
+fn render_display(
+    dispatch: &mut dyn NativeDispatch,
+    value: &Value,
+    aliases: &std::collections::HashMap<String, String>,
+) -> RuntimeResult<String> {
+    let own_name = match value {
+        Value::Struct(inner) => Some(inner.name.to_string()),
+        Value::Variant(inner) => Some(inner.name.to_string()),
+        _ => None,
+    };
+    let own_method = own_name.and_then(|name| {
+        aliases.get(&name).cloned().or_else(|| {
+            ["to_string", "fmt"]
+                .into_iter()
+                .map(|method| format!("{name}::{method}"))
+                .find(|qualified| dispatch.has_fn(qualified))
+        })
+    });
+    if let Some(method) = own_method {
+        return Ok(match dispatch.call_fn(&method, vec![value.clone()])? {
+            Value::String(s) => s.as_str().to_string(),
+            other => format!("{other}"),
+        });
+    }
+    let joined = |dispatch: &mut dyn NativeDispatch, items: &[Value]| -> RuntimeResult<Vec<String>> {
+        let mut out = Vec::with_capacity(items.len());
+        for item in items {
+            out.push(render_display(dispatch, item, aliases)?);
+        }
+        Ok(out)
+    };
+    match value {
+        Value::Array(items) => Ok(format!("[{}]", joined(dispatch, items)?.join(", "))),
+        Value::Tuple(items) => Ok(format!("({})", joined(dispatch, items)?.join(", "))),
+        Value::Variant(inner) if inner.fields.is_empty() => Ok(inner.name.to_string()),
+        Value::Variant(inner) => Ok(format!(
+            "{}({})",
+            inner.name,
+            joined(dispatch, &inner.fields)?.join(", ")
+        )),
+        Value::Struct(inner) => {
+            let mut parts = Vec::with_capacity(inner.fields.len());
+            for (name, field) in &inner.fields {
+                parts.push(format!("{name}: {}", render_display(dispatch, field, aliases)?));
+            }
+            Ok(format!("{} {{ {} }}", inner.name, parts.join(", ")))
+        }
+        Value::Map(map) => {
+            let entries: Vec<(crate::value::MapKey, Value)> = map
+                .lock()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            let mut parts = Vec::with_capacity(entries.len());
+            for (key, entry) in &entries {
+                // A map renders a string key quoted, the way the synthesized
+                // form and both compiled tiers show one.
+                let key = match key.to_value() {
+                    Value::String(text) => format!("{:?}", text.as_str()),
+                    other => render_display(dispatch, &other, aliases)?,
+                };
+                parts.push(format!("{key}: {}", render_display(dispatch, entry, aliases)?));
+            }
+            Ok(format!("{{{}}}", parts.join(", ")))
+        }
+        other => Ok(format!("{other}")),
+    }
+}
+
+/// `{}` over a value whose type, or one nested inside it, renders itself.
+fn native_render_display(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let Some(value) = args.first() else {
+        return Ok(Value::String(String::new().into()));
+    };
+    let aliases: std::collections::HashMap<String, String> = match args.get(1) {
+        Some(Value::String(text)) => text
+            .as_str()
+            .lines()
+            .filter_map(|line| line.split_once('='))
+            .map(|(variant, method)| (variant.to_string(), method.to_string()))
+            .collect(),
+        _ => std::collections::HashMap::new(),
+    };
+    Ok(Value::String(render_display(dispatch, value, &aliases)?.into()))
+}
+
+/// `xs.join(sep)` where the elements' own type supplies the rendering: the
+/// third argument names the method each element answers, so a user
+/// `impl Display for T` shows through a join the way it shows through `{}`.
+fn native_join_rendered(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let separator = match args.get(1) {
+        Some(Value::String(s)) => s.as_str().to_string(),
+        _ => String::new(),
+    };
+    let Some(Value::String(method)) = args.get(2) else {
+        return crate::stdlib_builtins::strings::builtin_strings_join(args);
+    };
+    let method = method.as_str().to_string();
+    let elements = args
+        .first()
+        .map(crate::stdlib_builtins::encoding_pem::collect_array)
+        .unwrap_or_default();
+    let mut parts: Vec<String> = Vec::with_capacity(elements.len());
+    for element in elements {
+        let rendered = dispatch.call_fn(&method, vec![element.clone()])?;
+        parts.push(match rendered {
+            Value::String(s) => s.as_str().to_string(),
+            other => format!("{other}"),
+        });
+    }
+    Ok(Value::String(parts.join(&separator).into()))
 }
 
 fn native_spawn(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {

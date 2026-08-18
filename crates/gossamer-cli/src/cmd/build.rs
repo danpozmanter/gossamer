@@ -655,6 +655,16 @@ fn validate_source(
         ));
     }
     profile_rss_stage("build_frontend_checked");
+    // The backend resolves a MIR span to the line a panic report names, and
+    // the source map does not outlive the frontend, so hand over the compact
+    // line table first.
+    gossamer_driver::register_source_lines(
+        &file.file_name().map_or_else(
+            || file.to_string_lossy().into_owned(),
+            |base| base.to_string_lossy().into_owned(),
+        ),
+        map.source(file_id),
+    );
     // Drop the source map before backend lowering so peak RSS reflects
     // only the live frontend artifacts.
     drop(map);

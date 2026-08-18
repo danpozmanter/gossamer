@@ -405,17 +405,33 @@ fn is_runtime_frame(symbol: &str) -> bool {
 #[cfg(not(target_arch = "wasm32"))]
 #[must_use]
 pub fn render_native_panic_trace() -> String {
-    let mut symbols: Vec<String> = Vec::new();
+    // The source position travels with the frame when the binary carries
+    // debug info, which a `gos build` (debug) binary does; `--release`
+    // strips DWARF, so those frames render as the symbol alone.
+    let mut symbols: Vec<(String, Option<String>)> = Vec::new();
     backtrace::trace(|frame| {
         backtrace::resolve_frame(frame, |sym| {
             if let Some(name) = sym.name() {
-                symbols.push(name.to_string());
+                let location = match (sym.filename(), sym.lineno()) {
+                    (Some(file), Some(line)) => {
+                        let file = file.file_name().map_or_else(
+                            || file.display().to_string(),
+                            |base| base.to_string_lossy().into_owned(),
+                        );
+                        match sym.colno() {
+                            Some(column) => Some(format!("{file}:{line}:{column}")),
+                            None => Some(format!("{file}:{line}")),
+                        }
+                    }
+                    _ => None,
+                };
+                symbols.push((name.to_string(), location));
             }
         });
         true
     });
     let mut out = String::new();
-    for sym in &symbols {
+    for (sym, location) in &symbols {
         // Runtime / unwinder machinery is filtered everywhere, not just
         // at the top: a goroutine stack bottoms out in coroutine
         // trampoline frames rather than `gos_main`, and printing those
@@ -425,6 +441,11 @@ pub fn render_native_panic_trace() -> String {
         }
         out.push_str("    at ");
         out.push_str(sym);
+        if let Some(location) = location {
+            out.push_str(" (");
+            out.push_str(location);
+            out.push(')');
+        }
         out.push('\n');
         // The program entry frame is the natural bottom of the gos
         // chain; everything below is libc / rt startup.

@@ -568,8 +568,7 @@ impl<'a> Lowerer<'a> {
             }
             ConcatKind::VecDesc(ref desc) => {
                 declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_desc");
-                let stream: String = desc.iter().map(|&b| b as char).collect();
-                let (global, _) = self.strings.borrow_mut().intern(&stream);
+                let global = self.intern_value_descriptor(desc);
                 writeln!(
                     self.out,
                     "  {dest} = call ptr @gos_rt_vec_format_desc(ptr {value}, ptr {global}, i64 0)"
@@ -578,8 +577,7 @@ impl<'a> Lowerer<'a> {
             }
             ConcatKind::MapDesc(ref desc, val_at) => {
                 declare_rt(&mut self.runtime_refs, "gos_rt_map_format_desc");
-                let stream: String = desc.iter().map(|&b| b as char).collect();
-                let (global, _) = self.strings.borrow_mut().intern(&stream);
+                let global = self.intern_value_descriptor(desc);
                 writeln!(
                     self.out,
                     "  {dest} = call ptr @gos_rt_map_format_desc(ptr {value}, ptr {global}, i64 0, i64 {val_at})"
@@ -751,8 +749,7 @@ impl<'a> Lowerer<'a> {
             ConcatKind::SetDesc(ref desc, is_btree) => {
                 declare_rt(&mut self.runtime_refs, "gos_rt_set_format_desc");
                 let ordered = i32::from(is_btree);
-                let stream: String = desc.iter().map(|&b| b as char).collect();
-                let (global, _) = self.strings.borrow_mut().intern(&stream);
+                let global = self.intern_value_descriptor(desc);
                 writeln!(
                     self.out,
                     "  {dest} = call ptr @gos_rt_set_format_desc(ptr {value}, i32 {ordered}, ptr {global})"
@@ -834,16 +831,56 @@ impl<'a> Lowerer<'a> {
         dest
     }
 
+    /// Emits the module-level global that carries a descriptor: an `i64`
+    /// count of the per-type `fmt` pointers, those pointers, then the tag
+    /// bytes. The runtime reads the header to reach both halves, so a
+    /// `DESC_ADT` byte anywhere in the stream resolves to a real formatter.
+    /// Returns the global's name.
+    fn intern_value_descriptor(&mut self, desc: &ValueDesc) -> String {
+        let mut bytes = String::with_capacity(desc.bytes.len() * 4);
+        let mut key = String::with_capacity(desc.bytes.len() * 2);
+        for byte in &desc.bytes {
+            let _ = write!(bytes, "\\{byte:02X}");
+            let _ = write!(key, "{byte:02x}");
+        }
+        for name in &desc.fns {
+            let _ = write!(key, "_{name}");
+        }
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for byte in key.as_bytes() {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100_0000_01b3);
+        }
+        let name = format!("@\"__gos_desc_{hash:016x}\"");
+        let table: String = desc
+            .fns
+            .iter()
+            .map(|f| format!("ptr @\"{f}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let n = desc.fns.len();
+        let len = desc.bytes.len();
+        self.runtime_refs.insert(format!(
+            "{name} = private constant {{ i64, [{n} x ptr], [{len} x i8] }} \
+             {{ i64 {n}, [{n} x ptr] [{table}], [{len} x i8] c\"{bytes}\" }}"
+        ));
+        name
+    }
+
     /// The `ptr` operand naming a payload's derived `fmt`, or `null` for a
     /// payload the runtime renders from its tag alone.
     fn debug_fmt_operand(&mut self, payload: &DebugPayload) -> String {
         match payload {
             DebugPayload::Tag(_) => "null".to_string(),
             DebugPayload::Fmt(sym) => format!("@\"{sym}\""),
-            DebugPayload::Tuple(tags) | DebugPayload::Desc(tags) => {
+            DebugPayload::Tuple(tags) => {
                 let stream: String = tags.iter().map(|&b| b as char).collect();
                 let (global, _) = self.strings.borrow_mut().intern(&stream);
                 global
+            }
+            DebugPayload::Desc(desc) => {
+                let desc = desc.clone();
+                self.intern_value_descriptor(&desc)
             }
         }
     }
@@ -860,6 +897,18 @@ impl<'a> Lowerer<'a> {
     ) -> Result<String, BuildError> {
         match kind {
             ConcatKind::Tuple => self.emit_tuple_format(arg, value),
+            ConcatKind::TupleDesc(ref desc) => {
+                let desc = desc.clone();
+                let global = self.intern_value_descriptor(&desc);
+                declare_rt(&mut self.runtime_refs, "gos_rt_tuple_format_desc");
+                let dest = self.fresh();
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_tuple_format_desc(ptr {value}, ptr {global})"
+                )
+                .unwrap();
+                Ok(dest)
+            }
             ConcatKind::SetI64(_)
             | ConcatKind::SetUint(_)
             | ConcatKind::SetString(_)

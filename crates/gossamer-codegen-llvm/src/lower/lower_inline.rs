@@ -1337,7 +1337,15 @@ impl<'a> Lowerer<'a> {
     fn value_to_i64(&mut self, val: &str, val_ty: &str) -> String {
         match val_ty {
             "i64" => val.to_string(),
-            "i32" | "i16" | "i8" | "i1" => {
+            // A `bool` element's stored byte is its canonical `0` / `1`, which
+            // every reader compares against and passes on as a whole byte, so
+            // it widens by zero-extension.
+            "i1" => {
+                let t = self.fresh();
+                writeln!(self.out, "  {t} = zext i1 {val} to i64").unwrap();
+                t
+            }
+            "i32" | "i16" | "i8" => {
                 let t = self.fresh();
                 writeln!(self.out, "  {t} = sext {val_ty} {val} to i64").unwrap();
                 t
@@ -1754,7 +1762,12 @@ impl<'a> Lowerer<'a> {
         // growth proportional to the loop iteration count.
         let val_i64 = match val_ty.as_str() {
             "i64" => val_v,
-            "i32" | "i16" | "i8" | "i1" => {
+            "i1" => {
+                let tmp = self.fresh();
+                writeln!(self.out, "  {tmp} = zext i1 {val_v} to i64").unwrap();
+                tmp
+            }
+            "i32" | "i16" | "i8" => {
                 let tmp = self.fresh();
                 writeln!(self.out, "  {tmp} = sext {val_ty} {val_v} to i64").unwrap();
                 tmp

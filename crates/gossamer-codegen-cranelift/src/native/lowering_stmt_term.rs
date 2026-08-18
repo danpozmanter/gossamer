@@ -2190,6 +2190,9 @@ pub(super) fn assert_message_text(msg: &AssertMessage) -> &'static str {
 pub(super) const STATIC_PANIC_MESSAGES: &[&str] = &[
     "index out of bounds\n",
     "arithmetic overflow\n",
+    "attempt to add with overflow\n",
+    "attempt to subtract with overflow\n",
+    "attempt to multiply with overflow\n",
     "divide by zero\n",
     UNREACHABLE_PANIC_MSG,
 ];

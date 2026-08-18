@@ -102,7 +102,9 @@ fn run_source_on_vm(
     // to belong to: no goroutine outlives the program, and a child's
     // failure that nothing reads is reported instead of vanishing.
     gossamer_interp::open_root_cohort();
-    let r = vm.call("main", Vec::new());
+    // A fault raised inside a JIT-compiled body exits through the runtime,
+    // which reports the host's frames through this window.
+    let r = vm.with_active_trace(|| vm.call("main", Vec::new()));
     profile_rss_stage("execution_complete");
     vm.release_jit_prelude();
     gossamer_interp::close_root_cohort();
@@ -138,7 +140,11 @@ fn run_source_on_vm(
                 // (Rust parity - scripts depend on it).
                 let hooked = vm.invoke_panic_hook(&gossamer_interp::panic_message(&err));
                 if !hooked {
-                    eprintln!("error: runtime error: {err}{trace}");
+                    // Everything the program printed belongs ahead of the
+                    // report, and the report itself opens with the code, the
+                    // way the compiled tiers write it.
+                    gossamer_interp::flush_runtime_stdout();
+                    eprintln!("{err}{trace}");
                 }
                 gossamer_interp::flush_runtime_stdout();
                 std::process::exit(101);

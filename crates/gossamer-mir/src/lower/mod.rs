@@ -260,6 +260,7 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
     // the pass for differential measurement and as a safety escape hatch.
     if std::env::var_os("GOS_RC_NO_ELIDE").is_none() {
         for body in &mut bodies {
+            crate::opt::elide_null_rc_accounting(body);
             crate::opt::elide_redundant_rc_pairs(body, tcx);
         }
     }

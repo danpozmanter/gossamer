@@ -633,6 +633,7 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_vec_format_i64" => Some("gos_rt_vec_format_i64"),
         "gos_rt_vec_format_u64" => Some("gos_rt_vec_format_u64"),
         "gos_rt_tuple_format" => Some("gos_rt_tuple_format"),
+        "gos_rt_tuple_format_desc" => Some("gos_rt_tuple_format_desc"),
         "gos_rt_map_format" => Some("gos_rt_map_format"),
         "gos_rt_map_format_tagged" => Some("gos_rt_map_format_tagged"),
         "gos_rt_set_format_i64" => Some("gos_rt_set_format_i64"),
@@ -656,6 +657,7 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_weak_opt_payload" => Some("gos_rt_result_payload"),
         "gos_rt_result_payload_f64" => Some("gos_rt_result_payload_f64"),
         "gos_rt_result_payload_i128" => Some("gos_rt_result_payload_i128"),
+        "gos_rt_option_unwrap" => Some("gos_rt_option_unwrap"),
         "gos_rt_result_unwrap" => Some("gos_rt_result_unwrap"),
         "gos_rt_result_unwrap_or" => Some("gos_rt_result_unwrap_or"),
         "gos_rt_result_ok" => Some("gos_rt_result_ok"),
@@ -836,9 +838,11 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_iter_flat_map_arr_i64" => Some("gos_rt_iter_flat_map_arr_i64"),
         "gos_rt_iter_group_by_i64" => Some("gos_rt_iter_group_by_i64"),
         "gos_rt_iter_max_by_i64" => Some("gos_rt_iter_max_by_i64"),
+        "gos_rt_iter_max_by_key_f64" => Some("gos_rt_iter_max_by_key_f64"),
         "gos_rt_iter_max_by_key_i64" => Some("gos_rt_iter_max_by_key_i64"),
         "gos_rt_iter_max_by_key_ptr" => Some("gos_rt_iter_max_by_key_ptr"),
         "gos_rt_iter_min_by_i64" => Some("gos_rt_iter_min_by_i64"),
+        "gos_rt_iter_min_by_key_f64" => Some("gos_rt_iter_min_by_key_f64"),
         "gos_rt_iter_min_by_key_i64" => Some("gos_rt_iter_min_by_key_i64"),
         "gos_rt_iter_min_by_key_ptr" => Some("gos_rt_iter_min_by_key_ptr"),
         "gos_rt_iter_partition_i64" => Some("gos_rt_iter_partition_i64"),
@@ -861,6 +865,7 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_iter_scan_i64" => Some("gos_rt_iter_scan_i64"),
         "gos_rt_iter_skip_while_i64" => Some("gos_rt_iter_skip_while_i64"),
         "gos_rt_iter_sorted_by_i64" => Some("gos_rt_iter_sorted_by_i64"),
+        "gos_rt_iter_sorted_by_key_f64" => Some("gos_rt_iter_sorted_by_key_f64"),
         "gos_rt_iter_sorted_by_key_i64" => Some("gos_rt_iter_sorted_by_key_i64"),
         "gos_rt_iter_take_while_i64" => Some("gos_rt_iter_take_while_i64"),
         "gos_rt_option_and_then" => Some("gos_rt_option_and_then"),
@@ -892,7 +897,9 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_vec_sort_str" => Some("gos_rt_vec_sort_str"),
         "gos_rt_vec_sort_tuple" => Some("gos_rt_vec_sort_tuple"),
         // Sort-by callbacks for fixed-array / Vec receivers.
+        "gos_rt_arr_sort_by_f64" => Some("gos_rt_arr_sort_by_f64"),
         "gos_rt_arr_sort_by_i64" => Some("gos_rt_arr_sort_by_i64"),
+        "gos_rt_vec_sort_by_f64" => Some("gos_rt_vec_sort_by_f64"),
         "gos_rt_vec_sort_by_i64" => Some("gos_rt_vec_sort_by_i64"),
         // Stride-aware sort_by for multi-slot aggregate elements
         // (Tuple / struct). The comparator receives element
@@ -900,6 +907,7 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         // already so the user closure body works unchanged.
         "gos_rt_arr_sort_by_aggr" => Some("gos_rt_arr_sort_by_aggr"),
         "gos_rt_vec_sort_by_aggr" => Some("gos_rt_vec_sort_by_aggr"),
+        "gos_rt_json_free" => Some("gos_rt_json_free"),
         "gos_rt_json_set" => Some("gos_rt_json_set"),
         "gos_rt_arr_iter" => Some("gos_rt_arr_iter"),
         "gos_rt_arr_iter_next" => Some("gos_rt_arr_iter_next"),

@@ -62,6 +62,7 @@ type NativeArg = (JitKind, i64, Option<Arc<ThreadConfinedCell>>);
 fn build_native_arg(kind: JitKind, value: &Value) -> Option<i64> {
     let result = match kind {
         JitKind::NativeVecI64 => build_native_vec_i64(value),
+        JitKind::NativeVecStr => build_native_vec_str(value),
         JitKind::NativeVecF64 => build_native_vec_f64(value),
         JitKind::NativeVecTupleIF => build_native_vec_tuple_if(value),
         JitKind::NativeStr => build_native_str(value),
@@ -70,6 +71,7 @@ fn build_native_arg(kind: JitKind, value: &Value) -> Option<i64> {
     };
     if result.is_some() {
         let bytes = match (kind, value) {
+            (JitKind::NativeVecStr, Value::Array(values)) => values.len().saturating_mul(24),
             (JitKind::NativeVecI64, Value::IntArray(values)) => values.len().saturating_mul(8),
             (JitKind::NativeVecI64, Value::Array(values)) => values.len().saturating_mul(8),
             (JitKind::NativeVecF64, Value::FloatVec(values)) => values.len().saturating_mul(8),
@@ -267,6 +269,35 @@ fn read_native_u8vec(ptr: i64) -> Vec<u8> {
 
 /// Builds an owned `*mut GosVec` of 8-byte `i64` slots from a VM integer
 /// vector. Returns the pointer as `i64` (RC = 1, trampoline-owned).
+/// Builds a `STRING`-kind `GosVec` whose slots are owned cstrings, the layout
+/// both compiled tiers give a `Vec<String>`. Answers `None` for a sequence
+/// holding anything else, which keeps the body on bytecode.
+fn build_native_vec_str(value: &Value) -> Option<i64> {
+    let Value::Array(arc) = value else {
+        return None;
+    };
+    // SAFETY: a fresh owned header; each push moves in a cstring the vec's
+    // `STRING` element kind makes it responsible for freeing.
+    unsafe {
+        let v = rt::gos_rt_vec_new_typed(8, rt::vec::vec_elem_kind::STRING);
+        if v.is_null() {
+            return None;
+        }
+        for elem in arc.iter() {
+            let Value::String(text) = elem else {
+                rt::gos_rt_vec_free(v);
+                return None;
+            };
+            let Some(ptr) = build_native_str(&Value::String(text.clone())) else {
+                rt::gos_rt_vec_free(v);
+                return None;
+            };
+            rt::gos_rt_vec_push_i64(v, ptr);
+        }
+        Some(v as i64)
+    }
+}
+
 fn build_native_vec_i64(value: &Value) -> Option<i64> {
     // SAFETY: `gos_rt_vec_new_typed` returns an owned header (RC = 1) or
     // null; `gos_rt_vec_push_i64` copies each value into the buffer. We
@@ -1043,31 +1074,70 @@ fn free_native_enum(ptr: i64, shape: &crate::value::NativeEnumShape) {
 /// message copy is freed; the error node itself is left to process teardown
 /// (the `Err` path is the cold branch and never aliases the trampoline's
 /// owned inputs).
+/// The VM value a two-word carrier's payload word stands for.
+fn decode_carrier_scalar(
+    kind: gossamer_codegen_cranelift::ResultScalarKind,
+    payload: i64,
+) -> Value {
+    use gossamer_codegen_cranelift::ResultScalarKind as K;
+    match kind {
+        K::I64 => Value::Int(payload),
+        K::F64 => Value::Float(f64::from_bits(payload as u64)),
+        K::Bool => Value::Bool(payload & 1 != 0),
+        K::Char => Value::Char(char::from_u32(payload as u32).unwrap_or('\u{fffd}')),
+    }
+}
+
 fn read_native_error(ptr: i64) -> Value {
-    let msg = if ptr == 0 {
-        String::new()
+    // A wrapped error is a chain, and `{}` prints every link colon-joined, so
+    // the whole chain crosses back - a `cause: None` here would silently
+    // shorten what an `errors::wrap` chain prints on this tier alone. The
+    // nodes themselves stay owned by the runtime, which holds an error for
+    // the life of the process.
+    let message = native_error_message(ptr);
+    let cause = if ptr == 0 {
+        Value::variant("None", vec![])
     } else {
-        // SAFETY: `ptr` is a live `*mut GosError`; `gos_rt_error_message`
-        // returns a freshly leaked cstring copy of the top message or null.
-        let c = unsafe { rt::gos_rt_error_message(ptr as *const rt::GosError) };
-        if c.is_null() {
-            String::new()
+        // SAFETY: `ptr` is a live `*mut GosError`; the shim answers the
+        // `Option<Error>` carrier for its cause.
+        let carrier = unsafe { rt::gos_rt_error_cause(ptr as *const rt::GosError) };
+        let disc = (carrier as u64) as i64;
+        let payload = ((carrier as u128) >> 64) as u64 as i64;
+        if disc == 0 && payload != 0 {
+            Value::variant("Some", vec![read_native_error(payload)])
         } else {
-            let len = unsafe { rt::gos_rt_str_len(c) }.max(0) as usize;
-            let bytes = unsafe { std::slice::from_raw_parts(c.cast::<u8>(), len) };
-            let s = String::from_utf8_lossy(bytes).into_owned();
-            // SAFETY: the message copy is owned by us; free it now.
-            unsafe { rt::gos_rt_str_free(c) };
-            s
+            Value::variant("None", vec![])
         }
     };
     Value::struct_(
         "errors::Error",
         vec![
-            ("message", Value::String(SmolStr::from_str(&msg))),
-            ("cause", Value::variant("None", vec![])),
+            ("message", Value::String(SmolStr::from_str(&message))),
+            ("cause", cause),
         ],
     )
+}
+
+/// The top message of a native error, or the empty string for a null error
+/// or one carrying no message.
+fn native_error_message(ptr: i64) -> String {
+    if ptr == 0 {
+        return String::new();
+    }
+    // SAFETY: `ptr` is a live `*mut GosError`; `gos_rt_error_message`
+    // returns a freshly leaked cstring copy of the top message or null.
+    let c = unsafe { rt::gos_rt_error_message(ptr as *const rt::GosError) };
+    if c.is_null() {
+        return String::new();
+    }
+    // `gos_rt_str_len` counts Unicode scalars; the slice below is bytes, so
+    // a message with any multibyte character would lose its tail.
+    let len = unsafe { rt::gos_rt_str_byte_len(c) }.max(0) as usize;
+    let bytes = unsafe { std::slice::from_raw_parts(c.cast::<u8>(), len) };
+    let s = String::from_utf8_lossy(bytes).into_owned();
+    // SAFETY: the message copy is owned by us; free it now.
+    unsafe { rt::gos_rt_str_free(c) };
+    s
 }
 
 /// Reads a native return pointer back into an owned VM value WITHOUT
@@ -1102,6 +1172,21 @@ fn native_ptr_to_value(kind: JitKind, ptr: i64) -> Value {
                 })
                 .collect::<Vec<_>>();
             Value::Array(Arc::new(elements))
+        }
+        JitKind::NativeVecStr => {
+            if ptr == 0 {
+                return Value::empty_array();
+            }
+            let v = ptr as *const rt::vec::GosVec;
+            // SAFETY: `v` is a live `STRING`-kind `GosVec`; each slot holds a
+            // cstring the vec owns, read here without taking that ownership.
+            let len = unsafe { rt::gos_rt_vec_len(v) }.max(0);
+            let mut out = Vec::with_capacity(len as usize);
+            for i in 0..len {
+                let word = unsafe { rt::gos_rt_vec_get_i64(v, i) };
+                out.push(native_ptr_to_value(JitKind::NativeStr, word));
+            }
+            Value::Array(Arc::new(out))
         }
         JitKind::NativeVecI64 => {
             if ptr == 0 {
@@ -1164,9 +1249,11 @@ fn native_ptr_to_value(kind: JitKind, ptr: i64) -> Value {
                 return Value::String(SmolStr::default());
             }
             let s = ptr as *const c_char;
-            // SAFETY: `s` is a live cstring; `gos_rt_str_len` reads its
-            // length header and the bytes are valid for that length.
-            let len = unsafe { rt::gos_rt_str_len(s) }.max(0) as usize;
+            // SAFETY: `s` is a live cstring; `gos_rt_str_byte_len` reads its
+            // length header and the bytes are valid for that length. The
+            // byte length is the one this slice needs - `gos_rt_str_len`
+            // counts Unicode scalars, which is fewer for any multibyte text.
+            let len = unsafe { rt::gos_rt_str_byte_len(s) }.max(0) as usize;
             let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) };
             Value::String(SmolStr::from_str(&String::from_utf8_lossy(bytes)))
         }
@@ -1261,6 +1348,7 @@ unsafe fn free_native(kind: JitKind, ptr: i64) {
         // `GosVec`, so `NativeVecVecI64` frees through the same call.
         JitKind::NativeVecI64
         | JitKind::NativeVecF64
+        | JitKind::NativeVecStr
         | JitKind::NativeVecTupleIF
         | JitKind::NativeVecVecI64 => unsafe {
             rt::gos_rt_vec_free(ptr as *mut rt::vec::GosVec);
@@ -1619,7 +1707,10 @@ macro_rules! call_through {
             // argument has an identical ABI on every target, unlike an `i128`
             // return (which Windows x64 places in a register Rust reads
             // differently). `invoke_prepared_native` decodes the carrier tuple.
-            JitKind::ResultEnumPtr(_) | JitKind::ResultNativeStr => {
+            JitKind::ResultEnumPtr(_)
+            | JitKind::ResultNativeStr
+            | JitKind::ResultScalar(_)
+            | JitKind::OptionScalar(_) => {
                 // A `u128` slot is 16-byte aligned, matching the thunk's
                 // aligned `i128` store; `disc` is the low word, `payload`
                 // the high word.
@@ -1639,6 +1730,7 @@ macro_rules! call_through {
             JitKind::NativeStr
             | JitKind::NativeVecI64
             | JitKind::NativeVecF64
+            | JitKind::NativeVecStr
             | JitKind::NativeVecTupleIF
             | JitKind::NativeVecVecI64
             | JitKind::U8VecHandle => {
@@ -3073,9 +3165,12 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
         JitKind::EnumPtr(idx) => (JitKind::I64, Some(idx), None, None, false),
         JitKind::ResultEnumPtr(idx) => (JitKind::ResultEnumPtr(idx), None, None, Some(idx), false),
         JitKind::ResultNativeStr => (JitKind::ResultNativeStr, None, None, None, true),
+        JitKind::ResultScalar(kind) => (JitKind::ResultScalar(kind), None, None, None, false),
+        JitKind::OptionScalar(kind) => (JitKind::OptionScalar(kind), None, None, None, false),
         k @ (JitKind::NativeStr
         | JitKind::NativeVecI64
         | JitKind::NativeVecF64
+        | JitKind::NativeVecStr
         | JitKind::NativeVecTupleIF) => (JitKind::I64, None, Some(k), None, false),
         // A `U8Vec` return would need re-registering the native buffer into
         // the VM registry; not supported, so keep such bodies on bytecode.
@@ -3134,6 +3229,7 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
                 JitKind::NativeStr
                     | JitKind::NativeVecI64
                     | JitKind::NativeVecF64
+                    | JitKind::NativeVecStr
                     | JitKind::NativeVecTupleIF
                     | JitKind::NativeVecVecI64
                     | JitKind::U8VecHandle
@@ -3262,6 +3358,7 @@ pub(crate) fn invoke_prepared(p: &Prepared, args: &[Value], graph_cache: &GraphC
                 JitKind::NativeStr
                 | JitKind::NativeVecI64
                 | JitKind::NativeVecF64
+                | JitKind::NativeVecStr
                 | JitKind::NativeVecTupleIF
                 | JitKind::NativeVecVecI64
                 | JitKind::U8VecHandle
@@ -3269,6 +3366,8 @@ pub(crate) fn invoke_prepared(p: &Prepared, args: &[Value], graph_cache: &GraphC
                 | JitKind::ArrayBlockPtr(..)
                 | JitKind::ResultEnumPtr(_)
                 | JitKind::ResultNativeStr
+                | JitKind::ResultScalar(_)
+                | JitKind::OptionScalar(_)
                 | JitKind::TupleReturn(_),
                 _,
             ) => return Dispatch::Fallback,
@@ -3400,7 +3499,10 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value], graph_cache: &GraphCache
                     Slot::I(ptr)
                 }
             },
-            JitKind::NativeVecI64 | JitKind::NativeVecF64 | JitKind::NativeVecTupleIF => {
+            JitKind::NativeVecI64
+            | JitKind::NativeVecF64
+            | JitKind::NativeVecStr
+            | JitKind::NativeVecTupleIF => {
                 // Unwrap a `&mut` write-back cell so we marshal its inner
                 // aggregate; record the cell so mutations flow back.
                 let (inner, cell) = match value {
@@ -3533,7 +3635,11 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value], graph_cache: &GraphCache
             },
             // Result carriers and `TupleReturn` are return-only kinds
             // (rejected as params by `body_kinds`); never in the param list.
-            JitKind::ResultEnumPtr(_) | JitKind::ResultNativeStr | JitKind::TupleReturn(_) => {
+            JitKind::ResultEnumPtr(_)
+            | JitKind::ResultNativeStr
+            | JitKind::ResultScalar(_)
+            | JitKind::OptionScalar(_)
+            | JitKind::TupleReturn(_) => {
                 free_in_flight(&natives, &built_enums, &str_cells);
                 return Dispatch::Fallback;
             }
@@ -3649,6 +3755,41 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value], graph_cache: &GraphCache
                 owned: true,
             }));
             Value::variant("Ok", vec![v])
+        } else {
+            Value::variant("Err", vec![read_native_error(payload)])
+        };
+        (v, None)
+    } else if let JitKind::OptionScalar(scalar) = p.jit.returns {
+        // `Option<scalar>`: the same carrier, with `Some` in the zero
+        // discriminant and the scalar in the payload word.
+        let Value::Tuple(t) = &raw else {
+            free_in_flight(&natives, &built_enums, &str_cells);
+            return Dispatch::Fallback;
+        };
+        let (Some(Value::Int(disc)), Some(Value::Int(payload))) = (t.first(), t.get(1)) else {
+            free_in_flight(&natives, &built_enums, &str_cells);
+            return Dispatch::Fallback;
+        };
+        let v = if *disc == 0 {
+            Value::variant("Some", vec![decode_carrier_scalar(scalar, *payload)])
+        } else {
+            Value::variant("None", vec![])
+        };
+        (v, None)
+    } else if let JitKind::ResultScalar(scalar) = p.jit.returns {
+        // `Result<scalar, errors::Error>`: the `Ok` payload word IS the
+        // scalar, so nothing is owned on that side and nothing is freed.
+        let Value::Tuple(t) = &raw else {
+            free_in_flight(&natives, &built_enums, &str_cells);
+            return Dispatch::Fallback;
+        };
+        let (Some(Value::Int(disc)), Some(Value::Int(payload))) = (t.first(), t.get(1)) else {
+            free_in_flight(&natives, &built_enums, &str_cells);
+            return Dispatch::Fallback;
+        };
+        let (disc, payload) = (*disc, *payload);
+        let v = if disc == 0 {
+            Value::variant("Ok", vec![decode_carrier_scalar(scalar, payload)])
         } else {
             Value::variant("Err", vec![read_native_error(payload)])
         };

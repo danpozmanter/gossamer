@@ -143,8 +143,8 @@ the [lazy iterator protocol](design/lazy_iterators.md) for ownership, adapters,
 and terminal behavior. `lo..hi` excludes `hi`, while `lo..=hi` includes it. An
 omitted lower bound starts at zero. An omitted upper bound is unbounded:
 like Rust's `RangeFrom`, it
-panics on overflow in debug builds, while release builds yield `i64::MAX`,
-wrap to `i64::MIN`, and continue. The REPL prints open ranges without
+panics on overflow in debug builds, while release builds wrap to `i64::MIN`
+and continue. The REPL prints open ranges without
 realising them, such as `10..` or `..10`. Because `..=` is inclusive, it
 always requires an upper bound; `10..=` is a parse error.
 
@@ -459,6 +459,28 @@ struct Point { x: i64, y: i64 }
 `PartialOrd`, and `Ord`. Any other name (`Clone`, `Hash`, `Copy`,
 `Display`, `Serialize`, ...) is rejected with `GT0025`: copying,
 comparison, hashing, and serialization are automatic and need no derive.
+
+A value's rendering is synthesized too, and an `impl` overrides it:
+
+```gossamer
+use std::fmt::Display
+
+struct Tagged { id: i64 }
+
+impl Display for Tagged {
+    fn to_string(&self) -> String { format!("#{}", self.id) }
+}
+```
+
+`Tagged` then renders as `#1` through `{}`, `format!`, `to_string()`,
+`join(sep)`, and wherever one sits inside a `Vec`, `Map`, tuple, `Option`, or
+struct field. `impl Debug for T { fn fmt(&self) -> String }` is the same
+override for `{:?}`.
+
+A trait names behaviour, never a value's type. There is no `dyn`, so
+`fn width(x: Display)` reports `GT0071`; bound a generic by the trait instead
+(`fn width<T: Display>(x: T)`). An `impl` header naming a trait nothing
+declares reports `GT0070`, which is what catches a misspelled trait name.
 
 ## Modules
 

@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0071]: A trait name was written where a type belongs. `fn f(x: Display)` - here
+--- framed ---
+error[GT0071]: A trait name was written where a type belongs. `fn f(x: Display)`
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

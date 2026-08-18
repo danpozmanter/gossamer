@@ -1,0 +1,81 @@
+// A user `impl Display for T` overrides the synthesized rendering everywhere
+// a value is shown: `{}`, `format!`, `to_string`, `join`, and a container,
+// tuple, `Option`, or struct field holding the type. An inherent `to_string`
+// is an ordinary method that serves the same purpose, and a type with no impl
+// of either keeps the synthesized shape.
+
+use std::fmt::Display
+
+struct Tagged {
+    id: i64,
+}
+
+impl Display for Tagged {
+    fn to_string(&self) -> String {
+        format!("#{}", self.id)
+    }
+}
+
+struct Inherent {
+    id: i64,
+}
+
+impl Inherent {
+    fn to_string(&self) -> String {
+        format!("<{}>", self.id)
+    }
+}
+
+struct Plain {
+    id: i64,
+}
+
+struct Holder {
+    tag: Tagged,
+    count: i64,
+}
+
+enum Marked {
+    Numbered(i64),
+    Blank,
+}
+
+impl Display for Marked {
+    fn to_string(&self) -> String {
+        match self {
+            Marked::Numbered(n) => format!("m{}", n),
+            Marked::Blank => "m-",
+        }
+    }
+}
+
+fn main() {
+    let tagged = Tagged { id: 1 }
+    println!("{}", tagged)
+    println!("{}", format!("{}", tagged))
+    println!("{}", tagged.to_string())
+
+    let inherent = Inherent { id: 2 }
+    println!("{}", inherent)
+    println!("{}", inherent.to_string())
+
+    println!("{}", Plain { id: 3 })
+
+    let tags: Vec<Tagged> = #[Tagged { id: 4 }, Tagged { id: 5 }]
+    println!("{}", tags.join(", "))
+    println!("{}", tags)
+
+    println!("{}", Some(Tagged { id: 6 }))
+    println!("{}", (Tagged { id: 7 }, 8))
+    println!("{}", Holder { tag: Tagged { id: 9 }, count: 10 })
+
+    let mut byname: Map<String, Tagged> = Map::new()
+    byname.insert("a", Tagged { id: 11 })
+    println!("{}", byname)
+
+    println!("{}", Marked::Numbered(12))
+    println!("{}", Marked::Blank)
+    let marks: Vec<Marked> = #[Marked::Numbered(13), Marked::Blank]
+    println!("{}", marks.join("/"))
+    println!("{}", marks)
+}

@@ -1620,12 +1620,12 @@ pub(crate) unsafe fn render_tagged_word(out: &mut String, word: i64, tag: u8) {
 }
 
 /// Advances `cursor` past one descriptor without rendering it.
-unsafe fn skip_desc(tags: *const u8, cursor: &mut usize) {
-    let tag = unsafe { *tags.add(*cursor) };
+unsafe fn skip_desc(tags: DescStream, cursor: &mut usize) {
+    let tag = tags.byte(*cursor);
     *cursor += 1;
     match tag {
         TUPLE_TAG_NESTED => {
-            let arity = unsafe { *tags.add(*cursor) } as usize;
+            let arity = tags.byte(*cursor) as usize;
             *cursor += 1;
             for _ in 0..arity {
                 unsafe { skip_desc(tags, cursor) };
@@ -1637,6 +1637,7 @@ unsafe fn skip_desc(tags: *const u8, cursor: &mut usize) {
             skip_desc(tags, cursor);
         },
         gossamer_abi::DESC_SET_I64 | gossamer_abi::DESC_SET_STR => *cursor += 1,
+        gossamer_abi::DESC_ADT => *cursor += 3,
         gossamer_abi::DESC_OPTION => unsafe { skip_desc(tags, cursor) },
         gossamer_abi::DESC_ERROR => {}
         gossamer_abi::DESC_RESULT => unsafe {
@@ -1647,6 +1648,76 @@ unsafe fn skip_desc(tags: *const u8, cursor: &mut usize) {
     }
 }
 
+/// Renders a tuple whose fields are described by a descriptor stream, for a
+/// field that no flat tag names - a struct, an enum, or a container of them.
+/// The stream opens with the nested-tuple marker and the arity, so the slot
+/// buffer needs no separate count.
+///
+/// # Safety
+/// `slots` addresses the tuple's slot buffer and `desc` a descriptor global.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_tuple_format_desc(
+    slots: *const i64,
+    desc: *const u8,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if slots.is_null() || desc.is_null() {
+            return alloc_cstring(b"()");
+        }
+        let tags = unsafe { DescStream::new(desc) };
+        let mut out = String::new();
+        let mut cursor = 0usize;
+        unsafe { render_desc_value(&mut out, slots.cast::<u8>(), tags, &mut cursor) };
+        alloc_cstring(out.as_bytes())
+    })
+}
+
+/// A descriptor stream as the codegen lays it out: an 8-byte count of the
+/// per-type `fmt` pointers that follow, those pointers, then the descriptor
+/// bytes. A `DESC_ADT` byte names one of the pointers by index, so a user
+/// struct or enum nested anywhere in a shape renders through the same
+/// derived formatter a bare `{:?}` on it calls.
+#[derive(Clone, Copy)]
+pub(crate) struct DescStream {
+    bytes: *const u8,
+    fns: *const *const std::ffi::c_void,
+    fn_count: usize,
+}
+
+impl DescStream {
+    /// A stream of tag bytes with no formatter table, which is what a plain
+    /// tuple tag stream is.
+    pub(crate) fn bare(bytes: *const u8) -> Self {
+        Self {
+            bytes,
+            fns: std::ptr::null(),
+            fn_count: 0,
+        }
+    }
+
+    /// # Safety
+    /// `base` addresses a descriptor global emitted by the native backend.
+    pub(crate) unsafe fn new(base: *const u8) -> Self {
+        let fn_count = unsafe { base.cast::<i64>().read_unaligned() }.max(0) as usize;
+        Self {
+            fns: unsafe { base.add(8) }.cast(),
+            bytes: unsafe { base.add(8 + fn_count * 8) },
+            fn_count,
+        }
+    }
+
+    fn byte(self, at: usize) -> u8 {
+        // SAFETY: cursors only ever address bytes of the stream this view
+        // was built over.
+        unsafe { *self.bytes.add(at) }
+    }
+
+    fn fmt(self, index: usize) -> Option<*const std::ffi::c_void> {
+        // SAFETY: the index is bounds-checked against the emitted count.
+        (index < self.fn_count).then(|| unsafe { *self.fns.add(index) })
+    }
+}
+
 /// Renders the value at `slot` per the descriptor at `cursor`, advancing the
 /// cursor past that descriptor. A container descriptor reads the slot as a
 /// handle and renders its elements through the descriptor that follows, so a
@@ -1654,14 +1725,35 @@ unsafe fn skip_desc(tags: *const u8, cursor: &mut usize) {
 pub(crate) unsafe fn render_desc_value(
     out: &mut String,
     slot: *const u8,
-    tags: *const u8,
+    tags: DescStream,
     cursor: &mut usize,
 ) {
-    let tag = unsafe { *tags.add(*cursor) };
+    unsafe { render_desc_storage(out, slot, tags, cursor, Storage::Inline) };
+}
+
+/// Where a descriptor's value lives relative to the slot it is reached from.
+/// A single-word value reads the same either way; the distinction matters for
+/// a multi-word one - an `Option` / `Result` pair, or a struct's flat slots.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Storage {
+    /// The value's own bytes begin at the slot.
+    Inline,
+    /// The slot holds a word addressing the value.
+    ByWord,
+}
+
+pub(crate) unsafe fn render_desc_storage(
+    out: &mut String,
+    slot: *const u8,
+    tags: DescStream,
+    cursor: &mut usize,
+    storage: Storage,
+) {
+    let tag = tags.byte(*cursor);
     match tag {
         TUPLE_TAG_NESTED => {
             *cursor += 1;
-            let arity = unsafe { *tags.add(*cursor) } as usize;
+            let arity = tags.byte(*cursor) as usize;
             *cursor += 1;
             let mut slot_cursor = 0usize;
             unsafe {
@@ -1703,8 +1795,7 @@ pub(crate) unsafe fn render_desc_value(
             unsafe { skip_desc(tags, cursor) };
             let val_desc = *cursor;
             unsafe { skip_desc(tags, cursor) };
-            let rendered =
-                unsafe { gos_rt_map_format_desc(m, tags, key_desc as i64, val_desc as i64) };
+            let rendered = unsafe { map_format_desc_stream(m, tags, key_desc, val_desc) };
             if rendered.is_null() {
                 out.push_str("{}");
             } else {
@@ -1727,10 +1818,16 @@ pub(crate) unsafe fn render_desc_value(
         gossamer_abi::DESC_RESULT | gossamer_abi::DESC_OPTION => {
             *cursor += 1;
             let is_option = tag == gossamer_abi::DESC_OPTION;
-            // The slot holds a pointer to the nested value's two words:
-            // the discriminant, then the payload the selected arm carries.
-            let word = unsafe { (slot as *const i64).read_unaligned() };
-            let pair: *const i64 = std::ptr::with_exposed_provenance(word as usize);
+            // The two words are the discriminant then the selected arm's
+            // payload: laid out at the slot where the value is stored inline
+            // (a `Vec` element, a set member), or behind the slot's word
+            // where it is another value's payload.
+            let pair: *const i64 = if storage == Storage::Inline {
+                slot.cast::<i64>()
+            } else {
+                let word = unsafe { (slot as *const i64).read_unaligned() };
+                std::ptr::with_exposed_provenance(word as usize)
+            };
             let (disc, payload) = if pair.is_null() {
                 (0i64, 0i64)
             } else {
@@ -1754,18 +1851,36 @@ pub(crate) unsafe fn render_desc_value(
             }
             let mut arm_cursor = arm_desc;
             unsafe {
-                render_desc_value(
+                render_desc_storage(
                     out,
                     std::ptr::addr_of!(payload).cast::<u8>(),
                     tags,
                     &mut arm_cursor,
+                    Storage::ByWord,
                 );
             }
             out.push(')');
         }
+        gossamer_abi::DESC_ADT => {
+            *cursor += 1;
+            let index = tags.byte(*cursor) as usize;
+            *cursor += 1;
+            let by_slot_address = tags.byte(*cursor) != 0;
+            *cursor += 2;
+            let Some(fmt) = tags.fmt(index) else {
+                return;
+            };
+            let arg = if by_slot_address && storage == Storage::Inline {
+                slot
+            } else {
+                let word = unsafe { (slot as *const usize).read_unaligned() };
+                std::ptr::with_exposed_provenance::<u8>(word)
+            };
+            out.push_str(&unsafe { crate::c_abi::vec::adt_fmt_string(arg, fmt) });
+        }
         gossamer_abi::DESC_SET_I64 | gossamer_abi::DESC_SET_STR => {
             *cursor += 1;
-            let ordered = i32::from(unsafe { *tags.add(*cursor) });
+            let ordered = i32::from(tags.byte(*cursor));
             *cursor += 1;
             let word = unsafe { (slot as *const i64).read_unaligned() };
             let handle = std::ptr::with_exposed_provenance(word as usize);
@@ -1791,7 +1906,7 @@ pub(crate) unsafe fn render_desc_value(
 pub(crate) unsafe fn render_tuple_elements(
     out: &mut String,
     p: *const i64,
-    tags: *const u8,
+    tags: DescStream,
     count: usize,
     slot_cursor: &mut usize,
     tag_cursor: &mut usize,
@@ -1801,12 +1916,33 @@ pub(crate) unsafe fn render_tuple_elements(
         if i > 0 {
             out.push_str(", ");
         }
-        let tag = unsafe { *tags.add(*tag_cursor) };
+        let tag = tags.byte(*tag_cursor);
         *tag_cursor += 1;
         if tag == TUPLE_TAG_NESTED {
-            let nested = unsafe { *tags.add(*tag_cursor) } as usize;
+            let nested = tags.byte(*tag_cursor) as usize;
             *tag_cursor += 1;
             unsafe { render_tuple_elements(out, p, tags, nested, slot_cursor, tag_cursor) };
+            continue;
+        }
+        // A struct or enum field is stored inline across its own slots, so it
+        // renders from the address of the first and advances the cursor by
+        // however many the descriptor says it spans.
+        if tag == gossamer_abi::DESC_ADT {
+            let index = tags.byte(*tag_cursor) as usize;
+            let by_slot_address = tags.byte(*tag_cursor + 1) != 0;
+            let slots = (tags.byte(*tag_cursor + 2) as usize).max(1);
+            *tag_cursor += 3;
+            let field = unsafe { p.add(*slot_cursor) };
+            *slot_cursor += slots;
+            if let Some(fmt) = tags.fmt(index) {
+                let arg = if by_slot_address {
+                    field.cast::<u8>()
+                } else {
+                    let word = unsafe { field.read_unaligned() };
+                    std::ptr::with_exposed_provenance::<u8>(word as usize)
+                };
+                out.push_str(&unsafe { crate::c_abi::vec::adt_fmt_string(arg, fmt) });
+            }
             continue;
         }
         let word = unsafe { p.add(*slot_cursor).read_unaligned() };
@@ -1886,7 +2022,7 @@ pub unsafe extern "C" fn gos_rt_tuple_format(
             render_tuple_elements(
                 &mut out,
                 p,
-                tags,
+                DescStream::bare(tags),
                 n as usize,
                 &mut slot_cursor,
                 &mut tag_cursor,
@@ -2259,7 +2395,7 @@ unsafe fn render_map_value(out: &mut String, word: i64, val_tag: i64, aux: *cons
             render_tuple_elements(
                 out,
                 slots,
-                aux,
+                DescStream::bare(aux),
                 aux_n as usize,
                 &mut slot_cursor,
                 &mut tag_cursor,
@@ -2287,6 +2423,54 @@ pub unsafe extern "C" fn gos_rt_map_format_desc(
         if m.is_null() || tags.is_null() {
             return alloc_cstring(b"{}");
         }
+        let tags = unsafe { DescStream::new(tags) };
+        unsafe { map_format_desc_stream(m, tags, key_desc as usize, val_desc as usize) }
+    })
+}
+
+/// [`gos_rt_map_format_desc`] over an already-parsed stream, so the recursive
+/// walk reaches a nested map without re-reading the stream header.
+unsafe fn map_format_desc_stream(
+    m: *const GosMap,
+    tags: DescStream,
+    key_desc: usize,
+    val_desc: usize,
+) -> *mut c_char {
+    {
+        let aggregate = unsafe { map_aggregate_entries(m) };
+        if !aggregate.is_empty() {
+            let mut out = String::from("{");
+            for (index, entry) in aggregate.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                let mut c = key_desc;
+                unsafe {
+                    render_desc_storage(
+                        &mut out,
+                        entry.key_slots.as_ptr().cast::<u8>(),
+                        tags,
+                        &mut c,
+                        Storage::Inline,
+                    );
+                }
+                out.push_str(": ");
+                let value = entry.value;
+                let mut c = val_desc;
+                unsafe {
+                    render_desc_storage(
+                        &mut out,
+                        std::ptr::from_ref(&value).cast::<u8>(),
+                        tags,
+                        &mut c,
+                        Storage::ByWord,
+                    );
+                }
+                entry.release();
+            }
+            out.push('}');
+            return alloc_cstring(out.as_bytes());
+        }
         let entries = unsafe { map_word_entries(m) };
         let mut out = String::from("{");
         let mut first = true;
@@ -2299,18 +2483,18 @@ pub unsafe extern "C" fn gos_rt_map_format_desc(
             if let Some(bytes) = string_key {
                 out.push_str(&format!("{:?}", String::from_utf8_lossy(&bytes)));
             } else {
-                let mut c = key_desc as usize;
+                let mut c = key_desc;
                 let slot = std::ptr::from_ref(&key).cast::<u8>();
                 unsafe { render_desc_value(&mut out, slot, tags, &mut c) };
             }
             out.push_str(": ");
-            let mut c = val_desc as usize;
+            let mut c = val_desc;
             let slot = std::ptr::from_ref(&value).cast::<u8>();
-            unsafe { render_desc_value(&mut out, slot, tags, &mut c) };
+            unsafe { render_desc_storage(&mut out, slot, tags, &mut c, Storage::ByWord) };
         }
         out.push('}');
         alloc_cstring(out.as_bytes())
-    })
+    }
 }
 
 /// Key/value words of a map in deterministic key order. A string key travels
@@ -2332,6 +2516,81 @@ unsafe fn map_word_entries(m: *const GosMap) -> Vec<(Option<Vec<u8>>, i64, i64)>
                 .collect();
             out.sort_by(|a, b| a.0.cmp(&b.0));
             out
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// One entry of a map keyed by an aggregate, for the descriptor walk: the
+/// key's own slot buffer and the value word. A struct, tuple, or fixed array
+/// key is stored content-encoded, so its slots are rebuilt from that encoding
+/// exactly as `keys()` rebuilds them; an enum key is a single node word.
+struct DescEntry {
+    key_slots: Vec<i64>,
+    /// Slot indices holding a c-string this entry allocated while decoding,
+    /// which the renderer releases once the entry is rendered.
+    owned_strings: Vec<usize>,
+    value: i64,
+}
+
+impl DescEntry {
+    fn release(&self) {
+        for &index in &self.owned_strings {
+            let ptr: *mut c_char =
+                std::ptr::with_exposed_provenance_mut(self.key_slots[index] as usize);
+            if !ptr.is_null() {
+                unsafe { crate::c_abi::string::gos_rt_str_free(ptr) };
+            }
+        }
+    }
+}
+
+/// Every entry of an aggregate-keyed map, ordered by the stored key bytes so
+/// rendering is stable across runs the way the bytecode tier's is.
+unsafe fn map_aggregate_entries(m: *const GosMap) -> Vec<DescEntry> {
+    let map = unsafe { &*m };
+    let storage = map.storage.lock();
+    match &*storage {
+        MapStorage::SkeyVal { entries, desc } => {
+            let slots = desc.len();
+            if slots == 0 {
+                return Vec::new();
+            }
+            let mut keys: Vec<&Box<[u8]>> = entries.keys().collect();
+            keys.sort_by_cached_key(|key| skey_order(key, desc));
+            keys.into_iter()
+                .filter_map(|k| {
+                    let mut key_slots = vec![0i64; slots];
+                    if !decode_skey_into(k, desc, &mut key_slots) {
+                        return None;
+                    }
+                    let owned_strings = desc
+                        .iter()
+                        .enumerate()
+                        .filter(|&(_, &code)| code == b'S')
+                        .map(|(index, _)| index)
+                        .collect();
+                    Some(DescEntry {
+                        key_slots,
+                        owned_strings,
+                        value: entries[k.as_ref()],
+                    })
+                })
+                .collect()
+        }
+        MapStorage::EkeyVal { entries } => {
+            let mut keys: Vec<&Box<[u8]>> = entries.keys().collect();
+            keys.sort_unstable();
+            keys.into_iter()
+                .map(|k| {
+                    let entry = &entries[k.as_ref()];
+                    DescEntry {
+                        key_slots: vec![entry.key_node as usize as i64],
+                        owned_strings: Vec::new(),
+                        value: entry.value,
+                    }
+                })
+                .collect()
         }
         _ => Vec::new(),
     }

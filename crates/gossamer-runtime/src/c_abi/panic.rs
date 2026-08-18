@@ -105,6 +105,41 @@ pub(crate) fn install_silent_gos_hook() {
     });
 }
 
+/// Renders the host's own call stack for a fault raised in compiled code.
+/// The bytecode VM installs one so a JIT-compiled body's panic still names
+/// the interpreted frames that reached it; a standalone native binary has no
+/// host and leaves it unset.
+pub type TraceHookFn = extern "C" fn() -> *mut c_char;
+
+static TRACE_HOOK: std::sync::atomic::AtomicPtr<()> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+/// Installs the host's call-stack renderer. Idempotent; the last wins.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_install_trace_hook(hook: TraceHookFn) {
+    TRACE_HOOK.store(hook as *mut (), std::sync::atomic::Ordering::Release);
+}
+
+/// The host's call stack, or the empty string when no host installed a
+/// renderer or it had nothing to report.
+fn host_trace() -> String {
+    let raw = TRACE_HOOK.load(std::sync::atomic::Ordering::Acquire);
+    if raw.is_null() {
+        return String::new();
+    }
+    // SAFETY: `raw` was stored from a `TraceHookFn` in
+    // `gos_rt_install_trace_hook` and is read back at the same type.
+    let hook: TraceHookFn = unsafe { std::mem::transmute::<*mut (), TraceHookFn>(raw) };
+    let text = hook();
+    if text.is_null() {
+        return String::new();
+    }
+    // SAFETY: the hook hands back an owned runtime string; copy and free it.
+    let out = unsafe { crate::c_abi::gos_str_arg_string(text) };
+    unsafe { crate::c_abi::string::gos_rt_str_free(text) };
+    out
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn gos_rt_panic(msg: *const c_char) {
     let text = if msg.is_null() {
@@ -122,6 +157,10 @@ pub unsafe extern "C-unwind" fn gos_rt_panic(msg: *const c_char) {
 /// hook, the per-goroutine isolation, the stdout flush, and the pinned
 /// exit code are properties of the fault, not of which one it is.
 fn raise(code: &str, prefix: &str, text: String) -> ! {
+    // A static panic message from codegen carries its own line terminator;
+    // the report adds one, and two would leave a blank line between the
+    // message and the frames below it.
+    let text = text.trim_end_matches('\n').to_string();
     install_silent_gos_hook();
     let hooked = call_user_panic_hook(&text);
     // per-goroutine panic isolation. If the panic originates inside a spawned
@@ -139,6 +178,9 @@ fn raise(code: &str, prefix: &str, text: String) -> ! {
         // `go` panic is unobserved, so it still reports - eagerly, so the report
         // is reliable even when `main` exits right after.
         if !hooked && !gossamer_coro::in_joinable_spawn() {
+            unsafe {
+                gos_rt_flush_stdout();
+            }
             eprintln!("error[{code}]: {prefix}{text}");
         }
         std::panic::panic_any(GosPanic(text));
@@ -147,14 +189,25 @@ fn raise(code: &str, prefix: &str, text: String) -> ! {
     // buffered stdout (a plain `abort` would drop it), and exit with the pinned
     // panic code 101 - matching Rust; no core is dumped for an ordinary panic.
     if !hooked {
+        // Everything the program printed before the fault belongs ahead of
+        // the report; buffered stdout would otherwise land after it and read
+        // as though the fault came first.
+        unsafe {
+            gos_rt_flush_stdout();
+        }
         // Match the unified diagnostic-code prefix the VM uses so both
         // execution modes tag a fault with the same code.
         eprintln!("error[{code}]: {prefix}{text}");
         let trace = crate::sigquit::render_active_panic_trace();
         if trace.is_empty() {
-            let native = crate::sigquit::render_native_panic_trace();
-            if !native.is_empty() {
-                eprint!("{native}");
+            let host = host_trace();
+            if host.is_empty() {
+                let native = crate::sigquit::render_native_panic_trace();
+                if !native.is_empty() {
+                    eprint!("{native}");
+                }
+            } else {
+                eprint!("{host}");
             }
         } else {
             eprint!("{trace}");

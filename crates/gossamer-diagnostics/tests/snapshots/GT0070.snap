@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0070]: An `impl` header named a trait nothing declares. `impl Bogus for S` - here
+--- framed ---
+error[GT0070]: An `impl` header named a trait nothing declares. `impl Bogus for S`
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

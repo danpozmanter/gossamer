@@ -35,6 +35,10 @@ impl NativeDispatch for VmDispatch<'_> {
         self.vm.apply(callee, args)
     }
 
+    fn has_fn(&self, name: &str) -> bool {
+        self.vm.lookup_global(name).is_some()
+    }
+
     fn call_value(&mut self, callee: &Value, args: Vec<Value>) -> RuntimeResult<Value> {
         self.vm.dispatch_call(callee, args)
     }

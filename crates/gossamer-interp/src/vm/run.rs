@@ -63,7 +63,8 @@ fn incompatible_type_error(value: &Value, peer: Option<&Value>, expected: &str) 
 #[cold]
 fn swap_out_of_bounds(a: i64, b: i64, len: usize) -> RuntimeError {
     RuntimeError::Panic(format!(
-        "swap: indexes {a} and {b} out of bounds for length {len}"
+        "vec swap index out of bounds: the len is {len} but the index is {}",
+        if a < 0 || a as usize >= len { a } else { b }
     ))
 }
 
@@ -1928,14 +1929,14 @@ impl Vm {
                     }
                     match b {
                         Value::Array(items) | Value::Tuple(items) => {
-                            if raw < 0 || (raw as usize) >= items.len() {
-                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            if raw < 0 || raw as usize >= items.len() {
+                                return Err(crate::vm::index_oob_panic(raw, items.len()));
                             }
                             Arc::make_mut(items)[raw as usize] = new_value;
                         }
                         Value::IntArray(data) => {
-                            if raw < 0 || (raw as usize) >= data.len() {
-                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            if raw < 0 || raw as usize >= data.len() {
+                                return Err(crate::vm::index_oob_panic(raw, data.len()));
                             }
                             match new_value {
                                 Value::Int(n) => Arc::make_mut(data)[raw as usize] = n,
@@ -1947,8 +1948,8 @@ impl Vm {
                             }
                         }
                         Value::ByteArray(data) => {
-                            if raw < 0 || (raw as usize) >= data.len() {
-                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            if raw < 0 || raw as usize >= data.len() {
+                                return Err(crate::vm::index_oob_panic(raw, data.len()));
                             }
                             match new_value {
                                 Value::Int(n) => Arc::make_mut(data)[raw as usize] = n as u8,
@@ -1960,8 +1961,8 @@ impl Vm {
                             }
                         }
                         Value::InlineByteArray(data) => {
-                            if raw < 0 || (raw as usize) >= data.len() {
-                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            if raw < 0 || raw as usize >= data.len() {
+                                return Err(crate::vm::index_oob_panic(raw, data.len()));
                             }
                             match new_value {
                                 Value::Int(n) => Arc::make_mut(data)[raw as usize] = n as u8,
@@ -1973,8 +1974,8 @@ impl Vm {
                             }
                         }
                         Value::ByteVec(data) => {
-                            if raw < 0 || (raw as usize) >= data.len() {
-                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            if raw < 0 || raw as usize >= data.len() {
+                                return Err(crate::vm::index_oob_panic(raw, data.len()));
                             }
                             match new_value {
                                 Value::Int(n) => {
@@ -1994,8 +1995,8 @@ impl Vm {
                             }
                         }
                         Value::FloatVec(data) => {
-                            if raw < 0 || (raw as usize) >= data.len() {
-                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            if raw < 0 || raw as usize >= data.len() {
+                                return Err(crate::vm::index_oob_panic(raw, data.len()));
                             }
                             match new_value {
                                 Value::Float(f) => Arc::make_mut(data)[raw as usize] = f,
@@ -2322,7 +2323,8 @@ impl Vm {
                         && usize::try_from(b).is_ok_and(|index| index < len);
                     if !valid {
                         return Err(RuntimeError::Panic(format!(
-                            "swap: indexes {a} and {b} out of bounds for length {len}"
+                            "vec swap index out of bounds: the len is {len} but the index is {}",
+                            if a < 0 || a as usize >= len { a } else { b }
                         )));
                     }
                     let (a, b) = (a as usize, b as usize);
@@ -2363,7 +2365,8 @@ impl Vm {
                     };
                     if a < 0 || b < 0 || a as usize >= len || b as usize >= len {
                         return Err(RuntimeError::Panic(format!(
-                            "swap: indexes {a} and {b} out of bounds for length {len}"
+                            "vec swap index out of bounds: the len is {len} but the index is {}",
+                            if a < 0 || a as usize >= len { a } else { b }
                         )));
                     }
                     let (a, b) = (a as usize, b as usize);
@@ -2601,10 +2604,11 @@ impl Vm {
                         )));
                     };
                     let slots = Arc::make_mut(items);
+                    let slot_count = slots.len();
                     let slot = slots.get_mut(idx).ok_or_else(|| {
                         // `v[i].field = x` out of range panics on the compiled
                         // tier (the place-form bounds assert); match it here.
-                        RuntimeError::Panic("index out of bounds".to_string())
+                        crate::vm::index_oob_panic(idx as i64, slot_count)
                     })?;
                     let Value::Struct(struct_arc) = slot else {
                         return Err(RuntimeError::Type(format!(
@@ -3306,9 +3310,9 @@ impl Vm {
                             "value of kind `{b}` is not indexable"
                         )));
                     };
-                    let slot = items.get(idx).ok_or_else(|| {
-                        RuntimeError::Arithmetic("index out of bounds".to_string())
-                    })?;
+                    let slot = items
+                        .get(idx)
+                        .ok_or_else(|| crate::vm::index_oob_panic(idx as i64, items.len()))?;
                     let Value::Struct(struct_inner) = slot else {
                         return Err(RuntimeError::Type(
                             "value at index is not a struct".to_string(),
@@ -3355,9 +3359,9 @@ impl Vm {
                             "value of kind `{b}` is not indexable"
                         )));
                     };
-                    let slot = items.get(idx).ok_or_else(|| {
-                        RuntimeError::Arithmetic("index out of bounds".to_string())
-                    })?;
+                    let slot = items
+                        .get(idx)
+                        .ok_or_else(|| crate::vm::index_oob_panic(idx as i64, items.len()))?;
                     let Value::Struct(struct_inner) = slot else {
                         return Err(RuntimeError::Type(
                             "value at index is not a struct".to_string(),
@@ -3400,10 +3404,11 @@ impl Vm {
                         )));
                     };
                     let slots = Arc::make_mut(items);
+                    let slot_count = slots.len();
                     let slot = slots.get_mut(idx).ok_or_else(|| {
                         // `v[i].field = x` out of range panics on the compiled
                         // tier (the place-form bounds assert); match it here.
-                        RuntimeError::Panic("index out of bounds".to_string())
+                        crate::vm::index_oob_panic(idx as i64, slot_count)
                     })?;
                     let Value::Struct(struct_arc) = slot else {
                         return Err(RuntimeError::Type(format!(
@@ -3452,8 +3457,9 @@ impl Vm {
                         // caller's responsibility; we bounds-check
                         // it once here.
                         if pos >= fa_inner.data.len() {
-                            return Err(RuntimeError::Arithmetic(
-                                "index out of bounds".to_string(),
+                            return Err(crate::vm::index_oob_panic(
+                                pos as i64,
+                                fa_inner.data.len(),
                             ));
                         }
                         let f = unsafe { *fa_inner.data.get_unchecked(pos) };
@@ -3466,9 +3472,9 @@ impl Vm {
                                 "value of kind `{b}` is not indexable"
                             )));
                         };
-                        let slot = items.get(idx).ok_or_else(|| {
-                            RuntimeError::Arithmetic("index out of bounds".to_string())
-                        })?;
+                        let slot = items
+                            .get(idx)
+                            .ok_or_else(|| crate::vm::index_oob_panic(idx as i64, items.len()))?;
                         let Value::Struct(struct_inner) = slot else {
                             return Err(RuntimeError::Type(
                                 "value at index is not a struct".to_string(),
@@ -3514,7 +3520,7 @@ impl Vm {
                         } else {
                             // `v[i].field = x` out of range panics on the
                             // compiled tier; match it here.
-                            return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                            return Err(crate::vm::index_oob_panic(pos as i64, buf.len()));
                         }
                     } else {
                         let new_value = Value::Float(new_f);
@@ -3524,9 +3530,10 @@ impl Vm {
                             )));
                         };
                         let slots = Arc::make_mut(items);
-                        let slot = slots.get_mut(idx).ok_or_else(|| {
-                            RuntimeError::Arithmetic("index out of bounds".to_string())
-                        })?;
+                        let slot_count = slots.len();
+                        let slot = slots
+                            .get_mut(idx)
+                            .ok_or_else(|| crate::vm::index_oob_panic(idx as i64, slot_count))?;
                         let Value::Struct(struct_arc) = slot else {
                             return Err(RuntimeError::Type(
                                 "cannot assign to field on non-struct".to_string(),
@@ -3686,7 +3693,7 @@ impl Vm {
                     };
                     let pos = idx * stride as usize + offset as usize;
                     if pos >= fa_inner.data.len() {
-                        return Err(RuntimeError::Arithmetic("index out of bounds".to_string()));
+                        return Err(crate::vm::index_oob_panic(pos as i64, fa_inner.data.len()));
                     }
                     *floats.get_unchecked_mut(dst_f as usize) = *fa_inner.data.get_unchecked(pos);
                 },
@@ -3713,7 +3720,7 @@ impl Vm {
                     } else {
                         // `v[i].field = x` out of range panics on the compiled
                         // tier (place-form bounds assert); match it here.
-                        return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                        return Err(crate::vm::index_oob_panic(pos as i64, buf.len()));
                     }
                 },
                 Op::FlatGetF64I {
@@ -3738,7 +3745,7 @@ impl Vm {
                     };
                     let pos = idx * stride as usize + offset as usize;
                     if pos >= fa_inner.data.len() {
-                        return Err(RuntimeError::Arithmetic("index out of bounds".to_string()));
+                        return Err(crate::vm::index_oob_panic(pos as i64, fa_inner.data.len()));
                     }
                     *floats.get_unchecked_mut(dst_f as usize) = *fa_inner.data.get_unchecked(pos);
                 },
@@ -3771,7 +3778,7 @@ impl Vm {
                     } else {
                         // `v[i].field = x` out of range panics on the compiled
                         // tier (place-form bounds assert); match it here.
-                        return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                        return Err(crate::vm::index_oob_panic(pos as i64, buf.len()));
                     }
                 },
 
@@ -4177,27 +4184,27 @@ impl Vm {
                 } => unsafe {
                     let idx = *ints.get_unchecked(index_i as usize);
                     let b = registers.get_unchecked(base as usize);
-                    let i = usize::try_from(idx)
-                        .map_err(|_| RuntimeError::Panic("index out of bounds".to_string()))?;
+                    let i = usize::try_from(idx).map_err(|_| crate::vm::index_oob_panic(idx, 0))?;
                     let value = match b {
-                        Value::IntArray(data) => data.get(i).copied().ok_or_else(|| {
-                            RuntimeError::Panic("index out of bounds".to_string())
-                        })?,
-                        Value::ByteArray(data) => {
-                            data.get(i).copied().map(i64::from).ok_or_else(|| {
-                                RuntimeError::Panic("index out of bounds".to_string())
-                            })?
-                        }
-                        Value::InlineByteArray(data) => {
-                            data.get(i).copied().map(i64::from).ok_or_else(|| {
-                                RuntimeError::Panic("index out of bounds".to_string())
-                            })?
-                        }
-                        Value::ByteVec(data) => {
-                            data.get(i).copied().map(i64::from).ok_or_else(|| {
-                                RuntimeError::Panic("index out of bounds".to_string())
-                            })?
-                        }
+                        Value::IntArray(data) => data
+                            .get(i)
+                            .copied()
+                            .ok_or_else(|| crate::vm::index_oob_panic(i as i64, data.len()))?,
+                        Value::ByteArray(data) => data
+                            .get(i)
+                            .copied()
+                            .map(i64::from)
+                            .ok_or_else(|| crate::vm::index_oob_panic(i as i64, data.len()))?,
+                        Value::InlineByteArray(data) => data
+                            .get(i)
+                            .copied()
+                            .map(i64::from)
+                            .ok_or_else(|| crate::vm::index_oob_panic(i as i64, data.len()))?,
+                        Value::ByteVec(data) => data
+                            .get(i)
+                            .copied()
+                            .map(i64::from)
+                            .ok_or_else(|| crate::vm::index_oob_panic(i as i64, data.len()))?,
                         Value::Array(data) => match data.get(i) {
                             Some(Value::Int(value)) => *value,
                             Some(other) => {
@@ -4206,7 +4213,7 @@ impl Vm {
                                 )));
                             }
                             None => {
-                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                                return Err(crate::vm::index_oob_panic(i as i64, data.len()));
                             }
                         },
                         Value::FloatVec(_) | Value::FloatArray(_) => {
@@ -4235,36 +4242,35 @@ impl Vm {
                         &Value::Int(new_val),
                     );
                     let b = registers.get_unchecked_mut(base as usize);
-                    let i = usize::try_from(idx)
-                        .map_err(|_| RuntimeError::Panic("index out of bounds".to_string()))?;
+                    let i = usize::try_from(idx).map_err(|_| crate::vm::index_oob_panic(idx, 0))?;
                     match b {
                         Value::IntArray(data) => {
                             if i >= data.len() {
-                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                                return Err(crate::vm::index_oob_panic(i as i64, data.len()));
                             }
                             *Arc::make_mut(data).get_unchecked_mut(i) = new_val;
                         }
                         Value::ByteArray(data) => {
                             if i >= data.len() {
-                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                                return Err(crate::vm::index_oob_panic(i as i64, data.len()));
                             }
                             *Arc::make_mut(data).get_unchecked_mut(i) = new_val as u8;
                         }
                         Value::InlineByteArray(data) => {
                             if i >= data.len() {
-                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                                return Err(crate::vm::index_oob_panic(i as i64, data.len()));
                             }
                             *Arc::make_mut(data).get_unchecked_mut(i) = new_val as u8;
                         }
                         Value::ByteVec(data) => {
                             if i >= data.len() {
-                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                                return Err(crate::vm::index_oob_panic(i as i64, data.len()));
                             }
                             *Arc::make_mut(data).get_unchecked_mut(i) = new_val as u8;
                         }
                         Value::Array(data) => {
                             if i >= data.len() {
-                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                                return Err(crate::vm::index_oob_panic(i as i64, data.len()));
                             }
                             *Arc::make_mut(data).get_unchecked_mut(i) = Value::Int(new_val);
                         }
@@ -4374,12 +4380,12 @@ impl Vm {
                 } => unsafe {
                     let idx = *ints.get_unchecked(index_i as usize);
                     let b = registers.get_unchecked(base as usize);
-                    let i = usize::try_from(idx)
-                        .map_err(|_| RuntimeError::Panic("index out of bounds".to_string()))?;
+                    let i = usize::try_from(idx).map_err(|_| crate::vm::index_oob_panic(idx, 0))?;
                     let value = match b {
-                        Value::FloatVec(data) => data.get(i).copied().ok_or_else(|| {
-                            RuntimeError::Panic("index out of bounds".to_string())
-                        })?,
+                        Value::FloatVec(data) => data
+                            .get(i)
+                            .copied()
+                            .ok_or_else(|| crate::vm::index_oob_panic(i as i64, data.len()))?,
                         Value::Array(data) => match data.get(i) {
                             Some(Value::Float(value)) => *value,
                             Some(other) => {
@@ -4388,12 +4394,12 @@ impl Vm {
                                 )));
                             }
                             None => {
-                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                                return Err(crate::vm::index_oob_panic(i as i64, data.len()));
                             }
                         },
                         Value::FloatArray(data) if data.stride == 1 => {
                             data.data.get(i).copied().ok_or_else(|| {
-                                RuntimeError::Panic("index out of bounds".to_string())
+                                crate::vm::index_oob_panic(i as i64, data.data.len())
                             })?
                         }
                         _ => {
@@ -4417,19 +4423,18 @@ impl Vm {
                         &Value::Float(new_f),
                     );
                     let b = registers.get_unchecked_mut(base as usize);
-                    let i = usize::try_from(idx)
-                        .map_err(|_| RuntimeError::Panic("index out of bounds".to_string()))?;
+                    let i = usize::try_from(idx).map_err(|_| crate::vm::index_oob_panic(idx, 0))?;
                     match b {
                         Value::FloatVec(data_arc) => {
                             let buf = Arc::make_mut(data_arc);
                             if i >= buf.len() {
-                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                                return Err(crate::vm::index_oob_panic(i as i64, buf.len()));
                             }
                             *buf.get_unchecked_mut(i) = new_f;
                         }
                         Value::Array(data) => {
                             if i >= data.len() {
-                                return Err(RuntimeError::Panic("index out of bounds".to_string()));
+                                return Err(crate::vm::index_oob_panic(i as i64, data.len()));
                             }
                             *Arc::make_mut(data).get_unchecked_mut(i) = Value::Float(new_f);
                         }

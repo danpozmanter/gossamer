@@ -1282,12 +1282,20 @@ pub unsafe extern "C" fn gos_rt_vec_new(elem_bytes: u32) -> *mut GosVec {
 /// An inline-aggregate kind describes elements whose heap children are
 /// described by the vec's metadata carrier rather than by the tag, and the
 /// carrier is attached after the elements are in place (see
-/// [`vec_set_slot_children`]). Such a request builds the storage untagged and
-/// is not a mistake; a tag outside the set is.
+/// [`vec_set_slot_children`]); a packed-rows vec likewise gets its tag when
+/// the descriptor is installed. Such a request builds the storage untagged
+/// and is not a mistake; a tag outside the set is.
+///
+/// Every one-word owning kind - including [`vec_elem_kind::RC_ENUM`], whose
+/// elements are reference-counted node pointers - is carried straight
+/// through, so a vec built to hold owned elements is tagged for the deep
+/// free from the moment it exists.
 fn header_elem_kind(requested: u8, site: &str) -> u8 {
     match requested {
-        vec_elem_kind::AGGR_GUARDED | vec_elem_kind::AGGR_OWNED => vec_elem_kind::PRIMITIVE,
-        kind if kind <= vec_elem_kind::ERROR => kind,
+        vec_elem_kind::AGGR_GUARDED | vec_elem_kind::AGGR_OWNED | vec_elem_kind::PACKED_ROWS => {
+            vec_elem_kind::PRIMITIVE
+        }
+        kind if kind <= vec_elem_kind::ERROR || kind == vec_elem_kind::RC_ENUM => kind,
         other => {
             eprintln!("{site}: unknown elem_kind {other}; falling back to PRIMITIVE");
             vec_elem_kind::PRIMITIVE
@@ -2116,7 +2124,7 @@ fn debug_payload_string_with(payload: i64, kind: i64, fmt: *const std::ffi::c_vo
             crate::c_abi::map::render_tuple_elements(
                 &mut out,
                 slots,
-                tags,
+                crate::c_abi::map::DescStream::bare(tags),
                 arity,
                 &mut slot_cursor,
                 &mut tag_cursor,
@@ -2131,10 +2139,19 @@ fn debug_payload_string_with(payload: i64, kind: i64, fmt: *const std::ffi::c_vo
         if tags.is_null() {
             return String::new();
         }
+        let tags = unsafe { crate::c_abi::map::DescStream::new(tags) };
         let mut out = String::new();
         let mut cursor = 0usize;
         let slot = std::ptr::from_ref(&payload).cast::<u8>();
-        unsafe { crate::c_abi::map::render_desc_value(&mut out, slot, tags, &mut cursor) };
+        unsafe {
+            crate::c_abi::map::render_desc_storage(
+                &mut out,
+                slot,
+                tags,
+                &mut cursor,
+                crate::c_abi::map::Storage::ByWord,
+            );
+        }
         return out;
     }
     debug_payload_string(payload, kind)
@@ -2287,6 +2304,21 @@ pub unsafe extern "C" fn gos_rt_result_unwrap(r: i128) -> i64 {
             // ahead of its pointer, so the message is allocated through the
             // runtime's own allocator rather than as a bare `CString`.
             let cs = super::string::alloc_cstring(b"called `Result::unwrap()` on an `Err` value");
+            unsafe { gos_rt_panic(cs) };
+            return 0;
+        }
+        result_payload_of(r)
+    })
+}
+
+/// `option.unwrap()` / `option.expect(msg)`. Shares the two-word carrier with
+/// [`gos_rt_result_unwrap`] and differs only in the message the empty case
+/// panics with, which names the shape the program actually wrote.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_option_unwrap(r: i128) -> i64 {
+    ffi_entry!(-1, {
+        if result_disc_of(r) != 0 {
+            let cs = super::string::alloc_cstring(b"called `Option::unwrap()` on a `None` value");
             unsafe { gos_rt_panic(cs) };
             return 0;
         }

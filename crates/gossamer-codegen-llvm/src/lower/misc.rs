@@ -675,7 +675,12 @@ impl<'a> Lowerer<'a> {
                                     Some(tags) if arity > 0 && tags.len() > 2 => {
                                         ConcatKind::VecTuple(tags[2..].to_vec(), arity)
                                     }
-                                    _ => ConcatKind::Unsupported,
+                                    // A field needing a derived `fmt` has no
+                                    // flat tag, so the whole element renders
+                                    // through its descriptor instead.
+                                    _ => self
+                                        .value_descriptor(elem)
+                                        .map_or(ConcatKind::Unsupported, ConcatKind::VecDesc),
                                 }
                             }
                             _ => match self.adt_debug_fmt_symbol(elem) {
@@ -698,7 +703,10 @@ impl<'a> Lowerer<'a> {
                         {
                             ConcatKind::Tuple
                         } else {
-                            ConcatKind::Unsupported
+                            // A field needing a derived `fmt` renders through
+                            // the descriptor walk, which reaches one.
+                            self.value_descriptor(ty)
+                                .map_or(ConcatKind::Unsupported, ConcatKind::TupleDesc)
                         }
                     }
                     // Scalar-keyed, scalar/string-valued HashMap:
@@ -712,7 +720,9 @@ impl<'a> Lowerer<'a> {
                             Some(TyKind::Int(IntTy::U64 | IntTy::Usize))
                         );
                         if !self.map_kv_supported(*key) {
-                            ConcatKind::Unsupported
+                            // An aggregate key is stored as its slot bytes,
+                            // which the key's own descriptor renders.
+                            self.map_aggregate_value_kind(*key, *value)
                         } else if unsigned_kv && self.map_kv_supported(*value) {
                             // The plain map formatter reads every integer slot
                             // as signed; the tags carry each side's declared
@@ -990,8 +1000,13 @@ impl<'a> Lowerer<'a> {
         if bare.starts_with("adt#") {
             return None;
         }
-        let sym = format!("{bare}::fmt");
-        self.param_tys_by_name.contains_key(&sym).then_some(sym)
+        // `to_string` is the `Display` contract a user `impl` supplies and
+        // `fmt` the `Debug` one; either overrides the synthesized rendering
+        // wherever a value of this type is shown.
+        ["to_string", "fmt"]
+            .into_iter()
+            .map(|method| format!("{bare}::{method}"))
+            .find(|sym| self.param_tys_by_name.contains_key(sym))
     }
 
     /// True when `ty`'s derived `fmt` receives the address of the value's
@@ -1076,23 +1091,31 @@ impl<'a> Lowerer<'a> {
     /// Rendering plan for a map value the tag encoding cannot name: a struct
     /// or enum through its derived `fmt`, a tuple through its element tags.
     fn map_aggregate_value_kind(&self, key: Ty, value: Ty) -> ConcatKind {
-        if let Some(sym) = self.adt_debug_fmt_symbol(value) {
-            return ConcatKind::MapAdt(sym);
-        }
-        if let Some(TyKind::Tuple(nested)) = self.tcx.kind(self.unwrap_ref(value)) {
-            let arity = nested.len();
-            if let Some(tags) = self.tuple_elem_tags(value)
-                && arity > 0
-                && tags.len() > 2
-            {
-                return ConcatKind::MapTuple(tags[2..].to_vec(), arity);
+        // The value-only shortcuts render the key from a fixed scalar tag, so
+        // they only apply while the key is one of those scalars.
+        if self.map_kv_supported(key) {
+            if let Some(sym) = self.adt_debug_fmt_symbol(value) {
+                return ConcatKind::MapAdt(sym);
+            }
+            if let Some(TyKind::Tuple(nested)) = self.tcx.kind(self.unwrap_ref(value)) {
+                let arity = nested.len();
+                if let Some(tags) = self.tuple_elem_tags(value)
+                    && arity > 0
+                    && tags.len() > 2
+                {
+                    return ConcatKind::MapTuple(tags[2..].to_vec(), arity);
+                }
             }
         }
-        match (self.value_descriptor(key), self.value_descriptor(value)) {
-            (Some(mut stream), Some(val)) => {
-                let val_at = stream.len();
-                stream.extend(val);
-                ConcatKind::MapDesc(stream, val_at)
+        let mut fns = Vec::new();
+        match (
+            self.value_descriptor_into(key, &mut fns),
+            self.value_descriptor_into(value, &mut fns),
+        ) {
+            (Some(mut bytes), Some(val)) => {
+                let val_at = bytes.len();
+                bytes.extend(val);
+                ConcatKind::MapDesc(ValueDesc { bytes, fns }, val_at)
             }
             _ => ConcatKind::Unsupported,
         }
@@ -1101,7 +1124,16 @@ impl<'a> Lowerer<'a> {
     /// Recursive rendering descriptor for `ty`: the scalar tags a tuple stream
     /// already uses, plus container tags whose element descriptors follow. A
     /// shape with no descriptor - anything needing a derived `fmt` - is `None`.
-    pub(crate) fn value_descriptor(&self, ty: Ty) -> Option<Vec<u8>> {
+    pub(crate) fn value_descriptor(&self, ty: Ty) -> Option<ValueDesc> {
+        let mut fns = Vec::new();
+        let bytes = self.value_descriptor_into(ty, &mut fns)?;
+        Some(ValueDesc { bytes, fns })
+    }
+
+    /// [`Self::value_descriptor`] writing into a shared formatter table, so
+    /// descriptors that are concatenated (a map's key and value) index into
+    /// one table.
+    pub(crate) fn value_descriptor_into(&self, ty: Ty, fns: &mut Vec<String>) -> Option<Vec<u8>> {
         let ty = self.unwrap_ref(ty);
         match self.tcx.kind(ty) {
             Some(TyKind::Tuple(elems)) => {
@@ -1111,21 +1143,21 @@ impl<'a> Lowerer<'a> {
                 }
                 let mut out = vec![gossamer_abi::TUPLE_TAG_NESTED, elems.len() as u8];
                 for e in &elems {
-                    out.extend(self.value_descriptor(*e)?);
+                    out.extend(self.value_descriptor_into(*e, fns)?);
                 }
                 Some(out)
             }
             Some(TyKind::Vec(elem) | TyKind::Slice(elem)) => {
                 let elem = *elem;
                 let mut out = vec![gossamer_abi::DESC_VEC];
-                out.extend(self.value_descriptor(elem)?);
+                out.extend(self.value_descriptor_into(elem, fns)?);
                 Some(out)
             }
             Some(TyKind::HashMap { key, value, .. }) => {
                 let (key, value) = (*key, *value);
                 let mut out = vec![gossamer_abi::DESC_MAP];
-                out.extend(self.value_descriptor(key)?);
-                out.extend(self.value_descriptor(value)?);
+                out.extend(self.value_descriptor_into(key, fns)?);
+                out.extend(self.value_descriptor_into(value, fns)?);
                 Some(out)
             }
             Some(TyKind::Adt { def, substs }) if matches!(def.local, n if n == u32::MAX - 7 || n == u32::MAX - 18) =>
@@ -1153,16 +1185,36 @@ impl<'a> Lowerer<'a> {
                 } else {
                     gossamer_abi::DESC_RESULT
                 }];
-                out.extend(self.value_descriptor(*tys.first()?)?);
+                out.extend(self.value_descriptor_into(*tys.first()?, fns)?);
                 if !is_option {
-                    out.extend(self.value_descriptor(*tys.get(1)?)?);
+                    out.extend(self.value_descriptor_into(*tys.get(1)?, fns)?);
                 }
                 Some(out)
             }
             // `errors::Error` is the Err arm of nearly every fallible
             // signature, so a descriptor walk has to be able to name it.
             Some(TyKind::DynError) => Some(vec![gossamer_abi::DESC_ERROR]),
-            _ => self.tuple_elem_tag(ty).map(|tag| vec![tag]),
+            // A user struct or enum renders through the same derived `fmt`
+            // the top-level path calls, reached by index through the
+            // formatter table that travels with the descriptor.
+            _ => {
+                if let Some(tag) = self.tuple_elem_tag(ty) {
+                    return Some(vec![tag]);
+                }
+                let sym = self.adt_debug_fmt_symbol(ty)?;
+                let idx = fns.iter().position(|s| *s == sym).unwrap_or_else(|| {
+                    fns.push(sym);
+                    fns.len() - 1
+                });
+                let idx = u8::try_from(idx).ok()?;
+                let slots = crate::ty::slot_count(self.tcx, ty).unwrap_or(1).max(1);
+                Some(vec![
+                    gossamer_abi::DESC_ADT,
+                    idx,
+                    u8::from(self.adt_fmt_takes_slot_address(ty)),
+                    u8::try_from(slots).ok()?,
+                ])
+            }
         }
     }
 

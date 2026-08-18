@@ -116,6 +116,9 @@ pub(crate) struct Lowerer<'a> {
     /// Runtime function signatures we've referenced so the
     /// enclosing module can emit the matching `declare`s.
     pub(crate) runtime_refs: std::collections::BTreeSet<String>,
+    /// Line this body's call-stack frame was last moved to, so a run of
+    /// statements on one source line emits a single update.
+    pub(crate) last_frame_line: Option<u32>,
     /// `DefId.local` → function name map so `Operand::FnRef`
     /// resolves to the exported symbol. Populated by the
     /// emitter before calling [`Lowerer::lower`].
@@ -281,9 +284,12 @@ pub(super) enum ConcatKind {
     /// Map-elem Vec.
     VecMap,
     /// Vec whose elements are described by a descriptor stream.
-    VecDesc(Vec<u8>),
+    VecDesc(ValueDesc),
+    /// A tuple with a field no flat tag describes, rendered by walking the
+    /// tuple's own descriptor over its slot buffer.
+    TupleDesc(ValueDesc),
     /// Map described by one stream holding the key descriptor then the value's.
-    MapDesc(Vec<u8>, usize),
+    MapDesc(ValueDesc, usize),
     /// Tuple-elem Vec: the per-element tag bytes and the tuple's arity.
     VecTuple(Vec<u8>, usize),
     /// Map whose keys and values carry the given tuple tags (`0` for a signed
@@ -334,7 +340,7 @@ pub(super) enum ConcatKind {
     /// for `BTreeSet`, which only changes the display prefix.
     SetString(bool),
     /// Set whose aggregate elements render through a descriptor stream.
-    SetDesc(Vec<u8>, bool),
+    SetDesc(ValueDesc, bool),
     /// A container handle - `Deque` / `Queue` / `Stack` / `MaxHeap` /
     /// `MinHeap` - rendered by the named runtime shim, which owns the one
     /// text form every tier prints.
@@ -346,6 +352,17 @@ pub(super) enum ConcatKind {
     /// helper with the Ok / Err payload rendering plans.
     Result(DebugPayload, DebugPayload),
     Unsupported,
+}
+
+/// A rendering descriptor: the tag byte stream, plus the ordered table of
+/// per-type derived `fmt` symbols its `DESC_ADT` entries index into. The two
+/// travel together in one emitted global (see
+/// `Lowerer::intern_value_descriptor`), so a struct or enum nested anywhere
+/// in a shape renders through the same formatter a bare `{:?}` on it calls.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(super) struct ValueDesc {
+    pub(super) bytes: Vec<u8>,
+    pub(super) fns: Vec<String>,
 }
 
 /// How the runtime renders one `Option` / `Result` payload word.
@@ -361,7 +378,7 @@ pub(super) enum DebugPayload {
     /// stream opening with the nested marker and the tuple's arity.
     Tuple(Vec<u8>),
     /// A payload rendered through a recursive descriptor stream.
-    Desc(Vec<u8>),
+    Desc(ValueDesc),
 }
 
 impl DebugPayload {

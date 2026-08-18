@@ -133,6 +133,19 @@ const fn spec(path: &'static str) -> Spec {
 
 const SPECS: &[Spec] = &[
     // --- examples/ ---
+    spec("examples/archive_zip.gos"),
+    spec("examples/big_numbers.gos"),
+    spec("examples/collection_patterns.gos"),
+    spec("examples/compress_demo.gos"),
+    spec("examples/crypto_hashing.gos"),
+    spec("examples/derive.gos"),
+    spec("examples/edge_nan_propagation.gos"),
+    spec("examples/encoding_codecs.gos"),
+    spec("examples/generic_struct.gos"),
+    spec("examples/json_structs.gos"),
+    spec("examples/semicolon_separators.gos"),
+    spec("examples/tuples.gos"),
+    spec("examples/vec_literals.gos"),
     spec("examples/binary_search.gos"),
     spec("examples/map_hashable_keys.gos"),
     spec("examples/bubble_sort.gos"),
@@ -159,6 +172,10 @@ const SPECS: &[Spec] = &[
     // expression reaches it and whatever the closure returns. The env
     // slot is reference-counted by that type on the compiled tiers.
     spec("feature-testing-examples/closure_capture_types.gos"),
+    spec("feature-testing-examples/combinator_element_kinds.gos"),
+    spec("feature-testing-examples/debugfmt_nested_adts.gos"),
+    spec("feature-testing-examples/display_impl_dispatch.gos"),
+    spec("feature-testing-examples/jit_admission_shapes.gos"),
     spec("feature-testing-examples/unit_main_goroutine_drain.gos"),
     // Structured concurrency. Both fixtures print only after the cohort
     // they describe has finished, so their transcripts are determined

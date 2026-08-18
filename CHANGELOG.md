@@ -1,5 +1,87 @@
 # Changelog
 
+## 0.52.0 - Display as a trait, lowering gaps, combinator parity, JIT admission
+
+- Keep peak memory flat across builtin callbacks: a program whose closures run
+  from `map`, `filter`, `fold`, `for_each`, `sort_by`, or a lazy `iter()`
+  adapter no longer grows by one argument buffer per call (543 MB to 24 MB over
+  12M callbacks), and runs faster for the allocation it no longer makes.
+- Read a `bool` element correctly in a compiled combinator: `bs.map(|b| !b)`,
+  `bs.filter(|b| !b)`, and `bs.iter().filter(..).count()` answered every
+  element as `true` on native builds.
+- Collect a lazy `map` whose callback answers a tuple, which faulted on native
+  builds: `ts.iter().map(|t| (t.1, t.0)).collect()`.
+- Order `max_by_key`, `min_by_key`, and `sort_by_key` by a float element or a
+  float key, which native builds answered from raw bits or the wrong element.
+- Sort with `sort_by` over a `f64`, `char`, `u8`, or other narrow-element
+  sequence, which failed the native build outright and read past a byte-strided
+  buffer; the bytecode tier answered such a receiver unchanged.
+- Answer `bits::count_ones`, `count_zeros`, `leading_zeros`, `trailing_zeros`,
+  and `len` from an `x as u64` operand on the bytecode tier, where they read 0.
+- Drop the spurious `unknown elem_kind 8` warning when a native build filters a
+  sequence of payload-bearing enum values, and tag the result for its deep free.
+- Render `{:?}` of a struct or enum nested inside a container, tuple, `Option`,
+  or `Result` on every tier: `Vec<Vec<T>>`, `Vec<Option<T>>`, `Vec<(i64, T)>`,
+  `(T, i64)`, and a `Map` keyed by a tuple, struct, or enum all failed the
+  native build with an internal lowering bug and silently de-JITed.
+- Build a map with an aggregate key from a literal or `Map::from([..])`, which
+  only the bytecode tier accepted.
+- Type a `json::Value` method call the way the matching free function types:
+  `let n: i64 = v.get("a")` passed `gos check` and then answered `None` at
+  every use.
+- Report the same panic text on every tier: `Option::unwrap()` on `None` said
+  `Result::unwrap()` on a native build, and an out-of-range index named neither
+  the length nor the index on the bytecode tier.
+- Name the source position of a panic in a `gos build` binary, which reported
+  only `at gos_main`.
+- Collapse a repeated frame in a stack-overflow report to one line with a
+  count, taking a runaway recursion's trace from 3972 lines to 4.
+- Check the in-process JIT's lowered code against the same invariants a native
+  build is checked against, so malformed input refuses the promotion instead of
+  reaching the code generator.
+- Override a value's rendering with `impl Display for T { fn to_string(&self)
+  -> String }`, which the documentation promised and no tier honoured: it now
+  applies to `{}`, `format!`, `println!`, `to_string()`, `join(sep)`, and a
+  `Vec`, `Map`, tuple, `Option`, or struct field holding the type, identically
+  on all three tiers. `impl Debug for T { fn fmt }` overrides `{:?}` the same
+  way, and `gos doc`, `%i`, and hover name the method each requires.
+- Answer the same text on every tier for a type that declares its own
+  `to_string` or `fmt`: an inherent `fmt` rendered only on native builds and an
+  inherent `to_string` only on the bytecode tier.
+- Report `GT0070` for an `impl` header naming a trait nothing declares, which
+  checked clean and quietly produced inherent methods under a misleading header.
+- Report `GT0071` for a trait written where a type belongs, such as
+  `fn width(x: Display)`, which typed as an unconstrained variable.
+- Name a trait as a trait in `%i`, where an implemented one was listed as a
+  type and a bare `Display` reached nothing at all.
+- Compile a function that builds, matches, or `?`s an `errors::Error`: such a
+  body kept its whole call chain on the bytecode tier, which is 717 of the
+  ~1500 refusals in the parity corpus. `Result<i64 | f64 | bool | char,
+  errors::Error>` also crosses the boundary now.
+- Print every link of a wrapped error's cause chain from a compiled body,
+  where `{}` showed only the top message.
+- Report a fault the same way on every tier: the text of a stack overflow, an
+  arithmetic overflow, and a `swap` bounds failure each differed, a compiled
+  report printed a blank line after its message and landed ahead of the
+  program's own output, and a native stack overflow printed an address that
+  changed between runs.
+- Show the call stack that reached a fault raised inside JIT-compiled code.
+- Compile a function that holds a closure or a lazy iterator, which kept every
+  `map` / `filter` / `fold` / `sort_by` body and its callers interpreted: a
+  combinator loop over 100 elements runs 26x faster.
+- Compile a function taking a `&Vec<String>`, returning a `Vec<String>`, or
+  returning an `Option<i64 | f64 | bool | char>`, each of which kept its whole
+  call chain interpreted.
+- Compile a string-builder loop, which was refused outright; the accumulation
+  is linear and runs 4x faster than the bytecode tier.
+- Keep every byte of a multibyte string returned from compiled code, which lost
+  its tail: the boundary read a character count as a byte length.
+- Compile `xs.map(|x| ...)` over a scalar sequence as the traversal itself when
+  the closure captures nothing, rather than an environment and an indirect call
+  into a runtime helper.
+- Drop reference-counting calls on a value just set to null, which every such
+  call already ignored.
+
 ## 0.51.4 - Reference parameters, Display, and exact REPL lookup
 
 - Render any value `{}` renders from `x.to_string()`: a struct, an enum, a

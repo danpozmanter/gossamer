@@ -2667,6 +2667,9 @@ impl fmt::Debug for Channel {
 pub trait NativeDispatch {
     /// Invokes a top-level function by name with the given arguments.
     fn call_fn(&mut self, name: &str, args: Vec<Value>) -> RuntimeResult<Value>;
+    /// Whether a top-level function of this name exists, so a builtin can
+    /// choose a dispatch without provoking a missing-name error.
+    fn has_fn(&self, name: &str) -> bool;
     /// Invokes an arbitrary callable [`Value`]: builtin, native, or
     /// closure. Used by higher-order native builtins (e.g.
     /// `Option::map`) that receive a Gossamer closure as an argument.
@@ -3663,7 +3666,9 @@ pub enum RuntimeError {
     #[error("error[GX0007]: interpreter does not yet support {0}")]
     Unsupported(&'static str),
     /// Goroutine call depth exceeded the VM limit.
-    #[error("error[GX0008]: stack overflow - call depth exceeded {0} frames")]
+    #[error(
+        "error[GX0008]: stack overflow - recursion exceeded the available stack (call depth {0})"
+    )]
     StackOverflow(usize),
     /// Execution budget exhausted (the playground caps loop iterations so an
     /// unbounded loop fails cleanly instead of hanging). Only exists under the

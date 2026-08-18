@@ -395,9 +395,13 @@ pub(crate) fn builtin_math_dim(args: &[Value]) -> RuntimeResult<Value> {
 // ----------------------------------------------------------------------
 // math::bits
 
+/// The bit pattern of an integer argument. `x as u64` produces a
+/// [`Value::Uint`], which carries the same 64 bits an [`Value::Int`] would,
+/// so both spell the operand a bit intrinsic acts on.
 pub(crate) fn arg_u64(args: &[Value], idx: usize) -> u64 {
     match args.get(idx) {
         Some(Value::Int(n)) => *n as u64,
+        Some(Value::Uint(n)) => *n,
         _ => 0,
     }
 }

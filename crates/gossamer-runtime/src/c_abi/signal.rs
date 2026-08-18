@@ -267,23 +267,111 @@ pub unsafe extern "C" fn gos_rt_arr_reverse(p: *mut u8, len: i64, elem_bytes: i6
     });
 }
 
-/// Sorts a `Vec<i64>` (heap `GosVec`) in place using the closure
+/// Sorts a word-element `Vec` (heap `GosVec`) in place using the closure
 /// callback at `env`. Mirrors [`gos_rt_arr_sort_by_i64`] for the
-/// growable-vec receiver shape.
+/// growable-vec receiver shape. Elements move through the header's own
+/// `elem_bytes`, so a byte-strided `bool` or `u8` sequence sorts within its
+/// own storage.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_sort_by_i64(v: *mut GosVec, env: *const u8) {
     ffi_entry!((), {
-        if v.is_null() || env.is_null() {
+        let Some(mut elems) = (unsafe { sortable_elems(v, env) }) else {
             return;
-        }
-        let vec = unsafe { &mut *v };
-        if vec.len <= 0 || vec.ptr.is_null() {
+        };
+        let Some(cmp_addr) = (unsafe { sort_cmp_addr(env) }) else {
             return;
-        }
-        unsafe {
-            gos_rt_arr_sort_by_i64(vec.ptr.cast::<i64>(), vec.len, env);
-        }
+        };
+        // SAFETY: the address is the closure body the sort lowering stored,
+        // whose comparator shape `fn_registry::verify` has just confirmed.
+        let cmp: WordCmpFn = unsafe { std::mem::transmute(cmp_addr) };
+        elems.sort_by(|a, b| unsafe { cmp(env, *a, *b) }.cmp(&0));
+        unsafe { store_elems(v, &elems) };
     });
+}
+
+/// Sorts an `f64`-element `Vec` in place. The comparator takes its two
+/// elements in SSE registers, which an integer-shaped signature never fills.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_sort_by_f64(v: *mut GosVec, env: *const u8) {
+    ffi_entry!((), {
+        let Some(mut elems) = (unsafe { sortable_elems(v, env) }) else {
+            return;
+        };
+        let Some(cmp_addr) = (unsafe { sort_cmp_addr(env) }) else {
+            return;
+        };
+        // SAFETY: as in `gos_rt_vec_sort_by_i64`, for the float comparator.
+        let cmp: FloatCmpFn = unsafe { std::mem::transmute(cmp_addr) };
+        elems.sort_by(|a, b| {
+            let (a, b) = (f64::from_bits(*a as u64), f64::from_bits(*b as u64));
+            unsafe { cmp(env, a, b) }.cmp(&0)
+        });
+        unsafe { store_elems(v, &elems) };
+    });
+}
+
+/// Sorts a fixed `f64` array in place, the array counterpart of
+/// [`gos_rt_vec_sort_by_f64`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_arr_sort_by_f64(p: *mut f64, len: i64, env: *const u8) {
+    ffi_entry!((), {
+        if p.is_null() || len <= 0 {
+            return;
+        }
+        let Some(cmp_addr) = (unsafe { sort_cmp_addr(env) }) else {
+            return;
+        };
+        let buf = unsafe { std::slice::from_raw_parts_mut(p, len as usize) };
+        // SAFETY: as in `gos_rt_vec_sort_by_f64`.
+        let cmp: FloatCmpFn = unsafe { std::mem::transmute(cmp_addr) };
+        buf.sort_by(|a, b| unsafe { cmp(env, *a, *b) }.cmp(&0));
+    });
+}
+
+type WordCmpFn = unsafe extern "C" fn(env: *const u8, a: i64, b: i64) -> i64;
+type FloatCmpFn = unsafe extern "C" fn(env: *const u8, a: f64, b: f64) -> i64;
+
+/// The comparator body address stored at `env[0]`, or `None` when there is
+/// no callable to run.
+unsafe fn sort_cmp_addr(env: *const u8) -> Option<*const ()> {
+    if env.is_null() {
+        return None;
+    }
+    // SAFETY: `env` is a live closure blob whose first word is the callable
+    // address (the layout Cranelift and LLVM both build).
+    let raw = unsafe { (env as *const usize).read() };
+    if raw == 0 {
+        return None;
+    }
+    super::fn_registry::verify(raw, super::fn_registry::FnKind::SortCmp);
+    Some(std::ptr::with_exposed_provenance(raw))
+}
+
+/// Every element of `v` as a slot word, or `None` when there is nothing to
+/// sort.
+unsafe fn sortable_elems(v: *const GosVec, env: *const u8) -> Option<Vec<i64>> {
+    if v.is_null() || env.is_null() {
+        return None;
+    }
+    // SAFETY: caller supplies a live header.
+    let vec = unsafe { &*v };
+    if vec.len <= 0 || vec.ptr.is_null() {
+        return None;
+    }
+    Some(
+        (0..vec.len)
+            .map(|i| unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, i) })
+            .collect(),
+    )
+}
+
+/// Writes `elems` back over `v`'s storage at the header's own stride.
+unsafe fn store_elems(v: *mut GosVec, elems: &[i64]) {
+    // SAFETY: caller supplies a live header whose length `elems` came from.
+    let vec = unsafe { &mut *v };
+    for (i, &value) in elems.iter().enumerate() {
+        unsafe { crate::c_abi::vec::vec_elem_store_i64(vec, i as i64, value) };
+    }
 }
 
 /// Sorts a `Vec<i64>` (heap `GosVec`) in ascending order in place.

@@ -1001,7 +1001,7 @@ impl<'a> TypeChecker<'a> {
             method_homes: HashMap::new(),
             current_module: Vec::new(),
             trait_own_methods: HashMap::new(),
-            trait_required_methods: HashMap::new(),
+            trait_required_methods: builtin_trait_required_methods(),
             trait_supertraits: HashMap::new(),
             pipe_stage_callees: std::collections::HashSet::new(),
             pipe_stage_arg_tys: HashMap::new(),
@@ -1376,6 +1376,26 @@ impl<'a> TypeChecker<'a> {
         else {
             return;
         };
+        let self_ty = match &decl.self_ty.kind {
+            gossamer_ast::ty::TypeKind::Path(path) => path
+                .segments
+                .last()
+                .map_or_else(|| "this type".to_string(), |s| s.name.name.clone()),
+            _ => "this type".to_string(),
+        };
+        // A header naming a trait nothing declares promises a contract that
+        // cannot be checked, so the block's methods would silently become
+        // inherent ones - which is how a misspelled name compiles clean.
+        if !self.trait_own_methods.contains_key(&trait_name) && !known_builtin_trait(&trait_name) {
+            self.emit(
+                TypeError::UnknownImplTrait {
+                    name: trait_name,
+                    ty: self_ty,
+                },
+                span,
+            );
+            return;
+        }
         let Some(required) = self.trait_required_methods.get(&trait_name).cloned() else {
             return;
         };
@@ -1394,17 +1414,10 @@ impl<'a> TypeChecker<'a> {
         if missing.is_empty() {
             return;
         }
-        let ty = match &decl.self_ty.kind {
-            gossamer_ast::ty::TypeKind::Path(path) => path
-                .segments
-                .last()
-                .map_or_else(|| "this type".to_string(), |s| s.name.name.clone()),
-            _ => "this type".to_string(),
-        };
         self.emit(
             TypeError::MissingTraitImplMethods {
                 trait_name,
-                ty,
+                ty: self_ty,
                 missing,
             },
             span,
@@ -6930,6 +6943,44 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Return type of a method call on a `json::Value` receiver, which is
+    /// the free function of the same name with the receiver as its first
+    /// argument. `None` leaves the call to the later dispatch arms.
+    fn json_value_method_ret(&mut self, method: &str, arg_count: usize) -> Option<Ty> {
+        let ty = match (method, arg_count) {
+            ("at", 1) | ("set", 2) => self.tcx.json_value_ty(),
+            ("get", 1) => {
+                let j = self.tcx.json_value_ty();
+                self.option_adt_ty(j)
+            }
+            ("len", 0) => self.tcx.int_ty(IntTy::I64),
+            ("is_null", 0) => self.tcx.bool_ty(),
+            ("as_i64", 0) => {
+                let i = self.tcx.int_ty(IntTy::I64);
+                self.option_adt_ty(i)
+            }
+            ("as_f64", 0) => {
+                let f = self.tcx.float_ty(FloatTy::F64);
+                self.option_adt_ty(f)
+            }
+            ("as_str", 0) => {
+                let s = self.tcx.string_ty();
+                self.option_adt_ty(s)
+            }
+            ("as_bool", 0) => {
+                let b = self.tcx.bool_ty();
+                self.option_adt_ty(b)
+            }
+            ("as_array", 0) => {
+                let j = self.tcx.json_value_ty();
+                let arr = self.tcx.intern(TyKind::Vec(j));
+                self.option_adt_ty(arr)
+            }
+            _ => return None,
+        };
+        Some(ty)
+    }
+
     /// Types the parser-injected format intrinsics and the bare
     /// variant constructors. The resolver doesn't hand `Some` / `Ok` /
     /// `Err` / `None` a `DefId`, so the call expression typechecks as
@@ -8203,15 +8254,16 @@ impl<'a> TypeChecker<'a> {
         if let Some(ty) = self.net_handle_method_ret(method, resolved) {
             return ty;
         }
-        // `v.set(k, val)` on a `json::Value` returns the updated value;
-        // a fresh var here would strip the JsonValue tag and leave a
-        // chained `.set(..).set(..)` receiver untagged, so the compiled
-        // tiers could not route the next call to the json helper.
+        // A `json::Value` answers the same surface in method form that
+        // `json::` does as free functions, so it is typed from the same
+        // table. Falling through to a fresh variable would strip the
+        // JsonValue tag - leaving a chained `.set(..).set(..)` receiver
+        // untagged for the compiled tiers - and would let a document read
+        // bind to any annotation the caller wrote.
         if matches!(self.tcx.kind(resolved), Some(TyKind::JsonValue))
-            && method == "set"
-            && arg_count == 2
+            && let Some(ty) = self.json_value_method_ret(method, arg_count)
         {
-            return self.tcx.json_value_ty();
+            return ty;
         }
         if method != "clone"
             && self.reject_unknown_sequence_method(resolved, method, arg_count, receiver.span)
@@ -14468,6 +14520,22 @@ impl<'a> TypeChecker<'a> {
         if path_matches_dyn_error(path) {
             return self.tcx.dyn_error_ty();
         }
+        // A trait names behaviour, not a value's type. Gossamer has no `dyn`,
+        // so a bare trait in type position has no runtime shape to stand for
+        // and would otherwise settle as an unconstrained variable that
+        // accepts anything.
+        if let Some(last) = path.segments.last()
+            && (STDLIB_TRAIT_NAMES.contains(&last.name.name.as_str())
+                || self.trait_own_methods.contains_key(&last.name.name))
+        {
+            self.emit(
+                TypeError::TraitInTypePosition {
+                    name: last.name.name.clone(),
+                },
+                span,
+            );
+            return self.tcx.error_ty();
+        }
         if let Some(resolution) = self.resolutions.get(node) {
             match resolution {
                 Resolution::Primitive(prim) => return self.type_from_primitive(prim),
@@ -16153,7 +16221,15 @@ fn derive_rejection_hint(name: &str) -> String {
         "Copy" => {
             "values are managed automatically; there is no Copy / move distinction".to_string()
         }
-        "Display" => "use `Debug`; `{}` and `{:?}` share one synthesized `fmt`".to_string(),
+        "Display" | "Debug" => format!(
+            "the rendering is synthesized; write `impl {name} for T` with \
+             `fn {method}(&self) -> String` to override it",
+            method = if name == "Display" {
+                "to_string"
+            } else {
+                "fmt"
+            }
+        ),
         "Serialize" | "Deserialize" => {
             "serialization is automatic - call `to_json::<T>` / `from_json::<T>`".to_string()
         }
@@ -17391,58 +17467,90 @@ fn builtin_trait_needs_impl(name: &str) -> bool {
     )
 }
 
-fn known_builtin_trait(name: &str) -> bool {
-    matches!(
-        name,
-        "Iterator"
-            | "IntoIterator"
-            | "FromIterator"
-            | "Fn"
-            | "FnMut"
-            | "FnOnce"
-            | "Clone"
-            | "Copy"
-            | "Debug"
-            | "Display"
-            | "Default"
-            | "Hash"
-            | "Hashable"
-            | "PartialEq"
-            | "Eq"
-            | "PartialOrd"
-            | "Ord"
-            | "Sized"
-            | "Send"
-            | "Sync"
-            | "Drop"
-            | "From"
-            | "Into"
-            | "TryFrom"
-            | "TryInto"
-            | "Add"
-            | "Sub"
-            | "Mul"
-            | "Div"
-            | "Rem"
-            | "Neg"
-            | "Not"
-            | "BitAnd"
-            | "BitOr"
-            | "BitXor"
-            | "Shl"
-            | "Shr"
-            | "Index"
-            | "IndexMut"
-            | "AsRef"
-            | "AsMut"
-            | "Read"
-            | "Write"
-            | "Error"
-            | "Future"
-            | "Serialize"
-            | "Deserialize"
-    )
+/// Methods a built-in trait requires an `impl` block to supply. `Display`
+/// and `Debug` name the rendering a value shows through `{}` and `{:?}`; a
+/// type that implements one overrides the synthesized form with that method.
+fn builtin_trait_required_methods() -> HashMap<String, Vec<String>> {
+    HashMap::from([
+        ("Display".to_string(), vec!["to_string".to_string()]),
+        ("Debug".to_string(), vec!["fmt".to_string()]),
+    ])
 }
+
+/// Every trait name an `impl` header may legitimately name: the language's
+/// own built-ins plus the traits the standard library declares.
+fn known_builtin_trait(name: &str) -> bool {
+    STDLIB_TRAIT_NAMES.contains(&name)
+        || matches!(
+            name,
+            "Iterator"
+                | "IntoIterator"
+                | "FromIterator"
+                | "Fn"
+                | "FnMut"
+                | "FnOnce"
+                | "Clone"
+                | "Copy"
+                | "Debug"
+                | "Display"
+                | "Default"
+                | "Hash"
+                | "Hashable"
+                | "PartialEq"
+                | "Eq"
+                | "PartialOrd"
+                | "Ord"
+                | "Sized"
+                | "Send"
+                | "Sync"
+                | "Drop"
+                | "From"
+                | "Into"
+                | "TryFrom"
+                | "TryInto"
+                | "Add"
+                | "Sub"
+                | "Mul"
+                | "Div"
+                | "Rem"
+                | "Neg"
+                | "Not"
+                | "BitAnd"
+                | "BitOr"
+                | "BitXor"
+                | "Shl"
+                | "Shr"
+                | "Index"
+                | "IndexMut"
+                | "AsRef"
+                | "AsMut"
+                | "Read"
+                | "Write"
+                | "Error"
+                | "Future"
+                | "Serialize"
+                | "Deserialize"
+        )
+}
+
+/// Traits the standard library declares, which user code implements the same
+/// way it implements a trait of its own. Kept in step with the manifest by
+/// `stdlib_export_drift`.
+pub const STDLIB_TRAIT_NAMES: &[&str] = &[
+    "Debug",
+    "Deserialize",
+    "Display",
+    "Driver",
+    "Handler",
+    "Http2Handler",
+    "Http2StreamingHandler",
+    "Probe",
+    "Reader",
+    "Serialize",
+    "SessionStore",
+    "Validate",
+    "Writer",
+];
 
 /// Collects the argument-path node of every `archive::{tar,zip}::write`
 /// call in a function body so the checker can re-type a `let`-bound

@@ -207,6 +207,7 @@ impl<'a> Lowerer<'a> {
             self.emit_cleanup_call(entry);
         }
         for stmt in &block.stmts {
+            self.emit_stack_frame_line(stmt.span.start);
             self.lower_stmt(stmt)?;
         }
         for entry in cleanup.at_block_exit(block.id) {
@@ -518,6 +519,9 @@ impl<'a> Lowerer<'a> {
     pub(crate) fn lower_terminator(&mut self, term: &Terminator) -> Result<(), BuildError> {
         match term {
             Terminator::Return => {
+                // The frame this body pushed on entry leaves the panic
+                // report's call stack on every return path.
+                self.emit_stack_frame_pop();
                 // Emit cleanup calls for owning heap-typed locals before
                 // the actual `ret`. Mirrors the Cranelift Return path -
                 // see `gossamer_mir::plan_cleanup` for the analysis.

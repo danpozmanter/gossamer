@@ -416,6 +416,25 @@ pub enum TypeError {
         /// Trait name as written.
         name: String,
     },
+    /// A trait name was written where a type belongs. A trait names
+    /// behaviour a type supplies, and Gossamer has no `dyn`, so there is no
+    /// value whose type it is.
+    #[error("`{name}` is a trait, not a type")]
+    TraitInTypePosition {
+        /// Trait name as written.
+        name: String,
+    },
+    /// An `impl` header names a trait no declaration and no built-in
+    /// provides. Nothing checks the block's contents against a contract that
+    /// does not exist, so a misspelled trait name would otherwise compile to
+    /// a set of inherent methods nobody calls.
+    #[error("unknown trait `{name}` in `impl {name} for {ty}`")]
+    UnknownImplTrait {
+        /// Trait name as written in the header.
+        name: String,
+        /// Type the block implements it for.
+        ty: String,
+    },
     /// A generic call instantiates a type parameter with a concrete type
     /// that does not implement a required trait bound.
     #[error("the trait bound `{ty}: {bound}` is not satisfied")]
@@ -852,6 +871,8 @@ impl TypeError {
             Self::IntLiteralOverflow { .. } => "int-literal-overflow",
             Self::InvalidEscape { .. } => "invalid-escape",
             Self::UnknownTraitBound { .. } => "unknown-trait-bound",
+            Self::UnknownImplTrait { .. } => "unknown-impl-trait",
+            Self::TraitInTypePosition { .. } => "trait-in-type-position",
             Self::TraitBoundNotSatisfied { .. } => "trait-bound-not-satisfied",
             Self::MethodNotOnBound { .. } => "method-not-on-bound",
             Self::OperatorNotOnBound { .. } => "operator-not-on-bound",
@@ -940,6 +961,8 @@ impl TypeError {
             Self::IntLiteralOverflow { .. } => "GT0009",
             Self::InvalidEscape { .. } => "GT0010",
             Self::UnknownTraitBound { .. } => "GT0011",
+            Self::UnknownImplTrait { .. } => "GT0070",
+            Self::TraitInTypePosition { .. } => "GT0071",
             Self::TooManyVariants { .. } => "GT0012",
             Self::ClosureParamUninferred { .. } => "GT0013",
             Self::GenericReturnTypeUninferred { .. } => "GT0044",
@@ -1511,6 +1534,25 @@ impl TypeDiagnostic {
                         "trait `{name}` is not declared anywhere; bound on `{param}` cannot be enforced",
                     ))
                     .with_note("check for a typo or import the trait into scope");
+            }
+            TypeError::TraitInTypePosition { name } => {
+                out = out
+                    .with_help(format!(
+                        "a parameter takes a type; bound a generic by the trait instead, \
+                         as in `fn f<T: {name}>(value: T)`"
+                    ))
+                    .with_note("there is no `dyn`, so a trait has no value shape of its own");
+            }
+            TypeError::UnknownImplTrait { name, ty } => {
+                out = out
+                    .with_help(format!(
+                        "nothing declares `{name}`, so the block's methods are inherent \
+                         methods on `{ty}` under a header that promises a contract"
+                    ))
+                    .with_note(
+                        "declare the trait, fix the spelling, or write `impl <type>` \
+                         with no trait name",
+                    );
             }
             // The title names the combinator and spells the annotation to
             // write, so a help line here would only restate it.

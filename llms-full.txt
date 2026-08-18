@@ -138,7 +138,12 @@ Write clear, low-complexity, concise code.
   every nesting of them answer the same text `format!("{}", x)` builds; a
   handle, a closure, a channel, and a `JoinHandle` have no rendering and
   report GT0062. `#[derive(Display)]` is not written - the rendering is
-  synthesized, and an `impl Display for T` of your own overrides it.
+  synthesized, and `impl Display for T { fn to_string(&self) -> String }`
+  overrides it everywhere a value of that type is shown, including inside a
+  `Vec`, `Map`, tuple, `Option`, or struct field. `impl Debug for T { fn fmt }`
+  is the same override for `{:?}`. A trait names behaviour, never a value's
+  type: `fn f(x: Display)` reports GT0071, and an `impl` header naming a trait
+  nothing declares reports GT0070.
 - **A collection traverses eagerly; `iter()` makes it lazy.** `xs.map(f)`
   on a `Vec`, array, or slice walks the values it already holds and
   answers a `Vec`. `xs.iter()` answers an `Iterator`, for when you do not
@@ -150,12 +155,13 @@ Write clear, low-complexity, concise code.
   with `iter()` (a cursor, over pairs read under the map's lock);
   `m.iter().collect()` materialises them. Adapters
   (`map`, `filter`, `take`, `skip`, `step_by`, `enumerate`, `rev`,
-  `zip`, `chain`, `flat_map`, ...) answer another iterator and stay
+  `zip`, `chain`, ...) answer another iterator and stay
   lazy; terminals (`collect`, `sum`, `count`, `min`/`max`, `fold`,
   `any`/`all`, `find`/`position`, `max_by_key`, `join`) end the chain
   and hand back a value. An iterator is single-use (GT0042) - bind a
   fresh `.iter()` per pipeline. Data-last `iter::` free forms take an
-  iterator too, for `|>` pipelines. `xs.join(sep)` Display-joins any
+  iterator too, for `|>` pipelines, and a few operations exist only in that
+  form - `iter::flat_map(f, xs)` has no method spelling. `xs.join(sep)` Display-joins any
   sequence whose element `{}` renders, without a traversal.
 - **A `Set` has no element order, so its traversal is the iterator's.**
   The set itself answers membership and cardinality (`insert`, `remove`,
@@ -426,10 +432,11 @@ fn load(path: &String) -> Result<String, errors::Error> {
 Panics are goroutine-scoped: a spawned goroutine's panic ends only
 that goroutine; a main-goroutine panic is fatal (exit 101). Integer
 divide/modulo by zero panics (GX0005); `i64::MIN / -1` wraps. Deep
-recursion raises `GX0008` and exits 101 on every tier: the bytecode VM
-refuses the call and prints the call stack, while JIT-compiled and
-native frames reach the installed stack guard, which names the faulting
-address. Neither corrupts memory.
+recursion raises `GX0008` and exits 101 on every tier, with the same message.
+The depth differs by tier because the limit does: the bytecode VM refuses the
+call at 4096 frames (65536 on the tail-call path) and prints its call stack
+with repeated frames collapsed, while JIT-compiled and native frames run until
+the installed stack guard trips on the real OS stack. Neither corrupts memory.
 
 ## 9. Concurrency
 

@@ -21,6 +21,14 @@ use super::{
 
 type MapFn = unsafe extern "C" fn(env: *const u8, x: i64) -> i64;
 type PtrMapFn = unsafe extern "C" fn(env: *const u8, x: *const u8) -> i64;
+/// The four key-callback shapes a `*_by_key` combinator reaches, one per
+/// (element register class, key register class) pair that is not `MapFn` or
+/// `PtrMapFn`. A float rides an SSE register in either position, so the
+/// callback must be called through the shape it was compiled with.
+type WordF64KeyFn = unsafe extern "C" fn(env: *const u8, x: i64) -> f64;
+type FloatWordKeyFn = unsafe extern "C" fn(env: *const u8, x: f64) -> i64;
+type FloatF64KeyFn = unsafe extern "C" fn(env: *const u8, x: f64) -> f64;
+type PtrF64KeyFn = unsafe extern "C" fn(env: *const u8, x: *const u8) -> f64;
 type PredFn = unsafe extern "C" fn(env: *const u8, x: i64) -> bool;
 type EnumFn = unsafe extern "C" fn(env: *const u8, x: i64) -> i128;
 type ThunkEnumFn = unsafe extern "C" fn(env: *const u8) -> i128;
@@ -624,26 +632,56 @@ pub unsafe extern "C" fn gos_rt_iter_sorted_by_i64(
     })
 }
 
-/// `iter::sort_by_key(key, xs)` - fresh Vec sorted by `key(x)`.
+/// `iter::sort_by_key(key, xs)` - fresh Vec sorted by `key(x)`, over
+/// integer-register elements.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_sorted_by_key_i64(
     env: *const u8,
     v: *const GosVec,
+    key_is_f64: i64,
 ) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
-        let Some(addr) = env_fn_addr(env) else {
-            return vec_from(&vec_elems(v));
-        };
-        // SAFETY: addr is the callable stored by the closure lowering.
-        let f: MapFn = unsafe { std::mem::transmute(addr) };
-        let mut keyed: Vec<(i64, i64)> = vec_elems(v)
-            .into_iter()
-            .map(|x| (unsafe { f(env, x) }, x))
-            .collect();
-        keyed.sort_by_key(|&(k, _)| k);
-        let out: Vec<i64> = keyed.into_iter().map(|(_, x)| x).collect();
-        vec_from(&out)
+        sorted_by_key(env, v, key_is_f64 != 0, false)
     })
+}
+
+/// `iter::sort_by_key(key, xs)` over `f64` elements, whose slots carry the
+/// value's bits and whose callback takes an SSE register.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_sorted_by_key_f64(
+    env: *const u8,
+    v: *const GosVec,
+    key_is_f64: i64,
+) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        sorted_by_key(env, v, key_is_f64 != 0, true)
+    })
+}
+
+fn sorted_by_key(
+    env: *const u8,
+    v: *const GosVec,
+    key_is_f64: bool,
+    elem_is_f64: bool,
+) -> *mut GosVec {
+    let elems = vec_elems(v);
+    let Some(addr) = env_fn_addr(env) else {
+        return vec_from(&elems);
+    };
+    let mut keyed: Vec<(SortKey, i64)> = elems
+        .into_iter()
+        .map(|x| {
+            let key = if elem_is_f64 {
+                unsafe { key_of_float(env, addr, x, key_is_f64) }
+            } else {
+                unsafe { key_of_word(env, addr, x, key_is_f64) }
+            };
+            (key, x)
+        })
+        .collect();
+    keyed.sort_by(|(a, _), (b, _)| a.order(*b));
+    let out: Vec<i64> = keyed.into_iter().map(|(_, x)| x).collect();
+    vec_from(&out)
 }
 
 /// `iter::min_by(cmp, xs) -> Option<T>` - first minimal element wins
@@ -694,31 +732,144 @@ pub unsafe extern "C" fn gos_rt_iter_max_by_i64(env: *const u8, v: *const GosVec
     })
 }
 
-/// `iter::min_by_key(key, xs) -> Option<T>`.
+/// `iter::min_by_key(key, xs) -> Option<T>` over integer-register elements.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_iter_min_by_key_i64(env: *const u8, v: *const GosVec) -> i128 {
-    ffi_entry!(NONE, { min_max_by_key(env, v, false) })
+pub unsafe extern "C" fn gos_rt_iter_min_by_key_i64(
+    env: *const u8,
+    v: *const GosVec,
+    key_is_f64: i64,
+) -> i128 {
+    ffi_entry!(NONE, {
+        min_max_by_key_word(env, v, false, key_is_f64 != 0)
+    })
+}
+
+/// `iter::min_by_key(key, xs) -> Option<T>` over `f64` elements.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_min_by_key_f64(
+    env: *const u8,
+    v: *const GosVec,
+    key_is_f64: i64,
+) -> i128 {
+    ffi_entry!(NONE, {
+        min_max_by_key_float(env, v, false, key_is_f64 != 0)
+    })
 }
 
 /// `iter::min_by_key(key, xs) -> Option<T>` for aggregate elements.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_iter_min_by_key_ptr(env: *const u8, v: *const GosVec) -> i128 {
-    ffi_entry!(NONE, { min_max_by_key_ptr(env, v, false) })
+pub unsafe extern "C" fn gos_rt_iter_min_by_key_ptr(
+    env: *const u8,
+    v: *const GosVec,
+    key_is_f64: i64,
+) -> i128 {
+    ffi_entry!(NONE, { min_max_by_key_ptr(env, v, false, key_is_f64 != 0) })
 }
 
-/// `iter::max_by_key(key, xs) -> Option<T>`.
+/// `iter::max_by_key(key, xs) -> Option<T>` over integer-register elements.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_iter_max_by_key_i64(env: *const u8, v: *const GosVec) -> i128 {
-    ffi_entry!(NONE, { min_max_by_key(env, v, true) })
+pub unsafe extern "C" fn gos_rt_iter_max_by_key_i64(
+    env: *const u8,
+    v: *const GosVec,
+    key_is_f64: i64,
+) -> i128 {
+    ffi_entry!(NONE, { min_max_by_key_word(env, v, true, key_is_f64 != 0) })
+}
+
+/// `iter::max_by_key(key, xs) -> Option<T>` over `f64` elements.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_max_by_key_f64(
+    env: *const u8,
+    v: *const GosVec,
+    key_is_f64: i64,
+) -> i128 {
+    ffi_entry!(NONE, {
+        min_max_by_key_float(env, v, true, key_is_f64 != 0)
+    })
 }
 
 /// `iter::max_by_key(key, xs) -> Option<T>` for aggregate elements.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_iter_max_by_key_ptr(env: *const u8, v: *const GosVec) -> i128 {
-    ffi_entry!(NONE, { min_max_by_key_ptr(env, v, true) })
+pub unsafe extern "C" fn gos_rt_iter_max_by_key_ptr(
+    env: *const u8,
+    v: *const GosVec,
+    key_is_f64: i64,
+) -> i128 {
+    ffi_entry!(NONE, { min_max_by_key_ptr(env, v, true, key_is_f64 != 0) })
 }
 
-fn min_max_by_key(env: *const u8, v: *const GosVec, want_max: bool) -> i128 {
+/// One key a `*_by_key` combinator orders by. Which shape a call sees is
+/// fixed by the `key_is_f64` flag the lowering passes, so the two never mix
+/// within one traversal.
+#[derive(Clone, Copy)]
+enum SortKey {
+    Int(i64),
+    Float(f64),
+}
+
+impl SortKey {
+    /// Order against another key of the same shape. Float keys order by
+    /// `f64::total_cmp`, the same total order `iter::max` and `iter::min`
+    /// place a float sequence in.
+    fn order(self, other: Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (Self::Int(a), Self::Int(b)) => a.cmp(&b),
+            (Self::Float(a), Self::Float(b)) => a.total_cmp(&b),
+            _ => std::cmp::Ordering::Equal,
+        }
+    }
+
+    /// Whether this key displaces `best` for the requested extreme.
+    fn beats(self, best: Self, want_max: bool) -> bool {
+        let ord = self.order(best);
+        if want_max { ord.is_gt() } else { ord.is_lt() }
+    }
+}
+
+/// Calls the key callback for an element that rides an integer register.
+unsafe fn key_of_word(env: *const u8, addr: *const (), x: i64, key_is_f64: bool) -> SortKey {
+    if key_is_f64 {
+        // SAFETY: addr is the callable stored by the closure lowering, whose
+        // shape the flag names.
+        let f: WordF64KeyFn = unsafe { std::mem::transmute(addr) };
+        SortKey::Float(unsafe { f(env, x) })
+    } else {
+        // SAFETY: as above.
+        let f: MapFn = unsafe { std::mem::transmute(addr) };
+        SortKey::Int(unsafe { f(env, x) })
+    }
+}
+
+/// Calls the key callback for an `f64` element, which rides an SSE register.
+unsafe fn key_of_float(env: *const u8, addr: *const (), bits: i64, key_is_f64: bool) -> SortKey {
+    let x = f64::from_bits(bits as u64);
+    if key_is_f64 {
+        // SAFETY: addr is the callable stored by the closure lowering, whose
+        // shape the flag names.
+        let f: FloatF64KeyFn = unsafe { std::mem::transmute(addr) };
+        SortKey::Float(unsafe { f(env, x) })
+    } else {
+        // SAFETY: as above.
+        let f: FloatWordKeyFn = unsafe { std::mem::transmute(addr) };
+        SortKey::Int(unsafe { f(env, x) })
+    }
+}
+
+/// Calls the key callback for an aggregate element, passed by address.
+unsafe fn key_of_ptr(env: *const u8, addr: *const (), x: *const u8, key_is_f64: bool) -> SortKey {
+    if key_is_f64 {
+        // SAFETY: addr is the callable stored by the closure lowering, whose
+        // shape the flag names.
+        let f: PtrF64KeyFn = unsafe { std::mem::transmute(addr) };
+        SortKey::Float(unsafe { f(env, x) })
+    } else {
+        // SAFETY: as above.
+        let f: PtrMapFn = unsafe { std::mem::transmute(addr) };
+        SortKey::Int(unsafe { f(env, x) })
+    }
+}
+
+fn min_max_by_key_word(env: *const u8, v: *const GosVec, want_max: bool, key_is_f64: bool) -> i128 {
     let xs = vec_elems(v);
     let Some((&first, rest)) = xs.split_first() else {
         return NONE;
@@ -726,22 +877,44 @@ fn min_max_by_key(env: *const u8, v: *const GosVec, want_max: bool) -> i128 {
     let Some(addr) = env_fn_addr(env) else {
         return some_of(first);
     };
-    // SAFETY: addr is the callable stored by the closure lowering.
-    let f: MapFn = unsafe { std::mem::transmute(addr) };
     let mut best = first;
-    let mut best_key = unsafe { f(env, first) };
+    let mut best_key = unsafe { key_of_word(env, addr, first, key_is_f64) };
     for &x in rest {
-        let k = unsafe { f(env, x) };
-        let better = if want_max { k > best_key } else { k < best_key };
-        if better {
+        let key = unsafe { key_of_word(env, addr, x, key_is_f64) };
+        if key.beats(best_key, want_max) {
             best = x;
-            best_key = k;
+            best_key = key;
         }
     }
     some_of(best)
 }
 
-fn min_max_by_key_ptr(env: *const u8, v: *const GosVec, want_max: bool) -> i128 {
+fn min_max_by_key_float(
+    env: *const u8,
+    v: *const GosVec,
+    want_max: bool,
+    key_is_f64: bool,
+) -> i128 {
+    let xs = vec_elems(v);
+    let Some((&first, rest)) = xs.split_first() else {
+        return NONE;
+    };
+    let Some(addr) = env_fn_addr(env) else {
+        return some_of(first);
+    };
+    let mut best = first;
+    let mut best_key = unsafe { key_of_float(env, addr, first, key_is_f64) };
+    for &x in rest {
+        let key = unsafe { key_of_float(env, addr, x, key_is_f64) };
+        if key.beats(best_key, want_max) {
+            best = x;
+            best_key = key;
+        }
+    }
+    some_of(best)
+}
+
+fn min_max_by_key_ptr(env: *const u8, v: *const GosVec, want_max: bool, key_is_f64: bool) -> i128 {
     if v.is_null() {
         return NONE;
     }
@@ -753,19 +926,12 @@ fn min_max_by_key_ptr(env: *const u8, v: *const GosVec, want_max: bool) -> i128 
         let first = unsafe { gos_rt_vec_get_ptr(v, 0) };
         return some_of(first as usize as i64);
     };
-    // SAFETY: addr is the callable stored by the closure lowering.
-    let f: PtrMapFn = unsafe { std::mem::transmute(addr) };
     let mut best = unsafe { gos_rt_vec_get_ptr(v, 0) };
-    let mut best_key = unsafe { f(env, best) };
+    let mut best_key = unsafe { key_of_ptr(env, addr, best, key_is_f64) };
     for i in 1..len {
         let candidate = unsafe { gos_rt_vec_get_ptr(v, i) };
-        let key = unsafe { f(env, candidate) };
-        let better = if want_max {
-            key > best_key
-        } else {
-            key < best_key
-        };
-        if better {
+        let key = unsafe { key_of_ptr(env, addr, candidate, key_is_f64) };
+        if key.beats(best_key, want_max) {
             best = candidate;
             best_key = key;
         }
@@ -949,7 +1115,7 @@ mod tests {
         assert_eq!(elems(sorted), vec![1, 2, 3]);
         let map_env = env_for(double_cb as *const () as usize);
         let keyed =
-            unsafe { gos_rt_iter_sorted_by_key_i64(map_env.as_ptr().cast(), vec_from(&[3, 1, 2])) };
+            unsafe { gos_rt_iter_sorted_by_key_i64(map_env.as_ptr().cast(), vec_from(&[3, 1, 2]), 0) };
         assert_eq!(elems(keyed), vec![1, 2, 3]);
     }
 }

@@ -377,3 +377,41 @@ fn stdlib_module_paths_match_manifest() {
          missing from table: {missing:?}\n  extra in table: {extra:?}"
     );
 }
+
+/// The checker accepts an `impl` header naming a stdlib trait, and rejects
+/// one naming anything undeclared (GT0070). Its allowlist is a static table,
+/// so a trait added to or removed from the manifest must move it too - a new
+/// stdlib trait would otherwise be rejected in every program that implements
+/// it.
+#[test]
+fn checker_trait_allowlist_matches_the_std_manifest() {
+    let mut live: Vec<&str> = gossamer_std::registry::modules()
+        .iter()
+        .flat_map(|m| m.items.iter())
+        .filter(|item| matches!(item.kind, gossamer_std::registry::StdItemKind::Trait))
+        .map(|item| item.name)
+        .collect();
+    live.sort_unstable();
+    live.dedup();
+
+    let table = gossamer_types::STDLIB_TRAIT_NAMES;
+    assert!(
+        table.windows(2).all(|w| w[0] < w[1]),
+        "STDLIB_TRAIT_NAMES must be sorted"
+    );
+    let missing: Vec<&str> = live
+        .iter()
+        .filter(|n| !table.contains(n))
+        .copied()
+        .collect();
+    let extra: Vec<&str> = table
+        .iter()
+        .filter(|n| !live.contains(n))
+        .copied()
+        .collect();
+    assert!(
+        missing.is_empty() && extra.is_empty(),
+        "trait allowlist drifted from the std manifest.\n  \
+         missing from table: {missing:?}\n  extra in table: {extra:?}"
+    );
+}

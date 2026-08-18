@@ -57,6 +57,12 @@ pub const DESC_OPTION: u8 = 17;
 /// Descriptor tag for an `errors::Error`: the slot holds the error
 /// pointer, rendered as the colon-joined cause chain `{}` shows.
 pub const DESC_ERROR: u8 = 18;
+/// Descriptor tag for a user struct or enum. Three bytes follow: the index
+/// of the type's derived `fmt` in the formatter table passed alongside the
+/// descriptor, whether that `fmt` takes the address of the value's slots (a
+/// struct) rather than the slot word itself (an enum), and how many slots the
+/// value occupies where it is stored inline, as a tuple field is.
+pub const DESC_ADT: u8 = 19;
 
 pub use registry::{REGISTRY, all_llvm_declarations, lookup};
 pub use types::{AbiSig, AbiType, RuntimeEntry, Tier};

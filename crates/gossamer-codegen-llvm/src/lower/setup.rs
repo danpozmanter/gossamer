@@ -83,6 +83,7 @@ impl<'a> Lowerer<'a> {
             out: String::new(),
             next_ssa: 0,
             runtime_refs: std::collections::BTreeSet::new(),
+            last_frame_line: None,
             fn_name_by_def: std::collections::HashMap::new(),
             param_tys_by_name: std::collections::HashMap::new(),
             strings: std::rc::Rc::new(std::cell::RefCell::new(StringPool::default())),
@@ -213,6 +214,54 @@ impl<'a> Lowerer<'a> {
         )
         .unwrap();
         writeln!(self.out, "entry:").unwrap();
+        self.emit_stack_frame_push();
+    }
+
+    /// Registers this body on the runtime's call-stack so a panic report
+    /// names it with the source position the VM's report shows. Debug builds
+    /// only: the frame bookkeeping is a call per entry, per return, and per
+    /// statement, which a release build must not pay for.
+    pub(crate) fn emit_stack_frame_push(&mut self) {
+        if !crate::emit::want_stack_frames() {
+            return;
+        }
+        let Some((file, line)) = crate::emit::source_position(self.body.span.start) else {
+            return;
+        };
+        declare_rt(&mut self.runtime_refs, "gos_rt_stack_push");
+        let (name_global, _) = self.strings.borrow_mut().intern(&self.body.name);
+        let (file_global, _) = self.strings.borrow_mut().intern(&file);
+        writeln!(
+            self.out,
+            "  call void @gos_rt_stack_push(ptr {name_global}, ptr {file_global}, i32 {line})"
+        )
+        .unwrap();
+    }
+
+    /// Drops this body's call-stack frame. Emitted on every return path.
+    pub(crate) fn emit_stack_frame_pop(&mut self) {
+        if !crate::emit::want_stack_frames() {
+            return;
+        }
+        declare_rt(&mut self.runtime_refs, "gos_rt_stack_pop");
+        writeln!(self.out, "  call void @gos_rt_stack_pop()").unwrap();
+    }
+
+    /// Moves this body's frame to `span`'s line, so a panic names the
+    /// statement that raised it rather than the function's first line.
+    pub(crate) fn emit_stack_frame_line(&mut self, offset: u32) {
+        if !crate::emit::want_stack_frames() {
+            return;
+        }
+        let Some((_, line)) = crate::emit::source_position(offset) else {
+            return;
+        };
+        if self.last_frame_line == Some(line) {
+            return;
+        }
+        self.last_frame_line = Some(line);
+        declare_rt(&mut self.runtime_refs, "gos_rt_stack_set_line");
+        writeln!(self.out, "  call void @gos_rt_stack_set_line(i32 {line})").unwrap();
     }
 
     pub(crate) fn emit_allocas(&mut self) {

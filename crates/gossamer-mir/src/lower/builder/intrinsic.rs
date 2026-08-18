@@ -385,9 +385,15 @@ impl<'a> Builder<'a> {
             TyKind::Adt { def, .. } if (u32::MAX - 16..=u32::MAX - 2).contains(&def.local)
         ) || matches!(elem_kind, TyKind::Adt { .. })
             && !self.is_inline_aggregate(elem_ty_concrete);
+        // Every single-slot scalar sorts by word, whatever its stride: the
+        // comparator's own parameter types decide how the body reads the
+        // bits, and the runtime moves elements through the header's
+        // `elem_bytes`. A float is the one class that needs its own helper,
+        // because its comparator takes SSE registers.
+        let elem_is_float = matches!(elem_kind, TyKind::Float(_));
         let elem_is_scalar = matches!(
             elem_kind,
-            TyKind::Int(IntTy::I64) | TyKind::String | TyKind::Bool
+            TyKind::Int(_) | TyKind::String | TyKind::Bool | TyKind::Char | TyKind::Float(_)
         ) || elem_is_opaque_handle;
         let elem_is_aggregate =
             !elem_is_opaque_handle && matches!(elem_kind, TyKind::Tuple(_) | TyKind::Adt { .. });
@@ -417,15 +423,15 @@ impl<'a> Builder<'a> {
         let closure_local =
             self.coerce_to_fn_trait_if_needed(raw_closure_local, cmp_trait_ty, span);
         let unit_ty = self.tcx.unit();
-        let vec_helper = if elem_is_aggregate {
-            "gos_rt_vec_sort_by_aggr"
-        } else {
-            "gos_rt_vec_sort_by_i64"
+        let vec_helper = match (elem_is_aggregate, elem_is_float) {
+            (true, _) => "gos_rt_vec_sort_by_aggr",
+            (_, true) => "gos_rt_vec_sort_by_f64",
+            _ => "gos_rt_vec_sort_by_i64",
         };
-        let arr_helper = if elem_is_aggregate {
-            "gos_rt_arr_sort_by_aggr"
-        } else {
-            "gos_rt_arr_sort_by_i64"
+        let arr_helper = match (elem_is_aggregate, elem_is_float) {
+            (true, _) => "gos_rt_arr_sort_by_aggr",
+            (_, true) => "gos_rt_arr_sort_by_f64",
+            _ => "gos_rt_arr_sort_by_i64",
         };
         match &recv_kind {
             TyKind::Vec(_) | TyKind::Slice(_) => {
@@ -1771,9 +1777,14 @@ impl<'a> Builder<'a> {
                 let out_abi = self.scalar_abi_of(out_ty);
                 // The lazy state carries the SOURCE elements, so a lazy result
                 // type alone does not qualify the call: the input's own family
-                // decides whether a handle can exist at all.
+                // decides whether a handle can exist at all. A mapped element
+                // wider than a slot is answered as the address of storage the
+                // callback owns, and the lazy state holds one word per element
+                // with nowhere to copy that block to, so it stays eager.
                 if let Some(source) = self.lazy_iter_source_family(args[1].ty)
                     && self.lazy_iter_ty_family(ty).is_some()
+                    && !self.elem_is_slot_addressed(out_ty)
+                    && self.elem_bytes_of(out_ty) <= 8
                 {
                     let helper = match (source, out_abi) {
                         (LazyElemFamily::Float, ElemAbi::Float) => "gos_rt_lazy_iter_map_f64",
@@ -1797,6 +1808,16 @@ impl<'a> Builder<'a> {
                     });
                     self.set_current(next);
                     return Some(dest);
+                }
+                // A callback the compiler can name is called directly, one
+                // element at a time, instead of through the runtime's
+                // combinator shim: no closure environment, no indirect call
+                // the optimiser has to see through, and no separate output
+                // buffer built by the runtime.
+                if let Some(local) = self.try_lower_direct_map(
+                    &args[0], &args[1], in_ty, in_abi, out_ty, out_abi, ty, span,
+                ) {
+                    return Some(local);
                 }
                 // A word-result map changes the element type, so the output
                 // vec cannot inherit the source's stride: the mapped element's
@@ -2216,7 +2237,7 @@ impl<'a> Builder<'a> {
                 let dest = self.fresh(dest_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("gos_rt_result_unwrap".to_string())),
+                    callee: Operand::Const(ConstValue::Str("gos_rt_option_unwrap".to_string())),
                     args: vec![Operand::Copy(Place::local(opt))],
                     destination: Place::local(dest),
                     target: Some(next),
@@ -2231,7 +2252,7 @@ impl<'a> Builder<'a> {
                 let dest = self.fresh(dest_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("gos_rt_result_unwrap".to_string())),
+                    callee: Operand::Const(ConstValue::Str("gos_rt_option_unwrap".to_string())),
                     args: vec![Operand::Copy(Place::local(opt))],
                     destination: Place::local(dest),
                     target: Some(next),
@@ -2993,36 +3014,70 @@ impl<'a> Builder<'a> {
                 };
                 let elem_is_aggregate =
                     vec_elem_ty.is_some_and(|elem| self.is_inline_aggregate(elem));
-                let in_ty = if elem_is_aggregate {
-                    vec_elem_ty.expect("aggregate iterator has an element type")
+                // The element and the key each pick their own register class,
+                // so the callback must be built with, and called through, the
+                // exact pair: a float in either position rides an SSE
+                // register that an integer-shaped signature never fills.
+                let elem_is_float = !elem_is_aggregate
+                    && vec_elem_ty
+                        .is_some_and(|elem| matches!(self.tcx.kind_of(elem), TyKind::Float(_)));
+                let in_ty = if elem_is_aggregate || elem_is_float {
+                    vec_elem_ty.expect("iterator has an element type")
                 } else {
                     i64_ty
                 };
-                let closure = self.lower_iter_closure(&args[0], &[in_ty], i64_ty, span)?;
+                let key_ty = self.callable_output_of(&args[0]).unwrap_or(i64_ty);
+                let key_is_f64 = matches!(self.tcx.kind_of(key_ty), TyKind::Float(_));
+                let closure_ret = if key_is_f64 {
+                    self.tcx.float_ty(gossamer_types::FloatTy::F64)
+                } else {
+                    i64_ty
+                };
+                let closure = self.lower_iter_closure(&args[0], &[in_ty], closure_ret, span)?;
+                let elem_payload_ty = if elem_is_aggregate || elem_is_float {
+                    in_ty
+                } else {
+                    i64_ty
+                };
+                let suffix = if elem_is_aggregate {
+                    "ptr"
+                } else if elem_is_float {
+                    "f64"
+                } else {
+                    "i64"
+                };
                 let (helper, dest_ty) = match joined {
                     "iter::sort_by_key" => {
                         let dest = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_)) {
                             ty
                         } else {
-                            self.tcx.intern(TyKind::Vec(i64_ty))
+                            self.tcx.intern(TyKind::Vec(elem_payload_ty))
                         };
-                        ("gos_rt_iter_sorted_by_key_i64", dest)
+                        // A sorted sequence hands back the source's own
+                        // elements, so an aggregate element keeps the eager
+                        // word-slot shim rather than the by-address one.
+                        let name = if elem_is_float {
+                            "gos_rt_iter_sorted_by_key_f64"
+                        } else {
+                            "gos_rt_iter_sorted_by_key_i64"
+                        };
+                        (name, dest)
                     }
-                    "iter::min_by_key" if elem_is_aggregate => (
-                        "gos_rt_iter_min_by_key_ptr",
-                        self.option_payload_adt_ty(in_ty),
-                    ),
                     "iter::min_by_key" => (
-                        "gos_rt_iter_min_by_key_i64",
-                        self.option_payload_adt_ty(i64_ty),
-                    ),
-                    _ if elem_is_aggregate => (
-                        "gos_rt_iter_max_by_key_ptr",
-                        self.option_payload_adt_ty(in_ty),
+                        match suffix {
+                            "ptr" => "gos_rt_iter_min_by_key_ptr",
+                            "f64" => "gos_rt_iter_min_by_key_f64",
+                            _ => "gos_rt_iter_min_by_key_i64",
+                        },
+                        self.option_payload_adt_ty(elem_payload_ty),
                     ),
                     _ => (
-                        "gos_rt_iter_max_by_key_i64",
-                        self.option_payload_adt_ty(i64_ty),
+                        match suffix {
+                            "ptr" => "gos_rt_iter_max_by_key_ptr",
+                            "f64" => "gos_rt_iter_max_by_key_f64",
+                            _ => "gos_rt_iter_max_by_key_i64",
+                        },
+                        self.option_payload_adt_ty(elem_payload_ty),
                     ),
                 };
                 Some(self.emit_combinator_call(
@@ -3030,6 +3085,7 @@ impl<'a> Builder<'a> {
                     vec![
                         Operand::Copy(Place::local(closure)),
                         Operand::Copy(Place::local(vec_local)),
+                        Operand::Const(ConstValue::Int(i128::from(key_is_f64))),
                     ],
                     dest_ty,
                     span,
@@ -3264,6 +3320,154 @@ impl<'a> Builder<'a> {
     /// element is wider than one slot - as the address of its storage. The
     /// helper name and the callback's parameter type both follow from this,
     /// so they are decided together and never drift apart.
+    /// The body a callback argument names when the compiler can see it: a
+    /// plain function, or a lifted closure that captured nothing and so needs
+    /// no environment. `None` for anything reached through a value.
+    fn direct_callback_body(&mut self, callback: &HirExpr) -> Option<String> {
+        match &callback.kind {
+            HirExprKind::LiftedClosure { name, captures } if captures.is_empty() => {
+                Some(name.name.clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// `xs.map(f)` over a word-slot element and a word-slot result, with `f`
+    /// a body the compiler can name: emits the traversal here so the element
+    /// is read, transformed, and pushed without a runtime shim in between.
+    /// `None` leaves the call to the general lowering.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one parameter per shape the specialisation is gated on"
+    )]
+    fn try_lower_direct_map(
+        &mut self,
+        callback: &HirExpr,
+        source: &HirExpr,
+        in_ty: Ty,
+        in_abi: ElemAbi,
+        out_ty: Ty,
+        out_abi: ElemAbi,
+        result_ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::TyKind;
+        if in_abi != ElemAbi::Word || out_abi != ElemAbi::Word {
+            return None;
+        }
+        // The traversal below reads and writes one 8-byte slot per element,
+        // so a narrower or wider element keeps the shim that knows its stride.
+        if self.elem_bytes_of(in_ty) != 8 || self.elem_bytes_of(out_ty) != 8 {
+            return None;
+        }
+        // The output vec's elements are plain words this loop owns outright;
+        // an element that carries a heap child needs the shim's element-kind
+        // bookkeeping instead.
+        if !matches!(
+            self.tcx.kind_of(out_ty),
+            TyKind::Int(_) | TyKind::Bool | TyKind::Char | TyKind::Float(_)
+        ) {
+            return None;
+        }
+        if !matches!(
+            self.tcx.kind_of(result_ty),
+            TyKind::Vec(_) | TyKind::Slice(_)
+        ) {
+            return None;
+        }
+        let body = self.direct_callback_body(callback)?;
+        let vec_local = self.lower_iter_vec_arg(source)?;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let bool_ty = self.tcx.bool_ty();
+
+        let len = self.emit_combinator_call(
+            "gos_rt_vec_len",
+            vec![Operand::Copy(Place::local(vec_local))],
+            i64_ty,
+            span,
+        );
+        let out = self.emit_combinator_call(
+            "gos_rt_vec_with_capacity_typed",
+            vec![
+                Operand::Const(ConstValue::Int(8)),
+                Operand::Copy(Place::local(len)),
+                Operand::Const(ConstValue::Int(0)),
+            ],
+            result_ty,
+            span,
+        );
+        let index = self.push_local(i64_ty, None, true);
+        self.emit_assign(
+            Place::local(index),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+        let header = self.new_block(span);
+        let body_block = self.new_block(span);
+        let exit = self.new_block(span);
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(header);
+        let more = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(more),
+            Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(index)),
+                rhs: Operand::Copy(Place::local(len)),
+            },
+            span,
+        );
+        self.terminate(Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(more)),
+            arms: vec![(0, exit)],
+            default: body_block,
+        });
+
+        self.set_current(body_block);
+        let elem = self.emit_combinator_call(
+            "gos_rt_vec_get_i64",
+            vec![
+                Operand::Copy(Place::local(vec_local)),
+                Operand::Copy(Place::local(index)),
+            ],
+            in_ty,
+            span,
+        );
+        let mapped = self.fresh(out_ty);
+        let after_call = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(body)),
+            args: vec![Operand::Copy(Place::local(elem))],
+            destination: Place::local(mapped),
+            target: Some(after_call),
+        });
+        self.set_current(after_call);
+        let unit_ty = self.tcx.unit();
+        let _ = self.emit_combinator_call(
+            "gos_rt_vec_push_i64",
+            vec![
+                Operand::Copy(Place::local(out)),
+                Operand::Copy(Place::local(mapped)),
+            ],
+            unit_ty,
+            span,
+        );
+        self.emit_assign(
+            Place::local(index),
+            Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(index)),
+                rhs: Operand::Const(ConstValue::Int(1)),
+            },
+            span,
+        );
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(exit);
+        Some(out)
+    }
+
     pub(crate) fn iter_elem_abi(&mut self, seq_ty: Ty) -> (Ty, ElemAbi) {
         use gossamer_types::TyKind;
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);

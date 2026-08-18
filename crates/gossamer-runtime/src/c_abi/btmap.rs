@@ -192,7 +192,15 @@ pub unsafe extern "C" fn gos_rt_vec_format_desc(
         if v.is_null() || tags.is_null() {
             return alloc_cstring(b"[]");
         }
+        let tags = unsafe { crate::c_abi::map::DescStream::new(tags) };
         let vec = unsafe { &*v };
+        // An element wider than one slot is stored inline; a one-word element
+        // is the value or the handle addressing it.
+        let storage = if vec.elem_bytes > 8 {
+            crate::c_abi::map::Storage::Inline
+        } else {
+            crate::c_abi::map::Storage::ByWord
+        };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 16);
         out.push('[');
         for i in 0..vec.len {
@@ -201,7 +209,9 @@ pub unsafe extern "C" fn gos_rt_vec_format_desc(
             }
             let slot = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
             let mut cursor = desc as usize;
-            unsafe { crate::c_abi::map::render_desc_value(&mut out, slot, tags, &mut cursor) };
+            unsafe {
+                crate::c_abi::map::render_desc_storage(&mut out, slot, tags, &mut cursor, storage);
+            }
         }
         out.push(']');
         alloc_cstring(out.as_bytes())
@@ -270,7 +280,7 @@ pub unsafe extern "C" fn gos_rt_vec_format_tuple(
                 crate::c_abi::map::render_tuple_elements(
                     &mut out,
                     slot.cast::<i64>(),
-                    tags,
+                    crate::c_abi::map::DescStream::bare(tags),
                     n as usize,
                     &mut slot_cursor,
                     &mut tag_cursor,

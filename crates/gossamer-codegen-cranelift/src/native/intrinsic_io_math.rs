@@ -364,9 +364,12 @@ pub(super) fn lower_intrinsic_call_io_math(
                         builder.ins().call(fref, &[s]);
                     }
                     PrintKind::ErrorMessage => {
+                        // `{}` on an error renders the colon-joined cause
+                        // chain, the same text the print path and the LLVM
+                        // tier render; `.message()` is the top link alone.
                         let error_msg_fn = intrinsics.extern_fn(
                             module,
-                            "gos_rt_error_message",
+                            "gos_rt_error_display",
                             &[ptr_ty],
                             &[ptr_ty],
                         )?;

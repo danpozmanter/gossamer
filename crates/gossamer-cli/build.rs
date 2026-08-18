@@ -71,6 +71,10 @@ const KNOWN_UNUSED_RUNTIME_SYMBOLS: &[&str] = &[
     // return shape has no generated reference of its own.
     "gos_rt_chan_recv_ctx_option",
     "gos_rt_install_ctx_hooks",
+    // Installed by the bytecode VM so a fault raised in JIT-compiled code
+    // reports the interpreted frames that reached it; no generated code
+    // references it.
+    "gos_rt_install_trace_hook",
     // Branch-coverage hooks. Codegen for `gos test --coverage` is
     // staged but not yet emitting bump/record calls - the runtime
     // surface ships ahead so the harness can install the global

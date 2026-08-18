@@ -60,14 +60,20 @@ impl Builder<'_> {
         else {
             return local;
         };
-        if !self.impl_methods.contains_key(&format!("{sname}::fmt")) {
+        // A user `impl Display for T` supplies `to_string`; `fmt` is the
+        // `Debug` contract and the older inherent spelling. Either overrides
+        // the synthesized rendering, so both are looked for here.
+        let Some(method) = ["to_string", "fmt"].into_iter().find(|method| {
+            self.impl_methods
+                .contains_key(&format!("{sname}::{method}"))
+        }) else {
             return local;
-        }
+        };
         let str_ty = self.tcx.string_ty();
         let dest = self.fresh(str_ty);
         let next = self.new_block(span);
         self.terminate(Terminator::Call {
-            callee: Operand::Const(ConstValue::Str(format!("{sname}::fmt"))),
+            callee: Operand::Const(ConstValue::Str(format!("{sname}::{method}"))),
             args: vec![Operand::Copy(Place::local(local))],
             destination: Place::local(dest),
             target: Some(next),

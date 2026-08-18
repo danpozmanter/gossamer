@@ -210,12 +210,14 @@ pub const FMT: StdModule = StdModule {
         StdItem {
             name: "Display",
             kind: StdItemKind::Trait,
-            doc: "Trait for human-readable string conversion.",
+            doc: "How a value renders through `{}`. The rendering is synthesized; \
+                  `impl Display for T { fn to_string(&self) -> String }` overrides it.",
         },
         StdItem {
             name: "Debug",
             kind: StdItemKind::Trait,
-            doc: "Trait for debugging-oriented string conversion.",
+            doc: "How a value renders through `{:?}`. The rendering is synthesized; \
+                  `impl Debug for T { fn fmt(&self) -> String }` overrides it.",
         },
         StdItem {
             name: "println",

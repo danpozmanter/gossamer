@@ -293,6 +293,7 @@ pub unsafe extern "C" fn gos_rt_set_format_desc(
         let mut out = String::from(set_format_prefix(ordered));
         out.push_str(" {");
         if !s.is_null() && !tags.is_null() {
+            let tags = unsafe { crate::c_abi::map::DescStream::new(tags) };
             let set = unsafe { &*s };
             let mut entries: Vec<&Box<[u8]>> = set.struct_inner.values().collect();
             entries.sort_unstable();

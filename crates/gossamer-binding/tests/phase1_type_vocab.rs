@@ -80,6 +80,10 @@ impl gossamer_binding::value::NativeDispatch for NullDispatch {
             "no dispatch".into(),
         ))
     }
+    fn has_fn(&self, _name: &str) -> bool {
+        false
+    }
+
     fn call_fn(
         &mut self,
         _name: &str,

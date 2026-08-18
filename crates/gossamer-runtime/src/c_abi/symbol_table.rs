@@ -92,6 +92,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_arr_sort_by_aggr as *const u8,
         ),
         (
+            "gos_rt_arr_sort_by_f64",
+            crate::c_abi::gos_rt_arr_sort_by_f64 as *const u8,
+        ),
+        (
             "gos_rt_arr_sort_by_i64",
             crate::c_abi::gos_rt_arr_sort_by_i64 as *const u8,
         ),
@@ -3904,6 +3908,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_iter_max_by_i64 as *const u8,
         ),
         (
+            "gos_rt_iter_max_by_key_f64",
+            crate::c_abi::gos_rt_iter_max_by_key_f64 as *const u8,
+        ),
+        (
             "gos_rt_iter_max_by_key_i64",
             crate::c_abi::gos_rt_iter_max_by_key_i64 as *const u8,
         ),
@@ -3914,6 +3922,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_iter_min_by_i64",
             crate::c_abi::gos_rt_iter_min_by_i64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_min_by_key_f64",
+            crate::c_abi::gos_rt_iter_min_by_key_f64 as *const u8,
         ),
         (
             "gos_rt_iter_min_by_key_i64",
@@ -3954,6 +3966,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_iter_sorted_by_i64",
             crate::c_abi::gos_rt_iter_sorted_by_i64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_sorted_by_key_f64",
+            crate::c_abi::gos_rt_iter_sorted_by_key_f64 as *const u8,
         ),
         (
             "gos_rt_iter_sorted_by_key_i64",
@@ -4054,6 +4070,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_result_payload_i128",
             crate::c_abi::gos_rt_result_payload_i128 as *const u8,
+        ),
+        (
+            "gos_rt_option_unwrap",
+            crate::c_abi::gos_rt_option_unwrap as *const u8,
         ),
         (
             "gos_rt_result_unwrap",
@@ -5610,6 +5630,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_tuple_format as *const u8,
         ),
         (
+            "gos_rt_tuple_format_desc",
+            crate::c_abi::gos_rt_tuple_format_desc as *const u8,
+        ),
+        (
             "gos_rt_lazy_iter_str_bytes",
             crate::c_abi::gos_rt_lazy_iter_str_bytes as *const u8,
         ),
@@ -6222,6 +6246,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_vec_sort_by_aggr",
             crate::c_abi::gos_rt_vec_sort_by_aggr as *const u8,
+        ),
+        (
+            "gos_rt_vec_sort_by_f64",
+            crate::c_abi::gos_rt_vec_sort_by_f64 as *const u8,
         ),
         (
             "gos_rt_vec_sort_by_i64",

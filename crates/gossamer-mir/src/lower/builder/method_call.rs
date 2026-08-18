@@ -476,6 +476,7 @@ impl<'a> Builder<'a> {
         if method.name.as_str() == "to_string"
             && args.is_empty()
             && self.display_to_string_receiver(receiver_ty)
+            && !self.has_user_rendering_method(receiver_ty, "to_string")
         {
             return self.lower_display_to_string(receiver, span);
         }
@@ -2186,7 +2187,11 @@ impl<'a> Builder<'a> {
                 if matches!(&receiver_kind_flat, TyKind::Adt { .. })
                     && self.is_result_or_option_adt(receiver_ty)
                 {
-                    Some("gos_rt_result_unwrap")
+                    if self.is_option_adt(receiver_ty) {
+                        Some("gos_rt_option_unwrap")
+                    } else {
+                        Some("gos_rt_result_unwrap")
+                    }
                 } else {
                     Some("")
                 }
@@ -3671,7 +3676,10 @@ impl<'a> Builder<'a> {
             "gos_rt_child_read_line" | "gos_rt_stream_next_line" => self.option_string_adt_ty(),
             "gos_rt_stream_read_line" => self.result_i64_error_adt_ty(),
             "gos_rt_child_read_stdout" => self.tcx.string_ty(),
-            "gos_rt_result_unwrap" | "gos_rt_result_unwrap_or" | "gos_rt_result_ok" => {
+            "gos_rt_option_unwrap"
+            | "gos_rt_result_unwrap"
+            | "gos_rt_result_unwrap_or"
+            | "gos_rt_result_ok" => {
                 let inner = self
                     .first_generic_of(receiver.ty)
                     .or_else(|| {
@@ -4595,7 +4603,13 @@ impl<'a> Builder<'a> {
         }
         if lowered_is_result {
             match method.name.as_str() {
-                "unwrap" | "expect" => runtime_symbol = Some("gos_rt_result_unwrap"),
+                "unwrap" | "expect" => {
+                    runtime_symbol = Some(if self.is_option_adt(lowered_recv_ty) {
+                        "gos_rt_option_unwrap"
+                    } else {
+                        "gos_rt_result_unwrap"
+                    });
+                }
                 "unwrap_or" => runtime_symbol = Some("gos_rt_result_unwrap_or"),
                 "ok" => runtime_symbol = Some("gos_rt_result_to_opt_ok"),
                 "err" => runtime_symbol = Some("gos_rt_result_to_opt_err"),
@@ -5470,8 +5484,12 @@ impl<'a> Builder<'a> {
             return None;
         }
         let name = self.adt_dispatch_name(elem_ty)?;
-        let symbol = format!("{name}::fmt");
-        self.impl_methods.contains_key(&symbol).then_some(symbol)
+        // `to_string` is the `Display` contract and `fmt` the `Debug` one;
+        // either overrides the synthesized rendering of an element.
+        ["to_string", "fmt"]
+            .into_iter()
+            .map(|method| format!("{name}::{method}"))
+            .find(|symbol| self.impl_methods.contains_key(symbol))
     }
 
     /// Whether the receiver's own type is a user enum, whose runtime value is
@@ -5563,6 +5581,13 @@ impl<'a> Builder<'a> {
     /// Whether `to_string` on this receiver is the Display rendering rather
     /// than a dedicated conversion. A scalar has its own shim, and a String
     /// is already its own text.
+    /// Whether `receiver_ty` names a type whose own `impl` supplies `method`,
+    /// which then wins over the synthesized rendering.
+    pub(crate) fn has_user_rendering_method(&mut self, receiver_ty: Ty, method: &str) -> bool {
+        self.adt_dispatch_name(receiver_ty)
+            .is_some_and(|name| self.impl_methods.contains_key(&format!("{name}::{method}")))
+    }
+
     fn display_to_string_receiver(&mut self, receiver_ty: Ty) -> bool {
         let mut ty = receiver_ty;
         while let TyKind::Ref { inner, .. } = self.tcx.kind_of(ty) {
