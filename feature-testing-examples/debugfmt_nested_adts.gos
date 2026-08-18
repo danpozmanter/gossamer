@@ -5,13 +5,13 @@
 use std::errors
 
 struct Item {
-    id: i64,
-    tag: String,
+    id: i64
+    tag: String
 }
 
 enum Kind {
-    Numbered(i64),
-    Plain,
+    Numbered(i64)
+    Plain
 }
 
 fn main() {
@@ -27,7 +27,7 @@ fn main() {
     tuple_keyed.insert((1, 2), "x")
     println!("{:?}", tuple_keyed)
 
-    let literal = {(3, 4): "y"}
+    let literal = { (3, 4): "y" }
     println!("{:?}", literal)
 
     let built = Map::from([((5, 6), 7)])

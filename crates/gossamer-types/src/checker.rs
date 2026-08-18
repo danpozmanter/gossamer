@@ -14523,8 +14523,14 @@ impl<'a> TypeChecker<'a> {
         // A trait names behaviour, not a value's type. Gossamer has no `dyn`,
         // so a bare trait in type position has no runtime shape to stand for
         // and would otherwise settle as an unconstrained variable that
-        // accepts anything.
+        // accepts anything. A name that also names a type in scope is that
+        // type: a program is free to declare its own `Reader`, and the
+        // resolver has already said which one this path reached.
         if let Some(last) = path.segments.last()
+            && !matches!(
+                self.resolutions.get(node),
+                Some(Resolution::Def { .. } | Resolution::Primitive(_))
+            )
             && (STDLIB_TRAIT_NAMES.contains(&last.name.name.as_str())
                 || self.trait_own_methods.contains_key(&last.name.name))
         {

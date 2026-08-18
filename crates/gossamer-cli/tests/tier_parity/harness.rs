@@ -176,6 +176,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/debugfmt_nested_adts.gos"),
     spec("feature-testing-examples/display_impl_dispatch.gos"),
     spec("feature-testing-examples/jit_admission_shapes.gos"),
+    spec("feature-testing-examples/sequence_method_compilability.gos"),
     spec("feature-testing-examples/unit_main_goroutine_drain.gos"),
     // Structured concurrency. Both fixtures print only after the cohort
     // they describe has finished, so their transcripts are determined

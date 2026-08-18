@@ -183,6 +183,12 @@ fn guard_copy(dst: &mut [u8], src: &[u8]) -> usize {
     n
 }
 
+/// The one text every tier reports when recursion runs past the stack. The
+/// bytecode tier appends its own frame count; the platform guards below write
+/// exactly this, from a signal context where formatting is not available.
+pub(crate) const STACK_OVERFLOW_MESSAGE: &[u8] =
+    b"error[GX0008]: stack overflow - recursion exceeded the available stack\n";
+
 #[cfg(unix)]
 mod unix {
     use std::cell::Cell;
@@ -451,10 +457,6 @@ mod unix {
         addr >= guard_bottom && addr < guard_top
     }
 
-    /// The one text every tier reports when recursion runs past the stack.
-    const STACK_OVERFLOW_MESSAGE: &[u8] =
-        b"error[GX0008]: stack overflow - recursion exceeded the available stack\n";
-
     fn report_overflow_and_abort(addr: usize) -> ! {
         // Compose the message on a stack scratch buffer. We can't
         // use `format!` or `eprintln!` - both allocate / take
@@ -469,7 +471,7 @@ mod unix {
         let _ = addr;
         let mut scratch = [0_u8; 96];
         let mut len = 0;
-        len += copy_into(&mut scratch[len..], STACK_OVERFLOW_MESSAGE);
+        len += copy_into(&mut scratch[len..], super::STACK_OVERFLOW_MESSAGE);
         // SAFETY: `write(2)` is async-signal-safe. fd 2 is
         // stderr; `scratch` outlives the call.
         let _ = unsafe {
@@ -794,7 +796,7 @@ mod windows {
     }
 
     fn write_message() {
-        const MSG: &[u8] = STACK_OVERFLOW_MESSAGE;
+        const MSG: &[u8] = super::STACK_OVERFLOW_MESSAGE;
         write_bytes(MSG);
     }
 

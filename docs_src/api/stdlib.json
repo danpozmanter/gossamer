@@ -4281,7 +4281,7 @@
       "name": "std::fmt::Debug",
       "kind": "trait",
       "signature": null,
-      "description": "Trait for debugging-oriented string conversion.",
+      "description": "How a value renders through `{:?}`. The rendering is synthesized; `impl Debug for T { fn fmt(&self) -> String }` overrides it.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -4300,7 +4300,7 @@
       "name": "std::fmt::Display",
       "kind": "trait",
       "signature": null,
-      "description": "Trait for human-readable string conversion.",
+      "description": "How a value renders through `{}`. The rendering is synthesized; `impl Display for T { fn to_string(&self) -> String }` overrides it.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",

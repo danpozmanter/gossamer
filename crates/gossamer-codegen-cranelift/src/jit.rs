@@ -137,7 +137,7 @@ pub enum JitKind {
     /// reads back + frees a returned `GosVec`. Integer register class.
     NativeVecI64,
     /// A `Vec<String>` / `[String]` crossing as the runtime's `*mut GosVec`
-    /// tagged [`vec_elem_kind::STRING`], each slot an owned cstring. The
+    /// tagged as string-element storage, each slot an owned cstring. The
     /// trampoline builds one from the VM sequence and frees it after the
     /// call; a returned one is read back and freed the same way.
     NativeVecStr,
@@ -380,6 +380,66 @@ fn body_user_calls<'a>(
     (calls, unresolved)
 }
 
+/// Whether every `Iterator`-typed local in `body` is one the body itself
+/// constructed through a `gos_rt_lazy_iter_*` call.
+///
+/// The bytecode tier and the runtime both spell a lazy iterator as one word
+/// of the same type, but the words are not interchangeable: one is a registry
+/// index into a thread-local map, the other a heap pointer. A handle the body
+/// built is the runtime's; one that arrives as a parameter, from a global, or
+/// as another body's return may be either, and native code reading the wrong
+/// one dereferences an index.
+fn body_builds_every_iterator_local(body: &Body, tcx: &TyCtxt) -> bool {
+    use gossamer_mir::{ConstValue, Operand, StatementKind, Terminator};
+    let is_iter_local = |local: gossamer_mir::Local| {
+        matches!(tcx.kind_of(body.local_ty(local)), TyKind::Iterator(_))
+    };
+    // A parameter or the return slot is by definition not built here.
+    for index in 0..=body.arity {
+        if is_iter_local(gossamer_mir::Local(index)) {
+            return false;
+        }
+    }
+    let mut built: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    let mut assigned: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                continue;
+            };
+            if !place.projection.is_empty() || !is_iter_local(place.local) {
+                continue;
+            }
+            assigned.insert(place.local.0);
+            // A copy of a handle the body already built carries the same
+            // provenance; anything else is an unknown word.
+            if let gossamer_mir::Rvalue::Use(Operand::Copy(source)) = rvalue
+                && source.projection.is_empty()
+                && built.contains(&source.local.0)
+            {
+                built.insert(place.local.0);
+            }
+        }
+        if let Terminator::Call {
+            callee,
+            destination,
+            ..
+        } = &block.terminator
+            && destination.projection.is_empty()
+            && is_iter_local(destination.local)
+        {
+            assigned.insert(destination.local.0);
+            if matches!(
+                callee,
+                Operand::Const(ConstValue::Str(name)) if name.starts_with("gos_rt_lazy_iter_")
+            ) {
+                built.insert(destination.local.0);
+            }
+        }
+    }
+    assigned.iter().all(|local| built.contains(local))
+}
+
 /// `true` when `body` holds a local representation the JIT cannot lower
 /// faithfully as part of a promoted region.
 fn body_uses_unlowerable_local_repr(
@@ -412,6 +472,15 @@ fn body_uses_unlowerable_local_repr(
     if borrows_a_parameter_local {
         if std::env::var("GOS_JIT_TRACE").is_ok() {
             eprintln!("jit: parameter-borrow {} stays on bytecode", body.name);
+        }
+        return true;
+    }
+    if !body_builds_every_iterator_local(body, tcx) {
+        if std::env::var("GOS_JIT_TRACE").is_ok() {
+            eprintln!(
+                "jit: {} holds a lazy iterator it did not build; stays on bytecode",
+                body.name
+            );
         }
         return true;
     }
@@ -1827,10 +1896,12 @@ fn jit_local_ty_needs_bytecode_inner(
         // Options, other tagged standard-library carriers, and opaque handles
         // still need the bytecode path. Ordinary user aggregates are safe as
         // internal native locals and are checked recursively above.
-        // A lazy iterator is a runtime handle - the one word
-        // `gos_rt_lazy_iter_*` hands back - built and consumed entirely
-        // inside the body. It has no boundary shape (`ty_to_kind` answers
-        // nothing for it), so it stays an internal local only.
+        // A lazy iterator is one word either way, but not the SAME word: the
+        // runtime's `gos_rt_lazy_iter_*` hands back a pointer where the
+        // bytecode tier keeps a registry index under the identical type.
+        // Nothing in the type tells them apart, so the local is admitted only
+        // where the body itself built it - `body_builds_every_iterator_local`
+        // proves that before this check is consulted.
         TyKind::Iterator(elem) => jit_local_ty_needs_bytecode_inner(tcx, *elem, visiting),
         // A `json::Value` is a runtime handle - one word, declared non-RC -
         // so a local holding one has a native representation. It stays on
@@ -2063,6 +2134,13 @@ fn body_kinds(
         let local = gossamer_mir::Local(pidx);
         let ty = body.local_ty(local);
         let kind = ty_to_kind(tcx, ty, enum_shapes, struct_shapes)?;
+        // A lazy iterator is a runtime handle when compiled code built it and
+        // a bytecode registry index when the VM did. The two are
+        // indistinguishable in a parameter, so a body that takes one stays on
+        // bytecode, where both spellings mean the same thing.
+        if matches!(tcx.kind_of(ty), TyKind::Iterator(_)) {
+            return None;
+        }
         // A `Vec<String>` the trampoline built is freed - strings and all -
         // after the call, so it may only be lent to the body. Taken by value
         // the body owns its elements and may consume them, and the free would
@@ -2084,6 +2162,12 @@ fn body_kinds(
             return None;
         }
         params.push(kind);
+    }
+    if matches!(
+        tcx.kind_of(body.local_ty(gossamer_mir::Local(0))),
+        TyKind::Iterator(_)
+    ) {
+        return None;
     }
     let returns = ty_to_kind(
         tcx,
@@ -3776,15 +3860,35 @@ mod promotion_report_tests {
         );
     }
 
-    #[test]
-    fn string_builder_loop_stays_on_capacity_preserving_vm_path() {
-        let mut tcx = TyCtxt::new();
+    /// Builds an append-in-a-loop body whose accumulator is `target`.
+    fn string_builder_body(tcx: &mut TyCtxt, target: Operand, param: bool) -> Body {
         let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+        let string_ty = tcx.intern(TyKind::String);
+        let mut_str_ty = tcx.intern(TyKind::Ref {
+            mutability: gossamer_types::Mutbl::Mut,
+            inner: string_ty,
+        });
         let mut builder = body("build", i64_ty, true);
         let span = builder.span;
+        if param {
+            builder.arity = 1;
+            builder.locals.push(LocalDecl {
+                ty: mut_str_ty,
+                debug_name: None,
+                mutable: true,
+                region: false,
+            });
+        } else {
+            builder.locals.push(LocalDecl {
+                ty: string_ty,
+                debug_name: None,
+                mutable: true,
+                region: false,
+            });
+        }
         builder.blocks[0].terminator = Terminator::Call {
             callee: Operand::Const(ConstValue::Str("gos_rt_str_append_bytes".to_string())),
-            args: Vec::new(),
+            args: vec![target],
             destination: Place::local(Local(0)),
             target: Some(BlockId(1)),
         };
@@ -3794,8 +3898,30 @@ mod promotion_report_tests {
             terminator: Terminator::Goto { target: BlockId(1) },
             span,
         });
-        let admitted = jit_compile_body_names(&[builder], &tcx, &HashMap::new(), &HashMap::new());
-        assert!(admitted.is_empty(), "admitted bodies: {admitted:?}");
+        builder
+    }
+
+    /// An accumulator the body owns grows in place, so the builder loop is
+    /// linear and worth compiling; one reached through a `&mut String`
+    /// parameter is still held by the caller, so each append copies the
+    /// prefix and the loop stays where it is linear.
+    #[test]
+    fn string_builder_compiles_for_a_local_accumulator_only() {
+        let mut tcx = TyCtxt::new();
+        let local_acc = string_builder_body(&mut tcx, Operand::Copy(Place::local(Local(1))), false);
+        let admitted = jit_compile_body_names(&[local_acc], &tcx, &HashMap::new(), &HashMap::new());
+        assert_eq!(
+            admitted,
+            std::collections::HashSet::from(["build".to_string()]),
+            "a local accumulator compiles: {admitted:?}"
+        );
+
+        let param_acc = string_builder_body(&mut tcx, Operand::Copy(Place::local(Local(1))), true);
+        let admitted = jit_compile_body_names(&[param_acc], &tcx, &HashMap::new(), &HashMap::new());
+        assert!(
+            admitted.is_empty(),
+            "a `&mut String` parameter accumulator stays on bytecode: {admitted:?}"
+        );
     }
 
     #[test]

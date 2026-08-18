@@ -8,15 +8,15 @@ use std::errors
 
 fn parse(text: &String) -> Result<i64, errors::Error> {
     match text.to_i64() {
-        Some(n) => Ok(n),
-        None => Err(errors::new("not a number")),
+        Some(n) => Ok(n)
+        None => Err(errors::new("not a number"))
     }
 }
 
 fn wrapped(text: &String) -> Result<i64, errors::Error> {
     match parse(text) {
-        Ok(n) => Ok(n),
-        Err(e) => Err(errors::wrap(e, "while reading a field")),
+        Ok(n) => Ok(n)
+        Err(e) => Err(errors::wrap(e, "while reading a field"))
     }
 }
 

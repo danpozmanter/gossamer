@@ -293,7 +293,21 @@ fn enforce_mir_backend_invariants(bodies: &[Body], tcx: &TyCtxt) -> anyhow::Resu
     }
 }
 
-/// Same as [`lower_to_mir`], but returns the [`TyCtxt`] alongside
+/// Hands the native backend the byte offset each source line begins at, so a
+/// MIR span resolves to the line a panic report names. The source map itself
+/// lives only for the duration of the frontend, which is why the table is
+/// registered rather than threaded through.
+pub fn register_source_lines(unit_name: &str, source: &str) {
+    let mut starts = vec![0u32];
+    for (offset, byte) in source.bytes().enumerate() {
+        if byte == b'\n' {
+            starts.push(u32::try_from(offset + 1).unwrap_or(u32::MAX));
+        }
+    }
+    gossamer_codegen_llvm::set_source_lines(unit_name, starts);
+}
+
+/// Same as `lower_to_mir`, but returns the [`TyCtxt`] alongside
 /// the MIR bodies so downstream passes that need type information
 /// (e.g. the native codegen's primitive-type classification) can
 /// walk `body.local_ty(local)` back into the kind table.
@@ -305,19 +319,6 @@ fn enforce_mir_backend_invariants(bodies: &[Body], tcx: &TyCtxt) -> anyhow::Resu
 /// `compile_source` artifact path and the package builder, both of
 /// which validate the program through the gate before reaching codegen;
 /// any residual diagnostics here would have been surfaced there.
-/// Hands the native backend the byte offset each source line begins at, so a
-/// MIR span resolves to the line a panic report names. The source map itself
-/// lives only for the duration of the frontend.
-pub fn register_source_lines(unit_name: &str, source: &str) {
-    let mut starts = vec![0u32];
-    for (offset, byte) in source.bytes().enumerate() {
-        if byte == b'\n' {
-            starts.push(u32::try_from(offset + 1).unwrap_or(u32::MAX));
-        }
-    }
-    gossamer_codegen_llvm::set_source_lines(unit_name, starts);
-}
-
 fn lower_to_mir_with_tcx(
     source: &str,
     unit_name: &str,

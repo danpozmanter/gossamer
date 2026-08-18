@@ -81,6 +81,10 @@
   into a runtime helper.
 - Drop reference-counting calls on a value just set to null, which every such
   call already ignored.
+- Compile `xs.flatten()`, `xs.dedup()`, and `xs.windows(n)`, each of which ran
+  under `gos run` and failed `gos build` with an undefined symbol.
+- Accept a program that names its own type after a standard-library trait, such
+  as `struct Reader`.
 
 ## 0.51.4 - Reference parameters, Display, and exact REPL lookup
 

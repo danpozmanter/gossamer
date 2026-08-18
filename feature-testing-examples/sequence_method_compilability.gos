@@ -1,0 +1,92 @@
+// Every sequence, string, and container method spelled once, so a method the
+// native backend has no lowering for fails the build here rather than in a
+// user's program. A missing lowering shows up as `undefined symbols before
+// LLVM tools: @<method>`, which is what `flatten`, `dedup`, and `windows`
+// each did before this fixture existed.
+
+fn main() {
+    let mut xs: Vec<i64> = #[3, 1, 2]
+    let nested: Vec<Vec<i64>> = #[#[1, 2], #[3, 4]]
+    let arr: [i64; 3] = [3, 1, 2]
+    let text = "a,b,c"
+
+    println!("{:?}", nested.flatten())
+    println!("{:?}", #[1, 1, 2, 2, 3].dedup())
+    println!("{:?}", #[1, 2, 3, 4].windows(2))
+    println!("{:?}", #[1, 2, 3, 4].chunks(2))
+
+    println!("{} {} {:?}", xs.len(), xs.is_empty(), xs.first())
+    println!("{:?} {:?} {}", xs.last(), xs.get(0), xs.contains(1))
+    println!("{} {}", xs.index_of(1), xs.count_of(1))
+    println!("{:?}", xs.slice(0, 2))
+    println!("{}", xs.sum())
+    println!("{:?}", xs.map(|v| v * 2))
+    println!("{:?}", xs.filter(|v| v > 1))
+    println!("{:?}", xs.join("-"))
+
+    xs.push(4)
+    xs.swap(0, 1)
+    xs.reverse()
+    xs.sort()
+    xs.sort_by(|a, b| if a < b { -1 } else { 1 })
+    xs.truncate(3)
+    xs.reserve(8)
+    xs.reserve_exact(8)
+    xs.extend(#[7])
+    xs.extend_from_slice(#[8])
+    println!("{:?} cap>=3 {}", xs, xs.capacity() >= 3)
+    let _ = xs.insert(0, 9)
+    let _ = xs.remove(0)
+    xs.fill(1)
+    println!("{:?}", xs)
+
+    println!("{:?} {:?}", arr.to_vec(), arr.windows(2))
+    println!("{:?} {}", arr.first(), arr.contains(1))
+    println!("{:?}", arr.iter().map(|v| v + 1).collect())
+
+    println!("{:?} {:?}", text.split(","), text.split_once(","))
+    println!("{} {} {}", text.trim(), text.to_uppercase(), text.starts_with("a"))
+    println!("{} {:?}", text.substring(0, 3), text.rsplit_once(","))
+    println!("{} {}", text.byte_at(0), text.repeat(2))
+    println!("{:?} {:?}", text.as_bytes(), text.bytes())
+    println!("{:?} {:?}", text.chars().collect(), text.lines())
+    println!("{} {}", text.replacen("a", "z", 1), text.equal_fold("A,B,C"))
+    println!("{:?} {}", text.rfind("b"), text.ends_with("c"))
+    println!("{} {} {}", text.center(9, '.'), text.pad_left(9, '.'), text.pad_right(9, '.'))
+    println!("{:?}", text.to_i64())
+
+    let mut counts: Map<String, i64> = { "a": 1 }
+    counts.inc("a")
+    println!("{:?} {:?}", counts.keys(), counts.values())
+    println!("{:?} {:?}", counts.get("a"), counts.pop("a"))
+    println!("{}", counts.or_insert("b", 2))
+
+    let members: Set<i64> = #{ 1, 2 }
+    println!("{:?}", members.union(#{ 3 }).to_vec())
+    println!("{:?}", members.intersection(#{ 1 }).to_vec())
+    println!("{:?}", members.difference(#{ 1 }).to_vec())
+    println!("{:?}", members.symmetric_difference(#{ 1 }).to_vec())
+    println!("{} {}", members.is_subset(#{ 1, 2, 3 }), members.contains(1))
+
+    let mut queue = Queue::from([1, 2])
+    let mut stack = Stack::from([1, 2])
+    let mut deque = Deque::from([1, 2])
+    let mut heap = MaxHeap::from([1, 2])
+    println!("{:?} {:?} {:?} {:?}", queue.pop(), stack.pop(), deque.peek_front(), heap.pop())
+    deque.push_back(3)
+    println!("{} {} {} {}", queue.len(), stack.len(), deque.len(), heap.len())
+
+    println!("{:?}", xs.iter().zip(xs.iter()).collect())
+    println!("{:?}", xs.iter().chain(xs.iter()).collect())
+    println!("{:?}", xs.iter().enumerate().collect())
+    println!("{:?}", xs.iter().step_by(2).collect())
+    println!("{:?}", xs.iter().rev().collect())
+    println!("{:?}", xs.iter().take(2).collect())
+    println!("{:?}", xs.iter().skip(1).collect())
+    println!("{:?}", xs.iter().take_while(|v| v > 0).collect())
+    println!("{:?}", xs.iter().skip_while(|v| v > 0).collect())
+    println!("{} {}", xs.iter().count(), xs.iter().fold(0, |a, v| a + v))
+    println!("{:?} {:?}", xs.iter().min(), xs.iter().max())
+    println!("{} {}", xs.iter().any(|v| v > 0), xs.iter().all(|v| v > 0))
+    println!("{:?} {:?}", xs.iter().find(|v| v > 0), xs.iter().position(|v| v > 0))
+}

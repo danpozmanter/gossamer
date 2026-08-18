@@ -82,6 +82,7 @@ const RUST_ONLY: &[&str] = &[
     // call it).
     "gos_rt_chan_recv_ctx_option",
     "gos_rt_install_ctx_hooks",
+    "gos_rt_install_trace_hook",
     "gos_rt_concat_f64_prec",
     "gos_rt_gc_reset",
     "gos_rt_go_spawn",

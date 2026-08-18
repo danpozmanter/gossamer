@@ -7,13 +7,13 @@
 use std::math::bits
 
 enum Shape {
-    Circle(f64),
-    Square,
+    Circle(f64)
+    Square
 }
 
 struct Part {
-    name: String,
-    weight: f64,
+    name: String
+    weight: f64
 }
 
 fn main() {

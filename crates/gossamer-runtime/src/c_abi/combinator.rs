@@ -1114,8 +1114,9 @@ mod tests {
             unsafe { gos_rt_iter_sorted_by_i64(cmp_env.as_ptr().cast(), vec_from(&[3, 1, 2])) };
         assert_eq!(elems(sorted), vec![1, 2, 3]);
         let map_env = env_for(double_cb as *const () as usize);
-        let keyed =
-            unsafe { gos_rt_iter_sorted_by_key_i64(map_env.as_ptr().cast(), vec_from(&[3, 1, 2]), 0) };
+        let keyed = unsafe {
+            gos_rt_iter_sorted_by_key_i64(map_env.as_ptr().cast(), vec_from(&[3, 1, 2]), 0)
+        };
         assert_eq!(elems(keyed), vec![1, 2, 3]);
     }
 }

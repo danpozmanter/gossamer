@@ -5273,6 +5273,9 @@ impl<'a> Builder<'a> {
             ("enumerate", 0) => Some("iter::enumerate"),
             ("rev", 0) => Some("iter::rev"),
             ("chunks", 1) => Some("iter::chunks"),
+            ("windows", 1) => Some("iter::windows"),
+            ("dedup", 0) => Some("iter::dedup"),
+            ("flatten", 0) => Some("iter::flatten"),
             _ => None,
         };
         let is_pred_count = method.name.as_str() == "count" && args.len() == 1;
