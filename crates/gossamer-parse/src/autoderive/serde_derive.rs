@@ -402,11 +402,11 @@ fn is_scalar_fmt_name(name: &str) -> bool {
 }
 
 /// Whether a field type renders inside a synthesized `fmt` on the compiled
-/// tiers: a scalar, or a struct / enum that itself ends up with a `fmt`
-/// (tracked in `formattable`). Containers (`Vec`, `Option`, tuple, `Map`),
-/// references-to-containers, channels, and function types are excluded -
-/// `{}` on them does not lower through the implicit `fmt` path, so a type
-/// carrying one keeps the runtime's default render and gets no implicit `fmt`.
+/// tiers: a scalar, a struct / enum that itself ends up with a `fmt` (tracked
+/// in `formattable`), or a sequence, `Option`, or tuple over those - each
+/// renders through the element's own descriptor. A `Map`, a `Set`, a channel,
+/// and a function type are excluded, so a type carrying one keeps the
+/// runtime's default render and gets no implicit `fmt`.
 /// Type-parameter names a declaration introduces.
 fn param_name_set(generics: &gossamer_ast::Generics) -> HashSet<String> {
     generics
@@ -460,6 +460,16 @@ fn ty_is_renderable_within(
                     _ => false,
                 };
             }
+            // A sequence or an `Option` renders element by element, so it
+            // renders exactly when its element does.
+            if matches!(name, "Vec" | "Option") {
+                return match seg.generics.as_slice() {
+                    [gossamer_ast::GenericArg::Type(inner)] => {
+                        ty_is_renderable_within(inner, formattable, params, aliases, depth)
+                    }
+                    _ => false,
+                };
+            }
             if !seg.generics.is_empty() {
                 return false;
             }
@@ -478,6 +488,14 @@ fn ty_is_renderable_within(
         TypeKind::Ref { inner, .. } => {
             ty_is_renderable_within(inner, formattable, params, aliases, depth)
         }
+        // A slice and a fixed array render like the sequence they are; a
+        // tuple renders field by field.
+        TypeKind::Slice(inner) | TypeKind::Array { elem: inner, .. } => {
+            ty_is_renderable_within(inner, formattable, params, aliases, depth)
+        }
+        TypeKind::Tuple(elems) => elems
+            .iter()
+            .all(|e| ty_is_renderable_within(e, formattable, params, aliases, depth)),
         _ => false,
     }
 }

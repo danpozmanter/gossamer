@@ -131,6 +131,7 @@ pub fn unpack_with_limits(
     let mut offset = 0;
     let mut regular_entries = 0usize;
     let mut total_payload = 0usize;
+    let mut pending = PendingMetadata::default();
     while offset < bytes.len() {
         if offset + BLOCK > bytes.len() {
             return Err(TarError::Truncated(offset));
@@ -139,10 +140,13 @@ pub fn unpack_with_limits(
         if header.iter().all(|b| *b == 0) {
             break;
         }
-        let name = parse_name(header);
-        let size = parse_size(header).ok_or_else(|| TarError::BadSize(name.clone()))?;
+        let mut name = parse_name(header);
+        let mut size = parse_size(header).ok_or_else(|| TarError::BadSize(name.clone()))?;
         verify_checksum(header, &name)?;
         let flag = header[156] as char;
+        if is_content_entry(flag) {
+            pending.apply(&mut name, &mut size);
+        }
         offset += BLOCK;
         let payload_end = offset
             .checked_add(size)
@@ -185,6 +189,16 @@ pub fn unpack_with_limits(
                 // and do not record the entry - our consumers walk
                 // files only.
             }
+            PAX_GLOBAL | PAX_EXTENDED | GNU_LONG_NAME | GNU_LONG_LINK => {
+                if size > limits.max_file_bytes {
+                    return Err(TarError::FileTooLarge {
+                        name,
+                        size,
+                        limit: limits.max_file_bytes,
+                    });
+                }
+                pending.read_header(flag, &bytes[offset..payload_end]);
+            }
             other => {
                 return Err(TarError::Unsupported { name, flag: other });
             }
@@ -216,6 +230,7 @@ pub fn unpack_reader_with_limits<R: Read>(
     let mut offset = 0usize;
     let mut regular_entries = 0usize;
     let mut total_payload = 0usize;
+    let mut pending = PendingMetadata::default();
     loop {
         let mut header = [0u8; BLOCK];
         let read = read_block_or_eof(&mut reader, &mut header)
@@ -232,10 +247,13 @@ pub fn unpack_reader_with_limits<R: Read>(
         if header.iter().all(|byte| *byte == 0) {
             break;
         }
-        let name = parse_name(&header);
-        let size = parse_size(&header).ok_or_else(|| TarError::BadSize(name.clone()))?;
+        let mut name = parse_name(&header);
+        let mut size = parse_size(&header).ok_or_else(|| TarError::BadSize(name.clone()))?;
         verify_checksum(&header, &name)?;
         let flag = header[156] as char;
+        if is_content_entry(flag) {
+            pending.apply(&mut name, &mut size);
+        }
         offset = offset
             .checked_add(BLOCK)
             .ok_or(TarError::Truncated(offset))?;
@@ -273,6 +291,20 @@ pub fn unpack_reader_with_limits<R: Read>(
                 out.insert(safe, contents);
             }
             '5' => skip_exact(&mut reader, size).map_err(|_| TarError::Truncated(offset))?,
+            PAX_GLOBAL | PAX_EXTENDED | GNU_LONG_NAME | GNU_LONG_LINK => {
+                if size > limits.max_file_bytes {
+                    return Err(TarError::FileTooLarge {
+                        name,
+                        size,
+                        limit: limits.max_file_bytes,
+                    });
+                }
+                let mut records = vec![0u8; size];
+                reader
+                    .read_exact(&mut records)
+                    .map_err(|_| TarError::Truncated(offset))?;
+                pending.read_header(flag, &records);
+            }
             other => return Err(TarError::Unsupported { name, flag: other }),
         }
         offset = offset
@@ -285,6 +317,90 @@ pub fn unpack_reader_with_limits<R: Read>(
             .ok_or(TarError::Truncated(offset))?;
     }
     Ok(out)
+}
+
+/// Pax global extended header. `git archive` writes one of these as the
+/// first entry of every tarball, carrying the commit id.
+const PAX_GLOBAL: char = 'g';
+/// Pax extended header, whose records describe the entry that follows.
+const PAX_EXTENDED: char = 'x';
+/// GNU long name, whose payload is the name of the entry that follows.
+const GNU_LONG_NAME: char = 'L';
+/// GNU long link name, which describes a link target rather than a name.
+const GNU_LONG_LINK: char = 'K';
+
+/// True for the entry kinds that carry a name and payload of their own,
+/// as opposed to metadata describing the entry after them.
+fn is_content_entry(flag: char) -> bool {
+    matches!(flag, '0' | '\0' | '5')
+}
+
+/// Name and size overrides a metadata header supplies for the entry that
+/// follows it. A ustar name field holds 100 bytes and its size field a
+/// 12-digit octal, so paths and sizes beyond those are carried in a
+/// preceding pax or GNU header instead.
+#[derive(Debug, Default)]
+struct PendingMetadata {
+    name: Option<String>,
+    size: Option<usize>,
+}
+
+impl PendingMetadata {
+    /// Reads one metadata header's payload, recording what it overrides.
+    fn read_header(&mut self, flag: char, payload: &[u8]) {
+        match flag {
+            // A global header states defaults for the whole archive; the
+            // records it carries (commit id, mtime) name no entry field we
+            // read, so it contributes no override.
+            PAX_GLOBAL | GNU_LONG_LINK => {}
+            PAX_EXTENDED => self.read_pax_records(payload),
+            _ => self.name = Some(null_terminated(payload)),
+        }
+    }
+
+    /// Parses `"<len> <key>=<value>\n"` records, keeping the `path` and
+    /// `size` ones. `<len>` counts its own digits; a record that does not
+    /// parse ends the scan, since the length is what finds the next one.
+    fn read_pax_records(&mut self, payload: &[u8]) {
+        let mut rest = payload;
+        while !rest.is_empty() {
+            let Some(space) = rest.iter().position(|byte| *byte == b' ') else {
+                return;
+            };
+            let Some(length) = std::str::from_utf8(&rest[..space])
+                .ok()
+                .and_then(|text| text.parse::<usize>().ok())
+            else {
+                return;
+            };
+            if length <= space + 1 || length > rest.len() {
+                return;
+            }
+            let record = &rest[space + 1..length - 1];
+            rest = &rest[length..];
+            let Some(equals) = record.iter().position(|byte| *byte == b'=') else {
+                continue;
+            };
+            let Ok(value) = std::str::from_utf8(&record[equals + 1..]) else {
+                continue;
+            };
+            match &record[..equals] {
+                b"path" => self.name = Some(value.to_string()),
+                b"size" => self.size = value.parse::<usize>().ok(),
+                _ => {}
+            }
+        }
+    }
+
+    /// Moves the recorded overrides onto the entry they describe.
+    fn apply(&mut self, name: &mut String, size: &mut usize) {
+        if let Some(override_name) = self.name.take() {
+            *name = override_name;
+        }
+        if let Some(override_size) = self.size.take() {
+            *size = override_size;
+        }
+    }
 }
 
 fn read_block_or_eof<R: Read>(reader: &mut R, block: &mut [u8; BLOCK]) -> Result<usize, ()> {
@@ -773,6 +889,156 @@ mod tests {
         out.resize(out.len() + pad, 0);
         out.extend_from_slice(&[0u8; 1024]);
         out
+    }
+
+    /// Builds one entry - header plus padded body - with an explicit type
+    /// flag, so a test can lay out the metadata-then-file pairs a pax or
+    /// GNU archive uses. Concatenate entries and append two zero blocks.
+    fn build_entry(name: &str, flag: u8, body: &[u8]) -> Vec<u8> {
+        let mut entry = build_tar(name, body);
+        entry.truncate(entry.len() - 1024);
+        entry[156] = flag;
+        for cell in &mut entry[148..156] {
+            *cell = b' ';
+        }
+        let checksum: u32 = entry[..512].iter().map(|byte| u32::from(*byte)).sum();
+        let text = format!("{checksum:06o}\0 ");
+        for (i, byte) in text.as_bytes().iter().take(8).enumerate() {
+            entry[148 + i] = *byte;
+        }
+        entry
+    }
+
+    /// One pax record in its `"<len> <key>=<value>\n"` framing, where the
+    /// length counts its own digits.
+    fn pax_record(key: &str, value: &str) -> Vec<u8> {
+        let body = format!(" {key}={value}\n");
+        let mut length = body.len() + 1;
+        while format!("{length}").len() + body.len() != length {
+            length += 1;
+        }
+        format!("{length}{body}").into_bytes()
+    }
+
+    fn archive(entries: &[Vec<u8>]) -> Vec<u8> {
+        let mut out: Vec<u8> = entries.concat();
+        out.extend_from_slice(&[0u8; 1024]);
+        out
+    }
+
+    #[test]
+    fn unpack_reads_past_the_pax_global_header_git_archive_writes() {
+        let tar = archive(&[
+            build_entry(
+                "pax_global_header",
+                b'g',
+                &pax_record("comment", "cf4da891f2e1a37eade4637ad6455a8d65d4a0b4"),
+            ),
+            build_entry("src/lib.gos", b'0', b"fn main() {}\n"),
+        ]);
+        let files = unpack(&tar).expect("unpack");
+        assert_eq!(files.len(), 1);
+        assert_eq!(
+            files.get("src/lib.gos").map(Vec::as_slice),
+            Some(b"fn main() {}\n" as &[u8])
+        );
+    }
+
+    #[test]
+    fn a_pax_extended_header_names_the_entry_that_follows() {
+        let long = format!("src/{}/deep.gos", "nested".repeat(20));
+        let tar = archive(&[
+            build_entry("PaxHeaders/deep.gos", b'x', &pax_record("path", &long)),
+            build_entry("src/truncated.gos", b'0', b"fn main() {}\n"),
+        ]);
+        let files = unpack(&tar).expect("unpack");
+        assert_eq!(files.keys().collect::<Vec<_>>(), vec![&long]);
+    }
+
+    #[test]
+    fn a_pax_extended_header_sizes_the_entry_that_follows() {
+        let mut header = build_entry("big.gos", b'0', b"0123456789");
+        // The pax `size` record is authoritative, so the ustar field it
+        // overrides reads zero on the entry it describes.
+        for cell in &mut header[124..135] {
+            *cell = b'0';
+        }
+        for cell in &mut header[148..156] {
+            *cell = b' ';
+        }
+        let checksum: u32 = header[..512].iter().map(|byte| u32::from(*byte)).sum();
+        let text = format!("{checksum:06o}\0 ");
+        for (i, byte) in text.as_bytes().iter().take(8).enumerate() {
+            header[148 + i] = *byte;
+        }
+        let tar = archive(&[
+            build_entry("PaxHeaders/big.gos", b'x', &pax_record("size", "10")),
+            header,
+        ]);
+        let files = unpack(&tar).expect("unpack");
+        assert_eq!(
+            files.get("big.gos").map(Vec::as_slice),
+            Some(b"0123456789" as &[u8])
+        );
+    }
+
+    #[test]
+    fn a_gnu_long_name_header_names_the_entry_that_follows() {
+        let long = format!("src/{}/deep.gos", "nested".repeat(20));
+        let mut payload = long.clone().into_bytes();
+        payload.push(0);
+        let tar = archive(&[
+            build_entry("././@LongLink", b'L', &payload),
+            build_entry("src/truncated.gos", b'0', b"fn main() {}\n"),
+        ]);
+        let files = unpack(&tar).expect("unpack");
+        assert_eq!(files.keys().collect::<Vec<_>>(), vec![&long]);
+    }
+
+    #[test]
+    fn a_pax_path_still_answers_to_the_traversal_check() {
+        let tar = archive(&[
+            build_entry(
+                "PaxHeaders/escape",
+                b'x',
+                &pax_record("path", "../outside.gos"),
+            ),
+            build_entry("inside.gos", b'0', b"fn main() {}\n"),
+        ]);
+        let err = unpack(&tar).unwrap_err();
+        assert!(matches!(err, TarError::UnsafePath(name) if name == "../outside.gos"));
+    }
+
+    #[test]
+    fn a_metadata_header_is_bounded_by_the_file_limit() {
+        let tar = archive(&[
+            build_entry("pax_global_header", b'g', &[b'x'; 64]),
+            build_entry("src/lib.gos", b'0', b"fn main() {}\n"),
+        ]);
+        let err = unpack_with_limits(
+            &tar,
+            UnpackLimits {
+                max_entries: 8,
+                max_file_bytes: 16,
+                max_total_bytes: 1024,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, TarError::FileTooLarge { size: 64, .. }));
+    }
+
+    #[test]
+    fn reader_unpack_reads_pax_headers_the_same_way() {
+        let long = format!("src/{}/deep.gos", "nested".repeat(20));
+        let tar = archive(&[
+            build_entry("pax_global_header", b'g', &pax_record("comment", "abc")),
+            build_entry("PaxHeaders/deep.gos", b'x', &pax_record("path", &long)),
+            build_entry("src/truncated.gos", b'0', b"fn main() {}\n"),
+        ]);
+        let from_slice = unpack(&tar).expect("unpack");
+        let from_reader = unpack_reader(std::io::Cursor::new(tar)).expect("unpack reader");
+        assert_eq!(from_reader, from_slice);
+        assert_eq!(from_reader.keys().collect::<Vec<_>>(), vec![&long]);
     }
 
     #[test]

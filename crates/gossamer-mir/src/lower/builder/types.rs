@@ -257,6 +257,31 @@ impl<'a> Builder<'a> {
         None
     }
 
+    /// The enum a scrutinee's type names, as the key the enum index is
+    /// registered under. A variant name may be declared by several enums, so
+    /// match dispatch resolves through the value's own type rather than
+    /// through the program-wide variant map.
+    pub(crate) fn enum_index_name_of(&self, ty: Ty) -> Option<String> {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(cur) {
+            cur = *inner;
+        }
+        if !matches!(self.tcx.kind_of(cur), TyKind::Adt { .. }) {
+            return None;
+        }
+        let rendered = gossamer_types::printer::render_ty(self.tcx, cur);
+        let rendered = rendered.split('<').next().unwrap_or(&rendered).to_string();
+        let bare = rendered
+            .rsplit("::")
+            .next()
+            .unwrap_or(&rendered)
+            .to_string();
+        [rendered, bare]
+            .into_iter()
+            .find(|key| self.enums.by_enum.contains_key(key))
+    }
+
     pub(crate) fn adt_dispatch_name(&self, ty: Ty) -> Option<String> {
         use gossamer_types::TyKind;
         if let Some(name) = self.struct_name_of(ty) {
@@ -469,6 +494,12 @@ impl<'a> Builder<'a> {
             match self.tcx.kind_of(cur) {
                 TyKind::Ref { inner, .. } => cur = *inner,
                 TyKind::Tuple(_) | TyKind::Array { .. } => return true,
+                TyKind::Vec(_) | TyKind::Slice(_) => return self.key_descriptor(cur).is_some(),
+                // An `Option<T>` is keyed by its two words, exactly as a
+                // two-element tuple is.
+                TyKind::Adt { def, .. } if def.local == u32::MAX - 1 => {
+                    return self.key_descriptor(cur).is_some();
+                }
                 TyKind::Adt { .. } => return self.struct_name_of(cur).is_some(),
                 _ => return false,
             }
@@ -502,6 +533,20 @@ impl<'a> Builder<'a> {
                 out.push('S');
                 true
             }
+            // A sequence of one-word scalars folds by content. Its elements
+            // must be readable as raw bytes, so a sequence of strings or of
+            // aggregates is not keyable.
+            TyKind::Vec(elem) | TyKind::Slice(elem) => {
+                let elem = *elem;
+                let scalar = matches!(
+                    self.tcx.kind_of(elem),
+                    TyKind::Int(_) | TyKind::Bool | TyKind::Char | TyKind::Float(_)
+                );
+                if scalar {
+                    out.push('V');
+                }
+                scalar
+            }
             TyKind::Tuple(elems) => {
                 let elems = elems.clone();
                 !elems.is_empty() && elems.iter().all(|e| self.append_key_descriptor(*e, out))
@@ -515,6 +560,18 @@ impl<'a> Builder<'a> {
                     return false;
                 };
                 len > 0 && (0..len).all(|_| self.append_key_descriptor(elem, out))
+            }
+            // An `Option<T>` key is its two-word carrier: the discriminant,
+            // then the payload the `Some` arm holds. Both slots are the key's
+            // own content, so the same descriptor that spells a tuple spells
+            // this.
+            TyKind::Adt { def, substs } if def.local == u32::MAX - 1 => {
+                let substs = substs.clone();
+                out.push('s');
+                substs
+                    .types()
+                    .first()
+                    .is_some_and(|payload| self.append_key_descriptor(*payload, out))
             }
             TyKind::Adt { def, substs } => {
                 if self.struct_name_of(ty).is_none() {
@@ -617,6 +674,22 @@ impl<'a> Builder<'a> {
     /// opaque runtime handle) lives in an `i64`-shaped local, and reading
     /// that local as the operand's type would take the address of a handle
     /// slot and hand the callee a pointer where it expects the handle.
+    /// True for a value whose storage is the slots themselves - a user
+    /// struct, a tuple, a fixed array - so a place of this type is read by
+    /// copying it and a reference to it must be the place's address.
+    pub(crate) fn inline_aggregate_ty(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        match self.tcx.kind_of(ty) {
+            TyKind::Tuple(_) | TyKind::Array { .. } => true,
+            TyKind::Adt { .. } => {
+                !self.tcx.is_rc_managed(ty)
+                    && !self.tcx.is_inline_enum_ty(ty)
+                    && self.struct_name_of(ty).is_some()
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn mut_ref_takes_slot_address(&self, operand_ty: Ty, local_ty: Ty) -> bool {
         use gossamer_types::TyKind;
         let rebindable = |ty: Ty| {

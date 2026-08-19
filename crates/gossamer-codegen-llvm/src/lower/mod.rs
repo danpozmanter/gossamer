@@ -344,10 +344,19 @@ pub(super) enum ConcatKind {
     SetString(bool),
     /// Set whose aggregate elements render through a descriptor stream.
     SetDesc(ValueDesc, bool),
+    /// `Set<T>` / `BTreeSet<T>` whose elements are one word read through a
+    /// tag - a `bool`, a `char`, an `f64`. The bool is true for `BTreeSet`.
+    SetTagged(u8, bool),
+    /// `Set<T>` / `BTreeSet<T>` of enum elements: each stored slot addresses
+    /// the node its descriptor reads. The bool is true for `BTreeSet`.
+    SetEkey(ValueDesc, bool),
     /// A container handle - `Deque` / `Queue` / `Stack` / `MaxHeap` /
     /// `MinHeap` - rendered by the named runtime shim, which owns the one
     /// text form every tier prints.
     HandleFormat(&'static str),
+    /// A container handle whose elements are read through a descriptor
+    /// stream, for an element the one-word integer shim cannot render.
+    HandleFormatDesc(&'static str, ValueDesc),
     /// `{:?}` of an `Option<T>`, rendered via the runtime's option debug
     /// helper with the payload's rendering plan.
     Option(DebugPayload),

@@ -3162,52 +3162,13 @@ fn phase1_runtime_collection_shapes_accept_i64_paths() {
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
 
-/// A slot-backed container holds one word per element, so an element that is a
-/// handle or spans several slots is reported as such. A heap also orders its
-/// elements against a signed 64-bit comparison, which `u64` outruns.
+/// A `Deque` / `Queue` / `Stack` stores and hands back, so it holds an element
+/// of any type. A heap also orders its elements, so an element with no
+/// ordering - a `Map`, a `Set` - is reported as such, as is a `u64`, whose
+/// range runs past the signed comparison a heap slot orders by.
 #[test]
 fn slot_backed_collections_reject_elements_they_cannot_hold() {
     for (name, source, owner, found) in [
-        (
-            "deque string annotation",
-            "use std::collections::Deque\n\
-             fn main() { let mut q: Deque<String> = Deque::new()\n\
-             q.push_back(\"a\") }\n",
-            "Deque",
-            "String",
-        ),
-        (
-            "queue string from",
-            "use std::collections::Queue\n\
-             fn main() { let mut q = Queue::from([\"a\"])\n\
-             println!(\"{}\", q.len()) }\n",
-            "Queue",
-            "String",
-        ),
-        (
-            "stack tuple annotation",
-            "use std::collections::Stack\n\
-             fn main() { let mut s: Stack<(i64, i64)> = Stack::new()\n\
-             println!(\"{}\", s.len()) }\n",
-            "Stack",
-            "(i64, i64)",
-        ),
-        (
-            "max heap string annotation",
-            "use std::collections::MaxHeap\n\
-             fn main() { let mut h: MaxHeap<String> = MaxHeap::new()\n\
-             println!(\"{}\", h.len()) }\n",
-            "MaxHeap",
-            "String",
-        ),
-        (
-            "min heap string from",
-            "use std::collections::MinHeap\n\
-             fn main() { let mut h = MinHeap::from([\"a\"])\n\
-             println!(\"{}\", h.len()) }\n",
-            "MinHeap",
-            "String",
-        ),
         (
             "max heap unsigned annotation",
             "use std::collections::MaxHeap\n\
@@ -3215,6 +3176,22 @@ fn slot_backed_collections_reject_elements_they_cannot_hold() {
              println!(\"{}\", h.len()) }\n",
             "MaxHeap",
             "u64",
+        ),
+        (
+            "max heap map annotation",
+            "use std::collections::{MaxHeap, Map}\n\
+             fn main() { let mut h: MaxHeap<Map<String, i64>> = MaxHeap::new()\n\
+             println!(\"{}\", h.len()) }\n",
+            "MaxHeap",
+            "Map<String, i64>",
+        ),
+        (
+            "min heap set annotation",
+            "use std::collections::{MinHeap, Set}\n\
+             fn main() { let mut h: MinHeap<Set<i64>> = MinHeap::new()\n\
+             println!(\"{}\", h.len()) }\n",
+            "MinHeap",
+            "Set<i64>",
         ),
     ] {
         let diagnostics = diagnostics_for(source);
@@ -3226,6 +3203,25 @@ fn slot_backed_collections_reject_elements_they_cannot_hold() {
             )),
             "{name} should name the element the container cannot hold: {diagnostics:?}"
         );
+    }
+
+    // The sequence-shaped containers hold whatever a `Vec` holds.
+    for source in [
+        "use std::collections::Deque\n\
+         fn main() { let mut q: Deque<String> = Deque::new()\n\
+         q.push_back(\"a\") }\n",
+        "use std::collections::Queue\n\
+         fn main() { let mut q = Queue::from([\"a\"])\n\
+         println!(\"{}\", q.len()) }\n",
+        "use std::collections::Stack\n\
+         fn main() { let mut s: Stack<(i64, i64)> = Stack::new()\n\
+         println!(\"{}\", s.len()) }\n",
+        "use std::collections::MaxHeap\n\
+         fn main() { let mut h: MaxHeap<String> = MaxHeap::new()\n\
+         println!(\"{}\", h.len()) }\n",
+    ] {
+        let diagnostics = diagnostics_for(source);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 }
 

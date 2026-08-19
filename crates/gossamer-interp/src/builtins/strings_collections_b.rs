@@ -1162,6 +1162,42 @@ fn render_display(
             inner.name,
             joined(dispatch, &inner.fields)?.join(", ")
         )),
+        // A container keeps its elements in a runtime registry behind a
+        // handle field, so the walk reads them out of it rather than
+        // rendering the handle: `Queue [P { .. }]`, not the handle struct.
+        Value::Struct(inner)
+            if matches!(inner.name.as_str(), "Deque" | "Queue" | "Stack")
+                && let Some(items) =
+                    crate::stdlib_builtins::deque::deque_snapshot(value) =>
+        {
+            Ok(format!(
+                "{} [{}]",
+                inner.name,
+                joined(dispatch, &items)?.join(", ")
+            ))
+        }
+        Value::Struct(inner)
+            if matches!(inner.name.as_str(), "MaxHeap" | "MinHeap")
+                && let Some(items) =
+                    crate::stdlib_builtins::container_heap::binary_heap_snapshot(value) =>
+        {
+            Ok(format!(
+                "{} [{}]",
+                inner.name,
+                joined(dispatch, &items)?.join(", ")
+            ))
+        }
+        Value::Struct(inner)
+            if matches!(inner.name.as_str(), "Set" | "BTreeSet")
+                && let Some(items) =
+                    crate::stdlib_builtins::set::set_display_snapshot(value) =>
+        {
+            Ok(format!(
+                "{} {{{}}}",
+                inner.name,
+                joined(dispatch, &items)?.join(", ")
+            ))
+        }
         Value::Struct(inner) => {
             let mut parts = Vec::with_capacity(inner.fields.len());
             for (name, field) in &inner.fields {
@@ -1181,6 +1217,7 @@ fn render_display(
                 // form and both compiled tiers show one.
                 let key = match key.to_value() {
                     Value::String(text) => format!("{:?}", text.as_str()),
+                    Value::Char(ch) => ch.to_string(),
                     other => render_display(dispatch, &other, aliases, method)?,
                 };
                 parts.push(format!("{key}: {}", render_display(dispatch, entry, aliases, method)?));

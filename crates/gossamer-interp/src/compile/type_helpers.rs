@@ -171,41 +171,10 @@ impl<'tcx> FnBuilder<'tcx> {
         vec![unparameterized.to_string(), bare.to_string()]
     }
 
-    /// `true` when `ty` could name a user type carrying an inherent
-    /// `impl`, or is not resolved concretely enough to tell. A built-in
-    /// receiver (`String`, `Vec`, `Map`, a slice, a scalar, a channel
-    /// endpoint) owns its method surface outright, so a same-named user
-    /// method on an unrelated type is not a candidate for it - the guard
-    /// that keeps name-only `&mut self` dispatch off builtin receivers.
-    pub(crate) fn ty_may_have_user_methods(&self, ty: gossamer_types::Ty) -> bool {
-        let ty = self.unwrap_ref(ty);
-        match self.tcx.kind(ty) {
-            // No resolved kind: the receiver's type is unknown here, so a
-            // uniquely-named user method stays reachable.
-            None => true,
-            Some(kind) => matches!(
-                kind,
-                TyKind::Adt { .. }
-                    | TyKind::Nominal { .. }
-                    | TyKind::Alias { .. }
-                    | TyKind::Dyn(_)
-                    | TyKind::Var(_)
-                    | TyKind::Param { .. }
-                    | TyKind::Error
-            ),
-        }
-    }
-
-    /// `true` only when `ty` is not resolved concretely enough to name the
-    /// type a method call would dispatch on.
-    ///
-    /// This is the narrow guard for name-only method resolution. A receiver
-    /// whose type *is* known owns its method surface, whether that surface
-    /// is a user `impl` or a built-in one, so a same-named method on an
-    /// unrelated type is never a candidate for it. Only a receiver whose
-    /// type is genuinely open - an unsubstituted parameter, an inference
-    /// variable, or a payload binding extracted from a generic enum - leaves
-    /// the name as the sole thing to go on.
+    /// `true` when `ty` names no concrete type here - an inference variable,
+    /// a generic parameter, or an error - so a method call on it cannot be
+    /// resolved by the receiver's own surface and the one uniquely-named
+    /// candidate is all there is to bind to.
     pub(crate) fn ty_is_unresolved(&self, ty: gossamer_types::Ty) -> bool {
         let ty = self.unwrap_ref(ty);
         match self.tcx.kind(ty) {

@@ -378,6 +378,11 @@ impl<'a> Builder<'a> {
                 }
                 return Some(source);
             }
+            if args.is_empty()
+                && let Some(local) = self.try_lower_slot_container_new(joined.as_str(), ty, span)
+            {
+                return Some(local);
+            }
             if matches!(
                 joined.as_str(),
                 "Deque::from"
@@ -474,17 +479,30 @@ impl<'a> Builder<'a> {
                 ) || self.binary_heap_ty_is_min(ty)
                     || self.binary_heap_elem_is_reverse_i64(ty);
                 let float_elem = self.heap_elem_is_float(ty);
-                let symbol = match (is_min, float_elem) {
-                    (true, true) => "gos_rt_bheap_min_from_vec_f64",
-                    (true, false) => "gos_rt_bheap_min_from_vec_i64",
-                    (false, true) => "gos_rt_bheap_max_from_vec_f64",
-                    (false, false) => "gos_rt_bheap_max_from_vec_i64",
+                // An element the one-word entry points cannot order carries
+                // its ordering descriptor into the heapify.
+                let desc = self
+                    .first_generic_of(ty)
+                    .filter(|elem| !float_elem && self.heap_elem_needs_desc(*elem))
+                    .and_then(|elem| self.ordering_stream(elem));
+                let symbol = match (is_min, float_elem, desc.is_some()) {
+                    (true, _, true) => "gos_rt_bheap_min_from_vec_desc",
+                    (false, _, true) => "gos_rt_bheap_max_from_vec_desc",
+                    (true, true, _) => "gos_rt_bheap_min_from_vec_f64",
+                    (true, false, _) => "gos_rt_bheap_min_from_vec_i64",
+                    (false, true, _) => "gos_rt_bheap_max_from_vec_f64",
+                    (false, false, _) => "gos_rt_bheap_max_from_vec_i64",
                 };
+                let mut call_args = vec![Operand::Copy(Place::local(source))];
+                if let Some(stream) = desc {
+                    let text: String = stream.iter().map(|&b| b as char).collect();
+                    call_args.push(Operand::Const(ConstValue::Str(text)));
+                }
                 let dest = self.fresh(ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
                     callee: Operand::Const(ConstValue::Str(symbol.to_string())),
-                    args: vec![Operand::Copy(Place::local(source))],
+                    args: call_args,
                     destination: Place::local(dest),
                     target: Some(next),
                 });
@@ -1284,6 +1302,124 @@ impl<'a> Builder<'a> {
             return self.load_slot_value(local, expected_inner, span);
         }
         local
+    }
+
+    /// Lowers `Deque::new()` / `Queue::new()` / `Stack::new()` into a store
+    /// typed for the element the call's own type names, plus the ownership
+    /// tag that store needs. The element type is not recoverable from the
+    /// handle the constructor answers, so both are settled here, where the
+    /// call's type is still in hand.
+    fn try_lower_slot_container_new(&mut self, joined: &str, ty: Ty, span: Span) -> Option<Local> {
+        let (runtime_kind, ctor) = match joined {
+            "Deque::new"
+            | "VecDeque::new"
+            | "collections::Deque::new"
+            | "collections::VecDeque::new" => ("collections::VecDeque", "gos_rt_deque_new_typed"),
+            "Queue::new"
+            | "VecQueue::new"
+            | "collections::Queue::new"
+            | "collections::VecQueue::new" => ("collections::VecQueue", "gos_rt_deque_new_typed"),
+            "Stack::new"
+            | "VecStack::new"
+            | "collections::Stack::new"
+            | "collections::VecStack::new" => ("collections::VecStack", "gos_rt_deque_new_typed"),
+            "MaxHeap::new"
+            | "BinaryHeap::new"
+            | "MaxBinaryHeap::new"
+            | "collections::MaxHeap::new"
+            | "collections::BinaryHeap::new"
+            | "collections::MaxBinaryHeap::new" => {
+                ("collections::MaxHeap", "gos_rt_bheap_new_typed")
+            }
+            "MinHeap::new"
+            | "MinBinaryHeap::new"
+            | "collections::MinHeap::new"
+            | "collections::MinBinaryHeap::new" => {
+                ("collections::MinHeap", "gos_rt_bheap_new_typed")
+            }
+            _ => return None,
+        };
+        // A heap of one-word scalars keeps the integer and float entry
+        // points, whose store the untyped constructor already allocates.
+        let heap = ctor == "gos_rt_bheap_new_typed";
+        let elem = self.first_generic_of(ty)?;
+        // A heap sifts through whole words - the scalar entry points read a
+        // slot as an `i64` - so its store never takes a narrower stride.
+        let slot_bytes = self.type_slot_bytes(elem).max(1);
+        let elem_bytes = i128::from(if heap { slot_bytes.max(8) } else { slot_bytes });
+        let kind = i128::from(self.vec_elem_kind_tag(elem));
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let const_arg = |builder: &mut Self, value: i128| {
+            let local = builder.fresh(i64_ty);
+            builder.emit_assign(
+                Place::local(local),
+                Rvalue::Use(Operand::Const(ConstValue::Int(value))),
+                span,
+            );
+            Operand::Copy(Place::local(local))
+        };
+        let bytes_arg = const_arg(self, elem_bytes);
+        let kind_arg = const_arg(self, kind);
+        // The handle keeps the container's own type: it is one slot either
+        // way, and the element type is what the format site reads to render
+        // an element the integer shim cannot.
+        let dest = self.fresh(ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(ctor.to_string())),
+            args: vec![bytes_arg, kind_arg],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        self.local_runtime_kind.insert(dest, runtime_kind);
+        if let Some(ownership) = crate::lower::helpers::elem_ownership(self.tcx, elem)
+            && std::env::var_os("GOS_NO_ELEM_META").is_none()
+        {
+            // A heap's handle is its element store; a deque's addresses it.
+            let store = if heap {
+                dest
+            } else {
+                let store = self.fresh(i64_ty);
+                let after_store = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_deque_vec".to_string())),
+                    args: vec![Operand::Copy(Place::local(dest))],
+                    destination: Place::local(store),
+                    target: Some(after_store),
+                });
+                self.set_current(after_store);
+                store
+            };
+            let mut args = vec![Operand::Copy(Place::local(store))];
+            if let Some(meta) = ownership.meta() {
+                args.push(Operand::Const(ConstValue::Str(meta.to_string())));
+            }
+            let unit_ty = self.tcx.unit();
+            let sink = self.fresh(unit_ty);
+            self.emit_assign(
+                Place::local(sink),
+                Rvalue::CallIntrinsic {
+                    name: ownership.symbol(),
+                    args,
+                },
+                span,
+            );
+        }
+        Some(dest)
+    }
+
+    /// The `Vec` element-kind tag an element store of `elem` elements carries,
+    /// naming what one slot owns: a counted string, container, or error
+    /// handle, or nothing beyond the slot itself.
+    pub(crate) fn vec_elem_kind_tag(&self, elem: Ty) -> u8 {
+        match self.tcx.kind_of(elem) {
+            TyKind::String => 1,
+            TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Iterator(_) => 2,
+            TyKind::HashMap { .. } => 3,
+            TyKind::DynError => 4,
+            _ => 0,
+        }
     }
 
     pub(crate) fn mut_ref_reload_target(&self, arg: &HirExpr) -> Option<Local> {

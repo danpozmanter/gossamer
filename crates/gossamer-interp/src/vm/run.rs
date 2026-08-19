@@ -1261,7 +1261,7 @@ impl Vm {
                                 .and_then(|q| self.lookup_global(q.as_ref())),
                             _ => None,
                         }
-                        .or_else(|| self.lookup_global("write_byte"));
+                        .or_else(|| self.lookup_builtin_method("write_byte"));
                         let args = vec![recv_clone, byte_clone];
                         let result = match resolved {
                             Some(Global::Value(Value::Builtin(builtin_inner))) => {
@@ -1337,7 +1337,7 @@ impl Vm {
                             .and_then(|q| self.lookup_global(q.as_ref())),
                         _ => None,
                     }
-                    .or_else(|| self.lookup_global("set_byte"));
+                    .or_else(|| self.lookup_builtin_method("set_byte"));
                     let args = vec![recv_clone, idx_clone, byte_clone];
                     let result = match resolved {
                         Some(Global::Value(Value::Builtin(builtin_inner))) => {
@@ -1401,7 +1401,7 @@ impl Vm {
                             .and_then(|q| self.lookup_global(q.as_ref())),
                         _ => None,
                     }
-                    .or_else(|| self.lookup_global("get_byte"));
+                    .or_else(|| self.lookup_builtin_method("get_byte"));
                     let args = vec![recv_clone, idx_clone];
                     let result = match resolved {
                         Some(Global::Value(Value::Builtin(builtin_inner))) => {
@@ -1456,7 +1456,7 @@ impl Vm {
                             .and_then(|q| self.lookup_global(q.as_ref())),
                         _ => None,
                     }
-                    .or_else(|| self.lookup_global("substring"));
+                    .or_else(|| self.lookup_builtin_method("substring"));
                     let args = vec![recv_clone, start_clone, end_clone];
                     let result = match resolved {
                         Some(Global::Value(Value::Builtin(builtin_inner))) => {
@@ -1535,7 +1535,7 @@ impl Vm {
                             .and_then(|q| self.lookup_global(q.as_ref())),
                         _ => None,
                     }
-                    .or_else(|| self.lookup_global("inc"));
+                    .or_else(|| self.lookup_builtin_method("inc"));
                     let args = vec![map_clone, key_clone, by_clone];
                     let result = match resolved {
                         Some(Global::Value(Value::Builtin(builtin_inner))) => {

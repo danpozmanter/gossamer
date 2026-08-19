@@ -466,13 +466,10 @@ pub(crate) unsafe fn consume_byte_vec<R>(v: *mut GosVec, f: impl FnOnce(&[u8]) -
         unsafe { gos_rt_panic(c"byte vector is too large to store".as_ptr()) };
         0
     });
-    // A moved map value can arrive with three shares: the slice-result payload,
-    // the user local cloned from it, and the explicit retain that represents
-    // the map's ownership. MIR cleanup treats the insert as consuming, so the
-    // first two shares have no later releases.
-    if vec_rc(vec) <= 3 {
-        vec_set_rc(vec, 1);
-    }
+    // The bytes are copied out, so the container's share of the source ends
+    // here: release exactly that one share and leave every other holder's -
+    // the frame keeps its own until its own release, which is what makes a
+    // read after an insert read live storage.
     unsafe { crate::c_abi::map::gos_rt_vec_free(v) };
     result
 }

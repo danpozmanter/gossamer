@@ -1525,8 +1525,13 @@ pub(super) fn lower_intrinsic_call_string(
         // stack bytes for the rest. Scalars still go through the
         // 8-byte slot path so misaligned int / float types reach
         // the runtime as a clean little-endian 8-byte payload.
-        "gos_rt_vec_push" => {
-            let push_fn = intrinsics.extern_fn_by_name(module, "gos_rt_vec_push")?;
+        "gos_rt_vec_push" | "gos_rt_deque_push_back_wide" | "gos_rt_deque_push_front_wide" => {
+            let callee: &'static str = match name {
+                "gos_rt_deque_push_back_wide" => "gos_rt_deque_push_back_wide",
+                "gos_rt_deque_push_front_wide" => "gos_rt_deque_push_front_wide",
+                _ => "gos_rt_vec_push",
+            };
+            let push_fn = intrinsics.extern_fn_by_name(module, callee)?;
             let vec_p = match args.first() {
                 Some(a) => lower_operand(
                     module,

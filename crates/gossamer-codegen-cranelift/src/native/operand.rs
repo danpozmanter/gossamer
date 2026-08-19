@@ -396,6 +396,15 @@ pub(super) fn operand_cl_type(
     }
 }
 
+/// `ty` with every reference peeled off.
+fn peel_refs(tcx: &TyCtxt, ty: Ty) -> Ty {
+    let mut ty = ty;
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+        ty = *inner;
+    }
+    ty
+}
+
 /// Runtime format shim for a container handle's sentinel `DefId`:
 /// `Deque` (`u32::MAX - 19`), `MaxHeap` (`- 28`), `MinHeap` (`- 30`),
 /// `Queue` (`- 31`), `Stack` (`- 32`).
@@ -537,9 +546,19 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
             // A container renders through its own runtime shim whether the
             // local carries the container's type or the bare i64 handle the
             // constructor returned.
-            if let TyKind::Adt { def, .. } = tcx.kind_of(ty)
+            if let TyKind::Adt { def, substs } = tcx.kind_of(ty)
                 && let Some(sym) = container_format_symbol(def.local)
             {
+                // The shim reads each element as one integer word. An
+                // element of any other shape needs the descriptor stream
+                // this tier does not emit, so the body runs on the VM
+                // rather than printing the slot as a number.
+                let elem = substs.types().first().copied();
+                if elem.is_some_and(|elem| {
+                    !matches!(tcx.kind_of(peel_refs(tcx, elem)), TyKind::Int(_))
+                }) {
+                    return PrintKind::Unsupported("container element needs a descriptor");
+                }
                 return PrintKind::HandleFormat(sym);
             }
             match tcx.kind_of(ty) {

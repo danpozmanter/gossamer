@@ -476,6 +476,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::deque::gos_rt_deque_is_empty as *const u8,
         ),
         (
+            "gos_rt_set_is_empty",
+            crate::c_abi::set::gos_rt_set_is_empty as *const u8,
+        ),
+        (
             "gos_rt_deque_len",
             crate::c_abi::deque::gos_rt_deque_len as *const u8,
         ),
@@ -534,6 +538,106 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_deque_push_back",
             crate::c_abi::deque::gos_rt_deque_push_back as *const u8,
+        ),
+        (
+            "gos_rt_bheap_max_format_desc",
+            crate::c_abi::container_heap::gos_rt_bheap_max_format_desc as *const u8,
+        ),
+        (
+            "gos_rt_bheap_max_from_vec_desc",
+            crate::c_abi::container_heap::gos_rt_bheap_max_from_vec_desc as *const u8,
+        ),
+        (
+            "gos_rt_bheap_max_pop_desc",
+            crate::c_abi::container_heap::gos_rt_bheap_max_pop_desc as *const u8,
+        ),
+        (
+            "gos_rt_bheap_max_push_desc",
+            crate::c_abi::container_heap::gos_rt_bheap_max_push_desc as *const u8,
+        ),
+        (
+            "gos_rt_bheap_min_format_desc",
+            crate::c_abi::container_heap::gos_rt_bheap_min_format_desc as *const u8,
+        ),
+        (
+            "gos_rt_bheap_min_from_vec_desc",
+            crate::c_abi::container_heap::gos_rt_bheap_min_from_vec_desc as *const u8,
+        ),
+        (
+            "gos_rt_bheap_min_pop_desc",
+            crate::c_abi::container_heap::gos_rt_bheap_min_pop_desc as *const u8,
+        ),
+        (
+            "gos_rt_bheap_min_push_desc",
+            crate::c_abi::container_heap::gos_rt_bheap_min_push_desc as *const u8,
+        ),
+        (
+            "gos_rt_bheap_new_typed",
+            crate::c_abi::container_heap::gos_rt_bheap_new_typed as *const u8,
+        ),
+        (
+            "gos_rt_bheap_peek_elem",
+            crate::c_abi::container_heap::gos_rt_bheap_peek_elem as *const u8,
+        ),
+        (
+            "gos_rt_set_format_tagged",
+            crate::c_abi::set::gos_rt_set_format_tagged as *const u8,
+        ),
+        (
+            "gos_rt_set_insert_ekey",
+            crate::c_abi::set::gos_rt_set_insert_ekey as *const u8,
+        ),
+        (
+            "gos_rt_set_contains_ekey",
+            crate::c_abi::set::gos_rt_set_contains_ekey as *const u8,
+        ),
+        (
+            "gos_rt_set_remove_ekey",
+            crate::c_abi::set::gos_rt_set_remove_ekey as *const u8,
+        ),
+        (
+            "gos_rt_set_to_vec_ekey",
+            crate::c_abi::set::gos_rt_set_to_vec_ekey as *const u8,
+        ),
+        (
+            "gos_rt_set_format_ekey",
+            crate::c_abi::set::gos_rt_set_format_ekey as *const u8,
+        ),
+        (
+            "gos_rt_desc_cmp",
+            crate::c_abi::desc_cmp::gos_rt_desc_cmp as *const u8,
+        ),
+        (
+            "gos_rt_deque_push_back_wide",
+            crate::c_abi::deque::gos_rt_deque_push_back_wide as *const u8,
+        ),
+        (
+            "gos_rt_deque_push_front_wide",
+            crate::c_abi::deque::gos_rt_deque_push_front_wide as *const u8,
+        ),
+        (
+            "gos_rt_deque_new_typed",
+            crate::c_abi::deque::gos_rt_deque_new_typed as *const u8,
+        ),
+        (
+            "gos_rt_deque_from_vec",
+            crate::c_abi::deque::gos_rt_deque_from_vec as *const u8,
+        ),
+        (
+            "gos_rt_deque_vec",
+            crate::c_abi::deque::gos_rt_deque_vec as *const u8,
+        ),
+        (
+            "gos_rt_deque_format_desc",
+            crate::c_abi::deque::gos_rt_deque_format_desc as *const u8,
+        ),
+        (
+            "gos_rt_queue_format_desc",
+            crate::c_abi::deque::gos_rt_queue_format_desc as *const u8,
+        ),
+        (
+            "gos_rt_stack_format_desc",
+            crate::c_abi::deque::gos_rt_stack_format_desc as *const u8,
         ),
         (
             "gos_rt_deque_push_back_f64",

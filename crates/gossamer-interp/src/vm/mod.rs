@@ -1410,9 +1410,16 @@ impl Vm {
         if name.contains("::") {
             return self.lookup_global(name);
         }
-        match self.lookup_global(name) {
+        // The prelude alone, never the program's own globals: a user function
+        // sharing a builtin's bare name is a free function, and a receiver
+        // that answers that name still answers with the builtin - the shadow
+        // belongs to the call spelled without a receiver.
+        if let Some(found) = self.prelude.get(name) {
+            return Some(found.clone());
+        }
+        match self.globals.get(name) {
             Some(Global::Fn(_)) | None => None,
-            found => found,
+            found => found.cloned(),
         }
     }
 
@@ -2300,6 +2307,7 @@ pub(crate) fn value_ordering(a: &Value, b: &Value) -> RuntimeResult<std::cmp::Or
     let b_ref = b_deref.as_ref().unwrap_or(b);
     match (a_ref, b_ref) {
         (Value::Int(x), Value::Int(y)) => Ok(x.cmp(y)),
+        (Value::Bool(x), Value::Bool(y)) => Ok(x.cmp(y)),
         (Value::Float(x), Value::Float(y)) => x
             .partial_cmp(y)
             .ok_or_else(|| RuntimeError::Arithmetic("NaN comparison".to_string())),
@@ -2324,6 +2332,17 @@ pub(crate) fn value_ordering(a: &Value, b: &Value) -> RuntimeResult<std::cmp::Or
             let x_values: Vec<_> = xa.fields.iter().map(|(_, value)| value.clone()).collect();
             let y_values: Vec<_> = xb.fields.iter().map(|(_, value)| value.clone()).collect();
             seq_ordering(&x_values, &y_values)
+        }
+        // An enum orders by variant rank - the position its variant was
+        // declared at, which is the discriminant every compiled tier
+        // compares - and then by payload, field by field.
+        (Value::Variant(xa), Value::Variant(xb)) => {
+            let rank = |name: &str| crate::builtins::variant_rank_of(name);
+            match (rank(xa.name.as_str()), rank(xb.name.as_str())) {
+                (Some(ra), Some(rb)) if ra != rb => Ok(ra.cmp(&rb)),
+                _ if xa.name != xb.name => Ok(xa.name.as_str().cmp(xb.name.as_str())),
+                _ => seq_ordering(&xa.fields, &xb.fields),
+            }
         }
         _ => match (seq_elements(a_ref), seq_elements(b_ref)) {
             (Some(xa), Some(xb)) => seq_ordering(&xa, &xb),

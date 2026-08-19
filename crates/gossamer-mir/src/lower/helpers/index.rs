@@ -100,11 +100,18 @@ pub(crate) struct EnumIndex {
     /// f64-typed binding made the cranelift codegen skip the
     /// I64→F64 bitcast in `define_var_to_with`.
     pub(crate) variant_field_tys: HashMap<String, Vec<Ty>>,
+    /// The same field types keyed by `Enum::Variant`, so a variant name two
+    /// enums both declare resolves to the one the value's type names.
+    pub(crate) variant_field_tys_owned: HashMap<String, Vec<Ty>>,
     /// `variant_name -> bool` - true when the variant carries any
     /// payload (struct fields OR tuple-payload constructor calls
     /// observed elsewhere in the program). Match dispatch keys off
     /// this to decide whether the scrutinee is a heap pointer.
     pub(crate) variant_has_payload: HashMap<String, bool>,
+    /// `enum_name -> bool` - true when a variant OF THAT ENUM carries a
+    /// payload. A variant name may be declared by several enums, so the
+    /// per-variant map above cannot answer this question for one of them.
+    pub(crate) enum_any_payload: HashMap<String, bool>,
 }
 
 impl EnumIndex {
@@ -139,6 +146,34 @@ impl EnumIndex {
             }
             [] => None,
         }
+    }
+
+    /// The variant's index within the named enum. A variant name can be
+    /// declared by more than one enum, so a caller that knows the value's
+    /// type resolves through this rather than through the program-wide
+    /// variant map.
+    pub(crate) fn variant_of_enum(&self, enum_name: &str, variant: &str) -> Option<usize> {
+        self.by_enum
+            .get(enum_name)?
+            .iter()
+            .position(|v| v == variant)
+    }
+
+    /// The declared field types of one variant, resolved through its own
+    /// enum when the caller knows it.
+    pub(crate) fn field_tys_of(&self, enum_name: &str, variant: &str) -> Option<Vec<Ty>> {
+        self.variant_field_tys_owned
+            .get(&format!("{enum_name}::{variant}"))
+            .or_else(|| self.variant_field_tys.get(variant))
+            .cloned()
+    }
+
+    /// True when any variant of the named enum carries a payload.
+    pub(crate) fn enum_has_any_payload(&self, enum_name: &str) -> bool {
+        self.enum_any_payload
+            .get(enum_name)
+            .copied()
+            .unwrap_or(false)
     }
 
     /// Returns true when ANY variant of the enum that contains

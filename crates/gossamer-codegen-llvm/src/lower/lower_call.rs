@@ -80,6 +80,9 @@ struct LoweredMapSlot {
     value: String,
 }
 
+/// Zero byte a discriminant read is steered at when the payload is null.
+const ENUM_DISC_NULL_PAD: &str = ".gos_enum_disc_null";
+
 impl<'a> Lowerer<'a> {
     /// Indirect call lowering for `f(args…)` where `f` is a
     /// local variable holding either a plain function pointer
@@ -519,6 +522,9 @@ impl<'a> Lowerer<'a> {
                 | "gos_rt_map_get_or_ekey"
                 | "gos_rt_map_or_insert_ekey"
                 | "gos_rt_map_inc_ekey"
+                | "gos_rt_set_insert_ekey"
+                | "gos_rt_set_contains_ekey"
+                | "gos_rt_set_remove_ekey"
         ) {
             self.lower_raw_intrinsic(&name, args, destination, target)?;
             return Ok(());
@@ -535,6 +541,17 @@ impl<'a> Lowerer<'a> {
         // stack-slot dance in `lower_intrinsic_call`.
         if name == "gos_rt_vec_push" && args.len() == 2 {
             self.lower_vec_push_inline(args, destination, target)?;
+            return Ok(());
+        }
+        // A slot container's wide push takes the address of the element's
+        // slots, exactly as the Vec push does: the runtime copies the
+        // element store's own stride from it.
+        if matches!(
+            name.as_str(),
+            "gos_rt_deque_push_back_wide" | "gos_rt_deque_push_front_wide"
+        ) && args.len() == 2
+        {
+            self.lower_container_push_wide(&name, args, destination, target)?;
             return Ok(());
         }
         if name == "gos_rt_vec_pop_opt"
@@ -1183,6 +1200,16 @@ impl<'a> Lowerer<'a> {
     }
 
     fn hashmap_storage_kinds(&self, key: Ty, value: Ty) -> Option<(i32, i32)> {
+        // A key the runtime hashes by CONTENT - a container, an aggregate -
+        // has no pre-typed storage: its first insert installs the
+        // content-keyed table. Pre-typing the map as handle-keyed would leave
+        // that insert with nowhere to go.
+        if matches!(
+            self.tcx.kind(self.unwrap_ref(key)),
+            Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::HashMap { .. })
+        ) {
+            return None;
+        }
         Some((
             self.hashmap_storage_kind(key)?,
             self.hashmap_storage_kind(value)?,
@@ -1617,12 +1644,29 @@ impl<'a> Lowerer<'a> {
                     return Err(BuildError::InternalLoweringBug("gos_enum_disc arity"));
                 }
                 let p = self.lower_raw_ptr_arg(&args[0])?;
+                // A payload that is not there - the `None` half of an
+                // `Option`, an unset carrier - has no header to read, so the
+                // load is steered at a zero byte and answers a discriminant
+                // no variant carries.
+                self.runtime_refs.insert(format!(
+                    "@{ENUM_DISC_NULL_PAD} = internal constant [8 x i8] zeroinitializer"
+                ));
+                let is_null = self.fresh();
+                writeln!(self.out, "  {is_null} = icmp eq ptr {p}, null").unwrap();
+                let header = self.fresh();
+                writeln!(self.out, "  {header} = getelementptr i8, ptr {p}, i64 -3").unwrap();
                 let addr = self.fresh();
-                writeln!(self.out, "  {addr} = getelementptr i8, ptr {p}, i64 -3").unwrap();
+                writeln!(
+                    self.out,
+                    "  {addr} = select i1 {is_null}, ptr @{ENUM_DISC_NULL_PAD}, ptr {header}"
+                )
+                .unwrap();
                 let b = self.fresh();
                 writeln!(self.out, "  {b} = load i8, ptr {addr}").unwrap();
+                let raw = self.fresh();
+                writeln!(self.out, "  {raw} = zext i8 {b} to i64").unwrap();
                 let v = self.fresh();
-                writeln!(self.out, "  {v} = zext i8 {b} to i64").unwrap();
+                writeln!(self.out, "  {v} = select i1 {is_null}, i64 -1, i64 {raw}").unwrap();
                 let coerced = self.coerce_llvm_value(&v, "i64", &dest_ty);
                 self.store_value_to_place(destination, &dest_ty, &coerced);
             }
@@ -1870,11 +1914,19 @@ impl<'a> Lowerer<'a> {
             | "gos_rt_map_pop_ekey"
             | "gos_rt_map_get_or_ekey"
             | "gos_rt_map_or_insert_ekey"
-            | "gos_rt_map_inc_ekey" => {
+            | "gos_rt_map_inc_ekey"
+            // A set of enum elements keys by the same descriptor, so its
+            // `(set, node, desc)` calls lower the same way.
+            | "gos_rt_set_insert_ekey"
+            | "gos_rt_set_contains_ekey"
+            | "gos_rt_set_remove_ekey" => {
                 let (ret_ty, has_word) = match name {
                     "gos_rt_map_insert_ekey_opt" => ("i128", true),
                     "gos_rt_map_get_ekey_opt" | "gos_rt_map_pop_ekey" => ("i128", false),
                     "gos_rt_map_contains_ekey" => ("i8", false),
+                    "gos_rt_set_insert_ekey"
+                    | "gos_rt_set_contains_ekey"
+                    | "gos_rt_set_remove_ekey" => ("i64", false),
                     _ => ("i64", true),
                 };
                 let map = self.lower_raw_ptr_arg(&args[0])?;

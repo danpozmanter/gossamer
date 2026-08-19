@@ -73,7 +73,7 @@ fn build_fetcher(
     let mut catalogue = gossamer_pkg::VersionCatalogue::new();
     for (raw_id, spec) in &manifest.dependencies {
         if matches!(spec, gossamer_pkg::DependencySpec::Registry(_)) {
-            let id = gossamer_pkg::dependency_identity(raw_id, spec)
+            let id = gossamer_pkg::dependency_identity(raw_id, spec, None)
                 .with_context(|| format!("invalid id `{raw_id}`"))?;
             if let Err(err) =
                 catalogue.load_from_registry(transport.as_ref(), &options.registry_url, &id)
@@ -117,6 +117,7 @@ pub(crate) fn enforce_lockfile_if_requested(locked: bool) -> Result<()> {
     options.auth_token = credential_for(&options.registry_url);
     let fetcher = build_fetcher(&manifest, options)?;
     let plan = gossamer_pkg::Resolver::new(fetcher.catalogue().clone())
+        .with_root(&project_root)
         .resolve(&manifest)
         .map_err(|e| anyhow!("resolve: {e}"))?;
     let lock = gossamer_pkg::Lockfile::load_required(&project_root)
@@ -476,6 +477,7 @@ pub(crate) fn fetch(manifest: Option<PathBuf>, offline: bool, update: bool) -> R
         .unwrap_or_default();
     let fetcher = build_fetcher(&m, options.clone())?.with_pinned_keys(pinned_keys);
     let plan = gossamer_pkg::Resolver::new(fetcher.catalogue().clone())
+        .with_root(&project_root)
         .resolve(&m)
         .map_err(|e| anyhow!("resolve failed: {e}"))?;
     if !update && let Some(existing) = &existing_lock {
@@ -518,6 +520,7 @@ pub(crate) fn vendor(manifest: Option<PathBuf>, out: Option<PathBuf>) -> Result<
         .unwrap_or_default();
     let fetcher = build_fetcher(&m, options)?.with_pinned_keys(pinned_keys);
     let plan = gossamer_pkg::Resolver::new(fetcher.catalogue().clone())
+        .with_root(&project_root)
         .resolve(&m)
         .map_err(|e| anyhow!("resolve failed: {e}"))?;
     let mut cache = build_cache();

@@ -724,13 +724,20 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                             && !(place.projection.is_empty()
                                 && stored_into_aggregate[place.local.0 as usize])
                     });
+                    // A bare copy into a reference local is an alias and
+                    // mints nothing. A projected store through one reaches
+                    // the pointee's own storage - a field of the borrowed
+                    // aggregate - so the aggregate gains the share the way a
+                    // field store on an owned local does.
+                    let ref_alias = place.projection.is_empty()
+                        && matches!(
+                            tcx.kind_of(body.locals[place.local.0 as usize].ty),
+                            gossamer_types::TyKind::Ref { .. }
+                        );
                     if let Some(l) = rc_operand(op)
                         && !copyback_sites.contains(&(block_idx, stmt_idx))
                         && !skip_extraction_move
-                        && !matches!(
-                            tcx.kind_of(body.locals[place.local.0 as usize].ty),
-                            gossamer_types::TyKind::Ref { .. }
-                        )
+                        && !ref_alias
                     {
                         retain_sites.push((block_idx, stmt_idx, l, 1));
                     }
@@ -872,7 +879,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 // `insert_drops_at_returns` block below. Letting this generic
                 // consuming-call path retain them too leaves the inner Vec at
                 // rc=1 after both the local and outer Vec are freed.
-                if name == "gos_rt_vec_push" && arg_idx == 1 && vec_operand(arg).is_some() {
+                if is_element_push(name) && arg_idx == 1 && vec_operand(arg).is_some() {
                     continue;
                 }
                 if let Some(l) = rc_operand(arg).or_else(|| vec_operand(arg)) {
@@ -1573,10 +1580,13 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         !(is_return_copy && is_rc(li) && owned[li] && flows_to_return[li])
     });
 
-    // Aggregate locals whose every whole-local assignment is a
-    // `gos_rt_result_payload` extraction are BORROWS: the source
-    // Result owns the payload's fields, the extraction never retained
-    // them, so it must not release them at death either.
+    // Aggregate locals whose every whole-local assignment is a payload
+    // extraction are BORROWS: the source Result or enum node owns the
+    // payload's fields, the extraction never retained them, so it must not
+    // release them at death either. `gos_enum_load` also runs BEFORE its
+    // arm's discriminant test, so on any other variant the local holds a
+    // payload of a different shape - releasing its fields at return would
+    // read one variant's words as another's.
     let mut extraction_seed = vec![false; n_locals];
     {
         let mut non_extraction = vec![false; n_locals];
@@ -1588,7 +1598,8 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 {
                     if matches!(
                         rvalue,
-                        Rvalue::CallIntrinsic { name, .. } if *name == "gos_rt_result_payload"
+                        Rvalue::CallIntrinsic { name, .. }
+                            if matches!(*name, "gos_rt_result_payload" | "gos_enum_load")
                     ) {
                         extraction_seed[place.local.0 as usize] = true;
                     } else {
@@ -1735,10 +1746,30 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         })
         .collect();
 
+    // Locals that BORROW an aggregate carrying RC fields. A store through one
+    // reaches the borrowed aggregate's own field, so the field's previous
+    // value is released and the stored one retained exactly as on an owned
+    // aggregate. Their fields are never released at return: the borrow owns
+    // nothing.
+    let ref_agg_locals: Vec<(usize, AggFieldPaths)> = (0..n_locals)
+        .filter(|&i| {
+            !body.locals[i].region
+                && matches!(
+                    tcx.kind_of(body.locals[i].ty),
+                    gossamer_types::TyKind::Ref { .. }
+                )
+        })
+        .filter_map(|i| {
+            let fields = agg_rc_fields(pointee_of(tcx, body.locals[i].ty));
+            (!fields.is_empty()).then_some((i, fields))
+        })
+        .collect();
+
     if releasable.is_empty()
         && retain_sites.is_empty()
         && terminator_retains.is_empty()
         && agg_locals.is_empty()
+        && ref_agg_locals.is_empty()
     {
         return;
     }
@@ -1869,7 +1900,10 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     .projection
                     .iter()
                     .all(|p| matches!(p, crate::ir::Projection::Field(_)))
-                && agg_locals.iter().any(|(l, _)| *l == place.local.0 as usize)
+                && (agg_locals.iter().any(|(l, _)| *l == place.local.0 as usize)
+                    || ref_agg_locals
+                        .iter()
+                        .any(|(l, _)| *l == place.local.0 as usize))
             {
                 let path: Vec<u32> = place
                     .projection
@@ -1881,6 +1915,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     .collect();
                 if let Some((_, kind)) = agg_locals
                     .iter()
+                    .chain(ref_agg_locals.iter())
                     .find(|(l, _)| *l == place.local.0 as usize)
                     .and_then(|(_, fields)| fields.iter().find(|(p, _)| *p == path))
                     .map(|(p, k)| (p.clone(), *k))
@@ -2176,8 +2211,21 @@ fn mints_owned_string(name: &str) -> bool {
     )
 }
 
-fn is_consuming_call(name: &str) -> bool {
+/// A call the second argument's heap ownership moves through: a container
+/// push, whatever container it is. The element store owns the pushed value
+/// from then on, so the frame must not free it independently.
+pub(crate) fn is_element_push(name: &str) -> bool {
     name.starts_with("gos_rt_vec_push")
+        || name.starts_with("gos_rt_deque_push")
+        || (name.starts_with("gos_rt_bheap_") && name.contains("_push"))
+}
+
+fn is_consuming_call(name: &str) -> bool {
+    is_element_push(name)
+        // `xs[i] = v` writes the value into the element store, which owns its
+        // elements from then on, so the store mints the container's share the
+        // way a push does.
+        || name.starts_with("gos_rt_vec_set_i64")
         || name.starts_with("gos_rt_vec_insert")
         || name.starts_with("gos_rt_set_insert")
         || name.starts_with("gos_rt_map_insert")
@@ -2766,6 +2814,68 @@ fn collect_field_rc(
     }
 }
 
+/// How a container owns one element of type `elem`, as the runtime call that
+/// tags its element store. `None` when the element owns nothing beyond its
+/// own slots.
+pub(crate) enum ElemOwnership {
+    /// Copy-blob children behind conditional (`Option` / `Result`) payloads.
+    Guarded(String),
+    /// Unconditional RC children (a `String`, nested vec, or enum pointer).
+    Owned(String),
+    /// The element is itself one payload-enum RC node.
+    RcElems,
+    /// The element is itself one counted container handle.
+    VecElems,
+}
+
+impl ElemOwnership {
+    /// The runtime symbol that tags an element store with this ownership.
+    pub(crate) fn symbol(&self) -> &'static str {
+        match self {
+            Self::Guarded(_) => "gos_rt_vec_set_elem_meta",
+            Self::Owned(_) => "gos_rt_vec_set_slot_children",
+            Self::RcElems => "gos_rt_vec_mark_rc_elems",
+            Self::VecElems => "gos_rt_vec_mark_vec_elems",
+        }
+    }
+
+    /// The metadata blob symbol the call passes, when it takes one.
+    pub(crate) fn meta(&self) -> Option<&str> {
+        match self {
+            Self::Guarded(sym) | Self::Owned(sym) => Some(sym),
+            _ => None,
+        }
+    }
+}
+
+/// The ownership an element store of `elem` elements needs, registering any
+/// metadata blob the runtime call refers to. The single answer both the
+/// `Vec` construction pass and the slot-container constructors read, so a
+/// `Deque<T>` owns its elements exactly as a `Vec<T>` does.
+pub(crate) fn elem_ownership(
+    tcx: &mut gossamer_types::TyCtxt,
+    elem: gossamer_types::Ty,
+) -> Option<ElemOwnership> {
+    use gossamer_types::TyKind;
+    if let Some(sym) = ensure_slot_children_meta(tcx, elem) {
+        return Some(ElemOwnership::Owned(sym));
+    }
+    if let Some(sym) = tcx.aggr_copy_meta(elem)
+        && let Some(blob) = tcx.rc_meta(sym)
+        && blob.len() >= 2
+        && blob[1] > 0
+    {
+        return Some(ElemOwnership::Guarded(sym.to_string()));
+    }
+    if tcx.is_payload_enum(elem) {
+        return Some(ElemOwnership::RcElems);
+    }
+    if matches!(tcx.kind_of(elem), TyKind::Vec(_) | TyKind::Slice(_)) {
+        return Some(ElemOwnership::VecElems);
+    }
+    None
+}
+
 /// Registers (idempotently) the `AGGR_OWNED` slot-children meta for vec
 /// element type `elem` and returns its symbol, or `None` when the element
 /// carries no unconditional RC child pointer (in which case the copy-blob
@@ -2917,8 +3027,13 @@ pub(crate) fn insert_vec_elem_metas(body: &mut Body, tcx: &mut gossamer_types::T
         };
         if tcx.aggr_copy_meta(*value).is_some() {
             Some(VecMeta::MapBlob)
-        } else if matches!(tcx.kind_of(*value), TyKind::Vec(_) | TyKind::Slice(_)) {
-            Some(VecMeta::MapVec)
+        } else if let TyKind::Vec(elem) | TyKind::Slice(elem) = tcx.kind_of(*value) {
+            // A byte sequence is stored as the bytes themselves - the insert
+            // copies them out and the entry owns no handle - so tagging the
+            // map as holding vec shares would release something no entry
+            // holds. Every other element keeps its handle, and its share.
+            let bytes = matches!(tcx.kind_of(*elem), TyKind::Int(gossamer_types::IntTy::U8));
+            (!bytes).then_some(VecMeta::MapVec)
         } else {
             None
         }
@@ -3675,7 +3790,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 args,
                 ..
             } = &block.terminator
-                && name == "gos_rt_vec_push"
+                && is_element_push(name)
                 && let Some(Operand::Copy(p)) = args.get(1)
                 && p.projection.is_empty()
                 && (p.local.0 as usize) < body.locals.len()
@@ -3747,7 +3862,10 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             | "gos_rt_bheap_max_new_i64"
             | "gos_rt_bheap_max_from_vec_i64"
             | "gos_rt_bheap_min_new_i64"
-            | "gos_rt_bheap_min_from_vec_i64" => Some("gos_rt_vec_free"),
+            | "gos_rt_bheap_min_from_vec_i64"
+            | "gos_rt_bheap_new_typed"
+            | "gos_rt_bheap_max_from_vec_desc"
+            | "gos_rt_bheap_min_from_vec_desc" => Some("gos_rt_vec_free"),
             // Always returns a freshly allocated vec the frame owns,
             // whatever the destination's inferred type (a cloned borrowed
             // row lands in a Slice-typed local the type-based inference
@@ -3788,6 +3906,8 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             | "BTreeSet::new"
             | "collections::BTreeSet::new" => Some("gos_rt_set_free"),
             "gos_rt_deque_new"
+            | "gos_rt_deque_new_typed"
+            | "gos_rt_deque_from_vec"
             | "Deque::new"
             | "collections::Deque::new"
             | "VecDeque::new"
@@ -3974,7 +4094,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                         // share, freed by the container's element
                         // teardown), so the frame's per-site reuse of the
                         // pushed local stays sound and load-bearing.
-                        if name == "gos_rt_vec_push"
+                        if is_element_push(name)
                             && matches!(
                                 tcx.kind_of(body.locals[p.local.0 as usize].ty),
                                 TyKind::Vec(_) | TyKind::Slice(_)
@@ -4238,6 +4358,43 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
         }
     }
 
+    // A container handle stored into an aggregate's field belongs to that
+    // aggregate from then on - it outlives the frame whenever the aggregate
+    // does. Handles the field walk does not track (a `Map`, a `Set`, an
+    // ordered container: no RC header, no field-death free) would otherwise
+    // be freed at return while the field still names them. A `Vec` or an
+    // RC field is tracked, retained at its store, and stays out of this.
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            let StatementKind::Assign {
+                place,
+                rvalue: Rvalue::Use(Operand::Copy(src)),
+            } = &stmt.kind
+            else {
+                continue;
+            };
+            if place.projection.is_empty()
+                || !place
+                    .projection
+                    .iter()
+                    .all(|p| matches!(p, crate::ir::Projection::Field(_)))
+                || !src.projection.is_empty()
+            {
+                continue;
+            }
+            let idx = src.local.0 as usize;
+            if idx >= owner_ctor.len() {
+                continue;
+            }
+            let ty = body.locals[idx].ty;
+            let tracked = matches!(tcx.kind_of(ty), TyKind::Vec(_) | TyKind::Slice(_))
+                || tcx.is_rc_managed(ty);
+            if !tracked {
+                owner_ctor[idx] = None;
+            }
+        }
+    }
+
     // Pass 2: detect locals that *transitively* flow into the
     // return slot. The constructor result may be copied through a
     // chain of intermediate locals before landing in `Local::RETURN`
@@ -4467,7 +4624,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             // moved-into-return.
             if let Terminator::Call { callee, args, .. } = &block.terminator
                 && let Operand::Const(ConstValue::Str(name)) = callee
-                && name == "gos_rt_vec_push"
+                && is_element_push(name)
                 && let Some(elem_op @ Operand::Copy(p)) = args.get(1)
                 && p.projection.is_empty()
                 && !is_container_local(elem_op)

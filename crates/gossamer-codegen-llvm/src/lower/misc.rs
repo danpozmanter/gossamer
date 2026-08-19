@@ -556,9 +556,20 @@ impl<'a> Lowerer<'a> {
                 // A container renders through its own runtime shim whether
                 // the local carries the container's type or the bare i64
                 // handle the constructor returned.
-                if let Some(TyKind::Adt { def, .. }) = self.tcx.kind(ty)
+                if let Some(TyKind::Adt { def, substs }) = self.tcx.kind(ty)
                     && let Some(sym) = container_format_symbol(def.local)
                 {
+                    // A one-word integer element renders through the plain
+                    // shim; anything else - a float, a `String`, a nested
+                    // container, a struct - is read through its descriptor.
+                    let elem = substs.types().first().copied();
+                    if let Some(elem) = elem
+                        && !matches!(self.tcx.kind(self.unwrap_ref(elem)), Some(TyKind::Int(_)))
+                        && let Some(desc_sym) = container_format_desc_symbol(def.local)
+                        && let Some(desc) = self.value_descriptor(elem, method)
+                    {
+                        return ConcatKind::HandleFormatDesc(desc_sym, desc);
+                    }
                     return ConcatKind::HandleFormat(sym);
                 }
                 match self.tcx.kind(ty) {
@@ -624,7 +635,11 @@ impl<'a> Lowerer<'a> {
                                     Some(TyKind::Int(_)) => ConcatKind::ArrArrI64(n, m),
                                     Some(TyKind::Float(_)) => ConcatKind::ArrArrF64(n, m),
                                     Some(TyKind::Bool) => ConcatKind::ArrArrBool(n, m),
-                                    _ => ConcatKind::Unsupported,
+                                    // A deeper nesting is a run of slots the
+                                    // element's own descriptor reads.
+                                    _ => self
+                                        .value_descriptor(ty, method)
+                                        .map_or(ConcatKind::Unsupported, ConcatKind::TupleDesc),
                                 }
                             }
                             // Array rows are inline, so element `i` starts at
@@ -641,7 +656,9 @@ impl<'a> Lowerer<'a> {
                                         self.adt_fmt_takes_slot_address(elem),
                                     )
                                 }
-                                None => ConcatKind::Unsupported,
+                                None => self
+                                    .value_descriptor(ty, method)
+                                    .map_or(ConcatKind::Unsupported, ConcatKind::TupleDesc),
                             },
                         }
                     }
@@ -759,16 +776,29 @@ impl<'a> Lowerer<'a> {
                                     Some(ConcatKind::SetI64(is_btree))
                                 }
                                 Some(TyKind::String) => Some(ConcatKind::SetString(is_btree)),
+                                // A `bool`, `char`, or float element is one
+                                // word the renderer reads through its tag.
+                                Some(TyKind::Bool) => Some(ConcatKind::SetTagged(3, is_btree)),
+                                Some(TyKind::Char) => Some(ConcatKind::SetTagged(4, is_btree)),
+                                Some(TyKind::Float(_)) => Some(ConcatKind::SetTagged(2, is_btree)),
                                 _ => None,
                             });
                         match scalar {
                             Some(kind) => kind,
                             // An aggregate element is stored as its slot
-                            // bytes, which its descriptor renders.
+                            // bytes, which its descriptor renders; an enum
+                            // element is stored as the node its descriptor
+                            // reads through.
                             None => elem
-                                .and_then(|elem| self.value_descriptor(elem, method))
-                                .map_or(ConcatKind::Unsupported, |desc| {
-                                    ConcatKind::SetDesc(desc, is_btree)
+                                .and_then(|elem| {
+                                    self.value_descriptor(elem, method).map(|desc| (elem, desc))
+                                })
+                                .map_or(ConcatKind::Unsupported, |(elem, desc)| {
+                                    if self.tcx.is_rc_managed(self.unwrap_ref(elem)) {
+                                        ConcatKind::SetEkey(desc, is_btree)
+                                    } else {
+                                        ConcatKind::SetDesc(desc, is_btree)
+                                    }
                                 }),
                         }
                     }
@@ -855,6 +885,24 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// Whether `local` holds the bit pattern a float was converted into for
+    /// a one-word store, which is what names a float element at a call whose
+    /// operand is that word.
+    fn local_is_float_bits(&self, local: Local) -> bool {
+        self.body.blocks.iter().any(|block| {
+            matches!(
+                &block.terminator,
+                Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(name)),
+                    destination,
+                    ..
+                } if name == "gos_rt_f64_to_bits"
+                    && destination.local == local
+                    && destination.projection.is_empty()
+            )
+        })
+    }
+
     fn set_handle_print_kind(&self, local: Local, depth: u8, method: &str) -> Option<ConcatKind> {
         if depth > 8 {
             return None;
@@ -862,6 +910,7 @@ impl<'a> Lowerer<'a> {
         let mut saw_set_ctor = false;
         let mut is_btree = false;
         let mut elem_kind = None;
+        let mut inherited = None;
         for block in &self.body.blocks {
             for stmt in &block.stmts {
                 if let StatementKind::Assign { place, rvalue } = &stmt.kind
@@ -905,7 +954,21 @@ impl<'a> Lowerer<'a> {
                         && src.projection.is_empty()
                         && let Some(kind) = self.set_handle_print_kind(src.local, depth + 1, method)
                     {
-                        return Some(kind);
+                        // Evidence from the source, kept as the fallback: an
+                        // insert against THIS handle names the element more
+                        // precisely, and a `let` that binds through a clone
+                        // is exactly where those inserts land.
+                        saw_set_ctor = true;
+                        is_btree = matches!(
+                            kind,
+                            ConcatKind::SetI64(true)
+                                | ConcatKind::SetUint(true)
+                                | ConcatKind::SetString(true)
+                                | ConcatKind::SetDesc(_, true)
+                                | ConcatKind::SetTagged(_, true)
+                                | ConcatKind::SetEkey(_, true)
+                        );
+                        inherited = Some(kind);
                     }
                     match name.as_str() {
                         "gos_rt_btree_set_new" => {
@@ -947,19 +1010,38 @@ impl<'a> Lowerer<'a> {
                     match name.as_str() {
                         "gos_rt_set_insert_i64" => {
                             // The inserted value names the element's declared
-                            // width, which the set handle's own i64 type does
-                            // not carry.
-                            let unsigned = args.get(1).is_some_and(|arg| match arg {
-                                Operand::Copy(place) => matches!(
-                                    self.tcx.kind(self.unwrap_ref(self.place_leaf_ty(place))),
-                                    Some(TyKind::Int(IntTy::U64 | IntTy::Usize))
-                                ),
+                            // type, which the set handle's own i64 type does
+                            // not carry: an unsigned width, or a `bool` /
+                            // `char` / float the renderer reads through a tag.
+                            let elem = args.get(1).and_then(|arg| match arg {
+                                Operand::Copy(place) => {
+                                    Some(self.unwrap_ref(self.place_leaf_ty(place)))
+                                }
+                                _ => None,
+                            });
+                            // A float element reaches the store as its bit
+                            // pattern, so the inserted operand is the word the
+                            // conversion produced rather than the float; the
+                            // conversion itself names the element.
+                            let float_bits = args.get(1).is_some_and(|arg| match arg {
+                                Operand::Copy(place) => {
+                                    place.projection.is_empty()
+                                        && self.local_is_float_bits(place.local)
+                                }
                                 _ => false,
                             });
-                            elem_kind = Some(if unsigned {
-                                ConcatKind::SetUint(is_btree)
+                            elem_kind = Some(if float_bits {
+                                ConcatKind::SetTagged(2, is_btree)
                             } else {
-                                ConcatKind::SetI64(is_btree)
+                                match elem.and_then(|ty| self.tcx.kind(ty)) {
+                                    Some(TyKind::Int(IntTy::U64 | IntTy::Usize)) => {
+                                        ConcatKind::SetUint(is_btree)
+                                    }
+                                    Some(TyKind::Bool) => ConcatKind::SetTagged(3, is_btree),
+                                    Some(TyKind::Char) => ConcatKind::SetTagged(4, is_btree),
+                                    Some(TyKind::Float(_)) => ConcatKind::SetTagged(2, is_btree),
+                                    _ => ConcatKind::SetI64(is_btree),
+                                }
                             });
                         }
                         "gos_rt_set_insert" => elem_kind = Some(ConcatKind::SetString(is_btree)),
@@ -974,13 +1056,25 @@ impl<'a> Lowerer<'a> {
                                 elem_kind = Some(ConcatKind::SetDesc(desc, is_btree));
                             }
                         }
+                        // An enum element is the node itself; its descriptor
+                        // reads through the stored word.
+                        "gos_rt_set_insert_ekey" => {
+                            if let Some(Operand::Copy(place)) = args.get(1)
+                                && let Some(desc) =
+                                    self.value_descriptor(self.place_leaf_ty(place), method)
+                            {
+                                elem_kind = Some(ConcatKind::SetEkey(desc, is_btree));
+                            }
+                        }
                         _ => {}
                     }
                 }
             }
         }
         if elem_kind.is_some() || saw_set_ctor {
-            elem_kind.or(Some(ConcatKind::SetString(is_btree)))
+            elem_kind
+                .or(inherited)
+                .or(Some(ConcatKind::SetString(is_btree)))
         } else {
             None
         }
@@ -1157,6 +1251,19 @@ impl<'a> Lowerer<'a> {
             Some(TyKind::Vec(elem) | TyKind::Slice(elem)) => {
                 let elem = *elem;
                 let mut out = vec![gossamer_abi::DESC_VEC];
+                out.extend(self.value_descriptor_into(elem, fns, method)?);
+                Some(out)
+            }
+            // A fixed array is a run of its elements' slots, so the
+            // descriptor carries the count and one element's span alongside
+            // the element's own descriptor.
+            Some(TyKind::Array { elem, len }) => {
+                let elem = *elem;
+                let count = u16::try_from(len.to_usize()).ok()?;
+                let span = u16::try_from(crate::ty::slot_count(self.tcx, elem)?.max(1)).ok()?;
+                let mut out = vec![gossamer_abi::DESC_ARRAY];
+                out.extend(count.to_le_bytes());
+                out.extend(span.to_le_bytes());
                 out.extend(self.value_descriptor_into(elem, fns, method)?);
                 Some(out)
             }
@@ -1687,6 +1794,21 @@ pub(crate) fn container_format_symbol(def_local: u32) -> Option<&'static str> {
         30 => "gos_rt_bheap_min_format",
         31 => "gos_rt_queue_format",
         32 => "gos_rt_stack_format",
+        _ => return None,
+    })
+}
+
+/// Descriptor-driven format shim for a container handle's sentinel
+/// `DefId`: the spelling that reads each element through the descriptor
+/// stream travelling with the call, for an element the one-word integer
+/// shim cannot render.
+pub(crate) fn container_format_desc_symbol(def_local: u32) -> Option<&'static str> {
+    Some(match u32::MAX - def_local {
+        19 => "gos_rt_deque_format_desc",
+        28 => "gos_rt_bheap_max_format_desc",
+        30 => "gos_rt_bheap_min_format_desc",
+        31 => "gos_rt_queue_format_desc",
+        32 => "gos_rt_stack_format_desc",
         _ => return None,
     })
 }

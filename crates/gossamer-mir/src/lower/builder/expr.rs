@@ -632,7 +632,7 @@ impl<'a> Builder<'a> {
         // match dispatch can uniformly load disc from offset 0.
         // Otherwise emit the variant index directly as i64.
         if let Some((enum_name, idx)) = self.enums.lookup(segments) {
-            if self.enums.has_any_payload(segments) {
+            if self.enums.enum_has_any_payload(&enum_name) {
                 let result = self.lower_user_enum_ctor(
                     &enum_name,
                     u32::try_from(idx).unwrap_or(0),
@@ -911,6 +911,26 @@ impl<'a> Builder<'a> {
             )
         {
             return Some(place.local);
+        }
+        // `&mut place.field` over an inline aggregate names the field's own
+        // storage. Reading the field as a value first copies its slots into a
+        // fresh local, and every write the callee makes would land on that
+        // copy - the caller's struct would never see them.
+        if matches!(op, HirUnaryOp::RefMut)
+            && self.inline_aggregate_ty(operand.ty)
+            && let Some(place) = self.lower_place_expr(operand)
+            && !place.projection.is_empty()
+        {
+            let dest = self.fresh(ty);
+            self.emit_assign(
+                Place::local(dest),
+                Rvalue::Ref {
+                    mutable: true,
+                    place,
+                },
+                span,
+            );
+            return Some(dest);
         }
         let inner = self.lower_expr(operand)?;
         // `-x` on a user struct / enum routes to its `neg` impl method.
@@ -2036,6 +2056,110 @@ impl<'a> Builder<'a> {
 
     /// The top-level element count and tag stream for a tuple type, or
     /// `None` when it is not a tuple of slot-comparable leaves.
+    /// The ordering descriptor for `ty`: the byte stream the runtime walks
+    /// to compare two values of that type, alongside their slots. `None`
+    /// when the type has no ordering the language defines - a map, a set, a
+    /// handle - so the caller can decline rather than compare raw words.
+    pub(crate) fn ordering_stream(&self, ty: Ty) -> Option<Vec<u8>> {
+        self.ordering_stream_inner(ty, None, 0)
+    }
+
+    fn ordering_stream_inner(
+        &self,
+        ty: Ty,
+        self_enum: Option<gossamer_resolve::DefId>,
+        depth: u32,
+    ) -> Option<Vec<u8>> {
+        use gossamer_types::{ArrayLen, IntTy, TyKind};
+        if depth > 12 {
+            return None;
+        }
+        let mut peeled = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
+            peeled = *inner;
+        }
+        match self.tcx.kind_of(peeled) {
+            TyKind::Int(IntTy::U64 | IntTy::Usize) => Some(vec![1]),
+            TyKind::Int(_) | TyKind::Duration | TyKind::Instant => Some(vec![0]),
+            TyKind::Float(_) => Some(vec![2]),
+            TyKind::Bool => Some(vec![3]),
+            TyKind::Char => Some(vec![4]),
+            TyKind::String => Some(vec![5]),
+            TyKind::Array {
+                elem,
+                len: ArrayLen::Concrete(n),
+            } => {
+                let (elem, n) = (*elem, *n);
+                let count = u8::try_from(n).ok()?;
+                let span = u8::try_from(self.type_slot_bytes(elem).max(8) / 8).ok()?;
+                let mut out = vec![gossamer_abi::DESC_ARRAY, count, span];
+                out.extend(self.ordering_stream_inner(elem, self_enum, depth + 1)?);
+                Some(out)
+            }
+            TyKind::Vec(elem) | TyKind::Slice(elem) => {
+                let elem = *elem;
+                let mut out = vec![gossamer_abi::DESC_VEC];
+                out.extend(self.ordering_stream_inner(elem, self_enum, depth + 1)?);
+                Some(out)
+            }
+            TyKind::Tuple(elems) => {
+                let elems = elems.clone();
+                let arity = u8::try_from(elems.len()).ok()?;
+                let mut out = vec![gossamer_abi::TUPLE_TAG_NESTED, arity];
+                for e in &elems {
+                    out.extend(self.ordering_stream_inner(*e, self_enum, depth + 1)?);
+                }
+                Some(out)
+            }
+            TyKind::Adt { def, substs } => {
+                let (def, substs) = (*def, substs.clone());
+                // `Option` and `Result` order by arm, then by payload.
+                if def.local == u32::MAX || def.local == u32::MAX - 1 {
+                    let is_option = def.local == u32::MAX - 1;
+                    let tys = substs.types();
+                    let mut out = vec![if is_option {
+                        gossamer_abi::DESC_OPTION
+                    } else {
+                        gossamer_abi::DESC_RESULT
+                    }];
+                    out.extend(self.ordering_stream_inner(*tys.first()?, self_enum, depth + 1)?);
+                    if !is_option {
+                        out.extend(self.ordering_stream_inner(
+                            *tys.get(1)?,
+                            self_enum,
+                            depth + 1,
+                        )?);
+                    }
+                    return Some(out);
+                }
+                if self_enum == Some(def) {
+                    return Some(vec![gossamer_abi::DESC_SELF]);
+                }
+                if let Some(fields) = self.tcx.struct_field_tys(def) {
+                    let fields = fields.to_vec();
+                    let arity = u8::try_from(fields.len()).ok()?;
+                    let mut out = vec![gossamer_abi::TUPLE_TAG_NESTED, arity];
+                    for f in &fields {
+                        out.extend(self.ordering_stream_inner(*f, self_enum, depth + 1)?);
+                    }
+                    return Some(out);
+                }
+                let variants = self.tcx.enum_variant_tys(def)?.to_vec();
+                let count = u8::try_from(variants.len()).ok()?;
+                let inline = u8::from(self.tcx.is_inline_enum_ty(peeled));
+                let mut out = vec![gossamer_abi::DESC_ENUM, inline, count];
+                for fields in &variants {
+                    out.push(u8::try_from(fields.len()).ok()?);
+                    for f in fields {
+                        out.extend(self.ordering_stream_inner(*f, Some(def), depth + 1)?);
+                    }
+                }
+                Some(out)
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn tuple_element_stream(&self, ty: Ty) -> Option<(usize, Vec<u8>)> {
         use gossamer_types::TyKind;
         let mut peeled = ty;

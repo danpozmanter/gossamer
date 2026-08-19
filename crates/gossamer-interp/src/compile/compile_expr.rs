@@ -3494,10 +3494,11 @@ impl<'tcx> FnBuilder<'tcx> {
             .find(|qual| self.method_muts.contains(qual))
             .or_else(|| {
                 // Name-only fallback, for a receiver whose type is not
-                // resolved to a concrete nominal here. A built-in receiver
-                // owns `push` / `insert` / `pop` itself, so it must keep
-                // its own method however a user type spells its methods.
-                if !self.ty_may_have_user_methods(place.ty) {
+                // resolved here at all. A receiver whose type IS known owns
+                // its method surface: a `&mut self` method of that name on
+                // some other type is not a candidate for it, and binding to
+                // one would call a body the receiver's type never declared.
+                if !self.ty_is_unresolved(place.ty) {
                     return None;
                 }
                 let suffix = format!("::{}", name.name);

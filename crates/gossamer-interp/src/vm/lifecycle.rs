@@ -458,16 +458,22 @@ impl Vm {
         // qualified by the enum that declares it. Without this the receiver
         // names only its variant and the call cannot be resolved by type.
         let mut variant_owners: Vec<(String, String)> = Vec::new();
+        // Declaration position of each variant, which is the rank ordering
+        // compares two values of one enum by.
+        let mut variant_ranks: Vec<(String, i64)> = Vec::new();
         for item in &program.items {
             if let HirItemKind::Adt(adt) = &item.kind {
                 if let gossamer_hir::HirAdtKind::Enum(variants) = &adt.kind {
-                    for variant in variants {
+                    for (rank, variant) in variants.iter().enumerate() {
                         variant_owners.push((variant.name.name.clone(), adt.name.name.clone()));
+                        variant_ranks
+                            .push((variant.name.name.clone(), i64::try_from(rank).unwrap_or(0)));
                     }
                 }
             }
         }
         crate::builtins::set_variant_owners(&variant_owners);
+        crate::builtins::set_variant_ranks(&variant_ranks);
         crate::builtins::set_struct_uint_fields(uint_fields);
         // Qualified names of every user `&mut self` method, so a call on
         // a place receiver routes through the write-back cell protocol

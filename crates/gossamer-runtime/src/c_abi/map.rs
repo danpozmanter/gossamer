@@ -535,6 +535,16 @@ pub unsafe extern "C" fn gos_rt_map_get(m: *const GosMap, key: *const u8, val_ou
         let k = unsafe { std::slice::from_raw_parts(key, 8) };
         let storage = map.storage.lock();
         let MapStorage::Bytes(inner) = &*storage else {
+            // Answering 0 here would read as "no such key", which is a
+            // different fact: this map holds its entries in a shape this
+            // reader does not know, so the caller was compiled against a
+            // storage the map never took.
+            drop(storage);
+            unsafe {
+                gos_rt_panic(
+                    c"map read reached a storage shape this accessor does not handle".as_ptr(),
+                );
+            };
             return 0;
         };
         if let Some(v) = inner.get(k) {
@@ -726,6 +736,29 @@ pub(crate) unsafe fn build_skey_for_set(key: *const u8, desc: *const c_char) -> 
                     let bytes = unsafe { crate::c_abi::gos_str_arg_bytes(sptr) };
                     out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
                     out.extend_from_slice(bytes);
+                }
+            }
+            // A sequence field folds by content: its length, then the bytes
+            // its elements occupy, so two equal sequences at distinct
+            // allocations key one slot exactly as the interpreter's
+            // by-value keying does.
+            b'V' => {
+                let raw = unsafe { (slot as *const usize).read_unaligned() };
+                let vec: *const crate::c_abi::GosVec = std::ptr::with_exposed_provenance(raw);
+                if vec.is_null() {
+                    out.extend_from_slice(&0u64.to_le_bytes());
+                    out.extend_from_slice(&8u64.to_le_bytes());
+                } else {
+                    let v = unsafe { &*vec };
+                    let len = v.len.max(0) as usize;
+                    let stride = (v.elem_bytes as usize).max(1);
+                    out.extend_from_slice(&(len as u64).to_le_bytes());
+                    out.extend_from_slice(&(stride as u64).to_le_bytes());
+                    if !v.ptr.is_null() {
+                        out.extend_from_slice(unsafe {
+                            std::slice::from_raw_parts(v.ptr.as_ptr(), len * stride)
+                        });
+                    }
                 }
             }
             _ => return None,
@@ -1639,6 +1672,12 @@ unsafe fn skip_desc(tags: DescStream, cursor: &mut usize) {
         gossamer_abi::DESC_SET_I64 | gossamer_abi::DESC_SET_STR => *cursor += 1,
         gossamer_abi::DESC_ADT => *cursor += 3,
         gossamer_abi::DESC_OPTION => unsafe { skip_desc(tags, cursor) },
+        gossamer_abi::DESC_ARRAY => {
+            // Element count and per-element slot span, a `u16` each, then
+            // one element descriptor.
+            *cursor += 4;
+            unsafe { skip_desc(tags, cursor) };
+        }
         gossamer_abi::DESC_ERROR => {}
         gossamer_abi::DESC_RESULT => unsafe {
             skip_desc(tags, cursor);
@@ -1710,6 +1749,12 @@ impl DescStream {
         // SAFETY: cursors only ever address bytes of the stream this view
         // was built over.
         unsafe { *self.bytes.add(at) }
+    }
+
+    /// The little-endian `u16` two bytes of the stream carry, for a
+    /// descriptor field that outgrows one byte.
+    fn u16(self, at: usize) -> u16 {
+        u16::from_le_bytes([self.byte(at), self.byte(at + 1)])
     }
 
     fn fmt(self, index: usize) -> Option<*const std::ffi::c_void> {
@@ -1801,6 +1846,33 @@ pub(crate) unsafe fn render_desc_storage(
             } else {
                 out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(rendered) });
             }
+        }
+        gossamer_abi::DESC_ARRAY => {
+            *cursor += 1;
+            let len = tags.u16(*cursor) as usize;
+            *cursor += 2;
+            let elem_slots = (tags.u16(*cursor) as usize).max(1);
+            *cursor += 2;
+            // The elements sit inline from the slot, so each reads through
+            // the one descriptor that follows, at its own offset.
+            let base = if storage == Storage::Inline {
+                slot
+            } else {
+                let word = unsafe { (slot as *const i64).read_unaligned() };
+                std::ptr::with_exposed_provenance::<u8>(word as usize)
+            };
+            let elem_desc = *cursor;
+            out.push('[');
+            for i in 0..len {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                let mut c = elem_desc;
+                let elem = unsafe { base.add(i * elem_slots * 8) };
+                unsafe { render_desc_value(out, elem, tags, &mut c) };
+            }
+            out.push(']');
+            unsafe { skip_desc(tags, cursor) };
         }
         gossamer_abi::DESC_ERROR => {
             *cursor += 1;
@@ -2445,13 +2517,18 @@ unsafe fn map_format_desc_stream(
                     out.push_str(", ");
                 }
                 let mut c = key_desc;
+                let storage = if entry.key_by_word {
+                    Storage::ByWord
+                } else {
+                    Storage::Inline
+                };
                 unsafe {
                     render_desc_storage(
                         &mut out,
                         entry.key_slots.as_ptr().cast::<u8>(),
                         tags,
                         &mut c,
-                        Storage::Inline,
+                        storage,
                     );
                 }
                 out.push_str(": ");
@@ -2527,14 +2604,27 @@ unsafe fn map_word_entries(m: *const GosMap) -> Vec<(Option<Vec<u8>>, i64, i64)>
 /// exactly as `keys()` rebuilds them; an enum key is a single node word.
 struct DescEntry {
     key_slots: Vec<i64>,
+    /// True when the single key slot holds a word addressing the key - an
+    /// enum node - rather than the key's own slots.
+    key_by_word: bool,
     /// Slot indices holding a c-string this entry allocated while decoding,
     /// which the renderer releases once the entry is rendered.
     owned_strings: Vec<usize>,
+    /// Slot indices holding a sequence this entry rebuilt while decoding,
+    /// released the same way.
+    owned_vecs: Vec<usize>,
     value: i64,
 }
 
 impl DescEntry {
     fn release(&self) {
+        for &index in &self.owned_vecs {
+            let ptr: *mut GosVec =
+                std::ptr::with_exposed_provenance_mut(self.key_slots[index] as usize);
+            if !ptr.is_null() {
+                unsafe { gos_rt_vec_free(ptr) };
+            }
+        }
         for &index in &self.owned_strings {
             let ptr: *mut c_char =
                 std::ptr::with_exposed_provenance_mut(self.key_slots[index] as usize);
@@ -2570,9 +2660,17 @@ unsafe fn map_aggregate_entries(m: *const GosMap) -> Vec<DescEntry> {
                         .filter(|&(_, &code)| code == b'S')
                         .map(|(index, _)| index)
                         .collect();
+                    let owned_vecs = desc
+                        .iter()
+                        .enumerate()
+                        .filter(|&(_, &code)| code == b'V')
+                        .map(|(index, _)| index)
+                        .collect();
                     Some(DescEntry {
                         key_slots,
+                        key_by_word: false,
                         owned_strings,
+                        owned_vecs,
                         value: entries[k.as_ref()],
                     })
                 })
@@ -2586,7 +2684,9 @@ unsafe fn map_aggregate_entries(m: *const GosMap) -> Vec<DescEntry> {
                     let entry = &entries[k.as_ref()];
                     DescEntry {
                         key_slots: vec![entry.key_node as usize as i64],
+                        key_by_word: true,
                         owned_strings: Vec::new(),
+                        owned_vecs: Vec::new(),
                         value: entry.value,
                     }
                 })
@@ -2646,11 +2746,12 @@ pub unsafe extern "C" fn gos_rt_map_format_tagged(
         // unsigned tag, so a key at or above `i64::MAX` reads as its own
         // decimal rather than the negative the same bits spell.
         let format_key = |k: i64| {
-            if key_tag == 1 {
-                crate::builtins::format_uint(k as u64)
-            } else {
-                crate::builtins::format_int(k)
-            }
+            // The key's own tag decides how its word reads: an unsigned
+            // decimal, a float's value rather than the bits' integer, a
+            // `bool`, or a `char`.
+            let mut out = String::new();
+            unsafe { render_tagged_word(&mut out, k, key_tag as u8) };
+            out
         };
         let mut first = true;
         match &*storage {
@@ -3474,6 +3575,9 @@ pub unsafe extern "C" fn gos_rt_map_keys_skey(m: *const GosMap) -> *mut GosVec {
 enum SkeyField<'a> {
     Word(i64),
     Text(&'a [u8]),
+    /// A sequence's elements, widened to whole words so they order by value
+    /// the way the interpreter orders the same elements.
+    Seq(Vec<i64>),
 }
 
 /// Field-wise ordering key for one stored aggregate key.
@@ -3482,6 +3586,34 @@ enum SkeyField<'a> {
 /// little-endian bytes; the snapshot orders by field value so a struct-keyed
 /// `keys()`, `values()`, and `iter()` all follow the same sequence the VM
 /// yields.
+pub(crate) fn skey_order_key(key: &[u8], desc: &[u8]) -> Vec<u8> {
+    // The comparable form is the field sequence rendered back into bytes that
+    // compare in the same order: a word as its big-endian two's-complement
+    // encoding with the sign bit flipped, text and sequences by content.
+    let mut out = Vec::with_capacity(key.len());
+    for field in skey_order(key, desc) {
+        match field {
+            SkeyField::Word(word) => {
+                out.push(0);
+                out.extend_from_slice(&(word as u64 ^ (1u64 << 63)).to_be_bytes());
+            }
+            SkeyField::Text(text) => {
+                out.push(1);
+                out.extend_from_slice(text);
+                out.push(0);
+            }
+            SkeyField::Seq(words) => {
+                out.push(2);
+                for word in words {
+                    out.extend_from_slice(&(word as u64 ^ (1u64 << 63)).to_be_bytes());
+                }
+                out.push(0);
+            }
+        }
+    }
+    out
+}
+
 fn skey_order<'a>(key: &'a [u8], desc: &[u8]) -> Vec<SkeyField<'a>> {
     let mut fields = Vec::with_capacity(desc.len());
     let mut cursor = 0usize;
@@ -3510,10 +3642,39 @@ fn skey_order<'a>(key: &'a [u8], desc: &[u8]) -> Vec<SkeyField<'a>> {
                 cursor += len;
                 fields.push(SkeyField::Text(text));
             }
+            b'V' => {
+                let Some(header) = key.get(cursor..cursor + 16) else {
+                    break;
+                };
+                let mut raw = [0u8; 8];
+                raw.copy_from_slice(&header[..8]);
+                let len = u64::from_le_bytes(raw) as usize;
+                raw.copy_from_slice(&header[8..]);
+                let stride = (u64::from_le_bytes(raw) as usize).max(1);
+                cursor += 16;
+                let Some(bytes) = key.get(cursor..cursor + len * stride) else {
+                    break;
+                };
+                cursor += len * stride;
+                fields.push(SkeyField::Seq(seq_words(bytes, stride)));
+            }
             _ => break,
         }
     }
     fields
+}
+
+/// Reads a sequence's raw element bytes back as whole words, so two keys
+/// order element by element rather than by their little-endian encoding.
+fn seq_words(bytes: &[u8], stride: usize) -> Vec<i64> {
+    bytes
+        .chunks_exact(stride.clamp(1, 8))
+        .map(|chunk| {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            i64::from_le_bytes(word)
+        })
+        .collect()
 }
 
 /// Decodes one stored aggregate key back into `slots`, one word per descriptor
@@ -3548,6 +3709,33 @@ fn decode_skey_into(key: &[u8], desc: &[u8], slots: &mut [i64]) -> bool {
                 };
                 cursor += len;
                 slots[index] = alloc_cstring(text) as usize as i64;
+            }
+            // A sequence key rebuilds as a fresh vec over the bytes the key
+            // folded, which the renderer reads and the entry then releases.
+            b'V' => {
+                let Some(header) = key.get(cursor..cursor + 16) else {
+                    return false;
+                };
+                let mut raw = [0u8; 8];
+                raw.copy_from_slice(&header[..8]);
+                let len = u64::from_le_bytes(raw) as usize;
+                raw.copy_from_slice(&header[8..]);
+                let stride = (u64::from_le_bytes(raw) as usize).max(1);
+                cursor += 16;
+                let Some(bytes) = key.get(cursor..cursor + len * stride) else {
+                    return false;
+                };
+                cursor += len * stride;
+                let vec = unsafe {
+                    crate::c_abi::vec::gos_rt_vec_new_typed(
+                        stride as u32,
+                        crate::c_abi::vec::vec_elem_kind::PRIMITIVE,
+                    )
+                };
+                for chunk in bytes.chunks_exact(stride) {
+                    unsafe { crate::c_abi::vec::gos_rt_vec_push(vec, chunk.as_ptr()) };
+                }
+                slots[index] = vec as usize as i64;
             }
             _ => return false,
         }
@@ -3922,6 +4110,16 @@ pub unsafe extern "C" fn gos_rt_map_inc_skey(
 /// `desc` is the same blob [`gos_rt_enum_struct_eq`] walks: `[num_variants]`
 /// then, per variant, `[num_fields, kind_0, ..]`. Returns `None` for a shape
 /// the walk cannot encode, which leaves the caller on pointer identity.
+/// The canonical by-value key of an enum node: its discriminant and payload,
+/// so two equal-valued nodes at distinct allocations key one slot. Shared with
+/// the set family, which keys its enum elements the same way.
+///
+/// # Safety
+/// `node` is an enum node and `desc` its variant-layout descriptor.
+pub(crate) unsafe fn enum_canonical_key(node: *mut u8, desc: *const i64) -> Option<Vec<u8>> {
+    unsafe { enum_canonical_bytes(node, desc) }
+}
+
 unsafe fn enum_canonical_bytes(node: *mut u8, desc: *const i64) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(16);
     unsafe { append_enum_canonical(node, desc, &mut out) }.then_some(out)
@@ -3934,8 +4132,10 @@ unsafe fn append_enum_canonical(node: *mut u8, desc: *const i64, out: &mut Vec<u
         return false;
     }
     if base.is_null() {
-        // A null node is its own encoding, distinct from every real variant.
-        out.extend_from_slice(&u64::MAX.to_le_bytes());
+        // A payload-less variant is a tagged null pointer: the discriminant
+        // lives in the tag bits and is the whole key, so two such variants
+        // encode distinctly and sort by their own order.
+        out.push(((raw & 7) >> 1) as u8);
         return true;
     }
     // Discriminant: a small heap enum tags it into the pointer's low bits

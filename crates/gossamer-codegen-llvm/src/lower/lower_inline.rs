@@ -1662,6 +1662,97 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
+    /// The address of a content key's slots. A reference to an aggregate
+    /// already names the storage the descriptor reads - a snapshot slot, a
+    /// borrowed struct - so the pointer travels as it is; anything else
+    /// takes the element-slot form.
+    pub(crate) fn skey_slot_address(&mut self, arg: &Operand) -> Result<String, BuildError> {
+        if let Operand::Copy(p) = arg
+            && let TyKind::Ref { inner, .. } = self.tcx.kind_of(self.place_leaf_ty(p))
+            && is_aggregate(self.tcx, *inner)
+            && slot_count(self.tcx, *inner).is_some()
+        {
+            let value = self.lower_operand(arg)?;
+            let ty = self.operand_llvm_ty(arg);
+            if ty == "ptr" {
+                return Ok(value);
+            }
+            let tmp = self.fresh();
+            writeln!(self.out, "  {tmp} = inttoptr {ty} {value} to ptr").unwrap();
+            return Ok(tmp);
+        }
+        self.elem_slot_address(arg)
+    }
+
+    /// The address of an element's slots: the operand's own storage when it
+    /// is a multi-slot aggregate, else a fresh slot holding its word. The
+    /// element store copies its own stride from whatever this addresses.
+    pub(crate) fn elem_slot_address(&mut self, arg: &Operand) -> Result<String, BuildError> {
+        if let Operand::Copy(p) = arg
+            && is_aggregate(self.tcx, self.place_leaf_ty(p))
+            && slot_count(self.tcx, self.place_leaf_ty(p)).is_some()
+        {
+            return Ok(if p.projection.is_empty() {
+                local_slot(p.local)
+            } else {
+                self.lower_place_address(p)
+            });
+        }
+        let val_v = self.lower_operand(arg)?;
+        let val_ty = self.operand_llvm_ty(arg);
+        let slot = self.fresh();
+        writeln!(self.out, "  {slot} = alloca i128, align 16").unwrap();
+        let stored = if val_ty == "i128" {
+            val_v
+        } else {
+            self.coerce_llvm_value(&val_v, &val_ty, "i128")
+        };
+        writeln!(self.out, "  store i128 {stored}, ptr {slot}").unwrap();
+        Ok(slot)
+    }
+
+    /// A slot container's wide push: `gos_rt_deque_push_{back,front}_wide`
+    /// copies the element store's own stride from the address handed over,
+    /// so the element's slots are passed by address - its stack slot for an
+    /// aggregate, a fresh 16-byte spill for a by-value `Option` / `Result`
+    /// carrier.
+    pub(crate) fn lower_container_push_wide(
+        &mut self,
+        sym: &str,
+        args: &[Operand],
+        destination: &Place,
+        target: Option<&gossamer_mir::BlockId>,
+    ) -> Result<(), BuildError> {
+        let recv_v = self.lower_operand(&args[0])?;
+        let recv_ty = self.operand_llvm_ty(&args[0]);
+        let recv_ptr = if recv_ty == "ptr" {
+            recv_v
+        } else {
+            let tmp = self.fresh();
+            writeln!(self.out, "  {tmp} = inttoptr {recv_ty} {recv_v} to ptr").unwrap();
+            tmp
+        };
+        let elem_addr = self.elem_slot_address(&args[1])?;
+        declare_rt(&mut self.runtime_refs, sym);
+        writeln!(
+            self.out,
+            "  call void @{sym}(ptr {recv_ptr}, ptr {elem_addr})"
+        )
+        .unwrap();
+        if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
+            let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
+            let dslot = local_slot(destination.local);
+            let zero = match dest_ty.as_str() {
+                "ptr" => "null".to_string(),
+                "double" | "float" => "0.0".to_string(),
+                _ => "0".to_string(),
+            };
+            writeln!(self.out, "  store {dest_ty} {zero}, ptr {dslot}").unwrap();
+        }
+        emit_terminator_branch(&mut self.out, target);
+        Ok(())
+    }
+
     /// Inline `v.push(x)` for arbitrary element widths.
     /// `gos_rt_vec_push(*mut GosVec, *const u8)` reads the
     /// element through the second pointer; the i64 / ptr value

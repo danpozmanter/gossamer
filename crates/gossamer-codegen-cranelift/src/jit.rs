@@ -442,6 +442,13 @@ fn body_builds_every_iterator_local(body: &Body, tcx: &TyCtxt) -> bool {
 
 /// `true` when `body` holds a local representation the JIT cannot lower
 /// faithfully as part of a promoted region.
+/// A sentinel `DefId` naming a runtime container - `Set` / `BTreeSet`,
+/// `Deque` / `Queue` / `Stack`, `MaxHeap` / `MinHeap` - whose value is the
+/// handle word itself.
+fn is_bare_container_handle(def_local: u32) -> bool {
+    matches!(u32::MAX - def_local, 7 | 18 | 19 | 28 | 30 | 31 | 32)
+}
+
 fn body_uses_unlowerable_local_repr(
     body: &Body,
     tcx: &TyCtxt,
@@ -496,6 +503,12 @@ fn body_uses_unlowerable_local_repr(
                 }
                 if tcx.is_inline_enum_ty(l.ty) {
                     return true;
+                }
+                // A runtime container's handle is one machine word the body
+                // only ever passes to a runtime call, so a local holding one
+                // lowers as the pointer it is.
+                if is_bare_container_handle(def.local) {
+                    return false;
                 }
                 // Opaque stdlib-handle sentinels (the high def-id band) that
                 // carry no marshalling shape stay on bytecode; ordinary user
@@ -1836,6 +1849,12 @@ fn jit_local_ty_needs_bytecode_inner(
             })
         }
         TyKind::Adt { def, .. } if def.local == u32::MAX - 20 => false,
+        // A runtime container's handle is the same one word on both tiers,
+        // and every operation on it lowers to the `gos_rt_*` call the AOT
+        // backend emits, so a body that builds and consumes one internally
+        // needs no bytecode representation for it. The boundary is decided
+        // separately by `ty_to_kind`.
+        TyKind::Adt { def, .. } if is_bare_container_handle(def.local) => false,
         // A callable value is one machine word: either a raw code address
         // (`FnDef`) or an env pointer whose first word is the code address
         // (`FnPtr` / `FnTrait` / `Closure`, post the MIR's coercion). The
@@ -2507,6 +2526,31 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_stack_new"           => rt::gos_rt_stack_new,
         "gos_rt_stack_from_vec_i64"  => rt::gos_rt_stack_from_vec_i64,
         "gos_rt_deque_push_back"     => rt::gos_rt_deque_push_back,
+        "gos_rt_bheap_max_format_desc" => rt::container_heap::gos_rt_bheap_max_format_desc,
+        "gos_rt_bheap_max_from_vec_desc" => rt::container_heap::gos_rt_bheap_max_from_vec_desc,
+        "gos_rt_bheap_max_pop_desc" => rt::container_heap::gos_rt_bheap_max_pop_desc,
+        "gos_rt_bheap_max_push_desc" => rt::container_heap::gos_rt_bheap_max_push_desc,
+        "gos_rt_bheap_min_format_desc" => rt::container_heap::gos_rt_bheap_min_format_desc,
+        "gos_rt_bheap_min_from_vec_desc" => rt::container_heap::gos_rt_bheap_min_from_vec_desc,
+        "gos_rt_bheap_min_pop_desc" => rt::container_heap::gos_rt_bheap_min_pop_desc,
+        "gos_rt_bheap_min_push_desc" => rt::container_heap::gos_rt_bheap_min_push_desc,
+        "gos_rt_bheap_new_typed" => rt::container_heap::gos_rt_bheap_new_typed,
+        "gos_rt_bheap_peek_elem" => rt::container_heap::gos_rt_bheap_peek_elem,
+        "gos_rt_desc_cmp" => rt::desc_cmp::gos_rt_desc_cmp,
+        "gos_rt_set_format_tagged" => rt::set::gos_rt_set_format_tagged,
+        "gos_rt_set_insert_ekey" => rt::set::gos_rt_set_insert_ekey,
+        "gos_rt_set_contains_ekey" => rt::set::gos_rt_set_contains_ekey,
+        "gos_rt_set_remove_ekey" => rt::set::gos_rt_set_remove_ekey,
+        "gos_rt_set_to_vec_ekey" => rt::set::gos_rt_set_to_vec_ekey,
+        "gos_rt_set_format_ekey" => rt::set::gos_rt_set_format_ekey,
+        "gos_rt_deque_push_back_wide" => rt::gos_rt_deque_push_back_wide,
+        "gos_rt_deque_push_front_wide" => rt::gos_rt_deque_push_front_wide,
+        "gos_rt_deque_new_typed"     => rt::gos_rt_deque_new_typed,
+        "gos_rt_deque_from_vec"      => rt::gos_rt_deque_from_vec,
+        "gos_rt_deque_vec"           => rt::gos_rt_deque_vec,
+        "gos_rt_deque_format_desc"   => rt::gos_rt_deque_format_desc,
+        "gos_rt_queue_format_desc"   => rt::gos_rt_queue_format_desc,
+        "gos_rt_stack_format_desc"   => rt::gos_rt_stack_format_desc,
         "gos_rt_deque_push_back_f64" => rt::gos_rt_deque_push_back_f64,
         "gos_rt_deque_push_front"    => rt::gos_rt_deque_push_front,
         "gos_rt_deque_push_front_f64" => rt::gos_rt_deque_push_front_f64,
@@ -2516,6 +2560,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_deque_peek_back"     => rt::gos_rt_deque_peek_back,
         "gos_rt_deque_len"           => rt::gos_rt_deque_len,
         "gos_rt_deque_is_empty"      => rt::gos_rt_deque_is_empty,
+        "gos_rt_set_is_empty"        => rt::gos_rt_set_is_empty,
         "gos_rt_deque_clear"         => rt::gos_rt_deque_clear,
         "gos_rt_deque_free"          => rt::gos_rt_deque_free,
         "gos_rt_strings_join"        => rt::gos_rt_strings_join,

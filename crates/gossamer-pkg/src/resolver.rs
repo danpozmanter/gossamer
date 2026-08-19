@@ -17,6 +17,7 @@
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::Value as JsonValue;
@@ -380,13 +381,26 @@ pub enum ResolveError {
 #[derive(Debug, Default)]
 pub struct Resolver {
     catalogue: VersionCatalogue,
+    root: Option<PathBuf>,
 }
 
 impl Resolver {
     /// Returns a resolver backed by `catalogue`.
     #[must_use]
     pub fn new(catalogue: VersionCatalogue) -> Self {
-        Self { catalogue }
+        Self {
+            catalogue,
+            root: None,
+        }
+    }
+
+    /// Anchors relative `path` dependencies on the directory holding the
+    /// manifest being resolved, which is what lets one state its identity
+    /// in its own `project.toml` rather than in the consumer's key.
+    #[must_use]
+    pub fn with_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.root = Some(root.into());
+        self
     }
 
     /// Resolves the direct dependencies listed in `manifest`. Picks
@@ -394,7 +408,7 @@ impl Resolver {
     pub fn resolve(&self, manifest: &Manifest) -> Result<Vec<Resolved>, ResolveError> {
         let mut requirements: BTreeMap<String, (ProjectId, Vec<RequirementSpec>)> = BTreeMap::new();
         for (raw_id, spec) in &manifest.dependencies {
-            let id = dependency_identity(raw_id, spec)?;
+            let id = dependency_identity(raw_id, spec, self.root.as_deref())?;
             let req = Requirement::from_spec(id.clone(), spec);
             let entry = requirements
                 .entry(raw_id.clone())
@@ -482,30 +496,54 @@ impl Resolver {
     }
 }
 
-/// The project identity of one `[dependencies]` entry.
+/// The project identity of one `[dependencies]` entry, with relative
+/// `path` sources anchored on `base` - the directory holding the manifest
+/// the entry was written in.
 ///
 /// The key is the identity when it spells one, which is how a registry
 /// dependency is written. A git dependency carries its identity in the URL
-/// instead, so its key is free to be the module name source reaches it by -
-/// `pgsql_gos = { git = "https://github.com/danpozmanter/pgsql-gos" }` is the
-/// same package as `"github.com/danpozmanter/pgsql-gos"`.
+/// instead, and a path dependency in the `project.toml` it points at, so
+/// either one's key is free to be the module name source reaches it by -
+/// `pgsql_gos = { git = "https://github.com/danpozmanter/pgsql-gos" }` and
+/// `pgsql_gos = { path = "../.." }` are both the same package as
+/// `"github.com/danpozmanter/pgsql-gos"`.
 ///
 /// # Errors
 ///
 /// Returns [`ResolveError::Unsatisfiable`] when neither the key nor the
 /// source names a project identity.
-pub fn dependency_identity(key: &str, spec: &DependencySpec) -> Result<ProjectId, ResolveError> {
+pub fn dependency_identity(
+    key: &str,
+    spec: &DependencySpec,
+    base: Option<&Path>,
+) -> Result<ProjectId, ResolveError> {
     if let Ok(id) = ProjectId::parse(key) {
         return Ok(id);
     }
-    if let DependencySpec::Inline(InlineDependency::Git { url, .. }) = spec
-        && let Some(id) = git_url_identity(url)
-    {
-        return Ok(id);
+    match spec {
+        DependencySpec::Inline(InlineDependency::Git { url, .. }) => {
+            if let Some(id) = git_url_identity(url) {
+                return Ok(id);
+            }
+        }
+        DependencySpec::Inline(InlineDependency::Path { path }) => {
+            if let Some(base) = base
+                && let Some(id) = path_dependency_identity(&base.join(path))
+            {
+                return Ok(id);
+            }
+        }
+        _ => {}
     }
     Err(ResolveError::Unsatisfiable {
         id: key.to_string(),
     })
+}
+
+/// The identity a path dependency declares in its own manifest.
+fn path_dependency_identity(root: &Path) -> Option<ProjectId> {
+    let text = std::fs::read_to_string(root.join("project.toml")).ok()?;
+    Manifest::parse(&text).ok().map(|m| m.project.id)
 }
 
 /// The project identity a git URL names: its host and repository path, with
@@ -529,9 +567,12 @@ pub trait TransitiveLoader {
 
 /// Walks the dependency graph rooted at `root`, returning every
 /// `(id, pin)` reachable from the root. Cycles terminate via a
-/// visited set keyed on `(id, pin)`.
+/// visited set keyed on `(id, pin)`. `base` is the directory holding
+/// `root`'s manifest, which anchors the relative `path` dependencies
+/// written in it.
 pub fn resolve_transitive(
     root: &Manifest,
+    base: Option<&Path>,
     catalogue: &VersionCatalogue,
     loader: &dyn TransitiveLoader,
 ) -> Result<Vec<Resolved>, ResolveError> {
@@ -542,7 +583,7 @@ pub fn resolve_transitive(
     let mut work: Vec<Manifest> = vec![root.clone()];
     while let Some(m) = work.pop() {
         for (raw_id, spec) in &m.dependencies {
-            let id = dependency_identity(raw_id, spec)?;
+            let id = dependency_identity(raw_id, spec, base)?;
             id_index.entry(raw_id.clone()).or_insert(id.clone());
             match spec {
                 DependencySpec::Registry(range) => {
@@ -749,3 +790,78 @@ impl TransitiveLoader for NoopLoader {
 
 /// Shared loader handle.
 pub type SharedLoader = Arc<dyn TransitiveLoader>;
+
+#[cfg(test)]
+mod identity_tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::*;
+
+    static SCRATCH_ID: AtomicU64 = AtomicU64::new(0);
+
+    /// Writes a package rooted at a fresh temp directory, answering both the
+    /// directory holding it and the directory the package itself lives in.
+    fn package_at(id: &str) -> (PathBuf, PathBuf) {
+        let base = std::env::temp_dir().join(format!(
+            "gossamer-identity-{}-{}",
+            std::process::id(),
+            SCRATCH_ID.fetch_add(1, Ordering::Relaxed),
+        ));
+        let root = base.join("driver");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("project.toml"),
+            format!("[project]\nid = \"{id}\"\nversion = \"0.1.0\"\n"),
+        )
+        .unwrap();
+        (base, root)
+    }
+
+    fn path_spec(path: &str) -> DependencySpec {
+        DependencySpec::Inline(InlineDependency::Path {
+            path: path.to_string(),
+        })
+    }
+
+    #[test]
+    fn a_path_dependency_takes_its_identity_from_the_manifest_it_points_at() {
+        let (base, _) = package_at("github.com/danpozmanter/pgsql-gos");
+        let id = dependency_identity("pgsql_gos", &path_spec("driver"), Some(&base)).unwrap();
+        assert_eq!(id.as_str(), "github.com/danpozmanter/pgsql-gos");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn a_key_that_spells_an_identity_outranks_the_manifest_it_points_at() {
+        let (base, _) = package_at("github.com/danpozmanter/pgsql-gos");
+        let id =
+            dependency_identity("example.com/alias", &path_spec("driver"), Some(&base)).unwrap();
+        assert_eq!(id.as_str(), "example.com/alias");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn a_path_dependency_with_no_base_to_anchor_on_is_unsatisfiable() {
+        let err = dependency_identity("pgsql_gos", &path_spec("driver"), None).unwrap_err();
+        assert!(matches!(err, ResolveError::Unsatisfiable { id } if id == "pgsql_gos"));
+    }
+
+    #[test]
+    fn a_path_dependency_pointing_at_no_manifest_is_unsatisfiable() {
+        let (base, root) = package_at("example.com/driver");
+        std::fs::remove_file(root.join("project.toml")).unwrap();
+        let err = dependency_identity("pgsql_gos", &path_spec("driver"), Some(&base)).unwrap_err();
+        assert!(matches!(err, ResolveError::Unsatisfiable { id } if id == "pgsql_gos"));
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn a_git_dependency_still_takes_its_identity_from_the_url() {
+        let spec = DependencySpec::Inline(InlineDependency::Git {
+            url: "https://github.com/danpozmanter/pgsql-gos".to_string(),
+            reference: "main".to_string(),
+        });
+        let id = dependency_identity("pgsql_gos", &spec, None).unwrap();
+        assert_eq!(id.as_str(), "github.com/danpozmanter/pgsql-gos");
+    }
+}

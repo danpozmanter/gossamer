@@ -547,6 +547,20 @@ const SPECS: &[Spec] = &[
     // whichever scalar the type names - each integer width, `f32` / `f64`,
     // `bool`, `char` - with a heap ordering by the element's own comparison.
     spec("feature-testing-examples/slot_container_element_types.gos"),
+    // A `Deque` / `Queue` / `Stack` holds an element of any type, and a
+    // `MaxHeap` / `MinHeap` any element the language orders - a `String`, a
+    // tuple, a struct, an enum, a fixed array, a nested container, an
+    // `Option` - rendered and ordered identically on every tier.
+    spec("feature-testing-examples/slot_container_any_element.gos"),
+    // A method call binds to the receiver's own type: a same-named method on
+    // another type, a `&mut self` method elsewhere, and a free function of
+    // that name are all beside the point. A container hands a heap value out
+    // owned, so a map read stays live for its reader.
+    spec("feature-testing-examples/method_dispatch_by_receiver_type.gos"),
+    // A `&mut` borrow of a struct field writes through to its owner, a `Set`
+    // answers emptiness from its own count, and a payload read on an arm that
+    // did not run reaches for no node at all.
+    spec("feature-testing-examples/enum_and_reference_dispatch.gos"),
     // A `Set` answers membership and set algebra and walks through `iter()`
     // in an order it promises nothing about; a `BTreeSet` reads sorted, and
     // both render sorted. Every tier reproduces the same walk.

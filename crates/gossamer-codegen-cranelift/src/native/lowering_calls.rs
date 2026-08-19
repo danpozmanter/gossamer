@@ -232,6 +232,36 @@ fn heap_copy_carrier(
     Ok(block)
 }
 
+/// Copies an aggregate's `slots` words into a fresh heap block and answers
+/// its address, so a value handed over in a carrier outlives the frame that
+/// built it. The symmetric read is whatever the payload's own type does with
+/// the address - a memcpy out, or a field read through it.
+fn heap_copy_aggregate(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    intrinsics: &mut IntrinsicContext,
+    src: ir::Value,
+    slots: u32,
+) -> Result<ir::Value> {
+    let ptr_ty = module.target_config().pointer_type();
+    let alloc_fn = intrinsics.extern_fn(module, "gos_rt_aggr_alloc", &[types::I64], &[ptr_ty])?;
+    let alloc_ref = module.declare_func_in_func(alloc_fn, builder.func);
+    let bytes = i64::from(slots.max(1)) * 8;
+    let size = builder.ins().iconst(types::I64, bytes);
+    let call = builder.ins().call(alloc_ref, &[size]);
+    let block = builder.inst_results(call)[0];
+    for index in 0..slots.max(1) {
+        let offset = ir::immediates::Offset32::new(i32::try_from(index * 8).unwrap_or(0));
+        let word = builder
+            .ins()
+            .load(types::I64, MemFlagsData::new(), src, offset);
+        builder
+            .ins()
+            .store(MemFlagsData::new(), word, block, offset);
+    }
+    Ok(block)
+}
+
 /// Calls runtime symbol `name` using the signature the ABI registry records
 /// for it, marshalling every `i128` slot the way [`emit_win64_rt_call`]
 /// documents. Call sites that already know their slot types call that
@@ -296,6 +326,16 @@ fn lower_inline_result_carrier_call(
                 None => builder.ins().iconst(types::I64, 0),
             };
             let payload = match args.get(1) {
+                // A multi-slot payload - a struct, a tuple, a fixed array -
+                // lives in the constructing frame's stack slot, which is gone
+                // the moment that frame returns. The carrier travels with the
+                // value, so it must hold the address of a heap copy.
+                Some(arg) if operand_aggregate_slots(body, tcx, arg).is_some() => {
+                    let slots = operand_aggregate_slots(body, tcx, arg).unwrap_or(1);
+                    let addr =
+                        lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?;
+                    heap_copy_aggregate(module, builder, intrinsics, addr, slots)?
+                }
                 Some(arg) => {
                     let raw =
                         lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?;
@@ -723,6 +763,31 @@ pub(super) fn lower_generic_rt_call(
         | "gos_rt_btree_set_from_vec_i64"
         | "gos_rt_btree_set_from_vec_str" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_deque_push_back" | "gos_rt_deque_push_front" => (&[ptr_ty, types::I64], None),
+        "gos_rt_bheap_max_push_desc" | "gos_rt_bheap_min_push_desc" => {
+            (&[ptr_ty, ptr_ty, ptr_ty], None)
+        }
+        "gos_rt_bheap_max_pop_desc" | "gos_rt_bheap_min_pop_desc" => {
+            (&[ptr_ty, ptr_ty], Some(types::I128))
+        }
+        "gos_rt_bheap_max_from_vec_desc"
+        | "gos_rt_bheap_min_from_vec_desc"
+        | "gos_rt_bheap_max_format_desc"
+        | "gos_rt_bheap_min_format_desc" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_bheap_new_typed" => (&[types::I32, types::I8], Some(ptr_ty)),
+        "gos_rt_bheap_peek_elem" => (&[ptr_ty], Some(types::I128)),
+        "gos_rt_desc_cmp" => (&[ptr_ty, ptr_ty, ptr_ty], Some(types::I64)),
+        "gos_rt_set_format_tagged" => (&[ptr_ty, types::I32, types::I32], Some(ptr_ty)),
+        "gos_rt_set_insert_ekey" | "gos_rt_set_contains_ekey" | "gos_rt_set_remove_ekey" => {
+            (&[ptr_ty, ptr_ty, ptr_ty], Some(types::I64))
+        }
+        "gos_rt_set_to_vec_ekey" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_set_format_ekey" => (&[ptr_ty, types::I32, ptr_ty], Some(ptr_ty)),
+        "gos_rt_deque_push_back_wide" | "gos_rt_deque_push_front_wide" => (&[ptr_ty, ptr_ty], None),
+        "gos_rt_deque_new_typed" => (&[types::I32, types::I8], Some(ptr_ty)),
+        "gos_rt_deque_from_vec" | "gos_rt_deque_vec" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_deque_format_desc" | "gos_rt_queue_format_desc" | "gos_rt_stack_format_desc" => {
+            (&[ptr_ty, ptr_ty], Some(ptr_ty))
+        }
         "gos_rt_deque_push_back_f64" | "gos_rt_deque_push_front_f64" => {
             (&[ptr_ty, types::F64], None)
         }
@@ -732,6 +797,7 @@ pub(super) fn lower_generic_rt_call(
         | "gos_rt_deque_peek_back" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_deque_len" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_deque_is_empty" => (&[ptr_ty], Some(types::I32)),
+        "gos_rt_set_is_empty" => (&[ptr_ty], Some(types::I32)),
         "gos_rt_deque_clear" => (&[ptr_ty], None),
         "gos_rt_deque_free" => (&[ptr_ty], None),
         "gos_rt_bytes_builder_build" => (&[ptr_ty], Some(ptr_ty)),

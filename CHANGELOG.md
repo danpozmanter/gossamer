@@ -1,5 +1,107 @@
 # Changelog
 
+## 0.52.3 - Generic collections, project dependencies, LSP fixes
+
+- Fetch a git dependency: the pax global header every `git archive` opens
+  with is read as the archive metadata it is, and a pax extended or GNU
+  long-name header names the entry it describes, so a path beyond 100 bytes
+  or a file beyond 8 GB unpacks under the name and size it was archived
+  with.
+- Compile against a git, registry, or tarball dependency once `gos fetch` or
+  `gos vendor` has prepared its source: the tree joins the compilation unit
+  the way a `path` dependency does, under the module its id names.
+- Name a path dependency by the module its source is reached under -
+  `pgsql_gos = { path = "../.." }` - with the package's own `project.toml`
+  supplying the identity that `vendor`, `fetch`, and the lockfile record.
+- Hold any element type in a `Deque`, `Queue`, or `Stack`: a `String`, a
+  tuple, a struct, an enum, a fixed array, a nested container, an `Option`.
+  Each keeps its elements in the element store a `Vec<T>` uses, so an element
+  is owned, released, and rendered exactly as the same element in a `Vec` is.
+- Hold any orderable element in a `MaxHeap` or a `MinHeap`, ordered the way
+  the language orders it: scalars and `String` by value, tuples and structs
+  field by field, sequences lexicographically, `Option` and `Result` by arm
+  then payload, and an enum by variant rank then payload. A `Map` or a `Set`
+  element, which has no order, is reported at check time.
+- Compare enum values in the interpreter by variant rank rather than
+  declining, so `sort`, the heaps, and every other ordered surface answer the
+  same order on every tier.
+- Print a `Vec` or a container of fixed arrays: `Vec<[i64; 2]>` rendered
+  through the element descriptor rather than failing the native build.
+- Render a container holding a type with its own `Display` or `Debug`
+  through that impl - a `Queue<T>` shows its elements, not its handle.
+- Key a `Map` or a `Set` by any value the language hashes, on every tier: an
+  enum (a `Set` keys one by value now, as a `Map` already did), an `Option`, a
+  sequence, and a float, each stored and read back as the value written rather
+  than as the word a conversion produced.
+- Store a float in a `Map` value slot as the value, not as the integer it
+  converts to: `Map<String, f64>` answered `5e-324` for `1.5` on the compiled
+  tiers.
+- Hold an `Option` map value whole: the two-word carrier is boxed like any
+  other multi-slot value rather than truncated to its discriminant.
+- Render a map key through its own type - a float as a float, a `bool`, a
+  `char` bare - and a `BTreeSet` of any element through its elements rather
+  than as an empty set.
+- Order a map's and a set's aggregate entries the same way on every tier: by
+  variant rank for an enum, and field by field for everything else.
+- Bind a method call to the receiver's own type: a `&mut self` method of the
+  same name on an unrelated type captured the call, so an enum answered a
+  struct's method.
+- Answer a builtin method on its receiver even where a free function of that
+  name is declared: `text.len()` beside a user `fn len` no longer fails to
+  resolve at run time.
+- Read a `Vec<u8>` back out of a map after inserting it: the insert released
+  the caller's share alongside the map's, so the reader saw storage the
+  allocator had already reclaimed.
+- Trap on a map read that reaches a storage shape the accessor does not
+  handle, rather than answering "no such key".
+- Report an unknown member of a local module at check time
+  (`util::missing()`), including a longer path through it
+  (`conn::value::Value::Integer`), which passed `gos check` and failed at run
+  time.
+- Report only the parse error in the editor when a file does not parse, as
+  `gos check` does: the later phases run on a tree the parse recovered, so
+  what they said about it was not actionable.
+- Type-check named and defaulted arguments in the editor, which reported a
+  call that omits a defaulted parameter as an arity error the command line
+  accepts.
+- Run the arena-escape check in the playground, which accepted a program
+  `gos check` rejects.
+- Write through a `&mut` reference to a struct field or a borrowed struct on
+  the compiled tiers: a field the callee assigned, and a container it
+  replaced, landed on a copy the caller never saw.
+- Keep a container a `&mut self` method stores in a field alive past the
+  method: the frame freed the handle it had just handed to the struct.
+- Leave an enum payload's fields to the node that owns them: a match arm's
+  extraction released them at return, on whichever arm ran, so an unrelated
+  variant's words were read as the arm's own.
+- Read a content-key through the address of the caller's own slots, so a
+  struct-keyed `m.iter()` finds each entry's value on the native tier instead
+  of reading the key's handle as its bytes.
+- Answer `is_empty` on a `Set` through the set's own length rather than the
+  generic length helper, which read a set handle as a length-prefixed buffer.
+- Read the discriminant of an absent payload as no variant at all rather than
+  faulting: `match f(x) { Some(Variant(..)) => .., _ => .. }` over a `None`
+  dereferenced the missing node.
+- Name a runtime handle in a signature, a field, or a return type -
+  `fn finish(journal: fs::File)` - and have it carry that type, so a method
+  call on it dispatches by the handle it is rather than by its name.
+- Recycle a dying allocation into a constructor only when nothing else in the
+  body reads it, so a node handed to the value being built is no longer
+  reused as that value.
+- Match a variant against the enum the value's own type names: two modules
+  each declaring a `Binary` variant made a pattern read the other enum's
+  index and representation, so an unrelated variant's arm ran.
+- Decide whether an enum carries a payload from its own declaration, so a
+  payload-free enum sharing a variant name with a payload-bearing one is
+  built and matched as the bare index it is.
+- Print a value whose type carries a sequence, an `Option`, or a tuple:
+  `{:?}` on an enum with a `Vec` payload failed the native build rather than
+  rendering, and a three-deep fixed array renders through its element
+  descriptor.
+- Hand a value to an element store as a move: `xs[i] = f(..)` on a sequence
+  of strings, sequences, or enum values freed what the store had just taken,
+  so the reader saw storage the allocator had reclaimed.
+
 ## 0.52.2 - Binary and positional file I/O, durability barriers, range locks, exact toolchain version
 
 - Read and write a `fs::File` by offset with `read_at` / `write_at`, past the

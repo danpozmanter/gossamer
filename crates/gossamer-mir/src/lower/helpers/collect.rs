@@ -751,7 +751,9 @@ pub(crate) fn collect_enum_variants(program: &HirProgram) -> EnumIndex {
     let mut variant_index: HashMap<String, (String, usize)> = HashMap::new();
     let mut variant_fields: HashMap<String, Vec<String>> = HashMap::new();
     let mut variant_field_tys: HashMap<String, Vec<Ty>> = HashMap::new();
+    let mut variant_field_tys_owned: HashMap<String, Vec<Ty>> = HashMap::new();
     let mut variant_has_payload: HashMap<String, bool> = HashMap::new();
+    let mut enum_any_payload: HashMap<String, bool> = HashMap::new();
     for item in &program.items {
         if let HirItemKind::Adt(adt) = &item.kind {
             if let HirAdtKind::Enum(variants) = &adt.kind {
@@ -776,8 +778,14 @@ pub(crate) fn collect_enum_variants(program: &HirProgram) -> EnumIndex {
                             variant_has_payload.insert(v.name.name.clone(), true);
                         }
                         variant_field_tys.insert(v.name.name.clone(), tys.clone());
+                        variant_field_tys_owned
+                            .insert(format!("{}::{}", adt.name.name, v.name.name), tys.clone());
                     }
                 }
+                let declared_payload = variants
+                    .iter()
+                    .any(|v| v.struct_field_tys.as_ref().is_some_and(|t| !t.is_empty()));
+                enum_any_payload.insert(adt.name.name.clone(), declared_payload);
                 by_enum.insert(adt.name.name.clone(), names);
             }
         }
@@ -929,12 +937,38 @@ pub(crate) fn collect_enum_variants(program: &HirProgram) -> EnumIndex {
             _ => {}
         }
     }
+    // A variant name may belong to more than one enum, so the per-variant
+    // flags cannot answer "does THIS enum carry a payload". The declaration
+    // answers it directly; a tuple payload the declaration did not spell out
+    // is credited through the variant map, which names one owner per variant.
+    // How many enums declare each variant name. A name more than one enum
+    // declares cannot be attributed by name alone, so only its declaration
+    // decides whether its enum carries a payload.
+    let mut declarers: HashMap<&str, usize> = HashMap::new();
+    for variants in by_enum.values() {
+        for v in variants {
+            *declarers.entry(v.as_str()).or_insert(0) += 1;
+        }
+    }
+    for (enum_name, variants) in &by_enum {
+        let scanned = variants.iter().any(|v| {
+            declarers.get(v.as_str()).copied().unwrap_or(0) == 1
+                && variant_has_payload.get(v).copied().unwrap_or(false)
+                && variant_index
+                    .get(v)
+                    .is_some_and(|(owner, _)| owner == enum_name)
+        });
+        let entry = enum_any_payload.entry(enum_name.clone()).or_insert(false);
+        *entry = *entry || scanned;
+    }
     EnumIndex {
         by_enum,
         variant_index,
         variant_fields,
         variant_field_tys,
+        variant_field_tys_owned,
         variant_has_payload,
+        enum_any_payload,
     }
 }
 

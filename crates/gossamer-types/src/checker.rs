@@ -7901,43 +7901,22 @@ impl<'a> TypeChecker<'a> {
     }
 
     /// Checks the element type of a slot-backed container (`Deque`, `Queue`,
-    /// `Stack`, `MaxHeap`, `MinHeap`), which holds one word per element.
+    /// `Stack`, `MaxHeap`, `MinHeap`).
     ///
-    /// Every scalar - each integer width, `f32` / `f64`, `bool`, `char` - is
-    /// one word and is held as written. An element that is a `String` or a
-    /// container is a counted handle, and one that is a struct, tuple, array,
-    /// or enum spans several slots; neither is stored here yet, so the call
-    /// says so rather than silently reading the value as an integer. An
-    /// unresolved element is left to the push that pins it.
-    ///
-    /// A heap also orders its elements, and it compares a slot as a signed
-    /// 64-bit value (or, for a float element, as the value its bits spell), so
-    /// `u64` / `usize` - whose range runs past what that comparison orders -
-    /// are declined there while a `Deque` / `Queue` / `Stack`, which only
-    /// stores, holds them exactly.
+    /// A `Deque` / `Queue` / `Stack` stores and hands back; it holds an
+    /// element of any type, in the same element store a `Vec<T>` uses. A heap
+    /// also orders its elements, so its element must be one the language
+    /// orders: every scalar, a `String`, a tuple, a struct, an array, a
+    /// sequence, an `Option` / `Result`, and any nesting of those. A `Map` or
+    /// a `Set` has no ordering, and a `u64` / `usize` runs past the signed
+    /// range the heap compares by, so both are declined there. An unresolved
+    /// element is left to the push that pins it.
     fn require_slot_collection_elem(&mut self, elem: Ty, owner: &str, span: Span) -> Ty {
         let resolved = self.infer.resolve(self.tcx, elem);
-        let ordered = matches!(owner, "MaxHeap" | "MinHeap" | "BinaryHeap");
-        if ordered
-            && matches!(
-                self.tcx.kind(resolved),
-                Some(TyKind::Int(IntTy::U64 | IntTy::Usize))
-            )
-        {
-            let found = self.render_public_ty(resolved);
-            self.emit(
-                TypeError::SlotCollectionElement {
-                    owner: owner.to_string(),
-                    found,
-                },
-                span,
-            );
-            return self.tcx.int_ty(IntTy::I64);
+        if !matches!(owner, "MaxHeap" | "MinHeap" | "BinaryHeap") {
+            return elem;
         }
-        if matches!(
-            self.tcx.kind(resolved),
-            Some(TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::Var(_))
-        ) {
+        if self.is_orderable_elem(resolved) {
             return elem;
         }
         let found = self.render_public_ty(resolved);
@@ -7949,6 +7928,60 @@ impl<'a> TypeChecker<'a> {
             span,
         );
         self.tcx.int_ty(IntTy::I64)
+    }
+
+    /// Whether values of `ty` have an ordering: the scalars, `String`, and
+    /// every aggregate whose parts are themselves ordered. A `u64` / `usize`
+    /// spans past the signed comparison a heap slot orders by, and a `Map` or
+    /// `Set` has no element order at all.
+    fn is_orderable_elem(&mut self, ty: Ty) -> bool {
+        let resolved = self.infer.resolve(self.tcx, ty);
+        match self.tcx.kind(resolved) {
+            Some(TyKind::Int(IntTy::U64 | IntTy::Usize)) => false,
+            Some(
+                TyKind::Int(_)
+                | TyKind::Float(_)
+                | TyKind::Bool
+                | TyKind::Char
+                | TyKind::String
+                | TyKind::Var(_),
+            ) => true,
+            Some(TyKind::Ref { inner, .. }) => {
+                let inner = *inner;
+                self.is_orderable_elem(inner)
+            }
+            Some(TyKind::Vec(inner) | TyKind::Slice(inner) | TyKind::Array { elem: inner, .. }) => {
+                let inner = *inner;
+                self.is_orderable_elem(inner)
+            }
+            Some(TyKind::Tuple(elems)) => {
+                let elems = elems.clone();
+                elems.into_iter().all(|e| self.is_orderable_elem(e))
+            }
+            Some(TyKind::Adt { def, substs }) => {
+                let (def, substs) = (*def, substs.clone());
+                if matches!(def.local, HASH_SET_DEF_LOCAL | BTREE_SET_DEF_LOCAL) {
+                    return false;
+                }
+                // `Option` / `Result` order by arm, then by payload; a user
+                // struct or enum orders by its fields in declaration order.
+                if def.local == u32::MAX || def.local == u32::MAX - 1 {
+                    return substs.types().iter().all(|t| self.is_orderable_elem(*t));
+                }
+                if let Some(fields) = self.tcx.struct_field_tys(def) {
+                    let fields = fields.to_vec();
+                    return fields.into_iter().all(|f| self.is_orderable_elem(f));
+                }
+                if let Some(variants) = self.tcx.enum_variant_tys(def) {
+                    let variants: Vec<Vec<Ty>> = variants.to_vec();
+                    return variants
+                        .into_iter()
+                        .all(|fields| fields.into_iter().all(|f| self.is_orderable_elem(f)));
+                }
+                false
+            }
+            _ => false,
+        }
     }
 
     fn reverse_ty(&mut self, elem: Ty) -> Ty {
@@ -15289,6 +15322,16 @@ impl<'a> TypeChecker<'a> {
             let substs = self.substs_from_ast(path);
             return self.tcx.intern(TyKind::Adt { def, substs });
         }
+        // Every other opaque runtime handle, named where no constructor
+        // types the slot: a parameter, a field, a return type.
+        let written: Vec<&str> = path
+            .segments
+            .iter()
+            .map(|seg| seg.name.name.as_str())
+            .collect();
+        if let Some((offset, name)) = stdlib_handle_by_path(&written) {
+            return self.stdlib_handle_ty(offset, name);
+        }
         self.fresh()
     }
 
@@ -18086,6 +18129,24 @@ fn stdlib_handle_ctor(module: &[&str], last: &str) -> Option<(u32, &'static str)
                 .find(|(path, name, _, _)| *name == last && *path == module)
                 .map(|(_, _, offset, name)| (*offset, *name))
         })
+}
+
+/// `(sentinel offset, name)` of the runtime handle a written type
+/// annotation names. A parameter, a struct field, and a return type carry
+/// no constructor to infer from, so the annotation itself has to land on
+/// the same sentinel `Adt` the constructor answers - otherwise the slot
+/// stays an inference variable and method dispatch falls back to the
+/// name, reaching whatever runtime symbol shares it.
+fn stdlib_handle_by_path(segments: &[&str]) -> Option<(u32, &'static str)> {
+    let last = *segments.last()?;
+    PURE_HANDLES.iter().find_map(|(offset, name, _)| {
+        let (module, tail) = name.split_once("::")?;
+        (tail == last
+            && (segments.len() == 1
+                || segments[segments.len() - 2] == module
+                || module.split("::").last() == Some(segments[segments.len() - 2])))
+        .then_some((*offset, *name))
+    })
 }
 
 /// Sentinel offsets of the stdlib types that are runtime-owned handles:

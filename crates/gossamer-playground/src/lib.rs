@@ -25,7 +25,9 @@ use gossamer_ast::{ItemKind, SourceFile};
 use gossamer_diagnostics::{Diagnostic, RenderOptions};
 use gossamer_lex::{FileId, SourceMap};
 use gossamer_resolve::{ResolveError, resolve_source_file};
-use gossamer_types::{ExhaustivenessError, TyCtxt, check_exhaustiveness, typecheck_source_file};
+use gossamer_types::{
+    ExhaustivenessError, TyCtxt, check_arena_escapes, check_exhaustiveness, typecheck_source_file,
+};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -220,6 +222,14 @@ fn front_end(
         .map(gossamer_parse::ParseDiagnostic::to_diagnostic)
         .collect();
 
+    // A program that does not parse is not the program the later passes
+    // see: `autoderive::augment_source` declines to synthesize from a
+    // recovered tree, so the derived `fmt` / `to_string` / serde surface a
+    // clean parse would carry is absent, and every pass below would report
+    // its absence against a line the user wrote correctly. The parse
+    // diagnostics are the actionable report.
+    let parse_failed = !parse_diags.is_empty();
+
     let (resolutions, resolve_diags) = resolve_source_file(&sf);
     // A named argument, a parameter default, and a std function named in
     // value position are caller-side spellings, rewritten into the one
@@ -229,33 +239,42 @@ fn front_end(
     // as an arity error.
     let named_arg_diags = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let in_scope = top_level_names(&sf);
-    diagnostics.extend(
-        named_arg_diags
-            .iter()
-            .map(|diag| diag.to_diagnostic(&in_scope)),
-    );
-    for diag in &resolve_diags {
-        if matches!(
-            diag.error,
-            ResolveError::UnresolvedName { .. }
-                | ResolveError::DuplicateItem { .. }
-                | ResolveError::UnknownModulePath { .. }
-        ) {
-            diagnostics.push(diag.to_diagnostic(&in_scope));
+    if !parse_failed {
+        diagnostics.extend(
+            named_arg_diags
+                .iter()
+                .map(|diag| diag.to_diagnostic(&in_scope)),
+        );
+        for diag in &resolve_diags {
+            if matches!(
+                diag.error,
+                ResolveError::UnresolvedName { .. }
+                    | ResolveError::DuplicateItem { .. }
+                    | ResolveError::UnknownModulePath { .. }
+            ) {
+                diagnostics.push(diag.to_diagnostic(&in_scope));
+            }
         }
     }
 
     let mut tcx = TyCtxt::new();
     let (table, type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
-    diagnostics.extend(
-        type_diags
-            .iter()
-            .map(gossamer_types::TypeDiagnostic::to_diagnostic),
-    );
+    if !parse_failed {
+        diagnostics.extend(
+            type_diags
+                .iter()
+                .map(gossamer_types::TypeDiagnostic::to_diagnostic),
+        );
 
-    let exhaustive_diags = check_exhaustiveness(&sf, &resolutions, &table, &tcx);
-    for diag in &exhaustive_diags {
-        if matches!(diag.error, ExhaustivenessError::NonExhaustive { .. }) {
+        for diag in check_exhaustiveness(&sf, &resolutions, &table, &tcx) {
+            if matches!(diag.error, ExhaustivenessError::NonExhaustive { .. }) {
+                diagnostics.push(diag.to_diagnostic());
+            }
+        }
+        // A value allocated in an `arena { }` block that outlives it is a
+        // use-after-free, so the escape check is fatal here for the same
+        // reason it is fatal on the command line.
+        for diag in check_arena_escapes(&sf, &resolutions, &table, &tcx) {
             diagnostics.push(diag.to_diagnostic());
         }
     }

@@ -468,6 +468,31 @@ impl<'a> Lowerer<'a> {
         // aggregate payloads passed to `gos_rt_result_new` so the
         // caller's stack alloca doesn't go dangling after return.
         let result_new_heap_copy = matches!(symbol, "gos_rt_result_new");
+        // An ordered container's push takes the address of the element's
+        // slots; the store copies its own stride from it.
+        let heap_push_by_address = matches!(
+            symbol,
+            "gos_rt_bheap_max_push_desc" | "gos_rt_bheap_min_push_desc"
+        );
+        // A content-keyed map or set reads the key's slots through the
+        // descriptor that travels with the call, so the key is passed by
+        // address - an aggregate's own storage, or a fresh slot holding a
+        // two-word `Option` carrier.
+        let skey_by_address = matches!(
+            symbol,
+            "gos_rt_map_insert_skey_opt"
+                | "gos_rt_map_insert_skey"
+                | "gos_rt_map_get_skey_opt"
+                | "gos_rt_map_get_or_skey"
+                | "gos_rt_map_contains_skey"
+                | "gos_rt_map_remove_skey"
+                | "gos_rt_map_or_insert_skey"
+                | "gos_rt_map_inc_skey"
+                | "gos_rt_set_insert_skey"
+                | "gos_rt_set_contains_skey"
+                | "gos_rt_set_remove_skey"
+        );
+
         // HashMap insert with a struct value: the value arg is the
         // stack address of an Rvalue::Aggregate local that goes out
         // of scope when the inserting frame returns. Heap-copy so
@@ -514,6 +539,16 @@ impl<'a> Lowerer<'a> {
                 let _ = write!(arg_text, "i64 {code}");
                 continue;
             }
+            if (heap_push_by_address || skey_by_address) && i == 1 {
+                let addr = if skey_by_address {
+                    self.skey_slot_address(arg)?
+                } else {
+                    self.elem_slot_address(arg)?
+                };
+                let _ = write!(arg_text, "ptr {addr}");
+                arg_tys_for_decl.push("ptr".to_string());
+                continue;
+            }
             let want = expected_param_tys.get(i).copied().flatten();
             let (a_v, mut a_ty) = self.lower_call_arg(arg, want, symbol)?;
             if result_new_heap_copy
@@ -527,7 +562,9 @@ impl<'a> Lowerer<'a> {
             }
             if map_insert_heap_copy
                 && i == 2
-                && let Some(heap_v) = self.maybe_heap_copy_aggregate_for_map(arg)
+                && let Some(heap_v) = self
+                    .maybe_heap_copy_value_enum(arg)
+                    .or_else(|| self.maybe_heap_copy_aggregate_for_map(arg))
             {
                 let _ = write!(arg_text, "i64 {heap_v}");
                 continue;

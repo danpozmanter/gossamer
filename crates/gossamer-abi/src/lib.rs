@@ -64,6 +64,20 @@ pub const DESC_ERROR: u8 = 18;
 /// value occupies where it is stored inline, as a tuple field is.
 pub const DESC_ADT: u8 = 19;
 
+/// Ordering-descriptor tag for a user enum. Three bytes follow: whether the
+/// value is stored inline as `[disc, payload]` rather than as a counted node
+/// pointer, the variant count, and then, per variant, its field count
+/// followed by that many field descriptors.
+pub const DESC_ENUM: u8 = 21;
+/// Ordering-descriptor tag for a field whose type is the enum the enclosing
+/// [`DESC_ENUM`] describes, read through the same descriptor.
+pub const DESC_SELF: u8 = 22;
+
+/// Descriptor tag for a fixed-size array stored inline. Four bytes follow -
+/// the element count and how many slots one element spans, each a
+/// little-endian `u16` - then the element's own descriptor once.
+pub const DESC_ARRAY: u8 = 20;
+
 /// Runtime shims that invoke a gossamer callback through
 /// `extern "C" fn(..) -> i128`, reading the callback's address from offset
 /// zero of the closure env blob handed to the shim.

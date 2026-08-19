@@ -1274,12 +1274,28 @@ pub(super) fn lower_intrinsic_call_io_math(
                 }
                 None => builder.ins().iconst(types::I64, 0),
             };
+            // A payload that is not there - the `None` half of an `Option`,
+            // an unset carrier - has no header to read, so the load is
+            // steered at a zeroed slot and answers a discriminant no variant
+            // carries.
+            let is_null = builder.ins().icmp_imm_s(IntCC::Equal, p, 0);
+            let pad = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                8,
+                3,
+            ));
+            let zero = builder.ins().iconst(types::I64, 0);
+            builder.ins().stack_store(types::I64, zero, pad, 0);
+            let pad_addr = builder.ins().stack_addr(types::I64, pad, 3);
+            let addr = builder.ins().select(is_null, pad_addr, p);
             let b = builder.ins().uload8(
                 types::I64,
                 cranelift_codegen::ir::MemFlagsData::trusted(),
-                p,
+                addr,
                 -3,
             );
+            let missing = builder.ins().iconst(types::I64, -1);
+            let b = builder.ins().select(is_null, missing, b);
             if !destination.projection.is_empty() {
                 bail!("native codegen: gos_enum_disc destination cannot have projections");
             }

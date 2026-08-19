@@ -737,6 +737,16 @@ impl<'a> Lowerer<'a> {
                 declare_rt(&mut self.runtime_refs, sym);
                 writeln!(self.out, "  {dest} = call ptr @{sym}(ptr {value})").unwrap();
             }
+            ConcatKind::HandleFormatDesc(sym, ref desc) => {
+                let desc = desc.clone();
+                let global = self.intern_value_descriptor(&desc);
+                declare_rt(&mut self.runtime_refs, sym);
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @{sym}(ptr {value}, ptr {global})"
+                )
+                .unwrap();
+            }
             ConcatKind::SetI64(is_btree) => {
                 declare_rt(&mut self.runtime_refs, "gos_rt_set_format_i64");
                 let ordered = i32::from(is_btree);
@@ -753,6 +763,26 @@ impl<'a> Lowerer<'a> {
                 writeln!(
                     self.out,
                     "  {dest} = call ptr @gos_rt_set_format_desc(ptr {value}, i32 {ordered}, ptr {global})"
+                )
+                .unwrap();
+            }
+            ConcatKind::SetEkey(ref desc, is_btree) => {
+                let desc = desc.clone();
+                let global = self.intern_value_descriptor(&desc);
+                declare_rt(&mut self.runtime_refs, "gos_rt_set_format_ekey");
+                let ordered = i32::from(is_btree);
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_set_format_ekey(ptr {value}, i32 {ordered}, ptr {global})"
+                )
+                .unwrap();
+            }
+            ConcatKind::SetTagged(tag, is_btree) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_set_format_tagged");
+                let ordered = i32::from(is_btree);
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_set_format_tagged(ptr {value}, i32 {ordered}, i32 {tag})"
                 )
                 .unwrap();
             }
@@ -913,7 +943,10 @@ impl<'a> Lowerer<'a> {
             | ConcatKind::SetUint(_)
             | ConcatKind::SetString(_)
             | ConcatKind::SetDesc(..)
-            | ConcatKind::HandleFormat(_) => {
+            | ConcatKind::SetTagged(..)
+            | ConcatKind::SetEkey(..)
+            | ConcatKind::HandleFormat(_)
+            | ConcatKind::HandleFormatDesc(..) => {
                 let ptr = self.coerce_llvm_value(value, &self.operand_llvm_ty(arg), "ptr");
                 Ok(self.emit_aggregate_format(kind, &ptr))
             }

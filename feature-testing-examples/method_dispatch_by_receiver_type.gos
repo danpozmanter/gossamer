@@ -1,0 +1,99 @@
+// A method call binds to the receiver's own type: a same-named method on an
+// unrelated type, a free function of that name, and a `&mut self` method
+// elsewhere are all beside the point. A container hands its values out owned,
+// so a heap value read out of a map stays live for its reader.
+
+enum Value { Null, Integer(i64) }
+
+struct Parser { at: i64 }
+
+struct Store {
+    pages: Map<i64, Vec<u8>>
+    seen: Set<i64>
+}
+
+impl Parser {
+    fn type_name(&mut self) -> String {
+        self.at += 1
+        "parser"
+    }
+}
+
+impl Value {
+    fn type_name(&self) -> String { "value" }
+}
+
+impl Store {
+    fn record(&mut self, key: i64, page: Vec<u8>) {
+        self.pages.insert(key, page)
+        let _ = self.seen.insert(key)
+    }
+
+    fn fetch(&mut self, key: i64) -> Vec<u8> {
+        if let Some(page) = self.pages.get(key) {
+            return page.clone()
+        }
+        let fresh: Vec<u8> = #[7u8; 8]
+        self.pages.insert(key, fresh.clone())
+        fresh
+    }
+}
+
+// Free functions whose names every container also answers. A method call must
+// never reach one of these.
+fn get(which: i64) -> String { "free get" }
+
+fn insert(which: i64) -> String { "free insert" }
+
+fn len(which: i64) -> String { "free len" }
+
+// A loop-bearing body, so the same dispatch runs compiled as well as
+// interpreted: `len` here is the free function, never a receiver's method.
+fn tally(rounds: i64) -> i64 {
+    let mut total = 0
+    for i in 0..rounds {
+        total += get(i).len() + len(i).len()
+    }
+    total
+}
+
+fn main() {
+    let v = Value::Null
+    println!("enum {}", v.type_name())
+    let mut p = Parser { at: 0 }
+    println!("struct {} at {}", p.type_name(), p.at)
+
+    let mut store = Store { pages: Map::new(), seen: Set::new() }
+    store.record(1, #[1u8, 2u8])
+    println!("miss {}", store.fetch(2).len())
+    println!("hit {}", store.fetch(1).len())
+    println!("hit again {}", store.fetch(1).len())
+
+    let mut m: Map<String, i64> = Map::new()
+    m.insert("a", 1)
+    let mut s: Set<i64> = #{}
+    s.insert(9)
+    let xs: Vec<i64> = #[1, 2, 3]
+    let text = "abc"
+    println!(
+        "surfaces {:?} {} {} {} {}"
+        m.get("a")
+        s.contains(9)
+        xs.len()
+        text.len()
+        m.len()
+    )
+    println!("free {} {} {}", get(1), insert(2), len(3))
+
+    // Repeated calls so the hot path compiles: the name a call binds to must
+    // not change once a body leaves the interpreter.
+    let mut names: Vec<String> = #[]
+    let mut lengths: Vec<i64> = #[]
+    for i in 0..4 {
+        names.push(get(i))
+        names.push(len(i))
+        lengths.push(store.fetch(i).len())
+        lengths.push(v.type_name().len())
+    }
+    println!("hot {} {} {:?} {}", names.len(), names[7], lengths, tally(4))
+}

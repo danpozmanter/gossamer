@@ -793,6 +793,26 @@ fn rc_alloc_dest(stmt: &Statement) -> Option<Local> {
     Some(place.local)
 }
 
+/// True when `s` is read anywhere in `body` other than by the statement at
+/// (`bi`, `ri`). A bare assignment to `s` writes it rather than reading it;
+/// every other mention - a projected write, an operand, a terminator - can
+/// reach the value, so recycling its block ahead of that mention would hand
+/// the reader a different object.
+fn reads_local_elsewhere(body: &Body, s: Local, bi: usize, ri: usize) -> bool {
+    body.blocks.iter().enumerate().any(|(b, block)| {
+        block
+            .stmts
+            .iter()
+            .enumerate()
+            .any(|(i, stmt)| {
+                !(b == bi && i == ri)
+                    && stmt_mentions_local(stmt, s)
+                    && !stmt_writes_bare(stmt, s)
+            })
+            || term_mentions_local(&block.terminator, s)
+    })
+}
+
 /// Perceus reuse pairing (`GOS_RC_NO_REUSE` disables it). Within a block, pair a
 /// whole-local `gos_rt_rc_release(S)` with a later same-type
 /// `D = gos_rc_alloc(size, meta)` constructor and rewrite the pair so S's block
@@ -884,7 +904,13 @@ pub(crate) fn insert_rc_reuse(body: &mut Body, tcx: &TyCtxt) {
                     (ri + 1..ci).any(|k| stmt_mentions_local(&body.blocks[bi].stmts[k], s_local))
                         || stmt_mentions_local(&body.blocks[bi].stmts[ci], s_local)
                 } else {
-                    (0..ri).any(|k| stmt_mentions_local(&body.blocks[bi].stmts[k], s_local))
+                    // Moving the release earlier can outrun a share that is
+                    // minted later - the store that hands S to the object
+                    // being built retains it AFTER the constructor - and an
+                    // alias of S reached through another local is invisible
+                    // to a scan of this block. Pair only when nothing else in
+                    // the body reads S, so no reader can hold its block.
+                    reads_local_elsewhere(body, s_local, bi, ri)
                 };
                 if clash {
                     continue;

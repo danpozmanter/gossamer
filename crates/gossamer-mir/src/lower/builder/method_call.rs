@@ -122,6 +122,26 @@ const MIN_HEAP_DEF_LOCAL: u32 = u32::MAX - 30;
 const VEC_QUEUE_DEF_LOCAL: u32 = u32::MAX - 31;
 const VEC_STACK_DEF_LOCAL: u32 = u32::MAX - 32;
 
+/// Whether argument `index` of `rt` is a one-word map / set slot, which a
+/// float reaches as its bit pattern rather than as a converted integer.
+pub(crate) fn float_word_arg(rt: &str, index: usize) -> bool {
+    if index == 0 {
+        return false;
+    }
+    let key_or_value = rt.starts_with("gos_rt_map_insert")
+        || rt.starts_with("gos_rt_map_or_insert")
+        || rt.starts_with("gos_rt_map_get")
+        || rt.starts_with("gos_rt_map_pop")
+        || rt.starts_with("gos_rt_map_remove")
+        || rt.starts_with("gos_rt_map_contains")
+        || rt.starts_with("gos_rt_map_inc");
+    let set_element = matches!(
+        rt,
+        "gos_rt_set_insert_i64" | "gos_rt_set_contains_i64" | "gos_rt_set_remove_i64"
+    );
+    key_or_value || set_element
+}
+
 fn tuple_get_const_index(expr: &HirExpr) -> Option<usize> {
     match &expr.kind {
         HirExprKind::Literal(HirLiteral::Int(raw)) => raw.parse::<usize>().ok(),
@@ -3067,6 +3087,9 @@ impl<'a> Builder<'a> {
             (Some("collections::HashSet" | "collections::BTreeSet"), "len") => {
                 Some("gos_rt_set_len")
             }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "is_empty") => {
+                Some("gos_rt_set_is_empty")
+            }
             (Some("collections::HashSet" | "collections::BTreeSet"), "union") => {
                 Some("gos_rt_set_union")
             }
@@ -3136,6 +3159,26 @@ impl<'a> Builder<'a> {
         // Peek reads the root without comparing, so it stays on the integer
         // entry point.
         let float_elem = float_elem || self.heap_elem_is_float(receiver_ty);
+        // An element the one-word integer and float entry points cannot
+        // order - a `String`, a tuple, a struct, a sequence, an `Option`, an
+        // enum - is compared through its ordering descriptor instead.
+        let desc_elem = !float_elem
+            && self
+                .first_generic_of(receiver_ty)
+                .is_some_and(|elem| self.heap_elem_needs_desc(elem));
+        if desc_elem {
+            return match (method.name.as_str(), min_heap) {
+                ("push", true) => Some("gos_rt_bheap_min_push_desc"),
+                ("pop", true) => Some("gos_rt_bheap_min_pop_desc"),
+                ("push", false) => Some("gos_rt_bheap_max_push_desc"),
+                ("pop", false) => Some("gos_rt_bheap_max_pop_desc"),
+                ("peek", _) => Some("gos_rt_bheap_peek_elem"),
+                ("len", _) => Some("gos_rt_bheap_len"),
+                ("is_empty", _) => Some("gos_rt_bheap_is_empty"),
+                ("clear", _) => Some("gos_rt_bheap_clear"),
+                _ => None,
+            };
+        }
         match (method.name.as_str(), min_heap) {
             ("push", true) if float_elem => Some("gos_rt_bheap_min_push_f64"),
             ("pop", true) if float_elem => Some("gos_rt_bheap_min_pop_f64"),
@@ -3152,6 +3195,44 @@ impl<'a> Builder<'a> {
             ("clear", _) => Some("gos_rt_bheap_clear"),
             _ => None,
         }
+    }
+
+    /// Emits `gos_rt_f64_to_bits(value)` and answers the local holding the
+    /// word, so a float reaches a one-word store as its own bits rather than
+    /// as the integer the value converts to.
+    pub(crate) fn emit_float_bits(&mut self, value: Local, span: Span) -> Local {
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let bits = self.fresh(i64_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_f64_to_bits".to_string())),
+            args: vec![Operand::Copy(Place::local(value))],
+            destination: Place::local(bits),
+            target: Some(next),
+        });
+        self.set_current(next);
+        bits
+    }
+
+    /// Whether a heap element orders through its descriptor rather than as
+    /// one integer or float word: everything but the scalars a slot holds
+    /// and compares directly.
+    pub(crate) fn heap_elem_needs_desc(&self, elem: Ty) -> bool {
+        use gossamer_types::TyKind;
+        let mut cur = elem;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(cur) {
+            cur = *inner;
+        }
+        !matches!(
+            self.tcx.kind_of(cur),
+            TyKind::Int(_)
+                | TyKind::Float(_)
+                | TyKind::Bool
+                | TyKind::Char
+                | TyKind::Duration
+                | TyKind::Instant
+                | TyKind::Var(_)
+        )
     }
 
     /// Whether a heap receiver's element is a 64-bit unsigned integer, whose
@@ -3442,7 +3523,7 @@ impl<'a> Builder<'a> {
         args: &[HirExpr],
         span: Span,
     ) -> Option<KindDispatchArgs> {
-        let mut arg_operands = Vec::with_capacity(args.len() + 1);
+        let mut arg_operands: Vec<Operand> = Vec::with_capacity(args.len() + 1);
         let mut mut_ref_reloads = Vec::new();
         arg_operands.push(Operand::Copy(Place::local(receiver_local)));
         // `xs.slice(a, b)` on a `[T; N]` literal needs the
@@ -3481,10 +3562,29 @@ impl<'a> Builder<'a> {
                 _ => "gos_rt_deque_push_front_f64",
             };
         }
+        // An element spanning more than one slot - a struct, tuple, array,
+        // inline enum, or `Option` / `Result` carrier - is handed over by the
+        // address of its slots, which is what the wide entry point takes.
+        if matches!(rt, "gos_rt_deque_push_back" | "gos_rt_deque_push_front")
+            && args
+                .first()
+                .is_some_and(|arg| self.type_slot_bytes(arg.ty) > 8)
+        {
+            rt = match rt {
+                "gos_rt_deque_push_back" => "gos_rt_deque_push_back_wide",
+                _ => "gos_rt_deque_push_front_wide",
+            };
+        }
         let aggregate_set_desc = self
             .first_generic_of(receiver.ty)
             .filter(|elem| self.is_aggregate_key(*elem))
             .and_then(|elem| self.key_descriptor(elem));
+        // A user enum's value is a counted node, so a set of them keys by the
+        // same discriminant-and-payload bytes an enum-keyed map uses.
+        let enum_set_desc = self
+            .first_generic_of(receiver.ty)
+            .filter(|elem| aggregate_set_desc.is_none() && self.struct_name_of(*elem).is_none())
+            .and_then(|elem| self.ensure_enum_eq_desc(elem));
         // An i64-element `HashSet` stores its keys as decimal strings;
         // passing the raw i64 to the String shims reinterprets it as a
         // key pointer and crashes. The element kind is erased from the
@@ -3510,6 +3610,15 @@ impl<'a> Builder<'a> {
         // i64 set's keys back as integers (sorted numerically).
         if rt == "gos_rt_set_to_vec" && matches!(self.set_elem_kind_of(receiver), MapKeyKind::I64) {
             rt = "gos_rt_set_to_vec_i64";
+        }
+        if enum_set_desc.is_some() {
+            rt = match rt {
+                "gos_rt_set_insert" | "gos_rt_set_insert_i64" => "gos_rt_set_insert_ekey",
+                "gos_rt_set_contains" | "gos_rt_set_contains_i64" => "gos_rt_set_contains_ekey",
+                "gos_rt_set_remove" | "gos_rt_set_remove_i64" => "gos_rt_set_remove_ekey",
+                "gos_rt_set_to_vec" | "gos_rt_set_to_vec_i64" => "gos_rt_set_to_vec_ekey",
+                _ => rt,
+            };
         }
         if aggregate_set_desc.is_some() {
             rt = match rt {
@@ -3620,6 +3729,52 @@ impl<'a> Builder<'a> {
         {
             arg_operands.push(Operand::Const(ConstValue::Str(desc)));
         }
+        if matches!(
+            rt,
+            "gos_rt_set_insert_ekey" | "gos_rt_set_contains_ekey" | "gos_rt_set_remove_ekey"
+        ) && let Some(desc) = enum_set_desc
+        {
+            arg_operands.push(Operand::Const(ConstValue::Str(desc)));
+        }
+        // A map or set stores one word per key and per scalar value, and a
+        // float's word is its bit pattern: the entry point's `i64` parameter
+        // would otherwise convert the value, so `1.5` would be stored - and
+        // read back - as the float those bits spell.
+        for (index, operand) in arg_operands.iter_mut().enumerate() {
+            if !float_word_arg(rt, index) {
+                continue;
+            }
+            let Operand::Copy(place) = operand else {
+                continue;
+            };
+            if !place.projection.is_empty() {
+                continue;
+            }
+            if !matches!(
+                self.tcx.kind_of(self.locals[place.local.0 as usize].ty),
+                TyKind::Float(_)
+            ) {
+                continue;
+            }
+            let bits = self.emit_float_bits(place.local, span);
+            *operand = Operand::Copy(Place::local(bits));
+        }
+        // An ordered container compares its elements through the ordering
+        // descriptor of the element type, which travels with the call.
+        if matches!(
+            rt,
+            "gos_rt_bheap_max_push_desc"
+                | "gos_rt_bheap_min_push_desc"
+                | "gos_rt_bheap_max_pop_desc"
+                | "gos_rt_bheap_min_pop_desc"
+        ) {
+            let stream = self
+                .first_generic_of(receiver.ty)
+                .or_else(|| self.first_generic_of(self.locals[receiver_local.0 as usize].ty))
+                .and_then(|elem| self.ordering_stream(elem))?;
+            let text: String = stream.iter().map(|&b| b as char).collect();
+            arg_operands.push(Operand::Const(ConstValue::Str(text)));
+        }
         Some((arg_operands, rt, mut_ref_reloads))
     }
 
@@ -3658,6 +3813,9 @@ impl<'a> Builder<'a> {
             | "gos_rt_set_insert_skey"
             | "gos_rt_set_contains_skey"
             | "gos_rt_set_remove_skey"
+            | "gos_rt_set_insert_ekey"
+            | "gos_rt_set_contains_ekey"
+            | "gos_rt_set_remove_ekey"
             | "gos_rt_set_contains"
             | "gos_rt_set_contains_i64"
             | "gos_rt_set_remove"
@@ -3669,9 +3827,28 @@ impl<'a> Builder<'a> {
                 let s = self.tcx.string_ty();
                 self.tcx.intern(gossamer_types::TyKind::Vec(s))
             }
+            "gos_rt_set_to_vec_ekey" => {
+                let elem = self
+                    .first_generic_of(receiver.ty)
+                    .or_else(|| self.first_generic_of(self.locals[receiver_local.0 as usize].ty))
+                    .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64));
+                self.tcx.intern(gossamer_types::TyKind::Vec(elem))
+            }
             "gos_rt_set_to_vec_i64" => {
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                self.tcx.intern(gossamer_types::TyKind::Vec(i))
+                // The snapshot's slots are the set's own words, so the vec
+                // takes the element type they hold: a float set answers a
+                // `Vec<f64>` whose slots are those same bits.
+                let elem = self
+                    .first_generic_of(receiver.ty)
+                    .or_else(|| self.first_generic_of(self.locals[receiver_local.0 as usize].ty))
+                    .filter(|elem| {
+                        matches!(
+                            self.tcx.kind_of(*elem),
+                            TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::Int(_)
+                        )
+                    })
+                    .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64));
+                self.tcx.intern(gossamer_types::TyKind::Vec(elem))
             }
             // The content-keyed snapshot is a materialised vec on every tier,
             // exactly as the scalar-element ones above are, so `iter()` names
@@ -3691,8 +3868,10 @@ impl<'a> Builder<'a> {
             "gos_rt_flag_set_short" => self.tcx.unit(),
             "gos_rt_deque_push_back"
             | "gos_rt_deque_push_back_f64"
+            | "gos_rt_deque_push_back_wide"
             | "gos_rt_deque_push_front"
             | "gos_rt_deque_push_front_f64"
+            | "gos_rt_deque_push_front_wide"
             | "gos_rt_deque_clear" => self.tcx.unit(),
             "gos_rt_bheap_max_push_i64"
             | "gos_rt_bheap_max_push_f64"
@@ -3764,7 +3943,10 @@ impl<'a> Builder<'a> {
             "gos_rt_deque_pop_front"
             | "gos_rt_deque_pop_back"
             | "gos_rt_deque_peek_front"
-            | "gos_rt_deque_peek_back" => {
+            | "gos_rt_deque_peek_back"
+            | "gos_rt_bheap_max_pop_desc"
+            | "gos_rt_bheap_min_pop_desc"
+            | "gos_rt_bheap_peek_elem" => {
                 let recv_mir_ty = self.locals[receiver_local.0 as usize].ty;
                 let elem = self
                     .first_generic_of(receiver.ty)
@@ -3777,7 +3959,7 @@ impl<'a> Builder<'a> {
                     substs,
                 })
             }
-            "gos_rt_deque_is_empty" => self.tcx.bool_ty(),
+            "gos_rt_deque_is_empty" | "gos_rt_set_is_empty" => self.tcx.bool_ty(),
             "gos_rt_router_add" | "gos_rt_router_add_fn" => self.tcx.unit(),
             "gos_rt_router_get"
             | "gos_rt_router_post"
@@ -4238,6 +4420,9 @@ impl<'a> Builder<'a> {
             }
             (Some("collections::HashSet" | "collections::BTreeSet"), "len") => {
                 Some("gos_rt_set_len")
+            }
+            (Some("collections::HashSet" | "collections::BTreeSet"), "is_empty") => {
+                Some("gos_rt_set_is_empty")
             }
             (Some("collections::HashSet" | "collections::BTreeSet"), "union") => {
                 Some("gos_rt_set_union")

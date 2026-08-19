@@ -1833,6 +1833,63 @@ impl Resolver {
         true
     }
 
+    /// Whether `segments` names a member of a local module that the module
+    /// does not declare.
+    ///
+    /// A local module's surface is fully known here - every item it declares
+    /// was collected before any body resolved - so a lowercase member of one
+    /// that still has no binding names nothing, and would fail at run time
+    /// (GX0002) rather than at check time. A path through a TYPE the module
+    /// declares (`util::Widget::new`) stays opaque: a module binding does not
+    /// carry its types' associated surfaces.
+    fn names_no_local_module_member(&self, segments: &[&str]) -> bool {
+        let Some((last, prefix)) = segments.split_last() else {
+            return false;
+        };
+        if prefix.is_empty() || !starts_lowercase(last) {
+            return false;
+        }
+        // The head may be an alias (`use sqlite_gos as sqlite`), which names
+        // the same module the import points at.
+        let mut path = prefix.join("::");
+        if !self.local_module_paths.contains(&path)
+            && let Some(target) = self.imported_targets.get(prefix[0])
+        {
+            let mut rejoined = target.clone();
+            for seg in &prefix[1..] {
+                rejoined.push_str("::");
+                rejoined.push_str(seg);
+            }
+            path = rejoined;
+        }
+        self.local_module_paths.contains(&path)
+    }
+
+    /// True when the path's head names a local module and its next segment
+    /// names nothing that module declares - no item, no child module. The
+    /// rest of the path hangs off that segment, so a mis-spelled or absent
+    /// member is a name error here rather than a `GX0002` at run time.
+    fn names_no_member_of_local_module(&self, segments: &[&str]) -> bool {
+        let [head, next, ..] = segments else {
+            return false;
+        };
+        let head_path = self
+            .imported_targets
+            .get(*head)
+            .cloned()
+            .filter(|target| self.local_module_paths.contains(target))
+            .unwrap_or_else(|| (*head).to_string());
+        if !self.local_module_paths.contains(&head_path) {
+            return false;
+        }
+        let member = format!("{head_path}::{next}");
+        if self.local_module_paths.contains(&member) {
+            return false;
+        }
+        self.lookup_qualified_value_or_type(&[head_path.as_str(), next])
+            .is_none()
+    }
+
     fn resolve_value_path(&mut self, path: &PathExpr, anchor: NodeId, span: Span) {
         let Some(head) = path.segments.first() else {
             return;
@@ -1918,6 +1975,14 @@ impl Resolver {
                     self.resolve_path_generic_args(path);
                     return;
                 }
+                self.emit(ResolveError::UnresolvedName { name: joined }, span);
+                self.resolutions.insert(anchor, Resolution::Err);
+                self.resolve_path_generic_args(path);
+                return;
+            }
+            if self.names_no_local_module_member(&effective)
+                || self.names_no_member_of_local_module(&effective)
+            {
                 self.emit(ResolveError::UnresolvedName { name: joined }, span);
                 self.resolutions.insert(anchor, Resolution::Err);
                 self.resolve_path_generic_args(path);

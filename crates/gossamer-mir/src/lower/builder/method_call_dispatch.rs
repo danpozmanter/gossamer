@@ -368,7 +368,7 @@ impl<'a> Builder<'a> {
             "gos_rt_sync_map_len" | "gos_rt_deque_len" => {
                 self.tcx.int_ty(gossamer_types::IntTy::I64)
             }
-            "gos_rt_sync_map_contains" | "gos_rt_deque_is_empty" => self.tcx.bool_ty(),
+            "gos_rt_sync_map_contains" | "gos_rt_deque_is_empty" | "gos_rt_set_is_empty" => self.tcx.bool_ty(),
             "gos_rt_sync_map_keys" => {
                 let s = self.tcx.string_ty();
                 self.tcx.intern(gossamer_types::TyKind::Vec(s))
@@ -565,6 +565,9 @@ impl<'a> Builder<'a> {
             | "gos_rt_bheap_max_pop_i64"
             | "gos_rt_bheap_min_peek_i64"
             | "gos_rt_bheap_min_pop_i64"
+            | "gos_rt_bheap_max_pop_desc"
+            | "gos_rt_bheap_min_pop_desc"
+            | "gos_rt_bheap_peek_elem"
             | "gos_rt_map_pop_i64"
             | "gos_rt_map_pop_str"
             | "gos_rt_map_pop_typed_str"
@@ -1038,6 +1041,11 @@ impl<'a> Builder<'a> {
         {
             self.local_runtime_kind.insert(dest, rk);
         }
+        // A map or set stores one word per key and per scalar value, and a
+        // float's word is its bit pattern: the entry point's `i64` parameter
+        // would otherwise convert the value, so `1.5` would be stored - and
+        // read back - as the float those bits spell.
+        let arg_operands = self.float_word_args(sym, arg_operands, span);
         let next = self.new_block(span);
         self.terminate(Terminator::Call {
             callee: Operand::Const(ConstValue::Str(sym.to_string())),
@@ -1047,5 +1055,37 @@ impl<'a> Builder<'a> {
         });
         self.set_current(next);
         Some(dest)
+    }
+
+    /// Rewrites every float argument of a one-word map / set slot into its
+    /// bit pattern, leaving every other operand as it stands.
+    pub(crate) fn float_word_args(
+        &mut self,
+        sym: &str,
+        args: Vec<Operand>,
+        span: Span,
+    ) -> Vec<Operand> {
+        use gossamer_types::TyKind;
+        args.into_iter()
+            .enumerate()
+            .map(|(index, operand)| {
+                if !crate::lower::builder::method_call::float_word_arg(sym, index) {
+                    return operand;
+                }
+                let Operand::Copy(place) = &operand else {
+                    return operand;
+                };
+                if !place.projection.is_empty()
+                    || !matches!(
+                        self.tcx.kind_of(self.locals[place.local.0 as usize].ty),
+                        TyKind::Float(_)
+                    )
+                {
+                    return operand;
+                }
+                let bits = self.emit_float_bits(place.local, span);
+                Operand::Copy(Place::local(bits))
+            })
+            .collect()
     }
 }

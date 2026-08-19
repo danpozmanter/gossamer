@@ -48,10 +48,29 @@ pub struct GosSet {
     /// Aggregate elements are keyed by their canonical slot bytes and retain
     /// an owned copy of those slots for `iter()` / set algebra.
     struct_inner: AggregateTable,
+    /// The slot descriptor the aggregate elements were keyed under, kept so a
+    /// sorted read orders them by field value rather than by the bytes their
+    /// canonical encoding happens to spell.
+    skey_desc: Option<Box<[u8]>>,
     /// A `BTreeSet` reads its elements in sorted order; a `Set` reads them in
     /// the table's own order. Set algebra carries the flag onto its result, so
     /// `a.union(b)` reads the way `a` does.
     ordered: bool,
+}
+
+impl GosSet {
+    /// Orders the aggregate table's keys the way their fields compare, which
+    /// is the order the interpreter reads the same elements in.
+    fn sorted_aggregate_keys(&self) -> Vec<&[u8]> {
+        let mut keys: Vec<&[u8]> = self.struct_inner.keys().map(AsRef::as_ref).collect();
+        match &self.skey_desc {
+            Some(desc) => {
+                keys.sort_by_cached_key(|key| crate::c_abi::map::skey_order_key(key, desc));
+            }
+            None => keys.sort_unstable(),
+        }
+        keys
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -253,6 +272,15 @@ pub unsafe extern "C" fn gos_rt_set_len(s: *const GosSet) -> i64 {
     })
 }
 
+/// Return 1 when the set holds no elements, 0 otherwise.
+///
+/// # Safety
+/// `s` is null or a live `GosSet`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_is_empty(s: *const GosSet) -> i32 {
+    ffi_entry!(1, { i32::from(unsafe { gos_rt_set_len(s) } <= 0) })
+}
+
 fn set_format_prefix(ordered: i32) -> &'static str {
     if ordered != 0 { "BTreeSet" } else { "Set" }
 }
@@ -278,6 +306,39 @@ pub unsafe extern "C" fn gos_rt_set_format_i64(s: *const GosSet, ordered: i32) -
     })
 }
 
+/// Renders an integer-table set whose elements were declared `bool`, `char`,
+/// or `f64`: the same slots as [`gos_rt_set_format_i64`], read through the
+/// element's own tag so each reads as the value it holds.
+///
+/// # Safety
+/// `s` is a live `GosSet` or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_format_tagged(
+    s: *const GosSet,
+    ordered: i32,
+    tag: i32,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let mut out = String::from(set_format_prefix(ordered));
+        out.push_str(" {");
+        if !s.is_null() {
+            let set = unsafe { &*s };
+            let mut keys: Vec<i64> = set.i64_inner.iter().copied().collect();
+            keys.sort_unstable();
+            for (index, key) in keys.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                unsafe {
+                    crate::c_abi::map::render_tagged_word(&mut out, *key, tag as u8);
+                }
+            }
+        }
+        out.push('}');
+        crate::c_abi::string::alloc_cstring(out.as_bytes())
+    })
+}
+
 /// Renders a set whose elements are aggregates, each stored as its canonical
 /// slot bytes and rendered through the descriptor `tags` addresses.
 ///
@@ -295,8 +356,11 @@ pub unsafe extern "C" fn gos_rt_set_format_desc(
         if !s.is_null() && !tags.is_null() {
             let tags = unsafe { crate::c_abi::map::DescStream::new(tags) };
             let set = unsafe { &*s };
-            let mut entries: Vec<&Box<[u8]>> = set.struct_inner.values().collect();
-            entries.sort_unstable();
+            let entries: Vec<&Box<[u8]>> = set
+                .sorted_aggregate_keys()
+                .into_iter()
+                .filter_map(|key| set.struct_inner.get(key))
+                .collect();
             for (index, slots) in entries.iter().enumerate() {
                 if index > 0 {
                     out.push_str(", ");
@@ -497,6 +561,9 @@ unsafe fn set_combine(
         inner: text(&a.inner, &b.inner),
         i64_inner: ints(&a.i64_inner, &b.i64_inner),
         struct_inner: aggregates(&a.struct_inner, &b.struct_inner),
+        // Both operands hold one element type, so either side's descriptor
+        // describes the result's elements.
+        skey_desc: a.skey_desc.clone().or_else(|| b.skey_desc.clone()),
         // The result is read the way the receiver is: `a.union(b)` on a
         // `BTreeSet` answers a `BTreeSet`.
         ordered: a.ordered,
@@ -562,6 +629,9 @@ pub unsafe extern "C" fn gos_rt_set_insert_skey(
             .to_vec()
             .into_boxed_slice();
         let s = unsafe { &mut *s };
+        if s.skey_desc.is_none() {
+            s.skey_desc = Some(unsafe { crate::c_abi::gos_str_arg_bytes(desc) }.into());
+        }
         i64::from(
             s.struct_inner
                 .insert(canonical.into_boxed_slice(), slots)
@@ -626,11 +696,15 @@ pub unsafe extern "C" fn gos_rt_set_to_vec_skey(
             return out;
         }
         let s = unsafe { &*s };
-        let mut entries: Vec<_> = s.struct_inner.iter().collect();
-        if s.ordered {
-            entries.sort_unstable_by_key(|(key, _)| *key);
-        }
-        for (_, slots) in entries {
+        let entries: Vec<&[u8]> = if s.ordered {
+            s.sorted_aggregate_keys()
+                .into_iter()
+                .filter_map(|key| s.struct_inner.get(key).map(AsRef::as_ref))
+                .collect()
+        } else {
+            s.struct_inner.values().map(AsRef::as_ref).collect()
+        };
+        for slots in entries {
             unsafe { crate::c_abi::vec::gos_rt_vec_push(out, slots.as_ptr()) };
         }
         out
@@ -802,5 +876,160 @@ pub unsafe extern "C" fn gos_rt_set_is_disjoint(a: *const GosSet, b: *const GosS
                 |x, y| !x.keys().any(|key| y.contains_key(key.as_ref())),
             )
         }
+    })
+}
+
+// ---------------------------------------------------------------
+// Enum elements. A user enum's value is a counted node, so a set of
+// them keys by the same canonical discriminant-and-payload bytes an
+// enum-keyed map uses, and stores the node itself as the element -
+// two equal-valued nodes then share one slot, exactly as they do in
+// the interpreter.
+// ---------------------------------------------------------------
+
+/// The canonical key bytes of an enum node, or `None` when the descriptor
+/// does not describe it.
+unsafe fn enum_element_key(node: *mut u8, desc: *const i64) -> Option<Vec<u8>> {
+    unsafe { crate::c_abi::map::enum_canonical_key(node, desc) }
+}
+
+/// Inserts an enum element by value, answering 1 when it was not present.
+///
+/// # Safety
+/// `node` is an enum node and `desc` its variant-layout descriptor.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_insert_ekey(
+    s: *mut GosSet,
+    node: *mut u8,
+    desc: *const i64,
+) -> i64 {
+    ffi_entry!(-1, {
+        let Some(key) = (unsafe { enum_element_key(node, desc) }) else {
+            return 0;
+        };
+        if s.is_null() {
+            return 0;
+        }
+        let slots = (node as usize as i64).to_le_bytes().to_vec();
+        let s = unsafe { &mut *s };
+        i64::from(
+            s.struct_inner
+                .insert(key.into_boxed_slice(), slots.into_boxed_slice())
+                .is_none(),
+        )
+    })
+}
+
+/// Membership test for an enum element.
+///
+/// # Safety
+/// `node` is an enum node and `desc` its variant-layout descriptor.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_contains_ekey(
+    s: *const GosSet,
+    node: *mut u8,
+    desc: *const i64,
+) -> i64 {
+    ffi_entry!(-1, {
+        let Some(key) = (unsafe { enum_element_key(node, desc) }) else {
+            return 0;
+        };
+        if s.is_null() {
+            return 0;
+        }
+        i64::from(unsafe { &*s }.struct_inner.contains_key(key.as_slice()))
+    })
+}
+
+/// Removes an enum element, answering 1 when it was present.
+///
+/// # Safety
+/// `node` is an enum node and `desc` its variant-layout descriptor.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_remove_ekey(
+    s: *mut GosSet,
+    node: *mut u8,
+    desc: *const i64,
+) -> i64 {
+    ffi_entry!(-1, {
+        let Some(key) = (unsafe { enum_element_key(node, desc) }) else {
+            return 0;
+        };
+        if s.is_null() {
+            return 0;
+        }
+        i64::from(
+            unsafe { &mut *s }
+                .struct_inner
+                .shift_remove(key.as_slice())
+                .is_some(),
+        )
+    })
+}
+
+/// The set's enum elements as a `Vec` of nodes, in the set's own order.
+///
+/// # Safety
+/// `s` is a live `GosSet` or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_to_vec_ekey(
+    s: *const GosSet,
+) -> *mut crate::c_abi::vec::GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe {
+            crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::PRIMITIVE)
+        };
+        if s.is_null() {
+            return out;
+        }
+        let s = unsafe { &*s };
+        let mut entries: Vec<_> = s.struct_inner.iter().collect();
+        if s.ordered {
+            entries.sort_unstable_by_key(|(key, _)| *key);
+        }
+        for (_, slots) in entries {
+            unsafe { crate::c_abi::vec::gos_rt_vec_push(out, slots.as_ptr()) };
+        }
+        out
+    })
+}
+
+/// Renders a set of enum elements: each stored slot addresses the node its
+/// descriptor reads.
+///
+/// # Safety
+/// `s` is a live `GosSet` and `tags` addresses a descriptor for its elements.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_format_ekey(
+    s: *const GosSet,
+    ordered: i32,
+    tags: *const u8,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let mut out = String::from(set_format_prefix(ordered));
+        out.push_str(" {");
+        if !s.is_null() && !tags.is_null() {
+            let tags = unsafe { crate::c_abi::map::DescStream::new(tags) };
+            let set = unsafe { &*s };
+            let mut entries: Vec<_> = set.struct_inner.iter().collect();
+            entries.sort_unstable_by_key(|(key, _)| *key);
+            for (index, (_, slots)) in entries.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                let mut cursor = 0usize;
+                unsafe {
+                    crate::c_abi::map::render_desc_storage(
+                        &mut out,
+                        slots.as_ptr(),
+                        tags,
+                        &mut cursor,
+                        crate::c_abi::map::Storage::ByWord,
+                    );
+                }
+            }
+        }
+        out.push('}');
+        crate::c_abi::string::alloc_cstring(out.as_bytes())
     })
 }

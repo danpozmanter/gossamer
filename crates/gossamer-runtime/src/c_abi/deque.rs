@@ -7,42 +7,121 @@
 use std::ffi::c_char;
 
 use super::*;
+use crate::c_abi::vec::vec_elem_kind;
 
 // ---------------------------------------------------------------
-// VecDeque<i64> - a ring-buffer FIFO queue for i64 values.
-// The handle is a raw Box pointer; the caller is responsible for
-// calling `gos_rt_deque_free` when done (or relying on GC reset).
+// Deque / Queue / Stack - a `GosVec` of elements plus the index of
+// the front one, so a FIFO pop is O(1) amortised. The element store
+// is the same one `Vec<T>` uses, so an element of any type - a
+// scalar, a `String`, a nested container, an inline struct or tuple -
+// is held, owned, and released exactly as a `Vec<T>` element is.
 // ---------------------------------------------------------------
 
-/// Heap-allocated i64 ring-buffer deque.
+/// A deque's element storage and the index its live range starts at.
+#[repr(C)]
 pub struct GosDeque {
-    inner: std::collections::VecDeque<i64>,
+    vec: *mut GosVec,
+    head: i64,
 }
 
-/// Create a new empty VecDeque, returning an opaque heap pointer.
+unsafe fn deque_alloc(elem_bytes: i32, elem_kind: u8) -> *mut GosDeque {
+    let bytes = if elem_bytes > 0 { elem_bytes } else { 8 };
+    let vec = unsafe { crate::c_abi::vec::gos_rt_vec_new_typed(bytes as u32, elem_kind) };
+    Box::into_raw(Box::new(GosDeque { vec, head: 0 }))
+}
+
+/// Number of live elements: everything from the front index to the end of
+/// the element store.
+unsafe fn deque_live_len(d: *const GosDeque) -> i64 {
+    if d.is_null() {
+        return 0;
+    }
+    let deque = unsafe { &*d };
+    if deque.vec.is_null() {
+        return 0;
+    }
+    (unsafe { &*deque.vec }.len - deque.head).max(0)
+}
+
+/// Moves the live range down to index zero. Every operation that reads or
+/// writes the element store through the `Vec` ABI runs this first, so that
+/// ABI only ever sees a store whose elements start where it expects them.
+unsafe fn deque_compact(d: *mut GosDeque) {
+    if d.is_null() {
+        return;
+    }
+    let deque = unsafe { &mut *d };
+    if deque.head <= 0 || deque.vec.is_null() {
+        return;
+    }
+    let vec = unsafe { &mut *deque.vec };
+    let live = (vec.len - deque.head).max(0);
+    let stride = vec.elem_bytes as usize;
+    if live > 0 && !vec.ptr.is_null() && stride > 0 {
+        let base = vec.ptr.as_ptr();
+        unsafe {
+            std::ptr::copy(
+                base.add(deque.head as usize * stride),
+                base,
+                live as usize * stride,
+            );
+        }
+    }
+    vec.len = live;
+    deque.head = 0;
+}
+
+/// The element store, with its live range starting at index zero: the shape
+/// every `Vec` entry point - rendering, ownership metadata, deep-free -
+/// reads.
+///
+/// # Safety
+/// `d` is a live `GosDeque` or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_deque_vec(d: *mut GosDeque) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        if d.is_null() {
+            return std::ptr::null_mut();
+        }
+        unsafe { deque_compact(d) };
+        unsafe { &*d }.vec
+    })
+}
+
+/// Create a new empty deque whose elements are one word wide.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_deque_new() -> *mut GosDeque {
     ffi_entry!(std::ptr::null_mut(), {
-        Box::into_raw(Box::new(GosDeque {
-            inner: std::collections::VecDeque::new(),
-        }))
+        unsafe { deque_alloc(8, vec_elem_kind::PRIMITIVE) }
     })
 }
 
-/// Create a VecDeque from a `Vec<i64>`, preserving iteration order.
+/// Create a new empty deque holding elements of `elem_bytes` bytes, owned
+/// per `elem_kind` (the `Vec` element-kind tags).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_deque_new_typed(elem_bytes: i32, elem_kind: u8) -> *mut GosDeque {
+    ffi_entry!(std::ptr::null_mut(), {
+        unsafe { deque_alloc(elem_bytes, elem_kind) }
+    })
+}
+
+/// Create a deque from a `Vec`, preserving iteration order. The deque takes
+/// its own copy, retaining whatever each element owns.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_deque_from_vec(v: *const GosVec) -> *mut GosDeque {
+    ffi_entry!(std::ptr::null_mut(), {
+        let vec = if v.is_null() {
+            unsafe { crate::c_abi::vec::gos_rt_vec_new_typed(8u32, vec_elem_kind::PRIMITIVE) }
+        } else {
+            unsafe { crate::c_abi::string::gos_rt_vec_clone(v) }
+        };
+        Box::into_raw(Box::new(GosDeque { vec, head: 0 }))
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_deque_from_vec_i64(v: *const GosVec) -> *mut GosDeque {
-    ffi_entry!(std::ptr::null_mut(), {
-        let mut inner = std::collections::VecDeque::new();
-        if !v.is_null() {
-            let vec = unsafe { &*v };
-            let ptr = vec.ptr.cast::<i64>();
-            for i in 0..vec.len.max(0) as usize {
-                inner.push_back(unsafe { *ptr.add(i) });
-            }
-        }
-        Box::into_raw(Box::new(GosDeque { inner }))
-    })
+    unsafe { gos_rt_deque_from_vec(v) }
 }
 
 #[unsafe(no_mangle)]
@@ -52,7 +131,7 @@ pub unsafe extern "C" fn gos_rt_queue_new() -> *mut GosDeque {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_queue_from_vec_i64(v: *const GosVec) -> *mut GosDeque {
-    unsafe { gos_rt_deque_from_vec_i64(v) }
+    unsafe { gos_rt_deque_from_vec(v) }
 }
 
 #[unsafe(no_mangle)]
@@ -62,107 +141,182 @@ pub unsafe extern "C" fn gos_rt_stack_new() -> *mut GosDeque {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_stack_from_vec_i64(v: *const GosVec) -> *mut GosDeque {
-    unsafe { gos_rt_deque_from_vec_i64(v) }
+    unsafe { gos_rt_deque_from_vec(v) }
 }
 
-/// Append `value` to the back of the deque.
+/// Appends the one-word element `value` to the back.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_deque_push_back(d: *mut GosDeque, value: i64) {
     ffi_entry!((), {
-        if d.is_null() {
-            return;
-        }
-        unsafe { &mut *d }.inner.push_back(value);
+        let word = value;
+        unsafe { deque_push_back_slot(d, std::ptr::addr_of!(word).cast()) };
     });
 }
 
-/// Append a float to the back, stored as its bit pattern: a slot holds one
-/// 64-bit word, and the pop side reads the same bits back as an `f64`.
+/// Appends a float to the back, stored as its bit pattern: a one-word slot
+/// holds the bits, and the read on the way out reinterprets them.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_deque_push_back_f64(d: *mut GosDeque, value: f64) {
     ffi_entry!((), {
-        if d.is_null() {
-            return;
-        }
-        unsafe { &mut *d }.inner.push_back(value.to_bits() as i64);
+        let word = value.to_bits() as i64;
+        unsafe { deque_push_back_slot(d, std::ptr::addr_of!(word).cast()) };
     });
 }
 
-/// Prepend a float to the front, stored as its bit pattern.
+/// Appends the element whose slots `elem` addresses to the back. The width
+/// and ownership of those slots come from the element store's header, so a
+/// multi-slot struct, tuple, or array is copied in whole.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_deque_push_front_f64(d: *mut GosDeque, value: f64) {
-    ffi_entry!((), {
-        if d.is_null() {
-            return;
-        }
-        unsafe { &mut *d }.inner.push_front(value.to_bits() as i64);
-    });
+pub unsafe extern "C" fn gos_rt_deque_push_back_wide(d: *mut GosDeque, elem: *const u8) {
+    ffi_entry!((), { unsafe { deque_push_back_slot(d, elem) } });
 }
 
-/// Remove and return the front element as `Option<i64>` packed into i128.
-/// Encoding: disc=0 (low i64) means `Some(value)`, disc=1 means `None`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_deque_pop_front(d: *mut GosDeque) -> i128 {
-    ffi_entry!(0i128, {
-        if d.is_null() {
-            return unsafe { gos_rt_result_new(1, 0) };
-        }
-        match unsafe { &mut *d }.inner.pop_front() {
-            Some(v) => unsafe { gos_rt_result_new(0, v) },
-            None => unsafe { gos_rt_result_new(1, 0) },
-        }
-    })
+unsafe fn deque_push_back_slot(d: *mut GosDeque, elem: *const u8) {
+    if d.is_null() || elem.is_null() {
+        return;
+    }
+    unsafe { deque_compact(d) };
+    let deque = unsafe { &mut *d };
+    if deque.vec.is_null() {
+        deque.vec =
+            unsafe { crate::c_abi::vec::gos_rt_vec_new_typed(8u32, vec_elem_kind::PRIMITIVE) };
+    }
+    unsafe { crate::c_abi::vec::gos_rt_vec_push(deque.vec, elem) };
 }
 
-/// Prepend `value` to the front of the deque.
+/// Prepends the one-word element `value` to the front.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_deque_push_front(d: *mut GosDeque, value: i64) {
     ffi_entry!((), {
-        if d.is_null() {
-            return;
-        }
-        unsafe { &mut *d }.inner.push_front(value);
+        let word = value;
+        unsafe { deque_push_front_slot(d, std::ptr::addr_of!(word).cast()) };
     });
 }
 
-/// Remove and return the back element as `Option<i64>` packed into i128
-/// (disc=0 `Some`, disc=1 `None`).
+/// Prepends a float to the front, stored as its bit pattern.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_deque_push_front_f64(d: *mut GosDeque, value: f64) {
+    ffi_entry!((), {
+        let word = value.to_bits() as i64;
+        unsafe { deque_push_front_slot(d, std::ptr::addr_of!(word).cast()) };
+    });
+}
+
+/// Prepends the element whose slots `elem` addresses to the front.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_deque_push_front_wide(d: *mut GosDeque, elem: *const u8) {
+    ffi_entry!((), { unsafe { deque_push_front_slot(d, elem) } });
+}
+
+unsafe fn deque_push_front_slot(d: *mut GosDeque, elem: *const u8) {
+    if d.is_null() || elem.is_null() {
+        return;
+    }
+    unsafe { deque_compact(d) };
+    let deque = unsafe { &mut *d };
+    if deque.vec.is_null() {
+        deque.vec =
+            unsafe { crate::c_abi::vec::gos_rt_vec_new_typed(8u32, vec_elem_kind::PRIMITIVE) };
+    }
+    // Push at the back to grow the store by one element's worth of storage
+    // (with the ownership the element kind asks for), then rotate that
+    // element down to index zero.
+    unsafe { crate::c_abi::vec::gos_rt_vec_push(deque.vec, elem) };
+    let vec = unsafe { &mut *deque.vec };
+    let stride = vec.elem_bytes as usize;
+    if vec.len <= 1 || vec.ptr.is_null() || stride == 0 {
+        return;
+    }
+    let base = vec.ptr.as_ptr();
+    let mut scratch = vec![0u8; stride];
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            base.add((vec.len as usize - 1) * stride),
+            scratch.as_mut_ptr(),
+            stride,
+        );
+        std::ptr::copy(base, base.add(stride), (vec.len as usize - 1) * stride);
+        std::ptr::copy_nonoverlapping(scratch.as_ptr(), base, stride);
+    }
+}
+
+/// The element at `idx` of the live range as the `Option` payload word: the
+/// value itself for a one-word element, the slot address for a wider one.
+unsafe fn deque_payload_at(d: *const GosDeque, idx: i64) -> Option<i64> {
+    if d.is_null() {
+        return None;
+    }
+    let deque = unsafe { &*d };
+    if deque.vec.is_null() {
+        return None;
+    }
+    let vec = unsafe { &*deque.vec };
+    let at = deque.head + idx;
+    if at < 0 || at >= vec.len {
+        return None;
+    }
+    Some(unsafe { crate::c_abi::vec::vec_elem_payload_word(vec, at) })
+}
+
+/// Removes and returns the front element as `Option<T>` packed into i128
+/// (disc=0 `Some`, disc=1 `None`). The payload of a multi-slot element is
+/// the address of its slots, which stay readable until the next mutation.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_deque_pop_front(d: *mut GosDeque) -> i128 {
+    ffi_entry!(0i128, {
+        // Compact first: the returned payload of a wide element addresses
+        // the store, and a later compaction would move it.
+        unsafe { deque_compact(d) };
+        match unsafe { deque_payload_at(d, 0) } {
+            Some(word) => {
+                unsafe { &mut *d }.head += 1;
+                unsafe { gos_rt_result_new(0, word) }
+            }
+            None => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
+/// Removes and returns the back element as `Option<T>` packed into i128.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_deque_pop_back(d: *mut GosDeque) -> i128 {
     ffi_entry!(0i128, {
-        if d.is_null() {
+        let len = unsafe { deque_live_len(d) };
+        if len <= 0 {
             return unsafe { gos_rt_result_new(1, 0) };
         }
-        match unsafe { &mut *d }.inner.pop_back() {
-            Some(v) => unsafe { gos_rt_result_new(0, v) },
+        match unsafe { deque_payload_at(d, len - 1) } {
+            Some(word) => {
+                let vec = unsafe { &mut *(*d).vec };
+                vec.len -= 1;
+                unsafe { gos_rt_result_new(0, word) }
+            }
             None => unsafe { gos_rt_result_new(1, 0) },
         }
     })
 }
 
-/// Return the front element as `Option<i64>` without removing it.
+/// Returns the front element as `Option<T>` without removing it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_deque_peek_front(d: *const GosDeque) -> i128 {
     ffi_entry!(0i128, {
-        if d.is_null() {
-            return unsafe { gos_rt_result_new(1, 0) };
-        }
-        match unsafe { &*d }.inner.front() {
-            Some(v) => unsafe { gos_rt_result_new(0, *v) },
+        match unsafe { deque_payload_at(d, 0) } {
+            Some(word) => unsafe { gos_rt_result_new(0, word) },
             None => unsafe { gos_rt_result_new(1, 0) },
         }
     })
 }
 
-/// Return the back element as `Option<i64>` without removing it.
+/// Returns the back element as `Option<T>` without removing it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_deque_peek_back(d: *const GosDeque) -> i128 {
     ffi_entry!(0i128, {
-        if d.is_null() {
+        let len = unsafe { deque_live_len(d) };
+        if len <= 0 {
             return unsafe { gos_rt_result_new(1, 0) };
         }
-        match unsafe { &*d }.inner.back() {
-            Some(v) => unsafe { gos_rt_result_new(0, *v) },
+        match unsafe { deque_payload_at(d, len - 1) } {
+            Some(word) => unsafe { gos_rt_result_new(0, word) },
             None => unsafe { gos_rt_result_new(1, 0) },
         }
     })
@@ -171,84 +325,133 @@ pub unsafe extern "C" fn gos_rt_deque_peek_back(d: *const GosDeque) -> i128 {
 /// Return the number of elements in the deque.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_deque_len(d: *const GosDeque) -> i64 {
-    ffi_entry!(0, {
-        if d.is_null() {
-            return 0;
-        }
-        unsafe { &*d }.inner.len() as i64
-    })
+    ffi_entry!(0, { unsafe { deque_live_len(d) } })
 }
 
 /// Return 1 if the deque is empty, 0 otherwise.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_deque_is_empty(d: *const GosDeque) -> i32 {
-    ffi_entry!(1, {
-        if d.is_null() {
-            return 1;
-        }
-        i32::from(unsafe { &*d }.inner.is_empty())
-    })
+    ffi_entry!(1, { i32::from(unsafe { deque_live_len(d) } <= 0) })
 }
 
-/// Remove all elements from the deque.
+/// Remove all elements from the deque, releasing whatever they own.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_deque_clear(d: *mut GosDeque) {
     ffi_entry!((), {
         if d.is_null() {
             return;
         }
-        unsafe { &mut *d }.inner.clear();
+        unsafe { deque_compact(d) };
+        let deque = unsafe { &mut *d };
+        if !deque.vec.is_null() {
+            unsafe { crate::c_abi::vec::gos_rt_vec_truncate(deque.vec, 0) };
+        }
     });
 }
 
-/// Renders `owner [a, b, c]` over the deque's front-to-back order, the
-/// one text form every tier prints for these containers.
-unsafe fn deque_format(d: *const GosDeque, owner: &str) -> *mut c_char {
+/// Renders `owner [a, b, c]` over the front-to-back order, reading each
+/// element through `tags` - the one text form every tier prints for these
+/// containers.
+unsafe fn deque_format_with(d: *mut GosDeque, owner: &str, tags: *const u8) -> *mut c_char {
     let mut out = String::from(owner);
     out.push_str(" [");
-    if !d.is_null() {
-        let deque = unsafe { &*d };
-        for (index, value) in deque.inner.iter().enumerate() {
-            if index > 0 {
+    let vec = unsafe { gos_rt_deque_vec(d) };
+    if !vec.is_null() {
+        let store = unsafe { &*vec };
+        let stride = store.elem_bytes as usize;
+        for i in 0..store.len.max(0) {
+            if i > 0 {
                 out.push_str(", ");
             }
-            out.push_str(&crate::builtins::format_int(*value));
+            let slot = unsafe { store.ptr.add((i as usize) * stride) };
+            if tags.is_null() {
+                out.push_str(&crate::builtins::format_int(unsafe {
+                    crate::c_abi::vec::vec_elem_load_i64(store, i)
+                }));
+            } else {
+                let stream = unsafe { crate::c_abi::map::DescStream::new(tags) };
+                let mut cursor = 0usize;
+                unsafe {
+                    crate::c_abi::map::render_desc_value(&mut out, slot, stream, &mut cursor);
+                };
+            }
         }
     }
     out.push(']');
     crate::c_abi::string::alloc_cstring(out.as_bytes())
 }
 
-/// Format a `Deque` for `{}` / `{:?}`.
+/// Format a `Deque` of one-word integer elements for `{}` / `{:?}`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_deque_format(d: *const GosDeque) -> *mut c_char {
+pub unsafe extern "C" fn gos_rt_deque_format(d: *mut GosDeque) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        unsafe { deque_format(d, "Deque") }
+        unsafe { deque_format_with(d, "Deque", std::ptr::null()) }
     })
 }
 
-/// Format a `Queue` for `{}` / `{:?}`.
+/// Format a `Queue` of one-word integer elements for `{}` / `{:?}`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_queue_format(d: *const GosDeque) -> *mut c_char {
+pub unsafe extern "C" fn gos_rt_queue_format(d: *mut GosDeque) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        unsafe { deque_format(d, "Queue") }
+        unsafe { deque_format_with(d, "Queue", std::ptr::null()) }
     })
 }
 
-/// Format a `Stack` for `{}` / `{:?}`.
+/// Format a `Stack` of one-word integer elements for `{}` / `{:?}`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_stack_format(d: *const GosDeque) -> *mut c_char {
+pub unsafe extern "C" fn gos_rt_stack_format(d: *mut GosDeque) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        unsafe { deque_format(d, "Stack") }
+        unsafe { deque_format_with(d, "Stack", std::ptr::null()) }
     })
 }
 
-/// Release the deque heap allocation.
+/// Format a `Deque` whose elements are described by `tags`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_deque_format_desc(
+    d: *mut GosDeque,
+    tags: *const u8,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        unsafe { deque_format_with(d, "Deque", tags) }
+    })
+}
+
+/// Format a `Queue` whose elements are described by `tags`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_queue_format_desc(
+    d: *mut GosDeque,
+    tags: *const u8,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        unsafe { deque_format_with(d, "Queue", tags) }
+    })
+}
+
+/// Format a `Stack` whose elements are described by `tags`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_stack_format_desc(
+    d: *mut GosDeque,
+    tags: *const u8,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        unsafe { deque_format_with(d, "Stack", tags) }
+    })
+}
+
+/// Release the deque and whatever its live elements own.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_deque_free(d: *mut GosDeque) {
     ffi_entry!((), {
-        if !d.is_null() {
-            drop(unsafe { Box::from_raw(d) });
+        if d.is_null() {
+            return;
+        }
+        // Compacting first leaves the store holding exactly the live range,
+        // so its own deep-free releases each element that is still here and
+        // nothing that was popped out.
+        unsafe { deque_compact(d) };
+        let deque = unsafe { Box::from_raw(d) };
+        if !deque.vec.is_null() {
+            unsafe { crate::c_abi::map::gos_rt_vec_free(deque.vec) };
         }
     });
 }

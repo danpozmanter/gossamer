@@ -598,3 +598,261 @@ pub unsafe extern "C" fn gos_rt_bheap_min_pop_f64(v: *mut GosVec) -> i128 {
         super::vec::pack_result(0, root)
     })
 }
+
+// ---------------------------------------------------------------
+// Elements of any orderable type. The heap is the same element store
+// a `Vec<T>` uses - one element of the store's own stride per slot -
+// and the sift compares two elements through the ordering descriptor
+// the call site hands over, so a struct, tuple, `String`, sequence,
+// `Option`, or enum orders exactly as the language orders it.
+// ---------------------------------------------------------------
+
+/// Create an empty heap holding elements of `elem_bytes` bytes, owned per
+/// the `Vec` element-kind tag.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bheap_new_typed(elem_bytes: i32, elem_kind: u8) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let bytes = if elem_bytes > 0 { elem_bytes } else { 8 };
+        unsafe { crate::c_abi::vec::gos_rt_vec_new_typed(bytes as u32, elem_kind) }
+    })
+}
+
+unsafe fn heap_elem(v: &GosVec, idx: usize) -> *mut u8 {
+    unsafe { v.ptr.add(idx * (v.elem_bytes as usize)) }
+}
+
+unsafe fn heap_cmp(v: &GosVec, a: usize, b: usize, tags: *const u8) -> i64 {
+    let mut cursor = 0usize;
+    unsafe {
+        crate::c_abi::desc_cmp::compare_desc(
+            heap_elem(v, a),
+            heap_elem(v, b),
+            tags,
+            &mut cursor,
+            crate::c_abi::desc_cmp::CmpStorage::Inline,
+            None,
+        )
+    }
+}
+
+unsafe fn heap_swap(v: &GosVec, a: usize, b: usize) {
+    if a == b {
+        return;
+    }
+    let stride = v.elem_bytes as usize;
+    let mut scratch = vec![0u8; stride];
+    unsafe {
+        std::ptr::copy_nonoverlapping(heap_elem(v, a), scratch.as_mut_ptr(), stride);
+        std::ptr::copy_nonoverlapping(heap_elem(v, b), heap_elem(v, a), stride);
+        std::ptr::copy_nonoverlapping(scratch.as_ptr(), heap_elem(v, b), stride);
+    }
+}
+
+/// Sifts the element at `start` towards the root while it outranks its
+/// parent. `max` selects which end of the ordering the root holds.
+unsafe fn heap_sift_up_desc(v: &GosVec, start: usize, tags: *const u8, max: bool) {
+    let mut i = start;
+    while i > 0 {
+        let parent = (i - 1) / 2;
+        let ord = unsafe { heap_cmp(v, parent, i, tags) };
+        let outranks = if max { ord < 0 } else { ord > 0 };
+        if !outranks {
+            break;
+        }
+        unsafe { heap_swap(v, parent, i) };
+        i = parent;
+    }
+}
+
+/// Sifts the element at `start` down while a child outranks it.
+unsafe fn heap_sift_down_desc(v: &GosVec, len: usize, start: usize, tags: *const u8, max: bool) {
+    let mut i = start;
+    loop {
+        let mut best = i;
+        for child in [2 * i + 1, 2 * i + 2] {
+            if child < len {
+                let ord = unsafe { heap_cmp(v, best, child, tags) };
+                let outranks = if max { ord < 0 } else { ord > 0 };
+                if outranks {
+                    best = child;
+                }
+            }
+        }
+        if best == i {
+            break;
+        }
+        unsafe { heap_swap(v, best, i) };
+        i = best;
+    }
+}
+
+unsafe fn bheap_push_desc(v: *mut GosVec, elem: *const u8, tags: *const u8, max: bool) {
+    if v.is_null() || elem.is_null() || tags.is_null() {
+        return;
+    }
+    unsafe { crate::c_abi::vec::gos_rt_vec_push(v, elem) };
+    let vec = unsafe { &*v };
+    let len = vec.len.max(0) as usize;
+    if len > 1 {
+        unsafe { heap_sift_up_desc(vec, len - 1, tags, max) };
+    }
+}
+
+unsafe fn bheap_pop_desc(v: *mut GosVec, tags: *const u8, max: bool) -> i128 {
+    if v.is_null() || tags.is_null() {
+        return unsafe { super::vec::pack_result(1, 0) };
+    }
+    let vec = unsafe { &mut *v };
+    if vec.len <= 0 {
+        return unsafe { super::vec::pack_result(1, 0) };
+    }
+    let last = (vec.len - 1) as usize;
+    // The root leaves through the slot just past the new end, which the
+    // sift below never touches - the same place a `Vec` pop hands its
+    // element back from.
+    unsafe { heap_swap(vec, 0, last) };
+    vec.len -= 1;
+    let new_len = vec.len.max(0) as usize;
+    if new_len > 1 {
+        unsafe { heap_sift_down_desc(vec, new_len, 0, tags, max) };
+    }
+    let word = unsafe { crate::c_abi::vec::vec_elem_payload_word(vec, last as i64) };
+    unsafe { super::vec::pack_result(0, word) }
+}
+
+unsafe fn bheap_from_vec_desc(v: *mut GosVec, tags: *const u8, max: bool) -> *mut GosVec {
+    let heap = if v.is_null() {
+        unsafe { gos_rt_vec_new(8) }
+    } else {
+        unsafe { gos_rt_vec_clone(v) }
+    };
+    if tags.is_null() {
+        return heap;
+    }
+    let vec = unsafe { &*heap };
+    let len = vec.len.max(0) as usize;
+    if len > 1 {
+        for i in (0..len / 2).rev() {
+            unsafe { heap_sift_down_desc(vec, len, i, tags, max) };
+        }
+    }
+    heap
+}
+
+/// Push an element of any orderable type onto a max heap.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bheap_max_push_desc(
+    v: *mut GosVec,
+    elem: *const u8,
+    tags: *const u8,
+) {
+    ffi_entry!((), { unsafe { bheap_push_desc(v, elem, tags, true) } });
+}
+
+/// Push an element of any orderable type onto a min heap.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bheap_min_push_desc(
+    v: *mut GosVec,
+    elem: *const u8,
+    tags: *const u8,
+) {
+    ffi_entry!((), { unsafe { bheap_push_desc(v, elem, tags, false) } });
+}
+
+/// Remove and return the greatest element as `Option<T>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bheap_max_pop_desc(v: *mut GosVec, tags: *const u8) -> i128 {
+    ffi_entry!(super::vec::pack_result(1, 0), {
+        unsafe { bheap_pop_desc(v, tags, true) }
+    })
+}
+
+/// Remove and return the least element as `Option<T>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bheap_min_pop_desc(v: *mut GosVec, tags: *const u8) -> i128 {
+    ffi_entry!(super::vec::pack_result(1, 0), {
+        unsafe { bheap_pop_desc(v, tags, false) }
+    })
+}
+
+/// The root element as `Option<T>` without removing it. The payload of a
+/// multi-slot element is the address of its slots.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bheap_peek_elem(v: *const GosVec) -> i128 {
+    ffi_entry!(super::vec::pack_result(1, 0), {
+        if v.is_null() {
+            return unsafe { super::vec::pack_result(1, 0) };
+        }
+        let vec = unsafe { &*v };
+        if vec.len <= 0 {
+            return unsafe { super::vec::pack_result(1, 0) };
+        }
+        let word = unsafe { crate::c_abi::vec::vec_elem_payload_word(vec, 0) };
+        unsafe { super::vec::pack_result(0, word) }
+    })
+}
+
+/// Heapify a `Vec` of any orderable element into a max heap.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bheap_max_from_vec_desc(
+    v: *mut GosVec,
+    tags: *const u8,
+) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        unsafe { bheap_from_vec_desc(v, tags, true) }
+    })
+}
+
+/// Heapify a `Vec` of any orderable element into a min heap.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bheap_min_from_vec_desc(
+    v: *mut GosVec,
+    tags: *const u8,
+) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        unsafe { bheap_from_vec_desc(v, tags, false) }
+    })
+}
+
+/// Renders `owner [a, b, c]` over the heap's array order, reading each
+/// element through the rendering descriptor `tags`.
+unsafe fn bheap_format_desc(v: *const GosVec, owner: &str, tags: *const u8) -> *mut c_char {
+    let mut out = String::from(owner);
+    out.push_str(" [");
+    if !v.is_null() && !tags.is_null() {
+        let vec = unsafe { &*v };
+        let stream = unsafe { crate::c_abi::map::DescStream::new(tags) };
+        for i in 0..vec.len.max(0) {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            let slot = unsafe { heap_elem(vec, i as usize) };
+            let mut cursor = 0usize;
+            unsafe { crate::c_abi::map::render_desc_value(&mut out, slot, stream, &mut cursor) };
+        }
+    }
+    out.push(']');
+    crate::c_abi::string::alloc_cstring(out.as_bytes())
+}
+
+/// Format a `MaxHeap` whose elements are described by `tags`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bheap_max_format_desc(
+    v: *const GosVec,
+    tags: *const u8,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        unsafe { bheap_format_desc(v, "MaxHeap", tags) }
+    })
+}
+
+/// Format a `MinHeap` whose elements are described by `tags`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bheap_min_format_desc(
+    v: *const GosVec,
+    tags: *const u8,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        unsafe { bheap_format_desc(v, "MinHeap", tags) }
+    })
+}

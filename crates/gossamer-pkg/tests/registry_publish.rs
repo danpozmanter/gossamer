@@ -134,7 +134,7 @@ fn transitive_resolution_walks_grandchildren() {
         Ok(next)
     });
 
-    let resolved = resolve_transitive(&root, &catalogue, &loader).unwrap();
+    let resolved = resolve_transitive(&root, None, &catalogue, &loader).unwrap();
     let ids: Vec<String> = resolved.iter().map(|r| r.id.as_str().to_string()).collect();
     assert_eq!(ids, vec!["a.test/a", "b.test/b", "c.test/c"]);
 }

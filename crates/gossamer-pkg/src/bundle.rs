@@ -2,7 +2,10 @@
 //!
 //! An entry file's siblings and subdirectory `mod.gos` packages become
 //! inline `mod NAME { ... }` items appended to the entry source, and
-//! every `path = "..."` dependency is inlined the same way. Every
+//! every dependency is inlined the same way - a `path = "..."` one from
+//! where it points, a git, registry, or tarball one from the source tree
+//! `gos fetch` or `gos vendor` prepared for it (SPEC 6.7: the compiler
+//! reads a prepared tree and never fetches code itself). Every
 //! front end that type-checks project code - the CLI and the language
 //! server alike - assembles the same unit, so a cross-module reference
 //! resolves identically in an editor and on the command line.
@@ -15,6 +18,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use crate::cache::default_cache_root;
+use crate::lockfile::Lockfile;
+use crate::resolver::dependency_identity;
 use crate::{DependencySpec, InlineDependency, Manifest};
 
 /// A byte range of an assembled unit and the file its bytes were read
@@ -170,11 +176,13 @@ pub fn collect_path_deps_with_modules(
     for (id, module) in &manifest.dependency_modules {
         modules.insert(id.clone(), module.clone());
     }
-    for spec in manifest.dependencies.values() {
-        let Some(rel) = dependency_path(spec) else {
+    for (key, spec) in &manifest.dependencies {
+        let Some(spelled) = dependency_path(spec).map_or_else(
+            || prepared_dependency_root(manifest_dir, key, spec),
+            |rel| Some(manifest_dir.join(rel)),
+        ) else {
             continue;
         };
-        let spelled = manifest_dir.join(rel);
         let Ok(identity) = spelled.canonicalize() else {
             continue;
         };
@@ -207,6 +215,34 @@ fn lexically_normalized(path: &Path) -> PathBuf {
         }
     }
     out
+}
+
+/// The directory holding a fetched dependency's source, for the sources
+/// that are not read live from a local path. `gos vendor` writes one under
+/// the project's own `vendor/`, and `gos fetch` writes one into the shared
+/// package cache, keyed by the digest the lockfile pins. A dependency with
+/// neither prepared yet has no source to compile against.
+fn prepared_dependency_root(
+    manifest_dir: &Path,
+    key: &str,
+    spec: &DependencySpec,
+) -> Option<PathBuf> {
+    let id = dependency_identity(key, spec, Some(manifest_dir)).ok()?;
+    let vendored = manifest_dir
+        .join("vendor")
+        .join(id.as_str().replace('/', "__"));
+    if vendored.join("project.toml").is_file() {
+        return Some(vendored);
+    }
+    let lock = Lockfile::load(manifest_dir).ok().flatten()?;
+    let digest = lock
+        .entries
+        .iter()
+        .find(|entry| entry.resolved.id == id)?
+        .sha256
+        .as_deref()?;
+    let cached = default_cache_root()?.join("pkg").join(digest);
+    cached.join("project.toml").is_file().then_some(cached)
 }
 
 /// The `path` field of a dependency spec, when it is a local-path
@@ -497,6 +533,68 @@ mod bundle_tests {
     use super::*;
 
     const MANIFEST: &str = "[project]\nid = \"example.com/widget\"\nversion = \"0.1.0\"\n";
+
+    /// Writes a consumer project whose only dependency is `spec`, plus the
+    /// dependency's own package under `dep_root`, and answers the entry file.
+    fn project_with_dependency(name: &str, spec: &str, dep_root: &str) -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("gos-bundle-dep-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("project.toml"),
+            format!("{MANIFEST}\n[dependencies]\n{spec}\n"),
+        )
+        .unwrap();
+        let entry = root.join("src").join("main.gos");
+        fs::write(&entry, "fn main() { }\n").unwrap();
+
+        let dep = root.join(dep_root);
+        fs::create_dir_all(dep.join("src")).unwrap();
+        fs::write(
+            dep.join("project.toml"),
+            "[project]\nid = \"github.com/danpozmanter/pgsql-gos\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::write(dep.join("src").join("lib.gos"), "pub fn connect() { }\n").unwrap();
+        entry
+    }
+
+    #[test]
+    fn a_git_dependency_compiles_against_the_tree_vendoring_prepared() {
+        let entry = project_with_dependency(
+            "vendored",
+            "pgsql_gos = { git = \"https://github.com/danpozmanter/pgsql-gos\", rev = \"cf4da891f2e1a37eade4637ad6455a8d65d4a0b4\" }",
+            "vendor/github.com__danpozmanter__pgsql-gos",
+        );
+        let bundled =
+            bundle_path_dependencies(&entry, fs::read_to_string(&entry).unwrap(), &mut Vec::new());
+        assert!(
+            bundled.contains("#[dependency(\"github.com/danpozmanter/pgsql-gos\")]"),
+            "vendored dependency not bundled:\n{bundled}"
+        );
+        assert!(
+            bundled.contains("mod pgsql_gos {") && bundled.contains("pub fn connect"),
+            "vendored dependency body missing:\n{bundled}"
+        );
+        let _ = fs::remove_dir_all(entry.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn a_dependency_with_no_prepared_tree_is_left_to_the_fetch_step() {
+        let entry = project_with_dependency(
+            "unfetched",
+            "pgsql_gos = { git = \"https://github.com/danpozmanter/pgsql-gos\", rev = \"cf4da891f2e1a37eade4637ad6455a8d65d4a0b4\" }",
+            "elsewhere",
+        );
+        let bundled =
+            bundle_path_dependencies(&entry, fs::read_to_string(&entry).unwrap(), &mut Vec::new());
+        assert!(
+            !bundled.contains("mod pgsql_gos {"),
+            "an unfetched dependency has no source to bundle:\n{bundled}"
+        );
+        let _ = fs::remove_dir_all(entry.parent().unwrap().parent().unwrap());
+    }
 
     #[test]
     fn bundle_includes_siblings_and_subdirectory_modules() {

@@ -131,7 +131,7 @@ fn vec_valued_map_releases_replaced_and_removed_entries() {
 }
 
 #[test]
-fn compact_i64_byte_vec_map_consumes_only_the_map_share() {
+fn compact_i64_byte_vec_map_consumes_only_the_moved_share() {
     let _guard = LEDGER_LOCK.lock();
     let base = vec_live();
     unsafe {
@@ -143,17 +143,27 @@ fn compact_i64_byte_vec_map_consumes_only_the_map_share() {
             for byte in 0u8..32 {
                 gos_rt_vec_push(payload, (&raw const byte).cast());
             }
-            gos_rt_vec_retain(payload);
-            gos_rt_vec_retain(payload);
             gos_rt_map_insert_i64_i64(map, key, payload as i64);
         }
 
         assert_eq!(
             vec_live(),
             base,
-            "compact byte map must consume every moved Vec header"
+            "the entry owns the bytes it copied, so the moved header is released"
         );
         assert_eq!(gos_rt_map_len(map), 1000);
+
+        // A caller holding its own share keeps it: the insert consumes the
+        // one it was handed and no more.
+        let kept = gos_rt_vec_with_capacity(1, 8);
+        for byte in 0u8..8 {
+            gos_rt_vec_push(kept, (&raw const byte).cast());
+        }
+        gos_rt_vec_retain(kept);
+        gos_rt_map_insert_i64_i64(map, 1000, kept as i64);
+        assert_eq!(vec_live(), base + 1, "the reader's own share survives");
+        gos_rt_vec_free(kept);
+
         gos_rt_map_free(map);
     }
     assert_eq!(

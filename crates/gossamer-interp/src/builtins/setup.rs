@@ -92,11 +92,14 @@ mod thread_local_registries {
             RefCell::new(std::collections::HashMap::new());
         pub(crate) static VARIANT_OWNERS: RefCell<std::collections::HashMap<&'static str, &'static str>> =
             RefCell::new(std::collections::HashMap::new());
+        pub(crate) static VARIANT_RANKS: RefCell<std::collections::HashMap<&'static str, i64>> =
+            RefCell::new(std::collections::HashMap::new());
     }
 }
 
 pub(crate) use thread_local_registries::{
     CELL_REGISTRY, NEXT_SET_ID, SET_REGISTRY, STRUCT_LAYOUTS, STRUCT_UINT_FIELDS, VARIANT_OWNERS,
+    VARIANT_RANKS,
 };
 
 /// Installs the variant-to-enum table that method dispatch consults to
@@ -136,6 +139,44 @@ pub(crate) fn set_variant_owners(owners: &[(String, String)]) {
 #[must_use]
 pub(crate) fn variant_owner_of(variant: &str) -> Option<&'static str> {
     VARIANT_OWNERS.with(|cell| cell.borrow().get(variant).copied())
+}
+
+/// Installs the variant-to-rank table ordering compares enum values by.
+///
+/// A `Value::Variant` carries only its own name, so the position it was
+/// declared at - which is what "lexicographic by variant rank" means - is
+/// recorded here. A name two enums declare at different positions maps to
+/// neither, exactly as [`set_variant_owners`] drops an ambiguous name.
+pub(crate) fn set_variant_ranks(ranks: &[(String, i64)]) {
+    let mut table: std::collections::HashMap<&'static str, i64> =
+        std::collections::HashMap::new();
+    let mut ambiguous: std::collections::HashSet<&'static str> = std::collections::HashSet::new();
+    // `Option` and `Result` rank by the discriminant every tier stores:
+    // `Some` and `Ok` are zero, `None` and `Err` one.
+    for (name, rank) in [("Some", 0), ("Ok", 0), ("None", 1), ("Err", 1)] {
+        table.insert(crate::value::intern_type_name(name), rank);
+    }
+    for (variant, rank) in ranks {
+        let variant = crate::value::intern_type_name(variant);
+        match table.get(variant) {
+            Some(existing) if *existing != *rank => {
+                ambiguous.insert(variant);
+            }
+            _ => {
+                table.insert(variant, *rank);
+            }
+        }
+    }
+    for variant in ambiguous {
+        table.remove(variant);
+    }
+    VARIANT_RANKS.with(|cell| *cell.borrow_mut() = table);
+}
+
+/// The declaration position of `variant`, when exactly one enum declares it.
+#[must_use]
+pub(crate) fn variant_rank_of(variant: &str) -> Option<i64> {
+    VARIANT_RANKS.with(|cell| cell.borrow().get(variant).copied())
 }
 
 /// Installs the struct-field declaration-order table that

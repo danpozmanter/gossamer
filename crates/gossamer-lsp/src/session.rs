@@ -13,7 +13,7 @@ use gossamer_lex::{FileId, SourceMap, Span};
 use gossamer_resolve::{Resolutions, resolve_source_file};
 use gossamer_types::{
     ExhaustivenessError, TyCtxt, TypeTable, check_arena_escapes, check_exhaustiveness,
-    typecheck_source_file,
+    normalize_caller_side_spellings, typecheck_source_file,
 };
 
 use crate::navigation::DefinitionIndex;
@@ -148,8 +148,14 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
     let bundle_len = u32::try_from(bundled.len()).unwrap_or(u32::MAX);
     let mut map = SourceMap::new();
     let file = map.add_file(uri.to_string(), augmented.clone());
-    let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&augmented, file);
+    let (mut sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&augmented, file);
     let (resolutions, resolve_diags) = resolve_source_file(&sf);
+    // A named argument, a parameter default, and a std function named in
+    // value position are caller-side spellings the checker never sees.
+    // Every front end runs this rewrite, or a call that omits a defaulted
+    // parameter reaches the checker with fewer arguments than the function
+    // declares and reads as an arity error the command line accepts.
+    let named_arg_diags = normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (types, type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
 
@@ -159,27 +165,38 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
             .iter()
             .map(gossamer_parse::ParseDiagnostic::to_diagnostic),
     );
+    // A program that does not parse is not the program the later passes
+    // see: `autoderive::augment_source` declines to synthesize from a
+    // recovered tree, so the derived `fmt` / `to_string` / serde surface a
+    // clean parse would carry is absent, and every pass below would report
+    // its absence against a line the user wrote correctly. The parse
+    // diagnostics are the actionable report, exactly as on the command
+    // line; the passes still run so navigation keeps a type table.
+    let parse_failed = !parse_diags.is_empty();
     // Seed `did you mean ...?` candidates from the file's
     // top-level item names so the resolver attaches a Suggestion
     // that LSP code-actions can surface as a quickfix.
     let in_scope = collect_top_level_names(&sf);
-    diagnostics.extend(resolve_diags.iter().map(|d| d.to_diagnostic(&in_scope)));
-    diagnostics.extend(
-        type_diags
-            .iter()
-            .map(gossamer_types::TypeDiagnostic::to_diagnostic),
-    );
-    // The editor must run every phase the command-line gate runs, or a
-    // file reads clean here and fails `gos check`. Exhaustiveness
-    // (GM0001) and arena escape (GM0003) are fatal there, so they are
-    // reported here under the same policy.
-    for diag in check_exhaustiveness(&sf, &resolutions, &types, &tcx) {
-        if matches!(diag.error, ExhaustivenessError::NonExhaustive { .. }) {
+    if !parse_failed {
+        diagnostics.extend(named_arg_diags.iter().map(|d| d.to_diagnostic(&in_scope)));
+        diagnostics.extend(resolve_diags.iter().map(|d| d.to_diagnostic(&in_scope)));
+        diagnostics.extend(
+            type_diags
+                .iter()
+                .map(gossamer_types::TypeDiagnostic::to_diagnostic),
+        );
+        // The editor must run every phase the command-line gate runs, or a
+        // file reads clean here and fails `gos check`. Exhaustiveness
+        // (GM0001) and arena escape (GM0003) are fatal there, so they are
+        // reported here under the same policy.
+        for diag in check_exhaustiveness(&sf, &resolutions, &types, &tcx) {
+            if matches!(diag.error, ExhaustivenessError::NonExhaustive { .. }) {
+                diagnostics.push(diag.to_diagnostic());
+            }
+        }
+        for diag in check_arena_escapes(&sf, &resolutions, &types, &tcx) {
             diagnostics.push(diag.to_diagnostic());
         }
-    }
-    for diag in check_arena_escapes(&sf, &resolutions, &types, &tcx) {
-        diagnostics.push(diag.to_diagnostic());
     }
     // The comptime fold lowers the program, so it runs only once every
     // earlier phase has accepted it - exactly the order `gos check` uses.
@@ -678,6 +695,42 @@ mod tests {
                 .iter()
                 .any(|diag| diag.code.as_str() == "GT0046"),
             "expected explicit mutable-reference diagnostic: {:?}",
+            doc.diagnostics
+        );
+    }
+
+    #[test]
+    fn a_parse_error_suppresses_the_later_phases_report() {
+        // Synthesis declines to run on a recovered tree, so the struct's
+        // derived `fmt` is absent and the checker would report the call on
+        // line 2 as an unknown method. The command line reports the parse
+        // error alone; the editor must agree.
+        let doc = analyse(
+            "file:///parse-gate.gos",
+            "struct Point(i64)\n             println!(\"{}\", Point(1).fmt())\n             println!({}, Point(1))\n",
+        );
+        let codes: Vec<&str> = doc
+            .diagnostics
+            .iter()
+            .map(|diag| diag.code.as_str())
+            .collect();
+        assert_eq!(
+            codes,
+            vec!["GP0024"],
+            "only the parse error is actionable: {:?}",
+            doc.diagnostics
+        );
+    }
+
+    #[test]
+    fn defaulted_and_named_arguments_type_check() {
+        let doc = analyse(
+            "file:///named-args.gos",
+            "fn volume(width: i64, height: i64 = 2) -> i64 { width * height }\n             println!(\"{}\", volume(2))\n             println!(\"{}\", volume(width = 2, height = 3))\n",
+        );
+        assert!(
+            doc.diagnostics.is_empty(),
+            "unexpected diagnostics: {:?}",
             doc.diagnostics
         );
     }

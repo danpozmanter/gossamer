@@ -737,6 +737,10 @@ pub enum MapKey {
     Uint(u64),
     /// `char` key.
     Char(char),
+    /// `f64` key, held as the value's bit pattern so two keys compare and
+    /// hash exactly as the compiled tiers' raw eight bytes do, and read back
+    /// as the float they spell.
+    Float(u64),
     /// String key (stored inline when ≤ 7 bytes - see [`SmolStr`]).
     Str(SmolStr),
     /// Aggregate key - struct / tuple / enum variant - hashed by *value*:
@@ -766,6 +770,12 @@ pub enum AggShape {
 /// Boxed payload of [`MapKey::Agg`]: an aggregate map key hashed by value.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AggKey {
+    /// An enum variant's declaration position, which is what orders two
+    /// values of one enum - the discriminant the compiled tiers compare.
+    /// Zero for every other shape, whose name orders it. Ahead of `name` so
+    /// the derived ordering reads it first; it is a function of the name, so
+    /// equality and hashing are unchanged by carrying it.
+    pub rank: i64,
     /// Type / variant name (`""` for a tuple, `"[]"` for an array).
     pub name: TypeTag,
     /// Each field's key, recursively.
@@ -785,39 +795,46 @@ impl MapKey {
             Value::Char(c) => Self::Char(*c),
             // Key floats by their bit pattern - matches the compiled tier,
             // which hashes the raw 8 bytes.
-            Value::Float(f) => Self::Int(f.to_bits() as i64),
+            Value::Float(f) => Self::Float(f.to_bits()),
             Value::String(s) => Self::Str(s.clone()),
             Value::Tuple(vals) => Self::Agg(Box::new(AggKey {
+                rank: 0,
                 name: intern_type_tag(""),
                 fields: vals.iter().map(Self::from_value).collect(),
                 shape: AggShape::Tuple,
             })),
             Value::Array(vals) => Self::Agg(Box::new(AggKey {
+                rank: 0,
                 name: intern_type_tag("[]"),
                 fields: vals.iter().map(Self::from_value).collect(),
                 shape: AggShape::Array,
             })),
             Value::IntArray(ns) => Self::Agg(Box::new(AggKey {
+                rank: 0,
                 name: intern_type_tag("[]"),
                 fields: ns.iter().map(|n| Self::Int(*n)).collect(),
                 shape: AggShape::Array,
             })),
             Value::ByteArray(bytes) => Self::Agg(Box::new(AggKey {
+                rank: 0,
                 name: intern_type_tag("[]"),
                 fields: bytes.iter().map(|n| Self::Int(i64::from(*n))).collect(),
                 shape: AggShape::Array,
             })),
             Value::InlineByteArray(bytes) => Self::Agg(Box::new(AggKey {
+                rank: 0,
                 name: intern_type_tag("[]"),
                 fields: bytes.iter().map(|n| Self::Int(i64::from(*n))).collect(),
                 shape: AggShape::Array,
             })),
             Value::ByteVec(bytes) => Self::Agg(Box::new(AggKey {
+                rank: 0,
                 name: intern_type_tag("[]"),
                 fields: bytes.iter().map(|n| Self::Int(i64::from(*n))).collect(),
                 shape: AggShape::Array,
             })),
             Value::Struct(inner) => Self::Agg(Box::new(AggKey {
+                rank: 0,
                 name: inner.name.clone(),
                 fields: inner
                     .fields
@@ -827,6 +844,7 @@ impl MapKey {
                 shape: AggShape::Struct(inner.fields.field_names()),
             })),
             Value::Variant(inner) => Self::Agg(Box::new(AggKey {
+                rank: crate::builtins::variant_rank_of(inner.name.as_str()).unwrap_or(0),
                 name: inner.name.clone(),
                 fields: inner.fields.iter().map(Self::from_value).collect(),
                 shape: AggShape::Variant,
@@ -848,6 +866,7 @@ impl MapKey {
             Self::Int(n) => Value::Int(*n),
             Self::Uint(n) => Value::Uint(*n),
             Self::Char(c) => Value::Char(*c),
+            Self::Float(bits) => Value::Float(f64::from_bits(*bits)),
             Self::Str(s) => Value::String(s.clone()),
             // An aggregate key retains the shape it was hashed from, so it
             // rebuilds as the value the program wrote.
@@ -3252,6 +3271,16 @@ fn uint_aware_field(struct_name: &str, field_name: &str, field: &Value) -> Strin
     }
 }
 
+/// A map key's text: a `String` key reads quoted, and every other key reads
+/// the way the same value reads anywhere else, which is what both compiled
+/// tiers render from the key's tag.
+fn map_key_text(key: &Value) -> String {
+    match key {
+        Value::String(text) => format!("{:?}", text.as_str()),
+        other => other.to_string(),
+    }
+}
+
 fn repr_value(value: &Value) -> String {
     match value {
         Value::Float(number) => repr_float(*number),
@@ -3318,7 +3347,7 @@ fn repr_value(value: &Value) -> String {
                     .iter()
                     .map(|(key, item)| format!(
                         "{}: {}",
-                        repr_value(&key.to_value()),
+                        map_key_text(&key.to_value()),
                         repr_value(item)
                     ))
                     .collect::<Vec<_>>()
@@ -3375,9 +3404,16 @@ fn repr_set(value: &Value, owner: &str) -> String {
 
 fn repr_deque(value: &Value, owner: &str) -> String {
     let values = crate::stdlib_builtins::deque::deque_snapshot(value).unwrap_or_default();
+    // Elements read the way a sequence's do - `Deque [a, b]` for the same
+    // elements a `Vec` prints as `[a, b]`, which is what both compiled tiers
+    // render from the element descriptor.
     format!(
         "{owner} [{}]",
-        values.iter().map(repr_value).collect::<Vec<_>>().join(", ")
+        values
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
     )
 }
 
@@ -3398,7 +3434,11 @@ fn repr_binary_heap(value: &Value, owner: &str) -> String {
         crate::stdlib_builtins::container_heap::binary_heap_snapshot(value).unwrap_or_default();
     format!(
         "{owner} [{}]",
-        values.iter().map(repr_value).collect::<Vec<_>>().join(", ")
+        values
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
     )
 }
 
@@ -3493,7 +3533,7 @@ fn write_map(out: &mut fmt::Formatter<'_>, map: &DenseMap<MapKey, Value>) -> fmt
         if i > 0 {
             out.write_str(", ")?;
         }
-        write!(out, "{}: ", repr_value(&k.to_value()))?;
+        write!(out, "{}: ", map_key_text(&k.to_value()))?;
         write_element(out, v)?;
     }
     out.write_str("}")

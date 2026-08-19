@@ -651,6 +651,9 @@ fn map_key_to_value(k: &MapKey) -> Value {
         // keyed by, so it converts back to that integer.
         MapKey::Uint(n) => Value::Int(*n as i64),
         MapKey::Char(c) => Value::Char(*c),
+        // A float key holds the value's bit pattern, so it reads back as the
+        // float those bits spell.
+        MapKey::Float(bits) => Value::Float(f64::from_bits(*bits)),
         MapKey::Str(s) => Value::String(s.clone()),
         // Aggregate keys don't round-trip to their typed shape (field names /
         // element types aren't retained in the key).
@@ -664,6 +667,7 @@ fn value_to_map_key(v: &Value) -> MapKey {
         Value::Int(i) => MapKey::Int(*i),
         Value::Uint(u) => MapKey::Int(i64::try_from(*u).unwrap_or(i64::MAX)),
         Value::Char(c) => MapKey::Char(*c),
+        Value::Float(f) => MapKey::Float(f.to_bits()),
         Value::String(s) => MapKey::Str(s.clone()),
         _ => MapKey::NonHashable,
     }

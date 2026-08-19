@@ -216,17 +216,24 @@ impl<'a> Builder<'a> {
                     // happy-path encoding (`Ok` / `Some` = 0,
                     // `Err` / `None` = 1) for the stdlib variants
                     // that don't have a Gossamer enum behind them.
-                    let pos: i128 =
-                        if let Some((_, idx)) = self.enums.lookup(std::slice::from_ref(name)) {
-                            idx as i128
-                        } else if matches!(name.name.as_str(), "Err" | "None" | "Some" | "Ok") {
-                            match name.name.as_str() {
-                                "Some" | "Ok" => 0,
-                                _ => 1,
-                            }
-                        } else {
-                            switch_arms.len() as i128
-                        };
+                    // Resolve through the scrutinee's own enum first: a
+                    // variant name two enums both declare would otherwise
+                    // take the other enum's index.
+                    let resolved = self
+                        .enum_index_name_of(scrutinee.ty)
+                        .and_then(|en| self.enums.variant_of_enum(&en, &name.name))
+                        .map(|idx| (String::new(), idx))
+                        .or_else(|| self.enums.lookup(std::slice::from_ref(name)));
+                    let pos: i128 = if let Some((_, idx)) = resolved {
+                        idx as i128
+                    } else if matches!(name.name.as_str(), "Err" | "None" | "Some" | "Ok") {
+                        match name.name.as_str() {
+                            "Some" | "Ok" => 0,
+                            _ => 1,
+                        }
+                    } else {
+                        switch_arms.len() as i128
+                    };
                     switch_arms.push((pos, arm_block));
                     // For `Ok(v)` / `Some(v)` patterns the
                     // payload is structurally identical to the
@@ -819,16 +826,29 @@ impl<'a> Builder<'a> {
                     .get(&name.name)
                     .cloned()
                     .or_else(|| self.enums.variant_fields.get(&name.name).cloned());
-                let variant_idx = self
-                    .enums
-                    .lookup(std::slice::from_ref(name))
-                    .map(|(_, i)| i);
+                // The scrutinee's own type names the enum, so a variant
+                // name two enums both declare resolves to this value's own
+                // variant rather than to whichever enum the program-wide
+                // map holds.
+                let matched = self
+                    .enum_index_name_of(self.locals[scrutinee.0 as usize].ty)
+                    .and_then(|en| {
+                        self.enums
+                            .variant_of_enum(&en, &name.name)
+                            .map(|idx| (en, idx))
+                    })
+                    .or_else(|| self.enums.lookup(std::slice::from_ref(name)));
+                let matched_enum = matched.clone().map(|(en, _)| en).unwrap_or_default();
+                let variant_idx = matched.map(|(_, i)| i);
                 // Whether ANY sibling variant of this enum carries
                 // a payload - controls whether the runtime layout
                 // is `[disc, p0, ...]` (heap aggregate) or just an
                 // i64 disc value.
-                let any_variant_has_payload =
-                    self.enums.has_any_payload(std::slice::from_ref(name));
+                let any_variant_has_payload = if matched_enum.is_empty() {
+                    self.enums.has_any_payload(std::slice::from_ref(name))
+                } else {
+                    self.enums.enum_has_any_payload(&matched_enum)
+                };
                 let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 let scrut_is_real_struct = self
                     .struct_name_of(self.locals[scrutinee.0 as usize].ty)
@@ -851,11 +871,7 @@ impl<'a> Builder<'a> {
                         let disc_load = self.fresh(i64_ty);
                         // Tagged repr (<= 4 variants): disc in pointer
                         // bits 1-2; header repr: disc byte at payload-3.
-                        let disc_intrinsic = if self
-                            .enums
-                            .lookup(std::slice::from_ref(name))
-                            .is_some_and(|(en, _)| self.enum_repr_tagged(&en))
-                        {
+                        let disc_intrinsic = if self.enum_repr_tagged(&matched_enum) {
                             "gos_enum_disc_tag"
                         } else {
                             "gos_enum_disc"
@@ -900,7 +916,7 @@ impl<'a> Builder<'a> {
                     );
                 }
                 if let Some(order) = order {
-                    let declared_tys = self.enums.variant_field_tys.get(&name.name).cloned();
+                    let declared_tys = self.enums.field_tys_of(&matched_enum, &name.name);
                     for f in fields {
                         let pos = order.iter().position(|n| n == &f.name.name);
                         let Some(pos) = pos else { continue };
@@ -1061,12 +1077,22 @@ impl<'a> Builder<'a> {
                 // compares the whole i128 value to that index and never
                 // matches, falling through to a stale local.
                 let scrut_ty = self.locals[scrutinee.0 as usize].ty;
+                // The value's own type names the enum: a variant name two
+                // enums both declare would otherwise dispatch through
+                // whichever one the program-wide map holds, comparing this
+                // value against the other enum's index and representation.
                 let user_enum_match = if self.is_result_or_option_adt(scrut_ty) {
                     None
                 } else {
-                    self.enums.lookup(std::slice::from_ref(name))
+                    self.enum_index_name_of(scrut_ty)
+                        .and_then(|en| {
+                            self.enums
+                                .variant_of_enum(&en, &name.name)
+                                .map(|idx| (en, idx))
+                        })
+                        .or_else(|| self.enums.lookup(std::slice::from_ref(name)))
                 };
-                if let Some((_, idx)) = user_enum_match {
+                if let Some((matched_enum, idx)) = user_enum_match.clone() {
                     let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
                     // For payload-bearing variants the scrutinee is a
                     // ptr to `[disc, p0, p1, ...]`; for no-payload
@@ -1077,8 +1103,7 @@ impl<'a> Builder<'a> {
                     // sibling variant has fields, treat scrutinee as
                     // ptr and load disc from offset 0. Otherwise the
                     // scrutinee is the i64 index directly.
-                    let any_variant_has_payload =
-                        self.enums.has_any_payload(std::slice::from_ref(name));
+                    let any_variant_has_payload = self.enums.enum_has_any_payload(&matched_enum);
                     // Inline-able enum: the scrutinee is the 2-word by-value
                     // `i128` [disc, payload]; the discriminant is its low word.
                     let mut peeled = scrut_ty;
@@ -1101,11 +1126,7 @@ impl<'a> Builder<'a> {
                         let disc_load = self.fresh(i64_ty);
                         // Tagged repr (<= 4 variants): disc in pointer
                         // bits 1-2; header repr: disc byte at payload-3.
-                        let disc_intrinsic = if self
-                            .enums
-                            .lookup(std::slice::from_ref(name))
-                            .is_some_and(|(en, _)| self.enum_repr_tagged(&en))
-                        {
+                        let disc_intrinsic = if self.enum_repr_tagged(&matched_enum) {
                             "gos_enum_disc_tag"
                         } else {
                             "gos_enum_disc"
@@ -1140,8 +1161,8 @@ impl<'a> Builder<'a> {
                     );
                     // Bind payload fields and check nested patterns by
                     // loading from offsets (i+1)*8 of the scrutinee pointer.
-                    let any_payload = self.enums.has_any_payload(std::slice::from_ref(name));
-                    let declared_tys = self.enums.variant_field_tys.get(&name.name).cloned();
+                    let any_payload = self.enums.enum_has_any_payload(&matched_enum);
+                    let declared_tys = self.enums.field_tys_of(&matched_enum, &name.name);
                     let mut acc = cmp;
                     for (i, field) in fields.iter().enumerate() {
                         if let HirPatKind::Binding { name: bname, .. } = &field.kind {
@@ -2168,8 +2189,14 @@ impl<'a> Builder<'a> {
             peeled = *inner;
         }
         let scrut_is_inline = self.tcx.is_inline_enum_ty(peeled);
-        let any_payload = self.enums.has_any_payload(std::slice::from_ref(name));
-        let declared_tys = self.enums.variant_field_tys.get(&name.name).cloned();
+        let any_payload = self.enum_index_name_of(scrut_ty).map_or_else(
+            || self.enums.has_any_payload(std::slice::from_ref(name)),
+            |en| self.enums.enum_has_any_payload(&en),
+        );
+        let declared_tys = self
+            .enum_index_name_of(scrut_ty)
+            .and_then(|en| self.enums.field_tys_of(&en, &name.name))
+            .or_else(|| self.enums.variant_field_tys.get(&name.name).cloned());
         for (i, field) in fields.iter().enumerate() {
             if matches!(field.kind, HirPatKind::Wildcard | HirPatKind::Rest) {
                 continue;

@@ -1,0 +1,141 @@
+// A `&mut` borrow of a struct field writes through to its owner, a `Set`
+// reports emptiness from its own count, and a payload read on an arm that did
+// not run reaches for no node at all.
+
+enum Collation { Exact, NoCase, RTrim }
+
+enum Expr {
+    Literal(i64)
+    Column(String, String)
+    Unary(String, Box<Expr>)
+    Binary(String, Box<Expr>, Box<Expr>)
+    Call(String, Vec<Expr>, bool)
+    Wildcard
+}
+
+struct Cache {
+    pages: Map<i64, Vec<u8>>
+    seen: Set<i64>
+    hits: i64
+}
+
+struct Store {
+    cache: Cache
+    name: String
+}
+
+fn kind(e: &Expr) -> i64 {
+    match e {
+        Expr::Call(name, arguments, _) => 5 + name.len() + arguments.len()
+        Expr::Unary(_, inner) => 3 + kind(inner)
+        Expr::Binary(op, left, right) => 4 + op.len() + kind(left) + kind(right)
+        _ => 0
+    }
+}
+
+fn collation_name(c: &Collation) -> String {
+    match c {
+        Collation::Exact => "exact"
+        Collation::NoCase => "nocase"
+        Collation::RTrim => "rtrim"
+    }
+}
+
+fn fill(cache: &mut Cache, page: i64) {
+    cache.pages.insert(page, #[7u8; 4])
+    let _ = cache.seen.insert(page)
+    cache.hits += 1
+    cache.pages = Map::from([(page, #[1u8, 2u8])])
+}
+
+impl Store {
+    fn load(&mut self, page: i64) -> i64 {
+        fill(&mut self.cache, page)
+        self.cache.pages.len() + self.cache.hits
+    }
+}
+
+fn first_payload(e: &Expr) -> String {
+    match e {
+        Expr::Binary(op, _, _) => op.clone()
+        Expr::Column(table, column) => table.clone() + column
+        _ => "none"
+    }
+}
+
+// A payload read through an `Option` the arm did not take must not reach for
+// a node that is not there.
+fn numeric_of(e: &Expr) -> i64 {
+    match narrow(e) {
+        Some(Expr::Literal(n)) => n
+        Some(Expr::Binary(op, _, _)) => op.len()
+        _ => -1
+    }
+}
+
+fn narrow(e: &Expr) -> Option<Expr> {
+    match e {
+        Expr::Literal(n) => Some(Expr::Literal(*n))
+        _ => None
+    }
+}
+
+// A loop-bearing arithmetic body, so the Cranelift tier compiles something
+// and this row compares two different engines.
+fn checksum(rounds: i64) -> i64 {
+    let mut total = 0
+    for i in 0..rounds {
+        total += i * 3 + total % 7
+    }
+    total
+}
+
+// A loop-bearing body, so the same reads and writes run compiled as well as
+// interpreted.
+fn walk(rounds: i64) -> i64 {
+    let mut cache = Cache { pages: Map::new(), seen: Set::new(), hits: 0 }
+    let mut total = 0
+    for i in 0..rounds {
+        fill(&mut cache, i)
+        total += cache.pages.len() + numeric_of(&Expr::Literal(i))
+    }
+    total + cache.hits + cache.seen.len()
+}
+
+// An element store takes the value it is handed: the sequence owns it from
+// then on, and the reader still finds it.
+fn overwrite() -> String {
+    let mut names: Vec<String> = #["a", "b"]
+    let mut rows: Vec<Vec<i64>> = #[#[1], #[2]]
+    let mut nodes: Vec<Expr> = #[Expr::Wildcard, Expr::Wildcard]
+    for i in 0..2 {
+        names[i] = format!("n{}", i)
+        rows[i] = #[i, i + 1]
+        nodes[i] = Expr::Column("", format!("c{}", i))
+    }
+    format!("{:?} {:?} {}", names, rows, first_payload(&nodes[1]))
+}
+
+fn main() {
+    let column = Expr::Column("", "v")
+    let call = Expr::Call("count", #[Expr::Wildcard], false)
+    let binary = Expr::Binary("=", Expr::Column("", "id"), Expr::Literal(1))
+    println!("kinds {} {} {}", kind(&column), kind(&call), kind(&binary))
+    println!("payloads {} {}", first_payload(&binary), first_payload(&column))
+    println!("collation {}", collation_name(&Collation::NoCase))
+    println!("absent {}", numeric_of(&Expr::Wildcard))
+
+    let mut store = Store {
+        cache: Cache { pages: Map::new(), seen: Set::new(), hits: 0 }
+        name: "store"
+    }
+    println!("load {} {}", store.load(1), store.load(2))
+    println!("seen {} {}", store.cache.seen.len(), store.cache.hits)
+
+    let mut empty: Set<i64> = #{}
+    println!("empty {} {}", empty.is_empty(), store.cache.seen.is_empty())
+    empty.insert(3)
+    println!("filled {} {}", empty.is_empty(), empty.len())
+    println!("walk {} checksum {}", walk(5), checksum(12))
+    println!("overwrite {}", overwrite())
+}

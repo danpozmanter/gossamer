@@ -179,6 +179,7 @@ pub mod crypto_extra;
 pub mod crypto_jwt;
 pub mod csv;
 pub mod deque;
+pub mod desc_cmp;
 pub mod encoding;
 pub mod errors;
 pub mod exec;
