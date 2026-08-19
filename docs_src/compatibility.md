@@ -34,17 +34,26 @@ Everything a patch release may, plus:
   keeps parsing for at least one further minor release.
 - Change a default, where `project.toml` can restore the old one.
 
-## What never changes inside an edition
+## Which toolchain a project is read by
 
-An edition pins the semantics a source file is read under. Within one
-edition:
+A project states the toolchain it is written against, exactly, in its
+manifest:
 
-- A construct's meaning is fixed. `E2026` reads `iter::map(f, xs)` as
-  eager; that does not change under `E2026`, ever.
-- Removing a stdlib item requires a deprecation period.
+```toml
+[project]
+gossamer-version = "v0.53.0"
+```
 
-Moving between editions is opt-in, per project, in `project.toml`. That
-is where a semantic change is allowed to be abrupt - you asked for it.
+There are no editions: one toolchain version reads one language, and
+the manifest names which version that is. A toolchain older than the
+one stated refuses the project rather than failing later on a surface
+it does not have, so the mismatch is reported where it can be acted on.
+`gos new` stamps the toolchain that scaffolded the project; raise the
+value when you adopt a newer one, after `gos fix` has carried the
+source across.
+
+Removing a stdlib item requires a deprecation period, whichever version
+is stated.
 
 ## How the toolchain carries the delta
 

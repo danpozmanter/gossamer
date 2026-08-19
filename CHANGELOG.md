@@ -1,5 +1,150 @@
 # Changelog
 
+## 0.53.0 - DynValue on every tier, Rust-binding value shapes, Map/Set content equality, compiled-tier and tooling fixes
+
+- Build a program natively when a struct it reaches holds a `Vec` of another
+  struct: the derived `fmt` of a type a module declares is registered under
+  that module's path, and the native lowering now looks for it there instead
+  of failing the build over a rendering nothing asked for.
+- Keep an `Option<Struct>` field's payload alive past the function that built
+  it. A payload of any width is a heap copy the owning aggregate takes a
+  share of; only a payload wider than one slot was counted, so a one-field
+  struct behind an `Option` was freed while the returned value still pointed
+  at it.
+- Write to a field of an aggregate that has an `Option` field without
+  disturbing the neighbouring slot: a store now reaches the option-slot
+  helpers only when the field being written is the two-word carrier itself.
+- Insert a struct, tuple, or fixed-array element into a `Vec` at a position:
+  the element is a block of slots the caller addresses in place, and reading
+  it as a single word stored a pointer and whatever sat beside it.
+- Name a type from a dependency's submodule in your own signature -
+  `use pkg::child` then `fn f(x: &child::Thing)` - and have it be the same
+  type the dependency's own functions take.
+- Reach a constant or an enum variant through an import alias: `use pkg as p`
+  followed by `p::LIMIT` or `p::child::Colour::Red` resolves to the item the
+  alias names rather than failing at run time with an unbound name.
+- Call your own free function when a dependency happens to declare a method
+  of the same name: an `impl` method no longer takes the bare name a free
+  function already holds.
+- Report `GR0005` for a `use` naming a module that does not exist, including
+  one written through a dependency's name; only the head of the path was
+  checked, so a mis-spelled tail bound a name nothing declares.
+- Keep `mut` on a binding that a method call or a `&mut` borrow mutates when
+  `gos lint --fix` runs: the rewriter and the lint now share one definition
+  of what needs the keyword, so `--fix` cannot produce a file that no longer
+  compiles.
+- Build a Rust binding crate that `gos new --template binding` or
+  `gos bindgen` wrote, without hand-adding a linker shim: the runner reaches
+  every binding through the registry the macros already publish into.
+- Depend on `gossamer-binding` at the version the running toolchain provides,
+  which the scaffolds now state, and see the `[rust-bindings]` line to add
+  printed with the scaffolded crate.
+- Pass a `Bytes`, a `Map<K, V>`, a tuple, or a `#[derive(GosStruct)]` struct
+  across a binding call on the compiled tiers: each is converted between the
+  runtime's shape and the wire shape, where the native build previously read
+  one as the other and faulted.
+- Call a `#[gos_opaque]` method from a compiled build, and spell it
+  `Type::method(handle, ..)` rather than `Type::Type__method(handle, ..)`.
+- Reclaim a Rust-binding runner whole rather than by file, so a surviving
+  workdir still holds the runtime archive its stamp says it was built with,
+  and the workdir a run is using is never reclaimed under it.
+- Report a heap's rejected element for the reason it is rejected - the
+  language has no order for a `Map` or a `Set` - rather than describing a
+  slot width, and check the rest of the program against the element that was
+  written.
+- Compare a `Map` to a `Map` and a `Set` to a `Set` by what they hold: equal
+  when they hold the same entries or members, whatever order those went in and
+  whichever representation each side settled into. A value that stands for a
+  whole value - a `String`, a sequence, an aggregate - compares by its content
+  rather than by the word that reaches it, an `f64` compares as the float it
+  spells, and a `Map` and a `BTreeMap` stay distinct types with no equality
+  between them.
+- Build a map literal holding a float, a `bool`, a `char`, or a narrow integer
+  natively: every scalar occupies the word the runtime already stores it in,
+  where only a 64-bit integer and a `String` were accepted.
+- JIT a body holding a `Map` with float keys or values, which the admission
+  gate kept on bytecode after the storage learned to hold one.
+- Carry a `DynValue` - the value whose shape the data decides, `Nil | Bool |
+  Int | Float | Char | String | Bytes | List | Map | Tagged { name, payload }` -
+  as a first-class runtime value with one shared node behind it, rendered and
+  compared by its contents (a tagged arm by its runtime name and every payload
+  field) on the bytecode VM, the JIT, and the native build alike.
+- Walk a string's whole UTF-8 encoding with `for b in s.as_bytes()`: the loop
+  read a byte at a byte offset but stopped at the string's Unicode scalar
+  count, so every multi-byte string silently lost its trailing bytes. Binding
+  the call first already walked them all, and the interpreter always did.
+- Build and read a `DynValue` from Gossamer, with no Rust and no mirror enum:
+  `DynValue::int`, `::string`, `::list`, `::map`, `::tagged`, and the rest
+  construct one, and `kind`, `name`, `len`, `at`, `key_at`, `as_i64`,
+  `as_f64`, `as_bool`, `as_char`, `as_str`, and `as_bytes` read it back. An arm
+  is matched by the runtime name it carries, and two values are equal when
+  their contents are, on every tier.
+- Match a Rust binding's declared arm set as the ordinary Gossamer enum that
+  spells the same arms: the wire's arm name selects that enum's discriminant
+  and the payload fills the variant's fields through the same construction a
+  written `Enum::Arm(..)` lowers to, so a `match` reads the same arm on the
+  bytecode VM, the JIT, and the native build. An arm outside the declared set
+  reports itself rather than becoming some other variant.
+- Read a `DynValue` a Rust binding returned as the value it is on the compiled
+  tiers: an open arm set has no declared type to lower through, so a native
+  build handed back the pointer that reached it and printed an address. A value
+  that is not a named arm crosses under a `$`-headed wire name no declared arm
+  can carry, so the reader gives back the bare value rather than an arm that
+  happens to share its spelling, and a boolean payload reads from its own byte.
+- Bind one name from an or-pattern to the payload the alternative that
+  matched carries, so `Status(text) | Verbatim(_, text)` reads the field each
+  arm names rather than the first arm's position.
+- Map over an `Option` holding a struct: the result takes the closure's own
+  type, where a native build released it as the receiver's payload type and
+  faulted.
+- Trim one edge of a string in a native build - `trim_start` and `trim_end`
+  had no lowering and were left to the interpreter.
+- Compile a generic function or method under a trait bound to native code:
+  each call site's specialisation is what the call now reaches, methods
+  specialised by their own type parameters included.
+- Reach every `impl` a package writes from outside it: a type's methods
+  belong to the type, so a block in a second file of the package is visible
+  to a consumer exactly as the one beside the declaration is.
+- Call the entry module's own function by its bare name when an imported
+  sibling module declares one of the same name; the nearer declaration wins,
+  and the argument is checked against it.
+- Call a `pub (package)` method from a sibling module, as a `pub (package)`
+  free function already could, and read a visibility diagnostic that names
+  the visibility actually written.
+- Debug-print and natively build a cross-package enum whose struct variant
+  holds a boxed value of its own enum.
+- Root an import at a project alias: `use "pkg/id" as alias` followed by
+  `use alias::submodule` names the same module the package's own name does,
+  and an import another `use` is rooted at no longer reports as unused.
+- Check a project that declares a dependency it never imports: the serde
+  functions synthesized for that dependency's types are the compiler's own
+  code, not code the user has to import.
+- Check or test a directory holding several projects: each project is one
+  unit rooted at its entry, so a cross-module reference resolves the way it
+  does under `gos run` instead of reporting a false unresolved name.
+- Scope `#[lint(allow(..))]` to the item it is written on: a method's
+  attribute silences its own body, a free function's stops at that function,
+  and a file-level `#![lint(..)]` still covers the file. An item may raise
+  the level the file set.
+- Write `#![lint(..)]` on the first line of a file: `#!` there opened a Unix
+  hashbang, which never spells `#![`.
+- Take a reference to an `Option`, a `Result`, or an inline enum in a
+  JIT-compiled body: the two-word carrier is held in a register, so the
+  reference now addresses a slot holding it rather than the carrier's own
+  bits, which the callee then wrote through as if it were a pointer.
+- Read an `Option` / `Result` through the reference that addresses it -
+  `{:?}`, `is_some()`, a `match`, `unwrap_or` on a `&mut Option<T>` - in a
+  compiled build. The operand named the reference where the carrier was
+  wanted, so every such read answered from the address instead of the value.
+- Keep the payload a `&mut Option<T>` was given: the slot written through the
+  reference takes its own share, and a caller's copy-back of a reference that
+  addresses its own local reads the value before the old one is released.
+- JIT a body that reads a `Vec` of a payload-bearing enum. What needs
+  element-by-element ownership transfer is a value handed back, so the gate
+  now looks at what the body returns instead of refusing every body that
+  returns anything at all: four fixtures the JIT had been skipping now
+  compile.
+
 ## 0.52.3 - Generic collections, project dependencies, LSP fixes
 
 - Fetch a git dependency: the pax global header every `git archive` opens

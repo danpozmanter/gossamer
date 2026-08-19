@@ -2383,6 +2383,11 @@ impl Lowerer<'_> {
         // or native registry entries colliding.
         if let Some(Resolution::Def { def, .. }) = self.resolutions.get(node)
             && let Some(identity) = self.module_type_names.get(&def)
+            // The identity names the TYPE. A literal that names a variant of
+            // it - `Value::Attr { .. }` - resolves to the same def, and the
+            // constructor is keyed by the variant, so only a literal whose
+            // own last segment is the type takes the qualified spelling.
+            && identity.rsplit("::").next() == Some(name.as_str())
         {
             name.clone_from(identity);
         }
@@ -3018,9 +3023,15 @@ impl Lowerer<'_> {
         // registered under the dependency module's real name, so the
         // head is respelled before any name-keyed dispatch sees it.
         if segments.len() > 1
-            && let Some(real) = self.resolutions.project_alias(&segments[0].name)
+            && let Some(real) = self
+                .resolutions
+                .project_alias(&segments[0].name)
+                .or_else(|| self.resolutions.module_alias(&segments[0].name))
         {
-            segments[0].name = real.to_string();
+            let real = real.to_string();
+            let mut rest = segments.split_off(1);
+            segments = real.split("::").map(Ident::new).collect();
+            segments.append(&mut rest);
         }
         // For a multi-segment path whose head only resolves to a
         // module (no qualified-name registration), the resolver

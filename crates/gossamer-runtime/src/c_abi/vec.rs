@@ -1213,6 +1213,26 @@ pub(crate) unsafe fn vec_elem_payload_word(v: &GosVec, idx: i64) -> i64 {
     }
 }
 
+/// The payload word for an element handed back as an owned value.
+///
+/// A word-wide element is the value itself. A wider one is a flat slot block
+/// the caller addresses in place, so it is copied out of the container: the
+/// value the caller holds has to stay readable across the next mutation of
+/// the storage it came from.
+pub(crate) unsafe fn vec_elem_owned_payload_word(v: &GosVec, idx: i64) -> i64 {
+    let stride = v.elem_bytes as usize;
+    if stride <= 8 || v.ptr.is_null() {
+        return unsafe { vec_elem_load_i64(v, idx) };
+    }
+    let copy = crate::c_abi::gc::gos_rt_gc_alloc(stride as u64);
+    if copy.is_null() {
+        return 0;
+    }
+    let src = unsafe { v.ptr.add((idx as usize) * stride) };
+    unsafe { std::ptr::copy_nonoverlapping(src, copy, stride) };
+    copy as i64
+}
+
 /// Writes `value` to element `idx` of `v`, truncating to the
 /// header's `elem_bytes`. Same preconditions as
 /// [`vec_elem_load_i64`].

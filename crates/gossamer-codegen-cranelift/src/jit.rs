@@ -1501,6 +1501,49 @@ fn body_calls_jit_unsafe(
     false
 }
 
+/// Whether a value of `ty` carries a `Vec` or slice of a payload-bearing
+/// enum, directly or through an aggregate it holds. Such a value cannot be
+/// handed back from a native body until its lift path retains each element.
+fn ty_carries_payload_enum_vec(tcx: &TyCtxt, ty: Ty) -> bool {
+    fn walk(tcx: &TyCtxt, ty: Ty, seen: &mut Vec<Ty>) -> bool {
+        if seen.contains(&ty) {
+            return false;
+        }
+        seen.push(ty);
+        match tcx.kind_of(ty) {
+            TyKind::Vec(elem) | TyKind::Slice(elem) | TyKind::Array { elem, .. } => {
+                tcx.is_payload_enum(*elem) || walk(tcx, *elem, seen)
+            }
+            TyKind::Tuple(elems) => elems.iter().any(|elem| walk(tcx, *elem, seen)),
+            TyKind::HashMap { key, value, .. } => walk(tcx, *key, seen) || walk(tcx, *value, seen),
+            TyKind::Adt { def, substs } => {
+                let def = *def;
+                // `Option<T>` / `Result<T, E>` carry their payload in the
+                // substitution; a user aggregate carries it in its fields.
+                let args = substs.types();
+                if args.iter().any(|arg| walk(tcx, *arg, seen)) {
+                    return true;
+                }
+                if let Some(fields) = tcx.struct_field_tys(def)
+                    && fields.to_vec().iter().any(|f| walk(tcx, *f, seen))
+                {
+                    return true;
+                }
+                tcx.enum_variant_tys(def).is_some_and(|variants| {
+                    variants
+                        .to_vec()
+                        .iter()
+                        .any(|fields| fields.iter().any(|f| walk(tcx, *f, seen)))
+                })
+            }
+            TyKind::Ref { inner, .. } => walk(tcx, *inner, seen),
+            TyKind::Nominal { repr, .. } => walk(tcx, *repr, seen),
+            _ => false,
+        }
+    }
+    walk(tcx, ty, &mut Vec::new())
+}
+
 /// Returns `true` when `body` uses a construct the JIT lowers incorrectly,
 /// so the VM must keep it on the bytecode interpreter:
 ///
@@ -1546,17 +1589,15 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
             }
             return true;
         }
-        // A `Vec`/`[T]` whose element is a payload-bearing enum is safe in a
-        // read-only, `Unit`-returning serializer body, but a builder that
-        // returns such a vector still needs native-to-VM element ownership
+        // A `Vec`/`[T]` whose element is a payload-bearing enum is safe to
+        // read, but handing one back needs native-to-VM element ownership
         // transfer. Keep that shape on bytecode until its lift path can retain
-        // every vector element before the native aggregate is released.
+        // every vector element before the native aggregate is released. What
+        // matters is the value that crosses back, so a body that only reads
+        // such a vector - a serializer, a derived `fmt` - is admitted.
         if let TyKind::Vec(elem) | TyKind::Slice(elem) = lty
             && tcx.is_payload_enum(*elem)
-            && !matches!(
-                tcx.kind_of(body.local_ty(gossamer_mir::Local::RETURN)),
-                TyKind::Unit
-            )
+            && ty_carries_payload_enum_vec(tcx, body.local_ty(gossamer_mir::Local::RETURN))
         {
             if std::env::var("GOS_JIT_TRACE").is_ok() {
                 eprintln!(
@@ -1738,7 +1779,7 @@ fn jit_map_component_ok(tcx: &TyCtxt, ty: Ty) -> bool {
     }
     matches!(
         tcx.kind_of(ty),
-        TyKind::Int(_) | TyKind::Bool | TyKind::Char | TyKind::String
+        TyKind::Int(_) | TyKind::Bool | TyKind::Char | TyKind::Float(_) | TyKind::String
     )
 }
 
@@ -1832,7 +1873,11 @@ fn jit_local_ty_needs_bytecode_inner(
         | TyKind::Never
         | TyKind::String
         | TyKind::Duration
-        | TyKind::Instant => false,
+        | TyKind::Instant
+        // A dynamic value is the same one-word handle on both tiers, and
+        // every operation on it lowers to the `gos_rt_dyn_*` call the AOT
+        // backend emits.
+        | TyKind::DynValue => false,
         TyKind::Vec(elem) | TyKind::Slice(elem) | TyKind::Array { elem, .. } => {
             jit_local_ty_needs_bytecode_inner(tcx, *elem, visiting)
         }
@@ -3404,6 +3449,48 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_vec_new_typed"       => rt::gos_rt_vec_new_typed,
         "gos_rt_vec_with_capacity_typed" => rt::gos_rt_vec_with_capacity_typed,
         "gos_rt_binding_map_free"    => rt::gos_rt_binding_map_free,
+        "gos_rt_map_eq"              => rt::gos_rt_map_eq,
+        "gos_rt_dyn_nil" => rt::gos_rt_dyn_nil,
+        "gos_rt_dyn_bool" => rt::gos_rt_dyn_bool,
+        "gos_rt_dyn_int" => rt::gos_rt_dyn_int,
+        "gos_rt_dyn_float" => rt::gos_rt_dyn_float,
+        "gos_rt_dyn_char" => rt::gos_rt_dyn_char,
+        "gos_rt_dyn_string" => rt::gos_rt_dyn_string,
+        "gos_rt_dyn_bytes" => rt::gos_rt_dyn_bytes,
+        "gos_rt_dyn_list" => rt::gos_rt_dyn_list,
+        "gos_rt_dyn_map" => rt::gos_rt_dyn_map,
+        "gos_rt_dyn_tagged" => rt::gos_rt_dyn_tagged,
+        "gos_rt_dyn_kind" => rt::gos_rt_dyn_kind,
+        "gos_rt_dyn_name" => rt::gos_rt_dyn_name,
+        "gos_rt_dyn_kind_name" => rt::gos_rt_dyn_kind_name,
+        "gos_rt_dyn_len" => rt::gos_rt_dyn_len,
+        "gos_rt_dyn_at" => rt::gos_rt_dyn_at,
+        "gos_rt_dyn_arm_index" => rt::gos_rt_dyn_arm_index,
+        "gos_rt_dyn_field_i64" => rt::gos_rt_dyn_field_i64,
+        "gos_rt_dyn_field_f64" => rt::gos_rt_dyn_field_f64,
+        "gos_rt_dyn_field_str" => rt::gos_rt_dyn_field_str,
+        "gos_rt_dyn_field_dyn" => rt::gos_rt_dyn_field_dyn,
+        "gos_rt_dyn_key_at" => rt::gos_rt_dyn_key_at,
+        "gos_rt_dyn_as_i64" => rt::gos_rt_dyn_as_i64,
+        "gos_rt_dyn_as_f64" => rt::gos_rt_dyn_as_f64,
+        "gos_rt_dyn_as_bool" => rt::gos_rt_dyn_as_bool,
+        "gos_rt_dyn_as_char" => rt::gos_rt_dyn_as_char,
+        "gos_rt_dyn_as_str" => rt::gos_rt_dyn_as_str,
+        "gos_rt_dyn_as_bytes" => rt::gos_rt_dyn_as_bytes,
+        "gos_rt_dyn_clone" => rt::gos_rt_dyn_clone,
+        "gos_rt_dyn_free" => rt::gos_rt_dyn_free,
+        "gos_rt_dyn_eq" => rt::gos_rt_dyn_eq,
+        "gos_rt_dyn_format" => rt::gos_rt_dyn_format,
+        "gos_rt_dyn_from_binding_variant" => rt::gos_rt_dyn_from_binding_variant,
+        "gos_rt_set_eq"              => rt::gos_rt_set_eq,
+        "gos_rt_binding_bytes_from_vec" => rt::gos_rt_binding_bytes_from_vec,
+        "gos_rt_binding_bytes_to_vec" => rt::gos_rt_binding_bytes_to_vec,
+        "gos_rt_binding_map_from_map" => rt::gos_rt_binding_map_from_map,
+        "gos_rt_binding_map_to_map"  => rt::gos_rt_binding_map_to_map,
+        "gos_rt_binding_struct_from_slots" => rt::gos_rt_binding_struct_from_slots,
+        "gos_rt_binding_struct_to_slots" => rt::gos_rt_binding_struct_to_slots,
+        "gos_rt_binding_tuple_from_slots" => rt::gos_rt_binding_tuple_from_slots,
+        "gos_rt_binding_tuple_to_slots" => rt::gos_rt_binding_tuple_to_slots,
         "gos_rt_panic_oob"           => rt::gos_rt_panic_oob,
         "gos_rt_gc_deregister"       => rt::gos_rt_gc_deregister,
         "gos_rt_gc_collect"          => rt::gos_rt_gc_collect,

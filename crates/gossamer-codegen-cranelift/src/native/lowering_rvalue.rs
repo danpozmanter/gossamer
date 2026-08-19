@@ -1011,12 +1011,18 @@ pub(super) fn lower_rvalue_into(
                         | gossamer_types::TyKind::Param { .. }
                 ) || (*mutable
                     && matches!(tcx.kind_of(ty), gossamer_types::TyKind::String));
-                if is_addressable_value {
+                // An `Option` / `Result` / inline user enum is the packed
+                // two-word carrier held in a register, so it has no machine
+                // address either. Its slot is the pair of words, and the
+                // reference is that slot's address.
+                let is_two_word_carrier = crate::native::compile::is_inline_two_word_ty(tcx, ty);
+                if is_addressable_value || is_two_word_carrier {
                     let ptr_ty = module.target_config().pointer_type();
+                    let bytes = if is_two_word_carrier { 16 } else { 8 };
                     let slot =
                         builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
                             cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
-                            8,
+                            bytes,
                             8,
                         ));
                     builder.ins().stack_store(ptr_ty, val, slot, 0);

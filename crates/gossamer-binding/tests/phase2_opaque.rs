@@ -38,8 +38,11 @@ fn opaque_methods_register_as_type_qualified_items() {
         .find(|m| m.path == "Counter")
         .copied()
         .expect("Counter module registered");
+    // The item name is the method's own name under the type's module, so a
+    // call is spelled `Counter::new(..)`; the mangled form is the exported
+    // symbol, not the name Gossamer writes.
     let names: Vec<&str> = m.items.iter().map(|i| i.name).collect();
-    assert!(names.contains(&"Counter__new"));
-    assert!(names.contains(&"Counter__get"));
-    assert!(names.contains(&"Counter__inc"));
+    assert!(names.contains(&"new"), "got {names:?}");
+    assert!(names.contains(&"get"), "got {names:?}");
+    assert!(names.contains(&"inc"), "got {names:?}");
 }

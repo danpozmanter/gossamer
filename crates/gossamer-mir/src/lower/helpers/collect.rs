@@ -1295,14 +1295,17 @@ pub(crate) fn lower_fn(
     }
     builder.end_auto_region(regioned, span);
     builder.terminate(Terminator::Return);
-    Some(Body {
+    let mut body = Body {
         name: decl.name.name.clone(),
         def,
         arity,
         locals: builder.locals,
         blocks: builder.blocks,
         span,
-    })
+    };
+    crate::lower::carrier_ref::deref_carrier_reads(&mut body, builder.tcx);
+    crate::lower::carrier_ref::split_carrier_writebacks(&mut body, builder.tcx);
+    Some(body)
 }
 
 /// Returns `Vec<T>` for a const generic array parameter `[T; N]`

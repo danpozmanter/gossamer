@@ -1,0 +1,91 @@
+/*
+ * Binding-ABI shapes that are converted at the boundary.
+ *
+ * `Bytes`, `Map<K, V>`, tuples, and `#[derive(GosStruct)]` structs
+ * have one representation in the runtime and another on the wire a
+ * binding reads, so every crossing converts. Printing the results
+ * keeps `gos run` and `gos build` comparable line for line.
+ */
+
+use shapes
+
+struct Tagged { label: String, weight: f64, live: bool }
+
+// The arms `shapes::reply` declares, spelled as the ordinary enum they are.
+enum Reply { Integer(i64), Text(String), Nothing }
+
+fn show(reply: Reply) -> String {
+    match reply {
+        Reply::Integer(n) => format!("int {}", n)
+        Reply::Text(s) => format!("text {}", s)
+        Reply::Nothing => "nothing"
+    }
+}
+
+fn main() {
+    println!("{:?}", shapes::reverse_bytes("abc".as_bytes()))
+    println!("{:?}", shapes::counts(#["a", "b", "a"]))
+    println!("{}", shapes::map_total({ "a": 1, "b": 2 }))
+    println!("{:?}", shapes::retuple((7, "ok", true)))
+    println!("{:?}", shapes::retag(Tagged { label: "hi", weight: 1.5, live: true }))
+    for pick in 0..10 {
+        println!("{:?}", shapes::dynamic(pick))
+    }
+    for pick in 0..3 {
+        println!("{}", show(shapes::reply(pick)))
+    }
+}
+
+#[cfg(test)]
+mod shapes_tests {
+    use std::testing
+    use shapes
+
+    #[test]
+    fn bytes_round_trip_through_the_wire() {
+        let _ = testing::check_eq(&shapes::reverse_bytes("abc".as_bytes()), &#[99, 98, 97], "reversed")
+    }
+
+    #[test]
+    fn a_map_crosses_in_both_directions() {
+        let counted = shapes::counts(#["a", "b", "a"])
+        let _ = testing::check_eq(&counted.len(), &2, "entries")
+        let _ = testing::check_eq(&counted.get("a").unwrap_or(0), &2, "a")
+        let _ = testing::check_eq(&counted.get("b").unwrap_or(0), &1, "b")
+        let _ = testing::check_eq(&shapes::map_total({ "a": 1, "b": 2 }), &3, "summed")
+    }
+
+    #[test]
+    fn a_tuple_crosses_in_both_directions() {
+        let _ = testing::check_eq(&shapes::retuple((7, "ok", true)), &(14, "OK", false), "retupled")
+    }
+
+    #[test]
+    fn a_dynamic_value_crosses_as_the_value_it_is() {
+        // The open shape has no declared type to lower through, so a native
+        // build once handed back the pointer that reached it.
+        let _ = testing::check_eq(&format!("{:?}", shapes::dynamic(2)), &"-7", "int")
+        let _ = testing::check_eq(&format!("{:?}", shapes::dynamic(5)), &"hi", "string")
+        let _ = testing::check_eq(&format!("{:?}", shapes::dynamic(6)), &"[1, 2, 3]", "bytes")
+        let _ = testing::check_eq(
+            &format!("{:?}", shapes::dynamic(8))
+            &"Row8(9, Inner(false))"
+            "runtime arm name and nested arm"
+        )
+    }
+
+    #[test]
+    fn a_declared_arm_set_matches_as_its_gossamer_enum() {
+        let _ = testing::check_eq(&super::show(shapes::reply(0)), &"int 41", "payload arm")
+        let _ = testing::check_eq(&super::show(shapes::reply(1)), &"text hi", "string arm")
+        let _ = testing::check_eq(&super::show(shapes::reply(2)), &"nothing", "payload-free arm")
+    }
+
+    #[test]
+    fn a_struct_crosses_in_both_directions() {
+        let got = shapes::retag(super::Tagged { label: "hi", weight: 1.5, live: true })
+        let _ = testing::check_eq(&got.label, &"HI", "label")
+        let _ = testing::check_eq(&got.weight, &3.0, "weight")
+        let _ = testing::check_eq(&got.live, &false, "live")
+    }
+}

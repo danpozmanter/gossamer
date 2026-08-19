@@ -578,7 +578,8 @@ fn broken() {}\n";
 
 #[test]
 fn lint_fix_applies_auto_suggestions_and_writes_back() {
-    let source = "fn main() { let mut x = 1i64\nprintln(x.to_string()) }\n";
+    // The binding is only read as a value, so nothing here needs the `mut`.
+    let source = "fn main() { let mut x = 1i64\nprintln!(\"{}\", x + 1) }\n";
     let fixture = write_fixture("lintfix", source);
     let out = Command::new(gos_bin())
         .arg("lint")

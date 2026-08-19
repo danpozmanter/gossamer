@@ -840,7 +840,7 @@ struct TypeChecker<'a> {
     /// written in and whether the method is `pub`. A method without
     /// `pub` is nameable only from that module, matching the resolver's
     /// rule for a free function.
-    method_homes: HashMap<(String, String), (Vec<String>, bool)>,
+    method_homes: HashMap<(String, String), (Vec<String>, Visibility)>,
     /// Module path of the item currently being checked, so a call site
     /// can be tested against a method's declaring module.
     current_module: Vec<String>,
@@ -3135,11 +3135,17 @@ impl<'a> TypeChecker<'a> {
         // A path written with its module (`impl lib::Point`) already
         // spells the identity; a bare one names a type the enclosing
         // module declares, or an imported one that keeps its own name.
-        let candidates = if segments.len() > 1 {
-            [segments.join("::"), qualified_type_name(module_path, &bare)]
-        } else {
-            [qualified_type_name(module_path, &bare), bare.clone()]
-        };
+        let mut candidates: Vec<String> = Vec::new();
+        if segments.len() > 1 {
+            candidates.push(segments.join("::"));
+        }
+        // The type may be declared in the module this `impl` sits in, or in
+        // any module enclosing it: a package splits one type's methods across
+        // sibling files, and consumed as a dependency every one of those sits
+        // one module deeper than the type they implement.
+        for level in (0..=module_path.len()).rev() {
+            candidates.push(qualified_type_name(&module_path[..level], &bare));
+        }
         let identity = candidates
             .into_iter()
             .find(|candidate| self.user_type_decls.contains(candidate))
@@ -3174,6 +3180,38 @@ impl<'a> TypeChecker<'a> {
         out
     }
 
+    /// Records which module each of an impl's methods is declared in, and
+    /// at what visibility, so a call from elsewhere is checked against the
+    /// declaration rather than against the call site's module.
+    fn record_impl_method_homes(
+        &mut self,
+        decl: &ImplDecl,
+        owners: &[String],
+        module_path: &[String],
+    ) {
+        for owner in owners {
+            self.collect_impl_method_owners_and_mutability(decl, owner);
+        }
+        // A trait impl's methods are reachable wherever the trait is: the
+        // trait declares the surface, the impl only supplies it.
+        let via_trait = decl.trait_ref.is_some();
+        for item in &decl.items {
+            if let ImplItem::Fn(fn_decl) = item {
+                let visibility = if via_trait {
+                    Visibility::Public
+                } else {
+                    fn_decl.visibility
+                };
+                for owner in owners {
+                    self.method_homes.insert(
+                        (owner.clone(), fn_decl.name.name.clone()),
+                        (module_path.to_vec(), visibility),
+                    );
+                }
+            }
+        }
+    }
+
     fn collect_impl_signatures(&mut self, decl: &ImplDecl, module_path: &[String]) {
         // Self-type names for receiver-keyed method return types.
         // Generic impls are skipped: their returns may mention
@@ -3190,23 +3228,7 @@ impl<'a> TypeChecker<'a> {
         // a different type.
         let owner_names = owner_keys;
         if let Some(owners) = &owner_names {
-            for owner in owners {
-                self.collect_impl_method_owners_and_mutability(decl, owner);
-            }
-            // A trait impl's methods are reachable wherever the trait is:
-            // the trait declares the surface, the impl only supplies it.
-            let via_trait = decl.trait_ref.is_some();
-            for item in &decl.items {
-                if let ImplItem::Fn(fn_decl) = item {
-                    let is_pub = via_trait || fn_decl.visibility.is_public();
-                    for owner in owners {
-                        self.method_homes.insert(
-                            (owner.clone(), fn_decl.name.name.clone()),
-                            (module_path.to_vec(), is_pub),
-                        );
-                    }
-                }
-            }
+            self.record_impl_method_homes(decl, owners, module_path);
         }
         // Record `impl Trait for Type` so a `T: Trait` bound can be verified
         // against the concrete argument type at a generic call site.
@@ -7123,6 +7145,11 @@ impl<'a> TypeChecker<'a> {
         ) {
             return Some(self.tcx.json_value_ty());
         }
+        // `DynValue::<ctor>(..)` builds the open dynamic value. Every
+        // constructor answers one, whatever it was built from.
+        if matches!(module, ["DynValue"]) {
+            return self.dyn_value_ctor_ret(last);
+        }
         if matches!(
             module,
             ["json"] | ["encoding", "json"] | ["std", "encoding", "json"]
@@ -7217,6 +7244,80 @@ impl<'a> TypeChecker<'a> {
             }
             _ => None,
         }
+    }
+
+    /// Return type of a `DynValue::<name>(..)` constructor, or `None` when
+    /// the name is not one.
+    fn dyn_value_ctor_ret(&mut self, last: &str) -> Option<Ty> {
+        matches!(
+            last,
+            "nil"
+                | "bool"
+                | "int"
+                | "float"
+                | "char"
+                | "string"
+                | "bytes"
+                | "list"
+                | "map"
+                | "tagged"
+        )
+        .then(|| self.tcx.dyn_value_ty())
+    }
+
+    /// Return type of a method call on one of the runtime's opaque dynamic
+    /// receivers - a `json::Value` or a `DynValue`. Each answers the same
+    /// surface in method form that its own table declares; falling through to
+    /// a fresh variable would strip the receiver's tag and leave a chained
+    /// call untagged for the compiled tiers.
+    fn opaque_value_method_ret(
+        &mut self,
+        resolved: Ty,
+        method: &str,
+        arg_count: usize,
+    ) -> Option<Ty> {
+        match self.tcx.kind(resolved) {
+            Some(TyKind::JsonValue) => self.json_value_method_ret(method, arg_count),
+            Some(TyKind::DynValue) => self.dyn_value_method_ret(method, arg_count),
+            _ => None,
+        }
+    }
+
+    /// Return type of a method call on a `DynValue` receiver. `None` leaves
+    /// the call to the later dispatch arms, which report it as unknown.
+    fn dyn_value_method_ret(&mut self, method: &str, arg_count: usize) -> Option<Ty> {
+        let ty = match (method, arg_count) {
+            ("kind" | "name", 0) => self.tcx.string_ty(),
+            ("len", 0) => self.tcx.int_ty(IntTy::I64),
+            ("at" | "key_at", 1) | ("clone", 0) => self.tcx.dyn_value_ty(),
+            ("as_i64", 0) => {
+                let i = self.tcx.int_ty(IntTy::I64);
+                self.option_adt_ty(i)
+            }
+            ("as_f64", 0) => {
+                let f = self.tcx.float_ty(FloatTy::F64);
+                self.option_adt_ty(f)
+            }
+            ("as_bool", 0) => {
+                let b = self.tcx.bool_ty();
+                self.option_adt_ty(b)
+            }
+            ("as_char", 0) => {
+                let c = self.tcx.char_ty();
+                self.option_adt_ty(c)
+            }
+            ("as_str", 0) => {
+                let s = self.tcx.string_ty();
+                self.option_adt_ty(s)
+            }
+            ("as_bytes", 0) => {
+                let i = self.tcx.int_ty(IntTy::I64);
+                self.tcx.intern(TyKind::Vec(i))
+            }
+            ("to_string", 0) => self.tcx.string_ty(),
+            _ => return None,
+        };
+        Some(ty)
     }
 
     /// Return type of a method call on a `json::Value` receiver, which is
@@ -7894,10 +7995,12 @@ impl<'a> TypeChecker<'a> {
     /// element the constructor never pinned - `Queue::new()` with no
     /// annotation and no `push` yet - settles as `i64`, the width a slot
     /// holds.
-    fn slot_collection_elem(&mut self, elem: Option<Ty>, owner: &str, span: Span) -> Ty {
-        let i64_ty = self.tcx.int_ty(IntTy::I64);
-        let Some(elem) = elem else { return i64_ty };
-        self.require_slot_collection_elem(elem, owner, span)
+    /// The element type a slot-backed container's methods read and write,
+    /// without re-checking it. The declaration that pinned the element is
+    /// where an element the container cannot hold is reported; a call on the
+    /// receiver reads whatever was written there.
+    fn slot_collection_elem_as_written(&mut self, elem: Option<Ty>) -> Ty {
+        elem.unwrap_or_else(|| self.tcx.int_ty(IntTy::I64))
     }
 
     /// Checks the element type of a slot-backed container (`Deque`, `Queue`,
@@ -7927,7 +8030,10 @@ impl<'a> TypeChecker<'a> {
             },
             span,
         );
-        self.tcx.int_ty(IntTy::I64)
+        // Recovery keeps the element the annotation named, so the pushes and
+        // pops that follow are checked against it rather than reported a
+        // second time against a substituted `i64`.
+        elem
     }
 
     /// Whether values of `ty` have an ordering: the scalars, `String`, and
@@ -8190,13 +8296,7 @@ impl<'a> TypeChecker<'a> {
     /// Phase 1 `VecDeque` support is backed by the native `i64` deque ABI.
     /// Keep method typing aligned with that runtime until the handle is made
     /// fully generic.
-    fn check_deque_method(
-        &mut self,
-        method: &str,
-        receiver_ty: Ty,
-        span: gossamer_lex::Span,
-        args: &[Expr],
-    ) -> Option<Ty> {
+    fn check_deque_method(&mut self, method: &str, receiver_ty: Ty, args: &[Expr]) -> Option<Ty> {
         let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
             resolved = self.infer.resolve(self.tcx, *inner);
@@ -8204,7 +8304,7 @@ impl<'a> TypeChecker<'a> {
         if let Some(TyKind::Adt { def, substs }) = self.tcx.kind(resolved)
             && def.local == VEC_DEQUE_DEF_LOCAL
         {
-            let elem = self.slot_collection_elem(substs.types().first().copied(), "Deque", span);
+            let elem = self.slot_collection_elem_as_written(substs.types().first().copied());
             return match method {
                 "push_back" | "push_front" if args.len() == 1 => {
                     let v = self.check_expr_expecting(&args[0], Expectation::HasType(elem));
@@ -8227,7 +8327,6 @@ impl<'a> TypeChecker<'a> {
         &mut self,
         method: &str,
         receiver_ty: Ty,
-        span: gossamer_lex::Span,
         args: &[Expr],
     ) -> Option<Ty> {
         let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
@@ -8237,12 +8336,7 @@ impl<'a> TypeChecker<'a> {
         if let Some(TyKind::Adt { def, substs }) = self.tcx.kind(resolved)
             && matches!(def.local, VEC_QUEUE_DEF_LOCAL | VEC_STACK_DEF_LOCAL)
         {
-            let owner = if def.local == VEC_QUEUE_DEF_LOCAL {
-                "Queue"
-            } else {
-                "Stack"
-            };
-            let elem = self.slot_collection_elem(substs.types().first().copied(), owner, span);
+            let elem = self.slot_collection_elem_as_written(substs.types().first().copied());
             return match method {
                 "push" if args.len() == 1 => {
                     let v = self.check_expr_expecting(&args[0], Expectation::HasType(elem));
@@ -8270,20 +8364,15 @@ impl<'a> TypeChecker<'a> {
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
             resolved = self.infer.resolve(self.tcx, *inner);
         }
-        let (owner, elem_ty) = match self.tcx.kind(resolved) {
+        let elem_ty = match self.tcx.kind(resolved) {
             Some(TyKind::Adt { def, substs })
                 if matches!(def.local, BINARY_HEAP_DEF_LOCAL | MIN_HEAP_DEF_LOCAL) =>
             {
-                let owner = if def.local == BINARY_HEAP_DEF_LOCAL {
-                    "MaxHeap"
-                } else {
-                    "MinHeap"
-                };
-                (owner, substs.types().first().copied())
+                substs.types().first().copied()
             }
             _ => return None,
         };
-        let elem_ty = self.slot_collection_elem(elem_ty, owner, span);
+        let elem_ty = self.slot_collection_elem_as_written(elem_ty);
         match method {
             "push" if args.len() == 1 => {
                 let got = self.check_expr_expecting(&args[0], Expectation::HasType(elem_ty));
@@ -8438,11 +8527,10 @@ impl<'a> TypeChecker<'a> {
         if matches!(method, "into" | "try_into") && args.is_empty() {
             return self.check_conversion_method(method, receiver_ty, receiver.span);
         }
-        if let Some(ty) = self.check_deque_method(method, receiver_ty, receiver.span, args) {
+        if let Some(ty) = self.check_deque_method(method, receiver_ty, args) {
             return ty;
         }
-        if let Some(ty) = self.check_queue_or_stack_method(method, receiver_ty, receiver.span, args)
-        {
+        if let Some(ty) = self.check_queue_or_stack_method(method, receiver_ty, args) {
             return ty;
         }
         if let Some(ty) = self.check_binary_heap_method(method, receiver_ty, args, receiver.span) {
@@ -8575,9 +8663,7 @@ impl<'a> TypeChecker<'a> {
         // JsonValue tag - leaving a chained `.set(..).set(..)` receiver
         // untagged for the compiled tiers - and would let a document read
         // bind to any annotation the caller wrote.
-        if matches!(self.tcx.kind(resolved), Some(TyKind::JsonValue))
-            && let Some(ty) = self.json_value_method_ret(method, arg_count)
-        {
+        if let Some(ty) = self.opaque_value_method_ret(resolved, method, arg_count) {
             return ty;
         }
         if method != "clone"
@@ -9522,6 +9608,7 @@ impl<'a> TypeChecker<'a> {
             Some(TyKind::Float(float)) => float.as_str().to_string(),
             Some(TyKind::Unit) => "()".to_string(),
             Some(TyKind::Never) => "!".to_string(),
+            Some(TyKind::DynValue) => "DynValue".to_string(),
             Some(TyKind::Array { elem, len }) => {
                 format!(
                     "[{}; {}]",
@@ -9739,6 +9826,7 @@ impl<'a> TypeChecker<'a> {
                 | TyKind::Duration
                 | TyKind::Instant
                 | TyKind::JsonValue
+                | TyKind::DynValue
                 | TyKind::DynError,
             ) => {
                 let rendered = render_ty(self.tcx, resolved);
@@ -11024,11 +11112,20 @@ impl<'a> TypeChecker<'a> {
     /// descendants keep access, so a `pub` wrapper always reaches the
     /// private helpers declared beside it.
     fn reject_private_method(&mut self, ty: &str, method: &str, span: Span) {
-        let Some((home, is_pub)) = self.method_homes.get(&(ty.to_string(), method.to_string()))
+        let Some((home, visibility)) = self.method_homes.get(&(ty.to_string(), method.to_string()))
         else {
             return;
         };
-        if *is_pub || self.current_module.starts_with(home.as_slice()) {
+        // The same rule a field and a free function get: the declaring module
+        // and its descendants always reach it, `pub` reaches everywhere, and
+        // `pub(package)` reaches the rest of its own package.
+        let reachable = self.current_module.starts_with(home.as_slice())
+            || match visibility {
+                Visibility::Public => true,
+                Visibility::Package => self.resolutions.same_package(home, &self.current_module),
+                Visibility::Inherited => false,
+            };
+        if reachable {
             return;
         }
         let error = TypeError::PrivateMethod {
@@ -14048,6 +14145,9 @@ impl<'a> TypeChecker<'a> {
                 | TyKind::Unit
                 | TyKind::Never,
             ) => true,
+            // A dynamic value's shape is not known until it exists, so there
+            // is no key layout to fold it into.
+            Some(TyKind::DynValue) => false,
             Some(TyKind::Tuple(elems)) => elems
                 .iter()
                 .all(|elem| self.is_hashable_ty_rec(*elem, seen)),
@@ -14912,6 +15012,11 @@ impl<'a> TypeChecker<'a> {
         }
         if path_matches_dyn_error(path) {
             return self.tcx.dyn_error_ty();
+        }
+        // The open dynamic value is a prelude type, so its bare name is the
+        // whole path.
+        if path.segments.len() == 1 && path.segments[0].name.name.as_str() == "DynValue" {
+            return self.tcx.dyn_value_ty();
         }
         // A trait names behaviour, not a value's type. Gossamer has no `dyn`,
         // so a bare trait in type position has no runtime shape to stand for
@@ -17038,6 +17143,7 @@ fn kind_is_concrete(checker: &TypeChecker<'_>, kind: &TyKind) -> bool {
         | TyKind::Duration
         | TyKind::Instant
         | TyKind::JsonValue
+        | TyKind::DynValue
         | TyKind::DynError
         | TyKind::Param { .. } => true,
         TyKind::Tuple(parts) => parts.iter().all(|t| checker.is_concrete(*t)),

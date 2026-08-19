@@ -302,6 +302,8 @@ mod tests {
             }),
         );
         let fn_decl = FnDecl {
+            attrs: Attrs::default(),
+            span: fake_span(),
             is_unsafe: false,
             is_comptime: false,
             visibility: crate::Visibility::Inherited,

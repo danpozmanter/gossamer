@@ -212,9 +212,7 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
     let (lint_sf, lint_parse_diags) = gossamer_parse::parse_source_file(source, file);
     if lint_parse_diags.is_empty() {
         let mut registry = gossamer_lint::Registry::with_defaults();
-        for item in &lint_sf.items {
-            gossamer_lint::apply_attributes(&item.attrs, &mut registry);
-        }
+        gossamer_lint::apply_attributes(&lint_sf.attrs, &mut registry);
         let mut lint_diagnostics = gossamer_lint::run(&lint_sf, source, &registry);
         let lint_fixes = gossamer_lint::fixes(&lint_sf, &registry, source);
         attach_lint_fixes(&mut lint_diagnostics, lint_fixes);

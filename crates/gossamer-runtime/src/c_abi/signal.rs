@@ -1413,6 +1413,51 @@ pub unsafe extern "C" fn gos_rt_vec_insert_at(v: *mut GosVec, idx: i64, value: i
     });
 }
 
+/// Bounds-checked in-place insert of an element the caller addresses in
+/// place, returning `Result<(), errors::Error>`.
+///
+/// Companion to [`gos_rt_vec_insert_safe`], which takes the element as the
+/// word itself. A struct, tuple, or array element is a flat slot block the
+/// caller holds in its own frame - exactly the shape `gos_rt_vec_push` takes
+/// and `remove` hands back - so `slots` is that block's address, and reading
+/// the parameter instead would store the pointer and whatever sits beside it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_insert_slots_safe(
+    v: *mut GosVec,
+    idx: i64,
+    slots: *const u8,
+) -> i128 {
+    ffi_entry!(0i128, {
+        let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
+        if idx < 0 || idx > len {
+            let msg = format!("insert: index {idx} out of bounds for length {len}");
+            let cs = alloc_cstring(msg.as_bytes());
+            let err = unsafe { gos_rt_error_new(cs) };
+            return unsafe { gos_rt_result_new(1, err as i64) };
+        }
+        if !v.is_null() && !slots.is_null() {
+            unsafe { vec_insert_payload_at(v, idx, slots) };
+        }
+        unsafe { gos_rt_result_new(0, 0) }
+    })
+}
+
+/// Shared body of the two insert entry points: grow by one with the new
+/// element parked at the tail, then rotate it down to `idx`.
+unsafe fn vec_insert_payload_at(v: *mut GosVec, idx: i64, payload: *const u8) {
+    let len = unsafe { (*v).len };
+    unsafe { gos_rt_vec_push(v, payload) };
+    let vec = unsafe { &mut *v };
+    let stride = vec.elem_bytes as usize;
+    if !vec.ptr.is_null() && stride > 0 && idx < len {
+        let base = vec.ptr.as_ptr();
+        let span = ((len - idx + 1) as usize) * stride;
+        let region =
+            unsafe { std::slice::from_raw_parts_mut(base.add(idx as usize * stride), span) };
+        region.rotate_right(stride);
+    }
+}
+
 /// The payload word for the element `remove` hands back.
 ///
 /// A word-wide element is the value itself. A wider one is a flat slot block
@@ -1420,17 +1465,7 @@ pub unsafe extern "C" fn gos_rt_vec_insert_at(v: *mut GosVec, idx: i64, value: i
 /// closes the gap writes over the slot it was read from, and the payload has
 /// to outlive that.
 unsafe fn removed_elem_payload(vec: &GosVec, idx: i64) -> i64 {
-    let stride = vec.elem_bytes as usize;
-    if stride <= 8 || vec.ptr.is_null() {
-        return unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, idx) };
-    }
-    let copy = crate::c_abi::gc::gos_rt_gc_alloc(stride as u64);
-    if copy.is_null() {
-        return 0;
-    }
-    let src = unsafe { vec.ptr.add((idx as usize) * stride) };
-    unsafe { std::ptr::copy_nonoverlapping(src, copy, stride) };
-    copy as i64
+    unsafe { crate::c_abi::vec::vec_elem_owned_payload_word(vec, idx) }
 }
 
 /// Bounds-checked in-place removal returning `Result<T, errors::Error>`.

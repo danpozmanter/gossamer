@@ -349,6 +349,20 @@ pub(super) fn lower_intrinsic_call_io_math(
                         let fref = module.declare_func_in_func(f, builder.func);
                         builder.ins().call(fref, &[s]);
                     }
+                    PrintKind::DynValue => {
+                        let render_fn = intrinsics.extern_fn(
+                            module,
+                            "gos_rt_dyn_format",
+                            &[ptr_ty],
+                            &[ptr_ty],
+                        )?;
+                        let render_ref = module.declare_func_in_func(render_fn, builder.func);
+                        let call = builder.ins().call(render_ref, &[value]);
+                        let s = builder.inst_results(call)[0];
+                        let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
+                        let fref = module.declare_func_in_func(f, builder.func);
+                        builder.ins().call(fref, &[s]);
+                    }
                     PrintKind::JsonValue => {
                         let render_fn = intrinsics.extern_fn(
                             module,

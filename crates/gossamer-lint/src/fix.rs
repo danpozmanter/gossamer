@@ -14,7 +14,7 @@ use gossamer_ast::{
 use gossamer_lex::Span;
 
 use crate::Registry;
-use crate::lints::{walk_block, walk_expr};
+use crate::lints::{block_reassigns, walk_block, walk_expr};
 
 /// An auto-applicable source edit.
 #[derive(Debug, Clone)]
@@ -301,34 +301,6 @@ fn ident_name(pattern: &Pattern) -> Option<(&str, Span, Mutability)> {
     }
 }
 
-fn block_reassigns(block: &Block, target: &str) -> bool {
-    let mut found = false;
-    walk_block(block, &mut |expr| {
-        if found {
-            return;
-        }
-        if let ExprKind::Assign { place, .. } = &expr.kind
-            && place_root_is(place, target)
-        {
-            found = true;
-        }
-    });
-    found
-}
-
-fn place_root_is(expr: &Expr, target: &str) -> bool {
-    match &expr.kind {
-        ExprKind::Path(path) => path.segments.first().is_some_and(|s| s.name.name == target),
-        ExprKind::FieldAccess { receiver, .. } => place_root_is(receiver, target),
-        ExprKind::Index { base, .. } => place_root_is(base, target),
-        ExprKind::Unary {
-            op: UnaryOp::Deref,
-            operand,
-        } => place_root_is(operand, target),
-        _ => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,7 +340,10 @@ mod tests {
 
     #[test]
     fn unused_mut_keyword_is_removed() {
-        let src = "fn f() { let mut x = 1; println(x.to_string()); }\n";
+        // The binding is only read as a value, so nothing here needs the
+        // `mut`. A method call on it would, because a receiver-mutating
+        // method is indistinguishable from a reading one at this level.
+        let src = "fn f() -> i64 { let mut x = 1; x + 1 }\n";
         let out = run(src);
         assert!(!out.contains("mut x"), "still has mut: {out}");
         assert!(out.contains("let x = 1"), "got: {out}");
@@ -386,5 +361,27 @@ mod tests {
         let src = "fn f(a: bool) -> bool { if a { true } else { false } }\n";
         let out = run(src);
         assert!(out.contains("{ a }"), "got: {out}");
+    }
+
+    #[test]
+    fn mut_survives_a_mutating_method_call() {
+        let src = "fn f() { let mut xs: Vec<i64> = #[]\n xs.push(1) }\n";
+        let out = run(src);
+        assert!(out.contains("let mut xs"), "got: {out}");
+    }
+
+    #[test]
+    fn mut_survives_a_mutable_borrow() {
+        let src =
+            "fn g(v: &mut Vec<u8>) { }\nfn f() { let mut out: Vec<u8> = #[]\n g(&mut out) }\n";
+        let out = run(src);
+        assert!(out.contains("let mut out"), "got: {out}");
+    }
+
+    #[test]
+    fn mut_survives_a_compound_assignment() {
+        let src = "fn f() { let mut n = 0\n n += 1 }\n";
+        let out = run(src);
+        assert!(out.contains("let mut n"), "got: {out}");
     }
 }

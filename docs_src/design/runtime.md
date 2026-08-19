@@ -164,7 +164,12 @@ to the injector instead of leaving it parked.
 
 ## Preemption
 
-Scheduling uses cooperative safepoints with watchdog-requested preemption.
+Scheduling is **cooperative**, with a watchdog that requests a yield and, past
+a longer threshold, interrupts the worker's syscalls. There is no asynchronous
+preemption: nothing moves a running goroutine off its worker without that
+goroutine reaching a safepoint. This is the one place the runtime is weaker
+than Go 1.14 and later, whose signal handler relocates a goroutine from a
+loop that never yields.
 
 A goroutine yields the worker M at *safepoints*:
 
@@ -172,9 +177,15 @@ A goroutine yields the worker M at *safepoints*:
   `time::sleep`, scheduler-aware network reads, and core filesystem operations,
 - function-call / scheduler-step boundaries, where the worker can
   reclaim the coroutine between `step()` invocations,
-- amortized loop back-edge polls. LLVM and Cranelift poll every 1,024 taken
-  backedges and suspend the current coroutine when the watchdog phase changes.
-  The bytecode VM yields its OS worker every 1,024 taken backedges.
+- loop back-edges **on the bytecode VM**, which polls every 1,024 taken
+  back-edges and yields its OS worker when the watchdog phase has changed.
+
+The compiled tiers do **not** poll loop back-edges. `emit_preempt_check` on the
+LLVM path is deliberately a no-op and the Cranelift JIT emits no back-edge
+poll: the opaque runtime call and its countdown state block the optimizers on
+exactly the numeric loops those backends exist to recover. `gos_rt_preempt_check`
+and `gos_rt_preempt_check_and_yield` stay in the ABI for when a cheaper
+safepoint shape lands.
 
 The watchdog thread (`sched::multi::watchdog_loop`, 5 ms tick) escalates
 against a worker that has not reached a safepoint:
@@ -183,18 +194,29 @@ against a worker that has not reached a safepoint:
   (`preempt::request_yield_all`); the next `preempt::should_yield`
   poll at any safepoint returns `true` and the goroutine yields,
 - after ~100 ms it sends a real OS signal to that worker's thread -
-  `SIGURG` on Unix, a `QueueUserAPC` on Windows. The signal does not
-  itself context-switch; it flips the yield flag promptly and, more
-  importantly, interrupts a blocking syscall the worker is stuck
-  inside (the kernel returns `EINTR`).
+  `SIGURG` on Unix, a `QueueUserAPC` on Windows. The signal does not itself
+  context-switch. It flips the yield flag and interrupts a blocking syscall the
+  worker is stuck inside (the kernel returns `EINTR`), which is what rescues a
+  worker blocked in a non-scheduler-aware call. A goroutine spinning in a
+  call-free compiled loop reads no flag, so the signal does not dislodge it.
 
-The compiled hot path is a decrement and branch; the runtime call occurs only
-when the counter expires, preserving a bounded polling cost. The native
-scheduler has a one-worker fairness regression that proves a call-free loop
-hands control to a runnable peer. The VM uses a separate bounded OS-thread pool,
-so its backedge poll yields an OS worker rather than suspending a stackful
-coroutine. A VM configured with one goroutine worker can still be monopolized by
-one nonterminating task; replacing that pool with resumable VM frames remains a
+### What this means for a program
+
+A CPU-bound loop that calls nothing - no function call, no allocation, no
+channel or timer operation - holds its worker until it finishes:
+
+- on the bytecode VM it still yields, through the back-edge poll;
+- in a `gos build` binary, and in a JIT-compiled body, it does not.
+
+With `GOMAXPROCS`-many workers this starves one worker, not the program: peers
+keep running. It becomes visible when such a loop outnumbers the workers, or
+when a single-worker configuration runs one. Give a long computation a
+safepoint the way you would give it a cancellation point - call
+`runtime::cohort_cancelled()`, or any other function, on an outer iteration -
+and the scheduler reclaims the worker at that call.
+
+A VM configured with one goroutine worker can still be monopolized by one
+nonterminating task; replacing that pool with resumable VM frames remains a
 tracked limitation.
 
 Not every host operation is scheduler-aware yet. Core filesystem file and path

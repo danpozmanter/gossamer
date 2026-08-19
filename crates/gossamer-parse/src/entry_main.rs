@@ -81,6 +81,8 @@ pub fn synthesize_entry_main(sf: &mut SourceFile) -> Vec<ParseDiagnostic> {
     );
 
     let decl = FnDecl {
+        attrs: gossamer_ast::Attrs::default(),
+        span,
         is_unsafe: false,
         is_comptime: false,
         visibility: gossamer_ast::Visibility::Public,

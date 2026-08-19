@@ -148,6 +148,16 @@ pub struct Vm {
     /// construction. Pre-lazy: every `Vm::new` cloned all ~330
     /// entries into its own HashMap. Post-lazy: a refcount bump.
     pub(crate) prelude: Arc<rustc_hash::FxHashMap<&'static str, Global>>,
+    /// Bare names of the program's own free functions. An `impl` method
+    /// also registers under its bare name so a receiver whose type cannot
+    /// be named still finds it; that registration must never displace a
+    /// free function, which is the only thing an unqualified call can
+    /// mean.
+    pub(crate) free_fn_names: Arc<rustc_hash::FxHashSet<String>>,
+    /// Module depth of the function that claimed each bare name. A bare call
+    /// names the nearest declaration - the entry file's own item before a
+    /// sibling module's - which is what the compiled tiers resolve it to.
+    pub(crate) bare_fn_depth: rustc_hash::FxHashMap<&'static str, usize>,
     /// VM-owned qualified method-name cache. Dynamic `Type::method` keys are
     /// released with the VM instead of being retained by a process/thread
     /// global interner.
@@ -2244,6 +2254,15 @@ pub(crate) fn values_equal(a: &Value, b: &Value) -> bool {
         // `Value::Struct` keyed by the variant name, so a derived enum's
         // field-wise `==` reaches here: same name, same fields by name+value.
         (Value::Struct(sa), Value::Struct(sb)) => {
+            // A set is a handle struct over a registry slot, so comparing its
+            // fields would compare handle identity. Two sets are equal when
+            // they hold the same elements, as they are in Rust.
+            if sa.name == sb.name
+                && let Some(xa) = crate::stdlib_builtins::set::set_entries_of(a_ref)
+                && let Some(xb) = crate::stdlib_builtins::set::set_entries_of(b_ref)
+            {
+                return xa.len() == xb.len() && xa.keys().all(|key| xb.contains_key(key));
+            }
             sa.name == sb.name
                 && sa.fields.len() == sb.fields.len()
                 && sa
@@ -2262,6 +2281,20 @@ pub(crate) fn values_equal(a: &Value, b: &Value) -> bool {
         (Value::FloatArray(xa), Value::FloatArray(xb)) => {
             xa.stride == xb.stride && xa.data == xb.data
         }
+        // A map is equal to a map holding the same entries, whatever order
+        // they went in and whichever of the typed representations each side
+        // happens to carry - the same contract Rust's `HashMap` has.
+        (
+            Value::Map(_) | Value::IntMap(_) | Value::StrIntMap(_),
+            Value::Map(_) | Value::IntMap(_) | Value::StrIntMap(_),
+        ) => {
+            let xa = map_entries(a_ref);
+            let xb = map_entries(b_ref);
+            xa.len() == xb.len()
+                && xa
+                    .iter()
+                    .all(|(key, value)| xb.get(key).is_some_and(|other| values_equal(value, other)))
+        }
         // Native enum handles compare structurally through the boxed
         // representation (rare fallback; derived `==` routes through
         // match dispatch instead).
@@ -2273,6 +2306,31 @@ pub(crate) fn values_equal(a: &Value, b: &Value) -> bool {
             }
             _ => false,
         },
+    }
+}
+
+/// Materializes a map's entries, normalizing the typed `IntMap` / `StrIntMap`
+/// representations onto the generic one, so two maps holding the same entries
+/// compare equal whichever representation each of them settled into.
+fn map_entries(v: &Value) -> rustc_hash::FxHashMap<crate::value::MapKey, Value> {
+    use crate::value::MapKey;
+    match v {
+        Value::Map(m) => m
+            .lock()
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+        Value::IntMap(m) => m
+            .lock()
+            .iter()
+            .map(|(key, value)| (MapKey::Int(*key), Value::Int(*value)))
+            .collect(),
+        Value::StrIntMap(m) => m
+            .lock()
+            .iter()
+            .map(|(key, value)| (MapKey::Str(key.clone()), Value::Int(*value)))
+            .collect(),
+        _ => rustc_hash::FxHashMap::default(),
     }
 }
 

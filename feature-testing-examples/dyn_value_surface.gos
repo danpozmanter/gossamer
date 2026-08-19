@@ -1,0 +1,85 @@
+/*
+ * `DynValue` is the value whose shape the data decides. A decoder builds one
+ * with the constructors and reads it back by kind, by runtime arm name, and by
+ * position - no mirror enum, and no Rust. Every tier answers the same.
+ */
+
+fn describe(v: DynValue) -> String {
+    format!("{}/{}/{}", v.kind(), v.name(), v.len())
+}
+
+fn scalars() -> String {
+    let parts = #[
+        describe(DynValue::nil()),
+        describe(DynValue::bool(true)),
+        describe(DynValue::int(-7)),
+        describe(DynValue::float(1.5)),
+        describe(DynValue::char('z')),
+        describe(DynValue::string("hi")),
+    ]
+    parts.join(" ")
+}
+
+fn readers() -> String {
+    format!(
+        "{:?} {:?} {:?} {:?} {:?} {:?}"
+        DynValue::int(7).as_i64()
+        DynValue::float(1.5).as_f64()
+        DynValue::bool(false).as_bool()
+        DynValue::char('q').as_char()
+        DynValue::string("text").as_str()
+        DynValue::int(7).as_str()
+    )
+}
+
+fn containers() -> String {
+    let list = DynValue::list(#[DynValue::int(1), DynValue::string("a")])
+    let bytes = DynValue::bytes(#[104, 105])
+    let m = DynValue::map(#[DynValue::string("k")], #[DynValue::int(9)])
+    format!(
+        "{} {} {:?} | {} {:?} | {} {:?} {:?}"
+        describe(list)
+        list.at(0).as_i64().unwrap_or(0)
+        list.at(1).as_str()
+        describe(bytes)
+        bytes.as_bytes()
+        describe(m)
+        m.key_at(0).as_str()
+        m.at(0).as_i64()
+    )
+}
+
+fn arms() -> String {
+    let inner = DynValue::tagged("Inner", #[DynValue::bool(false)])
+    let row = DynValue::tagged("Row" + "8", #[DynValue::int(9), inner])
+    format!(
+        "{} {} {} {:?}"
+        row.kind()
+        row.name()
+        row.at(1).name()
+        row
+    )
+}
+
+fn equality() -> String {
+    let a = DynValue::tagged("Row", #[DynValue::int(1)])
+    let b = DynValue::tagged("Row", #[DynValue::int(1)])
+    let c = DynValue::tagged("Row", #[DynValue::int(2)])
+    let d = DynValue::tagged("Other", #[DynValue::int(1)])
+    format!("{} {} {} {}", a == b, a == c, a == d, a != b)
+}
+
+fn main() {
+    let mut seen: Vec<String> = #[]
+    for _ in 0..3 {
+        seen.push(scalars())
+        seen.push(readers())
+        seen.push(containers())
+        seen.push(arms())
+        seen.push(equality())
+    }
+    for i in 0..5 {
+        println!("{}", seen[i])
+    }
+    println!("stable: {}", seen[0] == seen[5] && seen[4] == seen[9])
+}

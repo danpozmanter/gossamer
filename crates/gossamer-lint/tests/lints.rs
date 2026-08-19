@@ -223,6 +223,102 @@ fn apply_attributes_respects_inline_allow() {
     assert!(!diags.iter().any(|d| d.code.as_str() == "GL0001"));
 }
 
+/// A method's `#[lint(allow(..))]` reaches its own body.
+#[test]
+fn item_allow_silences_only_that_item() {
+    let source = concat!(
+        "pub enum K { A, B }\n",
+        "pub struct S { pub k: K }\n",
+        "fn free(k: &K) -> i64 {\n",
+        "    match k {\n        K::A => 1,\n        K::B => 1,\n    }\n",
+        "}\n",
+        "impl S {\n",
+        "    #[lint(allow(match_same_arms))]\n",
+        "    pub fn method(&self) -> i64 {\n",
+        "        match self.k {\n            K::A => 2,\n            K::B => 2,\n        }\n",
+        "    }\n",
+        "}\n",
+    );
+    let diags = lint(source);
+    let hits: Vec<u32> = diags
+        .iter()
+        .filter(|d| d.code.as_str() == "GL0037")
+        .filter_map(|d| d.labels.first().map(|l| l.location.span.start))
+        .collect();
+    assert_eq!(hits.len(), 1, "got {:?}", diags_codes(&diags));
+    let method_start = source.find("impl S").unwrap() as u32;
+    assert!(
+        hits[0] < method_start,
+        "the free function's arm is the one left standing"
+    );
+}
+
+/// A free function's `#[lint(allow(..))]` does not reach the rest of the file.
+#[test]
+fn free_fn_allow_does_not_silence_a_method() {
+    let source = concat!(
+        "pub enum K { A, B }\n",
+        "pub struct S { pub k: K }\n",
+        "#[lint(allow(match_same_arms))]\n",
+        "fn free(k: &K) -> i64 {\n",
+        "    match k {\n        K::A => 1,\n        K::B => 1,\n    }\n",
+        "}\n",
+        "impl S {\n",
+        "    pub fn method(&self) -> i64 {\n",
+        "        match self.k {\n            K::A => 2,\n            K::B => 2,\n        }\n",
+        "    }\n",
+        "}\n",
+    );
+    let diags = lint(source);
+    let hits: Vec<u32> = diags
+        .iter()
+        .filter(|d| d.code.as_str() == "GL0037")
+        .filter_map(|d| d.labels.first().map(|l| l.location.span.start))
+        .collect();
+    assert_eq!(hits.len(), 1, "got {:?}", diags_codes(&diags));
+    let method_start = source.find("impl S").unwrap() as u32;
+    assert!(
+        hits[0] > method_start,
+        "the method's arm is the one left standing"
+    );
+}
+
+/// A file-level `#![lint(allow(..))]` covers every item, and an item may
+/// still raise the level for itself.
+#[test]
+fn file_allow_covers_the_file_and_an_item_may_deny() {
+    let source = concat!(
+        "#![lint(allow(unused_variable))]\n",
+        "fn quiet() { let x = 1i64 }\n",
+        "#[lint(deny(unused_variable))]\n",
+        "fn loud() { let y = 1i64 }\n",
+    );
+    let mut map = SourceMap::new();
+    let file = map.add_file("t.gos", source.to_string());
+    let (sf, parse_diags) = parse_source_file(source, file);
+    assert!(parse_diags.is_empty(), "parse errors: {parse_diags:?}");
+    let mut registry = Registry::with_defaults();
+    apply_attributes(&sf.attrs, &mut registry);
+    let diags = run(&sf, source, &registry);
+    let hits: Vec<&Diagnostic> = diags
+        .iter()
+        .filter(|d| d.code.as_str() == "GL0001")
+        .collect();
+    assert_eq!(hits.len(), 1, "got {:?}", diags_codes(&diags));
+    assert!(matches!(
+        hits[0].severity,
+        gossamer_diagnostics::Severity::Error
+    ));
+}
+
+/// An import another `use` is rooted at is used by it.
+#[test]
+fn import_named_by_another_use_path_is_not_unused() {
+    let diags =
+        lint("use std::encoding\nuse encoding::json\nfn main() { let _ = json::parse(&\"1\") }\n");
+    assert!(!has_code(&diags, "GL0002"), "got {:?}", diags_codes(&diags));
+}
+
 #[test]
 fn every_day_one_lint_has_an_explanation() {
     for id in DAY_ONE_LINTS {

@@ -2454,7 +2454,59 @@ pub(crate) fn insert_aggr_copy_drops(body: &mut Body, tcx: &gossamer_types::TyCt
         }
         ty
     };
+    // The type a chain of field projections reaches, seeing through a
+    // reference at each step. `None` when the path leaves the layout this
+    // walk understands.
+    let projected_field_ty = |base: gossamer_types::Ty,
+                              projection: &[crate::ir::Projection]|
+     -> Option<gossamer_types::Ty> {
+        let mut ty = peel_ref(base);
+        for step in projection {
+            let crate::ir::Projection::Field(idx) = step else {
+                return None;
+            };
+            let next = match tcx.kind_of(ty) {
+                TyKind::Adt { def, .. } => tcx
+                    .struct_field_tys(*def)
+                    .and_then(|tys| tys.get(*idx as usize).copied()),
+                TyKind::Tuple(elems) => elems.get(*idx as usize).copied(),
+                TyKind::Array { elem, len } if (*idx as usize) < len.to_usize() => Some(*elem),
+                _ => None,
+            }?;
+            ty = peel_ref(next);
+        }
+        Some(ty)
+    };
+    // The by-value `{disc, payload}` carrier itself, whatever it holds. The
+    // slot helpers read the payload word beside the discriminant, so the
+    // address handed to one has to name a two-word carrier and nothing else:
+    // pointed at a single-word field they would read the field beside it.
+    let is_option_slot_ty = |ty: gossamer_types::Ty| -> bool {
+        matches!(
+            tcx.kind_of(peel_ref(ty)),
+            TyKind::Adt { def, .. } if def.local == u32::MAX || def.local == u32::MAX - 1
+        )
+    };
+    // A store through `&mut Option<T>` reaches the caller's carrier: the
+    // slot it names takes a share of the payload exactly as an aggregate's
+    // own carrier field does.
+    let is_carrier_deref_store = |place: &Place, rvalue: &Rvalue| -> bool {
+        if place.projection.as_slice() != [crate::ir::Projection::Deref] {
+            return false;
+        }
+        let i = place.local.0 as usize;
+        if i >= n_locals {
+            return false;
+        }
+        let TyKind::Ref { inner, .. } = tcx.kind_of(body.locals[i].ty) else {
+            return false;
+        };
+        is_option_slot_ty(*inner) && !matches!(rvalue, Rvalue::Use(Operand::Const(_)))
+    };
     let is_option_field_store = |place: &Place, rvalue: &Rvalue| -> bool {
+        if is_carrier_deref_store(place, rvalue) {
+            return true;
+        }
         if place.projection.is_empty()
             || !place
                 .projection
@@ -2470,14 +2522,20 @@ pub(crate) fn insert_aggr_copy_drops(body: &mut Body, tcx: &gossamer_types::TyCt
         if walk_meta(peel_ref(body.locals[i].ty)).is_none() {
             return false;
         }
+        // The destination field has to be the carrier itself. A store into
+        // any other field of the same aggregate is an ordinary field write.
+        if !projected_field_ty(body.locals[i].ty, &place.projection).is_some_and(is_option_slot_ty)
+        {
+            return false;
+        }
         match rvalue {
             Rvalue::Use(Operand::Copy(src)) if src.projection.is_empty() => {
                 option_holder(src.local) || is_guarded_option(body.locals[src.local.0 as usize].ty)
             }
             Rvalue::Use(_) | Rvalue::CallIntrinsic { .. } => {
-                // Conservatively treat any other store into the slot as
-                // an option write when the destination field could hold
-                // one; release/retain on a non-member payload no-op.
+                // Any other store into a carrier slot replaces whatever it
+                // held, so the old payload is released and the new one
+                // retained; a payload outside the copy-blob set no-ops.
                 true
             }
             _ => false,
@@ -2583,17 +2641,25 @@ pub(crate) fn insert_aggr_copy_drops(body: &mut Body, tcx: &gossamer_types::TyCt
                 }
             } else if is_option_field_store(place, rvalue) {
                 // Overwriting an owning option slot in place: release the
-                // old payload, store, retain the new one.
+                // old payload, store, retain the new one. The helpers read
+                // the payload word beside the discriminant, so they take the
+                // slot's address: a reference already is that address, while
+                // a field names it through the aggregate.
+                let slot = if place.projection.as_slice() == [crate::ir::Projection::Deref] {
+                    Place::local(place.local)
+                } else {
+                    place.clone()
+                };
                 gaps[bi][si].push(call_stmt(
                     "gos_rt_option_slot_release",
-                    vec![Operand::Copy(place.clone())],
+                    vec![Operand::Copy(slot.clone())],
                     span,
                     &mut next_unit,
                     &mut extra_locals,
                 ));
                 gaps[bi][si + 1].push(call_stmt(
                     "gos_rt_option_slot_retain",
-                    vec![Operand::Copy(place.clone())],
+                    vec![Operand::Copy(slot)],
                     span,
                     &mut next_unit,
                     &mut extra_locals,

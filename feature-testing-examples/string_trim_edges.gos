@@ -1,0 +1,12 @@
+fn edges(s: &String) -> String {
+    format!("[{}] [{}] [{}]", s.trim(), s.trim_start(), s.trim_end())
+}
+
+fn main() {
+    let mut last = ""
+    for _ in 0..200 {
+        last = edges(&"   padded   ")
+    }
+    println!("{}", last)
+    println!("[{}] [{}]", "xx".trim_start(), "".trim_end())
+}

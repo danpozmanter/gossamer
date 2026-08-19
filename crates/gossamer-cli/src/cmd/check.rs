@@ -52,6 +52,11 @@ pub(crate) fn dispatch(
             resolved.display()
         ));
     }
+    // A directory that is not itself a project may still hold several. A
+    // file inside one is checked as part of that project, once, through its
+    // entry: checking it alone would report the cross-module references its
+    // siblings supply as unresolved names.
+    let files = crate::paths::group_targets_by_project(&files);
     let mut total_errors = 0u32;
     for file in &files {
         if files.len() > 1 {
@@ -167,9 +172,7 @@ fn lint_diagnostics(
         return Ok(Vec::new());
     }
     let mut registry = gossamer_lint::Registry::with_defaults();
-    for item in &sf.items {
-        gossamer_lint::apply_attributes(&item.attrs, &mut registry);
-    }
+    gossamer_lint::apply_attributes(&sf.attrs, &mut registry);
     let mut diagnostics = gossamer_lint::run(&sf, &source, &registry);
     for diag in &mut diagnostics {
         diag.severity = gossamer_diagnostics::Severity::Warning;
@@ -274,9 +277,7 @@ fn lint_fixes_for(file: &Path, source: &str) -> Vec<gossamer_lint::Fix> {
         return Vec::new();
     }
     let mut registry = gossamer_lint::Registry::with_defaults();
-    for item in &sf.items {
-        gossamer_lint::apply_attributes(&item.attrs, &mut registry);
-    }
+    gossamer_lint::apply_attributes(&sf.attrs, &mut registry);
     gossamer_lint::fixes(&sf, &registry, source)
 }
 

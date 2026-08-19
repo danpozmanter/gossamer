@@ -808,6 +808,9 @@ impl<'a> Builder<'a> {
         if let Some(local) = self.lower_json_free_call(callee, args, span) {
             return Some(local);
         }
+        if let Some(local) = self.lower_dyn_value_ctor(callee, args, span) {
+            return Some(local);
+        }
         // External Rust binding (`tuigoose::layout::rect`, etc.).
         // Resolves through `gossamer_resolve::external` populated
         // either by the runner's `install_all` or the build-time

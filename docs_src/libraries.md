@@ -16,12 +16,25 @@ widget/
     └── main.gos
 ```
 
+`--template` picks what is scaffolded: `bin` (the default) writes an
+executable `src/main.gos`; `lib` writes a reusable `src/lib.gos` with
+a smoke test; `service` writes an HTTP handler bound to
+`0.0.0.0:8080`; `workspace` writes a manifest with an empty
+`[workspace.members]` and no source tree; `binding` writes a Rust
+crate that publishes functions to Gossamer (see [Calling
+Rust](rust_bindings.md)).
+
 ## The `project.toml` manifest
 
 ```toml
 [project]
 id      = "example.com/widget"
 version = "0.1.0"
+# The exact toolchain this project is written against, matching the
+# release tag. `gos new` stamps the toolchain that scaffolded the
+# project; an older toolchain refuses to build it rather than failing
+# later on a surface it does not have.
+gossamer-version = "v0.53.0"
 authors = ["Leslie Tungsten <ltungsten@example.com>"]
 license = "Apache-2.0"
 
@@ -79,13 +92,24 @@ pgsql_gos = { git = "https://github.com/danpozmanter/pgsql-gos", tag = "v1.2.3" 
 ```
 
 A `version` range belongs to a registry dependency, which resolves within it;
-writing one beside `git` is rejected rather than silently ignored.
+writing one beside `git` is rejected rather than silently ignored. A third
+source form names an archive directly, pinned by digest:
 
-`gos add example.org/lib@1.2.3` appends the dependency.
-`gos remove example.org/lib` drops it. `gos update` refreshes selected versions
-within declared ranges. `gos tidy` parses project sources, removes direct
-project dependencies that are not imported, and writes canonical ordering.
-Rust binding dependencies are retained independently.
+```toml
+[dependencies]
+"example.org/lib" = { tarball = "https://example.org/lib-1.2.3.tar.gz", sha256 = "..." }
+```
+
+Whichever source a dependency names, `gos fetch` prepares it (`gos vendor`
+copies the same trees into `./vendor/`), and from then on it joins the
+compilation unit exactly as a `path` dependency does, under the module its id
+names. `gos update` refreshes selected versions within declared ranges.
+
+`gos add example.org/lib@1.2.3` appends the dependency and
+`gos remove example.org/lib` drops it. `gos tidy` parses project sources,
+removes direct project dependencies that are not imported, and writes
+canonical ordering; `[rust-bindings]` entries are reached through Rust rather
+than through a `use`, so they are retained independently.
 
 The default convention is still: `src/main.gos` ⇒ binary,
 `src/lib.gos` ⇒ library, project id ⇒ output name. The
@@ -204,43 +228,39 @@ src/lib.gos` prints every item plus that summary block;
 
 ## Foreign code (`[rust-bindings]`)
 
-To call native (Rust) code, declare a binding crate under
-`[rust-bindings]` in `project.toml`. The crate depends on
-`gossamer-binding` and registers its entry points with
-`register_module!`; the toolchain builds it into a per-project runner
-and links it into the binary (or interpreter), after which the bound
-functions are `use`-able from `.gos` source like any other module.
+Native code is reached through a **binding crate**: an ordinary Rust
+library that depends on `gossamer-binding`, marks the functions it
+publishes, and is named under `[rust-bindings]` in `project.toml`.
 
 ```toml
 # project.toml
 [rust-bindings]
-echo-binding = { path = "echo-binding" }
+native = { path = "native" }
 ```
 
 ```rust
-// echo-binding/src/lib.rs
-use gossamer_binding::register_module;
-register_module!("echo", {
-    fn shout(s: String) -> String { s.to_uppercase() }
-});
+// native/src/lib.rs
+use gossamer_binding::gos_module;
+
+#[gos_module("native")]
+mod bindings {
+    /// Shout the input.
+    pub fn shout(s: String) -> String {
+        s.to_uppercase()
+    }
+}
 ```
 
 ```gossamer
-use echo::shout
-fn main() { println!("{}", shout("hello")) }
+use native
+fn main() { println!("{}", native::shout("hello")) }
 ```
 
-Values cross the boundary through the typed `gossamer-binding` ABI
-(integers, floats, strings, tuples, vectors, `Option` / `Result`,
-opaque handles, byte buffers, callbacks); a panic in a binding is
-caught and returned as `Result::Err`. This is the **only** FFI surface
-- a source-level `extern "C"` item form is rejected (`GP0016`) and the
-`extern` keyword stays reserved. Calls run end-to-end under `gos`
-and link into `gos build` binaries; direct compiled-tier dispatch into
-binding thunks lands incrementally as more binding shapes are wired.
-See the SPEC (section 12 in the repository root),
-`crates/gossamer-binding/ABI_0_4.md`, and the
-`example-external-libraries/` projects for full detail.
+This is the only FFI surface - a source-level `extern "C"` item form
+is rejected (`GP0016`) and `extern` stays reserved. [Calling
+Rust](rust_bindings.md) has the full instructions: the type
+vocabulary, errors, opaque handles, blocking work, wrapping a crate
+that knows nothing about Gossamer, and the tier and ABI rules.
 
 ## Publishing
 

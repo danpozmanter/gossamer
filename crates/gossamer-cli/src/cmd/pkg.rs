@@ -315,21 +315,18 @@ fn scaffold_wrapper_if_needed(
     } else {
         std::fs::canonicalize(&crate_root).unwrap_or_else(|_| crate_root.clone())
     };
+    // `gossamer-binding` is stated by version, not by a path into a
+    // toolchain checkout: the runner redirects it to the `gos` that
+    // builds the project, so the wrapper resolves wherever it is written.
     let wrapper_cargo_toml = format!(
-        "[package]\nname = \"gos-{name}\"\nversion = \"0.0.1\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n\n[lib]\ncrate-type = [\"rlib\"]\n\n[dependencies]\n{name} = {{ {} }}\ngossamer-binding = {{ {} }}\n",
+        "[package]\nname = \"gos-{name}\"\nversion = \"0.0.1\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n\n[lib]\ncrate-type = [\"rlib\"]\n\n[dependencies]\n{name} = {{ {} }}\ngossamer-binding = \"{binding_version}\"\n",
         toml_path_kv("path", &dep_abs),
-        toml_path_kv(
-            "path",
-            &crate::binding_dispatch::locate_gossamer_root().map_or_else(
-                || PathBuf::from("../../../crates/gossamer-binding"),
-                |r| r.join("crates").join("gossamer-binding"),
-            )
-        )
+        binding_version = gossamer_pkg::toolchain_version(),
     );
     fs::write(wrapper_dir.join("Cargo.toml"), wrapper_cargo_toml)?;
-    let symbol_prefix = name.replace('-', "_");
+    let module_name = name.replace('-', "_");
     let wrapper_lib = format!(
-        "//! Wrapper crate exposing `{name}` to Gossamer code.\n//!\n//! Fill in the `register_module!` block(s) below to expose\n//! the API surface you need from `{name}`.\n\nuse gossamer_binding::register_module;\n\nregister_module!(\n    binding,\n    path: \"{symbol_prefix}\",\n    symbol_prefix: {symbol_prefix},\n    doc: \"Bindings for the `{name}` Rust crate.\",\n\n    // Example:\n    // fn version() -> String {{\n    //     env!(\"CARGO_PKG_VERSION\").to_string()\n    // }}\n);\n\n/// Linker-hook: must be called from the runner template so the\n/// linkme entries survive LTO.\npub fn __bindings_force_link() {{\n    binding::force_link();\n}}\n",
+        "//! Wrapper crate exposing `{name}` to Gossamer code.\n//!\n//! Fill in the `#[gos_module]` block below with the API surface\n//! you want reachable from Gossamer. `///` doc comments flow\n//! through to the registered item.\n\nuse gossamer_binding::gos_module;\n\n#[gos_module(\"{module_name}\")]\nmod bindings {{\n    use super::*;\n\n    // Example:\n    // /// Version of the wrapped crate.\n    // pub fn version() -> String {{\n    //     env!(\"CARGO_PKG_VERSION\").to_string()\n    // }}\n}}\n",
     );
     fs::write(wrapper_dir.join("src").join("lib.rs"), wrapper_lib)?;
     Ok(Some(wrapper_dir))

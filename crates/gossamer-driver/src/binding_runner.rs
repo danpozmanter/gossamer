@@ -165,8 +165,12 @@ impl BindingRunner {
         profile: Profile,
     ) -> io::Result<Option<Self>> {
         let cache = cache_root()?;
-        prune_runner_cache_once(&cache);
-        Self::from_manifest_in(manifest, manifest_dir, gossamer_root, profile, &cache)
+        // Prune after the workdir is resolved, so this run's own artifacts
+        // are the one thing the reclamation is told to keep.
+        let resolved =
+            Self::from_manifest_in(manifest, manifest_dir, gossamer_root, profile, &cache)?;
+        prune_runner_cache_once(&cache, resolved.as_ref().map(|r| r.workdir.as_path()));
+        Ok(resolved)
     }
 
     /// Same as [`Self::from_manifest`] but uses an explicit cache
@@ -253,6 +257,7 @@ impl BindingRunner {
                 root,
                 crate::cache_maintenance::CachePolicy::default(),
                 false,
+                Some(&self.workdir),
             );
         }
         Ok(bin_path)
@@ -305,6 +310,7 @@ impl BindingRunner {
                 root,
                 crate::cache_maintenance::CachePolicy::default(),
                 false,
+                Some(&self.workdir),
             );
         }
         let mut out = Command::new(&bin_path)
@@ -441,8 +447,12 @@ impl StaticBindingsLib {
         profile: Profile,
     ) -> io::Result<Option<Self>> {
         let cache = cache_root()?;
-        prune_runner_cache_once(&cache);
-        Self::from_manifest_in(manifest, manifest_dir, gossamer_root, profile, &cache)
+        // Prune after the workdir is resolved, so this run's own artifacts
+        // are the one thing the reclamation is told to keep.
+        let resolved =
+            Self::from_manifest_in(manifest, manifest_dir, gossamer_root, profile, &cache)?;
+        prune_runner_cache_once(&cache, resolved.as_ref().map(|r| r.workdir.as_path()));
+        Ok(resolved)
     }
 
     /// Same as [`Self::from_manifest`] but uses an explicit cache
@@ -548,6 +558,7 @@ impl StaticBindingsLib {
                 root,
                 crate::cache_maintenance::CachePolicy::default(),
                 false,
+                Some(&self.workdir),
             );
         }
         Ok(archive)
@@ -1058,7 +1069,7 @@ fn cache_root() -> io::Result<PathBuf> {
     ))
 }
 
-fn prune_runner_cache_once(cache_root: &Path) {
+fn prune_runner_cache_once(cache_root: &Path, in_use: Option<&Path>) {
     use std::sync::OnceLock;
     static PRUNED: OnceLock<()> = OnceLock::new();
     PRUNED.get_or_init(|| {
@@ -1066,6 +1077,7 @@ fn prune_runner_cache_once(cache_root: &Path) {
             &cache_root.join("runners"),
             crate::cache_maintenance::CachePolicy::default(),
             false,
+            in_use,
         );
     });
 }

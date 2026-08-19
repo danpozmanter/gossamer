@@ -398,6 +398,69 @@ fn examples_rust_binding_add_project_tests_all_pass() {
 }
 
 #[test]
+fn examples_rust_binding_shapes_agree_across_tiers() {
+    // `examples/projects/rust_binding_shapes` exercises the binding
+    // shapes that are converted at the boundary rather than crossing
+    // as a bare word: `Bytes`, `Map<K, V>`, a tuple, and a
+    // `#[derive(GosStruct)]` struct. The bytecode VM and the native
+    // build must print the same lines for each.
+    let project = examples_dir().join("projects").join("rust_binding_shapes");
+    let tested = Command::new(gos_bin())
+        .arg("test")
+        .current_dir(&project)
+        .output()
+        .expect("spawn test");
+    assert!(
+        tested.status.success(),
+        "stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&tested.stderr),
+        String::from_utf8_lossy(&tested.stdout)
+    );
+
+    let interpreted = Command::new(gos_bin())
+        .arg("run")
+        .arg("src/main.gos")
+        .current_dir(&project)
+        .output()
+        .expect("spawn run");
+    assert!(
+        interpreted.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&interpreted.stderr)
+    );
+
+    let built = Command::new(gos_bin())
+        .arg("build")
+        .arg("src/main.gos")
+        .current_dir(&project)
+        .output()
+        .expect("spawn build");
+    assert!(
+        built.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let binary = project
+        .join("target")
+        .join("debug")
+        .join("rust_binding_shapes");
+    let native = Command::new(&binary)
+        .current_dir(&project)
+        .output()
+        .expect("spawn native binary");
+    assert!(
+        native.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&interpreted.stdout),
+        String::from_utf8_lossy(&native.stdout),
+        "bytecode VM and native build disagree on the binding wire shapes"
+    );
+}
+
+#[test]
 fn jit_compiled_binding_call_resolves_predeclared_symbol() {
     // A [rust-bindings] call reached from a JIT-compiled function must
     // resolve its `gos_binding_*` symbol from the intrinsic cache that

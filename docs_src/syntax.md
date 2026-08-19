@@ -403,13 +403,16 @@ M:N scheduler. Blocking primitives (channel ops, mutex contention,
 goroutine, freeing the worker thread to run other goroutines.
 Channels are typed: `channel()` / `channel(0)` is unbuffered,
 `channel(n)` is bounded, and `channel::unbounded()` is the explicit
-queue form. `select` multiplexes sends and receives.
+queue form. `select` multiplexes sends and receives; it is a keyword, so
+no function, method, or field may be named `select`.
 
-Scheduling uses watchdog-requested cooperative safepoints. Park points and
-function boundaries yield, and native loops poll every 1,024 taken backedges.
-The watchdog requests coroutine suspension and may interrupt a blocking syscall
-with `SIGURG` or a Windows APC. The VM yields its OS worker at the same
-backedge interval but retains its separate bounded worker-pool limitation. See
+Scheduling uses watchdog-requested cooperative safepoints; there is no
+asynchronous preemption. Park points and every function boundary yield, and the
+bytecode VM also polls loop back-edges every 1,024 iterations. The compiled
+back-ends leave back-edges un-polled, so a CPU-bound loop that calls nothing
+holds its worker to completion in a `gos build` binary - give it a call on an
+outer iteration to hand the worker back. The watchdog requests a yield and may
+interrupt a blocking syscall with `SIGURG` or a Windows APC. See
 [runtime design - Preemption](design/runtime.md#preemption).
 
 ## Closures and higher-order fns

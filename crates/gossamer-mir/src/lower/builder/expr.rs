@@ -48,6 +48,14 @@ use super::*;
 
 use super::Builder;
 
+/// How a map's values are compared: the kind the runtime reads a value word
+/// as, and the descriptor its content is folded by when the word stands for a
+/// whole value.
+struct MapValueCompare {
+    kind: u8,
+    desc: Option<String>,
+}
+
 impl<'a> Builder<'a> {
     /// Coerces a source value to the function's declared return ABI shape.
     /// Both explicit `return value` and an implicit tail expression must pass
@@ -1645,6 +1653,36 @@ impl<'a> Builder<'a> {
                 return Some(self.lower_vec_eq(op, lhs_local, rhs_local, tag, span));
             }
         }
+        // Map and set equality: a handle compares by the entries or members
+        // it stands for, not by its identity or by which storage shape it
+        // settled into - the contract Rust's `HashMap` / `HashSet` have.
+        if matches!(op, HirBinaryOp::Eq | HirBinaryOp::Ne) {
+            if let Some(value) = self
+                .map_value_compare(lhs.ty)
+                .or_else(|| self.map_value_compare(self.locals[lhs_local.0 as usize].ty))
+            {
+                return Some(self.lower_map_eq(op, lhs_local, rhs_local, value, span));
+            }
+            if self.is_set_ty(lhs.ty) || self.is_set_ty(self.locals[lhs_local.0 as usize].ty) {
+                return Some(self.lower_set_eq(op, lhs_local, rhs_local, span));
+            }
+            // A dynamic value compares by the contents it stands for, an arm
+            // by its runtime name and every payload field, so two equal
+            // values built separately are equal.
+            if self.is_dyn_value_ty(lhs.ty)
+                || self.is_dyn_value_ty(self.locals[lhs_local.0 as usize].ty)
+            {
+                return Some(self.lower_container_eq(
+                    op,
+                    "gos_rt_dyn_eq",
+                    vec![
+                        Operand::Copy(Place::local(lhs_local)),
+                        Operand::Copy(Place::local(rhs_local)),
+                    ],
+                    span,
+                ));
+            }
+        }
         // When the HIR type is still an inference variable, ground the
         // result type from the operands so the LLVM backend uses the
         // correct alloca type (double vs ptr). Without this, f64
@@ -2221,6 +2259,31 @@ impl<'a> Builder<'a> {
             return cmp;
         }
 
+        // A map and a set are equal to one holding the same entries, whatever
+        // order those went in and whichever storage each side settled into,
+        // so both route to the runtime's content comparison rather than to
+        // the pointer equality a handle would otherwise get.
+        if let Some(value) = self
+            .map_value_compare(ty)
+            .or_else(|| self.map_value_compare(lhs_ty))
+        {
+            return self.lower_map_eq(HirBinaryOp::Eq, lhs_local, rhs_local, value, span);
+        }
+        if self.is_set_ty(ty) || self.is_set_ty(lhs_ty) {
+            return self.lower_set_eq(HirBinaryOp::Eq, lhs_local, rhs_local, span);
+        }
+        if self.is_dyn_value_ty(ty) || self.is_dyn_value_ty(lhs_ty) {
+            return self.lower_container_eq(
+                HirBinaryOp::Eq,
+                "gos_rt_dyn_eq",
+                vec![
+                    Operand::Copy(Place::local(lhs_local)),
+                    Operand::Copy(Place::local(rhs_local)),
+                ],
+                span,
+            );
+        }
+
         let sname = self
             .adt_dispatch_name(ty)
             .or_else(|| self.adt_dispatch_name(lhs_ty))
@@ -2286,6 +2349,60 @@ impl<'a> Builder<'a> {
             span,
         );
         cmp
+    }
+
+    /// How the runtime reads a map's value word for `==`: `0` a word, `1` an
+    /// `f64`, `2` a `String`, `3` a single slot the descriptor describes, `4`
+    /// a block of slots it addresses. `None` when `ty` is not a map.
+    fn map_value_compare(&self, ty: Ty) -> Option<MapValueCompare> {
+        use gossamer_types::TyKind;
+        let TyKind::HashMap { value, .. } = self.tcx.kind_of(ty) else {
+            return None;
+        };
+        let mut cur = *value;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(cur) {
+            cur = *inner;
+        }
+        let kind = match self.tcx.kind_of(cur) {
+            TyKind::Float(_) => 1,
+            TyKind::String => 2,
+            TyKind::Vec(_) | TyKind::Slice(_) => 3,
+            _ if self.inline_field_tys(cur).is_some() => 4,
+            _ => 0,
+        };
+        let desc = match kind {
+            3 | 4 => self.key_descriptor(cur),
+            _ => None,
+        };
+        // A shape with no descriptor is read as the word it is; without one
+        // there is nothing to fold its content by.
+        let kind = if matches!(kind, 3 | 4) && desc.is_none() {
+            0
+        } else {
+            kind
+        };
+        Some(MapValueCompare { kind, desc })
+    }
+
+    /// Whether `ty` is the open dynamic value.
+    fn is_dyn_value_ty(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(cur) {
+            cur = *inner;
+        }
+        matches!(self.tcx.kind_of(cur), TyKind::DynValue)
+    }
+
+    /// Whether `ty` is a `Set` or a `BTreeSet`.
+    fn is_set_ty(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(cur) {
+            cur = *inner;
+        }
+        matches!(self.tcx.kind_of(cur), TyKind::Adt { def, .. }
+            if self.tcx.def_name(*def).is_some_and(|name| matches!(name, "Set" | "BTreeSet")))
     }
 
     /// Per-element tags for a flat-buffer aggregate of scalar/string elements:
@@ -2391,6 +2508,87 @@ impl<'a> Builder<'a> {
     }
 
     /// Emits `gos_rt_vec_eq(lhs, rhs, elem_tag)`, negating the result for `!=`.
+    /// Emits `gos_rt_map_eq(lhs, rhs, value_kind, value_desc)`, negated for
+    /// `!=`. A value that stands for a whole value rather than a number - a
+    /// string, a sequence, an aggregate - carries the descriptor its content
+    /// is folded by, so two equal values at distinct allocations compare
+    /// equal, exactly as they do on the interpreter.
+    fn lower_map_eq(
+        &mut self,
+        op: HirBinaryOp,
+        lhs_local: Local,
+        rhs_local: Local,
+        value: MapValueCompare,
+        span: Span,
+    ) -> Local {
+        let desc = match value.desc {
+            Some(desc) => Operand::Const(ConstValue::Str(desc)),
+            None => Operand::Const(ConstValue::Int(0)),
+        };
+        self.lower_container_eq(
+            op,
+            "gos_rt_map_eq",
+            vec![
+                Operand::Copy(Place::local(lhs_local)),
+                Operand::Copy(Place::local(rhs_local)),
+                Operand::Const(ConstValue::Int(i128::from(value.kind))),
+                desc,
+            ],
+            span,
+        )
+    }
+
+    /// Emits `gos_rt_set_eq(lhs, rhs)`, negated for `!=`.
+    fn lower_set_eq(
+        &mut self,
+        op: HirBinaryOp,
+        lhs_local: Local,
+        rhs_local: Local,
+        span: Span,
+    ) -> Local {
+        self.lower_container_eq(
+            op,
+            "gos_rt_set_eq",
+            vec![
+                Operand::Copy(Place::local(lhs_local)),
+                Operand::Copy(Place::local(rhs_local)),
+            ],
+            span,
+        )
+    }
+
+    fn lower_container_eq(
+        &mut self,
+        op: HirBinaryOp,
+        helper: &str,
+        args: Vec<Operand>,
+        span: Span,
+    ) -> Local {
+        let bool_ty = self.tcx.bool_ty();
+        let eq = self.fresh(bool_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(helper.to_string())),
+            args,
+            destination: Place::local(eq),
+            target: Some(next),
+        });
+        self.set_current(next);
+        if matches!(op, HirBinaryOp::Ne) {
+            let dest = self.fresh(bool_ty);
+            self.emit_assign(
+                Place::local(dest),
+                Rvalue::UnaryOp {
+                    op: UnOp::Not,
+                    operand: Operand::Copy(Place::local(eq)),
+                },
+                span,
+            );
+            return dest;
+        }
+        eq
+    }
+
     fn lower_vec_eq(
         &mut self,
         op: HirBinaryOp,

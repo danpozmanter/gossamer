@@ -226,6 +226,30 @@ impl Parser<'_> {
         }
     }
 
+    /// Parses the leading run of file-level `#![..]` attributes. These
+    /// belong to the file rather than to the item that happens to follow
+    /// them, so they are consumed before any item is parsed.
+    pub(crate) fn parse_file_attrs(&mut self) -> Attrs {
+        let mut inner = Vec::new();
+        while self.at_inner_attribute_start() {
+            match self.parse_attribute() {
+                Some(attribute) => inner.push(attribute),
+                None => break,
+            }
+        }
+        Attrs {
+            outer: Vec::new(),
+            inner,
+        }
+    }
+
+    /// Whether the cursor is at `#![`, the file- and item-level inner form.
+    pub(crate) fn at_inner_attribute_start(&self) -> bool {
+        self.at_punct(Punct::Hash)
+            && matches!(self.peek_nth(1).kind, TokenKind::Punct(Punct::Bang))
+            && matches!(self.peek_nth(2).kind, TokenKind::Punct(Punct::LBracket))
+    }
+
     /// Whether the cursor is at `#[` or `#![`, the only shapes that open an
     /// attribute. `#` also begins the `#[..]` Vec and `#{..}` Set literals,
     /// so the following token decides which construct this is.
@@ -315,6 +339,7 @@ impl Parser<'_> {
     }
 
     fn parse_fn_decl(&mut self, visibility: Visibility) -> FnDecl {
+        let start = self.peek_span();
         let is_comptime = self.eat_keyword(Keyword::Comptime);
         let is_unsafe = self.eat_keyword(Keyword::Unsafe);
         self.expect_keyword(Keyword::Fn, "to start function declaration");
@@ -342,6 +367,8 @@ impl Parser<'_> {
             None
         };
         FnDecl {
+            attrs: Attrs::default(),
+            span: start.join(self.last_span()),
             is_unsafe,
             is_comptime,
             visibility,
@@ -672,8 +699,9 @@ impl Parser<'_> {
                 });
                 continue;
             }
-            drop(attrs);
-            items.push(TraitItem::Fn(self.parse_fn_decl(Visibility::Public)));
+            let mut decl = self.parse_fn_decl(Visibility::Public);
+            decl.attrs = attrs;
+            items.push(TraitItem::Fn(decl));
         }
         self.expect_punct(Punct::RBrace, "to close trait body");
         TraitDecl {
@@ -749,7 +777,9 @@ impl Parser<'_> {
                 value,
             };
         }
-        ImplItem::Fn(self.parse_fn_decl(visibility))
+        let mut decl = self.parse_fn_decl(visibility);
+        decl.attrs = attrs;
+        ImplItem::Fn(decl)
     }
 
     fn parse_type_alias_decl(&mut self) -> TypeAliasDecl {

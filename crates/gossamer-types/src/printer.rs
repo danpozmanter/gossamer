@@ -80,6 +80,7 @@ fn write_kind(tcx: &TyCtxt, kind: &TyKind, out: &mut String) {
         TyKind::Duration => out.push_str("time::Duration"),
         TyKind::Instant => out.push_str("time::Instant"),
         TyKind::JsonValue => out.push_str("json::Value"),
+        TyKind::DynValue => out.push_str("DynValue"),
         TyKind::DynError => out.push_str("errors::Error"),
         TyKind::Ref { mutability, inner } => {
             out.push_str(mutability.prefix());

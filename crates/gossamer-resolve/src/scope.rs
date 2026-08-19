@@ -231,6 +231,10 @@ pub(crate) const PRELUDE_TYPES: &[&str] = &[
     // rather than listed here, so a bare `Mutex` reports the import
     // it is missing instead of binding a name with no owning module.
     "I64Vec", "U8Vec",
+    // The open dynamic value. No module exports it - a decoder builds one
+    // with `DynValue::int(..)` and reads it back by kind and arm name - so
+    // the prelude is where its name lives.
+    "DynValue",
 ];
 
 const PRELUDE_VALUES: &[&str] = &[

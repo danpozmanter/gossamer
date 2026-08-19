@@ -972,8 +972,28 @@ impl<'a> Builder<'a> {
         ty: Ty,
         span: Span,
     ) -> Option<Local> {
+        let mut payload = Vec::with_capacity(args.len());
+        for arg in args {
+            payload.push(self.lower_expr(arg)?);
+        }
+        self.lower_user_enum_ctor_from_locals(enum_name, variant_idx, &payload, ty, span)
+    }
+
+    /// Builds one variant of a user enum from payload values already lowered
+    /// into locals. The expression form above is this with its arguments
+    /// lowered first; a caller that computes a payload at run time - a Rust
+    /// binding's declared arm set, decoded into the enum it names - reaches
+    /// the same construction here.
+    pub(crate) fn lower_user_enum_ctor_from_locals(
+        &mut self,
+        enum_name: &str,
+        variant_idx: u32,
+        payload: &[Local],
+        ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-        let n_args = args.len();
+        let n_args = payload.len();
         // Payload bytes only: the discriminant lives in the RC header byte.
         let bytes = (n_args.max(1) * 8) as i128;
 
@@ -1001,9 +1021,8 @@ impl<'a> Builder<'a> {
                 Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(variant_idx)))),
                 span,
             );
-            let (payload_local, is_f64) = if let Some(arg) = args.first() {
-                let p = self.lower_expr(arg)?;
-                let p = self.coerce_enum_payload_array(p, field_tys.first().copied(), span);
+            let (payload_local, is_f64) = if let Some(first) = payload.first().copied() {
+                let p = self.coerce_enum_payload_array(first, field_tys.first().copied(), span);
                 let pty = self.locals[p.0 as usize].ty;
                 let is_f64 = matches!(self.tcx.kind_of(pty), gossamer_types::TyKind::Float(_));
                 (p, is_f64)
@@ -1094,10 +1113,9 @@ impl<'a> Builder<'a> {
         let mut payload_locals = Vec::with_capacity(n_args);
         let mut vec_payloads = vec![false; n_args];
         let mut child_offsets: Vec<i64> = Vec::new();
-        for (i, arg) in args.iter().enumerate() {
-            let payload_local = self.lower_expr(arg)?;
+        for (i, value) in payload.iter().copied().enumerate() {
             let payload_local =
-                self.coerce_enum_payload_array(payload_local, field_tys.get(i).copied(), span);
+                self.coerce_enum_payload_array(value, field_tys.get(i).copied(), span);
             let payload_ty = self.locals[payload_local.0 as usize].ty;
             // A multi-slot aggregate payload (struct / tuple / array > 1 word)
             // does not fit the one-word payload slot. Heap-box it into an RC

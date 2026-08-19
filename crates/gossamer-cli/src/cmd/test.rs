@@ -753,7 +753,11 @@ fn test_units(resolved: &PathBuf) -> Result<Vec<PathBuf>> {
         }
         return Ok(units);
     }
-    collect_lint_targets(resolved)
+    // A directory that is not itself a package may still hold several: each
+    // one is a single unit rooted at its entry, exactly as above.
+    Ok(crate::paths::group_targets_by_project(
+        &collect_lint_targets(resolved)?,
+    ))
 }
 
 fn discover_tests(file: &Path) -> Result<Vec<TestSpec>> {

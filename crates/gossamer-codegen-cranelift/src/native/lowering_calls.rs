@@ -1000,6 +1000,52 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_tuple_format_desc" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_tuple_cmp" => (&[ptr_ty, ptr_ty, types::I64, ptr_ty], Some(types::I64)),
         "gos_rt_vec_eq" => (&[ptr_ty, ptr_ty, types::I8], Some(types::I8)),
+        "gos_rt_map_eq" => (&[ptr_ty, ptr_ty, types::I64, ptr_ty], Some(types::I64)),
+        "gos_rt_dyn_nil" => (&[], Some(ptr_ty)),
+        "gos_rt_dyn_bool" => (&[types::I32], Some(ptr_ty)),
+        "gos_rt_dyn_int" => (&[types::I64], Some(ptr_ty)),
+        "gos_rt_dyn_float" => (&[types::F64], Some(ptr_ty)),
+        "gos_rt_dyn_char" => (&[types::I32], Some(ptr_ty)),
+        "gos_rt_dyn_string" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_dyn_bytes" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_dyn_list" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_dyn_map" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_dyn_tagged" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_dyn_kind" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_dyn_name" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_dyn_kind_name" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_dyn_len" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_dyn_at" => (&[ptr_ty, types::I64], Some(ptr_ty)),
+        "gos_rt_dyn_arm_index" => (&[ptr_ty, ptr_ty], Some(types::I64)),
+        "gos_rt_dyn_field_i64" => (&[ptr_ty, types::I64], Some(types::I64)),
+        "gos_rt_dyn_field_f64" => (&[ptr_ty, types::I64], Some(types::F64)),
+        "gos_rt_dyn_field_str" => (&[ptr_ty, types::I64], Some(ptr_ty)),
+        "gos_rt_dyn_field_dyn" => (&[ptr_ty, types::I64], Some(ptr_ty)),
+        "gos_rt_dyn_key_at" => (&[ptr_ty, types::I64], Some(ptr_ty)),
+        "gos_rt_dyn_as_i64" => (&[ptr_ty], Some(types::I128)),
+        "gos_rt_dyn_as_f64" => (&[ptr_ty], Some(types::I128)),
+        "gos_rt_dyn_as_bool" => (&[ptr_ty], Some(types::I128)),
+        "gos_rt_dyn_as_char" => (&[ptr_ty], Some(types::I128)),
+        "gos_rt_dyn_as_str" => (&[ptr_ty], Some(types::I128)),
+        "gos_rt_dyn_as_bytes" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_dyn_clone" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_dyn_free" => (&[ptr_ty], None),
+        "gos_rt_dyn_eq" => (&[ptr_ty, ptr_ty], Some(types::I64)),
+        "gos_rt_dyn_format" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_dyn_from_binding_variant" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_set_eq" => (&[ptr_ty, ptr_ty], Some(types::I64)),
+        "gos_rt_binding_bytes_from_vec" | "gos_rt_binding_bytes_to_vec" => {
+            (&[ptr_ty], Some(ptr_ty))
+        }
+        "gos_rt_binding_map_from_map" | "gos_rt_binding_map_to_map" => {
+            (&[ptr_ty, types::I64, types::I64], Some(ptr_ty))
+        }
+        "gos_rt_binding_tuple_from_slots" => (&[ptr_ty, types::I64, types::I64], Some(ptr_ty)),
+        "gos_rt_binding_tuple_to_slots" => (&[ptr_ty, ptr_ty, types::I64, types::I64], None),
+        "gos_rt_binding_struct_from_slots" => {
+            (&[ptr_ty, ptr_ty, types::I64, types::I64], Some(ptr_ty))
+        }
+        "gos_rt_binding_struct_to_slots" => (&[ptr_ty, ptr_ty, types::I64, types::I64], None),
         "gos_rt_map_format" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_map_format_tagged" => (
             &[ptr_ty, types::I64, types::I64, ptr_ty, types::I64],

@@ -164,6 +164,8 @@ pub(crate) fn fn_item(name: &str, body: Expr) -> Item {
 
 pub(crate) fn fn_item_with_ret(name: &str, body: Expr, ret: Option<Type>) -> Item {
     let decl = FnDecl {
+        attrs: Attrs::default(),
+        span: dummy_span(),
         is_unsafe: false,
         is_comptime: false,
         visibility: gossamer_ast::Visibility::Inherited,

@@ -92,6 +92,7 @@ pub struct Resolutions {
     bindings: HashMap<NodeId, DefId>,
     definitions: HashMap<DefId, DefKind>,
     project_aliases: HashMap<String, String>,
+    module_aliases: HashMap<String, String>,
     import_defs: HashMap<NodeId, DefId>,
 }
 
@@ -119,6 +120,25 @@ impl Resolutions {
     #[must_use]
     pub fn project_alias(&self, alias: &str) -> Option<&str> {
         self.project_aliases.get(alias).map(String::as_str)
+    }
+
+    /// Records that a `use path::to::module [as alias]` binds `alias` to
+    /// the module at `module`.
+    ///
+    /// Kept apart from the project aliases because those also say which
+    /// module roots are inlined packages, which is what `pub(package)`
+    /// reachability is defined against; a module import says nothing
+    /// about packages.
+    pub fn insert_module_alias(&mut self, alias: String, module: String) {
+        self.module_aliases.insert(alias, module);
+    }
+
+    /// The module a `use`-imported name was bound to, if any. Its items
+    /// register under the module's own path, so name-keyed dispatch has
+    /// to spell that rather than the name the import introduced.
+    #[must_use]
+    pub fn module_alias(&self, alias: &str) -> Option<&str> {
+        self.module_aliases.get(alias).map(String::as_str)
     }
 
     /// Records that the `use`-imported name at `node` ultimately refers

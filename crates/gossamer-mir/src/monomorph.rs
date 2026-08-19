@@ -125,7 +125,12 @@ pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
             if let Terminator::Call { callee, .. } = &mut block.terminator
                 && let Operand::FnRef { def, substs } = callee
                 && !substs.is_empty()
-                && substs_need_concrete_copy(substs, tcx)
+                // A template whose trait call was resolved per instantiation
+                // is dropped below, so every one of its call sites routes to
+                // a copy - including a scalar instantiation, which would
+                // otherwise keep pointing at a body that no longer exists.
+                && (substs_need_concrete_copy(substs, tcx)
+                    || trait_specialised_defs.contains(&def.local))
             {
                 let name = mangled_name(*def, substs);
                 if emitted.contains(&name) {
@@ -427,6 +432,33 @@ fn specialise_methods_step(
             }
         }
     }
+    // A method may carry its own type parameters on a type that has none -
+    // `impl Cmd { fn arg<T: Arg>(self, v: T) }`. The receiver's substs say
+    // nothing about `T`, so the instantiation is read off the argument types
+    // at the call site, exactly as a generic free function's is.
+    for (bi, body) in bodies.iter().enumerate().take(scan_end).skip(scan_start) {
+        for (blk, block) in body.blocks.iter().enumerate() {
+            let Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                args,
+                ..
+            } = &block.terminator
+            else {
+                continue;
+            };
+            let Some(&base_idx) = method_bases.get(name) else {
+                continue;
+            };
+            let Some(substs) = method_param_substs(&bodies[base_idx], body, args, tcx) else {
+                continue;
+            };
+            let spec_name = method_mangled_name(name, &substs);
+            rewrites.push((bi, blk, spec_name.clone()));
+            if emitted.insert(spec_name.clone()) {
+                to_create.push((base_idx, substs, spec_name, name.clone()));
+            }
+        }
+    }
     let made = !to_create.is_empty();
     for (base_idx, substs, spec_name, base_name) in to_create {
         let mut copy = bodies[base_idx].clone();
@@ -569,6 +601,48 @@ fn peel_ref(tcx: &TyCtxt, ty: Ty) -> Ty {
 /// so the name keys the specialisation: the base `Type::method` name plus the
 /// interned id of each concrete type argument (equal types share an id, so a
 /// call site and the materialised copy agree).
+/// The instantiation a call site gives a method's own type parameters.
+///
+/// The template's parameter locals still carry their `Param`s; each is paired
+/// with the type the call actually passes, so `cmd.arg(1)` reads `T = i64`.
+/// `None` when the method declares no parameters of its own, or when a
+/// parameter's instantiation is not concrete at this site.
+fn method_param_substs(
+    template: &Body,
+    caller: &Body,
+    args: &[Operand],
+    tcx: &TyCtxt,
+) -> Option<Substs> {
+    let mut resolved: Vec<Option<Ty>> = Vec::new();
+    let mut saw_param = false;
+    for (index, arg) in args.iter().enumerate() {
+        let Some(decl) = template.locals.get(index + 1) else {
+            break;
+        };
+        let TyKind::Param { idx, .. } = tcx.kind_of(peel_ref(tcx, decl.ty)) else {
+            continue;
+        };
+        let param = idx.0 as usize;
+        let Operand::Copy(place) = arg else {
+            return None;
+        };
+        let actual = peel_ref(tcx, caller.locals.get(place.local.0 as usize)?.ty);
+        if ty_contains_param(tcx, actual) {
+            return None;
+        }
+        saw_param = true;
+        if resolved.len() <= param {
+            resolved.resize(param + 1, None);
+        }
+        resolved[param] = Some(actual);
+    }
+    if !saw_param {
+        return None;
+    }
+    let types: Option<Vec<Ty>> = resolved.into_iter().collect();
+    Some(Substs::from_types(types?))
+}
+
 fn method_mangled_name(base: &str, substs: &Substs) -> String {
     let mut out = format!("{base}$mono$");
     for (i, arg) in substs.as_slice().iter().enumerate() {

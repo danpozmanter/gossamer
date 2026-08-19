@@ -313,7 +313,7 @@ mod tests {
         assert_eq!(out, again);
         assert!(out.contains("extern crate echo_binding;"));
         assert!(out.contains("extern crate tuigoose;"));
-        assert!(out.contains("echo_binding::__bindings_force_link()"));
+        assert!(out.contains("gossamer_binding::run_all_force_links()"));
         assert!(syn::parse_file(&out).is_ok());
     }
 

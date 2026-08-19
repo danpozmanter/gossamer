@@ -283,6 +283,17 @@ impl Uses {
             used: &mut self.used,
         };
         gossamer_ast::visitor::Visitor::visit_source_file(&mut scan, sf);
+        // The head of a multi-segment `use` path names an import another
+        // `use` introduced, so that import is what makes this one reach
+        // anything.
+        for decl in &sf.uses {
+            if let UseTarget::Module(path) = &decl.target
+                && (path.segments.len() > 1 || decl.list.is_some())
+                && let Some(head) = path.segments.first()
+            {
+                self.used.insert(head.name.clone());
+            }
+        }
     }
 
     fn contains(&self, name: &str) -> bool {
@@ -389,7 +400,11 @@ fn lint_unused_mut_variable(sf: &SourceFile) -> Vec<Finding> {
     out
 }
 
-fn block_reassigns(block: &Block, target: &str) -> bool {
+/// `true` when `target` is assigned, borrowed mutably, or used as the
+/// receiver of a method call anywhere in `block` - the one definition of
+/// "this binding needs its `mut`", shared with the `--fix` rewriter so a
+/// suggested edit can never remove a `mut` the lint would keep.
+pub(crate) fn block_reassigns(block: &Block, target: &str) -> bool {
     let mut found = false;
     walk_block(block, &mut |expr| {
         if found {
@@ -415,7 +430,7 @@ fn block_reassigns(block: &Block, target: &str) -> bool {
 }
 
 /// `true` when `expr` is a place rooted at `target`.
-fn place_root_is(expr: &Expr, target: &str) -> bool {
+pub(crate) fn place_root_is(expr: &Expr, target: &str) -> bool {
     match &expr.kind {
         ExprKind::Path(path) => path.segments.first().is_some_and(|s| s.name.name == target),
         ExprKind::FieldAccess { receiver, .. } => place_root_is(receiver, target),

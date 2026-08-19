@@ -153,7 +153,10 @@ fn expand_gos_opaque(block: &ItemImpl) -> TokenStream2 {
     let type_str = type_name.to_string();
     let registry_ident = format_ident!("__GOS_OPAQUE_REGISTRY_{}", type_str.to_uppercase());
     let mod_path_str = type_str.clone();
-    let mod_prefix_ident = format_ident!("opaque_{}", type_str.to_lowercase());
+    let mod_ident = format_ident!("opaque_{}", type_str.to_lowercase());
+    // The C-ABI prefix is derived from the module path the codegen sees, so
+    // the two are spelled from the same string.
+    let symbol_prefix_ident = format_ident!("{}", sanitize_ident(&mod_path_str));
 
     let mut binding_fns: Vec<TokenStream2> = Vec::new();
     let mut keep_methods: Vec<TokenStream2> = Vec::new();
@@ -164,7 +167,7 @@ fn expand_gos_opaque(block: &ItemImpl) -> TokenStream2 {
             keep_methods.push(quote! { #method });
             let sig = &method.sig;
             let method_name = &sig.ident;
-            let item_name = format_ident!("{}__{}", type_str, method_name);
+            let item_name = method_name.clone();
 
             let inputs = &sig.inputs;
             let output = &sig.output;
@@ -255,9 +258,9 @@ fn expand_gos_opaque(block: &ItemImpl) -> TokenStream2 {
             = ::gossamer_binding::opaque::Registry::new();
 
         ::gossamer_binding::register_module!(
-            #mod_prefix_ident,
+            #mod_ident,
             path: #mod_path_str,
-            symbol_prefix: #mod_prefix_ident,
+            symbol_prefix: #symbol_prefix_ident,
             doc: "Opaque-handle bindings.",
 
             #( #binding_fns )*
@@ -425,17 +428,48 @@ pub fn derive_gos_struct(input: TokenStream) -> TokenStream {
                     unsafe {
                         <::gossamer_binding::DynValue as ::gossamer_binding::native::BindingAbi>::from_input(input)
                     };
-                let v = <::gossamer_binding::DynValue as ::gossamer_binding::ToGos>::to_gos(dv);
-                <Self as ::gossamer_binding::FromGos>::from_gos(&v).unwrap_or_else(|_| {
-                    panic!(concat!("invalid `", #name_str, "` payload at binding boundary"))
-                })
+                // The wire carries the fields positionally, in declaration
+                // order; a `Value::Struct` round trip would need field
+                // names the payload does not carry.
+                let payload: ::std::vec::Vec<::gossamer_binding::DynValue> = match dv {
+                    ::gossamer_binding::DynValue::Tagged { payload, .. } => payload,
+                    ::gossamer_binding::DynValue::List(items) => items,
+                    other => ::std::vec![other],
+                };
+                let mut fields = payload.into_iter();
+                Self {
+                    #(
+                        #field_names: {
+                            let next = fields
+                                .next()
+                                .unwrap_or(::gossamer_binding::DynValue::Nil);
+                            let value = <::gossamer_binding::DynValue as ::gossamer_binding::ToGos>::to_gos(next);
+                            <#field_tys as ::gossamer_binding::FromGos>::from_gos(&value)
+                                .unwrap_or_else(|_| panic!(concat!(
+                                    "invalid `", #name_str, ".", #field_names_str,
+                                    "` payload at binding boundary"
+                                )))
+                        },
+                    )*
+                }
             }
 
             fn to_output(self) -> Self::Output {
-                let v = <Self as ::gossamer_binding::ToGos>::to_gos(self);
-                let dv = <::gossamer_binding::DynValue as ::gossamer_binding::FromGos>::from_gos(&v)
-                    .unwrap_or(::gossamer_binding::DynValue::Nil);
-                <::gossamer_binding::DynValue as ::gossamer_binding::native::BindingAbi>::to_output(dv)
+                let payload: ::std::vec::Vec<::gossamer_binding::DynValue> = ::std::vec![
+                    #(
+                        {
+                            let value = <#field_tys as ::gossamer_binding::ToGos>::to_gos(self.#field_names);
+                            <::gossamer_binding::DynValue as ::gossamer_binding::FromGos>::from_gos(&value)
+                                .unwrap_or(::gossamer_binding::DynValue::Nil)
+                        },
+                    )*
+                ];
+                <::gossamer_binding::DynValue as ::gossamer_binding::native::BindingAbi>::to_output(
+                    ::gossamer_binding::DynValue::Tagged {
+                        name: ::std::string::String::from(#name_str),
+                        payload,
+                    },
+                )
             }
         }
     }

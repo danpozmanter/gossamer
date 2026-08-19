@@ -1,0 +1,95 @@
+/*
+ * A map is equal to a map holding the same entries and a set to a set holding
+ * the same members, whatever order they went in and whichever representation
+ * each side settled into - the contract Rust's `HashMap` and `HashSet` have.
+ * The comparisons run through a helper called more than once so the JIT sees
+ * a hot body and every tier answers from its own compiled form.
+ */
+
+struct Point { x: i64, y: i64 }
+enum Colour { Red, Green, Blue(i64) }
+
+fn string_keyed() -> String {
+    let mut a: Map<String, i64> = Map::new()
+    a.insert("b", 1); a.insert("a", 2)
+    let mut s: Map<String, String> = Map::new()
+    s.insert("k2", "v2"); s.insert("k1", "v1")
+    let mut f: Map<String, f64> = Map::new()
+    f.insert("y", 2.5); f.insert("x", 1.5)
+    format!(
+        "{} {} {} {} {} {} {}"
+        a == { "a": 2, "b": 1 }
+        a != { "a": 2, "b": 1 }
+        a == { "a": 2 }
+        a == { "a": 2, "b": 9 }
+        s == { "k1": "v1", "k2": "v2" }
+        f == { "x": 1.5, "y": 2.5 }
+        f == { "x": 1.5, "y": 2.6 }
+    )
+}
+
+fn other_keys() -> String {
+    let mut i: Map<i64, i64> = Map::new()
+    i.insert(2, 20); i.insert(1, 10)
+    let mut b: BTreeMap<String, i64> = BTreeMap::new()
+    b.insert("b", 1); b.insert("a", 2)
+    let mut b2: BTreeMap<String, i64> = BTreeMap::new()
+    b2.insert("a", 2); b2.insert("b", 1)
+    let mut pk: Map<Point, i64> = Map::new()
+    pk.insert(Point { x: 1, y: 2 }, 7)
+    let mut pk2: Map<Point, i64> = Map::new()
+    pk2.insert(Point { x: 1, y: 2 }, 7)
+    let mut ek: Map<Colour, i64> = Map::new()
+    ek.insert(Colour::Blue(3), 1)
+    let mut ek2: Map<Colour, i64> = Map::new()
+    ek2.insert(Colour::Blue(3), 1)
+    let mut ek3: Map<Colour, i64> = Map::new()
+    ek3.insert(Colour::Blue(4), 1)
+    let e1: Map<String, i64> = Map::new()
+    let e2: Map<String, i64> = Map::from([])
+    format!(
+        "{} {} {} {} {} {}"
+        i == { 1: 10, 2: 20 }
+        b == b2
+        pk == pk2
+        ek == ek2
+        ek == ek3
+        e1 == e2
+    )
+}
+
+fn members() -> String {
+    let mut st: Set<i64> = Set::new()
+    st.insert(3); st.insert(1)
+    let mut ss: Set<String> = Set::new()
+    ss.insert("b"); ss.insert("a")
+    let bt: BTreeSet<i64> = #{ 3, 1 }
+    let bt2: BTreeSet<i64> = #{ 1, 3 }
+    let mut ps: Set<Point> = Set::new()
+    ps.insert(Point { x: 1, y: 2 })
+    let mut ps2: Set<Point> = Set::new()
+    ps2.insert(Point { x: 1, y: 2 })
+    format!(
+        "{} {} {} {} {} {} {}"
+        st == #{ 1, 3 }
+        st != #{ 1, 3 }
+        st == #{ 1, 2 }
+        st == #{ 1 }
+        ss == #{ "a", "b" }
+        bt == bt2
+        ps == ps2
+    )
+}
+
+fn main() {
+    let mut lines: Vec<String> = #[]
+    for _ in 0..3 {
+        lines.push(string_keyed())
+        lines.push(other_keys())
+        lines.push(members())
+    }
+    println!("{}", lines[0])
+    println!("{}", lines[1])
+    println!("{}", lines[2])
+    println!("stable: {}", lines[0] == lines[6] && lines[1] == lines[7] && lines[2] == lines[8])
+}

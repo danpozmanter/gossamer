@@ -47,14 +47,15 @@ the implementation by a rev.
 
 | Command | Purpose |
 |---------|---------|
-| `gos new ID [--path DIR] [--template bin|lib|workspace]` | Scaffold a project. |
+| `gos new ID [--path DIR] [--template bin\|lib\|service\|workspace\|binding]` | Scaffold a project, or a Rust binding crate. |
 | `gos init ID` | Create `project.toml` in the CWD. |
 | `gos add SPEC` | Add a dependency (`name` or `name@version`). |
 | `gos remove ID` | Drop a dependency. |
 | `gos update` | Update locked dependencies within declared ranges. |
 | `gos tidy` | Remove unused project dependencies and canonicalise the manifest. |
-| `gos fetch` | Populate the local cache. |
-| `gos vendor` | Copy fetched deps into `./vendor/`. |
+| `gos fetch` | Prepare each git / registry / tarball dependency's source in the local cache. |
+| `gos vendor` | Copy the same trees into `./vendor/`. |
+| `gos bindgen FILE [--output DIR] [--module NAME]` | Scaffold a Rust binding crate from a Rust source file's `pub fn` items. |
 
 ## Registry workflow
 
@@ -172,8 +173,9 @@ directly:
 - `hover` / `definition` / `references` / `workspace_symbols` -
   semantic navigation backed by the same analysis engine as
   `gos lsp`.
-- The skill card ships as the `gossamer://skill-card` resource
-  and the `skill-card` prompt.
+- The [AI skill card](https://github.com/danpozmanter/gossamer/blob/main/SKILL.md)
+  ships as the `gossamer://skill-card` resource and the
+  `skill-card` prompt; `gos skill-prompt` prints the same text.
 
 MCP framing is newline-delimited JSON-RPC; LSP framing is
 `Content-Length`-headed. `gos lsp` belongs in an editor's LSP

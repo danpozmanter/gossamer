@@ -138,9 +138,8 @@ pub enum TypeError {
         /// spelling is what missed, not the name.
         field_of_same_name: bool,
     },
-    /// A slot-backed container (`Deque`, `Queue`, `Stack`, `MaxHeap`,
-    /// `MinHeap`) named an element it cannot hold: one word per element is
-    /// all it stores.
+    /// A heap (`MaxHeap`, `MinHeap`) named an element the language has no
+    /// ordering for, so the heap has nothing to order it by.
     #[error("`{owner}` cannot hold an element of type `{found}`")]
     SlotCollectionElement {
         /// Container spelling as written.
@@ -1212,13 +1211,14 @@ impl TypeDiagnostic {
                     ))
                 } else {
                     out.with_help(format!(
-                        "`{owner}` holds a scalar element - an integer of any width, \
-                         `f32` / `f64`, `bool`, or `char`; `{found}` needs a `Vec` \
-                         (or a key into a `Map`)"
+                        "`{owner}` orders every element it holds, and `{found}` has \
+                         no order; hold it in a `Deque` / `Queue` / `Stack`, or key \
+                         the heap by something the language orders"
                     ))
                     .with_note(
-                        "each element occupies one 8-byte slot, which a handle or a \
-                         multi-slot value does not fit",
+                        "a heap orders scalars and `String` by value, and tuples, \
+                         structs, sequences, `Option` / `Result`, and enums by their \
+                         parts; a `Map` and a `Set` have no element order",
                     )
                 };
             }
@@ -1254,8 +1254,10 @@ impl TypeDiagnostic {
             }
             TypeError::PrivateMethod { ty, name, module } => {
                 out = out.with_help(format!(
-                    "`{name}` is declared without `pub`, so only `{module}` can call it; \
-                     write `pub` on the method, or reach it through a `pub` method of `{ty}`"
+                    "only `{module}` and the modules under it can call `{name}` as it is \
+                     declared; write `pub` on the method for callers anywhere, \
+                     `pub (package)` for the rest of this package, or reach it through a \
+                     `pub` method of `{ty}`"
                 ));
             }
             TypeError::UnresolvedOp { op, lhs, rhs } => {

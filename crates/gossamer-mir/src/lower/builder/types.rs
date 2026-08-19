@@ -1084,6 +1084,31 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// True when a value of `ty` is a block of flat slots addressed in
+    /// place - a struct, tuple, or fixed array - rather than a single word.
+    ///
+    /// A scalar, a `String`, an `Option` / `Result` carrier, an inline enum,
+    /// and every opaque runtime handle (`Map`, `Set`, `fs::File`, a socket)
+    /// are one word each. A handle's Adt carries no field table, which is
+    /// what separates it from a struct here.
+    pub(crate) fn is_inline_slot_block(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        let mut t = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(t) {
+            t = *inner;
+        }
+        match self.tcx.kind_of(t) {
+            TyKind::Tuple(_) | TyKind::Array { .. } => true,
+            TyKind::Adt { def, .. } => {
+                def.local != u32::MAX
+                    && def.local != u32::MAX - 1
+                    && !self.tcx.is_inline_enum_ty(t)
+                    && self.tcx.struct_field_tys(*def).is_some()
+            }
+            _ => false,
+        }
+    }
+
     /// `Result<Vec<json::Value>, errors::Error>` - the shape
     /// `gos_rt_yaml_parse_all` returns (one `json::Value` handle per
     /// document in a multi-document YAML stream).
@@ -1412,17 +1437,20 @@ impl<'a> Builder<'a> {
                     if def.local == u32::MAX || def.local == u32::MAX - 1 =>
                 {
                     // By-value `{disc, payload}` field. The payload word
-                    // holds a heap-copy pointer exactly when the active
-                    // side's payload type needs more than one slot:
+                    // holds a heap-copy pointer whenever the active side's
+                    // payload is a by-value aggregate, one slot or many:
                     // substs[0] (Ok/Some) under disc 0, substs[1] (Err)
                     // under disc 1. When both sides are copies the entry
                     // is unconditional (gate -1). The runtime walk
                     // re-checks the discriminant gate and the copy-blob
                     // provenance set, so over-approximating is safe.
-                    let is_copy_shape = |t: Ty| {
-                        self.type_slot_bytes(t) > 8
-                            && matches!(self.tcx.kind_of(t), TyKind::Adt { .. } | TyKind::Tuple(_))
-                    };
+                    //
+                    // The shape has to match what the backend actually
+                    // copies. A one-field struct is a single slot and is
+                    // copied like any other, so its owner needs the entry
+                    // to keep a share of it - the payload the option local
+                    // released on its way out is the same blob.
+                    let is_copy_shape = |t: Ty| self.is_inline_slot_block(t);
                     let ok_side = substs.types().first().copied().is_some_and(is_copy_shape);
                     let err_side = substs.types().get(1).copied().is_some_and(is_copy_shape);
                     match (ok_side, err_side) {
@@ -1736,6 +1764,49 @@ impl<'a> Builder<'a> {
     /// a concrete payload subst. Used to pin the result of `w.upgrade()`
     /// so the standard match/if-let machinery reads the discriminant and
     /// binds the payload at the right type.
+    /// The value a callable expression answers: the declared return of a
+    /// closure literal, or the output its type names.
+    pub(crate) fn closure_expr_output_ty(&self, expr: &HirExpr) -> Option<Ty> {
+        use gossamer_types::TyKind;
+        let concrete = |this: &Self, ty: Ty| {
+            (!matches!(
+                this.tcx.kind_of(ty),
+                TyKind::Var(_) | TyKind::Error | TyKind::Never
+            ))
+            .then_some(ty)
+        };
+        if let HirExprKind::Closure { body, ret, .. } = &expr.kind {
+            if let Some(declared) = ret.and_then(|ty| concrete(self, ty)) {
+                return Some(declared);
+            }
+            if let Some(from_body) = concrete(self, body.ty) {
+                return Some(from_body);
+            }
+        }
+        match self.tcx.kind_of(expr.ty) {
+            TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
+                let output = sig.output;
+                concrete(self, output)
+            }
+            _ => None,
+        }
+    }
+
+    /// The value a callable local answers, when its type names one.
+    pub(crate) fn callable_output_ty(&self, callable: Local) -> Option<Ty> {
+        use gossamer_types::TyKind;
+        let ty = self.locals[callable.0 as usize].ty;
+        let (TyKind::FnPtr(sig) | TyKind::FnTrait(sig)) = self.tcx.kind_of(ty) else {
+            return None;
+        };
+        let output = sig.output;
+        (!matches!(
+            self.tcx.kind_of(output),
+            TyKind::Var(_) | TyKind::Error | TyKind::Never
+        ))
+        .then_some(output)
+    }
+
     pub(crate) fn option_payload_adt_ty(&mut self, payload: Ty) -> Ty {
         use gossamer_types::TyKind;
         let def = gossamer_resolve::DefId::local(u32::MAX - 1);
@@ -1825,9 +1896,12 @@ impl<'a> Builder<'a> {
                 let inner_ty = self.binding_type_to_mir(inner);
                 self.tcx.intern(TyKind::Vec(inner_ty))
             }
-            // Option / Result / Variant map to the runtime's
-            // tagged-union pointer; the codegen treats them as
-            // ptr-sized.
+            // A binding's variant with no declared arms is the open
+            // dynamic value: its shape is decided by the data, so it
+            // carries the runtime's `DynValue`.
+            B::Variant(arms) if arms.is_empty() => self.tcx.intern(TyKind::DynValue),
+            // Option / Result / a declared arm set map to the runtime's
+            // tagged-union pointer; the codegen treats them as ptr-sized.
             B::Option(_) | B::Result(_, _) | B::Variant(_) => {
                 self.tcx.int_ty(gossamer_types::IntTy::I64)
             }

@@ -10,6 +10,9 @@ collector.
 - Language spec: [`SPEC.md`](https://github.com/danpozmanter/gossamer/blob/main/SPEC.md)
 - Project style guide: [`GUIDELINES.md`](https://github.com/danpozmanter/gossamer/blob/main/GUIDELINES.md)
 - Security policy: [`SECURITY.md`](https://github.com/danpozmanter/gossamer/blob/main/SECURITY.md)
+- AI skill card: [`SKILL.md`](https://github.com/danpozmanter/gossamer/blob/main/SKILL.md) -
+  drop it into a model's context to teach it idiomatic Gossamer
+  (`gos skill-prompt` prints the same text)
 
 Gossamer is pre-1.0.0, so the public API may still change before 1.0.
 
@@ -95,6 +98,8 @@ dies. No lifetimes, no borrow-checker surface, no tracing collector.
   automatic memory management fit together.
 - [Writing libraries](libraries.md) - `project.toml`, module
   layout, publishing.
+- [Calling Rust](rust_bindings.md) - binding crates, the type
+  vocabulary, opaque handles.
 - [Standard library](stdlib.md) - module index.
 - [Prelude](prelude.md) - everything available without imports.
 - [Toolchain](toolchain.md) - every subcommand.

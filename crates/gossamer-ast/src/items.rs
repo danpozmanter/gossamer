@@ -272,6 +272,15 @@ pub struct AssocBinding {
 /// A function declaration: signature plus optional body.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FnDecl {
+    /// Attributes written on the declaration. A free function repeats its
+    /// [`Item::attrs`] here, so a method - which has no enclosing `Item` -
+    /// answers the question the same way.
+    #[serde(default)]
+    pub attrs: Attrs,
+    /// Source range covered by the declaration, from the first attribute
+    /// through the closing brace of the body.
+    #[serde(default)]
+    pub span: Span,
     /// `true` when the function is declared `unsafe`.
     pub is_unsafe: bool,
     /// `true` when the function is declared `comptime`. Every call to a

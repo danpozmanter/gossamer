@@ -6,14 +6,15 @@ Sequence adapters: map, filter, fold, zip, enumerate, chain, etc. A `Vec` argume
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
-## Edition behavior
+## Eager and lazy
 
-Edition 2026 keeps these canonical eager signatures. In edition 2027,
-`range`, `range_inclusive`, `map`, `filter`, `take`, `skip`, `enumerate`,
-`chain`, and `zip` form linear lazy `Iterator<T>` pipelines. Terminals consume
-that state once. Use `collect` to materialize it, or traverse a collection
-through its own methods (`xs.map(f)`, `xs.sum()`), which answer eagerly in
-either edition.
+These free functions traverse eagerly: a `Vec` argument is walked and the
+result materialized. Laziness comes from the argument, not the spelling - an
+`Iterator<T>` argument (`xs.iter()`, or a range) keeps `map`, `filter`,
+`take`, `skip`, `enumerate`, `chain`, and `zip` lazy and answers with another
+iterator, and a terminal consumes that state once. Use `collect` to
+materialize it, or traverse a collection through its own methods
+(`xs.map(f)`, `xs.sum()`), which always answer eagerly.
 See the [lazy iterator protocol](../design/lazy_iterators.md) for ownership,
 short-circuiting, overflow, and backend behavior.
 

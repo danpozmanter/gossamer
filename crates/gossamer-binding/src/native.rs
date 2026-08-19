@@ -1120,7 +1120,28 @@ unsafe fn read_dyn_variant(p: *const GosDynVariant) -> DynValue {
         let slice = unsafe { std::slice::from_raw_parts(v.payload, payload_len) };
         slice.iter().map(read_variant_value).collect()
     };
-    DynValue::Tagged { name, payload }
+    unbare(name, payload)
+}
+
+/// Gives back the value a `$`-headed wire arm stands for, and every other arm
+/// as the named arm it is. The two directions have to agree: `to_output`
+/// wraps a bare value under one of these names, and nothing else may.
+fn unbare(name: String, mut payload: Vec<DynValue>) -> DynValue {
+    let single = |payload: &mut Vec<DynValue>| {
+        if payload.is_empty() {
+            DynValue::Nil
+        } else {
+            payload.remove(0)
+        }
+    };
+    match name.as_str() {
+        "$Nil" => DynValue::Nil,
+        "$Bool" | "$Int" | "$Float" | "$Char" | "$String" | "$Bytes" | "$Map" => {
+            single(&mut payload)
+        }
+        "$List" => DynValue::List(payload),
+        _ => DynValue::Tagged { name, payload },
+    }
 }
 
 fn read_variant_value(v: &GosVariantValue) -> DynValue {
@@ -1181,40 +1202,43 @@ impl BindingAbi for DynValue {
     }
 
     fn to_output(self) -> *mut GosDynVariant {
-        // The DynValue is always emitted as a tagged variant on
-        // the wire. Non-Tagged variants (Nil, Bool, ...) wrap in
-        // a synthetic arm name that matches the source-level
-        // sentinel; downstream Gossamer code can pattern-match.
+        // The DynValue is always emitted as a tagged variant on the wire; a
+        // value that is not a named arm rides under a `$`-headed name the
+        // reader gives back as the bare value it stands for.
         match self {
             DynValue::Tagged { name, payload } => {
                 let arm_payload: Vec<GosVariantValue> =
                     payload.iter().map(dyn_to_variant_value).collect();
                 make_dyn_variant(&name, arm_payload)
             }
-            DynValue::Nil => make_dyn_variant("Nil", Vec::new()),
+            // A value that is not a named arm still crosses as one, under a
+            // `$`-headed name no arm can carry - `$` is not an identifier
+            // character - so the reader gives back the bare value rather than
+            // a arm that happens to share its spelling.
+            DynValue::Nil => make_dyn_variant("$Nil", Vec::new()),
             DynValue::Bool(b) => {
-                make_dyn_variant("Bool", vec![dyn_to_variant_value(&DynValue::Bool(b))])
+                make_dyn_variant("$Bool", vec![dyn_to_variant_value(&DynValue::Bool(b))])
             }
             DynValue::Int(i) => {
-                make_dyn_variant("Int", vec![dyn_to_variant_value(&DynValue::Int(i))])
+                make_dyn_variant("$Int", vec![dyn_to_variant_value(&DynValue::Int(i))])
             }
             DynValue::Float(f) => {
-                make_dyn_variant("Float", vec![dyn_to_variant_value(&DynValue::Float(f))])
+                make_dyn_variant("$Float", vec![dyn_to_variant_value(&DynValue::Float(f))])
             }
             DynValue::Char(c) => {
-                make_dyn_variant("Char", vec![dyn_to_variant_value(&DynValue::Char(c))])
+                make_dyn_variant("$Char", vec![dyn_to_variant_value(&DynValue::Char(c))])
             }
             DynValue::String(s) => {
-                make_dyn_variant("String", vec![dyn_to_variant_value(&DynValue::String(s))])
+                make_dyn_variant("$String", vec![dyn_to_variant_value(&DynValue::String(s))])
             }
             DynValue::Bytes(b) => {
-                make_dyn_variant("Bytes", vec![dyn_to_variant_value(&DynValue::Bytes(b))])
+                make_dyn_variant("$Bytes", vec![dyn_to_variant_value(&DynValue::Bytes(b))])
             }
             DynValue::List(items) => {
-                make_dyn_variant("List", items.iter().map(dyn_to_variant_value).collect())
+                make_dyn_variant("$List", items.iter().map(dyn_to_variant_value).collect())
             }
             DynValue::Map(entries) => {
-                make_dyn_variant("Map", vec![dyn_to_variant_value(&DynValue::Map(entries))])
+                make_dyn_variant("$Map", vec![dyn_to_variant_value(&DynValue::Map(entries))])
             }
         }
     }
@@ -2518,8 +2542,9 @@ mod tests {
     fn dyn_value_nil_round_trip() {
         let raw = DynValue::Nil.to_output();
         let back = unsafe { <DynValue as BindingAbi>::from_input(raw) };
-        // Nil wraps in a synthetic "Nil" arm on the wire.
-        assert!(matches!(back, DynValue::Tagged { ref name, .. } if name == "Nil"));
+        // A bare value crosses under a `$`-headed wire name no declared arm
+        // can carry, and comes back as the value rather than as an arm.
+        assert!(matches!(back, DynValue::Nil), "got {back:?}");
     }
 
     #[test]

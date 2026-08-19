@@ -1,0 +1,27 @@
+enum Value {
+    Status(String)
+    Verbatim(String, String)
+}
+
+fn as_text(v: &Value) -> Option<String> {
+    match v {
+        Value::Status(text) | Value::Verbatim(_, text) => Some(text.clone())
+    }
+}
+
+fn widths(rounds: i64) -> i64 {
+    let mut total = 0
+    for _ in 0..rounds {
+        total += match as_text(&Value::Verbatim("txt", "BODY")) {
+            Some(t) => t.len()
+            None => 0
+        }
+    }
+    total
+}
+
+fn main() {
+    println!("{:?}", as_text(&Value::Status("PONG")))
+    println!("{:?}", as_text(&Value::Verbatim("txt", "BODY")))
+    println!("{}", widths(200))
+}

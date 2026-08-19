@@ -1,0 +1,22 @@
+/*
+ * A byte walk reads bytes: `for b in s.as_bytes()` covers the string's whole
+ * UTF-8 encoding, not its Unicode scalar count, so a multi-byte string keeps
+ * its trailing bytes. The three spellings - the direct call, a binding held
+ * first, and `bytes()` - answer the same sequence on every tier.
+ */
+
+fn main() {
+    let samples = #["héllo", "ascii", "", "日本語", "e\u{0301}"]
+    for text in samples {
+        let mut direct: Vec<i64> = #[]
+        for b in text.as_bytes() { direct.push(b as i64) }
+        let raw = text.as_bytes()
+        let mut bound: Vec<i64> = #[]
+        for b in raw { bound.push(b as i64) }
+        let mut iterform: Vec<i64> = #[]
+        for b in text.bytes() { iterform.push(b as i64) }
+        println!("{} len={} byte_len={} direct={} bound={} bytes={} same={}"
+            text, text.len(), text.byte_len(), direct.len(), bound.len(), iterform.len()
+            direct == bound && direct == iterform)
+    }
+}

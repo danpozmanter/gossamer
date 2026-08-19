@@ -276,8 +276,40 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_bheap_push_i64 as *const u8,
         ),
         (
+            "gos_rt_binding_bytes_from_vec",
+            crate::c_abi::gos_rt_binding_bytes_from_vec as *const u8,
+        ),
+        (
+            "gos_rt_binding_bytes_to_vec",
+            crate::c_abi::gos_rt_binding_bytes_to_vec as *const u8,
+        ),
+        (
             "gos_rt_binding_map_free",
             crate::c_abi::gos_rt_binding_map_free as *const u8,
+        ),
+        (
+            "gos_rt_binding_map_from_map",
+            crate::c_abi::gos_rt_binding_map_from_map as *const u8,
+        ),
+        (
+            "gos_rt_binding_map_to_map",
+            crate::c_abi::gos_rt_binding_map_to_map as *const u8,
+        ),
+        (
+            "gos_rt_binding_struct_from_slots",
+            crate::c_abi::gos_rt_binding_struct_from_slots as *const u8,
+        ),
+        (
+            "gos_rt_binding_struct_to_slots",
+            crate::c_abi::gos_rt_binding_struct_to_slots as *const u8,
+        ),
+        (
+            "gos_rt_binding_tuple_from_slots",
+            crate::c_abi::gos_rt_binding_tuple_from_slots as *const u8,
+        ),
+        (
+            "gos_rt_binding_tuple_to_slots",
+            crate::c_abi::gos_rt_binding_tuple_to_slots as *const u8,
         ),
         (
             "gos_rt_binding_variant_to_result",
@@ -602,6 +634,116 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_set_format_ekey",
             crate::c_abi::set::gos_rt_set_format_ekey as *const u8,
+        ),
+        ("gos_rt_dyn_nil", crate::c_abi::gos_rt_dyn_nil as *const u8),
+        (
+            "gos_rt_dyn_bool",
+            crate::c_abi::gos_rt_dyn_bool as *const u8,
+        ),
+        ("gos_rt_dyn_int", crate::c_abi::gos_rt_dyn_int as *const u8),
+        (
+            "gos_rt_dyn_float",
+            crate::c_abi::gos_rt_dyn_float as *const u8,
+        ),
+        (
+            "gos_rt_dyn_char",
+            crate::c_abi::gos_rt_dyn_char as *const u8,
+        ),
+        (
+            "gos_rt_dyn_string",
+            crate::c_abi::gos_rt_dyn_string as *const u8,
+        ),
+        (
+            "gos_rt_dyn_bytes",
+            crate::c_abi::gos_rt_dyn_bytes as *const u8,
+        ),
+        (
+            "gos_rt_dyn_list",
+            crate::c_abi::gos_rt_dyn_list as *const u8,
+        ),
+        ("gos_rt_dyn_map", crate::c_abi::gos_rt_dyn_map as *const u8),
+        (
+            "gos_rt_dyn_tagged",
+            crate::c_abi::gos_rt_dyn_tagged as *const u8,
+        ),
+        (
+            "gos_rt_dyn_kind",
+            crate::c_abi::gos_rt_dyn_kind as *const u8,
+        ),
+        (
+            "gos_rt_dyn_name",
+            crate::c_abi::gos_rt_dyn_name as *const u8,
+        ),
+        (
+            "gos_rt_dyn_kind_name",
+            crate::c_abi::gos_rt_dyn_kind_name as *const u8,
+        ),
+        ("gos_rt_dyn_len", crate::c_abi::gos_rt_dyn_len as *const u8),
+        ("gos_rt_dyn_at", crate::c_abi::gos_rt_dyn_at as *const u8),
+        (
+            "gos_rt_dyn_arm_index",
+            crate::c_abi::gos_rt_dyn_arm_index as *const u8,
+        ),
+        (
+            "gos_rt_dyn_field_i64",
+            crate::c_abi::gos_rt_dyn_field_i64 as *const u8,
+        ),
+        (
+            "gos_rt_dyn_field_f64",
+            crate::c_abi::gos_rt_dyn_field_f64 as *const u8,
+        ),
+        (
+            "gos_rt_dyn_field_str",
+            crate::c_abi::gos_rt_dyn_field_str as *const u8,
+        ),
+        (
+            "gos_rt_dyn_field_dyn",
+            crate::c_abi::gos_rt_dyn_field_dyn as *const u8,
+        ),
+        (
+            "gos_rt_dyn_key_at",
+            crate::c_abi::gos_rt_dyn_key_at as *const u8,
+        ),
+        (
+            "gos_rt_dyn_as_i64",
+            crate::c_abi::gos_rt_dyn_as_i64 as *const u8,
+        ),
+        (
+            "gos_rt_dyn_as_f64",
+            crate::c_abi::gos_rt_dyn_as_f64 as *const u8,
+        ),
+        (
+            "gos_rt_dyn_as_bool",
+            crate::c_abi::gos_rt_dyn_as_bool as *const u8,
+        ),
+        (
+            "gos_rt_dyn_as_char",
+            crate::c_abi::gos_rt_dyn_as_char as *const u8,
+        ),
+        (
+            "gos_rt_dyn_as_str",
+            crate::c_abi::gos_rt_dyn_as_str as *const u8,
+        ),
+        (
+            "gos_rt_dyn_as_bytes",
+            crate::c_abi::gos_rt_dyn_as_bytes as *const u8,
+        ),
+        (
+            "gos_rt_dyn_clone",
+            crate::c_abi::gos_rt_dyn_clone as *const u8,
+        ),
+        (
+            "gos_rt_dyn_free",
+            crate::c_abi::gos_rt_dyn_free as *const u8,
+        ),
+        ("gos_rt_dyn_eq", crate::c_abi::gos_rt_dyn_eq as *const u8),
+        (
+            "gos_rt_dyn_format",
+            crate::c_abi::gos_rt_dyn_format as *const u8,
+        ),
+        (
+            "gos_rt_dyn_from_binding_variant",
+            crate::c_abi::gos_rt_dyn_from_binding_variant as *const u8,
         ),
         (
             "gos_rt_desc_cmp",
@@ -2863,6 +3005,7 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             "gos_rt_map_inc_typed_str_i64",
             crate::c_abi::gos_rt_map_inc_typed_str_i64 as *const u8,
         ),
+        ("gos_rt_map_eq", crate::c_abi::gos_rt_map_eq as *const u8),
         (
             "gos_rt_map_insert",
             crate::c_abi::gos_rt_map_insert as *const u8,
@@ -4515,6 +4658,7 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             "gos_rt_set_format_u64",
             crate::c_abi::gos_rt_set_format_u64 as *const u8,
         ),
+        ("gos_rt_set_eq", crate::c_abi::gos_rt_set_eq as *const u8),
         (
             "gos_rt_set_free",
             crate::c_abi::gos_rt_set_free as *const u8,
@@ -6327,6 +6471,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_vec_insert_safe",
             crate::c_abi::gos_rt_vec_insert_safe as *const u8,
+        ),
+        (
+            "gos_rt_vec_insert_slots_safe",
+            crate::c_abi::gos_rt_vec_insert_slots_safe as *const u8,
         ),
         (
             "gos_rt_vec_join_bool",

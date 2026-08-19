@@ -73,6 +73,31 @@ impl GosSet {
     }
 }
 
+/// Structural equality of two sets: equal when they hold the same elements,
+/// whatever order those were added in. Each element family compares on its own
+/// terms - text by its bytes, integers by value, and an aggregate by the
+/// canonical slot bytes it is keyed under - so two sets built differently but
+/// holding the same members compare equal, as they do in Rust.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_eq(a: *const GosSet, b: *const GosSet) -> i64 {
+    ffi_entry!(0, {
+        if std::ptr::eq(a, b) {
+            return 1;
+        }
+        if a.is_null() || b.is_null() {
+            return 0;
+        }
+        let (x, y) = unsafe { (&*a, &*b) };
+        let same = x.inner == y.inner
+            && x.i64_inner == y.i64_inner
+            && x.struct_inner.len() == y.struct_inner.len()
+            && x.struct_inner
+                .keys()
+                .all(|key| y.struct_inner.contains_key(key));
+        i64::from(same)
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_new() -> *mut GosSet {
     ffi_entry!(std::ptr::null_mut(), {

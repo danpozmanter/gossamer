@@ -136,11 +136,13 @@ impl<'a> Builder<'a> {
 
         let s_local = self.lower_expr(string_expr)?;
 
-        // len = gos_rt_str_len(s)
+        // The cursor reads a byte at a byte offset, so the bound is the
+        // string's byte length: a `String` counts Unicode scalars, and any
+        // multi-byte one has fewer of those than it has bytes.
         let len_local = self.fresh(i64_ty);
         let next = self.new_block(span);
         self.terminate(Terminator::Call {
-            callee: Operand::Const(ConstValue::Str("gos_rt_str_len".to_string())),
+            callee: Operand::Const(ConstValue::Str("gos_rt_str_byte_len".to_string())),
             args: vec![Operand::Copy(Place::local(s_local))],
             destination: Place::local(len_local),
             target: Some(next),

@@ -486,6 +486,16 @@ channel does, a `sleep` returns early, and the child leaves through its
 own exit path with its `defer` frames running in order. Pure computation
 is not a cancellation point - poll `runtime::cohort_cancelled()`.
 
+**Scheduling is cooperative; there is no async preemption.** A goroutine
+yields at a safepoint - any channel / `select` / mutex / `sleep` /
+scheduler-aware read, and every function call - and a watchdog asks a
+long-running worker to yield at its next one. A CPU-bound loop that calls
+NOTHING holds its worker to completion under `gos build` (the compiled
+back-ends leave loop back-edges un-polled so numeric loops stay tight); the
+bytecode VM still yields on back-edges. Give such a loop a call on an outer
+iteration - `runtime::cohort_cancelled()` serves as both the cancellation
+point and the safepoint.
+
 ```gossamer
 use std::sync::channel
 
@@ -504,7 +514,9 @@ fn main() {
 ```
 
 `select { x = rx_a.recv() => .., default => .. }` multiplexes (arms
-poll in source order; `default` makes it non-blocking). One-shot
+poll in source order; `default` makes it non-blocking). `select` is a
+keyword, so nothing may be named it - a method that picks one of
+several values wants `pick`, `choose`, or `one_of`. One-shot
 timer: `time::after(d) -> Receiver` as a select timeout arm.
 `std::sync` also has `Mutex`, `RwLock`, atomics, `Once`, `WaitGroup`,
 `Barrier`, and `Map` (concurrent string->string). `std::thread`
@@ -566,15 +578,26 @@ are callable as methods/free functions and materialize results.
   `Map::pop`),
   `Set` (unordered; `#{...}` literals, full set algebra, and `iter()` for
   every traversal) / `BTreeSet` (the sorted set), `BTreeMap` (sorted; `String` or `i64`
-  keys), `Deque`, `Queue`, `Stack`, `MaxHeap`, `MinHeap` (one slot per
-  element, so the element is a scalar - any integer width, `f32`/`f64`,
-  `bool`, `char`; a heap declines `u64`/`usize`, whose range outruns the
-  signed comparison it orders by, and every one of them declines a `String`,
-  container, or aggregate element with GT0068). A separate i64-only
+  keys), `Deque`, `Queue`, `Stack` (each holds whatever a `Vec<T>` holds),
+  `MaxHeap`, `MinHeap` (any element the language orders: scalars and `String`
+  by value, tuples and structs field by field, sequences lexicographically,
+  `Option`/`Result` by arm then payload, an enum by variant rank then payload;
+  a `Map`, a `Set`, and a `u64`/`usize` are declined with GT0068). A separate i64-only
   `queue`/`stack`/`deque`/`heap`/`ordered_*` family is functional re-bind
   style (`let q = queue::push(q, v)`), not mutating.
 - Bracket literals create Vec values unless an expected fixed-array type is
   present. Borrow arrays or Vecs as `&[T]` / `&mut [T]`.
+- **`DynValue` is the value whose shape the data decides**: `Nil | Bool | Int
+  | Float | Char | String | Bytes | List | Map | Tagged { name, payload }`, a
+  prelude type needing no import. Build with `DynValue::int(7)`,
+  `::string(s)`, `::list(#[..])`, `::map(keys, values)`,
+  `::tagged("Row", #[..])`; read with `kind()` (`nil`/`bool`/`int`/`float`/
+  `char`/`string`/`bytes`/`list`/`map`/`tagged`), `name()` (the runtime arm
+  name, empty otherwise), `len()`, `at(i)`, `key_at(i)`, and
+  `as_i64`/`as_f64`/`as_bool`/`as_char`/`as_str` (each an `Option`) plus
+  `as_bytes`. `==` compares contents, an arm by name and payload. A decoder
+  answers one without a mirror enum; a Rust binding that declares its arms is
+  matched as the ordinary enum spelling the same names.
 - **Weak references**: RC means a genuine cycle leaks unless one edge
   is non-owning: `strong.downgrade() -> Weak<T>`,
   `w.upgrade() -> Option<T>`; `runtime::collect_cycles()` runs the
@@ -670,13 +693,23 @@ http::serve("0.0.0.0:8080", r)?
 ## 13. Project layout
 
 ```
-project.toml       # [project] id/version; [dependencies]; optional
-                   # entry = "src/app.gos"; [rust-bindings] for
-                   # native Rust crates (gos bindgen skeletons)
+project.toml       # [project] id/version/gossamer-version;
+                   # [dependencies]; optional entry = "src/app.gos";
+                   # [rust-bindings] for native Rust crates
 src/main.gos       # binary entry (lib.gos for libraries;
                    # subdir/mod.gos for module `subdir`)
 tests/             # integration tests
 ```
+
+`gossamer-version` is the exact toolchain the project is written
+against; an older `gos` refuses the project rather than failing later.
+Native Rust is reached ONLY through a binding crate named under
+`[rust-bindings]`: `gos new ID --template binding` scaffolds one, its
+`pub fn`s live inside a `#[gos_module("name")]` block (keep `use`
+imports outside it), and `gos bindgen FILE` drafts one from existing
+Rust. `#[gos_opaque]` on an `impl` publishes handle-taking methods
+under the type's name, `#[derive(GosStruct)]` passes a struct by
+value, and `#[gos_blocking]` moves a long sync call off the scheduler.
 
 A multi-package checkout uses `[workspace] members = ["packages/*"]`
 at the root (`gos new ID --template workspace`). Only the resolved
@@ -730,7 +763,7 @@ output wraps to the terminal width, capped at 80 columns.
 | `gos test / bench PATH` | `#[test]` / `#[bench]`; `--coverage`, `--parallel N`, `--format junit`, `--tier-parity`. |
 | `gos fmt [--check] / lint [--fix] / doc / explain CODE` | Format; lints; item docs; diagnostic rationale. `gos doc std`, `gos doc std::<module>`, and `gos doc std::<module>::<item>` answer from the stdlib manifest. |
 | `gos mcp / lsp / repl` | MCP server for agents; stdio LSP for editors; REPL. |
-| `gos new / init / add / remove / tidy / vendor / publish` | Scaffold and package management (Ed25519-signed registry). |
+| `gos new / init / add / remove / tidy / fetch / vendor / publish` | Scaffold (`--template bin\|lib\|service\|workspace\|binding`) and package management: `fetch` / `vendor` prepare git, registry, and tarball dependency sources for an Ed25519-signed registry. |
 | `gos watch / clean / env / completion / bindgen / feature-status` | Re-run on change; caches; toolchain info; shell completions; Rust-binding skeletons; feature registry. |
 | `gos skill-prompt` | Print this card (`gos skill-prompt \| claude --append-system-prompt`). |
 

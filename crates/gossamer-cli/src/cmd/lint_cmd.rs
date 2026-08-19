@@ -65,9 +65,7 @@ fn run(path: &PathBuf, deny_warnings: bool, explain: Option<&str>, fix: bool) ->
                 registry.set(id, gossamer_lint::Level::Deny);
             }
         }
-        for item in &sf.items {
-            gossamer_lint::apply_attributes(&item.attrs, &mut registry);
-        }
+        gossamer_lint::apply_attributes(&sf.attrs, &mut registry);
         if fix {
             let candidate_fixes = gossamer_lint::fixes(&sf, &registry, &source);
             if !candidate_fixes.is_empty() {

@@ -250,6 +250,13 @@ pub(crate) fn set_deep_clone(value: &Value) -> Value {
     handle
 }
 
+/// The elements a set handle stands for, keyed the way the set keys them.
+/// `None` when `value` is not a set handle.
+pub(crate) fn set_entries_of(value: &Value) -> Option<SetEntries> {
+    let id = set_id_of(value)?;
+    SET_REGISTRY.with(|r| r.borrow().get(&id).cloned())
+}
+
 pub(crate) fn set_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
         if matches!(inner.name.as_str(), "Set" | "BTreeSet") {

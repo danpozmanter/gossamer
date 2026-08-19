@@ -327,6 +327,8 @@ pub(super) enum ConcatKind {
     ArrArrBool(i64, i64),
     /// `json::Value` rendered via `gos_rt_json_display`.
     JsonValue,
+    /// `DynValue` rendered via `gos_rt_dyn_format`.
+    DynValue,
     /// `errors::Error` rendered via `gos_rt_error_message`.
     ErrorMessage,
     /// A tuple of scalar elements rendered via `gos_rt_tuple_format`.

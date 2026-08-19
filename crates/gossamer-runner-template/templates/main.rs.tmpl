@@ -10,9 +10,7 @@ fn main() -> std::process::ExitCode {
     // already linked. install_all() walks REGISTRY and registers
     // every item with the interpreter + resolver before we hand
     // off to the CLI's main loop.
-    {{#each bindings}}
-    {{ this.crate_name_ident }}::__bindings_force_link();
-    {{/each}}
+    gossamer_binding::run_all_force_links();
 
     let _ = gossamer_binding::install_all();
 

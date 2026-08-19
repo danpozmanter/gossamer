@@ -143,6 +143,25 @@ fn search(space: Vec<Board>) -> Result<i64, errors::Error> {
 }
 ```
 
+## Scheduling and preemption
+
+Scheduling is cooperative. A goroutine hands its worker back at a
+*safepoint* - a channel or `select` operation, a mutex, `time::sleep`, a
+scheduler-aware read, and every function call and scheduler step - and a
+watchdog asks a long-running worker to yield at the next one. Nothing
+relocates a running goroutine off its worker asynchronously, as Go's signal
+handler does.
+
+That distinction shows up in exactly one shape: a CPU-bound loop that calls
+nothing at all. The bytecode VM still yields on such a loop's back-edges, but a
+`gos build` binary does not - the compiled backends leave loop back-edges
+un-polled so the optimizers can keep numeric loops tight. Such a loop holds one
+worker until it finishes; its peers keep running on the others.
+
+The fix is the same one cancellation already asks for: give a long computation
+a point where it is willing to stop. The `runtime::cohort_cancelled()` check
+above is one, and so is any ordinary call on an outer iteration.
+
 ## Settings
 
 ```gossamer

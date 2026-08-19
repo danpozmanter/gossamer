@@ -2674,3 +2674,292 @@ fn forwarding_a_mut_map_parameter_keeps_the_callers_container() {
     assert_eq!(vm.0, "h left=1 after=1\n", "vm stdout");
     assert_eq!(native.0, vm.0, "tier parity");
 }
+
+/// Writes a dependency package and an app that depends on it by path.
+/// Returns `(app_root, workspace_root)`.
+fn write_package_pair(
+    tag: &str,
+    dep_id: &str,
+    dep_files: &[(&str, &str)],
+    app_id: &str,
+    app_files: &[(&str, &str)],
+) -> (PathBuf, PathBuf) {
+    let root = fresh_dir(tag);
+    let dep = root.join("dep");
+    let app = root.join("app");
+    fs::create_dir_all(&dep).unwrap();
+    fs::create_dir_all(&app).unwrap();
+    fs::write(
+        dep.join("project.toml"),
+        format!("[project]\nid = \"{dep_id}\"\nversion = \"0.1.0\"\n"),
+    )
+    .unwrap();
+    fs::write(
+        app.join("project.toml"),
+        format!(
+            "[project]\nid = \"{app_id}\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\n\"{dep_id}\" = {{ path = \"../dep\" }}\n"
+        ),
+    )
+    .unwrap();
+    for (dir, files) in [(&dep, dep_files), (&app, app_files)] {
+        for (rel, contents) in files {
+            let path = dir.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, contents).unwrap();
+        }
+    }
+    (app, root)
+}
+
+/// Runs `gos check .` at `dir`.
+fn project_check(dir: &Path) -> (String, String, Option<i32>) {
+    let child = Command::new(gos_bin())
+        .arg("check")
+        .arg(".")
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn gos check");
+    run_with_timeout(child)
+}
+
+#[test]
+fn split_impl_blocks_are_visible_to_a_consumer() {
+    // A type's methods belong to the type, not to the file that declares
+    // it, so a consumer reaches every `impl` the package writes.
+    let (app, root) = write_package_pair(
+        "split-impl",
+        "example.com/tylib",
+        &[
+            (
+                "src/lib.gos",
+                "pub struct Holder { pub n: i64 }\n\
+                 impl Holder { pub fn base(&self) -> i64 { self.n } }\n\
+                 pub fn make() -> Holder { Holder { n: 21 } }\n",
+            ),
+            (
+                "src/extra.gos",
+                "use crate::Holder\n\
+                 impl Holder { pub fn doubled(&self) -> i64 { self.base() * 2 } }\n",
+            ),
+        ],
+        "example.com/consumer",
+        &[(
+            "src/main.gos",
+            "use tylib\n\nfn main() { println!(\"{}\", tylib::make().doubled()) }\n",
+        )],
+    );
+    let vm = project_run_vm(&app);
+    let native = project_build_run(&app, "consumer");
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, "42\n", "vm stdout");
+    assert_eq!(native.0, vm.0, "tier parity");
+}
+
+#[test]
+fn entry_module_call_binds_its_own_function() {
+    // A bare name in the entry module names the entry module's item; an
+    // imported sibling's same-named function does not win it.
+    let dir = write_project(
+        "entry-shadow",
+        "example.com/entryshadow",
+        &[
+            (
+                "src/helper.gos",
+                "pub fn label(text: &String) -> String { format!(\"helper: {}\", text) }\n",
+            ),
+            (
+                "src/main.gos",
+                "use crate::helper\n\n\
+                 pub fn label(n: i64) -> String { format!(\"entry: {}\", n) }\n\n\
+                 fn main() { println!(\"{} {}\", label(7), helper::label(&\"t\")) }\n",
+            ),
+        ],
+    );
+    let vm = project_run_vm(&dir);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, "entry: 7 helper: t\n", "vm stdout");
+}
+
+#[test]
+fn package_visible_method_reaches_a_sibling_module() {
+    // `pub (package)` states one visibility, which a method answers to
+    // exactly as a free function does.
+    let dir = write_project(
+        "package-method",
+        "example.com/pkgvis",
+        &[
+            (
+                "src/conn.gos",
+                "pub struct Conn { pub n: i64 }\n\n\
+                 impl Conn {\n\
+                 \x20   pub (package) fn note(&mut self, v: i64) { self.n = v }\n\
+                 \x20   pub fn value(&self) -> i64 { self.n }\n\
+                 }\n\n\
+                 pub (package) fn helper_free() -> i64 { 7 }\n",
+            ),
+            (
+                "src/main.gos",
+                "use crate::conn\n\n\
+                 fn main() {\n\
+                 \x20   let mut c = conn::Conn { n: 0 }\n\
+                 \x20   c.note(5)\n\
+                 \x20   println!(\"{} {}\", c.value(), conn::helper_free())\n\
+                 }\n",
+            ),
+        ],
+    );
+    let vm = project_run_vm(&dir);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, "5 7\n", "vm stdout");
+}
+
+#[test]
+fn cross_package_struct_variant_holding_itself_renders_and_builds() {
+    // A struct variant carrying a boxed value of its own enum keeps the
+    // enum's identity across the package boundary, so the synthesized
+    // `{:?}` matches on it and the build resolves its constructor.
+    let (app, root) = write_package_pair(
+        "boxed-variant",
+        "example.com/vlib",
+        &[(
+            "src/lib.gos",
+            "pub enum Value {\n\
+             \x20   Nil\n\
+             \x20   Int(i64)\n\
+             \x20   Attr { data: Box<Value>, pairs: Vec<(Value, Value)> }\n\
+             }\n\n\
+             pub fn wrapped() -> Value {\n\
+             \x20   Value::Attr { data: Box::new(Value::Int(7)), pairs: #[] }\n\
+             }\n",
+        )],
+        "example.com/vapp",
+        &[(
+            "src/main.gos",
+            "use vlib\n\nfn main() { println!(\"{:?}\", vlib::wrapped()) }\n",
+        )],
+    );
+    let vm = project_run_vm(&app);
+    let native = project_build_run(&app, "vapp");
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, "Attr { data: Int(7), pairs: [] }\n", "vm stdout");
+    assert_eq!(native.0, vm.0, "tier parity");
+}
+
+#[test]
+fn a_project_alias_roots_a_submodule_import() {
+    // `use "id" as alias` names the package, so `use alias::submodule` is
+    // the same import as one written with the module's own name.
+    let (app, root) = write_package_pair(
+        "alias-submodule",
+        "example.com/redis-gos",
+        &[
+            ("src/lib.gos", "pub fn version() -> String { \"1\" }\n"),
+            (
+                "src/config.gos",
+                "use std::errors\n\n\
+                 pub struct Config { pub host: String }\n\n\
+                 pub fn parse(url: &String) -> Result<Config, errors::Error> {\n\
+                 \x20   if url.is_empty() { return Err(errors::new(\"empty\")) }\n\
+                 \x20   Ok(Config { host: url.clone() })\n\
+                 }\n",
+            ),
+        ],
+        "example.com/aliasapp",
+        &[(
+            "src/main.gos",
+            "use std::errors\n\
+             use \"example.com/redis-gos\" as redis\n\
+             use redis::config\n\n\
+             fn run() -> Result<(), errors::Error> {\n\
+             \x20   let cfg = config::parse(&\"localhost\")?\n\
+             \x20   println!(\"{}\", cfg.host)\n\
+             \x20   Ok(())\n\
+             }\n\n\
+             fn main() { let _ = run() }\n",
+        )],
+    );
+    let check = project_check(&app);
+    let vm = project_run_vm(&app);
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(check.2, Some(0), "check stderr: {}", check.1);
+    assert!(
+        !check.1.contains("GL0002"),
+        "the alias is what the second import is rooted at: {}",
+        check.1
+    );
+    assert_eq!(vm.0, "localhost\n", "vm stdout");
+}
+
+#[test]
+fn a_declared_but_unimported_dependency_checks_clean() {
+    // The import states which package a path comes from, which is a rule
+    // about user code: the serde functions the compiler synthesizes for a
+    // dependency's types are not the user's to import.
+    let (app, root) = write_package_pair(
+        "unimported-dep",
+        "example.com/depsl",
+        &[(
+            "src/lib.gos",
+            "pub struct SlotRange { pub start: i64, pub end: i64 }\n\n\
+             pub fn make() -> SlotRange { SlotRange { start: 1, end: 2 } }\n",
+        )],
+        "example.com/unimported",
+        &[("src/main.gos", "fn main() { println!(\"hello\") }\n")],
+    );
+    let check = project_check(&app);
+    let vm = project_run_vm(&app);
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(check.2, Some(0), "check stderr: {}", check.1);
+    assert!(!check.1.contains("GR0016"), "check stderr: {}", check.1);
+    assert_eq!(vm.0, "hello\n", "vm stdout");
+}
+
+#[test]
+fn checking_a_directory_of_projects_checks_each_as_one_unit() {
+    // A directory that is not itself a project may hold several. Each is
+    // checked through its entry, so a cross-module reference resolves the
+    // way it does under `gos run`.
+    let root = fresh_dir("dir-of-projects");
+    for (name, id) in [("one", "example.com/one"), ("two", "example.com/two")] {
+        let project = root.join(name);
+        fs::create_dir_all(project.join("src")).unwrap();
+        fs::write(
+            project.join("project.toml"),
+            format!("[project]\nid = \"{id}\"\nversion = \"0.1.0\"\n"),
+        )
+        .unwrap();
+        fs::write(
+            project.join("src/util.gos"),
+            "pub fn add(a: i64, b: i64) -> i64 { a + b }\n",
+        )
+        .unwrap();
+        fs::write(
+            project.join("src/main.gos"),
+            "fn main() { println!(\"{}\", util::add(1, 2)) }\n",
+        )
+        .unwrap();
+    }
+    let check = project_check(&root);
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(
+        check.2,
+        Some(0),
+        "check stdout: {}\nstderr: {}",
+        check.0,
+        check.1
+    );
+    assert!(
+        !check.0.contains("util.gos") && !check.1.contains("util.gos"),
+        "a sibling module is part of its project's unit, not a unit of its own: {}{}",
+        check.0,
+        check.1
+    );
+}

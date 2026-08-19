@@ -11,6 +11,7 @@ literal `--`. Put `gos run` options before `FILE`.
 | Command | What it does |
 |---------|--------------|
 | `gos new example.com/app --path ./app` | Scaffold a project |
+| `gos new example.com/app --template lib` | Scaffold a library (`bin`, `lib`, `service`, `workspace`, `binding`) |
 | `gos init example.com/app` | Scaffold just `project.toml` in the CWD |
 | `gos run src/main.gos` | Register-based bytecode VM with in-process Cranelift JIT |
 | `gos run --no-jit src/main.gos` | Same VM, pure bytecode dispatch (JIT off) |
@@ -31,7 +32,8 @@ literal `--`. Put `gos run` options before `FILE`.
 | `gos remove example.org/lib` | Drop a dependency |
 | `gos update` | Update locked dependencies within declared ranges |
 | `gos tidy` | Remove unused project dependencies and canonicalise the manifest |
-| `gos fetch` / `gos vendor` | Populate the package cache / vendor tree |
+| `gos fetch` / `gos vendor` | Prepare git / registry / tarball dependency sources |
+| `gos bindgen native/lib.rs` | Scaffold a Rust binding crate from an existing source file |
 | `gos` (no args) / `gos repl` | Start the interactive REPL |
 | `gos repl` then `%help` | List REPL commands |
 | `gos repl` then `%info strings::trim` | Show help and the relevant module or type listing |

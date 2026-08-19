@@ -1218,7 +1218,17 @@ impl<'a> Lowerer<'a> {
 
     fn hashmap_storage_kind(&self, ty: Ty) -> Option<i32> {
         match self.tcx.kind(self.unwrap_ref(ty)) {
-            Some(TyKind::Int(i)) if int_width(*i) == 64 => Some(0),
+            // Every scalar occupies the same one word, and the runtime keeps
+            // it as the bits the slot holds, so a float, a bool, a char, and
+            // a narrow integer share the word-storage kind an `i64` names.
+            Some(
+                TyKind::Int(_)
+                | TyKind::Float(_)
+                | TyKind::Bool
+                | TyKind::Char
+                | TyKind::Duration
+                | TyKind::Instant,
+            ) => Some(0),
             Some(TyKind::String) => Some(1),
             Some(TyKind::Vec(elem) | TyKind::Slice(elem))
                 if matches!(
@@ -1257,7 +1267,17 @@ impl<'a> Lowerer<'a> {
         )
         .unwrap();
         match self.tcx.kind(self.unwrap_ref(ty)) {
-            Some(TyKind::Int(i)) if int_width(*i) == 64 => {
+            // Read every scalar as the word its slot holds: the runtime keys
+            // and stores it by those bits, and reading a float as a double
+            // here would hand the insert a converted value instead.
+            Some(
+                TyKind::Int(_)
+                | TyKind::Float(_)
+                | TyKind::Bool
+                | TyKind::Char
+                | TyKind::Duration
+                | TyKind::Instant,
+            ) => {
                 let value = self.fresh();
                 writeln!(self.out, "  {value} = load i64, ptr {slot}").unwrap();
                 Ok(LoweredMapSlot {

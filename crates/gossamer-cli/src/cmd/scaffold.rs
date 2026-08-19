@@ -43,8 +43,11 @@ pub(crate) fn init(id: &str) -> Result<()> {
 
 /// `gos new ID --path P --template T` - scaffolds a fresh project
 /// directory according to the chosen template (`bin`, `lib`,
-/// `service`, or `workspace`).
+/// `service`, `workspace`, or `binding`).
 pub(crate) fn new(id: &str, path: Option<PathBuf>, template: &str) -> Result<()> {
+    // The binding template writes a Rust crate rather than a project, so
+    // it is reached from a project's manifest rather than run on its own.
+    let mut binding_hint: Option<(String, PathBuf)> = None;
     let project =
         gossamer_pkg::ProjectId::parse(id).with_context(|| format!("invalid id `{id}`"))?;
     let dir = path.unwrap_or_else(|| PathBuf::from(project.tail()));
@@ -96,6 +99,10 @@ pub(crate) fn new(id: &str, path: Option<PathBuf>, template: &str) -> Result<()>
             let lib_rs = binding_template_lib_rs(project.tail());
             fs::write(dir.join("Cargo.toml"), cargo_toml)?;
             fs::write(dir.join("src/lib.rs"), lib_rs)?;
+            binding_hint = Some((
+                format!("{}-binding", project.tail().replace('/', "-")),
+                dir.clone(),
+            ));
         }
         other => {
             return Err(anyhow!(
@@ -109,6 +116,14 @@ pub(crate) fn new(id: &str, path: Option<PathBuf>, template: &str) -> Result<()>
         template,
         dir.display()
     );
+    if let Some((crate_name, crate_dir)) = binding_hint {
+        println!(
+            "add it to the calling project's `project.toml`:\n\n\
+             [rust-bindings]\n\
+             {crate_name} = {{ path = \"{}\" }}",
+            crate_dir.display()
+        );
+    }
     Ok(())
 }
 
@@ -207,9 +222,11 @@ fn binding_template_cargo_toml(crate_name: &str) -> String {
          crate-type = [\"rlib\"]\n\
          \n\
          [dependencies]\n\
-         # Point this at your local gossamer checkout (or use the\n\
-         # registry version once 1.0 is published):\n\
-         gossamer-binding = \"1\"\n",
+         # The binding ABI this crate is built against. The toolchain\n\
+         # resolves it to the `gos` that builds the project, so it\n\
+         # tracks the version stated in `project.toml`.\n\
+         gossamer-binding = \"{binding_version}\"\n",
+        binding_version = gossamer_pkg::toolchain_version(),
     )
 }
 

@@ -179,10 +179,12 @@ both kinds, so rendered output is stable whatever order the elements went in.
 
 ## Deque
 
-`Deque<T>` is a double-ended ring buffer; both ends are constant-time. Its
-element is any scalar - an integer of any width, `f32` / `f64`, `bool`, or
-`char` - and the pop / peek methods answer `Option<T>` in that element type.
-Like Rust's `VecDeque`, `Deque` uses explicit front/back method names.
+`Deque<T>` is a double-ended ring buffer; both ends are constant-time. It
+holds its elements in the same element store a `Vec<T>` uses, so the element
+is any type a `Vec` holds - a scalar, a `String`, a tuple, a struct, an enum,
+a fixed array, a nested container, an `Option` - and the pop / peek methods
+answer `Option<T>` in that element type. Like Rust's `VecDeque`, `Deque` uses
+explicit front/back method names.
 
 | Method | Returns | Notes |
 |---|---|---|
@@ -198,7 +200,7 @@ Like Rust's `VecDeque`, `Deque` uses explicit front/back method names.
 
 ## Queue
 
-`Queue<T>` is a restricted FIFO queue over any scalar element:
+`Queue<T>` is a restricted FIFO queue over any element a `Vec` holds:
 `push` appends to the back, `pop` removes from the front, and `peek` observes
 the front without removing it. Build one with `Queue::new()` or `Queue::from([a, b])`.
 
@@ -213,7 +215,7 @@ the front without removing it. Build one with `Queue::new()` or `Queue::from([a,
 
 ## Stack
 
-`Stack<T>` is a restricted LIFO stack over any scalar element:
+`Stack<T>` is a restricted LIFO stack over any element a `Vec` holds:
 `push` appends to the top, `pop` removes from the top, and `peek` observes
 the top without removing it. Build one with `Stack::new()` or `Stack::from([a, b])`.
 
@@ -230,10 +232,12 @@ the top without removing it. Build one with `Stack::new()` or `Stack::from([a, b
 
 `MaxHeap<T>` and `MinHeap<T>` order their elements by the element's own
 comparison: `push` inserts, `pop` removes the greatest (or least) element, and
-`peek` observes it. The element is any scalar the ordering covers - each signed
-integer width, `u8` / `u16` / `u32`, `f32` / `f64`, `bool`, `char`. A `u64` or
-`usize` element is reported as GT0068: the heap compares slots as signed
-64-bit values, which that range outruns.
+`peek` observes it. The element is any type the language orders - scalars and
+`String` by value, tuples and structs field by field, sequences
+lexicographically, `Option` and `Result` by arm then payload, and an enum by
+variant rank then payload. A `Map` or a `Set` has no element order and is
+reported as GT0068, as is a `u64` or `usize`, whose range outruns the signed
+comparison the heap orders by.
 
 ## `to_string` and the Display rendering
 
@@ -249,12 +253,14 @@ is a cursor rather than a value, so it is collected first (GT0041).
 `xs.join(sep)` uses the same rendering for every element, so any sequence whose
 element `{}` renders can be joined.
 
-## Slot-backed container elements
+## Container element types
 
-`Deque`, `Queue`, `Stack`, `MaxHeap`, and `MinHeap` hold one 8-byte slot per
-element, so their element is a scalar. A `String`, a container, a struct, a
-tuple, an array, or an enum is reported as GT0068 - hold those in a `Vec`, or
-keep a key here and look the value up in a `Map`.
+`Deque`, `Queue`, and `Stack` store and hand back, so they hold whatever a
+`Vec<T>` holds, and an element is owned, released, and rendered exactly as the
+same element in a `Vec` is. A `MaxHeap` and a `MinHeap` also *order* their
+elements, so their element must be one the language orders; an unordered one
+(a `Map`, a `Set`) is reported as GT0068 - hold it in a `Deque` / `Queue` /
+`Stack`, or key the heap by something ordered and look the value up.
 
 ## Tuple
 

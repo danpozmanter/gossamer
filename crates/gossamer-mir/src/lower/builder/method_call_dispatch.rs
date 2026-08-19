@@ -59,7 +59,7 @@ impl<'a> Builder<'a> {
         sym: &'static str,
         receiver: &HirExpr,
         method: &Ident,
-        _args: &[HirExpr],
+        args: &[HirExpr],
         ty: Ty,
         span: Span,
         receiver_local: Local,
@@ -656,7 +656,7 @@ impl<'a> Builder<'a> {
                     substs,
                 })
             }
-            "gos_rt_vec_insert_safe" => {
+            "gos_rt_vec_insert_safe" | "gos_rt_vec_insert_slots_safe" => {
                 let unit = self.tcx.unit();
                 let error = self.tcx.dyn_error_ty();
                 let substs = gossamer_types::Substs::from_types([unit, error]);
@@ -805,6 +805,34 @@ impl<'a> Builder<'a> {
             | "gos_rt_result_map_err_bare"
             | "gos_rt_result_map_bare" => {
                 use gossamer_types::TyKind;
+                // `map` answers the closure's value, not the receiver's.
+                // Typing the destination from the receiver would tell the
+                // drop pass that `Option<Struct>.map(|s| 1)` owns a pointer,
+                // and releasing the integer `1` as one faults.
+                let mapped_payload = if matches!(
+                    sym,
+                    "gos_rt_result_map" | "gos_rt_result_map_bare"
+                ) && self.is_option_adt(receiver_ty)
+                {
+                    args.first()
+                        .and_then(|closure| self.closure_expr_output_ty(closure))
+                        .or_else(|| {
+                            arg_operands
+                                .get(1)
+                                .and_then(|closure| match closure {
+                                    Operand::Copy(place) if place.projection.is_empty() => {
+                                        Some(place.local)
+                                    }
+                                    _ => None,
+                                })
+                                .and_then(|local| self.callable_output_ty(local))
+                        })
+                } else {
+                    None
+                };
+                if let Some(payload) = mapped_payload {
+                    self.option_payload_adt_ty(payload)
+                } else {
                 let mut t = receiver_ty;
                 while let TyKind::Ref { inner, .. } = self.tcx.kind_of(t) {
                     t = *inner;
@@ -826,6 +854,7 @@ impl<'a> Builder<'a> {
                     } else {
                         self.result_i64_error_adt_ty()
                     }
+                }
                 }
             }
             // `result.ok_or(new_err)` - the returned Result's
@@ -895,6 +924,27 @@ impl<'a> Builder<'a> {
             // The Option-returning query helpers: a JSON node only answers
             // when it actually holds that type, which is what the VM and the
             // free-function form both report.
+            // The dynamic value's queries answer only when the value holds
+            // that shape, so each is an `Option`.
+            "gos_rt_dyn_as_i64" => self.option_i64_adt_ty(),
+            "gos_rt_dyn_as_f64" => self.option_f64_adt_ty(),
+            "gos_rt_dyn_as_bool" => self.option_bool_adt_ty(),
+            "gos_rt_dyn_as_str" => self.option_string_adt_ty(),
+            "gos_rt_dyn_as_char" => {
+                let payload = self.tcx.char_ty();
+                self.option_payload_adt_ty(payload)
+            }
+            "gos_rt_dyn_as_bytes" => {
+                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                self.tcx.intern(gossamer_types::TyKind::Vec(i64_ty))
+            }
+            "gos_rt_dyn_kind_name" | "gos_rt_dyn_name" | "gos_rt_dyn_format" => {
+                self.tcx.string_ty()
+            }
+            "gos_rt_dyn_len" => self.tcx.int_ty(gossamer_types::IntTy::I64),
+            "gos_rt_dyn_at" | "gos_rt_dyn_key_at" | "gos_rt_dyn_clone" => {
+                self.tcx.dyn_value_ty()
+            }
             "gos_rt_json_as_i64_opt" => self.option_i64_adt_ty(),
             "gos_rt_json_as_f64_opt" => self.option_f64_adt_ty(),
             "gos_rt_json_as_bool_opt" => self.option_bool_adt_ty(),

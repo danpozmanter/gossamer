@@ -189,6 +189,7 @@ impl Resolver {
 
     fn run(&mut self, source: &SourceFile) {
         self.local_module_paths = collect_module_paths(&source.items);
+        self.precollect_project_aliases(source);
         self.collect_imports(&source.uses);
         self.collect_items(&source.items);
         self.bind_project_imports();
@@ -291,6 +292,54 @@ impl Resolver {
         def
     }
 
+    /// Records each `use "project-id" as alias` against the module the
+    /// bundler inlined that package under, before any other `use` is
+    /// validated. A path rooted at the alias - `use alias::submodule` - is
+    /// the same path as one rooted at the module name, so the head is
+    /// respelled and both spellings reach the same items.
+    fn precollect_project_aliases(&mut self, source: &SourceFile) {
+        let mut by_id: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+        for item in &source.items {
+            if let ItemKind::Mod(decl) = &item.kind
+                && let Some(id) = item
+                    .attrs
+                    .outer
+                    .iter()
+                    .find_map(|attr| attr.string_argument("dependency"))
+            {
+                by_id.entry(id).or_insert_with(|| decl.name.name.clone());
+            }
+        }
+        for use_decl in &source.uses {
+            let gossamer_ast::UseTarget::Project { id, .. } = &use_decl.target else {
+                continue;
+            };
+            let Some(alias) = use_decl.alias.as_ref().map(|a| a.name.clone()) else {
+                continue;
+            };
+            if let Some(module) = by_id.get(id.as_str())
+                && alias != *module
+            {
+                self.project_alias_modules.insert(alias, module.clone());
+            }
+        }
+    }
+
+    /// `path` with a leading project alias replaced by the module it names.
+    fn respell_alias_head(&self, path: &str) -> String {
+        let (head, rest) = match path.split_once("::") {
+            Some((head, rest)) => (head, Some(rest)),
+            None => (path, None),
+        };
+        let Some(module) = self.project_alias_modules.get(head) else {
+            return path.to_string();
+        };
+        match rest {
+            Some(rest) => format!("{module}::{rest}"),
+            None => module.clone(),
+        }
+    }
+
     fn collect_imports(&mut self, uses: &[UseDecl]) {
         for use_decl in uses {
             self.record_imported_module_head(use_decl);
@@ -336,7 +385,16 @@ impl Resolver {
             });
             return;
         }
-        let target = target_path_text(&use_decl.target);
+        let target = self.respell_alias_head(&target_path_text(&use_decl.target));
+        // A module of this unit reached through an import: its items are
+        // registered under the module's own path, so the name the import
+        // introduced has to be respelled before any name-keyed dispatch
+        // sees it. Without the record a constant or a variant reached
+        // through the import type-checks and is unbound at run time.
+        if self.local_module_paths.contains(&target) && name != target {
+            self.resolutions
+                .insert_module_alias(name.clone(), target.clone());
+        }
         self.define_import(&name, use_decl.id, use_decl.span, &target);
     }
 
@@ -384,7 +442,9 @@ impl Resolver {
         }
         if p.segments[0].name != "std" {
             let segments: Vec<&str> = p.segments.iter().map(|s| s.name.as_str()).collect();
-            if self.names_local_module(&segments) {
+            let respelled = self.respell_alias_head(&segments.join("::"));
+            let respelled_segments: Vec<&str> = respelled.split("::").collect();
+            if self.names_local_module(&respelled_segments) {
                 return;
             }
             let joined = segments.join("::");
@@ -445,7 +505,8 @@ impl Resolver {
                 .alias
                 .as_ref()
                 .map_or_else(|| entry.name.name.clone(), |alias| alias.name.clone());
-            let target = format!("{}::{imported}", target_path_text(&use_decl.target));
+            let base = self.respell_alias_head(&target_path_text(&use_decl.target));
+            let target = format!("{base}::{imported}");
             self.define_import(&imported, use_decl.id, use_decl.span, &target);
         }
     }
@@ -527,11 +588,18 @@ impl Resolver {
     /// The last segment is the imported item, so any prefix that names a
     /// declared module makes the path local: `options::Colorize` and
     /// `config::example::options::Colorize` both start at the crate root.
+    /// True when a `use` path names a module this unit declares, or an item
+    /// of one. Only the whole path and its parent are accepted: matching any
+    /// prefix would take `pkg::nowhere::Missing` for a real import on the
+    /// strength of `pkg` alone, binding a name nothing declares.
     fn names_local_module(&self, segments: &[&str]) -> bool {
-        (1..segments.len()).any(|end| {
-            self.local_module_paths
-                .contains(&segments[..end].join("::"))
-        })
+        if self.local_module_paths.contains(&segments.join("::")) {
+            return true;
+        }
+        segments.len() > 1
+            && self
+                .local_module_paths
+                .contains(&segments[..segments.len() - 1].join("::"))
     }
 
     /// Reports an unresolved name, naming the rename when the name is a
@@ -1506,6 +1574,27 @@ impl Resolver {
                     return;
                 }
             }
+            // A `use pkg::child` head names a module by the last segment of
+            // the path it was imported through, and its types register under
+            // that whole path. The value side already respells such a head;
+            // a type named in a signature has to reach the same declaration
+            // or it becomes a second, unrelated one.
+            if let Some(target) = self.imported_targets.get(effective[0]).cloned() {
+                let mut rejoined: Vec<&str> = target.split("::").collect();
+                rejoined.extend_from_slice(&effective[1..]);
+                if let Some(resolution) = self.lookup_qualified_type(&rejoined) {
+                    if let Some(span) = span {
+                        self.check_visibility(resolution, None, span);
+                    }
+                    if let Some(anchor) = anchor {
+                        self.resolutions.insert(anchor, resolution);
+                    }
+                    for segment in &path.segments {
+                        self.resolve_generic_args(&segment.generics);
+                    }
+                    return;
+                }
+            }
         }
         // A qualifier that leaves one segment behind (`super::Point`,
         // `crate::Point`) names that type through the scope chain, the same
@@ -1792,6 +1881,12 @@ impl Resolver {
     /// `dep::item` path comes from, so the bare path is rejected outside the
     /// dependency's own body.
     fn check_dependency_import(&mut self, effective: &[&str], span: Span) {
+        // The import states which package a path comes from, which only user
+        // code has to say: a synthesized item's paths were written by the
+        // compiler, which already knows where each type lives.
+        if self.synthesized_depth > 0 {
+            return;
+        }
         let Some(head) = effective.first() else {
             return;
         };

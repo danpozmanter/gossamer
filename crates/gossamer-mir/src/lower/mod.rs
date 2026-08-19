@@ -281,6 +281,7 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
 }
 
 pub mod builder;
+pub(crate) mod carrier_ref;
 pub mod helpers;
 
 pub(crate) use builder::Builder;

@@ -2158,6 +2158,30 @@ impl<'a> Builder<'a> {
         if self.user_impl_method_exists(receiver_ty, receiver, &method.name) {
             return SymbolLookup::Found(None);
         }
+        // The open dynamic value answers its whole surface through the
+        // `gos_rt_dyn_*` family, on every tier. Matched ahead of the shared
+        // names below (`at`, `len`, `as_i64`, ...) so a `DynValue` receiver
+        // never falls into another type's helper.
+        if matches!(&receiver_kind_flat, TyKind::DynValue) {
+            if let Some(symbol) = match method.name.as_str() {
+                "kind" => Some("gos_rt_dyn_kind_name"),
+                "name" => Some("gos_rt_dyn_name"),
+                "len" => Some("gos_rt_dyn_len"),
+                "at" => Some("gos_rt_dyn_at"),
+                "key_at" => Some("gos_rt_dyn_key_at"),
+                "as_i64" => Some("gos_rt_dyn_as_i64"),
+                "as_f64" => Some("gos_rt_dyn_as_f64"),
+                "as_bool" => Some("gos_rt_dyn_as_bool"),
+                "as_char" => Some("gos_rt_dyn_as_char"),
+                "as_str" => Some("gos_rt_dyn_as_str"),
+                "as_bytes" => Some("gos_rt_dyn_as_bytes"),
+                "clone" => Some("gos_rt_dyn_clone"),
+                "to_string" => Some("gos_rt_dyn_format"),
+                _ => None,
+            } {
+                return SymbolLookup::Found(Some(symbol));
+            }
+        }
         SymbolLookup::Found(match method.name.as_str() {
             // `.to_string()` routes to the runtime numeric
             // formatter for integer / float receivers. String
@@ -2315,6 +2339,12 @@ impl<'a> Builder<'a> {
                 }
             },
             "trim" => Some("gos_rt_str_trim"),
+            "trim_start" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_trim_start")
+            }
+            "trim_end" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_trim_end")
+            }
             "contains" if matches!(&receiver_kind_flat, TyKind::String) => {
                 Some("gos_rt_str_contains")
             }
@@ -2807,8 +2837,24 @@ impl<'a> Builder<'a> {
                 // path that reinterprets the key pointer.
                 TyKind::HashMap { .. } => Some(self.map_insert_helper(receiver_ty)),
                 // Vec insertion mutates in place and returns a bounds error.
-                TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } => {
-                    Some("gos_rt_vec_insert_safe")
+                // A struct / tuple / array element reaches the runtime as the
+                // address of its slot block, the way `gos_rt_vec_push` takes
+                // one; every other element is the word itself. The two shapes
+                // need different entry points because a one-slot struct is
+                // indistinguishable from a scalar once it is in the vec.
+                TyKind::Vec(elem) | TyKind::Slice(elem) => {
+                    if self.is_inline_slot_block(*elem) {
+                        Some("gos_rt_vec_insert_slots_safe")
+                    } else {
+                        Some("gos_rt_vec_insert_safe")
+                    }
+                }
+                TyKind::Array { elem, .. } => {
+                    if self.is_inline_slot_block(*elem) {
+                        Some("gos_rt_vec_insert_slots_safe")
+                    } else {
+                        Some("gos_rt_vec_insert_safe")
+                    }
                 }
                 _ => None,
             },

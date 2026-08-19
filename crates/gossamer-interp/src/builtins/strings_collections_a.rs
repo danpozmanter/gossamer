@@ -14,6 +14,10 @@ fn builtin_len(args: &[Value]) -> RuntimeResult<Value> {
         Some(Value::Map(m)) => m.lock().len(),
         Some(Value::IntMap(m)) => m.lock().len(),
         Some(Value::StrIntMap(m)) => m.lock().len(),
+        // A named arm counts the payload it carries, which is what
+        // `DynValue::len` reads. Every other enum reaches `len` only through
+        // that type, so no user enum gains a length by it.
+        Some(Value::Variant(v)) => v.fields.len(),
         _ => return Ok(Value::Int(0)),
     };
     Ok(Value::Int(i64::try_from(count).unwrap_or(i64::MAX)))
@@ -92,6 +96,17 @@ fn builtin_trim(args: &[Value]) -> RuntimeResult<Value> {
 /// `for i in 0..s.len()` loop. On a non-string receiver, falls
 /// through to an empty array.
 fn builtin_as_bytes(args: &[Value]) -> RuntimeResult<Value> {
+    // A value that already holds bytes answers itself - the shape a
+    // `DynValue` of bytes carries.
+    if let Some(
+        value @ (Value::IntArray(_)
+        | Value::ByteArray(_)
+        | Value::InlineByteArray(_)
+        | Value::ByteVec(_)),
+    ) = args.first()
+    {
+        return Ok(value.clone());
+    }
     let Some(Value::String(s)) = args.first() else {
         return Ok(Value::empty_array());
     };

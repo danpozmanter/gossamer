@@ -422,7 +422,22 @@ impl<'a> Lowerer<'a> {
         };
         declare_rt(&mut self.runtime_refs, name);
         if name == "gos_rt_option_slot_retain" || name == "gos_rt_option_slot_release" {
-            writeln!(self.out, "  call void @{name}(ptr {base})").unwrap();
+            // The helpers read the payload word beside the discriminant, so
+            // they take the carrier's address. A local holds the carrier
+            // itself, so its own storage is that address; a reference holds
+            // the address, so the slot is what the reference points at.
+            let slot = if p.projection.is_empty()
+                && matches!(
+                    self.tcx.kind(self.body.local_ty(p.local)),
+                    Some(TyKind::Ref { .. })
+                ) {
+                let loaded = self.fresh();
+                writeln!(self.out, "  {loaded} = load ptr, ptr {base}").unwrap();
+                loaded
+            } else {
+                base
+            };
+            writeln!(self.out, "  call void @{name}(ptr {slot})").unwrap();
             return Ok(());
         }
         let meta = match args.get(1) {
@@ -612,6 +627,7 @@ impl<'a> Lowerer<'a> {
                     // Aggregate / collection / variant types
                     // we can route through runtime format helpers.
                     Some(TyKind::JsonValue) => ConcatKind::JsonValue,
+                    Some(TyKind::DynValue) => ConcatKind::DynValue,
                     Some(TyKind::DynError) => ConcatKind::ErrorMessage,
                     Some(TyKind::Array { elem, len }) => {
                         let n = i64::try_from(len.to_usize()).unwrap_or(0);
@@ -1089,20 +1105,25 @@ impl<'a> Lowerer<'a> {
         if !matches!(self.tcx.kind(ty), Some(TyKind::Adt { .. })) {
             return None;
         }
-        // Impl methods register under the type's bare source name, so a
-        // generic instantiation drops its argument suffix (`Wrap<f64>` ->
-        // `Wrap`); `adt#N` is the placeholder for an unnamed Adt.
+        // A generic instantiation registers under the declaration's own name,
+        // so the argument suffix goes (`Wrap<f64>` -> `Wrap`); `adt#N` is the
+        // placeholder for an unnamed Adt.
         let rendered = gossamer_types::printer::render_ty(self.tcx, ty);
-        let bare = rendered.rsplit("::").next().unwrap_or(&rendered);
-        let bare = bare.split('<').next().unwrap_or(bare);
+        let path = rendered.split('<').next().unwrap_or(&rendered);
+        let bare = path.rsplit("::").next().unwrap_or(path);
         if bare.starts_with("adt#") {
             return None;
         }
+        // A method of a type a module declares registers under that module's
+        // path, and one the entry file declares registers bare, so both
+        // spellings have to be tried for the symbol to be found either way.
+        //
         // `to_string` is the `Display` contract (`{}`) and `fmt` the `Debug`
         // one (`{:?}`); each channel reaches only its own method, so a type
         // implementing one keeps the synthesized rendering on the other.
-        let sym = format!("{bare}::{method}");
-        self.param_tys_by_name.contains_key(&sym).then_some(sym)
+        [format!("{path}::{method}"), format!("{bare}::{method}")]
+            .into_iter()
+            .find(|sym| self.param_tys_by_name.contains_key(sym))
     }
 
     /// True when `ty`'s derived `fmt` receives the address of the value's

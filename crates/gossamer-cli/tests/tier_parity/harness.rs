@@ -534,6 +534,34 @@ const SPECS: &[Spec] = &[
     // Traversal methods on `&Map` / `&Set` walk the collection the reference
     // names, matching the same call written on the collection itself.
     spec("feature-testing-examples/keyed_traversal_through_ref.gos"),
+    // A map is equal to a map holding the same entries and a set to a set
+    // holding the same members, whatever order they went in and whichever
+    // representation each settled into; a value that stands for a whole value
+    // compares by its content rather than by the word that reaches it.
+    spec("feature-testing-examples/map_set_content_equality.gos"),
+    // A byte walk is bounded by the string's UTF-8 length, not by its scalar
+    // count, so a multi-byte string keeps its trailing bytes.
+    spec("feature-testing-examples/string_byte_iteration.gos"),
+    // `DynValue` is constructed and read back from pure Gossamer - by kind,
+    // by runtime arm name, and by position - identically on every tier.
+    spec("feature-testing-examples/dyn_value_surface.gos"),
+    // An or-pattern binding one name from different payload positions reads
+    // the field the alternative that matched supplies.
+    spec("feature-testing-examples/or_pattern_payload_binding.gos"),
+    // Trimming one edge of a string answers the same text everywhere.
+    spec("feature-testing-examples/string_trim_edges.gos"),
+    // A generic function and a generic method under a trait bound each
+    // specialise per call site, free-standing and on a receiver alike.
+    spec("feature-testing-examples/generic_trait_bound_method.gos"),
+    // Mapping over an `Option` of a struct answers a value of the
+    // closure's own type, whatever the receiver held.
+    spec("feature-testing-examples/option_map_struct_field.gos"),
+    // A `&mut Option<T>` reads and writes the carrier its caller holds, and
+    // the payload outlives the frame that built it.
+    spec("feature-testing-examples/mut_option_ref_writeback.gos"),
+    // A map value that stands for a whole value - a sequence, an aggregate,
+    // a float - compares by its content on every tier.
+    spec("feature-testing-examples/map_set_aggregate_value_equality.gos"),
     // A sequence element pairing a scalar with a struct holds the struct's
     // words inline, so a destructured binding reads each part at its own slot
     // offset and borrows the element the sequence still owns.
@@ -722,6 +750,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/winb2_parse_u64.gos"),
     spec("feature-testing-examples/winb2_json_int_precision.gos"),
     spec("feature-testing-examples/winb2_hashset_to_vec.gos"),
+    spec("feature-testing-examples/module_aggregate_slots.gos"),
     spec("feature-testing-examples/winb2_vec_insert_remove.gos"),
     spec("feature-testing-examples/winb2_btreemap_keys.gos"),
     // 0.18.0 smaller items: String::from identity, parse-error Display,

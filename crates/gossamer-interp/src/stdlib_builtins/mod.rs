@@ -114,6 +114,7 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     #[cfg(not(target_arch = "wasm32"))]
     install_net(globals);
     install_set(globals);
+    dyn_value::install(globals);
     install_sort(globals);
     install_io_streams(globals);
     install_sync_extras(globals);
@@ -257,6 +258,7 @@ pub mod database_sql;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod database_sql_native;
 pub mod deque;
+pub mod dyn_value;
 pub mod encoding_binary;
 pub mod encoding_csv;
 pub mod encoding_pem;

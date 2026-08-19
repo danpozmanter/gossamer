@@ -1,0 +1,41 @@
+trait Arg {
+    fn to_arg(&self) -> String
+}
+
+impl Arg for i64 {
+    fn to_arg(&self) -> String { self.to_string() }
+}
+
+impl Arg for String {
+    fn to_arg(&self) -> String { self.clone() }
+}
+
+fn encode<T: Arg>(v: &T) -> String { v.to_arg() }
+
+struct Cmd {
+    args: Vec<String>
+}
+
+impl Cmd {
+    fn arg<T: Arg>(self, v: T) -> Cmd {
+        let mut out = self.args
+        out.push(v.to_arg())
+        Cmd { args: out }
+    }
+}
+
+fn widths(rounds: i64) -> i64 {
+    let mut total = 0
+    for _ in 0..rounds {
+        total += encode(&7).len()
+    }
+    total
+}
+
+fn main() {
+    println!("{}", encode(&7))
+    println!("{}", encode(&"hi"))
+    let c = Cmd { args: #[] } |> $.arg(1) |> $.arg("two")
+    println!("{:?}", c.args)
+    println!("{}", widths(200))
+}

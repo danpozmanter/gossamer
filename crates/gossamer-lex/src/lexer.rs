@@ -72,8 +72,13 @@ impl<'src> Lexer<'src> {
         }
         // Permit a Unix hashbang at the beginning of a source file. Treat it
         // exactly like a line comment so its newline stays in the source and
-        // all following spans retain their on-disk line numbers.
-        if start == 0 && first == '#' && self.cursor.peek_nth(1) == '!' {
+        // all following spans retain their on-disk line numbers. `#![` opens
+        // a file-level inner attribute, which a hashbang never spells.
+        if start == 0
+            && first == '#'
+            && self.cursor.peek_nth(1) == '!'
+            && self.cursor.peek_nth(2) != '['
+        {
             self.cursor.bump_while(|character| character != '\n');
             return TokenKind::LineComment;
         }

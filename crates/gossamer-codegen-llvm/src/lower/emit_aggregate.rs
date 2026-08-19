@@ -715,6 +715,14 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
             }
+            ConcatKind::DynValue => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_dyn_format");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_dyn_format(ptr {value})"
+                )
+                .unwrap();
+            }
             ConcatKind::ErrorMessage => {
                 // Display renders the colon-joined cause chain;
                 // `.message()` keeps `gos_rt_error_message`.

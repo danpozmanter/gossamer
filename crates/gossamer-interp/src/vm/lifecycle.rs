@@ -17,6 +17,8 @@ impl Vm {
         let mut vm = Self {
             globals: Arc::new(rustc_hash::FxHashMap::default()),
             prelude: builtins::prelude_globals(),
+            free_fn_names: Arc::new(rustc_hash::FxHashSet::default()),
+            bare_fn_depth: rustc_hash::FxHashMap::default(),
             qualified_names: RefCell::new(Vec::new()),
             pool: RefCell::new(FramePool::default()),
             mir_bodies: RefCell::new(None),
@@ -73,6 +75,8 @@ impl Vm {
         Self {
             globals,
             prelude: builtins::prelude_globals(),
+            free_fn_names: Arc::new(rustc_hash::FxHashSet::default()),
+            bare_fn_depth: rustc_hash::FxHashMap::default(),
             qualified_names: RefCell::new(Vec::new()),
             pool: RefCell::new(FramePool::default()),
             mir_bodies: RefCell::new(mir_bodies),
@@ -366,6 +370,11 @@ impl Vm {
         // compiling every function body in pass C.
         let mut inline_fns = crate::compile::InlinableFns::new();
         let mut fn_param_tys = crate::compile::FnParamTypes::new();
+        // A bare name belongs to the nearest declaration: the entry file's
+        // own function before a sibling module's, which is the one a bare
+        // call resolves to on every other tier. Depth decides, so the order
+        // the modules are walked in does not.
+        let mut bare_fn_depth: HashMap<String, usize> = HashMap::new();
         for item in &program.items {
             let module_prefix = if item.module_path.is_empty() {
                 None
@@ -404,11 +413,20 @@ impl Vm {
                 }
                 HirItemKind::Fn(decl) => {
                     let params: Vec<Ty> = decl.params.iter().map(|p| p.ty).collect();
-                    fn_param_tys.insert(decl.name.name.clone(), params.clone());
+                    let depth = item.module_path.len();
+                    let nearest = bare_fn_depth
+                        .get(&decl.name.name)
+                        .is_none_or(|claimed| depth < *claimed);
+                    if nearest {
+                        bare_fn_depth.insert(decl.name.name.clone(), depth);
+                    }
+                    if nearest {
+                        fn_param_tys.insert(decl.name.name.clone(), params.clone());
+                    }
                     if let Some(prefix) = &module_prefix {
                         fn_param_tys.insert(format!("{prefix}::{}", decl.name.name), params);
                     }
-                    if let Some(target) = detect_trivial_wrapper(decl) {
+                    if nearest && let Some(target) = detect_trivial_wrapper(decl) {
                         wrappers.insert(decl.name.name.clone(), target);
                     }
                     // The user-function inliner is a performance optimization
@@ -420,7 +438,7 @@ impl Vm {
                     } else {
                         None
                     };
-                    if let Some(info) = inlinable {
+                    if nearest && let Some(info) = inlinable {
                         inline_fns.insert(decl.name.name.clone(), info);
                     }
                 }
@@ -481,6 +499,16 @@ impl Vm {
         // iterator>` / stateful-method mechanism). See
         // `compile::collect_mut_self_methods`.
         let method_muts = crate::compile::collect_mut_self_methods(program);
+        self.free_fn_names = Arc::new(
+            program
+                .items
+                .iter()
+                .filter_map(|item| match &item.kind {
+                    HirItemKind::Fn(decl) => Some(decl.name.name.clone()),
+                    _ => None,
+                })
+                .collect(),
+        );
         // Names of `static mut` items. The compiler lowers an
         // assignment rooted at one of these into an `Op::StoreStatic`
         // against the shared `Global::MutStatic` cell.
@@ -1890,6 +1918,8 @@ impl Vm {
         // back to the bare name when no `Type::method` key matches - into
         // a type-specific impl that only understands its own shape.
         let prelude = Arc::clone(&self.prelude);
+        let free_fns = Arc::clone(&self.free_fn_names);
+        let mut bare_depth = std::mem::take(&mut self.bare_fn_depth);
         let globals = Arc::make_mut(&mut self.globals);
         let module_prefix = if item.module_path.is_empty() {
             None
@@ -1930,7 +1960,17 @@ impl Vm {
                     let qualified = format!("{prefix}::{}", decl.name.name);
                     globals.insert(intern(&qualified), Global::Fn(shared.clone()));
                 }
-                globals.insert(intern(&decl.name.name), Global::Fn(shared));
+                // A bare call names the nearest declaration: the entry file's
+                // own item before a sibling module's, which is what the
+                // compiled tiers resolve one to. Depth decides, so the order
+                // the modules happen to compile in does not.
+                let bare = intern(&decl.name.name);
+                let depth = item.module_path.len();
+                let nearer = bare_depth.get(bare).is_none_or(|claimed| depth < *claimed);
+                if nearer {
+                    bare_depth.insert(bare, depth);
+                    globals.insert(bare, Global::Fn(shared));
+                }
             }
             HirItemKind::Impl(decl) => {
                 for method in &decl.methods {
@@ -1959,7 +1999,9 @@ impl Vm {
                             );
                         }
                     }
-                    if !prelude.contains_key(method.name.name.as_str()) {
+                    if !prelude.contains_key(method.name.name.as_str())
+                        && !free_fns.contains(method.name.name.as_str())
+                    {
                         globals.insert(intern(&method.name.name), Global::Fn(shared));
                     }
                 }
@@ -2032,6 +2074,7 @@ impl Vm {
                 }
             },
         }
+        self.bare_fn_depth = bare_depth;
         Ok(())
     }
 }

@@ -386,15 +386,29 @@ binding's writable capability.
 
 Gossamer can call native (Rust) code through the `[rust-bindings]`
 section of `project.toml`. A Rust crate that depends on
-`gossamer-binding` registers its entry points with `register_module!`,
-and the toolchain compiles and links it into the produced binary (or
-the interpreter) - the bound functions are then `use`-able from `.gos`
-source like any other module:
+`gossamer-binding` marks the functions it publishes with
+`#[gos_module]`, and the toolchain compiles and links it into the
+produced binary (or the interpreter) - the bound functions are then
+`use`-able from `.gos` source like any other module. `gos new ID
+--template binding` scaffolds the crate:
 
 ```toml
 # project.toml
 [rust-bindings]
 echo-binding = { path = "echo-binding" }
+```
+
+```rust
+// echo-binding/src/lib.rs
+use gossamer_binding::gos_module;
+
+#[gos_module("echo")]
+mod bindings {
+    /// Shout the input.
+    pub fn shout(s: String) -> String {
+        s.to_uppercase()
+    }
+}
 ```
 
 ```gossamer
@@ -407,8 +421,12 @@ strings, tuples, vectors, `Option` / `Result`, opaque handles, byte
 buffers, callbacks); a panic inside a binding is caught and surfaced as
 a `Result::Err`. There is no source-level `extern "C"` item form - the
 `extern` keyword is reserved (`GP0016`) and `[rust-bindings]` is the
-single FFI surface. See [`SPEC.md` section 12](SPEC.md) and
-[`example-external-libraries/`](example-external-libraries/) for two
+single FFI surface. The full instructions - the type vocabulary,
+errors, opaque handles, blocking work, wrapping a crate that knows
+nothing about Gossamer, and the tier rules - are in [Calling
+Rust](https://danpozmanter.github.io/gossamer/docs/rust_bindings/).
+See also [`SPEC.md` section 12](SPEC.md) and
+[`example-external-libraries/`](example-external-libraries/) for
 end-to-end examples (a Gossamer-aware crate, and a plain published
 crate wrapped thinly).
 

@@ -240,8 +240,10 @@ unsafe fn deque_push_front_slot(d: *mut GosDeque, elem: *const u8) {
     }
 }
 
-/// The element at `idx` of the live range as the `Option` payload word: the
-/// value itself for a one-word element, the slot address for a wider one.
+/// The element at `idx` of the live range as the `Option` payload word the
+/// caller owns: the value itself for a one-word element, a copy of the slot
+/// block for a wider one. The value a `pop` or a `peek` answers is the
+/// caller's, so it stays readable however the container is used next.
 unsafe fn deque_payload_at(d: *const GosDeque, idx: i64) -> Option<i64> {
     if d.is_null() {
         return None;
@@ -255,7 +257,7 @@ unsafe fn deque_payload_at(d: *const GosDeque, idx: i64) -> Option<i64> {
     if at < 0 || at >= vec.len {
         return None;
     }
-    Some(unsafe { crate::c_abi::vec::vec_elem_payload_word(vec, at) })
+    Some(unsafe { crate::c_abi::vec::vec_elem_owned_payload_word(vec, at) })
 }
 
 /// Removes and returns the front element as `Option<T>` packed into i128

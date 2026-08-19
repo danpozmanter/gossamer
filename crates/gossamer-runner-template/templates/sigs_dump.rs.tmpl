@@ -83,9 +83,7 @@ fn json_string(s: &str) -> String {
 }
 
 fn main() {
-    {{#each bindings}}
-    {{ this.crate_name_ident }}::__bindings_force_link();
-    {{/each}}
+    gossamer_binding::run_all_force_links();
 
     let mut modules_json: Vec<String> = Vec::new();
     for module in gossamer_binding::modules() {

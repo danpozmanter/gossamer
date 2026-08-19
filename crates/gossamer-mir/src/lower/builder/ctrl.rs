@@ -723,32 +723,7 @@ impl<'a> Builder<'a> {
                 rest,
                 suffix,
             } => self.lower_slice_pattern(scrutinee, prefix, rest.as_deref(), suffix, span),
-            HirPatKind::Or(branches) => {
-                // Disjunction across branch predicates. Each branch
-                // contributes its own match check; their bool
-                // results are bitwise-ORed together.
-                let mut acc = self.fresh(bool_ty);
-                self.emit_assign(
-                    Place::local(acc),
-                    Rvalue::Use(Operand::Const(ConstValue::Bool(false))),
-                    span,
-                );
-                for branch in branches {
-                    let pred = self.lower_pattern_predicate(scrutinee, branch, span)?;
-                    let combined = self.fresh(bool_ty);
-                    self.emit_assign(
-                        Place::local(combined),
-                        Rvalue::BinaryOp {
-                            op: BinOp::BitOr,
-                            lhs: Operand::Copy(Place::local(acc)),
-                            rhs: Operand::Copy(Place::local(pred)),
-                        },
-                        span,
-                    );
-                    acc = combined;
-                }
-                Some(acc)
-            }
+            HirPatKind::Or(branches) => self.lower_or_pattern_predicate(scrutinee, branches, span),
             HirPatKind::Range { lo, hi, inclusive } => {
                 // `lo..hi` and `lo..=hi` arms reduce to
                 // `(scrut >= lo) && (scrut <op> hi)` where the
@@ -2266,6 +2241,112 @@ impl<'a> Builder<'a> {
     /// feed one shared result local per name. The matching alternative
     /// writes the bound name's value into that result local; control then
     /// merges and the name resolves to it for the rest of the scope.
+    /// Disjunction across alternatives, binding from the one that matched.
+    ///
+    /// Each alternative names its own payload positions - `A(text)` reads
+    /// field 0 where `B(_, text)` reads field 1 - so a name's binding has to
+    /// come from the alternative that actually matched. Merging the
+    /// predicates alone would leave the last alternative's extraction
+    /// standing for every one of them, and every arm would read that
+    /// alternative's slot.
+    fn lower_or_pattern_predicate(
+        &mut self,
+        scrutinee: Local,
+        branches: &[HirPat],
+        span: Span,
+    ) -> Option<Local> {
+        let bool_ty = self.tcx.bool_ty();
+        let mut names: Vec<String> = Vec::new();
+        if let Some(first) = branches.first() {
+            collect_pattern_binding_names(first, &mut names);
+        }
+        let matched_flag = self.push_local(bool_ty, None, true);
+        self.emit_assign(
+            Place::local(matched_flag),
+            Rvalue::Use(Operand::Const(ConstValue::Bool(false))),
+            span,
+        );
+        let merge = self.new_block(span);
+        let mut results: HashMap<String, Local> = HashMap::new();
+        for branch in branches {
+            let matched = self.new_block(span);
+            let next = self.new_block(span);
+            self.push_scope();
+            // Extraction is deferred into the matched block so a
+            // non-matching alternative never reads the wrong payload.
+            let outer_defer = self.payload_defer_block.take();
+            self.payload_defer_block = Some(matched);
+            let pred = self.lower_pattern_predicate(scrutinee, branch, span)?;
+            self.payload_defer_block = outer_defer;
+            self.terminate(Terminator::SwitchInt {
+                discriminant: Operand::Copy(Place::local(pred)),
+                arms: vec![(0, next)],
+                default: matched,
+            });
+            self.set_current(matched);
+            for name in &names {
+                let Some(src) = self.lookup_local(name) else {
+                    continue;
+                };
+                let src_ty = self.locals[src.0 as usize].ty;
+                let dst = match results.get(name).copied() {
+                    Some(existing) => {
+                        let existing_ty = self.locals[existing.0 as usize].ty;
+                        let loose = matches!(
+                            self.tcx.kind_of(existing_ty),
+                            gossamer_types::TyKind::Var(_)
+                                | gossamer_types::TyKind::Error
+                                | gossamer_types::TyKind::Never
+                        );
+                        let concrete = !matches!(
+                            self.tcx.kind_of(src_ty),
+                            gossamer_types::TyKind::Var(_)
+                                | gossamer_types::TyKind::Error
+                                | gossamer_types::TyKind::Never
+                        );
+                        if loose && concrete {
+                            self.locals[existing.0 as usize].ty = src_ty;
+                        }
+                        existing
+                    }
+                    None => {
+                        let local = self.push_local(src_ty, Some(Ident::new(name.as_str())), true);
+                        results.insert(name.clone(), local);
+                        local
+                    }
+                };
+                if let Some(sn) = self.local_struct.get(&src).cloned() {
+                    self.local_struct.insert(dst, sn);
+                }
+                if let Some(rk) = self.local_runtime_kind.get(&src).copied() {
+                    self.local_runtime_kind.insert(dst, rk);
+                }
+                if let Some(en) = self.local_elem_struct.get(&src).cloned() {
+                    self.local_elem_struct.insert(dst, en);
+                }
+                self.emit_assign(
+                    Place::local(dst),
+                    Rvalue::Use(Operand::Copy(Place::local(src))),
+                    span,
+                );
+            }
+            self.emit_assign(
+                Place::local(matched_flag),
+                Rvalue::Use(Operand::Const(ConstValue::Bool(true))),
+                span,
+            );
+            self.terminate(Terminator::Goto { target: merge });
+            self.pop_scope();
+            self.set_current(next);
+        }
+        self.terminate(Terminator::Goto { target: merge });
+        self.set_current(merge);
+        for (name, local) in &results {
+            self.bind_local(name, *local);
+        }
+        Some(matched_flag)
+    }
+
     pub(crate) fn bind_or_let_pattern(
         &mut self,
         scrutinee: Local,

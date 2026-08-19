@@ -199,6 +199,8 @@ pub(super) enum PrintKind {
     ArrArrBool(i64, i64),
     /// `json::Value` - rendered via `gos_rt_json_render`.
     JsonValue,
+    /// A `DynValue`, rendered through `gos_rt_dyn_format`.
+    DynValue,
     /// `errors::Error` - calls `gos_rt_error_message` then prints as string.
     ErrorMessage,
     /// A tuple of scalar elements - rendered via `gos_rt_tuple_format`
@@ -702,6 +704,7 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                     PrintKind::Unsupported("channel")
                 }
                 TyKind::JsonValue => PrintKind::JsonValue,
+                TyKind::DynValue => PrintKind::DynValue,
                 // `{:?}` of a built-in by-value enum (`Option` def `u32::MAX-1`,
                 // `Result` def `u32::MAX`) with scalar / String payloads -
                 // rendered via the runtime debug helper. User structs / enums

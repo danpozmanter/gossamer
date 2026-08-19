@@ -96,6 +96,7 @@ struct Primitives {
     string_: Option<Ty>,
     error: Option<Ty>,
     json_value: Option<Ty>,
+    dyn_value: Option<Ty>,
     dyn_error: Option<Ty>,
     duration: Option<Ty>,
     instant: Option<Ty>,
@@ -311,6 +312,17 @@ impl TyCtxt {
         ty
     }
 
+    /// Interns the open dynamic value type. Cached because type checking
+    /// and MIR lowering both reach for it on every `DynValue` expression.
+    pub fn dyn_value_ty(&mut self) -> Ty {
+        if let Some(ty) = self.primitives.dyn_value {
+            return ty;
+        }
+        let ty = self.intern(TyKind::DynValue);
+        self.primitives.dyn_value = Some(ty);
+        ty
+    }
+
     /// Interns the opaque dynamic `errors::Error` type.
     pub fn dyn_error_ty(&mut self) -> Ty {
         if let Some(ty) = self.primitives.dyn_error {
@@ -410,6 +422,17 @@ impl TyCtxt {
         variants: Vec<String>,
     ) {
         self.enum_variant_names.insert(def, variants);
+    }
+
+    /// Every enum that has registered variant names, with those names in
+    /// declaration order. Used to bind a Rust binding's declared arm set to
+    /// the Gossamer enum that spells the same arms.
+    #[must_use]
+    pub fn enums_with_variant_names(&self) -> Vec<(gossamer_resolve::DefId, &[String])> {
+        self.enum_variant_names
+            .iter()
+            .map(|(def, names)| (*def, names.as_slice()))
+            .collect()
     }
 
     /// Returns the declared variant names for `def`.

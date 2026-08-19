@@ -1049,7 +1049,7 @@ impl<'a> Builder<'a> {
         receiver: &HirExpr,
         method: &Ident,
         closure_arg: &HirExpr,
-        _ty: Ty,
+        ty: Ty,
         span: Span,
     ) -> Option<Local> {
         use gossamer_types::TyKind;
@@ -1119,7 +1119,23 @@ impl<'a> Builder<'a> {
             "map" => "gos_rt_result_map",
             _ => return None,
         };
-        let dest = self.fresh(recv_ty);
+        // `map` answers the closure's payload, not the receiver's. Typing the
+        // destination from the receiver would tell the drop pass that
+        // `Option<Struct>.map(|s| 1)` owns a pointer, and releasing the
+        // integer `1` as one faults. The call's own type is used when
+        // inference resolved it, then the closure's return type, and only
+        // then the receiver's.
+        let dest_ty = if self.is_result_or_option_adt(ty) {
+            self.result_repr_ty(ty)
+        } else if method.name.as_str() == "map"
+            && self.is_option_adt(recv_ty)
+            && let Some(output) = self.callable_output_ty(closure_local)
+        {
+            self.option_payload_adt_ty(output)
+        } else {
+            recv_ty
+        };
+        let dest = self.fresh(dest_ty);
         let next = self.new_block(span);
         self.terminate(Terminator::Call {
             callee: Operand::Const(ConstValue::Str(helper.to_string())),

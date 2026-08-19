@@ -423,6 +423,37 @@ fn entry_candidates(dir: &Path) -> Vec<PathBuf> {
 
 /// Recursively gathers every `.gos` file under `root`. If `root`
 /// names a single file, returns it as a one-element list.
+/// Collapses every target that belongs to a project down to that project's
+/// entry, keeping loose sources as themselves. The result is deduplicated
+/// and keeps the sweep's order, so each project is checked once, as the unit
+/// `gos run` and `gos build` compile it.
+pub(crate) fn group_targets_by_project(files: &[PathBuf]) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::with_capacity(files.len());
+    for file in files {
+        let target = enclosing_project_entry(file).unwrap_or_else(|| file.clone());
+        if !out.contains(&target) {
+            out.push(target);
+        }
+    }
+    out
+}
+
+/// The entry of the nearest project above `file`, when it has one.
+pub(crate) fn enclosing_project_entry(file: &Path) -> Option<PathBuf> {
+    let mut dir = file.parent()?;
+    loop {
+        if dir.join("project.toml").is_file() {
+            // An integration test under `tests/` is its own program rather
+            // than a module of the package, so it stays its own unit.
+            if file.starts_with(dir.join("tests")) {
+                return None;
+            }
+            return resolve_project_entry(dir).ok();
+        }
+        dir = dir.parent()?;
+    }
+}
+
 pub(crate) fn collect_lint_targets(root: &PathBuf) -> Result<Vec<PathBuf>> {
     let meta = fs::metadata(root).map_err(|e| friendly_io_error(e, root))?;
     if meta.is_file() {

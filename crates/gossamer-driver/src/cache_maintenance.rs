@@ -348,9 +348,11 @@ pub fn remove(
     Ok(removed)
 }
 
-/// Prunes expired files first, then oldest files until the aggregate budget is
-/// met. Runner directories with a build lock are skipped so an active build is
-/// never disrupted. Returns reclaimed bytes and files.
+/// Prunes expired units first, then oldest units until the aggregate budget is
+/// met. A runner workdir is one unit: it is reclaimed whole or not at all, so a
+/// surviving workdir always holds the complete artifact set its stamp records.
+/// Workdirs with a build lock are skipped so an active build is never
+/// disrupted. Returns reclaimed bytes and files.
 pub fn prune(
     cwd: &Path,
     policy: CachePolicy,
@@ -358,42 +360,41 @@ pub fn prune(
     dry_run: bool,
 ) -> std::io::Result<(u64, u64)> {
     let now = SystemTime::now();
-    let mut files = Vec::new();
+    let mut units = Vec::new();
     let roots: Vec<(CacheClass, PathBuf)> = paths_in_scope(cwd, scope);
     for (index, (class, root)) in roots.iter().enumerate() {
-        let mut root_files = Vec::new();
-        collect_files(root, &mut root_files);
-        files.extend(root_files.into_iter().map(|entry| (*class, index, entry)));
+        for unit in collect_units(*class, root) {
+            units.push((*class, index, unit));
+        }
     }
-    files.sort_by_key(|(_, _, entry)| entry.modified);
-    let mut total: u64 = files.iter().map(|(_, _, entry)| entry.bytes).sum();
+    units.sort_by_key(|(_, _, unit)| unit.modified);
+    let mut total: u64 = units.iter().map(|(_, _, unit)| unit.bytes).sum();
     let mut class_totals: HashMap<CacheClass, u64> = HashMap::new();
-    for (class, _, entry) in &files {
-        *class_totals.entry(*class).or_default() += entry.bytes;
+    for (class, _, unit) in &units {
+        *class_totals.entry(*class).or_default() += unit.bytes;
     }
     let mut reclaimed = 0;
     let mut count = 0;
-    for (class, root_index, entry) in files {
+    for (class, root_index, unit) in units {
         let expired = now
-            .duration_since(entry.modified)
+            .duration_since(unit.modified)
             .is_ok_and(|age| age > policy.max_age);
         let class_over =
             class_totals.get(&class).copied().unwrap_or_default() > policy.class_max_bytes(class);
         if !expired && total <= policy.max_bytes && !class_over {
             continue;
         }
-        if runner_locked(&entry.path) {
+        if runner_locked(&unit.path) {
             continue;
         }
         if !dry_run {
-            let _ = fs::remove_file(&entry.path);
-            cleanup_empty_cache_dirs(&entry.path, &roots[root_index].1);
+            remove_unit(&unit, &roots[root_index].1);
         }
-        total = total.saturating_sub(entry.bytes);
+        total = total.saturating_sub(unit.bytes);
         let class_total = class_totals.entry(class).or_default();
-        *class_total = class_total.saturating_sub(entry.bytes);
-        reclaimed += entry.bytes;
-        count += 1;
+        *class_total = class_total.saturating_sub(unit.bytes);
+        reclaimed += unit.bytes;
+        count += unit.files;
     }
     Ok((reclaimed, count))
 }
@@ -401,38 +402,120 @@ pub fn prune(
 /// Applies the runner-class age and byte limits directly to one resolved
 /// runner root. Binding startup uses this once per process so the documented
 /// 10 GiB class cap is enforced without requiring a manual cache command.
+///
+/// `in_use` names the workdir the calling process resolved. It is never
+/// reclaimed: its artifacts are read for the rest of that process's run,
+/// past the build lock that only spans their production.
 pub fn prune_runner_root(
     root: &Path,
     policy: CachePolicy,
     dry_run: bool,
+    in_use: Option<&Path>,
 ) -> std::io::Result<(u64, u64)> {
     let now = SystemTime::now();
-    let mut files = Vec::new();
-    collect_files(root, &mut files);
-    files.sort_by_key(|entry| entry.modified);
-    let mut total: u64 = files.iter().map(|entry| entry.bytes).sum();
+    let mut units = collect_units(CacheClass::Runners, root);
+    units.sort_by_key(|unit| unit.modified);
+    let mut total: u64 = units.iter().map(|unit| unit.bytes).sum();
     let cap = policy.class_max_bytes(CacheClass::Runners);
     let mut reclaimed = 0u64;
     let mut count = 0u64;
-    for entry in files {
+    for unit in units {
         let expired = now
-            .duration_since(entry.modified)
+            .duration_since(unit.modified)
             .is_ok_and(|age| age > policy.max_age);
         if !expired && total <= cap {
             continue;
         }
-        if runner_locked(&entry.path) {
+        if in_use.is_some_and(|dir| dir.starts_with(&unit.path)) {
+            continue;
+        }
+        if runner_locked(&unit.path) {
             continue;
         }
         if !dry_run {
-            let _ = fs::remove_file(&entry.path);
-            cleanup_empty_cache_dirs(&entry.path, root);
+            remove_unit(&unit, root);
         }
-        total = total.saturating_sub(entry.bytes);
-        reclaimed = reclaimed.saturating_add(entry.bytes);
-        count = count.saturating_add(1);
+        total = total.saturating_sub(unit.bytes);
+        reclaimed = reclaimed.saturating_add(unit.bytes);
+        count = count.saturating_add(unit.files);
     }
     Ok((reclaimed, count))
+}
+
+/// One reclaimable cache unit: a single file, or - for the runner class - a
+/// whole workdir, whose artifacts and freshness stamp only mean anything
+/// together.
+#[derive(Debug)]
+struct CacheUnit {
+    path: PathBuf,
+    bytes: u64,
+    files: u64,
+    modified: SystemTime,
+    whole_dir: bool,
+}
+
+/// Enumerates what the class reclaims in one piece: a runner root hands back
+/// one unit per workdir, every other root one unit per file.
+fn collect_units(class: CacheClass, root: &Path) -> Vec<CacheUnit> {
+    if class != CacheClass::Runners {
+        let mut files = Vec::new();
+        collect_files(root, &mut files);
+        return files
+            .into_iter()
+            .map(|entry| CacheUnit {
+                path: entry.path,
+                bytes: entry.bytes,
+                files: 1,
+                modified: entry.modified,
+                whole_dir: false,
+            })
+            .collect();
+    }
+    let Ok(entries) = fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut units = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(meta) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if meta.is_dir() {
+            let mut files = Vec::new();
+            collect_files(&path, &mut files);
+            let modified = files
+                .iter()
+                .map(|f| f.modified)
+                .max()
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            units.push(CacheUnit {
+                path,
+                bytes: files.iter().map(|f| f.bytes).sum(),
+                files: files.len() as u64,
+                modified,
+                whole_dir: true,
+            });
+        } else if meta.is_file() {
+            units.push(CacheUnit {
+                path,
+                bytes: meta.len(),
+                files: 1,
+                modified: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                whole_dir: false,
+            });
+        }
+    }
+    units
+}
+
+/// Reclaims one unit and the empty cache directories it leaves behind.
+fn remove_unit(unit: &CacheUnit, root: &Path) {
+    if unit.whole_dir {
+        let _ = fs::remove_dir_all(&unit.path);
+    } else {
+        let _ = fs::remove_file(&unit.path);
+    }
+    cleanup_empty_cache_dirs(&unit.path, root);
 }
 
 #[derive(Debug)]
@@ -632,7 +715,50 @@ mod tests {
         // The environment-independent class cap is large, so dry-run proves
         // traversal without deleting. Byte-limit behavior is covered by the
         // shared prune path; this regression protects the direct-root API.
-        assert_eq!(prune_runner_root(&root, policy, true).unwrap(), (0, 0));
+        assert_eq!(
+            prune_runner_root(&root, policy, true, None).unwrap(),
+            (0, 0)
+        );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn runner_workdir_is_reclaimed_whole_or_not_at_all() {
+        let root = scratch("runner-workdir");
+        let _ = fs::remove_dir_all(&root);
+        let workdir = root.join("deadbeef").join("runner").join("target");
+        fs::create_dir_all(&workdir).unwrap();
+        fs::write(workdir.join("libgossamer_runtime.a"), vec![0u8; 4096]).unwrap();
+        fs::write(workdir.join("gos-runner"), vec![0u8; 4096]).unwrap();
+        fs::write(root.join("deadbeef").join("stamp.json"), b"{}").unwrap();
+        let policy = CachePolicy {
+            max_bytes: u64::MAX,
+            max_age: Duration::ZERO,
+        };
+        let (bytes, files) = prune_runner_root(&root, policy, false, None).unwrap();
+        assert_eq!(files, 3);
+        assert_eq!(bytes, 8194);
+        assert!(!root.join("deadbeef").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_locked_runner_workdir_survives_the_prune() {
+        let root = scratch("runner-workdir-locked");
+        let _ = fs::remove_dir_all(&root);
+        let workdir = root.join("cafebabe");
+        fs::create_dir_all(workdir.join("runner")).unwrap();
+        fs::write(workdir.join(".gos-build.lock"), b"1").unwrap();
+        fs::write(workdir.join("runner").join("gos-runner"), vec![0u8; 4096]).unwrap();
+        let policy = CachePolicy {
+            max_bytes: u64::MAX,
+            max_age: Duration::ZERO,
+        };
+        assert_eq!(
+            prune_runner_root(&root, policy, false, None).unwrap(),
+            (0, 0)
+        );
+        assert!(workdir.join("runner").join("gos-runner").exists());
+        let _ = fs::remove_dir_all(&root);
     }
 }

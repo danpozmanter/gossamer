@@ -40,6 +40,7 @@ use gossamer_lex::{FileId, Keyword};
 #[must_use]
 pub fn parse_source_file(source: &str, file: FileId) -> (SourceFile, Vec<ParseDiagnostic>) {
     let mut parser = Parser::new(source, file);
+    let file_attrs = parser.parse_file_attrs_public();
     let mut uses = Vec::new();
     while parser.at_keyword_public(Keyword::Use) {
         let use_decl = parser.parse_use_decl();
@@ -83,6 +84,7 @@ pub fn parse_source_file(source: &str, file: FileId) -> (SourceFile, Vec<ParseDi
     let next_node_id = parser.ids.issued();
     let named_args = parser.take_named_args();
     let mut source_file = SourceFile::new(file, uses, items);
+    source_file.attrs = file_attrs;
     source_file.top_level_stmts = top_level_stmts;
     source_file.next_node_id = next_node_id;
     source_file.named_args = named_args;
@@ -112,6 +114,12 @@ impl Parser<'_> {
     #[must_use]
     pub fn at_keyword_public(&self, keyword: Keyword) -> bool {
         self.at_keyword(keyword)
+    }
+
+    /// Consumes the file's leading `#![..]` attributes. Public facade
+    /// used by `parse_source_file`.
+    pub fn parse_file_attrs_public(&mut self) -> gossamer_ast::Attrs {
+        self.parse_file_attrs()
     }
 
     /// Returns `true` when the cursor is at end of input. Public facade

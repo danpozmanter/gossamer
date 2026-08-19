@@ -391,6 +391,157 @@ unsafe fn byte_vec_from_slice(bytes: &[u8]) -> *mut GosVec {
     out
 }
 
+/// One entry of a map, in the shape a comparison reads it: the key and value
+/// each as the word they are stored as, or as their bytes.
+#[derive(PartialEq, Eq, Hash)]
+enum EntryPart {
+    Word(i64),
+    Bytes(Box<[u8]>),
+}
+
+/// How a map's value word is read when it is a bare word rather than stored
+/// bytes. The compiled tiers pass the kind the value's declared type names,
+/// because the storage keeps no type of its own.
+mod map_value_kind {
+    /// An `f64`, compared as the float it spells rather than as its bits.
+    pub(super) const FLOAT: i64 = 1;
+    /// A runtime `String`, compared by the bytes it holds.
+    pub(super) const STRING: i64 = 2;
+    /// A single-slot field the descriptor describes - a sequence, a string -
+    /// canonicalised from the slot the value word occupies.
+    pub(super) const DESC_SLOT: i64 = 3;
+    /// A block of slots the descriptor describes, addressed by the value word.
+    pub(super) const DESC_BLOCK: i64 = 4;
+}
+
+/// Reads a value word as the part a comparison uses, per the declared kind.
+/// A value the runtime keeps as one word may still stand for a whole value -
+/// a string, a sequence, an aggregate - so `desc` names the shape to fold it
+/// into content bytes by, the same encoding a content key is built with.
+unsafe fn value_part(word: i64, kind: i64, desc: *const c_char) -> EntryPart {
+    if kind == map_value_kind::STRING {
+        if word == 0 {
+            return EntryPart::Bytes(Box::default());
+        }
+        let text = unsafe { crate::c_abi::gos_str_arg_bytes(word as *const std::ffi::c_char) };
+        return EntryPart::Bytes(text.to_vec().into_boxed_slice());
+    }
+    if matches!(kind, map_value_kind::DESC_SLOT | map_value_kind::DESC_BLOCK) && !desc.is_null() {
+        let block: *const u8 = if kind == map_value_kind::DESC_SLOT {
+            std::ptr::from_ref(&word).cast()
+        } else {
+            std::ptr::with_exposed_provenance(word as usize)
+        };
+        if block.is_null() {
+            return EntryPart::Bytes(Box::default());
+        }
+        if let Some(bytes) = unsafe { build_skey_for_set(block, desc) } {
+            return EntryPart::Bytes(bytes.into_boxed_slice());
+        }
+    }
+    EntryPart::Word(word)
+}
+
+/// Snapshots a map's entries in a shape that is the same for every storage
+/// the same static type can settle into.
+unsafe fn map_entry_parts(
+    m: &GosMap,
+    value_kind: i64,
+    value_desc: *const c_char,
+) -> Vec<(EntryPart, EntryPart)> {
+    let storage = m.storage.lock();
+    let bytes = |b: &[u8]| EntryPart::Bytes(b.to_vec().into_boxed_slice());
+    match &*storage {
+        MapStorage::Empty => Vec::new(),
+        MapStorage::I64I64(inner) => inner
+            .iter()
+            .map(|(k, v)| {
+                (EntryPart::Word(*k), unsafe {
+                    value_part(*v, value_kind, value_desc)
+                })
+            })
+            .collect(),
+        MapStorage::StrI64(inner) => inner
+            .iter()
+            .map(|(k, v)| (bytes(k), unsafe { value_part(*v, value_kind, value_desc) }))
+            .collect(),
+        MapStorage::StrStr(inner) | MapStorage::Bytes(inner) => {
+            inner.iter().map(|(k, v)| (bytes(k), bytes(v))).collect()
+        }
+        MapStorage::I64Str(inner) => inner
+            .iter()
+            .map(|(k, v)| (EntryPart::Word(*k), bytes(v)))
+            .collect(),
+        MapStorage::StrBytes(inner) => inner.iter().map(|(k, v)| (bytes(k), bytes(v))).collect(),
+        MapStorage::I64Bytes(inner) => inner
+            .entries
+            .keys()
+            .filter_map(|k| inner.get(*k).map(|v| (EntryPart::Word(*k), bytes(v))))
+            .collect(),
+        MapStorage::SkeyVal { entries, .. } => entries
+            .iter()
+            .map(|(k, v)| (bytes(k), unsafe { value_part(*v, value_kind, value_desc) }))
+            .collect(),
+        MapStorage::EkeyVal { entries } => entries
+            .iter()
+            .map(|(k, entry)| {
+                (bytes(k), unsafe {
+                    value_part(entry.value, value_kind, value_desc)
+                })
+            })
+            .collect(),
+    }
+}
+
+/// Structural equality of two maps: equal when they hold the same entries,
+/// whatever order those went in and whichever storage each side settled into.
+/// `value_kind` names how a bare value word is read - see `map_value_kind`.
+///
+/// A `f64` value compares as the float it spells, so a map holding a NaN is
+/// unequal to itself, exactly as the scalar is.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_eq(
+    a: *const GosMap,
+    b: *const GosMap,
+    value_kind: i64,
+    value_desc: *const c_char,
+) -> i64 {
+    ffi_entry!(0, {
+        if std::ptr::eq(a, b) {
+            return 1;
+        }
+        if a.is_null() || b.is_null() {
+            return 0;
+        }
+        let xa = unsafe { map_entry_parts(&*a, value_kind, value_desc) };
+        let xb = unsafe { map_entry_parts(&*b, value_kind, value_desc) };
+        if xa.len() != xb.len() {
+            return 0;
+        }
+        let rhs: std::collections::HashMap<&EntryPart, &EntryPart> =
+            xb.iter().map(|(k, v)| (k, v)).collect();
+        for (key, value) in &xa {
+            let Some(other) = rhs.get(key) else {
+                return 0;
+            };
+            let same = if value_kind == map_value_kind::FLOAT {
+                match (value, other) {
+                    (EntryPart::Word(x), EntryPart::Word(y)) => {
+                        f64::from_bits(*x as u64) == f64::from_bits(*y as u64)
+                    }
+                    _ => value == *other,
+                }
+            } else {
+                value == *other
+            };
+            if !same {
+                return 0;
+            }
+        }
+        1
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_new(_key_bytes: u32, _val_bytes: u32) -> *mut GosMap {
     ffi_entry!(std::ptr::null_mut(), {

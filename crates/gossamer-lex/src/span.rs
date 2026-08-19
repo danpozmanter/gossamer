@@ -1,7 +1,9 @@
 //! Source byte-range types used by the lexer and later compiler passes.
 
 /// Opaque identifier for a file registered in a `SourceMap`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct FileId(pub(crate) u32);
 
 impl FileId {
@@ -13,7 +15,9 @@ impl FileId {
 }
 
 /// Half-open byte range `[start, end)` within a single source file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct Span {
     /// File this span points into.
     pub file: FileId,

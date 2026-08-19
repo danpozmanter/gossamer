@@ -39,7 +39,6 @@ The key is a SHA-256 over every input that can change the result:
   change in any sibling module or path dependency changes it;
 - the toolchain version, the frontend build stamp, and the running `gos`
   executable's own size and mtime, so any rebuilt compiler starts cold;
-- the language edition;
 - the `FileId` that spans in the cached AST are anchored to;
 - the compile target triple, including an explicit `--target`;
 - whether `#[cfg(test)]` items are visible, since that decides which items

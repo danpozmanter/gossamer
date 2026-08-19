@@ -297,6 +297,13 @@ pub enum TyKind {
     /// receiver is rewritten by MIR lowering into a runtime
     /// `gos_rt_json_get(receiver, "field")` call.
     JsonValue,
+    /// `DynValue` - a value whose shape is decided by the data rather than
+    /// by a declaration: `Nil | Bool | Int | Float | Char | String | Bytes |
+    /// List | Map | Tagged { name, payload }`, where a tagged arm's name is a
+    /// runtime string. A decoder, a database column typed by its own
+    /// metadata, and a Rust binding returning an arm set it names at run time
+    /// all produce one. The runtime backs every value with a shared node.
+    DynValue,
     /// `errors::Error` - opaque heap error value with a message
     /// string and optional cause chain. Used as the default Err
     /// type for `Result<T>` so the `?` operator and error

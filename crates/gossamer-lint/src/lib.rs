@@ -15,7 +15,7 @@
 
 use std::collections::BTreeMap;
 
-use gossamer_ast::{Attrs, SourceFile};
+use gossamer_ast::{Attrs, Item, ItemKind, SourceFile};
 use gossamer_diagnostics::{Code, Diagnostic, Location, Severity};
 use gossamer_lex::Span;
 
@@ -181,12 +181,18 @@ pub const DAY_ONE_LINTS: &[&str] = &[
 #[must_use]
 pub fn run(source_file: &SourceFile, src: &str, registry: &Registry) -> Vec<Diagnostic> {
     let mut out = Vec::new();
+    let scopes = collect_lint_scopes(source_file);
     for (id, level) in registry.entries() {
-        let Some(severity) = level.severity() else {
+        // A lint the file disables can still be denied on one item, so the
+        // pass runs whenever any scope asks for it.
+        if level.severity().is_none() && !scopes.iter().any(|s| s.levels.contains_key(id)) {
             continue;
-        };
+        }
         let findings = lints::run_lint(id, source_file, src);
         for (span, title, help) in findings {
+            let Some(severity) = scoped_level(&scopes, id, span).unwrap_or(level).severity() else {
+                continue;
+            };
             let location = Location::new(span.file, span);
             let code = lint_code(id);
             let mut diag = match severity {
@@ -211,6 +217,79 @@ pub fn run(source_file: &SourceFile, src: &str, registry: &Registry) -> Vec<Diag
             .then(a_span.cmp(&b_span))
     });
     out
+}
+
+/// One item's `#[lint(..)]` levels, keyed by the source range the item
+/// covers. A finding inside that range takes the innermost level set for
+/// its lint.
+struct LintScope {
+    span: Span,
+    levels: std::collections::HashMap<&'static str, Level>,
+}
+
+/// The level the innermost enclosing item sets for `id`, when one does.
+fn scoped_level(scopes: &[LintScope], id: &str, span: Span) -> Option<Level> {
+    scopes
+        .iter()
+        .filter(|scope| {
+            scope.span.file == span.file
+                && scope.span.start <= span.start
+                && span.end <= scope.span.end
+        })
+        .filter_map(|scope| scope.levels.get(id).map(|level| (scope.span.len(), *level)))
+        .min_by_key(|(width, _)| *width)
+        .map(|(_, level)| level)
+}
+
+/// Every `#[lint(..)]`-carrying item in the file, including methods inside
+/// `impl` and `trait` bodies and items inside nested modules.
+fn collect_lint_scopes(source_file: &SourceFile) -> Vec<LintScope> {
+    let mut out = Vec::new();
+    for item in &source_file.items {
+        collect_item_lint_scopes(item, &mut out);
+    }
+    out
+}
+
+fn collect_item_lint_scopes(item: &Item, out: &mut Vec<LintScope>) {
+    push_lint_scope(&item.attrs, item.span, out);
+    match &item.kind {
+        ItemKind::Impl(decl) => {
+            for member in &decl.items {
+                if let gossamer_ast::ImplItem::Fn(f) = member {
+                    push_lint_scope(&f.attrs, f.span, out);
+                }
+            }
+        }
+        ItemKind::Trait(decl) => {
+            for member in &decl.items {
+                if let gossamer_ast::TraitItem::Fn(f) = member {
+                    push_lint_scope(&f.attrs, f.span, out);
+                }
+            }
+        }
+        ItemKind::Mod(decl) => {
+            if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                for nested in inner {
+                    collect_item_lint_scopes(nested, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_lint_scope(attrs: &Attrs, span: Span, out: &mut Vec<LintScope>) {
+    if attrs.is_empty() {
+        return;
+    }
+    let mut registry = Registry::new();
+    apply_attributes(attrs, &mut registry);
+    let levels: std::collections::HashMap<&'static str, Level> =
+        registry.entries().into_iter().collect();
+    if !levels.is_empty() {
+        out.push(LintScope { span, levels });
+    }
 }
 
 /// Stable diagnostic code for a lint identifier.
