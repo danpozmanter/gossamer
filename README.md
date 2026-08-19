@@ -10,7 +10,7 @@
 
 * Ergonomic (Concise, Expressive)
 
-* Performant (Solid Execution Speed, Efficient Resource Usage)
+* Performant (Fast Execution Speed, Efficient Resource Usage)
 
 ## Current Status
 
@@ -21,7 +21,7 @@ My goal is a language stable enough for 1.0.0 (and beyond).
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for details on Github Issues, 
-PRs, and our LLM policy.
+PRs, and the LLM policy.
 
 ## Motivations
 
