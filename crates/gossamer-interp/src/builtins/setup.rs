@@ -90,12 +90,53 @@ mod thread_local_registries {
             RefCell::new(std::collections::HashMap::new());
         pub(crate) static STRUCT_LAYOUTS: RefCell<std::collections::HashMap<String, Vec<&'static str>>> =
             RefCell::new(std::collections::HashMap::new());
+        pub(crate) static VARIANT_OWNERS: RefCell<std::collections::HashMap<&'static str, &'static str>> =
+            RefCell::new(std::collections::HashMap::new());
     }
 }
 
 pub(crate) use thread_local_registries::{
-    CELL_REGISTRY, NEXT_SET_ID, SET_REGISTRY, STRUCT_LAYOUTS, STRUCT_UINT_FIELDS,
+    CELL_REGISTRY, NEXT_SET_ID, SET_REGISTRY, STRUCT_LAYOUTS, STRUCT_UINT_FIELDS, VARIANT_OWNERS,
 };
+
+/// Installs the variant-to-enum table that method dispatch consults to
+/// resolve a call on an enum receiver.
+///
+/// A `Value::Variant` carries only the variant's own name, so without this
+/// there is no way to tell which enum declared it, and a method call on an
+/// enum value cannot be qualified by its type. Invoked by [`crate::Vm::load`]
+/// before any program code runs.
+///
+/// A variant name declared by two different enums maps to neither: the
+/// receiver alone cannot say which was meant, and guessing would reintroduce
+/// exactly the misdispatch this table exists to prevent.
+pub(crate) fn set_variant_owners(owners: &[(String, String)]) {
+    let mut table: std::collections::HashMap<&'static str, &'static str> =
+        std::collections::HashMap::new();
+    let mut ambiguous: std::collections::HashSet<&'static str> = std::collections::HashSet::new();
+    for (variant, owner) in owners {
+        let variant = crate::value::intern_type_name(variant);
+        let owner = crate::value::intern_type_name(owner);
+        match table.get(variant) {
+            Some(existing) if *existing != owner => {
+                ambiguous.insert(variant);
+            }
+            _ => {
+                table.insert(variant, owner);
+            }
+        }
+    }
+    for variant in ambiguous {
+        table.remove(variant);
+    }
+    VARIANT_OWNERS.with(|cell| *cell.borrow_mut() = table);
+}
+
+/// The enum that declares `variant`, when exactly one does.
+#[must_use]
+pub(crate) fn variant_owner_of(variant: &str) -> Option<&'static str> {
+    VARIANT_OWNERS.with(|cell| cell.borrow().get(variant).copied())
+}
 
 /// Installs the struct-field declaration-order table that
 /// `__struct` consults when assembling a new `Value::Struct`.

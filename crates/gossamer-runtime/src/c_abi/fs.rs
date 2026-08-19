@@ -35,7 +35,15 @@ struct GosOpenOptions {
     create_new: bool,
 }
 
+/// The advisory ranges each open file handle currently holds.
+type HeldLocks = HashMap<i64, Vec<(u64, u64)>>;
+
 static FILE_HANDLES: Mutex<Option<HashMap<i64, Arc<Mutex<std::fs::File>>>>> = Mutex::new(None);
+
+// Win32 releases a lock only through an UnlockFileEx naming the same span
+// LockFileEx took, so a whole-file `unlock` has to name each range it is
+// releasing. The ranges a handle holds are recorded here and replayed.
+static HELD_LOCKS: Mutex<Option<HeldLocks>> = Mutex::new(None);
 static OPEN_OPTIONS_HANDLES: Mutex<Option<HashMap<i64, Arc<Mutex<GosOpenOptions>>>>> =
     Mutex::new(None);
 static NEXT_FS_HANDLE: AtomicI64 = AtomicI64::new(1);
@@ -459,6 +467,9 @@ pub unsafe extern "C" fn gos_rt_fs_file_close(h: i64) {
     ffi_entry!((), {
         if let Some(files) = FILE_HANDLES.lock().as_mut() {
             files.remove(&h);
+        }
+        if let Some(locks) = HELD_LOCKS.lock().as_mut() {
+            locks.remove(&h);
         }
     });
 }
@@ -1821,7 +1832,12 @@ pub unsafe extern "C" fn gos_rt_fs_file_try_lock_range(
         match with_file_blocking(h, "fs-file-lock", "File::try_lock_range", move |file| {
             try_lock_range_on(file, start as u64, len as u64, exclusive)
         }) {
-            Ok(Ok(acquired)) => unsafe { gos_rt_result_new(0, i64::from(acquired)) },
+            Ok(Ok(acquired)) => {
+                if acquired {
+                    record_held_range(h, start as u64, len as u64);
+                }
+                unsafe { gos_rt_result_new(0, i64::from(acquired)) }
+            }
             Ok(Err(e)) => fs_io_err(&e, "File::try_lock_range"),
             Err(packed) => packed,
         }
@@ -1838,7 +1854,10 @@ pub unsafe extern "C" fn gos_rt_fs_file_unlock_range(h: i64, start: i64, len: i6
         match with_file_blocking(h, "fs-file-unlock", "File::unlock_range", move |file| {
             unlock_range_on(file, start as u64, len as u64)
         }) {
-            Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
+            Ok(Ok(())) => {
+                forget_held_range(h, start as u64, len as u64);
+                unsafe { gos_rt_result_new(0, 0) }
+            }
             Ok(Err(e)) => fs_io_err(&e, "File::unlock_range"),
             Err(packed) => packed,
         }
@@ -1859,10 +1878,49 @@ pub unsafe extern "C" fn gos_rt_fs_file_try_lock_exclusive(h: i64) -> i128 {
     unsafe { gos_rt_fs_file_try_lock_range(h, 0, 0, 1) }
 }
 
-/// `fs::File::unlock() -> Result<(), Error>`: release the whole-file range.
+/// `fs::File::unlock() -> Result<(), Error>`: release every range this
+/// handle holds, whole-file or otherwise.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_fs_file_unlock(h: i64) -> i128 {
-    unsafe { gos_rt_fs_file_unlock_range(h, 0, 0) }
+    ffi_entry!(0i128, {
+        let held = HELD_LOCKS
+            .lock()
+            .as_mut()
+            .and_then(|locks| locks.remove(&h))
+            .unwrap_or_default();
+        if held.is_empty() {
+            return unsafe { gos_rt_result_new(0, 0) };
+        }
+        match with_file_blocking(h, "fs-file-unlock", "File::unlock", move |file| {
+            held.into_iter()
+                .try_for_each(|(start, len)| unlock_range_on(file, start, len))
+        }) {
+            Ok(Ok(())) => unsafe { gos_rt_result_new(0, 0) },
+            Ok(Err(e)) => fs_io_err(&e, "File::unlock"),
+            Err(packed) => packed,
+        }
+    })
+}
+
+/// Note a range this handle now holds, so `File::unlock` can name it.
+fn record_held_range(h: i64, start: u64, len: u64) {
+    let mut guard = HELD_LOCKS.lock();
+    let held = guard.get_or_insert_with(HashMap::new).entry(h).or_default();
+    if !held.contains(&(start, len)) {
+        held.push((start, len));
+    }
+}
+
+/// Drop one range from the handle's held set once it has been released.
+fn forget_held_range(h: i64, start: u64, len: u64) {
+    if let Some(held) = HELD_LOCKS
+        .lock()
+        .as_mut()
+        .and_then(|locks| locks.get_mut(&h))
+        && let Some(at) = held.iter().position(|range| *range == (start, len))
+    {
+        held.swap_remove(at);
+    }
 }
 
 /// One positional read at `offset`, independent of the file cursor.
@@ -1872,9 +1930,18 @@ pub fn read_at_offset(file: &std::fs::File, buf: &mut [u8], offset: u64) -> std:
 }
 
 /// One positional read at `offset`, independent of the file cursor.
+///
+/// A synchronous Win32 handle carries the transfer offset in the OVERLAPPED
+/// structure and advances the file pointer past the bytes moved, so the
+/// cursor is restored here to keep the call positional on every platform.
 #[cfg(windows)]
 pub fn read_at_offset(file: &std::fs::File, buf: &mut [u8], offset: u64) -> std::io::Result<usize> {
-    std::os::windows::fs::FileExt::seek_read(file, buf, offset)
+    use std::io::{Seek, SeekFrom};
+    let mut cursor = file;
+    let resume = cursor.stream_position()?;
+    let read = std::os::windows::fs::FileExt::seek_read(file, buf, offset);
+    cursor.seek(SeekFrom::Start(resume))?;
+    read
 }
 
 /// One positional write at `offset`, independent of the file cursor.
@@ -1884,13 +1951,20 @@ pub fn write_at_offset(file: &std::fs::File, buf: &[u8], offset: u64) -> std::io
 }
 
 /// One positional write at `offset`, independent of the file cursor.
+///
+/// Cursor-restoring for the same reason as [`read_at_offset`].
 #[cfg(windows)]
 pub fn write_at_offset(file: &std::fs::File, buf: &[u8], offset: u64) -> std::io::Result<usize> {
-    std::os::windows::fs::FileExt::seek_write(file, buf, offset)
+    use std::io::{Seek, SeekFrom};
+    let mut cursor = file;
+    let resume = cursor.stream_position()?;
+    let written = std::os::windows::fs::FileExt::seek_write(file, buf, offset);
+    cursor.seek(SeekFrom::Start(resume))?;
+    written
 }
 
 /// Make a directory's own entries durable.
-#[cfg(unix)]
+#[cfg(not(windows))]
 pub fn sync_directory(path: &str) -> std::io::Result<()> {
     std::fs::File::open(path)?.sync_all()
 }
@@ -1901,6 +1975,59 @@ pub fn sync_directory(path: &str) -> std::io::Result<()> {
 #[cfg(windows)]
 pub fn sync_directory(path: &str) -> std::io::Result<()> {
     std::fs::metadata(path).map(|_| ())
+}
+
+/// One positional read at `offset` on a target with neither the POSIX nor
+/// the Win32 positional call: the cursor is moved, the read taken, and the
+/// cursor restored. Single-threaded by construction on those targets, so no
+/// other holder observes the moved cursor.
+#[cfg(not(any(unix, windows)))]
+pub fn read_at_offset(file: &std::fs::File, buf: &mut [u8], offset: u64) -> std::io::Result<usize> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = file;
+    let resume = file.stream_position()?;
+    file.seek(SeekFrom::Start(offset))?;
+    let read = file.read(buf);
+    file.seek(SeekFrom::Start(resume))?;
+    read
+}
+
+/// One positional write at `offset`, cursor-restoring like
+/// [`read_at_offset`].
+#[cfg(not(any(unix, windows)))]
+pub fn write_at_offset(file: &std::fs::File, buf: &[u8], offset: u64) -> std::io::Result<usize> {
+    use std::io::{Seek, SeekFrom, Write};
+    let mut file = file;
+    let resume = file.stream_position()?;
+    file.seek(SeekFrom::Start(offset))?;
+    let written = file.write(buf);
+    file.seek(SeekFrom::Start(resume))?;
+    written
+}
+
+/// Advisory locks are the operating system's, and a target with neither the
+/// POSIX nor the Win32 call has none to take. Answering `Ok(false)` would
+/// claim another holder owns the range, so the absence is reported instead.
+#[cfg(not(any(unix, windows)))]
+pub fn try_lock_range_on(
+    _file: &std::fs::File,
+    _start: u64,
+    _len: u64,
+    _exclusive: bool,
+) -> std::io::Result<bool> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "advisory file locks are unavailable on this target",
+    ))
+}
+
+/// Companion to [`try_lock_range_on`] on a target with no advisory locks.
+#[cfg(not(any(unix, windows)))]
+pub fn unlock_range_on(_file: &std::fs::File, _start: u64, _len: u64) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "advisory file locks are unavailable on this target",
+    ))
 }
 
 /// POSIX record lock over `[start, start + len)`, or `[start, EOF)` when

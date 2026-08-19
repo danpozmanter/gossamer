@@ -196,6 +196,24 @@ impl<'tcx> FnBuilder<'tcx> {
         }
     }
 
+    /// `true` only when `ty` is not resolved concretely enough to name the
+    /// type a method call would dispatch on.
+    ///
+    /// This is the narrow guard for name-only method resolution. A receiver
+    /// whose type *is* known owns its method surface, whether that surface
+    /// is a user `impl` or a built-in one, so a same-named method on an
+    /// unrelated type is never a candidate for it. Only a receiver whose
+    /// type is genuinely open - an unsubstituted parameter, an inference
+    /// variable, or a payload binding extracted from a generic enum - leaves
+    /// the name as the sole thing to go on.
+    pub(crate) fn ty_is_unresolved(&self, ty: gossamer_types::Ty) -> bool {
+        let ty = self.unwrap_ref(ty);
+        match self.tcx.kind(ty) {
+            None => true,
+            Some(kind) => matches!(kind, TyKind::Var(_) | TyKind::Param { .. } | TyKind::Error),
+        }
+    }
+
     /// Bare name of the `Ok` payload type `B` of a `Result<B, E>` (the result
     /// type of `x.try_into()`), so the call can route to `B::try_from(x)`.
     pub(crate) fn result_ok_adt_name(&self, ty: gossamer_types::Ty) -> Option<String> {

@@ -18,9 +18,14 @@
 // tarball I/O, manifest/lockfile editing - is inert in a browser and
 // pulls native-only crypto/network crates (rustls, ed25519-dalek), so
 // it is gated out of the wasm build. Native is unaffected.
-mod language_version;
 pub mod sha256;
 
+// The toolchain version a manifest states is parsed as a `Version`, which
+// the package surface above carries and the wasm build does not.
+#[cfg(not(target_arch = "wasm32"))]
+mod language_version;
+
+#[cfg(not(target_arch = "wasm32"))]
 pub use language_version::{parse_gossamer_version, toolchain_version};
 
 /// Security advisories: the feed format and matching it against a

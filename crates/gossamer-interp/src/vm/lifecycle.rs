@@ -454,6 +454,20 @@ impl Vm {
             }
         }
         crate::builtins::set_struct_layouts(name_layouts);
+        // Variant-to-enum table, so a method call on an enum receiver can be
+        // qualified by the enum that declares it. Without this the receiver
+        // names only its variant and the call cannot be resolved by type.
+        let mut variant_owners: Vec<(String, String)> = Vec::new();
+        for item in &program.items {
+            if let HirItemKind::Adt(adt) = &item.kind {
+                if let gossamer_hir::HirAdtKind::Enum(variants) = &adt.kind {
+                    for variant in variants {
+                        variant_owners.push((variant.name.name.clone(), adt.name.name.clone()));
+                    }
+                }
+            }
+        }
+        crate::builtins::set_variant_owners(&variant_owners);
         crate::builtins::set_struct_uint_fields(uint_fields);
         // Qualified names of every user `&mut self` method, so a call on
         // a place receiver routes through the write-back cell protocol

@@ -1124,7 +1124,7 @@ impl Vm {
                             let r = self
                                 .qualified_key(&buf[0], name)
                                 .and_then(|qual| self.lookup_global(qual.as_ref()))
-                                .or_else(|| self.lookup_global(name));
+                                .or_else(|| self.lookup_builtin_method(name));
                             if recv_token != 0 {
                                 if let Some(ref g) = r {
                                     let mut cache = state.call_caches.borrow_mut();
@@ -1178,7 +1178,7 @@ impl Vm {
                             let r = self
                                 .qualified_key(&call_args[0], name)
                                 .and_then(|qual| self.lookup_global(qual.as_ref()))
-                                .or_else(|| self.lookup_global(name));
+                                .or_else(|| self.lookup_builtin_method(name));
                             if recv_token != 0 {
                                 if let Some(ref g) = r {
                                     let mut cache = state.call_caches.borrow_mut();
@@ -4564,7 +4564,7 @@ impl Vm {
                     let resolved = self
                         .qualified_key(&recv, name)
                         .and_then(|qual| self.lookup_global(qual.as_ref()))
-                        .or_else(|| self.lookup_global(name));
+                        .or_else(|| self.lookup_builtin_method(name));
                     let mut arg_values: Vec<Value> = Vec::with_capacity(argc as usize + 1);
                     arg_values.push(recv);
                     for i in 0..argc as usize {

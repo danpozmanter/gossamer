@@ -1,7 +1,7 @@
 //! Per-source frontend cache.
 //!
 //! `gos`, `gos check`, `gos test`, and `gos build` all reach the compiler
-//! through [`crate::frontend::check_frontend_with_edition`]. This module
+//! through [`crate::frontend::check_frontend`]. This module
 //! stores that gate's complete output - the parsed [`SourceFile`], the
 //! [`Resolutions`] side table, the [`TypeTable`], and the [`TyCtxt`]
 //! interner - as one postcard blob addressed by a key covering every input

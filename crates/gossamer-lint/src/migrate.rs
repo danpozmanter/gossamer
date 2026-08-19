@@ -23,9 +23,9 @@ pub struct Rewriter {
     pub id: &'static str,
     /// One line describing what the rewrite does.
     pub summary: &'static str,
-    /// Editions this rewriter prepares a project for. Empty means it
-    /// applies to every edition.
-    pub editions: &'static [&'static str],
+    /// Toolchain versions this rewriter prepares a project for. Empty
+    /// means it applies to every version.
+    pub versions: &'static [&'static str],
     /// Collects the edits this rewriter would make.
     pub collect: fn(&SourceFile, &str, &mut Vec<Fix>),
 }

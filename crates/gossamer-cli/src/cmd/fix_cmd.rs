@@ -29,12 +29,12 @@ pub(crate) fn dispatch(
     if list {
         println!("Available rewriters:");
         for r in REWRITERS {
-            let editions = if r.editions.is_empty() {
-                "every edition".to_string()
+            let versions = if r.versions.is_empty() {
+                "every version".to_string()
             } else {
-                r.editions.join(", ")
+                r.versions.join(", ")
             };
-            println!("  {:<28} {} [{editions}]", r.id, r.summary);
+            println!("  {:<28} {} [{versions}]", r.id, r.summary);
         }
         return Ok(());
     }

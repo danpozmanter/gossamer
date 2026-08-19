@@ -1364,7 +1364,55 @@ impl Vm {
             // receiver type; without this the bare-name fallback reaches a
             // reader for a different shape and returns `None`.
             Value::Json(_) => Some(self.intern_qualified("json", method)),
-            _ => None,
+            // Every map representation answers the one `Map::` surface. All
+            // three are the same type to a program; the split is a storage
+            // optimisation.
+            Value::Map(_) | Value::IntMap(_) | Value::StrIntMap(_) => {
+                Some(self.intern_qualified("Map", method))
+            }
+            Value::Tuple(_) => Some(self.intern_qualified("Tuple", method)),
+            // Scalars, so a method on one cannot be captured by a free
+            // function of the same name.
+            Value::Int(_) => Some(self.intern_qualified("i64", method)),
+            Value::Uint(_) => Some(self.intern_qualified("u64", method)),
+            Value::Float(_) => Some(self.intern_qualified("f64", method)),
+            Value::Bool(_) => Some(self.intern_qualified("bool", method)),
+            Value::Char(_) => Some(self.intern_qualified("char", method)),
+            // An enum receiver resolves through the enum that declares the
+            // variant, which the variant value itself does not carry.
+            Value::Variant(inner) => {
+                variant_owner(inner.name.as_str()).map(|owner| self.intern_qualified(owner, method))
+            }
+            Value::Weak(_) => Some(self.intern_qualified("Weak", method)),
+            Value::Unit | Value::Void => None,
+            Value::Closure(_)
+            | Value::Builtin(_)
+            | Value::Native(_)
+            | Value::NativeEnum(_)
+            | Value::CaptureCell(_) => None,
+        }
+    }
+
+    /// Bare-name fallback for a method call whose receiver type did not name
+    /// a method.
+    ///
+    /// The stdlib registers most of its methods under a bare name, so the
+    /// fallback has to stay for them. It must never reach a *user* function,
+    /// though: a user `impl` method is also registered bare (so that a
+    /// receiver whose type cannot be named still finds it), and without this
+    /// filter a method call on one type resolves to a same-named method on
+    /// an unrelated one, or to a free function that is not a method at all.
+    /// A user method is reachable through its own type's qualified name,
+    /// which is where a method call should find it.
+    fn lookup_builtin_method(&self, name: &str) -> Option<Global> {
+        // An already-qualified name is a target the compiler resolved, not a
+        // guess: honour it as written.
+        if name.contains("::") {
+            return self.lookup_global(name);
+        }
+        match self.lookup_global(name) {
+            Some(Global::Fn(_)) | None => None,
+            found => found,
         }
     }
 
@@ -2532,5 +2580,18 @@ mod tests {
             )),
             "slice-pattern programs must stay on bytecode until native lowering preserves failed-arm control flow"
         );
+    }
+}
+
+/// The enum that declares `variant`, when the program declared one.
+///
+/// A `Value::Variant` carries only the variant's own name, so the declaring
+/// enum is looked up rather than stored on every value. `Some` / `None` /
+/// `Ok` / `Err` are built in and answer their own types.
+fn variant_owner(variant: &str) -> Option<&'static str> {
+    match variant {
+        "Some" | "None" => Some("Option"),
+        "Ok" | "Err" => Some("Result"),
+        _ => crate::builtins::variant_owner_of(variant),
     }
 }

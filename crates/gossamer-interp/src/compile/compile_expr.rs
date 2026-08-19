@@ -3238,11 +3238,11 @@ impl<'tcx> FnBuilder<'tcx> {
                 // unresolved type, which is exactly the receiver of a
                 // recursive method's inner call. One `impl` declaring the
                 // name settles it without a type: there is nothing else the
-                // call could reach. A receiver that resolved to a built-in
-                // container or scalar owns its own method surface, so its
-                // own type is the only place the method may come from.
+                // call could reach. A receiver whose type *is* known owns its
+                // method surface, so the guess is confined to receivers whose
+                // type is genuinely open.
                 .or_else(|| {
-                    self.ty_may_have_user_methods(resolved_receiver_ty)
+                    self.ty_is_unresolved(resolved_receiver_ty)
                         .then(|| self.sole_impl_method(&name.name))
                         .flatten()
                 }),
