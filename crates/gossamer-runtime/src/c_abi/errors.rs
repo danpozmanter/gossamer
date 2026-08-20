@@ -39,6 +39,20 @@ pub struct GosError {
     pub fields: Vec<(String, String)>,
 }
 
+/// Builds a causeless error carrying `text` as its message.
+///
+/// Runtime callers that already hold the message as Rust bytes reach the
+/// error this way rather than through a host C string, which the string ABI
+/// would have to measure with `strlen`.
+pub(crate) fn error_new_from_bytes(text: &[u8]) -> *mut GosError {
+    let leaked = alloc_cstring(text);
+    Box::into_raw(Box::new(GosError {
+        message: SyncRawPtr::new(leaked),
+        cause: SyncRawPtr::NULL,
+        fields: Vec::new(),
+    }))
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_error_new(msg: *const c_char) -> *mut GosError {
     ffi_entry!(std::ptr::null_mut(), {
@@ -47,12 +61,7 @@ pub unsafe extern "C" fn gos_rt_error_new(msg: *const c_char) -> *mut GosError {
         } else {
             unsafe { crate::c_abi::gos_str_arg_bytes(msg) }.to_vec()
         };
-        let leaked = alloc_cstring(&text);
-        Box::into_raw(Box::new(GosError {
-            message: SyncRawPtr::new(leaked),
-            cause: SyncRawPtr::NULL,
-            fields: Vec::new(),
-        }))
+        error_new_from_bytes(&text)
     })
 }
 

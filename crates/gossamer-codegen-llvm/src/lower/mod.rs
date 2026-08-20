@@ -227,10 +227,15 @@ impl StringPool {
             let ty = format!(
                 "<{{ [16 x i8], i32, i32, i32, i8, [{size} x i8], [{index_slots} x i32] }}>"
             );
+            // The runtime reaches a string body at `base + 29` and selects its
+            // carrier by the body's address modulo 8, so an 8-aligned base is
+            // what makes every body congruent to 5 and keeps the header read
+            // inside this blob. A packed type has an ABI alignment of 1, so the
+            // blob states the alignment it needs rather than inheriting one.
             let _ = writeln!(
                 out,
                 "{data} = private constant {ty} \
-                 <{{ [16 x i8] [i8 1, i8 0, i8 2, i8 0, i8 3, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0], i32 0, i32 {content_len}, i32 {content_len}, i8 -88, [{size} x i8] c\"{escaped}\\00\", [{index_slots} x i32] [{index_values}] }}>"
+                 <{{ [16 x i8] [i8 1, i8 0, i8 2, i8 0, i8 3, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0, i8 0], i32 0, i32 {content_len}, i32 {content_len}, i8 -88, [{size} x i8] c\"{escaped}\\00\", [{index_slots} x i32] [{index_values}] }}>, align 8"
             );
             // `-88` is `0xA8` (STR_STATIC_TAG) as a signed i8.
             let _ = writeln!(

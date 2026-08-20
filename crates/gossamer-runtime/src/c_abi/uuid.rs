@@ -297,7 +297,7 @@ pub unsafe extern "C" fn gos_rt_iter_repeat_i64(value: i64, n: i64) -> *mut GosV
     ffi_entry!(std::ptr::null_mut(), {
         let out = unsafe { gos_rt_vec_new(8) };
         if n < 0 {
-            unsafe { gos_rt_panic(c"iter::repeat: count must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("iter::repeat: count must be non-negative");
         }
         if n > 0 {
             for _ in 0..n {
@@ -392,11 +392,9 @@ impl Iterator for BorrowedGosVecI64 {
             || source.len != self.len
             || source.cap != self.cap
         {
-            const MESSAGE: &[u8] =
-                b"borrowed Vec source was structurally mutated during iteration\0";
-            // SAFETY: MESSAGE is a static, nul-terminated C string. A source
-            // invalidation is a language-level runtime panic, not exhaustion.
-            unsafe { crate::c_abi::panic::gos_rt_panic(MESSAGE.as_ptr().cast()) };
+            crate::c_abi::panic::panic_text(
+                "borrowed Vec source was structurally mutated during iteration",
+            );
             return None;
         }
         let value = unsafe { gos_rt_vec_get_i64(self.source, self.index) };
@@ -466,11 +464,8 @@ impl Iterator for GosRangeFromI64 {
 
     fn next(&mut self) -> Option<Self::Item> {
         let Some((out, next)) = advance_range_from_i64(self.current) else {
-            const MESSAGE: &[u8] = b"attempt to add with overflow in open integer range\0";
-            // SAFETY: MESSAGE is static and nul-terminated. Rust's debug
-            // RangeFrom overflows before yielding the maximum value.
-            unsafe { crate::c_abi::panic::gos_rt_panic(MESSAGE.as_ptr().cast()) };
-            unreachable!("gos_rt_panic does not return on the main thread");
+            crate::c_abi::panic::panic_text("attempt to add with overflow in open integer range");
+            unreachable!("the raise does not return on the main thread");
         };
         self.current = next;
         Some(out)
@@ -727,10 +722,9 @@ unsafe fn lazy_from_vec_classed(source: *mut GosVec, class: u8) -> *mut GosLazyI
     // SAFETY: the caller supplies a live GosVec header.
     let header = unsafe { &*source };
     if header.elem_bytes > 8 {
-        const MESSAGE: &[u8] =
-            b"lazy iterator source holds multi-slot elements; use the eager sequence surface\0";
-        // SAFETY: MESSAGE is static and nul-terminated.
-        unsafe { crate::c_abi::panic::gos_rt_panic(MESSAGE.as_ptr().cast()) };
+        crate::c_abi::panic::panic_text(
+            "lazy iterator source holds multi-slot elements; use the eager sequence surface",
+        );
     }
     // SAFETY: retaining the header gives the iterator state its own share
     // until `BorrowedGosVecI64::drop`.
@@ -786,10 +780,9 @@ impl Iterator for BorrowedGosVecAggr {
             || source.len != self.len
             || source.cap != self.cap
         {
-            const MESSAGE: &[u8] =
-                b"borrowed Vec source was structurally mutated during iteration\0";
-            // SAFETY: MESSAGE is a static, nul-terminated C string.
-            unsafe { crate::c_abi::panic::gos_rt_panic(MESSAGE.as_ptr().cast()) };
+            crate::c_abi::panic::panic_text(
+                "borrowed Vec source was structurally mutated during iteration",
+            );
             return None;
         }
         // SAFETY: `index` is in `[0, len)` against this same live header.
@@ -898,7 +891,7 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_from_vec_f64(source: *mut GosVec) -> *
 pub unsafe extern "C" fn gos_rt_lazy_iter_repeat_i64(value: i64, n: i64) -> *mut GosLazyIterI64 {
     ffi_entry!(std::ptr::null_mut(), {
         if n < 0 {
-            unsafe { gos_rt_panic(c"iter::repeat: count must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("iter::repeat: count must be non-negative");
         }
         let n = usize::try_from(n).unwrap_or(0);
         lazy_i64(std::iter::repeat_n(value, n))
@@ -981,7 +974,7 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_take_i64(
 ) -> *mut GosLazyIterI64 {
     ffi_entry!(std::ptr::null_mut(), {
         if n < 0 {
-            unsafe { gos_rt_panic(c"iter::take: count must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("iter::take: count must be non-negative");
         }
         let n = usize::try_from(n).unwrap_or(0);
         let (upstream, tag) = unsafe { take_lazy_tagged(iter) };
@@ -997,7 +990,7 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_step_by_i64(
 ) -> *mut GosLazyIterI64 {
     ffi_entry!(std::ptr::null_mut(), {
         if step <= 0 {
-            unsafe { gos_rt_panic(c"iter::step_by: step must be positive".as_ptr()) };
+            crate::c_abi::panic::panic_text("iter::step_by: step must be positive");
         }
         let step = usize::try_from(step).unwrap_or(1);
         let (upstream, tag) = unsafe { take_lazy_tagged(iter) };
@@ -1013,7 +1006,7 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_skip_i64(
 ) -> *mut GosLazyIterI64 {
     ffi_entry!(std::ptr::null_mut(), {
         if n < 0 {
-            unsafe { gos_rt_panic(c"iter::skip: count must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("iter::skip: count must be non-negative");
         }
         let n = usize::try_from(n).unwrap_or(0);
         let (upstream, tag) = unsafe { take_lazy_tagged(iter) };
@@ -1300,7 +1293,7 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_find_i64(
 pub unsafe extern "C" fn gos_rt_lazy_iter_repeat_f64(value: f64, n: i64) -> *mut GosLazyIterI64 {
     ffi_entry!(std::ptr::null_mut(), {
         if n < 0 {
-            unsafe { gos_rt_panic(c"iter::repeat: count must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("iter::repeat: count must be non-negative");
         }
         let n = usize::try_from(n).unwrap_or(0);
         lazy_f64(std::iter::repeat_n(value, n))
@@ -1550,7 +1543,7 @@ pub unsafe extern "C" fn gos_rt_iter_take_i64(n: i64, v: *const GosVec) -> *mut 
     ffi_entry!(std::ptr::null_mut(), {
         let out = unsafe { vec_like_source(v, 0) };
         if n < 0 {
-            unsafe { gos_rt_panic(c"iter::take: count must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("iter::take: count must be non-negative");
         }
         if v.is_null() {
             return out;
@@ -1571,7 +1564,7 @@ pub unsafe extern "C" fn gos_rt_iter_skip_i64(n: i64, v: *const GosVec) -> *mut 
     ffi_entry!(std::ptr::null_mut(), {
         let out = unsafe { vec_like_source(v, 0) };
         if n < 0 {
-            unsafe { gos_rt_panic(c"iter::skip: count must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("iter::skip: count must be non-negative");
         }
         if v.is_null() {
             return out;
@@ -1741,7 +1734,7 @@ pub unsafe extern "C" fn gos_rt_iter_windowed_i64(n: i64, v: *const GosVec) -> *
             crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::VEC)
         };
         if n <= 0 {
-            unsafe { gos_rt_panic(c"iter::windows: count must be positive".as_ptr()) };
+            crate::c_abi::panic::panic_text("iter::windows: count must be positive");
         }
         if v.is_null() {
             return out;
@@ -1772,7 +1765,7 @@ pub unsafe extern "C" fn gos_rt_iter_chunk_by_size_i64(n: i64, v: *const GosVec)
             crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::VEC)
         };
         if n <= 0 {
-            unsafe { gos_rt_panic(c"iter::chunks: count must be positive".as_ptr()) };
+            crate::c_abi::panic::panic_text("iter::chunks: count must be positive");
         }
         if v.is_null() {
             return out;

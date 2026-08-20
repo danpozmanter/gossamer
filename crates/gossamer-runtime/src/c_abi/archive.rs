@@ -110,8 +110,7 @@ fn ok_bytes(bytes: &[u8]) -> i128 {
 }
 
 fn err(msg: &str) -> i128 {
-    let cs = alloc_cstring(msg.as_bytes());
-    let e = unsafe { super::errors::gos_rt_error_new(cs) };
+    let e = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
     unsafe { gos_rt_result_new(1, e as i64) }
 }
 

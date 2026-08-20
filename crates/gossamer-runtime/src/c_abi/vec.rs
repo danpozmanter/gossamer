@@ -463,7 +463,7 @@ pub(crate) unsafe fn consume_byte_vec<R>(v: *mut GosVec, f: impl FnOnce(&[u8]) -
     };
     let result = f(bytes);
     let _ = u32::try_from(bytes.len()).unwrap_or_else(|_| {
-        unsafe { gos_rt_panic(c"byte vector is too large to store".as_ptr()) };
+        crate::c_abi::panic::panic_text("byte vector is too large to store");
         0
     });
     // The bytes are copied out, so the container's share of the source ends
@@ -486,7 +486,7 @@ pub(crate) unsafe fn consume_byte_vec_preserving_source<R>(
     };
     let result = f(bytes);
     let _ = u32::try_from(bytes.len()).unwrap_or_else(|_| {
-        unsafe { gos_rt_panic(c"byte vector is too large to store".as_ptr()) };
+        crate::c_abi::panic::panic_text("byte vector is too large to store");
         0
     });
     match vec_rc(vec) {
@@ -672,7 +672,7 @@ unsafe fn alloc_vec_header(mut v: GosVec) -> *mut GosVec {
 /// reserve the requested capacity through the shared growth path.
 unsafe fn alloc_vec_with_capacity(elem_bytes: u32, elem_kind: u8, cap: i64) -> *mut GosVec {
     if cap < 0 {
-        unsafe { gos_rt_panic(c"Vec::with_capacity: capacity must be non-negative".as_ptr()) };
+        crate::c_abi::panic::panic_text("Vec::with_capacity: capacity must be non-negative");
     }
     if !crate::c_abi::rc::region_is_active() {
         return unsafe { alloc_box_vec(elem_bytes, elem_kind, cap, 0) };
@@ -809,7 +809,7 @@ pub unsafe extern "C" fn gos_rt_vec_borrow_arr(
 ) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
         if len < 0 {
-            unsafe { gos_rt_panic(c"Vec length must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("Vec length must be non-negative");
         }
         let view_elem_bytes = elem_bytes.max(8);
         let v = unsafe { alloc_box_vec(view_elem_bytes, vec_elem_kind::PRIMITIVE, 0, 0) };
@@ -833,7 +833,7 @@ pub unsafe extern "C" fn gos_rt_vec_borrow_packed_arr(
 ) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
         if len < 0 {
-            unsafe { gos_rt_panic(c"Vec length must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("Vec length must be non-negative");
         }
         let v = unsafe { alloc_box_vec(elem_bytes.max(1), vec_elem_kind::PRIMITIVE, 0, 0) };
         unsafe {
@@ -1374,15 +1374,9 @@ pub(crate) fn alloc_vec_buffer(bytes: usize) -> *mut u8 {
 #[inline]
 fn checked_buffer_bytes(count: usize, elem_bytes: usize) -> usize {
     count.checked_mul(elem_bytes).unwrap_or_else(|| {
-        // `gos_rt_panic` reads the length header a Gossamer string carries
-        // ahead of its pointer, so the message is allocated through the
-        // runtime's own allocator rather than as a bare `CString`.
-        let cs = super::string::alloc_cstring(b"capacity overflow");
-        // SAFETY: `cs` is a valid NUL-terminated C string for the call's
-        // duration; `gos_rt_panic` reads it and does not retain the pointer.
-        // It exits the process (main goroutine) or unwinds (spawned
+        // The raise exits the process (main goroutine) or unwinds (spawned
         // goroutine); this arm never returns.
-        unsafe { gos_rt_panic(cs) };
+        crate::c_abi::panic::panic_text("capacity overflow");
         0
     })
 }
@@ -1423,10 +1417,10 @@ pub unsafe extern "C" fn gos_rt_vec_repeat_primitive(
 ) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
         if count < 0 {
-            unsafe { gos_rt_panic(c"array repeat count must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("array repeat count must be non-negative");
         }
         if !matches!(elem_bytes, 1 | 2 | 4 | 8) {
-            unsafe { gos_rt_panic(c"invalid primitive array element width".as_ptr()) };
+            crate::c_abi::panic::panic_text("invalid primitive array element width");
         }
         let vec = unsafe { alloc_vec_with_capacity(elem_bytes, vec_elem_kind::PRIMITIVE, count) };
         if vec.is_null() {
@@ -1492,7 +1486,7 @@ pub unsafe extern "C" fn gos_rt_vec_from_arr(
 ) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
         if len < 0 {
-            unsafe { gos_rt_panic(c"Vec length must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("Vec length must be non-negative");
         }
         let n = checked_buffer_bytes(len as usize, elem_bytes as usize);
         // Header + element buffer in one `Box<InlineVec>` (inline for a
@@ -1531,7 +1525,7 @@ pub unsafe extern "C" fn gos_rt_vec_from_packed_arr(
 ) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
         if len < 0 {
-            unsafe { gos_rt_panic(c"Vec length must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("Vec length must be non-negative");
         }
         let n = checked_buffer_bytes(len as usize, elem_bytes as usize);
         let v = unsafe { alloc_box_vec(elem_bytes.max(1), vec_elem_kind::PRIMITIVE, len, len) };
@@ -1916,7 +1910,7 @@ pub unsafe extern "C" fn gos_rt_vec_truncate(v: *mut GosVec, len: i64) {
             return;
         }
         if len < 0 {
-            unsafe { gos_rt_panic(c"truncate: length must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("truncate: length must be non-negative");
         }
         let new_len = len;
         let old_len = unsafe { (*v).len.max(0) };
@@ -2317,11 +2311,7 @@ pub extern "C" fn gos_rt_debug_result_fmt(
 pub unsafe extern "C" fn gos_rt_result_unwrap(r: i128) -> i64 {
     ffi_entry!(-1, {
         if result_disc_of(r) != 0 {
-            // `gos_rt_panic` reads the length header a Gossamer string carries
-            // ahead of its pointer, so the message is allocated through the
-            // runtime's own allocator rather than as a bare `CString`.
-            let cs = super::string::alloc_cstring(b"called `Result::unwrap()` on an `Err` value");
-            unsafe { gos_rt_panic(cs) };
+            crate::c_abi::panic::panic_text("called `Result::unwrap()` on an `Err` value");
             return 0;
         }
         result_payload_of(r)
@@ -2335,8 +2325,7 @@ pub unsafe extern "C" fn gos_rt_result_unwrap(r: i128) -> i64 {
 pub unsafe extern "C" fn gos_rt_option_unwrap(r: i128) -> i64 {
     ffi_entry!(-1, {
         if result_disc_of(r) != 0 {
-            let cs = super::string::alloc_cstring(b"called `Option::unwrap()` on a `None` value");
-            unsafe { gos_rt_panic(cs) };
+            crate::c_abi::panic::panic_text("called `Option::unwrap()` on a `None` value");
             return 0;
         }
         result_payload_of(r)
@@ -2469,11 +2458,11 @@ pub unsafe extern "C" fn gos_rt_main_exit_code_err(disc: i64, payload: i64) -> i
 pub unsafe extern "C" fn gos_rt_vec_copy_within(v: *mut GosVec, src: i64, dest: i64, len: i64) {
     ffi_entry!((), {
         if v.is_null() {
-            unsafe { gos_rt_panic(c"copy_within: null vector".as_ptr()) };
+            crate::c_abi::panic::panic_text("copy_within: null vector");
         }
         let vec_len = unsafe { (*v).len.max(0) };
         if src < 0 || dest < 0 || len < 0 || src + len > vec_len || dest + len > vec_len {
-            unsafe { gos_rt_panic(c"copy_within: range outside the vector".as_ptr()) };
+            crate::c_abi::panic::panic_text("copy_within: range outside the vector");
         }
         if len == 0 || src == dest {
             return;
@@ -2486,7 +2475,7 @@ pub unsafe extern "C" fn gos_rt_vec_copy_within(v: *mut GosVec, src: i64, dest: 
         unsafe { bump_vec_mutation_generation(&mut *v) };
         for offset in 0..len {
             if !unsafe { vec_retain_elem_at_for_copy(v, src + offset) } {
-                unsafe { gos_rt_panic(c"copy_within: element type cannot be copied".as_ptr()) };
+                crate::c_abi::panic::panic_text("copy_within: element type cannot be copied");
             }
         }
         let span = (len as usize) * stride;
@@ -2518,7 +2507,7 @@ pub unsafe extern "C" fn gos_rt_vec_copy_within(v: *mut GosVec, src: i64, dest: 
 pub unsafe extern "C" fn gos_rt_vec_copy_from_slice(dst: *mut GosVec, src: *const GosVec) {
     ffi_entry!((), {
         if dst.is_null() || src.is_null() {
-            unsafe { gos_rt_panic(c"copy_from_slice: null vector".as_ptr()) };
+            crate::c_abi::panic::panic_text("copy_from_slice: null vector");
         }
         if std::ptr::addr_eq(dst.cast_const(), src) {
             return;
@@ -2527,14 +2516,16 @@ pub unsafe extern "C" fn gos_rt_vec_copy_from_slice(dst: *mut GosVec, src: *cons
         let src_len = unsafe { (*src).len.max(0) };
         if dst_len != src_len {
             unsafe {
-                gos_rt_panic(c"copy_from_slice: source and destination differ in length".as_ptr());
+                crate::c_abi::panic::panic_text(
+                    "copy_from_slice: source and destination differ in length",
+                );
             }
         }
         let stride = unsafe { (*dst).elem_bytes } as usize;
         if unsafe { (*src).elem_bytes } as usize != stride
             || unsafe { (*src).elem_kind } != unsafe { (*dst).elem_kind }
         {
-            unsafe { gos_rt_panic(c"copy_from_slice: element shapes differ".as_ptr()) };
+            crate::c_abi::panic::panic_text("copy_from_slice: element shapes differ");
         }
         let (dst_base, src_base) = unsafe { ((*dst).ptr.as_ptr(), (*src).ptr.as_const_ptr()) };
         if stride == 0 || dst_base.is_null() || src_base.is_null() || dst_len == 0 {
@@ -2543,7 +2534,7 @@ pub unsafe extern "C" fn gos_rt_vec_copy_from_slice(dst: *mut GosVec, src: *cons
         unsafe { bump_vec_mutation_generation(&mut *dst) };
         for idx in 0..src_len {
             if !unsafe { vec_retain_elem_at_for_copy(src, idx) } {
-                unsafe { gos_rt_panic(c"copy_from_slice: element type cannot be copied".as_ptr()) };
+                crate::c_abi::panic::panic_text("copy_from_slice: element type cannot be copied");
             }
         }
         for idx in 0..dst_len {

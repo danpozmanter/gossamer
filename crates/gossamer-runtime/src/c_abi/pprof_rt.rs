@@ -9,16 +9,20 @@
 use std::os::raw::c_char;
 use std::time::Duration;
 
-/// Converts a rendered profile into an owned C string for the caller.
-fn into_c_string(text: String) -> *mut c_char {
-    std::ffi::CString::new(text).unwrap_or_default().into_raw()
+/// Converts a rendered profile into an owned Gossamer string for the caller.
+///
+/// The value crosses the ABI as the language's `String`, so it is built by the
+/// runtime string allocator: the caller's release path reclaims it, and every
+/// shim that reads its length finds the header behind the body.
+fn into_gos_string(text: &str) -> *mut c_char {
+    crate::c_abi::alloc_cstring(text.as_bytes())
 }
 
 /// `pprof::goroutine_profile() -> String`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_pprof_goroutine_profile() -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        into_c_string(crate::pprof::goroutine_profile())
+        into_gos_string(&crate::pprof::goroutine_profile())
     })
 }
 
@@ -26,7 +30,7 @@ pub unsafe extern "C" fn gos_rt_pprof_goroutine_profile() -> *mut c_char {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_pprof_mutex_profile() -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        into_c_string(crate::pprof::mutex_profile())
+        into_gos_string(&crate::pprof::mutex_profile())
     })
 }
 
@@ -34,7 +38,7 @@ pub unsafe extern "C" fn gos_rt_pprof_mutex_profile() -> *mut c_char {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_pprof_block_profile() -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        into_c_string(crate::pprof::block_profile())
+        into_gos_string(&crate::pprof::block_profile())
     })
 }
 
@@ -44,7 +48,7 @@ pub unsafe extern "C" fn gos_rt_pprof_block_profile() -> *mut c_char {
 pub unsafe extern "C" fn gos_rt_pprof_execution_trace(millis: i64) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         let window = Duration::from_millis(millis.max(0) as u64);
-        into_c_string(crate::pprof::execution_trace(window))
+        into_gos_string(&crate::pprof::execution_trace(window))
     })
 }
 
@@ -53,7 +57,7 @@ pub unsafe extern "C" fn gos_rt_pprof_execution_trace(millis: i64) -> *mut c_cha
 pub unsafe extern "C" fn gos_rt_pprof_cpu_profile(millis: i64) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         let window = Duration::from_millis(millis.max(0) as u64);
-        into_c_string(crate::pprof::cpu_profile(window))
+        into_gos_string(&crate::pprof::cpu_profile(window))
     })
 }
 
@@ -62,7 +66,7 @@ pub unsafe extern "C" fn gos_rt_pprof_cpu_profile(millis: i64) -> *mut c_char {
 pub unsafe extern "C" fn gos_rt_pprof_heap_profile(millis: i64) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         let window = Duration::from_millis(millis.max(0) as u64);
-        into_c_string(crate::pprof::heap_profile(window))
+        into_gos_string(&crate::pprof::heap_profile(window))
     })
 }
 

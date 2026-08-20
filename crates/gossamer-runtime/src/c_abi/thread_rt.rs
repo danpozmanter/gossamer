@@ -36,7 +36,7 @@ pub unsafe extern "C" fn gos_rt_runtime_scheduler_stats_json() -> *mut std::os::
             scheduler.worker_count(),
             crate::sched::MultiScheduler::worker_count_cap(),
         );
-        std::ffi::CString::new(text).unwrap_or_default().into_raw()
+        crate::c_abi::alloc_cstring(text.as_bytes())
     })
 }
 

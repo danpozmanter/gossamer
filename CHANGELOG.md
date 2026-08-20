@@ -2,6 +2,16 @@
 
 ## 0.53.0 - DynValue on every tier, Rust-binding value shapes, Map/Set content equality, compiled-tier and tooling fixes
 
+- Take a heap or CPU profile from a native Windows binary without an access
+  violation: a profile crosses the ABI as a language `String`, and one built
+  by the host string API carried no length header, so measuring it read the
+  byte before its allocation.
+- Measure a foreign C string without reading behind it anywhere in the
+  runtime: the header a Gossamer `String` carries is now reached only through
+  the body shape that proves it is there.
+- Free the profile a `pprof` call answers, and the JSON
+  `runtime::scheduler_stats_json` answers, when the binding goes out of
+  scope; both were allocated outside the runtime's ownership and leaked.
 - Build a program natively when a struct it reaches holds a `Vec` of another
   struct: the derived `fmt` of a type a module declares is registered under
   that module's path, and the native lowering now looks for it there instead

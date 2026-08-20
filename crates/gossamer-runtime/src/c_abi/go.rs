@@ -571,7 +571,9 @@ pub unsafe extern "C" fn gos_rt_sleep_ms_ctx(ctx_handle: *const u8, ms: i64) -> 
     ffi_entry!(0, {
         if ms < 0 {
             unsafe {
-                super::gos_rt_panic(c"time::sleep_ctx: duration_ms must be non-negative".as_ptr());
+                crate::c_abi::panic::panic_text(
+                    "time::sleep_ctx: duration_ms must be non-negative",
+                );
             };
         }
         let addr = ctx_handle as usize;
@@ -617,7 +619,7 @@ pub unsafe extern "C" fn gos_rt_sleep_ms(ms: i64) {
     ffi_entry!((), {
         if ms < 0 {
             unsafe {
-                super::gos_rt_panic(c"time::sleep: duration_ms must be non-negative".as_ptr());
+                crate::c_abi::panic::panic_text("time::sleep: duration_ms must be non-negative");
             };
         }
         let ns = ms.saturating_mul(1_000_000);

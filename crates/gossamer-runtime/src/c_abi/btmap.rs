@@ -740,8 +740,7 @@ pub unsafe extern "C" fn gos_rt_arr_format_arr_bool(
 pub unsafe extern "C" fn gos_rt_os_set_env(name: *const c_char, value: *const c_char) -> i128 {
     ffi_entry!(0i128, {
         if name.is_null() {
-            let cs = alloc_cstring(b"os::set_env: name is null");
-            let err = unsafe { gos_rt_error_new(cs) };
+            let err = crate::c_abi::errors::error_new_from_bytes(b"os::set_env: name is null");
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let name_str = unsafe { crate::c_abi::gos_str_arg_string(name) };
@@ -787,8 +786,7 @@ pub unsafe extern "C" fn gos_rt_os_unset_env(name: *const c_char) {
 pub unsafe extern "C" fn gos_rt_exec_spawn(prog: *const c_char, args: *mut GosVec) -> i128 {
     ffi_entry!(0i128, {
         let prog_str = if prog.is_null() {
-            let cs = alloc_cstring(b"exec::spawn: program is null");
-            let err = unsafe { gos_rt_error_new(cs) };
+            let err = crate::c_abi::errors::error_new_from_bytes(b"exec::spawn: program is null");
             return unsafe { gos_rt_result_new(1, err as i64) };
         } else {
             unsafe { crate::c_abi::gos_str_arg_string(prog) }
@@ -831,8 +829,7 @@ pub unsafe extern "C" fn gos_rt_exec_spawn(prog: *const c_char, args: *mut GosVe
             }
             Err(e) => {
                 let msg = format!("exec::spawn({prog_str}): {e}");
-                let cs = alloc_cstring(msg.as_bytes());
-                let err = unsafe { gos_rt_error_new(cs) };
+                let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
         }

@@ -19,7 +19,6 @@ use std::io::{BufRead, Read};
 use std::os::raw::c_char;
 
 use super::*;
-use crate::c_abi::errors::gos_rt_error_new;
 use crate::c_abi::vec::gos_rt_result_new;
 
 // ---------------------------------------------------------------
@@ -118,8 +117,8 @@ pub unsafe extern "C" fn gos_rt_io_read_all(reader: *const GosStream) -> i128 {
 }
 
 fn read_all_error(message: String) -> i128 {
-    let msg = alloc_cstring(format!("io::ReadAll: {message}").as_bytes());
-    let err = unsafe { gos_rt_error_new(msg) };
+    let err =
+        crate::c_abi::errors::error_new_from_bytes(format!("io::ReadAll: {message}").as_bytes());
     unsafe { gos_rt_result_new(1, err as i64) }
 }
 
@@ -305,8 +304,7 @@ pub unsafe extern "C" fn gos_rt_stream_flush(stream: *const GosStream) {
 }
 
 fn stream_read_line_err(message: &str) -> i128 {
-    let msg = alloc_cstring(message.as_bytes());
-    let err = unsafe { gos_rt_error_new(msg) };
+    let err = crate::c_abi::errors::error_new_from_bytes(message.as_bytes());
     gos_rt_result_new(1, err as i64)
 }
 

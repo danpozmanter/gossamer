@@ -573,7 +573,9 @@ pub unsafe extern "C" fn gos_rt_map_new_with_capacity(
         const MAX_PREALLOCATED_CAPACITY: usize = 1 << 24;
         if cap < 0 {
             unsafe {
-                gos_rt_panic(c"HashMap::with_capacity: capacity must be non-negative".as_ptr());
+                crate::c_abi::panic::panic_text(
+                    "HashMap::with_capacity: capacity must be non-negative",
+                );
             };
         }
         let cap = (cap as usize).min(MAX_PREALLOCATED_CAPACITY);
@@ -607,7 +609,9 @@ pub unsafe extern "C" fn gos_rt_map_new_with_capacity_typed(
         const MAX_PREALLOCATED_CAPACITY: usize = 1 << 24;
         if cap < 0 {
             unsafe {
-                gos_rt_panic(c"HashMap::with_capacity: capacity must be non-negative".as_ptr());
+                crate::c_abi::panic::panic_text(
+                    "HashMap::with_capacity: capacity must be non-negative",
+                );
             };
         }
         let cap = (cap as usize).min(MAX_PREALLOCATED_CAPACITY);
@@ -691,11 +695,9 @@ pub unsafe extern "C" fn gos_rt_map_get(m: *const GosMap, key: *const u8, val_ou
             // reader does not know, so the caller was compiled against a
             // storage the map never took.
             drop(storage);
-            unsafe {
-                gos_rt_panic(
-                    c"map read reached a storage shape this accessor does not handle".as_ptr(),
-                );
-            };
+            crate::c_abi::panic::panic_text(
+                "map read reached a storage shape this accessor does not handle",
+            );
             return 0;
         };
         if let Some(v) = inner.get(k) {
@@ -1469,10 +1471,10 @@ pub unsafe extern "C" fn gos_rt_map_inc_at_str_i64(
 ) -> i64 {
     ffi_entry!(-1, {
         if start < 0 {
-            unsafe { gos_rt_panic(c"HashMap::inc_at: start must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("HashMap::inc_at: start must be non-negative");
         }
         if len < 0 {
-            unsafe { gos_rt_panic(c"HashMap::inc_at: length must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("HashMap::inc_at: length must be non-negative");
         }
         if m.is_null() || seq.is_null() || len == 0 {
             return 0;

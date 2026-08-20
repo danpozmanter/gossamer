@@ -494,9 +494,7 @@ pub unsafe extern "C" fn gos_rt_cohort_join() -> i128 {
         match join_current() {
             None => super::vec::pack_result(0, 0),
             Some(message) => {
-                let text = std::ffi::CString::new(message)
-                    .unwrap_or_else(|_| c"cohort child failed".to_owned());
-                let err = unsafe { super::errors::gos_rt_error_new(text.as_ptr()) };
+                let err = super::errors::error_new_from_bytes(message.as_bytes());
                 super::vec::pack_result(1, err as i64)
             }
         }

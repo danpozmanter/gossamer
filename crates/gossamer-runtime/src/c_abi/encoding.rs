@@ -12,12 +12,10 @@
 
 use std::os::raw::c_char;
 
-use super::errors::gos_rt_error_new;
 use super::string::alloc_cstring;
 
 fn err_result(msg: &str) -> i128 {
-    let cs = alloc_cstring(msg.as_bytes());
-    let err = unsafe { gos_rt_error_new(cs) };
+    let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
     unsafe { super::vec::gos_rt_result_new(1, err as i64) }
 }
 

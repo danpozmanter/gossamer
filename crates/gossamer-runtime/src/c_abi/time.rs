@@ -113,7 +113,7 @@ use chrono::{
 use chrono_tz::Tz;
 use std::os::raw::c_char;
 
-use crate::c_abi::{gos_rt_error_new, gos_rt_gc_alloc, gos_rt_result_new};
+use crate::c_abi::{gos_rt_gc_alloc, gos_rt_result_new};
 
 enum CivilLocation {
     Iana(Tz),
@@ -160,8 +160,7 @@ fn parse_location(spec: &str) -> Result<CivilLocation, String> {
 }
 
 fn time_error(message: &str) -> i128 {
-    let text = super::string::alloc_cstring(message.as_bytes());
-    let error = unsafe { gos_rt_error_new(text) };
+    let error = crate::c_abi::errors::error_new_from_bytes(message.as_bytes());
     gos_rt_result_new(1, error as i64)
 }
 

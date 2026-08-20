@@ -150,6 +150,25 @@ pub unsafe extern "C-unwind" fn gos_rt_panic(msg: *const c_char) {
     raise("GX0005", "panic: ", text);
 }
 
+/// Raises the same fault as [`gos_rt_panic`] for a caller inside the runtime.
+///
+/// The C entry point measures its argument through the string ABI, which reads
+/// the header a Gossamer `String` carries behind its body. Runtime callers
+/// already hold Rust text, so they hand it over directly rather than shaping a
+/// C string the ABI would have to treat as foreign.
+pub(crate) fn panic_text(text: &str) {
+    raise("GX0005", "panic: ", text.to_string());
+}
+
+/// [`gos_rt_panic_oob`] for a caller inside the runtime. See [`panic_text`].
+pub(crate) fn panic_oob_text(what: &str, idx: i64, len: i64) -> ! {
+    raise(
+        "GX0005",
+        "panic: ",
+        format!("{what} out of bounds: the len is {len} but the index is {idx}"),
+    );
+}
+
 /// Raises `text` as a fault carrying diagnostic `code`, rendered as
 /// `error[<code>]: <prefix><text>`.
 ///
@@ -285,16 +304,7 @@ pub unsafe extern "C" fn gos_rt_panic_oob(what: *const c_char, idx: i64, len: i6
     } else {
         unsafe { crate::c_abi::gos_str_arg_string(what) }
     };
-    let msg = format!("{label} out of bounds: the len is {len} but the index is {idx}");
-    // `gos_rt_panic` reads the length header a Gossamer string carries
-    // ahead of its pointer, so the message is allocated through the
-    // runtime's own allocator rather than as a bare `CString`.
-    let cmsg = alloc_cstring(msg.as_bytes());
-    unsafe { gos_rt_panic(cmsg) };
-    // `gos_rt_panic` calls `std::process::abort`, so this is
-    // unreachable. The explicit `abort` keeps the `-> !` return
-    // type honest if `gos_rt_panic` is ever changed to unwind.
-    std::process::abort();
+    panic_oob_text(&label, idx, len);
 }
 
 // ---------------------------------------------------------------

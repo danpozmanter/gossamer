@@ -37,8 +37,7 @@ fn cstr_to_str(p: *const c_char) -> String {
 /// Packs an `Err(errors::Error)` for the Result-returning `net::ip`
 /// shims, matching the `gos_rt_result_new(1, error_ptr)` convention.
 fn ip_err(msg: &str) -> i128 {
-    let cs = super::string::alloc_cstring(msg.as_bytes());
-    let err = unsafe { super::errors::gos_rt_error_new(cs) };
+    let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
     super::vec::gos_rt_result_new(1, err as i64)
 }
 

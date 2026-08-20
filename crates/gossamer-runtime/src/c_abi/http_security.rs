@@ -151,15 +151,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 
 /// Packs an `Err(errors::Error)` for the Result-returning shims.
 fn sec_err(msg: &str) -> i128 {
-    // `gos_rt_error_new` reads the length header a Gossamer string carries
-    // ahead of its pointer, so the message is allocated through the runtime's
-    // own allocator rather than as a bare `CString` - a bare heap pointer has
-    // no such header, and the byte the length-header probe reads just before
-    // it is unrelated allocator/adjacent-allocation content that can coincide
-    // with a real tag byte, misreading a garbage length and handing
-    // `to_vec()` an out-of-bounds range.
-    let cs = alloc_cstring(msg.as_bytes());
-    let err = unsafe { super::errors::gos_rt_error_new(cs) };
+    let err = super::errors::error_new_from_bytes(msg.as_bytes());
     gos_rt_result_new(1, err as i64)
 }
 

@@ -40,8 +40,7 @@ fn header_lookup(req: &GosHttpRequest, name: &str) -> Option<String> {
 /// Packs an `Err(errors::Error)` Result with the given message,
 /// matching the interp tier's handshake error strings.
 fn handshake_err(msg: &str) -> i128 {
-    let cs = alloc_cstring(msg.as_bytes());
-    let err = unsafe { gos_rt_error_new(cs) };
+    let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
     crate::c_abi::vec::pack_result(1, err as i64)
 }
 

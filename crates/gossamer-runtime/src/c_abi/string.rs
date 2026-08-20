@@ -106,9 +106,21 @@ fn is_registered_heap_string_body(s: *const c_char) -> bool {
         .contains(&(s as usize))
 }
 
+/// Whether `s` carries the fixed low-bit shape of a Gossamer string body.
+///
+/// Every body sits `STRING_BODY_OFFSET` bytes into an 8-aligned allocation, so
+/// its address is congruent to `STRING_BODY_TAG` modulo 8. A pointer failing
+/// this test is a foreign C string, and the bytes before it belong to whoever
+/// allocated it - reading them addresses memory outside the allocation, which
+/// faults outright when the string begins an OS mapping.
+#[inline]
+fn has_body_shape(s: *const c_char) -> bool {
+    (s as usize & 7) == STRING_BODY_TAG
+}
+
 #[inline]
 fn str_owner(s: *const c_char) -> Option<&'static StringOwner> {
-    if s.is_null() || (s as usize & 7) != STRING_BODY_TAG {
+    if s.is_null() || !has_body_shape(s) {
         return None;
     }
     if !is_registered_heap_string_body(s) {
@@ -126,7 +138,7 @@ fn str_owner(s: *const c_char) -> Option<&'static StringOwner> {
 
 #[inline]
 unsafe fn typed_str_owner(s: *const c_char) -> Option<&'static StringOwner> {
-    if s.is_null() || (s as usize & 7) != STRING_BODY_TAG {
+    if s.is_null() || !has_body_shape(s) {
         return None;
     }
     let owner = unsafe { &*s.cast::<u8>().sub(STRING_BODY_OFFSET).cast::<StringOwner>() };
@@ -162,15 +174,19 @@ pub(crate) unsafe fn c_str_len(s: *const c_char) -> usize {
 
 /// Returns the byte length of a compiler-typed Gossamer string.
 ///
-/// Generated code only passes values of the language's `String` type here, so
-/// the byte immediately before the payload is always readable: heap builders,
-/// static literals, and region strings carry a length header; foreign strings
-/// are not part of this internal contract. Reading the header rather than
-/// scanning for a NUL is what lets a `String` hold interior NUL bytes.
+/// Heap builders, static literals, and region strings carry a length header;
+/// reading it rather than scanning for a NUL is what lets a `String` hold
+/// interior NUL bytes. The body shape selects the carrier before the header
+/// read, so a foreign C string - one a runtime shim received from a host API,
+/// or a `c"..."` literal the runtime passes itself - takes the `strlen`
+/// fallback without any backwards probe.
 #[inline]
 unsafe fn typed_str_len(s: *const c_char) -> usize {
     if s.is_null() {
         return 0;
+    }
+    if !has_body_shape(s) {
+        return unsafe { c_str_len(s) };
     }
     let tag = unsafe { *s.cast::<u8>().sub(1) };
     if matches!(tag, STR_BUILDER_TAG | STR_STATIC_TAG | STR_REGION_TAG) {
@@ -440,7 +456,7 @@ unsafe fn extend_str_index(s: *mut c_char, old_len: usize, added: &[u8], cap: us
 
 #[inline]
 unsafe fn typed_str_cap(s: *const c_char) -> Option<usize> {
-    if s.is_null() {
+    if s.is_null() || !has_body_shape(s) {
         return None;
     }
     let tag = unsafe { *s.cast::<u8>().sub(1) };
@@ -931,7 +947,7 @@ pub extern "C" fn gos_rt_str_clear() -> *mut c_char {
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_str_with_capacity(capacity: i64) -> *mut c_char {
     if capacity < 0 {
-        unsafe { gos_rt_panic(c"String::with_capacity: capacity must be non-negative".as_ptr()) };
+        crate::c_abi::panic::panic_text("String::with_capacity: capacity must be non-negative");
     }
     let capacity = usize::try_from(capacity).unwrap_or(u32::MAX as usize);
     alloc_growable(&[], capacity.min(u32::MAX as usize))
@@ -980,8 +996,7 @@ pub unsafe extern "C" fn gos_rt_string_from_utf8(bytes: *const GosVec) -> i128 {
             Ok(_) => unsafe { gos_rt_result_new(0, alloc_cstring_from_slices(&[&out]) as i64) },
             Err(e) => {
                 let msg = format!("String::from_utf8: {e}");
-                let cs = alloc_cstring(msg.as_bytes());
-                let err = unsafe { gos_rt_error_new(cs) };
+                let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
         }
@@ -1269,6 +1284,19 @@ pub unsafe extern "C" fn gos_rt_str_concat(a: *const c_char, b: *const c_char) -
     })
 }
 
+/// Answers the concatenation of `a` with an empty right side: `a` itself when
+/// it is already owned, and an owned copy otherwise.
+///
+/// SAFETY: `a` is null or a Gossamer string body.
+unsafe fn concat_with_empty(a: *const c_char) -> *mut c_char {
+    if is_managed_string(a) {
+        return a.cast_mut();
+    }
+    let a_bytes: &[u8] = unsafe { gos_str_arg_bytes(a) };
+    let force_heap = crate::c_abi::rc::in_region_arena(a.cast());
+    alloc_growable_forced(&[a_bytes], 64.max(a_bytes.len()), force_heap)
+}
+
 /// Concatenates `a + b`, frees `a`, and returns the result.
 ///
 /// Implements amortized O(1) string accumulation: when `a` is already a
@@ -1296,13 +1324,7 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
         let len_b = b_bytes.len();
 
         if len_b == 0 {
-            // Nothing new to append; return a as-is when it is already owned.
-            if is_managed_string(a) {
-                return a.cast_mut();
-            }
-            let a_bytes: &[u8] = unsafe { gos_str_arg_bytes(a) };
-            let force_heap = crate::c_abi::rc::in_region_arena(a.cast());
-            return alloc_growable_forced(&[a_bytes], 64.max(a_bytes.len()), force_heap);
+            return unsafe { concat_with_empty(a) };
         }
 
         // Fast path: a is a known live heap builder - try in-place append.
@@ -1371,7 +1393,7 @@ pub unsafe extern "C" fn gos_rt_str_append_bytes(
 ) -> *mut c_char {
     let len_b = if len < 0 { 0 } else { len as usize };
     if len_b == 0 {
-        return unsafe { gos_rt_str_concat_drop_a(acc, c"".as_ptr()) };
+        return unsafe { concat_with_empty(acc) };
     }
     let b_bytes: &[u8] = unsafe { std::slice::from_raw_parts(b, len_b) };
 
@@ -1959,7 +1981,7 @@ pub unsafe extern "C" fn gos_rt_str_zfill(s: *const c_char, width: i64) -> *mut 
             unsafe { gos_str_arg_text(s) }
         };
         if width < 0 {
-            unsafe { gos_rt_panic(c"strings::center: width must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("strings::center: width must be non-negative");
         }
         if width == 0 {
             return alloc_cstring(s.as_bytes());
@@ -2039,8 +2061,7 @@ pub unsafe extern "C" fn gos_rt_str_slice(s: *const c_char, start: i64, end: i64
             };
             let msg =
                 format!("slice: range [{start}, {end}) out of bounds for length {display_len}");
-            let cs = alloc_cstring(msg.as_bytes());
-            let err = unsafe { gos_rt_error_new(cs) };
+            let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let bytes: &[u8] = if s.is_null() {
@@ -2319,11 +2340,11 @@ pub unsafe extern "C" fn gos_rt_str_repeat(s: *const c_char, n: i64) -> *mut c_c
             unsafe { gos_str_arg_text(s) }
         };
         if n < 0 {
-            unsafe { gos_rt_panic(c"strings::repeat: count must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("strings::repeat: count must be non-negative");
         }
         let n = n as usize;
         if s.len().checked_mul(n).is_none() {
-            unsafe { gos_rt_panic(c"string repeat capacity overflow".as_ptr()) };
+            crate::c_abi::panic::panic_text("string repeat capacity overflow");
         }
         alloc_cstring(s.repeat(n).as_bytes())
     })
@@ -2360,8 +2381,7 @@ pub unsafe extern "C" fn gos_rt_parse_i64(s: *const c_char, ok_out: *mut i32) ->
 pub unsafe extern "C" fn gos_rt_parse_i64_result(s: *const c_char) -> i128 {
     ffi_entry!(0i128, {
         if s.is_null() {
-            let cs = alloc_cstring(b"parse: null input");
-            let err = unsafe { gos_rt_error_new(cs) };
+            let err = crate::c_abi::errors::error_new_from_bytes(b"parse: null input");
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let text = unsafe { gos_str_arg_text(s) }.trim();
@@ -2372,8 +2392,7 @@ pub unsafe extern "C" fn gos_rt_parse_i64_result(s: *const c_char) -> i128 {
                 "unexpected byte 0x{:x} at 1:1",
                 text.as_bytes().first().copied().unwrap_or(0)
             );
-            let cs = alloc_cstring(msg.as_bytes());
-            let err = unsafe { gos_rt_error_new(cs) };
+            let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
             unsafe { gos_rt_result_new(1, err as i64) }
         }
     })
@@ -3053,7 +3072,7 @@ pub unsafe extern "C" fn gos_rt_f64_to_str(x: f64) -> *mut c_char {
 pub unsafe extern "C" fn gos_rt_f64_prec_to_str(x: f64, prec: i64) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if prec < 0 {
-            unsafe { gos_rt_panic(c"__fmt_prec: precision must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("__fmt_prec: precision must be non-negative");
         }
         let prec = prec.min(64) as usize;
         alloc_cstring(format!("{x:.prec$}").as_bytes())
@@ -3116,7 +3135,7 @@ pub unsafe extern "C" fn gos_rt_str_splitn(
 ) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
         if n < 0 {
-            unsafe { gos_rt_panic(c"strings::splitn: count must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("strings::splitn: count must be non-negative");
         }
         let n = usize::try_from(n).unwrap_or(0);
         let parts: Vec<String> = unsafe { cstr(s) }
@@ -3162,7 +3181,7 @@ pub unsafe extern "C" fn gos_rt_str_replacen(
 ) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if n < 0 {
-            unsafe { gos_rt_panic(c"strings::replacen: count must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("strings::replacen: count must be non-negative");
         }
         let n = usize::try_from(n).unwrap_or(0);
         let out = unsafe { cstr(s) }.replacen(unsafe { cstr(from) }, unsafe { cstr(to) }, n);
@@ -3228,7 +3247,7 @@ pub unsafe extern "C" fn gos_rt_str_pad_left(
     ffi_entry!(std::ptr::null_mut(), {
         let text = unsafe { cstr(s) };
         if width < 0 {
-            unsafe { gos_rt_panic(c"strings::pad_left: width must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("strings::pad_left: width must be non-negative");
         }
         let width = usize::try_from(width).unwrap_or(0);
         let pc = u32::try_from(pad_char)
@@ -3260,7 +3279,7 @@ pub unsafe extern "C" fn gos_rt_str_pad_right(
     ffi_entry!(std::ptr::null_mut(), {
         let text = unsafe { cstr(s) };
         if width < 0 {
-            unsafe { gos_rt_panic(c"strings::pad_right: width must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("strings::pad_right: width must be non-negative");
         }
         let width = usize::try_from(width).unwrap_or(0);
         let pc = u32::try_from(pad_char)
@@ -3300,7 +3319,7 @@ pub unsafe extern "C" fn gos_rt_fmt_pad(
             unsafe { gos_str_arg_text(s) }
         };
         if width < 0 {
-            unsafe { gos_rt_panic(c"__fmt_pad: width must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("__fmt_pad: width must be non-negative");
         }
         let width = usize::try_from(width).unwrap_or(0);
         let pad_char = u32::try_from(fill)
@@ -3341,7 +3360,7 @@ pub unsafe extern "C" fn gos_rt_fmt_pad_i64(
 ) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if width < 0 {
-            unsafe { gos_rt_panic(c"__fmt_pad: width must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("__fmt_pad: width must be non-negative");
         }
         let mut number = itoa::Buffer::new();
         let rendered = number.format(value);
@@ -3392,7 +3411,7 @@ pub unsafe extern "C" fn gos_rt_concat_pad_i64(
 ) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if width < 0 {
-            unsafe { gos_rt_panic(c"__fmt_pad: width must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("__fmt_pad: width must be non-negative");
         }
         let prefix = unsafe { cstr(prefix) }.as_bytes();
         let mut number = itoa::Buffer::new();

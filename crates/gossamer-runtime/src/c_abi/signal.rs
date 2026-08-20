@@ -744,11 +744,11 @@ pub unsafe extern "C" fn gos_rt_arr_iter_free(iter: *mut GosArrIter) {
 pub unsafe extern "C" fn gos_rt_vec_get_i64(v: *const GosVec, idx: i64) -> i64 {
     ffi_entry!(-1, {
         if v.is_null() {
-            unsafe { gos_rt_panic_oob(c"vec index".as_ptr(), idx, 0) };
+            crate::c_abi::panic::panic_oob_text("vec index", idx, 0);
         }
         let vec = unsafe { &*v };
         if idx < 0 || idx >= vec.len {
-            unsafe { gos_rt_panic_oob(c"vec index".as_ptr(), idx, vec.len) };
+            crate::c_abi::panic::panic_oob_text("vec index", idx, vec.len);
         }
         unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, idx) }
     })
@@ -776,11 +776,11 @@ pub unsafe extern "C" fn gos_rt_vec_get_i64_unchecked(v: *const GosVec, idx: i64
 pub unsafe extern "C" fn gos_rt_vec_set_i64(v: *mut GosVec, idx: i64, value: i64) {
     ffi_entry!((), {
         if v.is_null() {
-            unsafe { gos_rt_panic_oob(c"vec index".as_ptr(), idx, 0) };
+            crate::c_abi::panic::panic_oob_text("vec index", idx, 0);
         }
         let vec = unsafe { &mut *v };
         if idx < 0 || idx >= vec.len {
-            unsafe { gos_rt_panic_oob(c"vec index".as_ptr(), idx, vec.len) };
+            crate::c_abi::panic::panic_oob_text("vec index", idx, vec.len);
         }
         unsafe { crate::c_abi::vec::vec_elem_store_i64(vec, idx, value) };
     });
@@ -837,14 +837,14 @@ pub unsafe extern "C" fn gos_rt_vec_swap_i64(v: *mut GosVec, i: i64, j: i64) {
 pub unsafe extern "C" fn gos_rt_vec_swap_safe(v: *mut GosVec, i: i64, j: i64) {
     ffi_entry!((), {
         if v.is_null() {
-            unsafe { gos_rt_panic_oob(c"vec swap index".as_ptr(), i, 0) };
+            crate::c_abi::panic::panic_oob_text("vec swap index", i, 0);
         }
         let len = unsafe { (*v).len };
         if i < 0 || i >= len {
-            unsafe { gos_rt_panic_oob(c"vec swap index".as_ptr(), i, len) };
+            crate::c_abi::panic::panic_oob_text("vec swap index", i, len);
         }
         if j < 0 || j >= len {
-            unsafe { gos_rt_panic_oob(c"vec swap index".as_ptr(), j, len) };
+            crate::c_abi::panic::panic_oob_text("vec swap index", j, len);
         }
         unsafe { gos_rt_vec_swap_i64(v, i, j) };
     });
@@ -1006,7 +1006,7 @@ pub unsafe extern "C" fn gos_rt_vec_reversed(v: *const GosVec) -> *mut GosVec {
 pub unsafe extern "C" fn gos_rt_vec_step_by(v: *const GosVec, step: i64) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
         if step <= 0 {
-            unsafe { gos_rt_panic(c"Vec::step_by: count must be positive".as_ptr()) };
+            crate::c_abi::panic::panic_text("Vec::step_by: count must be positive");
         }
         if v.is_null() {
             return unsafe { gos_rt_vec_new(8) };
@@ -1034,7 +1034,7 @@ pub unsafe extern "C" fn gos_rt_vec_step_by(v: *const GosVec, step: i64) -> *mut
 pub unsafe extern "C" fn gos_rt_vec_take(v: *const GosVec, n: i64) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
         if n < 0 {
-            unsafe { gos_rt_panic(c"Vec::take: count must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("Vec::take: count must be non-negative");
         }
         if v.is_null() {
             return unsafe { gos_rt_vec_new(8) };
@@ -1062,7 +1062,7 @@ pub unsafe extern "C" fn gos_rt_vec_take(v: *const GosVec, n: i64) -> *mut GosVe
 pub unsafe extern "C" fn gos_rt_vec_skip(v: *const GosVec, n: i64) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
         if n < 0 {
-            unsafe { gos_rt_panic(c"Vec::skip: count must be non-negative".as_ptr()) };
+            crate::c_abi::panic::panic_text("Vec::skip: count must be non-negative");
         }
         if v.is_null() {
             return unsafe { gos_rt_vec_new(8) };
@@ -1221,8 +1221,7 @@ pub unsafe extern "C" fn gos_rt_vec_slice_result(v: *const GosVec, start: i64, e
         let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
         if start < 0 || end < 0 || start > end || end > len {
             let msg = format!("slice: range [{start}, {end}) out of bounds for length {len}");
-            let cs = alloc_cstring(msg.as_bytes());
-            let err = unsafe { gos_rt_error_new(cs) };
+            let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let out = unsafe { gos_rt_vec_slice(v, start, end) };
@@ -1249,8 +1248,7 @@ pub unsafe extern "C" fn gos_rt_intarr_slice_result(
     ffi_entry!(0i128, {
         if p.is_null() || start < 0 || end < 0 || start > end || end > len {
             let msg = format!("slice: range [{start}, {end}) out of bounds for length {len}");
-            let cs = alloc_cstring(msg.as_bytes());
-            let err = unsafe { gos_rt_error_new(cs) };
+            let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let count = end - start;
@@ -1287,8 +1285,7 @@ pub unsafe extern "C" fn gos_rt_bytearr_slice_result(
     ffi_entry!(0i128, {
         if p.is_null() || start < 0 || end < 0 || start > end || end > len {
             let msg = format!("slice: range [{start}, {end}) out of bounds for length {len}");
-            let cs = alloc_cstring(msg.as_bytes());
-            let err = unsafe { gos_rt_error_new(cs) };
+            let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let count = end - start;
@@ -1316,8 +1313,7 @@ pub unsafe extern "C" fn gos_rt_packed_bytearr_slice_result(
     ffi_entry!(0i128, {
         if p.is_null() || start < 0 || end < 0 || start > end || end > len {
             let msg = format!("slice: range [{start}, {end}) out of bounds for length {len}");
-            let cs = alloc_cstring(msg.as_bytes());
-            let err = unsafe { gos_rt_error_new(cs) };
+            let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let count = end - start;
@@ -1347,8 +1343,7 @@ pub unsafe extern "C" fn gos_rt_floatarr_slice_result(
     ffi_entry!(0i128, {
         if p.is_null() || start < 0 || end < 0 || start > end || end > len {
             let msg = format!("slice: range [{start}, {end}) out of bounds for length {len}");
-            let cs = alloc_cstring(msg.as_bytes());
-            let err = unsafe { gos_rt_error_new(cs) };
+            let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let count = end - start;
@@ -1373,8 +1368,7 @@ pub unsafe extern "C" fn gos_rt_vec_insert_safe(v: *mut GosVec, idx: i64, value:
         let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
         if idx < 0 || idx > len {
             let msg = format!("insert: index {idx} out of bounds for length {len}");
-            let cs = alloc_cstring(msg.as_bytes());
-            let err = unsafe { gos_rt_error_new(cs) };
+            let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         unsafe { gos_rt_vec_insert_at(v, idx, value) };
@@ -1390,11 +1384,7 @@ pub unsafe extern "C" fn gos_rt_vec_insert_at(v: *mut GosVec, idx: i64, value: i
         let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
         if v.is_null() || idx < 0 || idx > len {
             let msg = format!("insert: index {idx} out of bounds for length {len}");
-            // `gos_rt_panic` reads the length header a Gossamer string carries
-            // ahead of its pointer, so the message is allocated through the
-            // runtime's own allocator rather than as a bare `CString`.
-            let cs = alloc_cstring(msg.as_bytes());
-            unsafe { gos_rt_panic(cs) };
+            crate::c_abi::panic::panic_text(&msg);
             return;
         }
         // Grow by one (handling region/global reallocation) with the new
@@ -1431,8 +1421,7 @@ pub unsafe extern "C" fn gos_rt_vec_insert_slots_safe(
         let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
         if idx < 0 || idx > len {
             let msg = format!("insert: index {idx} out of bounds for length {len}");
-            let cs = alloc_cstring(msg.as_bytes());
-            let err = unsafe { gos_rt_error_new(cs) };
+            let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         if !v.is_null() && !slots.is_null() {
@@ -1475,8 +1464,7 @@ pub unsafe extern "C" fn gos_rt_vec_remove_safe(v: *mut GosVec, idx: i64) -> i12
         let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
         if v.is_null() || idx < 0 || idx >= len {
             let msg = format!("remove: index {idx} out of bounds for length {len}");
-            let cs = alloc_cstring(msg.as_bytes());
-            let err = unsafe { gos_rt_error_new(cs) };
+            let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
         let vec = unsafe { &mut *v };
@@ -1506,11 +1494,7 @@ pub unsafe extern "C" fn gos_rt_vec_remove_at(v: *mut GosVec, idx: i64) -> i64 {
         let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
         if v.is_null() || idx < 0 || idx >= len {
             let msg = format!("remove: index {idx} out of bounds for length {len}");
-            // `gos_rt_panic` reads the length header a Gossamer string carries
-            // ahead of its pointer, so the message is allocated through the
-            // runtime's own allocator rather than as a bare `CString`.
-            let cs = alloc_cstring(msg.as_bytes());
-            unsafe { gos_rt_panic(cs) };
+            crate::c_abi::panic::panic_text(&msg);
             return 0;
         }
         let vec = unsafe { &mut *v };

@@ -186,10 +186,10 @@ fn insert(image: Image) -> i64 {
 
 fn dimension(value: i64) -> u32 {
     if value < 0 {
-        unsafe { super::gos_rt_panic(c"image dimension must be non-negative".as_ptr()) };
+        unsafe { crate::c_abi::panic::panic_text("image dimension must be non-negative") };
     }
     u32::try_from(value).unwrap_or_else(|_| {
-        unsafe { super::gos_rt_panic(c"image dimension is too large".as_ptr()) };
+        unsafe { crate::c_abi::panic::panic_text("image dimension is too large") };
         0
     })
 }
@@ -304,11 +304,9 @@ pub unsafe extern "C" fn gos_rt_image_encode_png_base64(handle: i64) -> *mut c_c
 pub unsafe extern "C" fn gos_rt_image_encode_jpeg_base64(handle: i64, quality: i64) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if !(1..=100).contains(&quality) {
-            unsafe {
-                super::gos_rt_panic(
-                    c"image::encode_jpeg: quality must be between 1 and 100".as_ptr(),
-                );
-            };
+            crate::c_abi::panic::panic_text(
+                "image::encode_jpeg: quality must be between 1 and 100",
+            );
         }
         let text = lock_images()
             .get(&handle)

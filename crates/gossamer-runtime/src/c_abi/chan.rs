@@ -827,11 +827,7 @@ pub unsafe extern "C" fn gos_rt_chan_close(c: *mut GosChan) -> i32 {
         None => -1,
         Some(true) => 0,
         Some(false) => {
-            // `gos_rt_panic` reads the length header a Gossamer string carries
-            // ahead of its pointer, so the message is allocated through the
-            // runtime's own allocator rather than as a bare `CString`.
-            let cs = super::string::alloc_cstring(b"close of closed channel");
-            unsafe { super::gos_rt_panic(cs) };
+            super::panic::panic_text("close of closed channel");
             0
         }
     }

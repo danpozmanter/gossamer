@@ -454,14 +454,13 @@ pub fn apply(kind_id: i64, config: &str, parts: &mut ResponseParts) {
 pub unsafe extern "C" fn gos_rt_middleware_serve(mw: *mut u8, req: *mut GosHttpRequest) -> i128 {
     ffi_entry!(0i128, {
         if mw.is_null() {
-            let cs = alloc_cstring(b"middleware: null handle");
-            let err = unsafe { gos_rt_error_new(cs) };
+            let err = crate::c_abi::errors::error_new_from_bytes(b"middleware: null handle");
             return crate::c_abi::vec::pack_result(1, err as i64);
         }
         let m = unsafe { &*(mw as *const GosMiddleware) };
         if m.inner_serve_addr == 0 {
-            let cs = alloc_cstring(b"middleware: missing inner handler");
-            let err = unsafe { gos_rt_error_new(cs) };
+            let err =
+                crate::c_abi::errors::error_new_from_bytes(b"middleware: missing inner handler");
             return crate::c_abi::vec::pack_result(1, err as i64);
         }
         // SAFETY: inner_serve_addr came from `gos_fn_addr` over a

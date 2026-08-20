@@ -60,8 +60,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 
 /// Packs an `Err(errors::Error)` for the Result-returning `kdf` shims.
 fn kdf_err(msg: &str) -> i128 {
-    let cs = super::string::alloc_cstring(msg.as_bytes());
-    let err = unsafe { super::errors::gos_rt_error_new(cs) };
+    let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
     super::vec::gos_rt_result_new(1, err as i64)
 }
 

@@ -304,14 +304,12 @@ pub unsafe extern "C" fn gos_rt_json_parse(text: *const c_char) -> i128 {
                 }
                 Err(error) => {
                     let message = error.to_string();
-                    let cs = alloc_cstring(message.as_bytes());
-                    let err = unsafe { gos_rt_error_new(cs) };
+                    let err = crate::c_abi::errors::error_new_from_bytes(message.as_bytes());
                     unsafe { gos_rt_result_new(1, err as i64) }
                 }
             },
             Err(message) => {
-                let cs = alloc_cstring(message.as_bytes());
-                let err = unsafe { gos_rt_error_new(cs) };
+                let err = crate::c_abi::errors::error_new_from_bytes(message.as_bytes());
                 unsafe { gos_rt_result_new(1, err as i64) }
             }
         }
