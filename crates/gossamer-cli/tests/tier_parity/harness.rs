@@ -559,6 +559,9 @@ const SPECS: &[Spec] = &[
     // A `&mut Option<T>` reads and writes the carrier its caller holds, and
     // the payload outlives the frame that built it.
     spec("feature-testing-examples/mut_option_ref_writeback.gos"),
+    // A fixed array's elements fill whole slots, so a `char`, a `bool`, or a
+    // narrow integer reads back as the value it was written as.
+    spec("feature-testing-examples/fixed_array_narrow_slots.gos"),
     // A map value that stands for a whole value - a sequence, an aggregate,
     // a float - compares by its content on every tier.
     spec("feature-testing-examples/map_set_aggregate_value_equality.gos"),

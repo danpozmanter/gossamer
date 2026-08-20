@@ -1,0 +1,53 @@
+// A fixed array's elements sit in whole slots, so a scalar narrower than one
+// - a `char`, a `bool`, a narrow integer - fills the slot it is written to
+// and reads back as the value it was. `contains` and `index_of` compare those
+// slots, whatever the element type.
+
+struct S {
+    a: i32
+    b: u8
+    c: char
+    d: bool
+}
+
+fn scan(rounds: i64) -> i64 {
+    let mut hits = 0
+    let mut i = 0
+    while i < rounds {
+        if ['#', '<', '>', '^', 'v'].contains('#') {
+            hits += 1
+        }
+        if [1.5, 2.5].contains(2.5) {
+            hits += 1
+        }
+        i += 1
+    }
+    hits
+}
+
+fn main() {
+    let ch = '#'
+    println!("{} {}", ['#', '<', '>', '^', 'v'].contains(ch), ['a', 'b'].contains(ch))
+    println!("{} {}", [1.5, 2.5].contains(2.5), [1.5, 2.5].contains(3.5))
+    println!("{} {}", [(1, 2), (3, 4)].contains((3, 4)), [(1, 2)].contains((9, 9)))
+    println!("{} {}", [true, false].contains(false), [true].contains(false))
+    println!("{:?} {:?}", ['x', 'y'].index_of('y'), [1.5, 2.5].index_of(2.5))
+
+    let neg: [i32; 3] = [-1, -128, 5]
+    println!("{:?} {} {}", neg, neg[0], neg.contains(-128))
+    let bytes: [u8; 3] = [250, 1, 2]
+    println!("{:?} {} {}", bytes, bytes[0], bytes.contains(250))
+
+    let s = S { a: -7, b: 200, c: 'q', d: true }
+    println!("{:?} {} {} {} {}", s, s.a, s.b, s.c, s.d)
+    let tup = (-3, 'k', true)
+    println!("{:?} {} {} {}", tup, tup.0, tup.1, tup.2)
+
+    // The repeat form fills each slot with the same scalar.
+    let cs = ['x'; 4]
+    let bs = [true; 3]
+    let ns: [i32; 3] = [-5; 3]
+    println!("{:?} {} {:?} {} {:?} {}", cs, cs.contains('x'), bs, bs.contains(true), ns, ns.contains(-5))
+
+    println!("scan {}", scan(200))
+}

@@ -128,6 +128,16 @@
   the level the file set.
 - Write `#![lint(..)]` on the first line of a file: `#!` there opened a Unix
   hashbang, which never spells `#![`.
+- Read back a `char`, a `bool`, or a narrow integer written into a fixed
+  array, a tuple, or a struct in a compiled build: each element occupies a
+  whole slot, and a scalar written at its own width left the rest of the slot
+  holding whatever the frame did, so `['#', '<'].contains('#')` answered
+  false natively while the interpreter answered true. The repeat form
+  (`['x'; 4]`) fills its slots the same way.
+- Search a fixed array whose element the flat-slot shims cannot compare - a
+  float, a tuple, a struct: the scan reads its receiver through the `Vec`
+  surface, so the array is given a header first rather than having one read
+  out of its elements.
 - Take a reference to an `Option`, a `Result`, or an inline enum in a
   JIT-compiled body: the two-word carrier is held in a register, so the
   reference now addresses a slot holding it rather than the carrier's own

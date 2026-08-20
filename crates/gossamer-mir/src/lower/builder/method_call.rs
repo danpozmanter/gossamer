@@ -6135,6 +6135,19 @@ impl<'a> Builder<'a> {
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let bool_ty = self.tcx.bool_ty();
         let needle_local = self.lower_expr(needle)?;
+        // The scan walks its receiver through the `GosVec` surface, so a
+        // fixed array - a bare block of slots with no header - is given one
+        // first.
+        let receiver_local = match self
+            .tcx
+            .kind_of(self.locals[receiver_local.0 as usize].ty)
+            .clone()
+        {
+            TyKind::Array { elem, len } => {
+                self.coerce_array_to_vec(receiver_local, elem, len, span)
+            }
+            _ => receiver_local,
+        };
 
         let len_local = self.fresh(i64_ty);
         let after_len = self.new_block(span);

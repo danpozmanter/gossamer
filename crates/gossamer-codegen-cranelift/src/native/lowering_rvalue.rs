@@ -678,9 +678,10 @@ pub(super) fn lower_rvalue_into(
                     let value = lower_operand(
                         module, builder, locals, body, tcx, operand, None, intrinsics,
                     )?;
+                    let word = widen_to_slot_word(builder, tcx, body, operand, value);
                     builder.ins().store(
                         MemFlagsData::trusted(),
-                        value,
+                        word,
                         base,
                         ir::immediates::Offset32::new(dst_off as i32),
                     );
@@ -1412,5 +1413,35 @@ fn int_cmp_cc(op: BinOp, unsigned: bool) -> ir::condcodes::IntCC {
         (BinOp::Ge, false) => IntCC::SignedGreaterThanOrEqual,
         (BinOp::Ge, true) => IntCC::UnsignedGreaterThanOrEqual,
         _ => unreachable!("int_cmp_cc only handles ordered comparisons"),
+    }
+}
+
+/// Widens a scalar narrower than a slot to the whole word the slot holds, so
+/// the bytes beside it carry the value rather than whatever the frame left
+/// there. A signed integer keeps its sign; a `char`, a `bool`, and an
+/// unsigned integer are magnitudes.
+fn widen_to_slot_word(
+    builder: &mut FunctionBuilder<'_>,
+    tcx: &TyCtxt,
+    body: &Body,
+    operand: &Operand,
+    value: ir::Value,
+) -> ir::Value {
+    let ty = builder.func.dfg.value_type(value);
+    if !ty.is_int() || ty.bits() >= 64 {
+        return value;
+    }
+    let signed = match operand {
+        Operand::Copy(place) => matches!(
+            tcx.kind_of(resolve_place_ty(tcx, body, place)),
+            TyKind::Int(int_ty) if !int_ty_is_unsigned(*int_ty)
+        ),
+        Operand::Const(ConstValue::Int(_)) => true,
+        _ => false,
+    };
+    if signed {
+        builder.ins().sextend(types::I64, value)
+    } else {
+        builder.ins().uextend(types::I64, value)
     }
 }

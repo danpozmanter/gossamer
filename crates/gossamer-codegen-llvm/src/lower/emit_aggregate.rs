@@ -190,7 +190,18 @@ impl<'a> Lowerer<'a> {
                         "  {dst} = getelementptr i64, ptr {base}, i64 {slot_idx}"
                     )
                     .unwrap();
-                    writeln!(self.out, "  store {op_llvm} {v}, ptr {dst}{tbaa}").unwrap();
+                    // A slot is a whole word and is read back as one, so a
+                    // scalar narrower than that is widened to fill it: a
+                    // `char` or a `bool` written at its own width would leave
+                    // the rest of the slot holding whatever the frame did.
+                    match self.slot_word_of(operand, &op_llvm, &v) {
+                        Some(word) => {
+                            writeln!(self.out, "  store i64 {word}, ptr {dst}{tbaa}").unwrap();
+                        }
+                        None => {
+                            writeln!(self.out, "  store {op_llvm} {v}, ptr {dst}{tbaa}").unwrap();
+                        }
+                    }
                 }
             } else {
                 // Nested aggregate. The operand may be either a
@@ -240,6 +251,33 @@ impl<'a> Lowerer<'a> {
             slot_idx += op_slots;
         }
         Ok(())
+    }
+
+    /// The whole-word form of a scalar operand narrower than a slot, or
+    /// `None` when the value already fills one. A signed integer keeps its
+    /// sign so the word reads back as the value written; every other narrow
+    /// scalar - `char`, `bool`, an unsigned integer - is a magnitude.
+    fn slot_word_of(&mut self, operand: &Operand, op_llvm: &str, value: &str) -> Option<String> {
+        let width: u32 = op_llvm.strip_prefix('i')?.parse().ok()?;
+        if width >= 64 {
+            return None;
+        }
+        // Only a signed integer carries a sign into the word. A `bool` and a
+        // `char` are magnitudes, and `i1` is always the former whatever the
+        // operand's type lookup answers.
+        let signed = op_llvm != "i1"
+            && !matches!(
+                operand,
+                Operand::Const(ConstValue::Bool(_) | ConstValue::Char(_))
+            )
+            && matches!(
+                self.tcx.kind(self.operand_ty(operand)),
+                Some(TyKind::Int(int_ty)) if !int_ty_is_unsigned_llvm(*int_ty)
+            );
+        let op = if signed { "sext" } else { "zext" };
+        let word = self.fresh();
+        writeln!(self.out, "  {word} = {op} {op_llvm} {value} to i64").unwrap();
+        Some(word)
     }
 
     /// `[value; count]` - fills `count` slots with the same
@@ -435,6 +473,12 @@ impl<'a> Lowerer<'a> {
             }
             return Ok(());
         }
+        // A slot is a whole word and is read back as one, so the scalar being
+        // repeated fills each slot it lands in.
+        let (v_llvm, v) = match self.slot_word_of(value, &v_llvm, &v) {
+            Some(word) => ("i64".to_string(), word),
+            None => (v_llvm, v),
+        };
         if count <= 16 {
             for i in 0..count {
                 let dst = self.fresh();
