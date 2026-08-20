@@ -203,10 +203,20 @@ pub(crate) enum VecElemKind {
 
 pub(crate) fn vec_element_kind(tcx: &gossamer_types::TyCtxt, ty: Ty) -> VecElemKind {
     use gossamer_types::TyKind;
-    let inner = match tcx.kind_of(ty) {
-        TyKind::Vec(inner) | TyKind::Slice(inner) => *inner,
-        TyKind::Array { elem, .. } => *elem,
-        _ => return VecElemKind::Int,
+    // See through `&` / `&mut`: a sequence reached through a reference has
+    // the same element type it does directly. Reading the reference itself
+    // answers `Int` for a `Vec<String>`, which routes `contains` / `index_of`
+    // / `count_of` to the integer helper - and that compares the slot words,
+    // so it matches only when both sides are the same interned literal and
+    // reports a string built at run time as absent.
+    let mut cur = ty;
+    let inner = loop {
+        match tcx.kind_of(cur) {
+            TyKind::Ref { inner, .. } => cur = *inner,
+            TyKind::Vec(inner) | TyKind::Slice(inner) => break *inner,
+            TyKind::Array { elem, .. } => break *elem,
+            _ => return VecElemKind::Int,
+        }
     };
     if matches!(tcx.kind_of(inner), TyKind::String) {
         VecElemKind::Str

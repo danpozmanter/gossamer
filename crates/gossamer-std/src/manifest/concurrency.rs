@@ -116,6 +116,11 @@ pub const SYNC: StdModule = StdModule {
             doc: "Reader-writer lock.",
         },
         StdItem {
+            name: "Shared",
+            kind: StdItemKind::Type,
+            doc: "A value several goroutines reach, every read and write taken under one lock. Build with `Shared::new(value)`; read with `get` or `with`, write with `set`, and read-modify-write with `update`, which holds the lock across the callback.",
+        },
+        StdItem {
             name: "Once",
             kind: StdItemKind::Type,
             doc: "One-shot initialisation latch.",

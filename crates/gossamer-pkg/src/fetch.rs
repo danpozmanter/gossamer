@@ -430,7 +430,12 @@ impl Fetcher {
         ensure_git_clone(url, &bare_dir).map_err(|e| {
             CacheError::Unsupported(format!("{}: git fetch failed: {e}", resolved.id))
         })?;
-        let tarball = git_archive(&bare_dir, reference).map_err(|e| {
+        // A branch or tag is resolved against the clone that was just
+        // refreshed, so what the tree is read from - and what a lockfile
+        // pins - is the immutable object the name pointed at.
+        let object_id = resolve_git_ref(&bare_dir, reference)
+            .map_err(|e| CacheError::RejectedGitSource(format!("{}: {e}", resolved.id)))?;
+        let tarball = git_archive(&bare_dir, &object_id).map_err(|e| {
             CacheError::Unsupported(format!("{}: git archive failed: {e}", resolved.id))
         })?;
         let files = tar::unpack(&tarball).map_err(|e| {
@@ -665,17 +670,96 @@ fn validate_git_source(url: &str, reference: &str) -> Result<(), String> {
     if url.starts_with('-') {
         return Err(format!("git url may not begin with '-': {url}"));
     }
+    validate_git_ref(reference)
+}
+
+/// `true` when `reference` names an immutable object outright.
+fn is_object_id(reference: &str) -> bool {
+    matches!(reference.len(), 40 | 64) && reference.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Accepts an object ID, or a branch / tag name safe to hand to `git`.
+///
+/// A moving name is resolved to the object it points at before anything is
+/// read from it, and that object is what a lockfile records, so naming a
+/// branch costs nothing in reproducibility. The characters refused here are
+/// the ones that would let a name act as an option, a refspec, or a second
+/// argument rather than as the ref it looks like.
+fn validate_git_ref(reference: &str) -> Result<(), String> {
+    // Checked before the object-id shortcut so no spelling of a ref can be
+    // read as an option by the `git` invocations that take it positionally.
     if reference.starts_with('-') {
         return Err(format!("git ref may not begin with '-': {reference}"));
     }
-    let immutable_object_id = matches!(reference.len(), 40 | 64)
-        && reference.bytes().all(|byte| byte.is_ascii_hexdigit());
-    if !immutable_object_id {
+    if is_object_id(reference) {
+        return Ok(());
+    }
+    if reference.is_empty() {
+        return Err("git ref may not be empty".to_string());
+    }
+    if reference.len() > 250 {
+        return Err(format!("git ref is too long: {reference}"));
+    }
+    let rejected = |c: char| {
+        c.is_whitespace()
+            || c.is_control()
+            || matches!(
+                c,
+                ':' | '?' | '[' | ']' | '\\' | '^' | '~' | '*' | '@' | '\'' | '"'
+            )
+    };
+    if let Some(c) = reference.chars().find(|c| rejected(*c)) {
         return Err(format!(
-            "git ref must be a full 40- or 64-hex object ID, not a moving branch or tag: {reference}"
+            "git ref may not contain `{c}`, which git reads as a pattern or a refspec: {reference}"
+        ));
+    }
+    if reference.contains("..")
+        || reference.starts_with('/')
+        || reference.ends_with('/')
+        || reference.strip_suffix(".lock").is_some()
+        || reference.starts_with('.')
+    {
+        return Err(format!(
+            "git ref is not a well-formed branch or tag name: {reference}"
         ));
     }
     Ok(())
+}
+
+/// The object ID `reference` names in the clone at `bare_dir`.
+///
+/// A branch and a tag are looked up under their own namespaces before the
+/// bare name is tried, so a repository carrying both cannot decide which one
+/// a manifest meant. The answer is always a commit id, which is what the
+/// tree is read from and what the lockfile pins.
+fn resolve_git_ref(bare_dir: &Path, reference: &str) -> std::io::Result<String> {
+    if is_object_id(reference) {
+        return Ok(reference.to_string());
+    }
+    let candidates = [
+        format!("refs/tags/{reference}"),
+        format!("refs/heads/{reference}"),
+        format!("refs/remotes/origin/{reference}"),
+    ];
+    for candidate in &candidates {
+        let out = hardened_git()
+            .arg("--git-dir")
+            .arg(bare_dir)
+            .arg("rev-parse")
+            .arg("--verify")
+            .arg("--end-of-options")
+            .arg(format!("{candidate}^{{commit}}"))
+            .output()?;
+        if out.status.success() {
+            let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if is_object_id(&id) {
+                return Ok(id);
+            }
+        }
+    }
+    Err(std::io::Error::other(format!(
+        "git ref `{reference}` names no tag or branch in this repository"
+    )))
 }
 
 /// A `git` invocation with the remote-helper (`ext`) and local
@@ -858,10 +942,39 @@ mod git_source_tests {
     }
 
     #[test]
-    fn moving_git_references_are_rejected() {
-        for reference in ["main", "v1.0.0", "HEAD", "0123456"] {
-            let err = validate_git_source("https://example.com/repo.git", reference).unwrap_err();
-            assert!(err.contains("object ID"), "got: {err}");
+    fn branch_and_tag_references_are_accepted() {
+        // A moving name is resolved to the object it points at before the
+        // tree is read, so naming one is allowed; the lockfile still pins
+        // the resolved commit.
+        for reference in ["main", "v1.0.0", "release/2.x", "0123456", "feature_a"] {
+            assert!(
+                validate_git_source("https://example.com/repo.git", reference).is_ok(),
+                "rejected {reference}"
+            );
+        }
+    }
+
+    #[test]
+    fn refspec_and_pattern_characters_are_rejected() {
+        for reference in [
+            "main:refs/heads/evil",
+            "re*lease",
+            "a b",
+            "he^ad",
+            "we~ird",
+            "with[bracket]",
+            "quo'te",
+            "..",
+            "/leading",
+            "trailing/",
+            "branch.lock",
+            ".hidden",
+            "",
+        ] {
+            assert!(
+                validate_git_source("https://example.com/repo.git", reference).is_err(),
+                "accepted {reference}"
+            );
         }
     }
 

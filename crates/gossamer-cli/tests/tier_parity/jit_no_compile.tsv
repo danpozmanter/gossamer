@@ -117,6 +117,7 @@ feature-testing-examples/debug_impl_dispatch.gos	bytecode-only local
 feature-testing-examples/debugfmt_nested_adts.gos	bytecode-only local
 feature-testing-examples/debugfmt_nested_floats.gos	bytecode-only local
 feature-testing-examples/deref_string_concat.gos	string append
+feature-testing-examples/derive_ord_option_field.gos	no hot body
 feature-testing-examples/derive_struct_variant.gos	no hot body
 feature-testing-examples/derive_traits.gos	bytecode-only local
 feature-testing-examples/display_impl_dispatch.gos	bytecode-only local
@@ -256,6 +257,7 @@ feature-testing-examples/select_multiplex.gos	no hot body
 feature-testing-examples/sequence_method_compilability.gos	no hot body
 feature-testing-examples/serde_more_field_kinds.gos	bytecode-only local
 feature-testing-examples/set_from_sequence.gos	no hot body
+feature-testing-examples/shared_across_goroutines.gos	admission gate
 feature-testing-examples/single_field_struct_aggregate.gos	bytecode-only local
 feature-testing-examples/slice_methods.gos	no hot body
 feature-testing-examples/slice_pattern_fixed_array.gos	no hot body

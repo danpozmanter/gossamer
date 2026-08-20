@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.53.2 - Cross-goroutine sharing, `sync::Shared`, derived ordering over `Option`, git branches
+
+- A goroutine that reads a captured binding whose type holds nested growable
+  storage is now refused by `gos check` (`GT0076`), naming the binding and its
+  type. Sharing a connection pool compiled cleanly, ran on the VM, and hard-
+  faulted in a native build; the answer is now the same on every tier, and it
+  is given before the program runs.
+- `sync::Shared` publishes one value to several goroutines with every read and
+  every write taken under one lock: `Shared::new(v)`, `get`, `set`, `with(f)`,
+  and `update(f)`, the last two holding the lock across the callback so a
+  read-modify-write cannot interleave with another. Real on the bytecode VM,
+  Cranelift, and LLVM - eight goroutines each bumping a counter a thousand
+  times answer 8000 on all three. The guarded slot is one word every tier
+  reads back as an integer, so an integer is what it guards; any other payload
+  is refused (`GT0077`) rather than compiling on one tier and failing to lower
+  on another.
+- `contains`, `index_of`, and `count_of` find a `String` in a sequence reached
+  through a `&` reference. The reference was read as the element type, which
+  chose the integer helper, and that compares the slot words - so a string
+  built at run time was reported absent while a literal was found. This is
+  what left PostgreSQL SCRAM authentication unable to agree on a mechanism.
+- `#[derive(PartialOrd, Ord)]` on a type with an `Option` field orders it.
+  The derived `cmp` compared that field with `<`, which reaches the field
+  type's own `cmp` - and nothing declares one for `Option`, so the body named
+  a function that does not exist: the VM reported it unbound and a native
+  build failed to lower the comparison. `None` now orders before `Some`, and
+  two payloads compare as their own type does.
+- Name a branch or a tag in a git dependency (`branch = "main"`,
+  `tag = "v1.2.3"`), not only a full object ID. The name is resolved against
+  the fetched clone and the commit it points at is what the tree is read from,
+  so a lockfile still pins an immutable object.
+
 ## 0.53.1 - Imports from a sibling file, method dispatch, JSON over aggregates, sequence element reads
 
 - Reach a dependency package from any file of a project, not only the entry:

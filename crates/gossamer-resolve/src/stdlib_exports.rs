@@ -2468,6 +2468,7 @@ pub const STDLIB_MANIFEST_ITEMS: &[&str] = &[
     "sync::Mutex",
     "sync::Once",
     "sync::RwLock",
+    "sync::Shared",
     "sync::WaitGroup",
     "sync::channel",
     "sync::channel_unbounded",

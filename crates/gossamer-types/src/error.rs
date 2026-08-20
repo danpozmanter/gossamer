@@ -866,6 +866,25 @@ pub enum TypeError {
         /// Concurrency boundary being crossed.
         boundary: &'static str,
     },
+    /// A goroutine closure captured a binding whose type has no
+    /// representation that crosses the boundary, so both sides would reach
+    /// the same nested storage with no synchronisation behind it.
+    #[error(
+        "`{name}` is a `{ty}`, which cannot be captured by a goroutine: its nested storage has no shared representation"
+    )]
+    ConcurrentCaptureUnsupported {
+        /// The captured binding's name, as written.
+        name: String,
+        /// The binding's type.
+        ty: String,
+    },
+    /// `sync::Shared::new` was handed a value whose type the guarded slot
+    /// cannot carry on every tier.
+    #[error("`sync::Shared` cannot guard a `{ty}`")]
+    SharedPayloadUnsupported {
+        /// The type offered to `Shared::new`.
+        ty: String,
+    },
     /// A call omitted `&mut` for a parameter that may modify its argument.
     /// Mutable access must be visible at the call site as `&mut place`.
     #[error(
@@ -968,6 +987,8 @@ impl TypeError {
                 "reference-pattern-aggregate-unsupported"
             }
             Self::ConcurrentAggregateUnsupported { .. } => "concurrent-aggregate-unsupported",
+            Self::ConcurrentCaptureUnsupported { .. } => "concurrent-capture-unsupported",
+            Self::SharedPayloadUnsupported { .. } => "shared-payload-unsupported",
             Self::MutableArgumentRequiresReference { .. } => "mutable-argument-requires-reference",
         }
     }
@@ -1061,6 +1082,8 @@ impl TypeError {
             Self::BorrowedPlaceConflict { .. } => "GT0053",
             Self::ReferencePatternAggregateUnsupported { .. } => "GT0054",
             Self::ConcurrentAggregateUnsupported { .. } => "GT0055",
+            Self::ConcurrentCaptureUnsupported { .. } => "GT0076",
+            Self::SharedPayloadUnsupported { .. } => "GT0077",
             Self::MutableArgumentRequiresReference { .. } => "GT0046",
         }
     }
@@ -1833,6 +1856,24 @@ impl TypeDiagnostic {
                     )
                     .with_note(
                         "nested growable storage does not yet have one ownership descriptor shared by every concurrency ABI",
+                    );
+            }
+            TypeError::ConcurrentCaptureUnsupported { name, .. } => {
+                out = out
+                    .with_help(format!(
+                        "open `{name}`'s value inside the goroutine, hand it over through a channel, or guard it with `sync::Shared` and reach it through `with`"
+                    ))
+                    .with_note(
+                        "a goroutine reaches a captured binding through the same storage the spawning one holds, and nested growable storage has no representation both sides can own",
+                    );
+            }
+            TypeError::SharedPayloadUnsupported { .. } => {
+                out = out
+                    .with_help(
+                        "guard a scalar or a `String`; publish a collection through a channel, or keep one `Shared` per field",
+                    )
+                    .with_note(
+                        "the guarded slot is one word on every tier, and only a scalar or a `String` has the same reading in the bytecode VM and in compiled code",
                     );
             }
             TypeError::MutableArgumentRequiresReference { argument } => {

@@ -1,0 +1,43 @@
+// `sync::Shared` is the value several goroutines reach, with every read and
+// every write taken under one lock.
+//
+// The counter is the load-bearing case: eight goroutines each bump it a
+// thousand times through `update`, which holds the lock across the callback,
+// so no increment lands on a value another goroutine has read but not yet
+// stored. A total below 8000 would mean updates were lost.
+
+use std::{errors, sync}
+
+// A scalar signature over a loop, so the body is one the JIT compiles: the
+// lock has to hold up in native code, not only in the bytecode VM.
+fn bump_times(counter: sync::Shared, times: i64) -> i64 {
+    let mut last = 0
+    for _ in 0..times {
+        last = counter.update(|v| v + 1)
+    }
+    last
+}
+
+fn bump(counter: sync::Shared, times: i64) -> Result<(), errors::Error> {
+    let _ = bump_times(counter, times)
+    Ok(())
+}
+
+fn main() -> Result<(), errors::Error> {
+    let counter = sync::Shared::new(0)
+    println!("initial: {}", counter.get())
+
+    counter.set(41)
+    println!("after set: {}", counter.get())
+    println!("after update: {}", counter.update(|v| v + 1))
+    println!("with leaves it alone: {} then {}", counter.with(|v| v * 2), counter.get())
+
+    counter.set(0)
+    cohort {
+        for _ in 0..8 {
+            spawn(|| bump(counter, 1000))
+        }
+    }?
+    println!("eight goroutines, a thousand each: {}", counter.get())
+    Ok(())
+}

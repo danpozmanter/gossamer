@@ -1156,6 +1156,25 @@ pub const REGISTRY: &[(&str, &str)] = &[
             `copy_from_slice`, or an indexed write.",
     ),
     (
+        "GT0076",
+        "A goroutine's closure reads a binding whose type holds nested\n\
+            growable storage - a struct or tuple carrying a Vec, Map, or Set.\n\
+            Both goroutines would reach that storage through the same handle\n\
+            with nothing serialising the access, and no compiled concurrency\n\
+            ABI has an ownership descriptor for it. Build the value inside the\n\
+            goroutine, send it over a channel, or guard it with\n\
+            `sync::Shared` and reach it through `with`, which takes the lock\n\
+            for the duration of the access.",
+    ),
+    (
+        "GT0077",
+        "`sync::Shared` guards one word, and only a scalar or a `String` is\n\
+            read the same way from that word by the bytecode VM and by\n\
+            compiled code. A collection or a struct would need a shape both\n\
+            sides agree on before it can be guarded; publish one through a\n\
+            channel instead, or keep a `Shared` per scalar field.",
+    ),
+    (
         "GX0001",
         "An operation received a value of an incompatible type. The\n\
                      diagnostic names the type that was required and the type\n\

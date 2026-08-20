@@ -1121,6 +1121,8 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/stdlib_path_free.gos"),
     spec("feature-testing-examples/json_encode_aggregates.gos"),
     spec("feature-testing-examples/vec_elem_option_accessors.gos"),
+    spec("feature-testing-examples/derive_ord_option_field.gos"),
+    spec("feature-testing-examples/shared_across_goroutines.gos"),
     spec("feature-testing-examples/stdlib_path_glob.gos"),
     spec("feature-testing-examples/stdlib_sort_module.gos"),
     spec("feature-testing-examples/stdlib_errors_chain.gos"),

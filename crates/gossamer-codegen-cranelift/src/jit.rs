@@ -446,7 +446,9 @@ fn body_builds_every_iterator_local(body: &Body, tcx: &TyCtxt) -> bool {
 /// `Deque` / `Queue` / `Stack`, `MaxHeap` / `MinHeap` - whose value is the
 /// handle word itself.
 fn is_bare_container_handle(def_local: u32) -> bool {
-    matches!(u32::MAX - def_local, 7 | 18 | 19 | 28 | 30 | 31 | 32)
+    // 46 is `sync::Shared`: a pointer the body only ever hands to a
+    // `gos_rt_shared_*` call, so a local holding one lowers as that pointer.
+    matches!(u32::MAX - def_local, 7 | 18 | 19 | 28 | 30 | 31 | 32 | 46)
 }
 
 fn body_uses_unlowerable_local_repr(
@@ -2837,6 +2839,11 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_rwlock_set" => rt::gos_rt_rwlock_set,
         "gos_rt_rwlock_with_read" => rt::gos_rt_rwlock_with_read,
         "gos_rt_rwlock_with_write" => rt::gos_rt_rwlock_with_write,
+        "gos_rt_shared_new" => rt::gos_rt_shared_new,
+        "gos_rt_shared_get" => rt::gos_rt_shared_get,
+        "gos_rt_shared_set" => rt::gos_rt_shared_set,
+        "gos_rt_shared_with" => rt::gos_rt_shared_with,
+        "gos_rt_shared_update" => rt::gos_rt_shared_update,
         "gos_rt_ctx_background" => rt::gos_rt_ctx_background,
         "gos_rt_ctx_with_cancel" => rt::gos_rt_ctx_with_cancel,
         "gos_rt_ctx_with_timeout" => rt::gos_rt_ctx_with_timeout,

@@ -744,6 +744,47 @@ impl<'a> Builder<'a> {
                 span,
             );
         }
+        // `shared.with(f)` / `shared.update(f)` run a closure under the
+        // lock, so they lower through the combinator-call convention
+        // rather than the plain receiver-kind symbol table: the callback
+        // has to reach the native side as an env blob, which a bare
+        // symbol row cannot carry.
+        if matches!(method.name.as_str(), "with" | "update")
+            && args.len() == 1
+            && (self.local_runtime_kind.get(&receiver_local).copied() == Some("sync::Shared")
+                || self.ty_is_shared_handle(receiver_ty)
+                || self.ty_is_shared_handle(self.locals[receiver_local.0 as usize].ty))
+        {
+            let symbol = if method.name.as_str() == "with" {
+                "gos_rt_shared_with"
+            } else {
+                "gos_rt_shared_update"
+            };
+            // The callback sees the guarded value, so its parameter carries
+            // that type: a hardcoded `i64` would leave a method on a
+            // `String` or `Vec` payload with nothing to lower against.
+            let elem_ty = self
+                .shared_elem_ty(receiver_ty)
+                .or_else(|| self.shared_elem_ty(self.locals[receiver_local.0 as usize].ty))
+                .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64));
+            // `update` stores what the callback answers, so it answers the
+            // guarded type; `with` answers whatever the call site expects.
+            let out_ty = if method.name.as_str() == "update" {
+                elem_ty
+            } else {
+                ty
+            };
+            let closure = self.lower_iter_closure(&args[0], &[elem_ty], out_ty, span)?;
+            return Some(self.emit_combinator_call(
+                symbol,
+                vec![
+                    Operand::Copy(Place::local(receiver_local)),
+                    Operand::Copy(Place::local(closure)),
+                ],
+                ty,
+                span,
+            ));
+        }
         let lowered_runtime_kind = self.local_runtime_kind.get(&receiver_local).copied();
         let lowered_heap_reverse_i64 = self.local_binary_heap_min_i64.contains(&receiver_local)
             || self.binary_heap_elem_is_reverse_i64(receiver_ty)
@@ -3396,6 +3437,8 @@ impl<'a> Builder<'a> {
             (Some("validate::Errors"), "collect") => Some("gos_rt_validate_errors_collect"),
             (Some("sync::RwLock"), "read") => Some("gos_rt_rwlock_get"),
             (Some("sync::RwLock"), "write") => Some("gos_rt_rwlock_set"),
+            (Some("sync::Shared"), "get") => Some("gos_rt_shared_get"),
+            (Some("sync::Shared"), "set") => Some("gos_rt_shared_set"),
             // AtomicBool load/store route to the bool-typed shims so
             // the load result renders `true` / `false`; the name-only
             // table below keeps AtomicI64 on the i64 path.
@@ -4117,6 +4160,7 @@ impl<'a> Builder<'a> {
             "gos_rt_validate_errors_len"
             | "gos_rt_validate_errors_count"
             | "gos_rt_rwlock_get"
+            | "gos_rt_shared_get"
             | "gos_rt_metrics_counter_value"
             | "gos_rt_metrics_histogram_count" => self.tcx.int_ty(gossamer_types::IntTy::I64),
             "gos_rt_metrics_gauge_value" | "gos_rt_metrics_histogram_sum" => {
@@ -4126,6 +4170,7 @@ impl<'a> Builder<'a> {
             | "gos_rt_vec_reserve_at_least"
             | "gos_rt_vec_reserve_exact"
             | "gos_rt_rwlock_set"
+            | "gos_rt_shared_set"
             | "gos_rt_ctx_cancel"
             | "gos_rt_metrics_counter_inc"
             | "gos_rt_metrics_gauge_set"
@@ -4549,6 +4594,8 @@ impl<'a> Builder<'a> {
             (Some("validate::Errors"), "collect") => Some("gos_rt_validate_errors_collect"),
             (Some("sync::RwLock"), "read") => Some("gos_rt_rwlock_get"),
             (Some("sync::RwLock"), "write") => Some("gos_rt_rwlock_set"),
+            (Some("sync::Shared"), "get") => Some("gos_rt_shared_get"),
+            (Some("sync::Shared"), "set") => Some("gos_rt_shared_set"),
             (Some("sync::AtomicBool"), "load") => Some("gos_rt_atomic_bool_load"),
             (Some("sync::AtomicBool"), "store") => Some("gos_rt_atomic_bool_store"),
             (Some("context::Context"), "is_cancelled") => Some("gos_rt_ctx_is_cancelled"),
@@ -6079,6 +6126,37 @@ impl<'a> Builder<'a> {
     /// several slots or reached through a pointer, so a slot compare answers
     /// pointer identity rather than value equality. Those element types take
     /// the structural scan instead.
+    /// The type a `sync::Shared` guards, or `None` for another receiver.
+    fn shared_elem_ty(&self, ty: Ty) -> Option<Ty> {
+        let mut cur = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(cur) {
+            cur = *inner;
+        }
+        let TyKind::Adt { def, substs } = self.tcx.kind_of(cur) else {
+            return None;
+        };
+        if self.tcx.def_name(*def) != Some("sync::Shared") {
+            return None;
+        }
+        substs.types().first().copied()
+    }
+
+    /// `true` when `ty` is a `sync::Shared` handle, however it was reached.
+    ///
+    /// A constructor result is tracked by its runtime kind, but a handle
+    /// arriving as a parameter has only its type to go on, and both spellings
+    /// must reach the same lowering.
+    fn ty_is_shared_handle(&self, ty: Ty) -> bool {
+        let mut cur = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(cur) {
+            cur = *inner;
+        }
+        matches!(
+            self.tcx.kind_of(cur),
+            TyKind::Adt { def, .. } if self.tcx.def_name(*def) == Some("sync::Shared")
+        )
+    }
+
     fn seq_search_shim_fits(&self, elem: Ty) -> bool {
         let mut t = elem;
         while let TyKind::Ref { inner, .. } = self.tcx.kind_of(t) {

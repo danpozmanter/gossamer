@@ -15848,6 +15848,25 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-sync-Shared",
+      "name": "std::sync::Shared",
+      "kind": "type",
+      "signature": null,
+      "description": "A value several goroutines reach, every read and write taken under one lock. Build with `Shared::new(value)`; read with `get` or `with`, write with `set`, and read-modify-write with `update`, which holds the lock across the callback.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdsync",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-sync-WaitGroup",
       "name": "std::sync::WaitGroup",
       "kind": "type",

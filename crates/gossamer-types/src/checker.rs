@@ -93,6 +93,7 @@ impl TypeChecker<'_> {
         self.check_deferred_mutating_receivers();
         self.check_deferred_private_fields();
         self.check_deferred_structural();
+        self.check_deferred_shared_payloads();
         self.resolve_table();
         let diagnostics = Self::dedupe_diagnostics(self.diagnostics);
         (self.table, diagnostics)
@@ -208,6 +209,7 @@ const PURE_HANDLES: &[HandleRow] = &[
     // handle constructors here.
     (44, "fs::File", &[]),
     (45, "fs::OpenOptions", &[(&["fs", "OpenOptions"], "new")]),
+    (46, "sync::Shared", &[(&["sync", "Shared"], "new")]),
     (
         46,
         "http::FileServer",
@@ -841,6 +843,9 @@ struct TypeChecker<'a> {
     /// `pub` is nameable only from that module, matching the resolver's
     /// rule for a free function.
     method_homes: HashMap<(String, String), (Vec<String>, Visibility)>,
+    /// `sync::Shared` payloads awaiting the end of inference, with the
+    /// span of the value each was built from.
+    deferred_shared_payloads: Vec<(Ty, Span)>,
     /// Module path of the item currently being checked, so a call site
     /// can be tested against a method's declaring module.
     current_module: Vec<String>,
@@ -973,6 +978,7 @@ impl<'a> TypeChecker<'a> {
             user_type_decls: std::collections::HashSet::new(),
             user_method_owners: HashMap::new(),
             user_fn_names: std::collections::HashSet::new(),
+            deferred_shared_payloads: Vec::new(),
             method_homes: HashMap::new(),
             current_module: Vec::new(),
             trait_own_methods: HashMap::new(),
@@ -4390,6 +4396,32 @@ impl<'a> TypeChecker<'a> {
             ExprKind::Path(path) => self.check_path_expr(expr.id, path, expr.span),
             ExprKind::Call { callee, args } => {
                 let ty = self.check_call(callee, args, expected);
+                if let ExprKind::Path(path) = &callee.kind
+                    && let Some(last) = path.segments.last()
+                {
+                    if last.name.name == "spawn"
+                        && let Some(arg) = args.first()
+                    {
+                        self.reject_unshareable_goroutine_captures(arg);
+                    }
+                    // The guarded slot is one word that every tier reads
+                    // back as an integer. A payload without that agreement
+                    // is refused here rather than compiling on one tier and
+                    // failing to lower on another.
+                    if last.name.name == "new"
+                        && path
+                            .segments
+                            .iter()
+                            .any(|segment| segment.name.name == "Shared")
+                        && let Some(arg) = args.first()
+                        && let Some(arg_ty) = self.table.get(arg.id)
+                    {
+                        // Judged once inference has settled: a numeric
+                        // literal is still an open variable here, and
+                        // whether it lands on an integer decides the answer.
+                        self.deferred_shared_payloads.push((arg_ty, arg.span));
+                    }
+                }
                 // A non-generic tuple-variant constructor call is its
                 // enum: unify so bindings (`let p = Sign::Pos(7)`) carry
                 // the nominal type operator dispatch resolves against.
@@ -4758,6 +4790,7 @@ impl<'a> TypeChecker<'a> {
             ExprKind::Go(inner) => {
                 self.check_expr(inner);
                 self.reject_go_inline_aggregate_args(inner);
+                self.reject_unshareable_goroutine_captures(inner);
                 self.fresh()
             }
             ExprKind::Select(arms) => self.check_select(arms),
@@ -6754,6 +6787,7 @@ impl<'a> TypeChecker<'a> {
         if let Some((offset, handle)) = stdlib_handle_ctor(module, last) {
             return Some(self.stdlib_handle_ty(offset, handle));
         }
+
         // A socket constructor answers its handle through a `Result`, so
         // `TcpStream::connect(addr)?` propagates like any fallible call.
         if let Some((offset, handle)) = net_socket_ctor(module, last) {
@@ -7073,6 +7107,50 @@ impl<'a> TypeChecker<'a> {
                 }
                 _ => None,
             },
+            _ => None,
+        }
+    }
+
+    /// Return type of a method on a `sync::Shared`.
+    ///
+    /// The guarded slot is one word that every tier reads back as an
+    /// integer, so that is what a read answers and what an update stores.
+    fn shared_method_ret(&mut self, method: &str, resolved: Ty, args: &[Expr]) -> Option<Ty> {
+        let TyKind::Adt { def, .. } = self.tcx.kind_of(resolved) else {
+            return None;
+        };
+        if self.tcx.def_name(*def) != Some("sync::Shared") {
+            return None;
+        }
+        let elem = self.tcx.int_ty(IntTy::I64);
+        match method {
+            "get" => Some(elem),
+            "set" => {
+                if let Some(arg) = args.first() {
+                    let value = self.check_expr(arg);
+                    self.unify(elem, value, arg.span);
+                }
+                Some(self.tcx.unit())
+            }
+            // `with` answers whatever the callback answers; `update` stores
+            // what it answers, so that has to be the guarded type.
+            "with" | "update" => {
+                let output = if method == "update" {
+                    elem
+                } else {
+                    self.fresh()
+                };
+                let sig = FnSig {
+                    inputs: vec![elem],
+                    output,
+                };
+                let want = self.tcx.intern(TyKind::FnTrait(sig));
+                if let Some(arg) = args.first() {
+                    let got = self.check_expr_expecting(arg, Expectation::HasType(want));
+                    self.unify(want, got, arg.span);
+                }
+                Some(output)
+            }
             _ => None,
         }
     }
@@ -8662,6 +8740,9 @@ impl<'a> TypeChecker<'a> {
             return ty;
         }
         if let Some(ty) = self.flag_set_method_ret(method, resolved) {
+            return ty;
+        }
+        if let Some(ty) = self.shared_method_ret(method, resolved, args) {
             return ty;
         }
         if let Some(ty) = self.http_client_method_ret(method, resolved) {
@@ -13776,6 +13857,7 @@ impl<'a> TypeChecker<'a> {
                     );
                 }
                 self.reject_go_inline_aggregate_args(inner);
+                self.reject_unshareable_goroutine_captures(inner);
             }
         }
     }
@@ -14006,6 +14088,118 @@ impl<'a> TypeChecker<'a> {
                 );
             }
         }
+    }
+
+    /// Rejects a goroutine body that reads an outer binding whose type has
+    /// no representation crossing the boundary.
+    ///
+    /// The spawning goroutine keeps its own handle on the value, so both
+    /// sides would reach one piece of nested growable storage with nothing
+    /// serialising them - the shape whose compiled ABI has no ownership
+    /// descriptor, and which faults rather than racing. Checked here so the
+    /// answer is the same on every tier, rather than at run time on one.
+    /// Reports a `sync::Shared` payload the guarded slot cannot carry.
+    ///
+    /// Run after inference so a numeric literal has landed on its type:
+    /// an integer is read back identically by every tier, and nothing else
+    /// is, so nothing else may be guarded.
+    fn check_deferred_shared_payloads(&mut self) {
+        let pending = std::mem::take(&mut self.deferred_shared_payloads);
+        for (ty, span) in pending {
+            let elem = self.infer.resolve(self.tcx, ty);
+            if matches!(self.tcx.kind_of(elem), TyKind::Int(_) | TyKind::Error) {
+                continue;
+            }
+            let rendered = self.render_public_ty(elem);
+            self.emit(TypeError::SharedPayloadUnsupported { ty: rendered }, span);
+        }
+    }
+
+    fn reject_unshareable_goroutine_captures(&mut self, expr: &Expr) {
+        let unshareable: Vec<(String, Ty)> = self
+            .scopes
+            .iter()
+            .flat_map(|scope| scope.iter())
+            .filter_map(|(name, ty)| {
+                let resolved = self.infer.resolve(self.tcx, *ty);
+                self.ty_is_unshareable_across_goroutines(resolved)
+                    .then(|| (name.to_string(), resolved))
+            })
+            .collect();
+        if unshareable.is_empty() {
+            return;
+        }
+        for body in goroutine_bodies(expr) {
+            let bound = closure_bound_names(body.params);
+            for (name, ty) in &unshareable {
+                if bound.contains(name) {
+                    continue;
+                }
+                let mut one = HashSet::new();
+                one.insert(name.clone());
+                if expr_mentions_any_name(body.body, &one) {
+                    let rendered = self.render_public_ty(*ty);
+                    self.emit(
+                        TypeError::ConcurrentCaptureUnsupported {
+                            name: name.clone(),
+                            ty: rendered,
+                        },
+                        body.body.span,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Whether a value of `ty` reaches a goroutine only as shared nested
+    /// storage. A bare sequence or map is published as one owned container,
+    /// and a scalar, a `String`, or a runtime handle carries its own
+    /// representation; an aggregate *holding* growable storage does not.
+    fn ty_is_unshareable_across_goroutines(&self, ty: Ty) -> bool {
+        let mut peeled = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
+            peeled = *inner;
+        }
+        if matches!(
+            self.tcx.kind_of(peeled),
+            TyKind::Vec(_) | TyKind::Slice(_) | TyKind::HashMap { .. }
+        ) {
+            return false;
+        }
+        if self.ty_is_shareable_handle(peeled) {
+            return false;
+        }
+        self.ty_contains_nested_vec(peeled)
+    }
+
+    /// A stdlib handle built to be reached from several goroutines: the
+    /// synchronisation types, the channel ends, and `sync::Shared`.
+    fn ty_is_shareable_handle(&self, ty: Ty) -> bool {
+        if matches!(
+            self.tcx.kind_of(ty),
+            TyKind::Sender(_) | TyKind::Receiver(_) | TyKind::JoinHandle(_)
+        ) {
+            return true;
+        }
+        let TyKind::Adt { def, .. } = self.tcx.kind_of(ty) else {
+            return false;
+        };
+        self.tcx.def_name(*def).is_some_and(|name| {
+            let bare = name.rsplit("::").next().unwrap_or(name);
+            matches!(
+                bare,
+                "Shared"
+                    | "Mutex"
+                    | "RwLock"
+                    | "Once"
+                    | "WaitGroup"
+                    | "Barrier"
+                    | "AtomicI64"
+                    | "AtomicI32"
+                    | "AtomicU64"
+                    | "AtomicBool"
+            )
+        })
     }
 
     fn reject_go_inline_aggregate_args(&mut self, expr: &Expr) {
@@ -17120,6 +17314,44 @@ fn expr_tree_has_reference(expr: &Expr, table: &TypeTable, tcx: &TyCtxt) -> bool
     };
     gossamer_ast::visitor::Visitor::visit_expr(&mut finder, expr);
     finder.found
+}
+
+/// A closure that a goroutine will run: its parameters and its body.
+struct GoroutineBody<'a> {
+    params: &'a [ClosureParam],
+    body: &'a Expr,
+}
+
+/// Every closure whose body a `spawn` / `go` expression will run.
+///
+/// `spawn(|| work())` and `go fn() { .. }()` name the closure directly;
+/// `go f(closure)` hands one to a call, whose own body runs in the spawning
+/// goroutine, so only the closure arguments are collected.
+fn goroutine_bodies(expr: &Expr) -> Vec<GoroutineBody<'_>> {
+    match &expr.kind {
+        ExprKind::Closure { params, body, .. } => vec![GoroutineBody { params, body }],
+        ExprKind::Call { callee, args } => {
+            let mut out = goroutine_bodies(callee);
+            for arg in args {
+                if matches!(arg.kind, ExprKind::Closure { .. }) {
+                    out.extend(goroutine_bodies(arg));
+                }
+            }
+            out
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The names a closure's own parameters bind, which shadow anything outside.
+fn closure_bound_names(params: &[ClosureParam]) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for param in params {
+        let mut names = Vec::new();
+        pattern_binding_names(&param.pattern, &mut names);
+        out.extend(names);
+    }
+    out
 }
 
 fn expr_mentions_any_name(expr: &Expr, names: &HashSet<String>) -> bool {

@@ -2060,6 +2060,26 @@ impl<'a> Builder<'a> {
     /// Field types of a value stored inline as a run of slots - a tuple, or a
     /// struct, which lays its fields out the same way. `None` for anything
     /// else, including an enum, whose payload is not a plain field run.
+    /// The payload of an `Option` whose value the slot comparison can read,
+    /// or `None` for any other type. A payload reached by pointer - a
+    /// `String`, a container - is excluded: its slot holds an address, and
+    /// ordering addresses is not ordering values.
+    pub(crate) fn option_scalar_payload(&self, ty: Ty) -> Option<Ty> {
+        use gossamer_types::TyKind;
+        let TyKind::Adt { def, substs } = self.tcx.kind_of(ty) else {
+            return None;
+        };
+        if def.local != u32::MAX - 1 {
+            return None;
+        }
+        let payload = *substs.types().first()?;
+        matches!(
+            self.tcx.kind_of(payload),
+            TyKind::Int(_) | TyKind::Bool | TyKind::Char | TyKind::Float(_)
+        )
+        .then_some(payload)
+    }
+
     pub(crate) fn inline_field_tys(&self, ty: Ty) -> Option<Vec<Ty>> {
         use gossamer_types::TyKind;
         match self.tcx.kind_of(ty) {
@@ -2088,6 +2108,14 @@ impl<'a> Builder<'a> {
                 out.extend(self.tuple_stream_tags(*e)?);
             }
             return Some(out);
+        }
+        // An `Option` field occupies the two slots its carrier is - the
+        // discriminant, then the payload - so it streams as a nested pair
+        // rather than as one leaf. Reading it as a single slot would compare
+        // half of the field and walk the rest of the element off by one.
+        if let Some(payload) = self.option_scalar_payload(peeled) {
+            let value = self.scalar_cmp_tag(payload)?;
+            return Some(vec![gossamer_abi::TUPLE_TAG_NESTED, 2, 0, value]);
         }
         self.scalar_cmp_tag(ty).map(|tag| vec![tag])
     }
@@ -2203,6 +2231,18 @@ impl<'a> Builder<'a> {
         let mut peeled = ty;
         while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
             peeled = *inner;
+        }
+        // An `Option` is a two-slot carrier - the discriminant, then the
+        // payload - and reading it as one word sorts half of each element.
+        // Streaming both slots orders it by the language's own rule for an
+        // enum: by variant rank, and `Some` is declared first, so its zero
+        // discriminant sorts ahead of `None`'s; equal ranks fall through to
+        // the payload.
+        if let Some(payload) = self.option_scalar_payload(peeled) {
+            // The discriminant is an integer slot; tag 0 is what
+            // `scalar_cmp_tag` answers for one, without interning a type.
+            let value = self.scalar_cmp_tag(payload)?;
+            return Some((2, vec![0, value]));
         }
         let elems = self.inline_field_tys(peeled)?;
         if elems.is_empty() {

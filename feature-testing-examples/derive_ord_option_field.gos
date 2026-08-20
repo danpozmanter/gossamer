@@ -1,0 +1,33 @@
+// A derived ordering reaches a field of every shape, including an `Option`.
+//
+// The rule is the language's own for an enum - by variant rank, then payload.
+// `Some` is declared first, so it orders before `None`, which is the order a
+// sort of bare `Option`s gives; the derived `<` and `sort` agree, and both
+// answer the same on the bytecode VM and in compiled code.
+
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+struct Stamp {
+    minute: i64
+    offset: Option<i64>
+    label: Option<String>
+}
+
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+struct Pair(i64, Option<i64>)
+
+fn main() {
+    let none = Stamp { minute: 1, offset: None, label: None }
+    let low = Stamp { minute: 1, offset: Some(0), label: None }
+    let high = Stamp { minute: 1, offset: Some(5), label: None }
+    println!("Some(0) < None:    {}", low < none)
+    println!("Some(0) < Some(5): {}", low < high)
+    println!("Some(5) < Some(0): {}", high < low)
+    println!("None < Some(0):    {}", none < low)
+    println!("equal:             {}", low == low)
+
+    let named_none = Stamp { minute: 1, offset: Some(0), label: None }
+    let named_some = Stamp { minute: 1, offset: Some(0), label: Some("z") }
+    println!("Some(text) < None: {}", named_some < named_none)
+
+    println!("tuple struct:      {}", Pair(1, Some(0)) < Pair(1, None))
+}

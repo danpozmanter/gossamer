@@ -3420,6 +3420,10 @@ impl<'a> Builder<'a> {
                 "gos_rt_rwlock_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
+            "sync::Shared::new" | "Shared::new" => (
+                "gos_rt_shared_new",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
             "context::Context::background" | "Context::background" => (
                 "gos_rt_ctx_background",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
@@ -4583,6 +4587,7 @@ impl<'a> Builder<'a> {
             "gos_rt_field_error_new" => Some("validate::FieldError"),
             "gos_rt_validate_errors_new" => Some("validate::Errors"),
             "gos_rt_rwlock_new" => Some("sync::RwLock"),
+            "gos_rt_shared_new" => Some("sync::Shared"),
             "gos_rt_atomic_bool_new" => Some("sync::AtomicBool"),
             "gos_rt_ctx_background" | "gos_rt_ctx_with_cancel" | "gos_rt_ctx_with_timeout" => {
                 Some("context::Context")

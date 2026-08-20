@@ -379,6 +379,30 @@ fn type_head_name(ty: &gossamer_ast::Type) -> Option<&str> {
     }
 }
 
+/// The `cmp` lines that order one field of a derived comparison.
+///
+/// `<` on a field recurses into that type's own `cmp`, which every shape has
+/// except `Option`: nothing declares `Option::cmp`, so a type carrying one
+/// derived a body naming a function that does not exist. The arms are spelled
+/// out here instead, following the language's own rule for an enum - by
+/// variant rank, then payload. `Some` is declared first, so it orders before
+/// `None`, which is the order a sort of bare `Option`s already gives.
+fn derived_cmp_field(ty: &gossamer_ast::Type, mine: &str, theirs: &str) -> String {
+    if type_head_name(ty) != Some("Option") {
+        return format!(
+            "        if {mine} < {theirs} {{ return -1 }}\n        if {theirs} < {mine} {{ return 1 }}\n"
+        );
+    }
+    format!(
+        "        if {mine}.is_some() && {theirs}.is_none() {{ return -1 }}\n\
+         \x20       if {mine}.is_none() && {theirs}.is_some() {{ return 1 }}\n\
+         \x20       if {mine}.is_some() && {theirs}.is_some() {{\n\
+         \x20           if {mine}.unwrap() < {theirs}.unwrap() {{ return -1 }}\n\
+         \x20           if {theirs}.unwrap() < {mine}.unwrap() {{ return 1 }}\n\
+         \x20       }}\n"
+    )
+}
+
 /// Scalar field types a synthesized `fmt` can render directly via
 /// `format!("{}", field)` on every tier.
 fn is_scalar_fmt_name(name: &str) -> bool {
@@ -1246,9 +1270,11 @@ fn emit_tuple_struct_derive_impl(
     }
     if want_cmp {
         out.push_str(&format!("    fn cmp(&self, other: &{self_ty}) -> i64 {{\n"));
-        for i in 0..n {
-            out.push_str(&format!(
-                "        if self.{i} < other.{i} {{ return -1 }}\n        if other.{i} < self.{i} {{ return 1 }}\n"
+        for (i, field) in fields.iter().enumerate() {
+            out.push_str(&derived_cmp_field(
+                &field.ty,
+                &format!("self.{i}"),
+                &format!("other.{i}"),
             ));
         }
         out.push_str("        0\n    }\n");
@@ -1358,9 +1384,11 @@ fn emit_struct_derive_impl(
         // scalars / String compare natively, a nested struct routes to its own
         // `cmp`.
         out.push_str(&format!("    fn cmp(&self, other: &{self_ty}) -> i64 {{\n"));
-        for f in &field_names {
-            out.push_str(&format!(
-                "        if self.{f} < other.{f} {{ return -1 }}\n        if other.{f} < self.{f} {{ return 1 }}\n"
+        for (f, field) in field_names.iter().zip(fields.iter()) {
+            out.push_str(&derived_cmp_field(
+                &field.ty,
+                &format!("self.{f}"),
+                &format!("other.{f}"),
             ));
         }
         out.push_str("        0\n    }\n");

@@ -4587,6 +4587,26 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_rwlock_with_write as *const u8,
         ),
         (
+            "gos_rt_shared_get",
+            crate::c_abi::gos_rt_shared_get as *const u8,
+        ),
+        (
+            "gos_rt_shared_new",
+            crate::c_abi::gos_rt_shared_new as *const u8,
+        ),
+        (
+            "gos_rt_shared_set",
+            crate::c_abi::gos_rt_shared_set as *const u8,
+        ),
+        (
+            "gos_rt_shared_update",
+            crate::c_abi::gos_rt_shared_update as *const u8,
+        ),
+        (
+            "gos_rt_shared_with",
+            crate::c_abi::gos_rt_shared_with as *const u8,
+        ),
+        (
             "gos_rt_select_arm_default",
             crate::c_abi::gos_rt_select_arm_default as *const u8,
         ),

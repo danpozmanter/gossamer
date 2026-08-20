@@ -202,6 +202,7 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     install_jwt(globals);
     install_validate(globals);
     install_rwlock(globals);
+    install_shared(globals);
     install_context(globals);
     install_cohort(globals);
     #[cfg(not(target_arch = "wasm32"))]
@@ -316,6 +317,7 @@ pub mod path;
 pub mod result;
 pub mod rwlock;
 pub mod set;
+pub mod shared;
 pub mod sort;
 pub mod strconv;
 pub mod strings;
@@ -479,6 +481,7 @@ pub(crate) use rwlock::install_rwlock;
 pub use rwlock::*;
 pub(crate) use set::install_set;
 pub use set::*;
+pub(crate) use shared::install_shared;
 pub(crate) use sort::install_sort;
 pub(crate) use strconv::install_strconv;
 pub use strconv::*;

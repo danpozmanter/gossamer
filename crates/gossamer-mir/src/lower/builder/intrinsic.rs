@@ -2907,6 +2907,38 @@ impl<'a> Builder<'a> {
                     span,
                 ))
             }
+            ("sync::Shared::with" | "Shared::with", 2) => {
+                // `Shared::with(shared, |v| ...)` - handle first, the
+                // callback second. Mirrors the VM-native
+                // `native_shared_with`: the lock is held across the call
+                // and the guarded value is left as it was.
+                let handle = self.lower_expr(&args[0])?;
+                let closure = self.lower_iter_closure(&args[1], &[i64_ty], i64_ty, span)?;
+                Some(self.emit_combinator_call(
+                    "gos_rt_shared_with",
+                    vec![
+                        Operand::Copy(Place::local(handle)),
+                        Operand::Copy(Place::local(closure)),
+                    ],
+                    i64_ty,
+                    span,
+                ))
+            }
+            ("sync::Shared::update" | "Shared::update", 2) => {
+                // The callback's answer becomes the guarded value, and the
+                // lock spans both the read and the write.
+                let handle = self.lower_expr(&args[0])?;
+                let closure = self.lower_iter_closure(&args[1], &[i64_ty], i64_ty, span)?;
+                Some(self.emit_combinator_call(
+                    "gos_rt_shared_update",
+                    vec![
+                        Operand::Copy(Place::local(handle)),
+                        Operand::Copy(Place::local(closure)),
+                    ],
+                    i64_ty,
+                    span,
+                ))
+            }
             ("sync::RwLock::with_read" | "RwLock::with_read", 2) => {
                 // `RwLock::with_read(lock, |v| ...)` - handle first, an
                 // i64-taking closure second. Mirrors the VM-native
