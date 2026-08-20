@@ -38,6 +38,15 @@ use gossamer_runner_template::{
 use thiserror::Error;
 
 /// Cache subdirectory of the runner executable.
+/// Cargo's resolved dependency graph. A generated project without one
+/// resolves every dependency afresh against the registry on each build.
+const CARGO_LOCK: &str = "Cargo.lock";
+
+/// Copy of the toolchain lockfile a generated project was last seeded from,
+/// so a toolchain whose pins have moved re-seeds instead of building on the
+/// graph an older one resolved.
+const LOCK_SEED_STAMP: &str = ".gos-lock-seed";
+
 const SUBDIR_RUNNER: &str = "runner";
 /// Cache subdirectory of the staticlib build.
 const SUBDIR_STATICLIB: &str = "staticlib";
@@ -233,6 +242,7 @@ impl BindingRunner {
         write_if_different(&cargo_toml, &render_cargo_toml(&input))?;
         write_if_different(&main_rs, &render_main_rs(&input))?;
         write_if_different(&sigs_rs, &render_sigs_dump_rs(&input))?;
+        seed_lockfile(&dir, &self.gossamer_root)?;
 
         let bin_path = self.runner_binary_path();
         let stamp = dir.join("stamp.json");
@@ -280,6 +290,7 @@ impl BindingRunner {
         write_if_different(&cargo_toml, &render_cargo_toml(&input))?;
         write_if_different(&main_rs, &render_main_rs(&input))?;
         write_if_different(&sigs_rs, &render_sigs_dump_rs(&input))?;
+        seed_lockfile(&dir, &self.gossamer_root)?;
 
         let bin_path = dir
             .join("target")
@@ -533,6 +544,7 @@ impl StaticBindingsLib {
         };
         write_if_different(&cargo_toml, &render_staticlib_cargo_toml(&input))?;
         write_if_different(&lib_rs, &render_staticlib_lib_rs(&input))?;
+        seed_lockfile(&self.workdir, &self.gossamer_root)?;
 
         let archive = self.archive_path();
         let stamp = self.workdir.join("stamp.json");
@@ -1080,6 +1092,39 @@ fn prune_runner_cache_once(cache_root: &Path, in_use: Option<&Path>) {
             in_use,
         );
     });
+}
+
+/// Seeds a generated project's lockfile from the toolchain's own resolved
+/// dependency graph.
+///
+/// Cargo runs a dependency's build script as part of compiling it, so the
+/// version chosen for every transitive crate decides what code executes. A
+/// generated project carrying no lockfile resolves the whole graph afresh
+/// against the registry and takes the newest semver-compatible release of
+/// each crate, which makes any newly published version of any dependency
+/// run here - regardless of what the toolchain itself pins.
+///
+/// Seeding makes the toolchain's audited graph the resolver's starting
+/// point. Cargo's resolution is minimal-change, so a package the seed
+/// already pins keeps that version and only what the bindings add on top is
+/// resolved. Bindings still reach their own dependencies; those are the
+/// user's tree to pin, and a binding that names none adds nothing to
+/// resolve.
+fn seed_lockfile(project_dir: &Path, gossamer_root: &Path) -> io::Result<()> {
+    // A toolchain installed without its source tree has no lockfile to seed
+    // from. Its generated projects also have no path dependencies to reach,
+    // so a binding build there fails on the manifest well before resolution.
+    let Ok(seed) = fs::read(gossamer_root.join(CARGO_LOCK)) else {
+        return Ok(());
+    };
+    let lock = project_dir.join(CARGO_LOCK);
+    let stamp = project_dir.join(LOCK_SEED_STAMP);
+    if lock.exists() && fs::read(&stamp).is_ok_and(|previous| previous == seed) {
+        return Ok(());
+    }
+    fs::write(&lock, &seed)?;
+    fs::write(&stamp, &seed)?;
+    Ok(())
 }
 
 fn write_if_different(path: &Path, contents: &str) -> io::Result<()> {
@@ -1646,6 +1691,80 @@ mod tests {
             matches!(&item.params[0], DumpedType::Vec { of } if matches!(**of, DumpedType::I64))
         );
         assert!(matches!(&item.ret, DumpedType::Result { .. }));
+    }
+
+    /// The pins a generated project starts from decide which code its build
+    /// scripts run, so an absent lockfile is the whole exposure: cargo would
+    /// resolve every transitive crate to whatever the registry currently
+    /// serves.
+    #[test]
+    fn generated_project_starts_from_the_toolchain_pins() {
+        let root = tempdir();
+        let project = tempdir();
+        let pins = "version = 4\n\n[[package]]\nname = \"arrayref\"\nversion = \"0.3.9\"\n";
+        fs::write(root.join(CARGO_LOCK), pins).unwrap();
+
+        seed_lockfile(&project, &root).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(project.join(CARGO_LOCK)).unwrap(),
+            pins,
+            "a generated project must resolve from the toolchain's graph, not the registry's newest"
+        );
+    }
+
+    #[test]
+    fn seeding_keeps_a_resolution_the_project_already_has() {
+        let root = tempdir();
+        let project = tempdir();
+        fs::write(root.join(CARGO_LOCK), "version = 4\n").unwrap();
+        seed_lockfile(&project, &root).unwrap();
+
+        // What cargo resolved on top of the seed - the bindings' own tree.
+        let resolved = "version = 4\n\n[[package]]\nname = \"user-binding\"\n";
+        fs::write(project.join(CARGO_LOCK), resolved).unwrap();
+        seed_lockfile(&project, &root).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(project.join(CARGO_LOCK)).unwrap(),
+            resolved,
+            "an unchanged toolchain must not discard the bindings' resolved versions"
+        );
+    }
+
+    #[test]
+    fn moved_toolchain_pins_replace_an_older_seed() {
+        let root = tempdir();
+        let project = tempdir();
+        fs::write(
+            root.join(CARGO_LOCK),
+            "version = 4\n\n[[package]]\nname = \"a\"\n",
+        )
+        .unwrap();
+        seed_lockfile(&project, &root).unwrap();
+        fs::write(
+            project.join(CARGO_LOCK),
+            "version = 4\n\n[[package]]\nname = \"stale\"\n",
+        )
+        .unwrap();
+
+        let moved = "version = 4\n\n[[package]]\nname = \"a\"\nversion = \"2\"\n";
+        fs::write(root.join(CARGO_LOCK), moved).unwrap();
+        seed_lockfile(&project, &root).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(project.join(CARGO_LOCK)).unwrap(),
+            moved,
+            "an upgraded toolchain's pins must reach projects an older one seeded"
+        );
+    }
+
+    #[test]
+    fn a_toolchain_without_a_lockfile_leaves_the_project_alone() {
+        let root = tempdir();
+        let project = tempdir();
+        seed_lockfile(&project, &root).unwrap();
+        assert!(!project.join(CARGO_LOCK).exists());
     }
 
     fn tempdir() -> PathBuf {

@@ -245,6 +245,37 @@ pub fn reset_lazy_iterator_state() {
     LAZY_VEC_REPLACEMENTS.with(|replacements| replacements.borrow_mut().clear());
 }
 
+/// Owns one slot in the lazy-iterator registry.
+///
+/// `Value::LazyIter` carries this handle behind an `Arc`, so the registry entry
+/// lives exactly as long as the Gossamer values naming it. An adapter's state
+/// holds its upstream `Value`, so releasing a chain's head cascades down it.
+#[derive(Debug)]
+pub struct LazyIterHandle {
+    id: i64,
+}
+
+impl LazyIterHandle {
+    /// Registry key this handle owns.
+    pub fn id(&self) -> i64 {
+        self.id
+    }
+}
+
+impl Drop for LazyIterHandle {
+    fn drop(&mut self) {
+        // The state is taken out from under the registry borrow before being
+        // discarded: discarding an adapter releases its upstream handle, which
+        // re-enters this `Drop` and borrows the registry again.
+        let state = LAZY_ITER_STATES
+            .try_with(|states| states.borrow_mut().remove(&self.id))
+            .unwrap_or(None);
+        if let Some(state) = state {
+            discard_lazy_state(state);
+        }
+    }
+}
+
 fn new_lazy_iter(state: LazyIterState) -> Value {
     let id = NEXT_LAZY_ITER_ID.with(|next| {
         let mut next = next.borrow_mut();
@@ -255,7 +286,7 @@ fn new_lazy_iter(state: LazyIterState) -> Value {
     LAZY_ITER_STATES.with(|states| {
         states.borrow_mut().insert(id, state);
     });
-    Value::LazyIter(id)
+    Value::LazyIter(Arc::new(LazyIterHandle { id }))
 }
 
 /// Returns an independent lazy-iterator state when `value` is a lazy iterator.
@@ -269,7 +300,7 @@ pub(crate) fn fork_lazy_iter_value(value: &Value) -> Value {
     let Value::LazyIter(id) = value else {
         return value.clone();
     };
-    let state = LAZY_ITER_STATES.with(|states| states.borrow().get(id).cloned());
+    let state = LAZY_ITER_STATES.with(|states| states.borrow().get(&id.id()).cloned());
     state
         .as_ref()
         .map(fork_lazy_state)
@@ -521,7 +552,7 @@ fn discard_lazy_value(value: &Value) {
     let Value::LazyIter(id) = value else {
         return;
     };
-    let state = LAZY_ITER_STATES.with(|states| states.borrow_mut().remove(id));
+    let state = LAZY_ITER_STATES.with(|states| states.borrow_mut().remove(&id.id()));
     if let Some(state) = state {
         discard_lazy_state(state);
     }
@@ -737,7 +768,7 @@ fn lazy_next(
         let mut xs = collect_array(source).into_iter();
         return Ok(xs.next());
     };
-    let Some(state) = LAZY_ITER_STATES.with(|states| states.borrow_mut().remove(id)) else {
+    let Some(state) = LAZY_ITER_STATES.with(|states| states.borrow_mut().remove(&id.id())) else {
         return Ok(None);
     };
     let mut guard = LazyStateGuard(Some(state));
@@ -1059,7 +1090,7 @@ fn lazy_next(
     if matches!(result, Ok(Some(_))) {
         let state = guard.0.take().expect("live lazy iterator state");
         LAZY_ITER_STATES.with(|states| {
-            states.borrow_mut().insert(*id, state);
+            states.borrow_mut().insert(id.id(), state);
         });
     }
     result
@@ -1176,7 +1207,7 @@ eager_seq_natives! {
 /// the entry point undrained.
 fn native_iter_reversed(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
     if let Some(Value::LazyIter(id)) = args.first()
-        && lazy_range_bounds(*id).is_some()
+        && lazy_range_bounds(id.id()).is_some()
     {
         return builtin_iter_reversed(args);
     }
@@ -1728,7 +1759,7 @@ pub(crate) fn builtin_iter_reversed(args: &[Value]) -> RuntimeResult<Value> {
     // element to hand back a cursor the range already describes, so
     // `(0..n).rev().take(3)` would pay for n of them to yield three.
     if let Value::LazyIter(id) = source
-        && let Some((current, end, inclusive, start_open, end_open)) = lazy_range_bounds(*id)
+        && let Some((current, end, inclusive, start_open, end_open)) = lazy_range_bounds(id.id())
         && !start_open
         && !end_open
     {

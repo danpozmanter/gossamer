@@ -315,8 +315,10 @@ pub enum Value {
     FloatVec(Arc<Vec<f64>>),
     /// Opaque VM-only lazy iterator state handle. The concrete state lives in
     /// the stdlib `iter` registry so the `Value` enum does not recursively
-    /// carry iterator closures and upstream states.
-    LazyIter(i64),
+    /// carry iterator closures and upstream states. The handle owns that
+    /// registry slot: the last share dropping releases the state, so a cursor
+    /// abandoned before exhaustion costs nothing beyond its own lifetime.
+    LazyIter(Arc<crate::stdlib_builtins::iter::LazyIterHandle>),
     /// Enum variant or tuple-struct constructor payload.
     Variant(Arc<VariantInner>),
     /// Struct-shaped aggregate.
@@ -2993,7 +2995,7 @@ impl fmt::Display for Value {
                 let elems: Vec<Value> = data.iter().copied().map(Value::Float).collect();
                 write_array(out, &elems)
             }
-            Self::LazyIter(id) => match crate::stdlib_builtins::iter::lazy_iter_repr(*id) {
+            Self::LazyIter(id) => match crate::stdlib_builtins::iter::lazy_iter_repr(id.id()) {
                 Some(range) => out.write_str(&range),
                 None => out.write_str("<iterator>"),
             },
@@ -3309,7 +3311,7 @@ fn repr_value(value: &Value) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        Value::LazyIter(id) => crate::stdlib_builtins::iter::lazy_iter_repr(*id)
+        Value::LazyIter(id) => crate::stdlib_builtins::iter::lazy_iter_repr(id.id())
             .unwrap_or_else(|| "<iterator>".to_string()),
         Value::Variant(inner) => {
             let fields = inner.fields.iter().map(repr_value).collect::<Vec<_>>();

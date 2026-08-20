@@ -39,6 +39,22 @@
   library's `impl PartialOrd` was honoured in compiled code and reported
   unbound by the bytecode VM - the wrong way round for something a library
   ships.
+- A Rust-binding build resolves its dependencies from the toolchain's own
+  pinned graph. The generated cargo project carried no lockfile, so every
+  build re-resolved the whole tree against the registry and took the newest
+  semver-compatible release of each crate - and cargo runs a dependency's
+  build script as part of compiling it, so whatever had most recently been
+  published is what ran. The toolchain's `Cargo.lock` now seeds the generated
+  project, and cargo's minimal-change resolution keeps those versions; only
+  what a binding adds on top is resolved. A toolchain whose pins have moved
+  re-seeds projects an older one left behind.
+- An `iter()` cursor releases its state when the value naming it goes away.
+  The registry slot behind a lazy iterator was keyed by an integer nobody
+  owned, so a cursor that a terminal method forked, drained, and discarded
+  left its original behind: peak memory grew with the number of `iter()`
+  calls a program made, at roughly a slot per call and three for an adapter
+  chain. A loop calling `xs.iter().filter(..).count()` now holds steady
+  whatever the iteration count.
 - Name a branch or a tag in a git dependency (`branch = "main"`,
   `tag = "v1.2.3"`), not only a full object ID. The name is resolved against
   the fetched clone and the commit it points at is what the tree is read from,

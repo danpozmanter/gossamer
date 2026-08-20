@@ -1189,7 +1189,7 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
         Value::Int(_) | Value::Uint(_) => index_value(idx)?,
         Value::LazyIter(id) => {
             let Some((start, end, inclusive, start_open, end_open)) =
-                crate::stdlib_builtins::iter::lazy_range_bounds(*id)
+                crate::stdlib_builtins::iter::lazy_range_bounds(id.id())
             else {
                 return Err(RuntimeError::Type(
                     "index range is no longer valid".to_string(),

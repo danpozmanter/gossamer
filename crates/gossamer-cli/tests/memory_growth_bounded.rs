@@ -520,13 +520,20 @@ fn main() {
 
 /// Every closure the VM invokes from a builtin combinator (`map`, `filter`,
 /// `fold`, `for_each`, `sort_by`, and the lazy `iter()` adapters) marshals its
-/// arguments through the frame pool's argument free list. The pool is a cache,
-/// so its depth must stay bounded no matter how many callbacks a goroutine
-/// runs: 12M callback invocations here must not move peak RSS off the
-/// interpreter's baseline. Runs on the bytecode VM, where every such body is
-/// refused by JIT admission anyway.
+/// arguments through the frame pool's argument free list, and every `iter()`
+/// takes a slot in the lazy-iterator registry. Both are caches whose depth must
+/// stay bounded no matter how many callbacks a goroutine runs.
+///
+/// The gate compares peak RSS at N against 4N rather than against one absolute
+/// cap. A fixed cap conflates the interpreter's own startup footprint - which
+/// moves with the profile, the toolchain, and the host - with the workload's
+/// growth, so it can only be set loose enough to admit a real per-iteration
+/// leak. Growth is the property under test: bounded reclamation makes peak RSS
+/// independent of the iteration count, so the two runs land within noise of
+/// each other whatever the baseline happens to be. Runs on the bytecode VM,
+/// where every such body is refused by JIT admission anyway.
 #[test]
-fn vm_builtin_callback_loop_stays_under_rss_cap() {
+fn vm_builtin_callback_loop_rss_is_independent_of_iteration_count() {
     if !std::path::Path::new("/usr/bin/time").exists() {
         eprintln!("skipping: /usr/bin/time not available on this host");
         return;
@@ -541,59 +548,77 @@ fn vm_builtin_callback_loop_stays_under_rss_cap() {
     }
     let dir = env::temp_dir().join(format!("gos-cbpool-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let source = dir.join("cbpool.gos");
-    std::fs::write(
-        &source,
-        "
-fn work(xs: &Vec<i64>) -> i64 {
-    xs.iter().filter(|x| x > 5).count()
-}
 
-fn main() {
+    let run_at = |iterations: i64| -> (u64, String) {
+        let source = dir.join(format!("cbpool{iterations}.gos"));
+        std::fs::write(
+            &source,
+            format!(
+                "
+fn work(xs: &Vec<i64>) -> i64 {{
+    xs.iter().filter(|x| x > 5).count()
+}}
+
+fn main() {{
     let mut xs: Vec<i64> = #[]
     let mut i = 0
-    while i < 1000 {
+    while i < 1000 {{
         xs.push(i)
         i += 1
-    }
+    }}
     let mut total = 0
     let mut k = 0
-    while k < 12000 {
+    while k < {iterations} {{
         total += work(&xs)
         k += 1
-    }
-    println!(\"total = {}\", total)
-}
-",
-    )
-    .unwrap();
+    }}
+    println!(\"total = {{}}\", total)
+}}
+"
+            ),
+        )
+        .unwrap();
+        let out = Command::new("/usr/bin/time")
+            .arg("-v")
+            .arg(gos_bin())
+            .arg("run")
+            .arg(&source)
+            .env("GOS_JIT", "0")
+            .output()
+            .expect("spawn /usr/bin/time");
+        assert!(
+            out.status.success(),
+            "gos run failed: stderr={}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let kb = parse_max_rss_kb(&stderr)
+            .unwrap_or_else(|| panic!("could not parse Maximum resident set size:\n{stderr}"));
+        (kb, String::from_utf8_lossy(&out.stdout).into_owned())
+    };
 
-    let out = Command::new("/usr/bin/time")
-        .arg("-v")
-        .arg(gos_bin())
-        .arg("run")
-        .arg(&source)
-        .env("GOS_JIT", "0")
-        .output()
-        .expect("spawn /usr/bin/time");
+    let (small_kb, small_out) = run_at(12_000);
+    let (large_kb, large_out) = run_at(48_000);
     assert!(
-        out.status.success(),
-        "gos run failed: stderr={}",
-        String::from_utf8_lossy(&out.stderr)
+        small_out.contains("total = 11928000"),
+        "unexpected output at 12000: {small_out}"
     );
     assert!(
-        String::from_utf8_lossy(&out.stdout).contains("total = 11928000"),
-        "unexpected output: {}",
-        String::from_utf8_lossy(&out.stdout)
+        large_out.contains("total = 47712000"),
+        "unexpected output at 48000: {large_out}"
     );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    let kb = parse_max_rss_kb(&stderr)
-        .unwrap_or_else(|| panic!("could not parse Maximum resident set size:\n{stderr}"));
-    let cap_kb = 64 * 1024;
+
+    // Four times the callbacks may cost allocator noise and a larger high-water
+    // mark in the pools themselves, never a share of the work. A per-iteration
+    // leak at these counts adds tens of MiB.
+    let growth_kb = large_kb.saturating_sub(small_kb);
+    let allowance_kb = 8 * 1024;
     assert!(
-        kb < cap_kb,
-        "RSS {kb} KiB exceeded {cap_kb} KiB cap; the frame pool's argument free list is \
-         growing once per builtin-to-closure call"
+        growth_kb < allowance_kb,
+        "peak RSS grew {growth_kb} KiB going from 12000 to 48000 iterations \
+         ({small_kb} KiB -> {large_kb} KiB), over the {allowance_kb} KiB allowance; \
+         a per-callback allocation is being retained - the frame pool's argument \
+         free list or the lazy-iterator registry is growing with the call count"
     );
 
     let _ = std::fs::remove_dir_all(&dir);
