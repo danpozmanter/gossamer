@@ -7055,8 +7055,30 @@ impl<'a> TypeChecker<'a> {
                 }
                 _ => None,
             },
+            // A verb method answers the router itself, which is what lets a
+            // routing table be built as one `|>` chain. Without the row the
+            // chain's later steps carry an open receiver type.
+            Some("http::Router") => match method {
+                "get" | "post" | "put" | "delete" | "patch" | "head" | "options" => {
+                    Some(self.http_router_ty())
+                }
+                "serve" => Some(self.result_response_error_ty()),
+                _ => None,
+            },
+            Some("http::Response") => match method {
+                "with_header" => Some(self.http_response_ty()),
+                "bytes" => {
+                    let byte = self.tcx.int_ty(IntTy::U8);
+                    Some(self.tcx.intern(TyKind::Vec(byte)))
+                }
+                _ => None,
+            },
             _ => None,
         }
+    }
+
+    fn http_router_ty(&mut self) -> Ty {
+        self.stdlib_handle_ty(41, "http::Router")
     }
 
     #[allow(

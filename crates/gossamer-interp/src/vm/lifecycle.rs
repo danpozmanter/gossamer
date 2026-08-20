@@ -499,6 +499,7 @@ impl Vm {
         // iterator>` / stateful-method mechanism). See
         // `compile::collect_mut_self_methods`.
         let method_muts = crate::compile::collect_mut_self_methods(program);
+        let impl_methods = crate::compile::collect_impl_method_names(program);
         self.free_fn_names = Arc::new(
             program
                 .items
@@ -540,6 +541,7 @@ impl Vm {
                     &fn_param_tys,
                     &module_consts,
                     &method_muts,
+                    &impl_methods,
                     &mut_statics,
                 )?;
             }
@@ -570,6 +572,7 @@ impl Vm {
                         &fn_param_tys,
                         &mut module_consts,
                         &method_muts,
+                        &impl_methods,
                         &mut_statics,
                     )?;
                     let value = match self.eval_initializer(
@@ -581,6 +584,7 @@ impl Vm {
                         &fn_param_tys,
                         &module_consts,
                         &method_muts,
+                        &impl_methods,
                         &mut_statics,
                     ) {
                         Ok(value) => value,
@@ -611,6 +615,7 @@ impl Vm {
                         &fn_param_tys,
                         &mut module_consts,
                         &method_muts,
+                        &impl_methods,
                         &mut_statics,
                     )?;
                     let value = match self.eval_initializer(
@@ -622,6 +627,7 @@ impl Vm {
                         &fn_param_tys,
                         &module_consts,
                         &method_muts,
+                        &impl_methods,
                         &mut_statics,
                     ) {
                         Ok(value) => value,
@@ -654,6 +660,7 @@ impl Vm {
                 &fn_param_tys,
                 &mut module_consts,
                 &method_muts,
+                &impl_methods,
                 &mut_statics,
             )?;
         }
@@ -674,6 +681,7 @@ impl Vm {
                     &fn_param_tys,
                     &module_consts,
                     &method_muts,
+                    &impl_methods,
                     &mut_statics,
                 )?;
             }
@@ -698,6 +706,7 @@ impl Vm {
                         &fn_param_tys,
                         &module_consts,
                         &method_muts,
+                        &impl_methods,
                         &mut_statics,
                     )
                     .map_err(|err| err.to_string());
@@ -1153,6 +1162,7 @@ impl Vm {
         fn_param_tys: &crate::compile::FnParamTypes,
         module_consts: &crate::compile::ConstValues,
         method_muts: &crate::compile::MutSelfMethods,
+        impl_methods: &crate::compile::ImplMethodNames,
         mut_statics: &crate::compile::MutStatics,
     ) -> RuntimeResult<Value> {
         let source_map = self.diagnostic_source_map();
@@ -1166,6 +1176,7 @@ impl Vm {
             fn_param_tys,
             module_consts,
             method_muts,
+            impl_methods,
             mut_statics,
             source_map.as_deref(),
             cov_map.as_deref(),
@@ -1200,6 +1211,7 @@ impl Vm {
         fn_param_tys: &crate::compile::FnParamTypes,
         module_consts: &mut crate::compile::ConstValues,
         method_muts: &crate::compile::MutSelfMethods,
+        impl_methods: &crate::compile::ImplMethodNames,
         mut_statics: &crate::compile::MutStatics,
     ) -> RuntimeResult<()> {
         match &item.kind {
@@ -1214,6 +1226,7 @@ impl Vm {
                         fn_param_tys,
                         module_consts,
                         method_muts,
+                        impl_methods,
                         mut_statics,
                     )?;
                 }
@@ -1230,6 +1243,7 @@ impl Vm {
                             fn_param_tys,
                             module_consts,
                             method_muts,
+                            impl_methods,
                             mut_statics,
                         )?;
                     }
@@ -1247,6 +1261,7 @@ impl Vm {
                             fn_param_tys,
                             module_consts,
                             method_muts,
+                            impl_methods,
                             mut_statics,
                         )?;
                     }
@@ -1262,6 +1277,7 @@ impl Vm {
                     fn_param_tys,
                     module_consts,
                     method_muts,
+                    impl_methods,
                     mut_statics,
                 )?;
             }
@@ -1275,6 +1291,7 @@ impl Vm {
                     fn_param_tys,
                     module_consts,
                     method_muts,
+                    impl_methods,
                     mut_statics,
                 )?;
             }
@@ -1294,6 +1311,7 @@ impl Vm {
         fn_param_tys: &crate::compile::FnParamTypes,
         module_consts: &mut crate::compile::ConstValues,
         method_muts: &crate::compile::MutSelfMethods,
+        impl_methods: &crate::compile::ImplMethodNames,
         mut_statics: &crate::compile::MutStatics,
     ) -> RuntimeResult<()> {
         self.collect_nested_const_values_in_expr(
@@ -1305,6 +1323,7 @@ impl Vm {
             fn_param_tys,
             module_consts,
             method_muts,
+            impl_methods,
             mut_statics,
         )?;
         let value = self.eval_initializer(
@@ -1316,6 +1335,7 @@ impl Vm {
             fn_param_tys,
             module_consts,
             method_muts,
+            impl_methods,
             mut_statics,
         )?;
         if let Some(def) = item.def {
@@ -1334,6 +1354,7 @@ impl Vm {
         fn_param_tys: &crate::compile::FnParamTypes,
         module_consts: &mut crate::compile::ConstValues,
         method_muts: &crate::compile::MutSelfMethods,
+        impl_methods: &crate::compile::ImplMethodNames,
         mut_statics: &crate::compile::MutStatics,
     ) -> RuntimeResult<()> {
         for stmt in &block.stmts {
@@ -1349,6 +1370,7 @@ impl Vm {
                             fn_param_tys,
                             module_consts,
                             method_muts,
+                            impl_methods,
                             mut_statics,
                         )?;
                     }
@@ -1365,6 +1387,7 @@ impl Vm {
                         fn_param_tys,
                         module_consts,
                         method_muts,
+                        impl_methods,
                         mut_statics,
                     )?;
                 }
@@ -1380,6 +1403,7 @@ impl Vm {
                             fn_param_tys,
                             module_consts,
                             method_muts,
+                            impl_methods,
                             mut_statics,
                         )?;
                     }
@@ -1396,6 +1420,7 @@ impl Vm {
                 fn_param_tys,
                 module_consts,
                 method_muts,
+                impl_methods,
                 mut_statics,
             )?;
         }
@@ -1412,6 +1437,7 @@ impl Vm {
         fn_param_tys: &crate::compile::FnParamTypes,
         module_consts: &mut crate::compile::ConstValues,
         method_muts: &crate::compile::MutSelfMethods,
+        impl_methods: &crate::compile::ImplMethodNames,
         mut_statics: &crate::compile::MutStatics,
     ) -> RuntimeResult<()> {
         use gossamer_hir::HirExprKind as K;
@@ -1425,6 +1451,7 @@ impl Vm {
                 fn_param_tys,
                 module_consts,
                 method_muts,
+                impl_methods,
                 mut_statics,
             )?,
             K::If {
@@ -1441,6 +1468,7 @@ impl Vm {
                     fn_param_tys,
                     module_consts,
                     method_muts,
+                    impl_methods,
                     mut_statics,
                 )?;
                 self.collect_nested_const_values_in_expr(
@@ -1452,6 +1480,7 @@ impl Vm {
                     fn_param_tys,
                     module_consts,
                     method_muts,
+                    impl_methods,
                     mut_statics,
                 )?;
                 if let Some(else_branch) = else_branch {
@@ -1464,6 +1493,7 @@ impl Vm {
                         fn_param_tys,
                         module_consts,
                         method_muts,
+                        impl_methods,
                         mut_statics,
                     )?;
                 }
@@ -1477,6 +1507,7 @@ impl Vm {
                 fn_param_tys,
                 module_consts,
                 method_muts,
+                impl_methods,
                 mut_statics,
             )?,
             K::While {
@@ -1491,6 +1522,7 @@ impl Vm {
                     fn_param_tys,
                     module_consts,
                     method_muts,
+                    impl_methods,
                     mut_statics,
                 )?;
                 self.collect_nested_const_values_in_expr(
@@ -1502,6 +1534,7 @@ impl Vm {
                     fn_param_tys,
                     module_consts,
                     method_muts,
+                    impl_methods,
                     mut_statics,
                 )?;
             }
@@ -1515,6 +1548,7 @@ impl Vm {
                     fn_param_tys,
                     module_consts,
                     method_muts,
+                    impl_methods,
                     mut_statics,
                 )?;
                 for arm in arms {
@@ -1528,6 +1562,7 @@ impl Vm {
                             fn_param_tys,
                             module_consts,
                             method_muts,
+                            impl_methods,
                             mut_statics,
                         )?;
                     }
@@ -1540,6 +1575,7 @@ impl Vm {
                         fn_param_tys,
                         module_consts,
                         method_muts,
+                        impl_methods,
                         mut_statics,
                     )?;
                 }
@@ -1553,6 +1589,7 @@ impl Vm {
                 fn_param_tys,
                 module_consts,
                 method_muts,
+                impl_methods,
                 mut_statics,
             )?,
             K::Call { callee, args } => {
@@ -1565,6 +1602,7 @@ impl Vm {
                     fn_param_tys,
                     module_consts,
                     method_muts,
+                    impl_methods,
                     mut_statics,
                 )?;
                 for arg in args {
@@ -1577,6 +1615,7 @@ impl Vm {
                         fn_param_tys,
                         module_consts,
                         method_muts,
+                        impl_methods,
                         mut_statics,
                     )?;
                 }
@@ -1591,6 +1630,7 @@ impl Vm {
                     fn_param_tys,
                     module_consts,
                     method_muts,
+                    impl_methods,
                     mut_statics,
                 )?;
                 for arg in args {
@@ -1603,6 +1643,7 @@ impl Vm {
                         fn_param_tys,
                         module_consts,
                         method_muts,
+                        impl_methods,
                         mut_statics,
                     )?;
                 }
@@ -1617,6 +1658,7 @@ impl Vm {
                     fn_param_tys,
                     module_consts,
                     method_muts,
+                    impl_methods,
                     mut_statics,
                 )?;
             }
@@ -1630,6 +1672,7 @@ impl Vm {
                     fn_param_tys,
                     module_consts,
                     method_muts,
+                    impl_methods,
                     mut_statics,
                 )?;
                 self.collect_nested_const_values_in_expr(
@@ -1641,6 +1684,7 @@ impl Vm {
                     fn_param_tys,
                     module_consts,
                     method_muts,
+                    impl_methods,
                     mut_statics,
                 )?;
             }
@@ -1654,6 +1698,7 @@ impl Vm {
                     fn_param_tys,
                     module_consts,
                     method_muts,
+                    impl_methods,
                     mut_statics,
                 )?;
                 self.collect_nested_const_values_in_expr(
@@ -1665,6 +1710,7 @@ impl Vm {
                     fn_param_tys,
                     module_consts,
                     method_muts,
+                    impl_methods,
                     mut_statics,
                 )?;
             }
@@ -1678,6 +1724,7 @@ impl Vm {
                     fn_param_tys,
                     module_consts,
                     method_muts,
+                    impl_methods,
                     mut_statics,
                 )?;
             }
@@ -1691,6 +1738,7 @@ impl Vm {
                     fn_param_tys,
                     module_consts,
                     method_muts,
+                    impl_methods,
                     mut_statics,
                 )?;
                 self.collect_nested_const_values_in_expr(
@@ -1702,6 +1750,7 @@ impl Vm {
                     fn_param_tys,
                     module_consts,
                     method_muts,
+                    impl_methods,
                     mut_statics,
                 )?;
             }
@@ -1716,6 +1765,7 @@ impl Vm {
                         fn_param_tys,
                         module_consts,
                         method_muts,
+                        impl_methods,
                         mut_statics,
                     )?;
                 }
@@ -1732,6 +1782,7 @@ impl Vm {
                             fn_param_tys,
                             module_consts,
                             method_muts,
+                            impl_methods,
                             mut_statics,
                         )?;
                     }
@@ -1746,6 +1797,7 @@ impl Vm {
                         fn_param_tys,
                         module_consts,
                         method_muts,
+                        impl_methods,
                         mut_statics,
                     )?;
                     self.collect_nested_const_values_in_expr(
@@ -1757,6 +1809,7 @@ impl Vm {
                         fn_param_tys,
                         module_consts,
                         method_muts,
+                        impl_methods,
                         mut_statics,
                     )?;
                 }
@@ -1774,6 +1827,7 @@ impl Vm {
                     fn_param_tys,
                     module_consts,
                     method_muts,
+                    impl_methods,
                     mut_statics,
                 )?;
             }
@@ -1788,6 +1842,7 @@ impl Vm {
                         fn_param_tys,
                         module_consts,
                         method_muts,
+                        impl_methods,
                         mut_statics,
                     )?;
                 }
@@ -1801,6 +1856,7 @@ impl Vm {
                         fn_param_tys,
                         module_consts,
                         method_muts,
+                        impl_methods,
                         mut_statics,
                     )?;
                 }
@@ -1818,6 +1874,7 @@ impl Vm {
                                 fn_param_tys,
                                 module_consts,
                                 method_muts,
+                                impl_methods,
                                 mut_statics,
                             )?;
                         }
@@ -1831,6 +1888,7 @@ impl Vm {
                                 fn_param_tys,
                                 module_consts,
                                 method_muts,
+                                impl_methods,
                                 mut_statics,
                             )?;
                             self.collect_nested_const_values_in_expr(
@@ -1842,6 +1900,7 @@ impl Vm {
                                 fn_param_tys,
                                 module_consts,
                                 method_muts,
+                                impl_methods,
                                 mut_statics,
                             )?;
                         }
@@ -1856,6 +1915,7 @@ impl Vm {
                         fn_param_tys,
                         module_consts,
                         method_muts,
+                        impl_methods,
                         mut_statics,
                     )?;
                 }
@@ -1895,6 +1955,7 @@ impl Vm {
         fn_param_tys: &crate::compile::FnParamTypes,
         module_consts: &crate::compile::ConstValues,
         method_muts: &crate::compile::MutSelfMethods,
+        impl_methods: &crate::compile::ImplMethodNames,
         mut_statics: &crate::compile::MutStatics,
     ) -> RuntimeResult<()> {
         // Resolve the coverage source map before borrowing `globals`
@@ -1950,6 +2011,7 @@ impl Vm {
                     fn_param_tys,
                     module_consts,
                     method_muts,
+                    impl_methods,
                     mut_statics,
                     source_map.as_deref(),
                     cov_map.as_deref(),
@@ -1983,6 +2045,7 @@ impl Vm {
                         fn_param_tys,
                         module_consts,
                         method_muts,
+                        impl_methods,
                         mut_statics,
                         source_map.as_deref(),
                         cov_map.as_deref(),
@@ -2018,6 +2081,7 @@ impl Vm {
                             fn_param_tys,
                             module_consts,
                             method_muts,
+                            impl_methods,
                             mut_statics,
                             source_map.as_deref(),
                             cov_map.as_deref(),

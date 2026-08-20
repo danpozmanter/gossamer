@@ -716,7 +716,7 @@ unsafe fn bheap_pop_desc(v: *mut GosVec, tags: *const u8, max: bool) -> i128 {
     if new_len > 1 {
         unsafe { heap_sift_down_desc(vec, new_len, 0, tags, max) };
     }
-    let word = unsafe { crate::c_abi::vec::vec_elem_payload_word(vec, last as i64) };
+    let word = unsafe { crate::c_abi::vec::vec_elem_owned_payload_word(vec, last as i64) };
     unsafe { super::vec::pack_result(0, word) }
 }
 
@@ -787,7 +787,7 @@ pub unsafe extern "C" fn gos_rt_bheap_peek_elem(v: *const GosVec) -> i128 {
         if vec.len <= 0 {
             return unsafe { super::vec::pack_result(1, 0) };
         }
-        let word = unsafe { crate::c_abi::vec::vec_elem_payload_word(vec, 0) };
+        let word = unsafe { crate::c_abi::vec::vec_elem_shared_payload_word(vec, 0) };
         unsafe { super::vec::pack_result(0, word) }
     })
 }

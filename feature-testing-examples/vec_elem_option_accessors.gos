@@ -1,0 +1,89 @@
+// `first` / `last` / `get` / `pop` hand back a value the program keeps after
+// the sequence is gone or has moved on. An element held inline - a struct or
+// a tuple, at any width - is copied out with its own share of every
+// reference-counted field, so the reads below stay valid on every tier.
+
+struct One {
+    names: Vec<String>
+}
+
+struct Named {
+    name: String
+}
+
+struct Pair {
+    names: Vec<String>
+    vals: Vec<i64>
+}
+
+// The sequence dies with this call, so what it answers cannot point into it.
+fn first_of(rows: Vec<Pair>) -> Option<Pair> {
+    rows.first()
+}
+
+// A hot loop over the same reads, so the JIT compiles a body that performs
+// them: the element copy has to hold up natively, not only in the bytecode VM.
+fn scan(rounds: i64) -> i64 {
+    let mut total = 0
+    for _ in 0..rounds {
+        let ones = #[One { names: #["a", "bb"] }, One { names: #["ccc"] }]
+        match ones.first() {
+            Some(o) => total += o.names[1].len()
+            None => {}
+        }
+        match ones.last() {
+            Some(o) => total += o.names[0].len()
+            None => {}
+        }
+        let tuples = #[(1, "a"), (2, "bb")]
+        match tuples.last() {
+            Some(t) => total += t.0 + t.1.len()
+            None => {}
+        }
+    }
+    total
+}
+
+fn main() {
+    let ones = #[One { names: #["a", "b"] }, One { names: #["c"] }]
+    match ones.first() {
+        Some(o) => println!("first one: {} {}", o.names.len(), o.names[0])
+        None => println!("none")
+    }
+    match ones.last() {
+        Some(o) => println!("last one: {} {}", o.names.len(), o.names[0])
+        None => println!("none")
+    }
+
+    let named = #[Named { name: "ada" }, Named { name: "grace" }]
+    match named.get(1) {
+        Some(n) => println!("get: {}", n.name)
+        None => println!("none")
+    }
+
+    let mut pairs: Vec<Pair> = #[]
+    pairs.push(Pair { names: #["id", "title"], vals: #[7, 8] })
+    pairs.push(Pair { names: #["only"], vals: #[9] })
+    match first_of(pairs) {
+        Some(p) => println!("outlived: {} {} {}", p.names.len(), p.names[1], p.vals[0])
+        None => println!("none")
+    }
+
+    let mut popping = #[Named { name: "x" }, Named { name: "y" }]
+    match popping.pop() {
+        Some(n) => println!("pop: {}", n.name)
+        None => println!("none")
+    }
+    println!("left: {}", popping.len())
+
+    let tuples = #[(1, "a"), (2, "b")]
+    match tuples.first() {
+        Some(t) => println!("tuple first: {} {}", t.0, t.1)
+        None => println!("none")
+    }
+
+    let scalars = #[10, 20, 30]
+    println!("{:?} {:?} {:?}", scalars.first(), scalars.last(), scalars.get(1))
+
+    println!("scan: {}", scan(200))
+}

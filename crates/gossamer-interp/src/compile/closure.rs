@@ -102,6 +102,7 @@ impl<'tcx> FnBuilder<'tcx> {
             self.fn_param_tys,
             self.module_consts,
             self.method_muts,
+            self.impl_methods,
             self.mut_statics,
             self.source_map,
             self.cov,

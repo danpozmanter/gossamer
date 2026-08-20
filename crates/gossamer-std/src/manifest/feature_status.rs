@@ -271,6 +271,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
         "std::encoding::json",
         &[
             "examples/file_io.gos",
+            "feature-testing-examples/json_encode_aggregates.gos",
             "feature-testing-examples/json_round_trip_fuzz.gos",
             "feature-testing-examples/json_set_update.gos",
             "feature-testing-examples/module_scoped_type_names.gos",

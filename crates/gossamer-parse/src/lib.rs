@@ -70,17 +70,11 @@ pub fn parse_source_file(source: &str, file: FileId) -> (SourceFile, Vec<ParseDi
     }
     // Pull `use` decls hoisted out of inline `mod ... { ... }` bodies
     // up to the source-file level so the resolver's top-level
-    // `collect_imports` walk picks them up. Single-segment local
-    // module imports (`use util`, `use chat`) are dropped: with the
-    // sibling auto-bundle, those names are already inline modules
-    // at the top level, and re-importing them would clash with the
-    // module's own [`gossamer_resolve::DefKind::Mod`] binding.
-    uses.extend(
-        parser
-            .take_hoisted_uses()
-            .into_iter()
-            .filter(|u| !is_local_single_segment_use(u)),
-    );
+    // `collect_imports` walk picks them up. Whether a single-segment
+    // `use NAME` names a sibling module or a dependency package is a
+    // question about the unit's module table, so the resolver decides
+    // what such an import binds.
+    uses.extend(parser.take_hoisted_uses());
     let next_node_id = parser.ids.issued();
     let named_args = parser.take_named_args();
     let mut source_file = SourceFile::new(file, uses, items);
@@ -90,19 +84,6 @@ pub fn parse_source_file(source: &str, file: FileId) -> (SourceFile, Vec<ParseDi
     source_file.named_args = named_args;
     let diagnostics = parser.take_diagnostics();
     (source_file, diagnostics)
-}
-
-/// `true` for `use NAME` (no `::` segments, no brace list, no project
-/// id) - these reference an intra-project sibling module that the
-/// sibling auto-bundle already exposes as an inline `mod NAME { ... }`.
-fn is_local_single_segment_use(decl: &gossamer_ast::UseDecl) -> bool {
-    if decl.list.is_some() {
-        return false;
-    }
-    match &decl.target {
-        gossamer_ast::UseTarget::Module(path) => path.segments.len() == 1,
-        gossamer_ast::UseTarget::Project { .. } => false,
-    }
 }
 
 // Public shims so `parse_source_file` can talk to the parser across the

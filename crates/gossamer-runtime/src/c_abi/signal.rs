@@ -935,7 +935,7 @@ pub unsafe extern "C" fn gos_rt_vec_first(v: *const GosVec) -> i128 {
         if vec.len <= 0 {
             return unsafe { gos_rt_result_new(1, 0) };
         }
-        let value = unsafe { crate::c_abi::vec::vec_elem_payload_word(vec, 0) };
+        let value = unsafe { crate::c_abi::vec::vec_elem_shared_payload_word(vec, 0) };
         unsafe { gos_rt_result_new(0, value) }
     })
 }
@@ -952,7 +952,7 @@ pub unsafe extern "C" fn gos_rt_vec_last(v: *const GosVec) -> i128 {
         if vec.len <= 0 {
             return unsafe { gos_rt_result_new(1, 0) };
         }
-        let value = unsafe { crate::c_abi::vec::vec_elem_payload_word(vec, vec.len - 1) };
+        let value = unsafe { crate::c_abi::vec::vec_elem_shared_payload_word(vec, vec.len - 1) };
         unsafe { gos_rt_result_new(0, value) }
     })
 }
@@ -968,7 +968,7 @@ pub unsafe extern "C" fn gos_rt_vec_get_opt(v: *const GosVec, idx: i64) -> i128 
         if idx < 0 || idx >= vec.len {
             return unsafe { gos_rt_result_new(1, 0) };
         }
-        let value = unsafe { crate::c_abi::vec::vec_elem_payload_word(vec, idx) };
+        let value = unsafe { crate::c_abi::vec::vec_elem_shared_payload_word(vec, idx) };
         unsafe { gos_rt_result_new(0, value) }
     })
 }
@@ -1528,7 +1528,7 @@ pub unsafe extern "C" fn gos_rt_vec_pop_opt(v: *mut GosVec) -> i128 {
         }
         crate::c_abi::vec::bump_vec_mutation_generation(vec);
         vec.len -= 1;
-        let value = unsafe { crate::c_abi::vec::vec_elem_payload_word(vec, vec.len) };
+        let value = unsafe { crate::c_abi::vec::vec_elem_owned_payload_word(vec, vec.len) };
         unsafe { gos_rt_result_new(0, value) }
     })
 }

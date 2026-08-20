@@ -506,7 +506,16 @@ impl Resolver {
                 .as_ref()
                 .map_or_else(|| entry.name.name.clone(), |alias| alias.name.clone());
             let base = self.respell_alias_head(&target_path_text(&use_decl.target));
-            let target = format!("{base}::{imported}");
+            // The full path is `target :: prefix :: name`, so a nested entry
+            // (`use std::{encoding::json}`) carries its own segments between
+            // the list's root and the bound name.
+            let mut target = base;
+            for segment in &entry.prefix {
+                target.push_str("::");
+                target.push_str(&segment.name);
+            }
+            target.push_str("::");
+            target.push_str(&entry.name.name);
             self.define_import(&imported, use_decl.id, use_decl.span, &target);
         }
     }
@@ -685,6 +694,24 @@ impl Resolver {
             None => true,
             _ => false,
         };
+        // A single-segment `use NAME` whose name is a module this unit
+        // already declares - a bundled sibling, or an inlined dependency -
+        // states which module the file's paths come from. The module's own
+        // binding is the one those paths need, so the import records where
+        // the name leads without standing in front of it.
+        if name == target
+            && matches!(
+                existing_kind,
+                Some(crate::resolutions::Resolution::Def {
+                    kind: DefKind::Mod,
+                    ..
+                })
+            )
+        {
+            self.imported_targets
+                .insert(name.to_string(), target.to_string());
+            return;
+        }
         if !is_prelude_only {
             // Every `use` in a compilation unit lands in this one module
             // scope, including those written inside a `mod { }` body and

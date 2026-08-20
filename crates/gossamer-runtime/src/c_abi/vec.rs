@@ -1199,18 +1199,16 @@ pub(crate) unsafe fn vec_elem_load_i64(v: &GosVec, idx: i64) -> i64 {
     }
 }
 
-/// Reads element `idx` of `v` as the word an `Option<T>` payload carries.
-/// A scalar / `String` / single-word element is the word itself (its value
-/// or heap pointer). A multi-word element (a struct or tuple, `elem_bytes >
-/// 8`) is stored inline; the payload must be a *pointer* to that element so
-/// the consumer derefs it for field access, not the truncated first word.
-/// `idx` must already be bounds-checked by the caller.
-pub(crate) unsafe fn vec_elem_payload_word(v: &GosVec, idx: i64) -> i64 {
-    if v.elem_bytes > 8 {
-        unsafe { v.ptr.add((idx as usize) * (v.elem_bytes as usize)) as i64 }
-    } else {
-        unsafe { vec_elem_load_i64(v, idx) }
-    }
+/// `true` when the element is a struct or tuple held inline in the storage,
+/// so its slot address is the value and its slots may embed owned children.
+/// A one-field struct occupies a single slot and is still one of these, which
+/// is why the width alone does not answer the question.
+fn vec_elem_is_inline_aggregate(v: &GosVec) -> bool {
+    v.elem_bytes > 8
+        || matches!(
+            v.elem_kind,
+            vec_elem_kind::AGGR_OWNED | vec_elem_kind::AGGR_GUARDED
+        )
 }
 
 /// The payload word for an element handed back as an owned value.
@@ -1221,7 +1219,7 @@ pub(crate) unsafe fn vec_elem_payload_word(v: &GosVec, idx: i64) -> i64 {
 /// the storage it came from.
 pub(crate) unsafe fn vec_elem_owned_payload_word(v: &GosVec, idx: i64) -> i64 {
     let stride = v.elem_bytes as usize;
-    if stride <= 8 || v.ptr.is_null() {
+    if stride == 0 || v.ptr.is_null() || !vec_elem_is_inline_aggregate(v) {
         return unsafe { vec_elem_load_i64(v, idx) };
     }
     let copy = crate::c_abi::gc::gos_rt_gc_alloc(stride as u64);
@@ -1230,6 +1228,39 @@ pub(crate) unsafe fn vec_elem_owned_payload_word(v: &GosVec, idx: i64) -> i64 {
     }
     let src = unsafe { v.ptr.add((idx as usize) * stride) };
     unsafe { std::ptr::copy_nonoverlapping(src, copy, stride) };
+    copy as i64
+}
+
+/// The payload word for an element handed to the program while the vec keeps
+/// its own.
+///
+/// An inline aggregate is copied out of the storage: the value has to stay
+/// readable after the vec grows, is mutated, or dies, none of which the slot
+/// address survives. Both holders are then live, so each of the copy's
+/// reference-counted children gains its own share.
+pub(crate) unsafe fn vec_elem_shared_payload_word(v: &GosVec, idx: i64) -> i64 {
+    let stride = v.elem_bytes as usize;
+    if stride == 0 || v.ptr.is_null() || !vec_elem_is_inline_aggregate(v) {
+        return unsafe { vec_elem_load_i64(v, idx) };
+    }
+    let copy = crate::c_abi::gc::gos_rt_gc_alloc(stride as u64);
+    if copy.is_null() {
+        return 0;
+    }
+    let src = unsafe { v.ptr.add((idx as usize) * stride) };
+    unsafe { std::ptr::copy_nonoverlapping(src, copy, stride) };
+    match v.elem_kind {
+        vec_elem_kind::AGGR_GUARDED => {
+            let meta = vec_elem_meta(std::ptr::from_ref(v));
+            if !meta.is_null() {
+                unsafe { crate::c_abi::rc::gos_rt_aggr_retain_children(copy, meta) };
+            }
+        }
+        vec_elem_kind::AGGR_OWNED => unsafe {
+            vec_retain_slot_children(std::ptr::from_ref(v), copy);
+        },
+        _ => {}
+    }
     copy as i64
 }
 

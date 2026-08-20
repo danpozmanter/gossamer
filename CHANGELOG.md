@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.53.1 - Imports from a sibling file, method dispatch, JSON over aggregates, sequence element reads
+
+- Reach a dependency package from any file of a project, not only the entry:
+  `use pgsql_gos as pgsql` written in `src/store.gos` binds the alias there,
+  where a single-segment import lifted out of a sibling file was dropped
+  before the resolver saw it.
+- Import a std module in two sibling files without a false
+  `GR0004`: a nested list entry (`use std::{encoding::json}`) now registers
+  the path it names, so it agrees with the same module imported as
+  `use std::encoding::json` next door instead of reading as a rival binding.
+- Call a method on a receiver whose type is open and reach a method: a
+  module's free function of the same name - `store::delete` beside
+  `router.delete(..)` - is no longer a candidate for a call that has a
+  receiver.
+- Build a routing table as one `|>` chain and keep its type: the router's
+  verb methods, and `Response::with_header` / `Response::bytes`, now carry
+  their return types, so a later step in the chain dispatches on a known
+  receiver rather than on an open one.
+- `json::encode` renders every aggregate the same on the VM and the compiled
+  tiers: a sequence of structs, a tuple, a sequence of tuples, a nested
+  sequence, and a struct whose field is any of those. Those shapes rendered
+  as nothing, as `null`, or faulted when compiled. A shape the lowering
+  cannot walk renders as `null` rather than reading its argument as a
+  document.
+- `first`, `last`, `get`, and a heap's `peek` answer a value that outlives
+  the sequence it came from. A struct or tuple element is held inline, and
+  handing back its address let the value read as garbage once the sequence
+  was gone; the element is now copied out with its own share of every
+  reference-counted field.
+- Read a one-field struct out of a sequence as the struct: `Vec<Row>` where
+  `Row` holds a single `String` or `Vec` field answered the field itself,
+  which the caller then read as a struct.
+
 ## 0.53.0 - DynValue on every tier, Rust-binding value shapes, Map/Set content equality, compiled-tier and tooling fixes
 
 - Take a heap or CPU profile from a native Windows binary without an access

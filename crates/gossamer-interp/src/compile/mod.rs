@@ -243,6 +243,13 @@ pub(crate) type ConstValues = std::collections::HashMap<gossamer_resolve::DefId,
 /// site and consults this set to decide whether the writeback fires.
 pub(crate) type MutSelfMethods = std::collections::HashSet<String>;
 
+/// Every name under which an `impl` or `trait` block's method is filed in
+/// [`FnParamTypes`] - the bare `method`, `Type::method`, and both of those
+/// under the declaring module. A method call whose receiver type is open
+/// binds to a uniquely-named candidate from this set, which is what keeps
+/// the guess from reaching a module's free function of the same name.
+pub(crate) type ImplMethodNames = std::collections::HashSet<String>;
+
 /// Bare names of every `static mut` item in the program. The bytecode
 /// compiler consults this set to lower an assignment whose place is
 /// rooted at a mutable static into an [`Op::StoreStatic`] against the
@@ -286,6 +293,38 @@ pub fn collect_mut_self_methods(program: &gossamer_hir::HirProgram) -> MutSelfMe
     out
 }
 
+/// Collects the [`ImplMethodNames`] set, mirroring every key the loader
+/// files an `impl` or `trait` method under.
+pub fn collect_impl_method_names(program: &gossamer_hir::HirProgram) -> ImplMethodNames {
+    let mut out = ImplMethodNames::new();
+    for item in &program.items {
+        let prefix = (!item.module_path.is_empty()).then(|| item.module_path.join("::"));
+        let methods = match &item.kind {
+            gossamer_hir::HirItemKind::Impl(decl) => {
+                for method in &decl.methods {
+                    if let Some(type_name) = &decl.self_name {
+                        let qualified = format!("{}::{}", type_name.name, method.name.name);
+                        if let Some(prefix) = &prefix {
+                            out.insert(format!("{prefix}::{qualified}"));
+                        }
+                        out.insert(qualified);
+                    }
+                }
+                &decl.methods
+            }
+            gossamer_hir::HirItemKind::Trait(decl) => &decl.methods,
+            _ => continue,
+        };
+        for method in methods {
+            if let Some(prefix) = &prefix {
+                out.insert(format!("{prefix}::{}", method.name.name));
+            }
+            out.insert(method.name.name.clone());
+        }
+    }
+    out
+}
+
 /// `true` when `decl`'s first parameter is a `&mut self` receiver - the
 /// shape (`fn next(&mut self)`, `fn bump(&mut self)`) whose mutation
 /// must flow back to the caller's binding.
@@ -313,6 +352,7 @@ pub fn compile_fn(
     fn_param_tys: &FnParamTypes,
     consts: &ConstValues,
     method_muts: &MutSelfMethods,
+    impl_methods: &ImplMethodNames,
     mut_statics: &MutStatics,
     source_map: Option<&gossamer_lex::SourceMap>,
     cov: Option<&gossamer_lex::SourceMap>,
@@ -351,6 +391,7 @@ pub fn compile_fn(
         fn_param_tys,
         consts,
         method_muts,
+        impl_methods,
         mut_statics,
         source_map,
         cov,
@@ -464,6 +505,7 @@ pub fn compile_initializer(
     fn_param_tys: &FnParamTypes,
     consts: &ConstValues,
     method_muts: &MutSelfMethods,
+    impl_methods: &ImplMethodNames,
     mut_statics: &MutStatics,
     source_map: Option<&gossamer_lex::SourceMap>,
     cov: Option<&gossamer_lex::SourceMap>,
@@ -478,6 +520,7 @@ pub fn compile_initializer(
         fn_param_tys,
         consts,
         method_muts,
+        impl_methods,
         mut_statics,
         source_map,
         cov,
@@ -649,6 +692,8 @@ pub(crate) struct FnBuilder<'tcx> {
     /// by `compile_method_call` to route a place-receiver call through
     /// the write-back cell protocol so the receiver's mutation persists.
     pub(crate) method_muts: &'tcx MutSelfMethods,
+    /// Names an `impl` or `trait` method is filed under; see [`ImplMethodNames`].
+    pub(crate) impl_methods: &'tcx ImplMethodNames,
     /// Names of `static mut` items. Used to lower a static-rooted
     /// assignment into an [`Op::StoreStatic`] instead of deferring it.
     pub(crate) mut_statics: &'tcx MutStatics,

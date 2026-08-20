@@ -4908,6 +4908,12 @@ impl<'tcx> FnBuilder<'tcx> {
             if !key.ends_with(&suffix) {
                 continue;
             }
+            // Only a method answers a method call. A module's free function
+            // is filed under `module::name` too, and binding one here would
+            // hand `value.name(..)` to a function that never took a receiver.
+            if !self.impl_methods.contains(key.as_str()) {
+                continue;
+            }
             // `mod::Type::method` and `Type::method` name one method.
             if found.is_some_and(|prev| !prev.ends_with(key.as_str()) && !key.ends_with(prev)) {
                 return None;

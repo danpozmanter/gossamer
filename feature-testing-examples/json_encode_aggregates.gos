@@ -1,0 +1,44 @@
+// `json::encode` over every aggregate shape the lowering walks: a struct, a
+// sequence of structs, nested structs, a tuple, and a nested sequence. Each
+// tier builds the same document, so each prints the same text.
+
+use std::encoding::json
+
+struct Inner {
+    n: i64
+    tags: Vec<String>
+}
+
+struct Item {
+    id: i64
+    title: String
+    ratio: f64
+    done: bool
+    inner: Inner
+    pair: (i64, String)
+}
+
+fn item(id: i64, title: String) -> Item {
+    Item {
+        id: id
+        title: title
+        ratio: 1.5
+        done: id % 2 == 0
+        inner: Inner { n: id * 10, tags: #["a", "b"] }
+        pair: (id, "p")
+    }
+}
+
+fn main() {
+    println!("{}", json::encode(&item(1, "one")))
+    println!("{}", json::encode(&#[item(1, "one"), item(2, "two")]))
+    println!("{}", json::encode(&[item(3, "three")]))
+    println!("{}", json::encode(&(1, "a", true, 2.5)))
+    println!("{}", json::encode(&#[(1, "a"), (2, "b")]))
+    println!("{}", json::encode(&#[#[1, 2], #[3]]))
+    println!("{}", json::encode(&#[#[Inner { n: 1, tags: #["z"] }]]))
+    let empty: Vec<Item> = #[]
+    println!("{}", json::encode(&empty))
+    println!("{} {} {} {}", json::encode(&7), json::encode(&true), json::encode(&2.5), json::encode(&"s"))
+    println!("{} {}", json::encode(&#[1, 2, 3]), json::encode(&#["x", "y"]))
+}

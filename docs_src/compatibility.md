@@ -41,7 +41,7 @@ manifest:
 
 ```toml
 [project]
-gossamer-version = "v0.53.0"
+gossamer-version = "v0.53.1"
 ```
 
 There are no editions: one toolchain version reads one language, and

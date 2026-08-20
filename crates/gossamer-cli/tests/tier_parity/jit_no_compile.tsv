@@ -181,6 +181,7 @@ feature-testing-examples/integer_overflow_edges.gos	no hot body
 feature-testing-examples/iterator_param_argument.gos	bytecode-only local
 feature-testing-examples/iterator_trait_user_impl.gos	bytecode-only local
 feature-testing-examples/jit_panic_trace.gos	unlowered call
+feature-testing-examples/json_encode_aggregates.gos	bytecode-only local
 feature-testing-examples/json_round_trip_fuzz.gos	bytecode-only local
 feature-testing-examples/json_set_update.gos	no hot body
 feature-testing-examples/json_yaml_encode.gos	no hot body
