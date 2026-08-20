@@ -144,6 +144,10 @@ pub(crate) fn install_net(globals: &mut Vec<(&'static str, Value)>) {
         ),
         ("TcpStream::start_tls_ca", builtin_tcp_stream_start_tls_ca),
         (
+            "TcpStream::peer_certificate",
+            builtin_tcp_stream_peer_certificate,
+        ),
+        (
             "TcpStream::set_read_timeout_ms",
             builtin_tcp_stream_set_read_timeout_ms,
         ),
@@ -843,6 +847,20 @@ pub(crate) fn builtin_unix_stream_close(_args: &[Value]) -> RuntimeResult<Value>
 /// `net::TcpStream` method surface drives either transport.
 fn tls_has(id: i64) -> bool {
     TLS_STREAM_REGISTRY.with(|r| r.borrow().contains_key(&id))
+}
+
+/// `stream.peer_certificate()` - the DER bytes of the peer's end-entity
+/// certificate, empty when the stream is not TLS or the peer sent none.
+pub(crate) fn builtin_tcp_stream_peer_certificate(args: &[Value]) -> RuntimeResult<Value> {
+    let der = args
+        .first()
+        .and_then(handle_id)
+        .and_then(|id| {
+            TLS_STREAM_REGISTRY
+                .with(|r| r.borrow().get(&id).map(|tls| tls.lock().peer_certificate()))
+        })
+        .unwrap_or_default();
+    Ok(Value::ByteVec(Arc::new(der)))
 }
 
 pub(crate) fn builtin_tcp_stream_start_tls(args: &[Value]) -> RuntimeResult<Value> {

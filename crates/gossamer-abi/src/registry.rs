@@ -1549,6 +1549,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_tcp_listener_bind", (Ptr) -> I128, Cranelift, "net::TcpListener::bind(addr) -> Result<TcpListener, Error>."),
     rt!("gos_rt_tcp_listener_close", (I64) -> Void, Cranelift, "net::TcpListener::close(h)."),
     rt!("gos_rt_tcp_listener_local_addr", (I64) -> I128, Cranelift, "net::TcpListener::local_addr(h) -> Result<String, Error>."),
+    rt!("gos_rt_tcp_tls_peer_cert", (I64) -> Ptr, Cranelift, "net::TcpStream::peer_certificate(h) -> DER bytes of the peer end-entity certificate, empty when not TLS."),
     rt!("gos_rt_tcp_start_tls", (I64, Ptr) -> I128, Cranelift, "net::TcpStream::start_tls(h, host) -> Result<TcpStream, Error> (upgrades a connected socket to TLS, verifying against the public roots)."),
     rt!("gos_rt_tcp_start_tls_ca", (I64, Ptr, Ptr) -> I128, Cranelift, "net::TcpStream::start_tls_ca(h, host, ca_pem) -> Result<TcpStream, Error> (TLS upgrade verifying against a custom CA bundle)."),
     rt!("gos_rt_tcp_start_tls_insecure", (I64, Ptr) -> I128, Cranelift, "net::TcpStream::start_tls_insecure(h, host) -> Result<TcpStream, Error> (TLS upgrade with no certificate verification)."),

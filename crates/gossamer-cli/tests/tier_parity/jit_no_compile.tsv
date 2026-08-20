@@ -200,6 +200,7 @@ feature-testing-examples/method_dispatch_collisions.gos	no hot body
 feature-testing-examples/method_name_collision.gos	bytecode-only local
 feature-testing-examples/metrics_observability.gos	no hot body
 feature-testing-examples/module_aggregate_slots.gos	aggregate print
+feature-testing-examples/module_impl_ordering.gos	no hot body
 feature-testing-examples/module_same_fn_names.gos	no hot body
 feature-testing-examples/module_scoped_type_names.gos	bytecode-only local
 feature-testing-examples/mut_ref_container_params.gos	&mut aggregate param

@@ -6880,6 +6880,13 @@ impl<'a> TypeChecker<'a> {
                 let handle = self.stdlib_handle_ty(12, "net::TcpStream");
                 Some(self.fallible(handle))
             }
+            // The peer's certificate is bytes, not a handle: what a caller
+            // does with it - hash it for a channel binding, read its
+            // fields - is its own business.
+            ("net::TcpStream", "peer_certificate") => {
+                let byte = self.tcx.int_ty(IntTy::U8);
+                Some(self.tcx.intern(TyKind::Vec(byte)))
+            }
             ("net::TcpListener", "accept") => {
                 let stream = self.stdlib_handle_ty(12, "net::TcpStream");
                 let string = self.tcx.string_ty();

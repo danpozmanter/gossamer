@@ -5822,6 +5822,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_tcp_listener_local_addr as *const u8,
         ),
         (
+            "gos_rt_tcp_tls_peer_cert",
+            crate::c_abi::gos_rt_tcp_tls_peer_cert as *const u8,
+        ),
+        (
             "gos_rt_tcp_start_tls",
             crate::c_abi::gos_rt_tcp_start_tls as *const u8,
         ),

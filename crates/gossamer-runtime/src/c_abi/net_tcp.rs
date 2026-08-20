@@ -181,6 +181,40 @@ pub unsafe extern "C" fn gos_rt_tcp_start_tls_ca(
     })
 }
 
+/// `net::TcpStream::peer_certificate(h) -> Vec<u8>` - the DER bytes of the
+/// end-entity certificate the peer presented, empty when the stream is not
+/// TLS or the peer sent none.
+///
+/// This is what SCRAM's `tls-server-end-point` channel binding hashes, so a
+/// client can prove its authentication exchange and its TLS connection are
+/// the same one. The bytes are handed over unhashed: which digest the
+/// binding calls for is the caller's rule, not the socket's.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_tcp_tls_peer_cert(h: i64) -> *mut super::vec::GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let Some(stream) = tls_clone(h) else {
+            return crate::c_abi::encoding::bytes_to_gosvec(&[]);
+        };
+        let mut guard = stream.lock();
+        // rustls hands the certificate over only once the handshake it was
+        // presented in has finished, and a session opens without any I/O.
+        while guard.conn.is_handshaking() {
+            let stream = &mut *guard;
+            if stream.conn.complete_io(&mut stream.sock).is_err() {
+                break;
+            }
+        }
+        let der = guard
+            .conn
+            .peer_certificates()
+            .and_then(|chain| chain.first())
+            .map(|cert| cert.as_ref().to_vec())
+            .unwrap_or_default();
+        drop(guard);
+        crate::c_abi::encoding::bytes_to_gosvec(&der)
+    })
+}
+
 /// Shared TLS upgrade: duplicate the connected socket, drop the
 /// plaintext handle so no caller reads cleartext on it, and register a
 /// rustls client session built from `config` under a fresh handle.

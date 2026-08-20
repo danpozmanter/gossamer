@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.53.2 - Cross-goroutine sharing, `sync::Shared`, derived ordering over `Option`, git branches
+## 0.53.2 - Cross-goroutine sharing, `sync::Shared`, TLS peer certificates, derived ordering over `Option`, git branches
 
 - A goroutine that reads a captured binding whose type holds nested growable
   storage is now refused by `gos check` (`GT0076`), naming the binding and its
@@ -27,6 +27,18 @@
   a function that does not exist: the VM reported it unbound and a native
   build failed to lower the comparison. `None` now orders before `Some`, and
   two payloads compare as their own type does.
+- `net::TcpStream::peer_certificate()` answers the DER bytes of the
+  certificate the peer presented, so a client can compute SCRAM's
+  `tls-server-end-point` channel binding and prove its authentication
+  exchange and its TLS connection are the same one. The handshake is driven
+  to completion first: a rustls session opens without any I/O, and reading
+  the certificate before that reported none for a peer that sent one.
+- An ordering a module declares is the ordering its callers get. `a < b`
+  reaches the receiver type's own `cmp`, and an `impl` written in a module
+  names its type through that module, so the two spellings never met: a
+  library's `impl PartialOrd` was honoured in compiled code and reported
+  unbound by the bytecode VM - the wrong way round for something a library
+  ships.
 - Name a branch or a tag in a git dependency (`branch = "main"`,
   `tag = "v1.2.3"`), not only a full object ID. The name is resolved against
   the fetched clone and the commit it points at is what the tree is read from,

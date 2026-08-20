@@ -2061,6 +2061,22 @@ impl Vm {
                                 Global::Fn(shared.clone()),
                             );
                         }
+                        // An `impl` in a module names its type through that
+                        // module, while an operator's dispatch key is built
+                        // from the receiver's own type name. Register the
+                        // bare spelling too, so `a < b` on a type a library
+                        // declares reaches the `cmp` that library wrote
+                        // instead of reporting it unbound.
+                        if let Some((_, bare)) = type_name.name.rsplit_once("::") {
+                            let bare_qualified = format!("{bare}::{}", method.name.name);
+                            globals.insert(intern(&bare_qualified), Global::Fn(shared.clone()));
+                            if let Some(prefix) = &module_prefix {
+                                globals.insert(
+                                    intern(&format!("{prefix}::{bare_qualified}")),
+                                    Global::Fn(shared.clone()),
+                                );
+                            }
+                        }
                     }
                     if !prelude.contains_key(method.name.name.as_str())
                         && !free_fns.contains(method.name.name.as_str())

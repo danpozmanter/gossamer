@@ -423,6 +423,31 @@ pub struct TlsStream {
 }
 
 impl TlsStream {
+    /// The DER bytes of the end-entity certificate the peer presented, or
+    /// an empty vector when it sent none.
+    ///
+    /// This is what SCRAM's `tls-server-end-point` channel binding hashes,
+    /// so a client can prove its authentication exchange and its TLS
+    /// connection are the same one. The bytes are handed over unhashed:
+    /// which digest the binding calls for is the caller's rule.
+    pub fn peer_certificate(&mut self) -> Vec<u8> {
+        // rustls hands the certificate over only once the handshake it was
+        // presented in has finished, and a session opens without any I/O -
+        // so drive the handshake to completion before reading it, rather
+        // than reporting "no certificate" for a peer that sent one.
+        while self.inner.conn.is_handshaking() {
+            if self.inner.conn.complete_io(&mut self.inner.sock).is_err() {
+                break;
+            }
+        }
+        self.inner
+            .conn
+            .peer_certificates()
+            .and_then(<[_]>::first)
+            .map(|cert| cert.as_ref().to_vec())
+            .unwrap_or_default()
+    }
+
     /// Sets the per-syscall read timeout on the underlying socket.
     pub fn set_read_timeout(&self, timeout: Option<Duration>) -> Result<(), IoError> {
         self.inner

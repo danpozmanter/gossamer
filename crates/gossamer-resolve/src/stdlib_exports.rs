@@ -1121,6 +1121,7 @@ pub const STDLIB_QUALIFIED: &[&str] = &[
     "net::TcpStream::clear_write_timeout",
     "net::TcpStream::close",
     "net::TcpStream::connect",
+    "net::TcpStream::peer_certificate",
     "net::TcpStream::read",
     "net::TcpStream::read_to_string",
     "net::TcpStream::set_read_timeout_ms",

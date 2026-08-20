@@ -948,6 +948,11 @@ pub const HANDLE_SIGNATURES: &[(&str, &str, &str)] = &[
     ),
     (
         "TcpStream",
+        "peer_certificate",
+        "fn peer_certificate(self: net::TcpStream) -> Vec<u8>",
+    ),
+    (
+        "TcpStream",
         "read",
         "fn read(self: net::TcpStream, max: i64) -> Result<Vec<u8>, errors::Error>",
     ),
