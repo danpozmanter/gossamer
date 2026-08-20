@@ -47,6 +47,9 @@ const CARGO_LOCK: &str = "Cargo.lock";
 /// graph an older one resolved.
 const LOCK_SEED_STAMP: &str = ".gos-lock-seed";
 
+/// Name of the lock file guarding one runner workdir.
+const BUILD_LOCK: &str = ".gos-build.lock";
+
 const SUBDIR_RUNNER: &str = "runner";
 /// Cache subdirectory of the staticlib build.
 const SUBDIR_STATICLIB: &str = "staticlib";
@@ -230,9 +233,12 @@ impl BindingRunner {
     /// Idempotently builds the runner. Returns the path to the
     /// produced binary.
     pub fn ensure_built(&self) -> Result<PathBuf, BindingRunnerError> {
+        // The lock comes before the directory: reclamation removes this
+        // workdir under the same lock, so taking it first is what keeps a
+        // build's files out of a removal already in flight.
+        let _lock = AdvisoryLock::acquire(&build_lock_path(&self.workdir))?;
         let dir = self.workdir.join(SUBDIR_RUNNER);
         fs::create_dir_all(&dir)?;
-        let _lock = AdvisoryLock::acquire(&self.workdir.join(".gos-build.lock"))?;
 
         let cargo_toml = dir.join("Cargo.toml");
         let main_rs = dir.join("main.rs");
@@ -278,9 +284,9 @@ impl BindingRunner {
     pub fn ensure_signatures(&self) -> Result<PathBuf, BindingRunnerError> {
         // Reuse the runner's Cargo.toml - the sigs-dump bin lives
         // alongside the runner bin in the same crate.
+        let _lock = AdvisoryLock::acquire(&build_lock_path(&self.workdir))?;
         let dir = self.workdir.join(SUBDIR_RUNNER);
         fs::create_dir_all(&dir)?;
-        let _lock = AdvisoryLock::acquire(&self.workdir.join(".gos-build.lock"))?;
 
         let cargo_toml = dir.join("Cargo.toml");
         let main_rs = dir.join("main.rs");
@@ -506,6 +512,12 @@ impl StaticBindingsLib {
     /// `lib<name>.a` on every platform *except* Windows MSVC, where
     /// it lands as `<name>.lib`. The lib name in the staticlib
     /// `Cargo.toml` is `gos_static_bindings`.
+    /// The runner workdir this staticlib lives inside - the unit the cache
+    /// reclaims and the build lock covers.
+    fn unit_dir(&self) -> &Path {
+        self.workdir.parent().unwrap_or(&self.workdir)
+    }
+
     /// Sets the cargo `--target` triple for the staticlib build.
     #[must_use]
     pub fn with_cargo_target(mut self, target: Option<String>) -> Self {
@@ -529,8 +541,11 @@ impl StaticBindingsLib {
     /// produced archive (`.a` on Unix / Windows-GNU, `.lib` on
     /// Windows MSVC).
     pub fn ensure_built(&self) -> Result<PathBuf, BindingRunnerError> {
+        // The staticlib sits inside the runner workdir, which is reclaimed
+        // as one piece, so it takes that workdir's lock rather than one of
+        // its own.
+        let _lock = AdvisoryLock::acquire(&build_lock_path(self.unit_dir()))?;
         fs::create_dir_all(&self.workdir)?;
-        let _lock = AdvisoryLock::acquire(&self.workdir.join(".gos-build.lock"))?;
 
         let cargo_toml = self.workdir.join("Cargo.toml");
         let lib_rs = self.workdir.join("lib.rs");
@@ -1094,6 +1109,14 @@ fn prune_runner_cache_once(cache_root: &Path, in_use: Option<&Path>) {
     });
 }
 
+/// The lock guarding one runner workdir.
+///
+/// The runner project, the staticlib, and the signatures beside them are
+/// reclaimed together, so one lock at the workdir root covers all three.
+pub(crate) fn build_lock_path(workdir: &Path) -> PathBuf {
+    workdir.join(BUILD_LOCK)
+}
+
 /// Seeds a generated project's lockfile from the toolchain's own resolved
 /// dependency graph.
 ///
@@ -1314,7 +1337,7 @@ fn leaked_entries(rendered: &[RenderedBinding]) -> &'static [BindingEntry] {
 /// best-effort exclusive create-on-open is sufficient for the
 /// intended "two `gos` processes started seconds apart" case, and
 /// it doesn't require the workspace to permit unsafe.
-struct AdvisoryLock {
+pub(crate) struct AdvisoryLock {
     path: PathBuf,
 }
 
@@ -1322,37 +1345,82 @@ impl AdvisoryLock {
     fn acquire(path: &Path) -> io::Result<Self> {
         let deadline = std::time::Instant::now() + std::time::Duration::from_mins(5);
         loop {
-            match fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(path)
-            {
-                Ok(mut f) => {
-                    let _ = writeln!(f, "{}", std::process::id());
-                    return Ok(Self {
-                        path: path.to_path_buf(),
-                    });
-                }
-                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            match Self::take(path) {
+                Ok(Some(lock)) => return Ok(lock),
+                Ok(None) => {
                     if std::time::Instant::now() > deadline {
                         return Err(io::Error::other(format!(
                             "another `gos` process holds {} for >5 min",
                             path.display()
                         )));
                     }
-                    // Best-effort: stale lock detection - if the PID
-                    // in the file no longer exists, take it.
-                    if let Ok(text) = fs::read_to_string(path)
-                        && let Ok(pid) = text.trim().parse::<u32>()
-                        && !pid_alive(pid)
-                    {
-                        let _ = fs::remove_file(path);
-                        continue;
-                    }
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
                 Err(err) => return Err(err),
             }
+        }
+    }
+
+    /// Takes the lock if it is free, and answers `None` if another process
+    /// holds it. Reclamation uses this so a workdir is only ever removed
+    /// while nothing is building in it.
+    pub(crate) fn try_acquire(path: &Path) -> Option<Self> {
+        Self::take(path).ok().flatten()
+    }
+
+    /// Path of the lock file this guard owns.
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// One attempt: `Ok(None)` means a live process holds the lock.
+    fn take(path: &Path) -> io::Result<Option<Self>> {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+        {
+            Ok(mut f) => {
+                let _ = writeln!(f, "{}", std::process::id());
+                Ok(Some(Self {
+                    path: path.to_path_buf(),
+                }))
+            }
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                // Best-effort: stale lock detection - if the PID
+                // in the file no longer exists, take it.
+                if let Ok(text) = fs::read_to_string(path)
+                    && let Ok(pid) = text.trim().parse::<u32>()
+                    && !pid_alive(pid)
+                {
+                    let _ = fs::remove_file(path);
+                    return Self::take(path);
+                }
+                Ok(None)
+            }
+            // The workdir is reclaimed as a whole, so the directory holding
+            // the lock can be gone between one build and the next.
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                let Some(parent) = path.parent() else {
+                    return Err(err);
+                };
+                fs::create_dir_all(parent)?;
+                match fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(path)
+                {
+                    Ok(mut f) => {
+                        let _ = writeln!(f, "{}", std::process::id());
+                        Ok(Some(Self {
+                            path: path.to_path_buf(),
+                        }))
+                    }
+                    Err(err) if err.kind() == io::ErrorKind::AlreadyExists => Ok(None),
+                    Err(err) => Err(err),
+                }
+            }
+            Err(err) => Err(err),
         }
     }
 }
@@ -1368,12 +1436,23 @@ impl Drop for AdvisoryLock {
 // for "is this pid alive". Unsafe is contained to this single function.
 #[allow(unsafe_code)]
 fn pid_alive(pid: u32) -> bool {
+    // 0 names the caller's own process group on unix and the idle process on
+    // Windows; neither is a lock holder, and both would read as alive.
+    if pid == 0 {
+        return false;
+    }
     #[cfg(unix)]
     {
+        // `kill` reads a negative argument as a process group or a broadcast,
+        // which answers "alive" for a value that never named a process, so
+        // only one that fits a pid reaches it.
+        let Ok(pid) = libc::pid_t::try_from(pid) else {
+            return false;
+        };
         // POSIX signal 0 error-checks without delivering a signal. 0 (alive)
         // or EPERM (alive but owned by another user) => alive; ESRCH => dead.
         // Portable across Linux and macOS, unlike a /proc check.
-        let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        let rc = unsafe { libc::kill(pid, 0) };
         if rc == 0 {
             return true;
         }
@@ -1691,6 +1770,28 @@ mod tests {
             matches!(&item.params[0], DumpedType::Vec { of } if matches!(**of, DumpedType::I64))
         );
         assert!(matches!(&item.ret, DumpedType::Result { .. }));
+    }
+
+    /// A lock file names the process that holds it. A value that is not a pid
+    /// must read as dead, or a workdir the cache should reclaim stays pinned
+    /// and the lock nothing owns is never taken.
+    #[test]
+    fn a_value_that_is_not_a_pid_is_not_alive() {
+        assert!(!pid_alive(0), "pid 0 names a process group, not a process");
+        assert!(!pid_alive(u32::MAX), "no platform hands out this pid");
+        assert!(pid_alive(std::process::id()), "this process is alive");
+    }
+
+    /// A held lock is what keeps reclamation and a build apart, so a second
+    /// taker must be told the lock is busy instead of getting one of its own.
+    #[test]
+    fn a_held_build_lock_is_not_taken_twice() {
+        let dir = tempdir();
+        let path = build_lock_path(&dir);
+        let held = AdvisoryLock::try_acquire(&path).expect("a free lock is takeable");
+        assert!(AdvisoryLock::try_acquire(&path).is_none());
+        drop(held);
+        assert!(AdvisoryLock::try_acquire(&path).is_some());
     }
 
     /// The pins a generated project starts from decide which code its build

@@ -48,6 +48,14 @@
   project, and cargo's minimal-change resolution keeps those versions; only
   what a binding adds on top is resolved. A toolchain whose pins have moved
   re-seeds projects an older one left behind.
+- A Rust-binding build and the cache reclamation running beside it no longer
+  overlap. Trimming the runner cache to its size cap only peeked for a lock
+  file before removing a workdir, so a build that took the lock a moment later
+  could lose the `main.rs` it had just written and fail with `can't find bin
+  gos-runner`. Reclamation now holds the build lock it used to only look for,
+  a build takes that lock before it creates anything, and a staticlib build
+  shares the lock of the workdir it lives in rather than holding one the
+  reclamation never checked.
 - An `iter()` cursor releases its state when the value naming it goes away.
   The registry slot behind a lazy iterator was keyed by an integer nobody
   owned, so a cursor that a terminal method forked, drained, and discarded

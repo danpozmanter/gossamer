@@ -388,7 +388,14 @@ pub fn prune(
             continue;
         }
         if !dry_run {
-            remove_unit(&unit, &roots[root_index].1);
+            let root = &roots[root_index].1;
+            if class == CacheClass::Runners && unit.whole_dir {
+                if !reclaim_runner_workdir(&unit.path, root) {
+                    continue;
+                }
+            } else {
+                remove_unit(&unit, root);
+            }
         }
         total = total.saturating_sub(unit.bytes);
         let class_total = class_totals.entry(class).or_default();
@@ -432,8 +439,8 @@ pub fn prune_runner_root(
         if runner_locked(&unit.path) {
             continue;
         }
-        if !dry_run {
-            remove_unit(&unit, root);
+        if !dry_run && !reclaim_runner_workdir(&unit.path, root) {
+            continue;
         }
         total = total.saturating_sub(unit.bytes);
         reclaimed = reclaimed.saturating_add(unit.bytes);
@@ -509,6 +516,39 @@ fn collect_units(class: CacheClass, root: &Path) -> Vec<CacheUnit> {
 }
 
 /// Reclaims one unit and the empty cache directories it leaves behind.
+/// Removes one runner workdir while holding the build lock that guards it,
+/// and answers whether the removal happened.
+///
+/// A build takes that lock before it creates anything, so holding it here is
+/// what makes reclamation and a build mutually exclusive rather than merely
+/// unlikely to overlap. The lock file itself outlives the tree around it and
+/// goes last: a `gos` waiting on it starts writing only once the directory it
+/// would have written into is gone.
+fn reclaim_runner_workdir(path: &Path, root: &Path) -> bool {
+    let Some(lock) = crate::binding_runner::AdvisoryLock::try_acquire(
+        &crate::binding_runner::build_lock_path(path),
+    ) else {
+        return false;
+    };
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let child = entry.path();
+            if child == lock.path() {
+                continue;
+            }
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                let _ = fs::remove_dir_all(&child);
+            } else {
+                let _ = fs::remove_file(&child);
+            }
+        }
+    }
+    drop(lock);
+    let _ = fs::remove_dir(path);
+    cleanup_empty_cache_dirs(path, root);
+    true
+}
+
 fn remove_unit(unit: &CacheUnit, root: &Path) {
     if unit.whole_dir {
         let _ = fs::remove_dir_all(&unit.path);
@@ -739,6 +779,68 @@ mod tests {
         assert_eq!(files, 3);
         assert_eq!(bytes, 8194);
         assert!(!root.join("deadbeef").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Reclamation and a build are mutually exclusive through the workdir's
+    /// build lock, so the removal must leave the lock free for the next build
+    /// rather than a file nothing owns.
+    #[test]
+    fn reclaiming_a_runner_workdir_leaves_no_lock_behind() {
+        let root = scratch("runner-workdir-reclaim");
+        let _ = fs::remove_dir_all(&root);
+        let workdir = root.join("cafed00d");
+        fs::create_dir_all(workdir.join("runner").join("target")).unwrap();
+        fs::write(workdir.join("runner").join("main.rs"), b"fn main() {}").unwrap();
+
+        assert!(reclaim_runner_workdir(&workdir, &root));
+
+        assert!(!workdir.exists(), "the workdir must be gone");
+        assert!(!crate::binding_runner::build_lock_path(&workdir).exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A lock whose owner died must not pin a workdir in the cache forever.
+    #[test]
+    fn a_stale_lock_does_not_pin_a_runner_workdir() {
+        let root = scratch("runner-workdir-stale-lock");
+        let _ = fs::remove_dir_all(&root);
+        let workdir = root.join("d15ea5e0");
+        fs::create_dir_all(workdir.join("runner")).unwrap();
+        fs::write(workdir.join("runner").join("main.rs"), b"fn main() {}").unwrap();
+        // No process can hold this pid: it is past every platform's pid_max.
+        fs::write(
+            crate::binding_runner::build_lock_path(&workdir),
+            format!("{}\n", u32::MAX),
+        )
+        .unwrap();
+
+        assert!(reclaim_runner_workdir(&workdir, &root));
+
+        assert!(!workdir.exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// The lock a live build holds is the whole guarantee: reclamation reports
+    /// that it did nothing rather than removing files out from under it.
+    #[test]
+    fn reclaiming_a_workdir_a_build_holds_removes_nothing() {
+        let root = scratch("runner-workdir-held");
+        let _ = fs::remove_dir_all(&root);
+        let workdir = root.join("feedface");
+        fs::create_dir_all(workdir.join("runner")).unwrap();
+        let source = workdir.join("runner").join("main.rs");
+        fs::write(&source, b"fn main() {}").unwrap();
+        let held = crate::binding_runner::AdvisoryLock::try_acquire(
+            &crate::binding_runner::build_lock_path(&workdir),
+        )
+        .expect("a free lock is takeable");
+
+        assert!(!reclaim_runner_workdir(&workdir, &root));
+        assert!(source.exists(), "a held workdir keeps its files");
+
+        drop(held);
+        assert!(reclaim_runner_workdir(&workdir, &root));
         let _ = fs::remove_dir_all(&root);
     }
 
