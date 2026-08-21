@@ -78,12 +78,35 @@ pub fn resolve(path: &str) -> String {
 mod tests {
     use super::*;
 
+    /// This platform's absolute root: `/` on Unix, the current drive's
+    /// `C:\` on Windows. A path literal cannot stand in for it - a
+    /// leading `/` is root-relative on Windows, not absolute.
+    fn root() -> PathBuf {
+        std::env::current_dir()
+            .expect("current directory")
+            .ancestors()
+            .last()
+            .expect("every path has a root ancestor")
+            .to_path_buf()
+    }
+
+    /// `root()/a/b/...`, spelled with this platform's separator.
+    fn under_root(parts: &[&str]) -> PathBuf {
+        parts.iter().fold(root(), |acc, part| acc.join(part))
+    }
+
+    fn anchor_at(parts: &[&str]) -> Anchored {
+        Anchored::at_source(&under_root(parts).to_string_lossy())
+    }
+
     #[test]
     fn a_relative_path_resolves_against_the_source_directory() {
-        let _guard = Anchored::at_source("/project/src/app.gos");
+        let _guard = anchor_at(&["project", "src", "app.gos"]);
         assert_eq!(
             resolve("templates/index.html"),
-            "/project/src/templates/index.html"
+            under_root(&["project", "src"])
+                .join("templates/index.html")
+                .to_string_lossy()
         );
     }
 
@@ -99,8 +122,9 @@ mod tests {
 
     #[test]
     fn an_absolute_path_is_left_alone() {
-        let _guard = Anchored::at_source("/project/src/app.gos");
-        assert_eq!(resolve("/etc/hosts"), "/etc/hosts");
+        let _guard = anchor_at(&["project", "src", "app.gos"]);
+        let absolute = under_root(&["etc", "hosts"]).to_string_lossy().into_owned();
+        assert_eq!(resolve(&absolute), absolute);
     }
 
     #[test]
@@ -111,12 +135,12 @@ mod tests {
     #[test]
     fn the_anchor_is_restored_when_the_guard_ends() {
         {
-            let _outer = Anchored::at_source("/a/one.gos");
+            let _outer = anchor_at(&["a", "one.gos"]);
             {
-                let _inner = Anchored::at_source("/b/two.gos");
-                assert_eq!(resolve("x"), "/b/x");
+                let _inner = anchor_at(&["b", "two.gos"]);
+                assert_eq!(resolve("x"), under_root(&["b", "x"]).to_string_lossy());
             }
-            assert_eq!(resolve("x"), "/a/x");
+            assert_eq!(resolve("x"), under_root(&["a", "x"]).to_string_lossy());
         }
         assert_eq!(resolve("x"), "x");
     }

@@ -44,6 +44,18 @@ use crate::ir::{
     Statement, StatementKind, Terminator, UnOp,
 };
 
+/// What the runtime's stored handler answers when a dispatch shim calls it.
+///
+/// Win64 returns a `Result` carrier through xmm0 rather than the general
+/// register pair, and the backends emit that thunk only for a shim named
+/// in `gossamer_abi::I128_HANDLER_REGISTRATIONS`. A handler that answers
+/// nothing needs no such arrangement.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HandlerReturn {
+    Carrier,
+    Unit,
+}
+
 use super::*;
 
 use super::Builder;
@@ -376,21 +388,15 @@ impl<'a> Builder<'a> {
         let handler_local = self.lower_expr(handler_expr)?;
         let fn_addr_local = self.handler_fn_addr_local(handler_local, "serve", span)?;
         let result_ty = self.result_response_error_adt_ty();
-        let dest = self.fresh(result_ty);
-        let next = self.new_block(span);
-        self.terminate(Terminator::Call {
-            callee: Operand::Const(ConstValue::Str("gos_rt_httptest_record".to_string())),
-            args: vec![
-                Operand::Copy(Place::local(method_local)),
-                Operand::Copy(Place::local(path_local)),
-                Operand::Copy(Place::local(body_local)),
-                Operand::Copy(Place::local(handler_local)),
-                Operand::Copy(Place::local(fn_addr_local)),
-            ],
-            destination: Place::local(dest),
-            target: Some(next),
-        });
-        self.set_current(next);
+        let dest = self.terminate_handler_dispatch(
+            "gos_rt_httptest_record",
+            &[method_local, path_local, body_local],
+            handler_local,
+            fn_addr_local,
+            HandlerReturn::Carrier,
+            result_ty,
+            span,
+        );
         Some(dest)
     }
 
@@ -407,19 +413,15 @@ impl<'a> Builder<'a> {
         let handler_local = self.lower_expr(handler_expr)?;
         let fn_addr_local = self.handler_fn_addr_local(handler_local, "serve", span)?;
         let result_ty = self.result_unit_error_adt_ty();
-        let dest = self.fresh(result_ty);
-        let next = self.new_block(span);
-        self.terminate(Terminator::Call {
-            callee: Operand::Const(ConstValue::Str("gos_rt_http_server_serve".to_string())),
-            args: vec![
-                Operand::Copy(Place::local(server_local)),
-                Operand::Copy(Place::local(handler_local)),
-                Operand::Copy(Place::local(fn_addr_local)),
-            ],
-            destination: Place::local(dest),
-            target: Some(next),
-        });
-        self.set_current(next);
+        let dest = self.terminate_handler_dispatch(
+            "gos_rt_http_server_serve",
+            &[server_local],
+            handler_local,
+            fn_addr_local,
+            HandlerReturn::Carrier,
+            result_ty,
+            span,
+        );
         Some(dest)
     }
 
@@ -440,19 +442,15 @@ impl<'a> Builder<'a> {
         // lowering with a DynError-typed `e` instead of a void
         // binding (the LLVM `sext void` regression).
         let result_ty = self.result_unit_error_adt_ty();
-        let dest = self.fresh(result_ty);
-        let next = self.new_block(span);
-        self.terminate(Terminator::Call {
-            callee: Operand::Const(ConstValue::Str("gos_rt_http_serve".to_string())),
-            args: vec![
-                Operand::Copy(Place::local(addr_local)),
-                Operand::Copy(Place::local(handler_local)),
-                Operand::Copy(Place::local(fn_addr_local)),
-            ],
-            destination: Place::local(dest),
-            target: Some(next),
-        });
-        self.set_current(next);
+        let dest = self.terminate_handler_dispatch(
+            "gos_rt_http_serve",
+            &[addr_local],
+            handler_local,
+            fn_addr_local,
+            HandlerReturn::Carrier,
+            result_ty,
+            span,
+        );
         Some(dest)
     }
 
@@ -475,22 +473,59 @@ impl<'a> Builder<'a> {
         let handler_local = self.lower_expr(handler_expr)?;
         let fn_addr_local = self.handler_fn_addr_local(handler_local, "serve", span)?;
         let result_ty = self.result_unit_error_adt_ty();
+        let dest = self.terminate_handler_dispatch(
+            "gos_rt_http_serve_tls",
+            &[addr_local, cert_local, key_local],
+            handler_local,
+            fn_addr_local,
+            HandlerReturn::Carrier,
+            result_ty,
+            span,
+        );
+        Some(dest)
+    }
+
+    /// Terminates the current block with a handler-dispatch call to
+    /// `symbol`: the `leading` arguments, then the handler's environment
+    /// and its dispatch address, answering the call's destination local.
+    ///
+    /// The address argument's position is what a backend keys the Win64
+    /// carrier-return thunk on, so a dispatch whose handler answers a
+    /// `Result` must be listed in [`gossamer_abi::I128_HANDLER_REGISTRATIONS`]
+    /// at exactly the position this builds.
+    fn terminate_handler_dispatch(
+        &mut self,
+        symbol: &str,
+        leading: &[Local],
+        handler_local: Local,
+        fn_addr_local: Local,
+        returns: HandlerReturn,
+        result_ty: Ty,
+        span: Span,
+    ) -> Local {
+        let addr_index = leading.len() + 1;
+        debug_assert!(
+            returns == HandlerReturn::Unit
+                || gossamer_abi::I128_HANDLER_REGISTRATIONS.contains(&(symbol, addr_index)),
+            "{symbol} dispatches a carrier-returning handler, so it belongs in \
+             I128_HANDLER_REGISTRATIONS at address index {addr_index}"
+        );
+        let mut args: Vec<Operand> = leading
+            .iter()
+            .map(|local| Operand::Copy(Place::local(*local)))
+            .collect();
+        args.push(Operand::Copy(Place::local(handler_local)));
+        args.push(Operand::Copy(Place::local(fn_addr_local)));
         let dest = self.fresh(result_ty);
         let next = self.new_block(span);
         self.terminate(Terminator::Call {
-            callee: Operand::Const(ConstValue::Str("gos_rt_http_serve_tls".to_string())),
-            args: vec![
-                Operand::Copy(Place::local(addr_local)),
-                Operand::Copy(Place::local(cert_local)),
-                Operand::Copy(Place::local(key_local)),
-                Operand::Copy(Place::local(handler_local)),
-                Operand::Copy(Place::local(fn_addr_local)),
-            ],
+            callee: Operand::Const(ConstValue::Str(symbol.to_string())),
+            args,
             destination: Place::local(dest),
             target: Some(next),
         });
         self.set_current(next);
-        Some(dest)
+        dest
     }
 
     /// Resolves a handler value's dispatch method (`method`) to a
@@ -568,21 +603,15 @@ impl<'a> Builder<'a> {
         let handler_local = self.lower_expr(handler_expr)?;
         let fn_addr_local = self.handler_fn_addr_local(handler_local, "serve", span)?;
         let result_ty = self.result_unit_error_adt_ty();
-        let dest = self.fresh(result_ty);
-        let next = self.new_block(span);
-        self.terminate(Terminator::Call {
-            callee: Operand::Const(ConstValue::Str("gos_rt_http3_serve".to_string())),
-            args: vec![
-                Operand::Copy(Place::local(addr_local)),
-                Operand::Copy(Place::local(cert_local)),
-                Operand::Copy(Place::local(key_local)),
-                Operand::Copy(Place::local(handler_local)),
-                Operand::Copy(Place::local(fn_addr_local)),
-            ],
-            destination: Place::local(dest),
-            target: Some(next),
-        });
-        self.set_current(next);
+        let dest = self.terminate_handler_dispatch(
+            "gos_rt_http3_serve",
+            &[addr_local, cert_local, key_local],
+            handler_local,
+            fn_addr_local,
+            HandlerReturn::Carrier,
+            result_ty,
+            span,
+        );
         Some(dest)
     }
 
@@ -602,19 +631,15 @@ impl<'a> Builder<'a> {
         let handler_local = self.lower_expr(handler_expr)?;
         let fn_addr_local = self.handler_fn_addr_local(handler_local, "handle", span)?;
         let result_ty = self.result_unit_error_adt_ty();
-        let dest = self.fresh(result_ty);
-        let next = self.new_block(span);
-        self.terminate(Terminator::Call {
-            callee: Operand::Const(ConstValue::Str("gos_rt_ws_serve".to_string())),
-            args: vec![
-                Operand::Copy(Place::local(addr_local)),
-                Operand::Copy(Place::local(handler_local)),
-                Operand::Copy(Place::local(fn_addr_local)),
-            ],
-            destination: Place::local(dest),
-            target: Some(next),
-        });
-        self.set_current(next);
+        let dest = self.terminate_handler_dispatch(
+            "gos_rt_ws_serve",
+            &[addr_local],
+            handler_local,
+            fn_addr_local,
+            HandlerReturn::Unit,
+            result_ty,
+            span,
+        );
         Some(dest)
     }
 

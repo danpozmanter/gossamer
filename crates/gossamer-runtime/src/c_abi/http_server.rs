@@ -761,8 +761,8 @@ fn handle_http_conn<C: HttpIo>(conn: &mut C, env_addr: usize, fn_addr: usize) {
     handle_http_conn_from(conn, env_addr, fn_addr, "");
 }
 
-/// [`handle_http_conn`] with the peer address every request on this
-/// connection is stamped with.
+/// [`handle_http_conn_limited`] under the default server limits, with
+/// the peer address every request on this connection is stamped with.
 fn handle_http_conn_from<C: HttpIo>(conn: &mut C, env_addr: usize, fn_addr: usize, peer: &str) {
     handle_http_conn_limited(conn, env_addr, fn_addr, peer, &ServerLimits::default());
 }
@@ -1442,7 +1442,7 @@ fn find_crlf(buf: &[u8], from: usize, cap: usize) -> Option<usize> {
 /// `max_body` - declared chunk sizes count against the cap the
 /// moment the size line is parsed, so a hostile declaration is
 /// rejected before its data arrives. The still-encoded frame is
-/// capped at [`MAX_CHUNKED_RAW_BYTES`] while incomplete.
+/// capped at [`ServerLimits::max_chunked_raw_bytes`] while incomplete.
 ///
 /// The scan restarts from `header_end` on every call; cost is
 /// bounded by the caps, and chunked uploads are not the keep-alive

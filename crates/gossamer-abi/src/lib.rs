@@ -108,6 +108,8 @@ pub const I128_HANDLER_REGISTRATIONS: &[(&str, usize)] = &[
     ("gos_rt_http3_serve", 4),
     ("gos_rt_http_serve", 2),
     ("gos_rt_http_serve_tls", 4),
+    ("gos_rt_http_server_serve", 2),
+    ("gos_rt_httptest_record", 4),
     ("gos_rt_middleware_new", 1),
     ("gos_rt_middleware_new_kind", 1),
     ("gos_rt_router_add", 4),
