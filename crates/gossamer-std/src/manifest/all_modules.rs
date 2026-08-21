@@ -167,6 +167,7 @@ pub const ALL_MODULES: &[StdModule] = &[
     OS_USER,
     NETIP,
     NET_IP,
+    SMTP,
     MIME,
     ENCODING_TOML,
     CONTAINER_HEAP,

@@ -126,6 +126,26 @@ pub unsafe extern "C" fn gos_rt_error_message(err: *const GosError) -> *mut c_ch
     })
 }
 
+/// The colon-joined cause chain of `err` as Rust text, for a runtime
+/// caller that already holds the error pointer and reports it itself.
+pub(crate) fn error_chain_text(err: *const GosError) -> String {
+    let mut text = String::new();
+    let mut cur = err;
+    while !cur.is_null() {
+        if !text.is_empty() {
+            text.push_str(": ");
+        }
+        let m = unsafe { (*cur).message };
+        if !m.is_null() {
+            text.push_str(&String::from_utf8_lossy(unsafe {
+                crate::c_abi::gos_str_arg_bytes(m.as_ptr())
+            }));
+        }
+        cur = unsafe { (*cur).cause.as_ptr() };
+    }
+    text
+}
+
 /// Display (`{}`) rendering of an `errors::Error`: the Go-style
 /// colon-joined cause chain (`"outer: mid: root"`). `.message()`
 /// stays top-level-only via [`gos_rt_error_message`] - this entry

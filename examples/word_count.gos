@@ -35,11 +35,11 @@ fn analyse(text: &String) -> Stats {
 }
 
 let inputs = #[
-    "hello world",
-    "the quick brown fox jumps over the lazy dog",
-    "   leading and trailing   ",
-    "one\ttwo\nthree four",
-    "",
+    "hello world"
+    "the quick brown fox jumps over the lazy dog"
+    "   leading and trailing   "
+    "one\ttwo\nthree four"
+    ""
 ]
 for s in inputs {
     let stats = analyse(&s)

@@ -78,6 +78,9 @@ enum Alg {
     Hs512,
     Es256,
     EdDsa,
+    Rs256,
+    Rs384,
+    Rs512,
 }
 
 impl Alg {
@@ -88,12 +91,15 @@ impl Alg {
             Alg::Hs512 => "HS512",
             Alg::Es256 => "ES256",
             Alg::EdDsa => "EdDSA",
+            Alg::Rs256 => "RS256",
+            Alg::Rs384 => "RS384",
+            Alg::Rs512 => "RS512",
         }
     }
 
-    /// Mirrors `gossamer_std::jwt::Alg::from_str` for the algorithms
-    /// the compiled tier signs/verifies. RS* are verify-only in
-    /// gossamer-std and not exposed through the JSON entry API.
+    /// Mirrors `gossamer_std::jwt::Alg::from_str`. The RS family is
+    /// verify-only on every tier: a service accepts a provider's token
+    /// with it and mints none of its own.
     fn parse(s: &str) -> Result<Self, String> {
         match s {
             "HS256" => Ok(Alg::Hs256),
@@ -101,6 +107,9 @@ impl Alg {
             "HS512" => Ok(Alg::Hs512),
             "ES256" => Ok(Alg::Es256),
             "EdDSA" => Ok(Alg::EdDsa),
+            "RS256" => Ok(Alg::Rs256),
+            "RS384" => Ok(Alg::Rs384),
+            "RS512" => Ok(Alg::Rs512),
             "none" => {
                 Err("jwt: alg \"none\" is refused on principle (RFC 7515 §4.1.1)".to_string())
             }
@@ -110,6 +119,10 @@ impl Alg {
 
     fn is_hmac(self) -> bool {
         matches!(self, Alg::Hs256 | Alg::Hs384 | Alg::Hs512)
+    }
+
+    fn is_rsa(self) -> bool {
+        matches!(self, Alg::Rs256 | Alg::Rs384 | Alg::Rs512)
     }
 }
 
@@ -403,6 +416,301 @@ fn validate_claims(claims: &serde_json::Value, leeway: i64) -> Result<(), String
 
 fn claims_string(claims: &serde_json::Value) -> Result<String, String> {
     serde_json::to_string(claims).map_err(|e| format!("jwt: encode claims: {e}"))
+}
+
+/// Parses an RSA public key from PEM. Accepts both SPKI
+/// (`BEGIN PUBLIC KEY`, the JOSE / OIDC convention) and bare
+/// PKCS#1 (`BEGIN RSA PUBLIC KEY`). Returns `(modulus_be, exponent_be)`
+/// with leading zero bytes stripped - the shape ring expects.
+fn parse_rsa_public_key_pem(pem: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
+    use std::io::Cursor;
+    use x509_parser::pem::Pem;
+    use x509_parser::prelude::FromDer;
+    use x509_parser::x509::SubjectPublicKeyInfo;
+
+    let bytes = pem.as_bytes();
+    let (parsed, _read) =
+        Pem::read(Cursor::new(bytes)).map_err(|e| format!("jwt: RSA public pem: {e}"))?;
+
+    let (n_bytes, e_bytes): (Vec<u8>, Vec<u8>) = match parsed.label.as_str() {
+        "PUBLIC KEY" => {
+            // SPKI: AlgorithmIdentifier + BIT STRING(RSAPublicKey).
+            let (_, spki) = SubjectPublicKeyInfo::from_der(&parsed.contents)
+                .map_err(|e| format!("jwt: RSA SPKI parse: {e}"))?;
+            let pk = spki
+                .parsed()
+                .map_err(|e| format!("jwt: RSA SPKI parsed: {e}"))?;
+            match pk {
+                x509_parser::public_key::PublicKey::RSA(rsa) => {
+                    (rsa.modulus.to_vec(), rsa.exponent.to_vec())
+                }
+                _ => {
+                    return Err(String::from(
+                        "jwt: RSA verifier got non-RSA key inside PUBLIC KEY pem",
+                    ));
+                }
+            }
+        }
+        "RSA PUBLIC KEY" => {
+            // Bare PKCS#1: SEQUENCE { modulus, exponent }.
+            let (_, rsa) = x509_parser::public_key::RSAPublicKey::from_der(&parsed.contents)
+                .map_err(|e| format!("jwt: RSA PKCS#1 parse: {e}"))?;
+            (rsa.modulus.to_vec(), rsa.exponent.to_vec())
+        }
+        other => {
+            return Err(format!(
+                "jwt: RSA verifier got unsupported pem label {other:?} \
+                 (expected PUBLIC KEY or RSA PUBLIC KEY)"
+            ));
+        }
+    };
+
+    Ok((strip_leading_zeros(&n_bytes), strip_leading_zeros(&e_bytes)))
+}
+
+/// Strips leading 0x00 bytes from a big-endian integer encoding -
+/// ASN.1 INTEGER prepends a zero byte to keep the high bit clear,
+/// but ring wants the unpadded magnitude.
+fn strip_leading_zeros(bytes: &[u8]) -> Vec<u8> {
+    let first_nonzero = bytes.iter().position(|&b| b != 0).unwrap_or(bytes.len());
+    bytes[first_nonzero..].to_vec()
+}
+
+/// Encodes an `RSAPublicKey` (PKCS#1) DER SEQUENCE from raw
+/// big-endian n and e bytes. The output is what ring's
+/// `RSA_PKCS1_*` verification algorithms accept as the public key.
+fn encode_rsa_public_key_der(n: &[u8], e: &[u8]) -> Vec<u8> {
+    let n_int = der_encode_integer(n);
+    let e_int = der_encode_integer(e);
+    let mut body = Vec::with_capacity(n_int.len() + e_int.len());
+    body.extend_from_slice(&n_int);
+    body.extend_from_slice(&e_int);
+    let mut out = Vec::with_capacity(body.len() + 4);
+    out.push(0x30); // SEQUENCE
+    der_encode_length(&mut out, body.len());
+    out.extend_from_slice(&body);
+    out
+}
+
+/// Encodes a single DER INTEGER from a big-endian magnitude. A
+/// leading 0x00 is prepended when the high bit is set so the
+/// integer reads as non-negative.
+fn der_encode_integer(magnitude: &[u8]) -> Vec<u8> {
+    let needs_sign_pad = magnitude.first().is_some_and(|b| b & 0x80 != 0);
+    let content_len = magnitude.len() + usize::from(needs_sign_pad);
+    let mut out = Vec::with_capacity(content_len + 4);
+    out.push(0x02); // INTEGER
+    der_encode_length(&mut out, content_len);
+    if needs_sign_pad {
+        out.push(0x00);
+    }
+    out.extend_from_slice(magnitude);
+    out
+}
+
+/// Appends an ASN.1 DER definite-length encoding. Short-form for
+/// lengths < 128, long-form otherwise.
+fn der_encode_length(out: &mut Vec<u8>, len: usize) {
+    if len < 0x80 {
+        out.push(len as u8);
+        return;
+    }
+    let mut tmp = [0u8; 8];
+    let mut n = len;
+    let mut i = tmp.len();
+    while n > 0 {
+        i -= 1;
+        tmp[i] = (n & 0xff) as u8;
+        n >>= 8;
+    }
+    let count = tmp.len() - i;
+    out.push(0x80 | count as u8);
+    out.extend_from_slice(&tmp[i..]);
+}
+
+/// Verifies an ES256-signed token's signature over `signing_input`.
+fn es256_verify(pem: &str, signing_input: &str, sig: &[u8]) -> Result<(), String> {
+    use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
+    use p256::pkcs8::DecodePublicKey;
+
+    if sig.len() != 64 {
+        return Err(format!(
+            "jwt: ES256 signature must be 64 bytes (r||s), got {}",
+            sig.len()
+        ));
+    }
+    let key = VerifyingKey::from_public_key_pem(pem)
+        .map_err(|e| format!("jwt: ES256 public pem: {e}"))?;
+    let signature = Signature::from_slice(sig).map_err(|e| format!("jwt: ES256 signature: {e}"))?;
+    key.verify(signing_input.as_bytes(), &signature)
+        .map_err(|_| "jwt: signature invalid".to_string())
+}
+
+/// Verifies an EdDSA-signed token's signature over `signing_input`.
+fn eddsa_verify(pem: &str, signing_input: &str, sig: &[u8]) -> Result<(), String> {
+    use ed25519_dalek::pkcs8::DecodePublicKey;
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+    let sig_arr: [u8; 64] = sig
+        .try_into()
+        .map_err(|_| format!("jwt: EdDSA signature must be 64 bytes, got {}", sig.len()))?;
+    let key = VerifyingKey::from_public_key_pem(pem)
+        .map_err(|e| format!("jwt: EdDSA public pem: {e}"))?;
+    key.verify(signing_input.as_bytes(), &Signature::from_bytes(&sig_arr))
+        .map_err(|_| "jwt: signature invalid".to_string())
+}
+
+/// Verifies an RSA-signed token's signature over `signing_input`.
+fn rsa_verify(alg: Alg, pem: &str, signing_input: &str, sig: &[u8]) -> Result<(), String> {
+    let params: &'static dyn ring::signature::VerificationAlgorithm = match alg {
+        Alg::Rs256 => &ring::signature::RSA_PKCS1_2048_8192_SHA256,
+        Alg::Rs384 => &ring::signature::RSA_PKCS1_2048_8192_SHA384,
+        Alg::Rs512 => &ring::signature::RSA_PKCS1_2048_8192_SHA512,
+        _ => return Err("jwt: internal RSA alg dispatch error".to_string()),
+    };
+    let (n, e) = parse_rsa_public_key_pem(pem)?;
+    // Ring wants the key as DER-encoded PKCS#1 `RSAPublicKey`
+    // (SEQUENCE { modulus INTEGER, exponent INTEGER }); x509-parser
+    // hands back the raw n/e, so they are re-encoded as that SEQUENCE.
+    let der = encode_rsa_public_key_der(&n, &e);
+    ring::signature::UnparsedPublicKey::new(params, der)
+        .verify(signing_input.as_bytes(), sig)
+        .map_err(|_| "jwt: signature invalid".to_string())
+}
+
+/// Enforces the registered claims a caller demanded.
+///
+/// A verifier that checks only the signature accepts a token minted for
+/// another service by whoever shares the key, and a token from any issuer
+/// that signed with it. `issuer` and `audience` are enforced when
+/// non-empty; leaving them empty is the caller's decision to accept both.
+fn enforce_claims(
+    claims: &serde_json::Value,
+    leeway: i64,
+    issuer: &str,
+    audience: &str,
+) -> Result<(), String> {
+    validate_claims(claims, leeway)?;
+    if !issuer.is_empty() && claims.get("iss").and_then(serde_json::Value::as_str) != Some(issuer) {
+        return Err(format!("jwt: iss mismatch (expected {issuer:?})"));
+    }
+    if !audience.is_empty() {
+        let present = match claims.get("aud") {
+            Some(serde_json::Value::String(s)) => s == audience,
+            Some(serde_json::Value::Array(items)) => items
+                .iter()
+                .any(|v| v.as_str().is_some_and(|s| s == audience)),
+            _ => false,
+        };
+        if !present {
+            return Err(format!(
+                "jwt: aud does not contain required value {audience:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `jwt::verify(token, alg, key, leeway, issuer, audience)
+/// -> Result<String, errors::Error>` - the verifier a service protecting
+/// an endpoint uses. `key` is the shared secret for the HS family and the
+/// PEM-encoded public key for every other algorithm.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_jwt_verify(
+    token: *const c_char,
+    alg: *const c_char,
+    key: *const c_char,
+    leeway_secs: i64,
+    issuer: *const c_char,
+    audience: *const c_char,
+) -> i128 {
+    ffi_entry!(0i128, {
+        let expected = match Alg::parse(unsafe { cstr(alg) }) {
+            Ok(a) => a,
+            Err(e) => return jwt_err(&e),
+        };
+        let key = unsafe { cstr(key) };
+        let issuer = unsafe { cstr(issuer) };
+        let audience = unsafe { cstr(audience) };
+        let dec = match decode_token(unsafe { cstr(token) }) {
+            Ok(d) => d,
+            Err(e) => return jwt_err(&e),
+        };
+        // The token's own `alg` never selects the verifier: a caller that
+        // let it would accept an HMAC token signed with a public key it
+        // published (RFC 8725 2.1).
+        if !expected.is_hmac() && dec.alg.is_hmac() {
+            return jwt_err(&format!(
+                "jwt: {} verifier refusing HMAC token alg {}",
+                if expected.is_rsa() {
+                    "RSA"
+                } else {
+                    expected.as_str()
+                },
+                dec.alg.as_str()
+            ));
+        }
+        if dec.alg != expected {
+            return jwt_err(&format!(
+                "jwt: alg mismatch - token says {} but verifier expected {}",
+                dec.alg.as_str(),
+                expected.as_str()
+            ));
+        }
+        let verified: Result<(), String> = if expected.is_hmac() {
+            let want = hmac_sign(expected, key.as_bytes(), dec.signing_input.as_bytes());
+            if ct_eq(&want, &dec.sig) {
+                Ok(())
+            } else {
+                Err("jwt: signature invalid".to_string())
+            }
+        } else if expected.is_rsa() {
+            rsa_verify(expected, key, &dec.signing_input, &dec.sig)
+        } else if expected == Alg::Es256 {
+            es256_verify(key, &dec.signing_input, &dec.sig)
+        } else {
+            eddsa_verify(key, &dec.signing_input, &dec.sig)
+        };
+        if let Err(e) = verified {
+            return jwt_err(&e);
+        }
+        if let Err(e) = enforce_claims(&dec.claims, leeway_secs, issuer, audience) {
+            return jwt_err(&e);
+        }
+        match claims_string(&dec.claims) {
+            Ok(s) => ok_string(&s),
+            Err(e) => jwt_err(&e),
+        }
+    })
+}
+
+/// `jwt::header(token) -> Result<String, errors::Error>` - the token's
+/// JOSE header as JSON, read WITHOUT verifying the signature.
+///
+/// A service holding a key set reads `kid` and `alg` to choose which key
+/// to verify with. Nothing in the header is authenticated until that
+/// verification succeeds, which is why `verify` takes the expected
+/// algorithm as its own argument rather than reading it here.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_jwt_header(token: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        let token = unsafe { cstr(token) };
+        let Some(header_b64) = token.split('.').next() else {
+            return jwt_err("jwt: token has no header segment");
+        };
+        let raw = match b64url_decode(header_b64) {
+            Ok(r) => r,
+            Err(e) => return jwt_err(&e),
+        };
+        let value: serde_json::Value = match serde_json::from_slice(&raw) {
+            Ok(v) => v,
+            Err(e) => return jwt_err(&format!("jwt: header is not JSON: {e}")),
+        };
+        match serde_json::to_string(&value) {
+            Ok(s) => ok_string(&s),
+            Err(e) => jwt_err(&format!("jwt: encode header: {e}")),
+        }
+    })
 }
 
 // -- HMAC entry points -----------------------------------------------------

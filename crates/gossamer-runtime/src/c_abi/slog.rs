@@ -61,6 +61,28 @@ fn json_escape_str(value: &str) -> String {
 /// Emit one JSON-line record at `level` to stderr, appending the
 /// paired key/value `fields` after `msg`. Both keys and values are
 /// rendered as JSON strings, matching the VM's `slog_emit`.
+/// Writes one JSON-line record at `level` to stderr with `fields` as its
+/// trailing key/value pairs. The record shape every tier reports a server
+/// fault in, so a log line reads identically under `gos run` and a native
+/// build.
+pub(crate) fn emit_json_line(level: &str, msg: &str, fields: &[(&str, &str)]) {
+    let mut line = String::with_capacity(64 + msg.len());
+    line.push('{');
+    let _ = write!(line, "\"level\":\"{level}\"");
+    let _ = write!(line, ",\"msg\":\"{}\"", json_escape_str(msg));
+    for (key, value) in fields {
+        let _ = write!(
+            line,
+            ",\"{}\":\"{}\"",
+            json_escape_str(key),
+            json_escape_str(value),
+        );
+    }
+    line.push('}');
+    line.push('\n');
+    eprint!("{line}");
+}
+
 unsafe fn slog_emit(level: &str, msg: *const c_char, fields: *const GosVec) {
     let m = if msg.is_null() {
         String::new()

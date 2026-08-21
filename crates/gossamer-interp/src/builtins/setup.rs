@@ -304,6 +304,12 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     crate::stdlib_builtins::install(globals);
     #[cfg(not(target_arch = "wasm32"))]
     globals.push(("serve", native("serve", native_http_serve)));
+    for key in ["Server::serve", "http::Server::serve"] {
+        globals.push((
+            key,
+            native(key, crate::stdlib_builtins::http_server::native_http_server_serve),
+        ));
+    }
     install_leaf_module_aliases(globals);
 }
 

@@ -32,10 +32,10 @@ fn count_vowels(text: &String) -> LetterCounts {
 }
 
 let lines = #[
-    "Hello, World!",
-    "the quick brown fox",
-    "rhythm",
-    "AEIOU",
+    "Hello, World!"
+    "the quick brown fox"
+    "rhythm"
+    "AEIOU"
 ]
 for s in lines {
     let counts = count_vowels(&s)

@@ -31,6 +31,10 @@ pub fn fold_into_source(
     augmented: &str,
     file_label: &str,
 ) -> Result<String, String> {
+    // An embedded asset belongs to the source that embeds it, so a
+    // relative path inside a `comptime` region reads the same file
+    // whatever directory the build was started from.
+    let _anchor = gossamer_runtime::comptime_paths::Anchored::at_source(file_label);
     let mut vm = crate::vm::Vm::new();
     vm.set_collect_comptime(true);
     vm.load(program, tcx, false)

@@ -359,141 +359,32 @@ fn escape_js(s: &str) -> String {
     out
 }
 
+/// Renders `source` against `data` through the block-capable text
+/// engine, escaping every substituted value by the context the literal
+/// markup before it puts the value in.
+///
+/// The template is one AST, so `if`, `range`, `with`, `define`, and
+/// `template` all work and a value inside any of them is escaped exactly
+/// as one at top level is. `{{ safe .x }}` writes through unescaped -
+/// that is the caller taking responsibility for the fragment.
 fn render_html(source: &str, data: &Value) -> Result<String, Error> {
-    let bytes = source.as_bytes();
-    let mut cursor = 0;
-    let mut prefix = String::new();
-    let mut output = String::new();
-    while cursor < bytes.len() {
-        if cursor + 1 < bytes.len() && bytes[cursor] == b'{' && bytes[cursor + 1] == b'{' {
-            // Action begin.
-            let mut body_start = cursor + 2;
-            let mut trim_left = false;
-            if body_start < bytes.len() && bytes[body_start] == b'-' {
-                trim_left = true;
-                body_start += 1;
-                if body_start < bytes.len() && bytes[body_start].is_ascii_whitespace() {
-                    body_start += 1;
-                }
+    let template = crate::text::parse(source)?;
+    let funcs = crate::text::FuncMap::new();
+    template.render_with(
+        data,
+        &funcs,
+        Some(&|literal: &str, value: &str, raw: bool| {
+            if raw {
+                return value.to_string();
             }
-            let mut end = body_start;
-            while end + 1 < bytes.len() {
-                if bytes[end] == b'}' && bytes[end + 1] == b'}' {
-                    break;
-                }
-                if end + 2 < bytes.len()
-                    && bytes[end] == b'-'
-                    && bytes[end + 1] == b'}'
-                    && bytes[end + 2] == b'}'
-                {
-                    break;
-                }
-                end += 1;
+            match detect_context(literal) {
+                Context::Body | Context::Attr => escape_html_text(value),
+                Context::AttrUnquoted => escape_attr_unquoted(value),
+                Context::Url => escape_url(value),
+                Context::Js => escape_js(value),
             }
-            let mut trim_right = false;
-            let mut body_end = end;
-            let after;
-            if end + 2 < bytes.len()
-                && bytes[end] == b'-'
-                && bytes[end + 1] == b'}'
-                && bytes[end + 2] == b'}'
-            {
-                trim_right = true;
-                if body_end > body_start && bytes[body_end - 1].is_ascii_whitespace() {
-                    body_end -= 1;
-                }
-                after = end + 3;
-            } else if end + 1 < bytes.len() && bytes[end] == b'}' && bytes[end + 1] == b'}' {
-                after = end + 2;
-            } else {
-                output.push_str(&source[cursor..]);
-                break;
-            }
-            if trim_left {
-                while output.ends_with(|c: char| c.is_whitespace()) {
-                    output.pop();
-                }
-                while prefix.ends_with(|c: char| c.is_whitespace()) {
-                    prefix.pop();
-                }
-            }
-            let body = String::from_utf8_lossy(&bytes[body_start..body_end])
-                .trim()
-                .to_string();
-            handle_action(&body, data, &mut output, &mut prefix)?;
-            cursor = after;
-            if trim_right {
-                while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
-                    cursor += 1;
-                }
-            }
-        } else {
-            // Copy one whole UTF-8 character. Casting a single byte to
-            // `char` corrupts every multi-byte sequence (é, …, emoji)
-            // into garbage code points in both the output and the
-            // context-detection prefix.
-            let ch = source[cursor..].chars().next().unwrap_or('\u{fffd}');
-            output.push(ch);
-            prefix.push(ch);
-            cursor += ch.len_utf8();
-        }
-    }
-    Ok(output)
-}
-
-fn handle_action(
-    body: &str,
-    data: &Value,
-    output: &mut String,
-    prefix: &mut String,
-) -> Result<(), Error> {
-    // For the HTML pass we keep things simpler: delegate non-body
-    // actions to the text engine, then escape its output by context.
-    // We rebuild a single-substitute subtemplate, render via the text
-    // engine, and append the escaped result.
-    if body == "end" || body == "else" || body.starts_with("if ") || body.starts_with("range ") {
-        // Block actions are handled by re-rendering the entire
-        // template via the text engine and then re-escaping. That
-        // path is taken when callers use blocks; render_html falls
-        // back to it via [`render`] below.
-        return Err(Error::Parse(format!(
-            "html template blocks must use the dedicated render path: {body}"
-        )));
-    }
-    if body.starts_with("/*") && body.ends_with("*/") {
-        return Ok(());
-    }
-    let (raw, expr) = if let Some(rest) = body.strip_prefix("safe ") {
-        (true, rest.trim().to_string())
-    } else {
-        (false, body.to_string())
-    };
-    let value = if expr.starts_with('"') && expr.ends_with('"') && expr.len() >= 2 {
-        Value::String(expr[1..expr.len() - 1].to_string())
-    } else if let Ok(n) = expr.parse::<i64>() {
-        Value::Int(n)
-    } else if expr == "." {
-        data.clone()
-    } else if let Some(field) = expr.strip_prefix('.') {
-        data.lookup(field)
-    } else {
-        Value::Null
-    };
-    let context = detect_context(prefix);
-    let raw_text = value.to_text();
-    let escaped = if raw {
-        raw_text
-    } else {
-        match context {
-            Context::Body | Context::Attr => escape_html_text(&raw_text),
-            Context::AttrUnquoted => escape_attr_unquoted(&raw_text),
-            Context::Url => escape_url(&raw_text),
-            Context::Js => escape_js(&raw_text),
-        }
-    };
-    output.push_str(&escaped);
-    prefix.push_str(&escaped);
-    Ok(())
+        }),
+    )
 }
 
 #[cfg(test)]
@@ -507,6 +398,67 @@ mod tests {
             m.insert((*k).to_string(), v.clone());
         }
         Value::Map(m)
+    }
+
+    #[test]
+    fn range_escapes_each_element_by_context() {
+        let data = map(&[(
+            "items",
+            Value::Seq(vec![
+                Value::String("<b>one</b>".into()),
+                Value::String("two & three".into()),
+            ]),
+        )]);
+        let out = render("<ul>{{range .items}}<li>{{ . }}</li>{{end}}</ul>", &data).unwrap();
+        assert_eq!(
+            out, "<ul><li>&lt;b&gt;one&lt;/b&gt;</li><li>two &amp; three</li></ul>",
+            "got {out}"
+        );
+    }
+
+    #[test]
+    fn if_else_selects_a_branch() {
+        let truthy = map(&[("on", Value::Bool(true))]);
+        let falsy = map(&[("on", Value::Bool(false))]);
+        let src = "{{if .on}}yes{{else}}no{{end}}";
+        assert_eq!(render(src, &truthy).unwrap(), "yes");
+        assert_eq!(render(src, &falsy).unwrap(), "no");
+    }
+
+    #[test]
+    fn with_rebinds_the_dot() {
+        let data = map(&[("user", map(&[("name", Value::String("Ada".into()))]))]);
+        let out = render("{{with .user}}{{ .name }}{{end}}", &data).unwrap();
+        assert_eq!(out, "Ada");
+    }
+
+    #[test]
+    fn define_and_template_compose() {
+        let data = map(&[("title", Value::String("Hi & bye".into()))]);
+        let src = "{{define \"head\"}}<h1>{{ .title }}</h1>{{end}}{{template \"head\"}}";
+        assert_eq!(render(src, &data).unwrap(), "<h1>Hi &amp; bye</h1>");
+    }
+
+    #[test]
+    fn a_url_attribute_inside_a_range_still_blocks_javascript() {
+        // The escape context is decided by the literal markup, so a value
+        // reached through a block is protected exactly as one at top level.
+        let data = map(&[(
+            "links",
+            Value::Seq(vec![Value::String("javascript:alert(1)".into())]),
+        )]);
+        let out = render("{{range .links}}<a href=\"{{ . }}\">x</a>{{end}}", &data).unwrap();
+        assert!(!out.contains("javascript:"), "got {out}");
+    }
+
+    #[test]
+    fn a_function_may_be_called_prefix_first() {
+        let data = map(&[(
+            "items",
+            Value::Seq(vec![Value::Int(1), Value::Int(2), Value::Int(3)]),
+        )]);
+        assert_eq!(render("{{ len .items }}", &data).unwrap(), "3");
+        assert_eq!(render("{{ .items | len }}", &data).unwrap(), "3");
     }
 
     #[test]

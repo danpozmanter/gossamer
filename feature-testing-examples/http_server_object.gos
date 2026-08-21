@@ -1,0 +1,40 @@
+// Cross-tier regression for `http::Server`: the setters chain and answer
+// the server, `listen` binds before `serve` blocks so a port-0
+// assignment reads back, a raised or lowered body budget is enforced,
+// and `shutdown(deadline)` drains and says whether it finished.
+//
+// Binds port 0, so it needs no port lock and cannot collide with another
+// fixture. Self-terminating: the client runs in main and the program
+// returns normally.
+
+use std::{errors, http, time}
+
+fn hello(_r: http::Request) -> Result<http::Response, errors::Error> {
+    Ok(http::Response::text(200, "hi"))
+}
+
+fn main() -> Result<(), errors::Error> {
+    let s = http::Server::new()
+        |> $.read_header_timeout_ms(5000)
+        |> $.max_body_bytes(32)
+        |> $.server_name("srvtest")
+    s.listen("127.0.0.1:0")?
+    let addr = s.addr()
+    println!("bound: {}", addr.contains("127.0.0.1:"))
+    go run_server(s)
+    time::sleep(300)
+    match http::get(format!("http://{}/x", addr), Vec::from([])) {
+        Ok(r) => println!("get status={} body={}", r.status, r.body)
+        Err(e) => println!("get error: {}", e)
+    }
+    match http::post(format!("http://{}/x", addr), "0123456789012345678901234567890123456789", "text/plain") {
+        Ok(r) => println!("big status={}", r.status)
+        Err(e) => println!("big error: {}", e)
+    }
+    println!("drained: {}", s.shutdown(2000))
+    Ok(())
+}
+
+fn run_server(s: http::Server) {
+    let _ = s.serve(hello)
+}

@@ -5,6 +5,13 @@
 // tiers' header stores differ in case and emission order). A second and
 // third request exercise the token bucket: capacity 2 means the third
 // answer is a 429.
+//
+// The shed answer carries only what the limiter owes the client. A control
+// that sheds load does not run the work below it, so the decorations of
+// every layer INSIDE it are absent by construction - which is the whole
+// point of shedding rather than accounting. An application that wants CORS
+// on a shed response wraps `cors` OUTSIDE `rate_limit`, and the layers
+// above the limiter still decorate what it answers.
 use std::http
 use std::http::middleware
 use std::process
@@ -48,19 +55,19 @@ fn header_of(response: &http::Response, wanted: String) -> String {
 fn report(label: String, response: &http::Response) {
     println!("{} status={} body={}", label, response.status, response.body)
     let wanted = #[
-        "access-control-allow-origin",
-        "access-control-allow-methods",
-        "access-control-max-age",
-        "x-content-type-options",
-        "x-frame-options",
-        "referrer-policy",
-        "content-security-policy",
-        "etag",
-        "strict-transport-security",
-        "cache-control",
-        "vary",
-        "x-timeout-ms",
-        "retry-after",
+        "access-control-allow-origin"
+        "access-control-allow-methods"
+        "access-control-max-age"
+        "x-content-type-options"
+        "x-frame-options"
+        "referrer-policy"
+        "content-security-policy"
+        "etag"
+        "strict-transport-security"
+        "cache-control"
+        "vary"
+        "x-timeout-ms"
+        "retry-after"
     ]
     for name in wanted {
         println!("  {}: {}", name, header_of(response, name))

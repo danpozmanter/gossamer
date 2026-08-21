@@ -61,8 +61,8 @@ fn main() {
     await_ready(&"http://127.0.0.1:23896/x")
     // "admin:s3cret" base64-encoded is "YWRtaW46czNjcmV0".
     let hdr: Vec<(String, String)> = Vec::from([
-        ("Content-Type", "application/x-www-form-urlencoded"),
-        ("Authorization", "Basic YWRtaW46czNjcmV0"),
+        ("Content-Type", "application/x-www-form-urlencoded")
+        ("Authorization", "Basic YWRtaW46czNjcmV0")
     ])
     match http::request("POST", "http://127.0.0.1:23896/x", "user=alice&role=admin", hdr) {
         Ok(r) => println!("status={} body={}", r.status, r.body)

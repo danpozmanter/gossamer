@@ -1,0 +1,42 @@
+// Cross-tier regression for a response body the handler writes as it
+// goes. The handler answers immediately with the stream as its body and a
+// goroutine feeds it; the server frames each write to the client. This is
+// what server-sent events, a large download, and a progressive render all
+// need, and what a fully-buffered `Response::text` cannot do.
+//
+// Binds port 0, so it needs no port lock. Self-terminating: the client
+// runs in main and the program returns normally.
+
+use std::{errors, http, time}
+
+fn events(_r: http::Request) -> Result<http::Response, errors::Error> {
+    let body = http::ResponseStream::new()
+    go feed(body)
+    Ok(http::Response::stream(200, "text/event-stream", body))
+}
+
+fn feed(body: http::ResponseStream) {
+    let mut i = 0
+    while i < 3 {
+        let _ = body.write(format!("data: tick {}\n\n", i))
+        time::sleep(50)
+        i += 1
+    }
+    body.close()
+}
+
+fn main() -> Result<(), errors::Error> {
+    let s = http::Server::new()
+    s.listen("127.0.0.1:0")?
+    let addr = s.addr()
+    go run(s)
+    time::sleep(300)
+    match http::get(format!("http://{}/events", addr), Vec::from([])) {
+        Ok(r) => println!("status={} bytes={}", r.status, r.body.byte_len())
+        Err(e) => println!("error: {}", e)
+    }
+    let _ = s.shutdown(1000)
+    Ok(())
+}
+
+fn run(s: http::Server) { let _ = s.serve(events) }

@@ -205,6 +205,10 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     install_shared(globals);
     install_context(globals);
     install_cohort(globals);
+    lifecycle::install_lifecycle(globals);
+    http_server::install_http_server(globals);
+    http_response_stream::install_http_response_stream(globals);
+    net::install_smtp(globals);
     #[cfg(not(target_arch = "wasm32"))]
     install_metrics(globals);
     #[cfg(not(target_arch = "wasm32"))]
@@ -279,9 +283,11 @@ pub mod http_native_client;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod http_proxy;
 pub mod http_request_values;
+pub(crate) mod http_response_stream;
 pub mod http_router;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod http_security;
+pub(crate) mod http_server;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod http_sse;
 pub mod http_static_files;
@@ -299,6 +305,7 @@ pub mod iter;
 pub mod json_builtins;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod jwt;
+pub(crate) mod lifecycle;
 pub mod math;
 pub mod math_big;
 pub mod math_bits;

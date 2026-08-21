@@ -215,6 +215,16 @@ impl<'a> Builder<'a> {
                     return Some(local);
                 }
             }
+            // `httptest::record(handler, method, path, body)` - the handler
+            // is called with a request built in memory, so it needs the
+            // same dispatch address `http::serve` resolves.
+            if joined == "httptest::record" && args.len() == 4 {
+                if let Some(local) =
+                    self.lower_httptest_record(&args[0], &args[1], &args[2], &args[3], span)
+                {
+                    return Some(local);
+                }
+            }
             // `http::serve_tls(addr, cert_pem, key_pem, handler)` - the
             // TLS-terminating variant. Same handler-fn-ptr dispatch as
             // `http::serve`, with the cert + key PEM threaded ahead of

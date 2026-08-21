@@ -42,6 +42,7 @@
   {"name":"std::io","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::iter","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::jwt","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
+  {"name":"std::lifecycle","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::math","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::math::bits","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::math::rand","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},

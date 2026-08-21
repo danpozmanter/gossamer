@@ -34,8 +34,8 @@ fn main() {
     println!("{}", describe(shapes::Shape::Rect(2.0, 3.0)))
     println!("{}", describe(shapes::Shape::Point))
     let all = #[
-        shapes::Shape::Circle(1.0),
-        shapes::Shape::Rect(2.0, 3.0),
+        shapes::Shape::Circle(1.0)
+        shapes::Shape::Rect(2.0, 3.0)
         shapes::Shape::Point
     ]
     println!("{:.4}", shapes::total(all))

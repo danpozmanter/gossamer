@@ -76,9 +76,9 @@ fn main() {
     // Basic auth + websocket upgrade headers present.
     // "admin:s3cret" base64-encoded is "YWRtaW46czNjcmV0".
     let up_hdr: Vec<(String, String)> = Vec::from([
-        ("Authorization", "Basic YWRtaW46czNjcmV0"),
-        ("Upgrade", "websocket"),
-        ("Connection", "Upgrade"),
+        ("Authorization", "Basic YWRtaW46czNjcmV0")
+        ("Upgrade", "websocket")
+        ("Connection", "Upgrade")
     ])
     match http::request("GET", &base, "", up_hdr) {
         Ok(r) => println!("A status={} body={}", r.status, r.body)

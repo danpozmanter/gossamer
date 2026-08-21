@@ -51,4 +51,13 @@ impl NativeDispatch for VmDispatch<'_> {
     fn spawn_join(&mut self, callable: Value, args: Vec<Value>) -> RuntimeResult<Value> {
         self.vm.spawn_join_native(callable, args)
     }
+
+    fn spawn_with_outcome(
+        &mut self,
+        target: crate::value::SpawnTarget,
+        args: Vec<Value>,
+        sink: Box<dyn FnOnce(RuntimeResult<Value>) + Send>,
+    ) {
+        self.vm.spawn_with_outcome_native(target, args, sink);
+    }
 }

@@ -79,6 +79,39 @@ macro_rules! ffi_entry {
     }};
 }
 
+/// [`ffi_entry`] for a shim a Gossamer fault may legitimately cross.
+///
+/// A handler-dispatch shim sits between the server loop and Gossamer code,
+/// and a panicking handler is the server's to report - it answers 500 and
+/// names the request. Catching the fault here would replace that answer
+/// with a sentinel, so a Gossamer panic is re-raised and only a fault
+/// raised by the shim itself is caught.
+macro_rules! ffi_entry_passthrough {
+    ($sentinel:expr, $body:block) => {{
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $body));
+        match result {
+            Ok(v) => v,
+            Err(payload) if payload.is::<gossamer_coro::GosPanic>() => {
+                std::panic::resume_unwind(payload)
+            }
+            Err(payload) => {
+                let msg = if let Some(s) = payload.downcast_ref::<&'static str>() {
+                    (*s).to_string()
+                } else if let Some(s) = payload.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "(non-string panic payload)".to_string()
+                };
+                eprintln!(
+                    "gossamer runtime: panic at FFI entry caught - {msg}; \
+                     returning sentinel"
+                );
+                $sentinel
+            }
+        }
+    }};
+}
+
 // ---------------------------------------------------------------
 // SyncRawPtr<T> - `repr(transparent)` newtype around `*mut T` that
 // is structurally `Send + Sync`. Used as the field type wherever a
@@ -209,6 +242,8 @@ pub mod http_request_values;
 pub mod http_security;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod http_server;
+pub mod http_server_handle;
+pub mod http_stream_writer;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod http_ws;
 #[cfg(not(target_arch = "wasm32"))]
@@ -220,6 +255,7 @@ pub mod json;
 pub mod lcg;
 pub mod ledger;
 pub mod len;
+pub mod lifecycle;
 pub mod map;
 pub mod math;
 pub mod math_big;

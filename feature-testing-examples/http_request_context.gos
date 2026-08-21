@@ -1,0 +1,39 @@
+// Cross-tier regression for the request-scoped `Context`: a handler
+// reads `request.context`, and the server's `request_timeout_ms` deadline
+// cancels it. The same context is cancelled when the peer disconnects and
+// when shutdown begins, both of which need a live socket to demonstrate
+// and are covered by the runtime's own tests.
+//
+// Binds port 0, so it needs no port lock. Self-terminating: the client
+// runs in main and the program returns normally.
+
+use std::{errors, http, time}
+
+fn slow(r: http::Request) -> Result<http::Response, errors::Error> {
+    let ctx = r.context
+    let mut waited = 0
+    while waited < 2000 {
+        if ctx.is_cancelled() {
+            return Ok(http::Response::text(200, format!("cancelled after {}ms", waited)))
+        }
+        time::sleep(50)
+        waited += 50
+    }
+    Ok(http::Response::text(200, "ran to completion"))
+}
+
+fn main() -> Result<(), errors::Error> {
+    let s = http::Server::new() |> $.request_timeout_ms(300)
+    s.listen("127.0.0.1:0")?
+    let addr = s.addr()
+    go run(s)
+    time::sleep(300)
+    match http::get(format!("http://{}/x", addr), Vec::from([])) {
+        Ok(r) => println!("{}", r.body)
+        Err(e) => println!("error: {}", e)
+    }
+    let _ = s.shutdown(1000)
+    Ok(())
+}
+
+fn run(s: http::Server) { let _ = s.serve(slow) }

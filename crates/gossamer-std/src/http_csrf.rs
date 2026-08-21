@@ -559,6 +559,7 @@ mod tests {
             body: Vec::new(),
             context: Context::background(),
             trailers: None,
+            peer_addr: String::new(),
         }
     }
 

@@ -155,7 +155,7 @@ const OPTION_DEF_LOCAL: u32 = u32::MAX - 1;
 /// contiguous so both the checker's display gate and the MIR's
 /// representation rule recognise the whole family by range.
 const PURE_HANDLE_LO_OFFSET: u32 = 34;
-const PURE_HANDLE_HI_OFFSET: u32 = 48;
+const PURE_HANDLE_HI_OFFSET: u32 = 49;
 
 /// One constructor of a runtime handle: the module path it is written
 /// under, and the associated function's name.
@@ -225,6 +225,19 @@ const PURE_HANDLES: &[HandleRow] = &[
             (&["proxy", "Proxy"], "new"),
             (&["http", "proxy", "Proxy"], "new"),
         ],
+    ),
+    (
+        4,
+        "http::ResponseStream",
+        &[
+            (&["http", "ResponseStream"], "new"),
+            (&["ResponseStream"], "new"),
+        ],
+    ),
+    (
+        48,
+        "http::Server",
+        &[(&["http", "Server"], "new"), (&["Server"], "new")],
     ),
     // The composed-middleware handler closes the band; it is produced by
     // the `middleware::*` wrappers rather than by a named constructor.
@@ -6846,11 +6859,33 @@ impl<'a> TypeChecker<'a> {
     /// Return type of a method on one of the opaque `std::net` socket
     /// handles. Without a row here the call answers a fresh variable, so
     /// `?` on `sock.read(n)` reports the operand is not a `Result`.
-    fn net_handle_method_ret(&mut self, method: &str, resolved: Ty) -> Option<Ty> {
+    ///
+    /// The table is the handle's complete surface, so a name absent from
+    /// it is reported here. Letting it through typed the call as a fresh
+    /// variable and reached the compiled tier as an undefined `@method`
+    /// symbol - a link failure with no source location, after `gos check`
+    /// had said the program was fine.
+    fn net_handle_method_ret(
+        &mut self,
+        method: &str,
+        resolved: Ty,
+        arg_count: usize,
+        span: Span,
+    ) -> Option<Ty> {
         let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved) else {
             return None;
         };
         let owner = self.tcx.def_name(*def)?.to_string();
+        if !matches!(
+            owner.as_str(),
+            "net::TcpStream"
+                | "net::UnixStream"
+                | "net::TcpListener"
+                | "net::UnixListener"
+                | "net::UdpSocket"
+        ) {
+            return None;
+        }
         let unit = self.tcx.unit();
         match (owner.as_str(), method) {
             (
@@ -6905,7 +6940,13 @@ impl<'a> TypeChecker<'a> {
                 let pair = self.tcx.intern(TyKind::Tuple(vec![bytes, string]));
                 Some(self.fallible(pair))
             }
-            _ => None,
+            // `clone` is the language's own copy, answered for every value.
+            (_, "clone") => Some(resolved),
+            _ => {
+                let error = self.unresolved_method_call(owner.clone(), method, resolved, arg_count);
+                self.emit(error, span);
+                Some(self.tcx.error_ty())
+            }
         }
     }
 
@@ -7096,6 +7137,36 @@ impl<'a> TypeChecker<'a> {
                 }
                 _ => None,
             },
+            Some("http::ResponseStream") => match method {
+                "write" | "write_bytes" => Some(self.tcx.int_ty(IntTy::I64)),
+                "close" => Some(self.tcx.unit()),
+                "is_open" => Some(self.tcx.bool_ty()),
+                _ => None,
+            },
+            // Every setter answers the server itself, which is what lets a
+            // configuration be written as one `|>` chain.
+            Some("http::Server") => match method {
+                "read_header_timeout_ms"
+                | "read_body_timeout_ms"
+                | "write_timeout_ms"
+                | "idle_timeout_ms"
+                | "max_header_bytes"
+                | "max_body_bytes"
+                | "max_connections"
+                | "request_timeout_ms"
+                | "server_name" => Some(self.http_server_ty()),
+                "listen" => {
+                    let unit = self.tcx.unit();
+                    Some(self.fallible(unit))
+                }
+                "serve" => {
+                    let unit = self.tcx.unit();
+                    Some(self.fallible(unit))
+                }
+                "addr" => Some(self.tcx.string_ty()),
+                "shutdown" => Some(self.tcx.bool_ty()),
+                _ => None,
+            },
             // A verb method answers the router itself, which is what lets a
             // routing table be built as one `|>` chain. Without the row the
             // chain's later steps carry an open receiver type.
@@ -7164,6 +7235,10 @@ impl<'a> TypeChecker<'a> {
 
     fn http_router_ty(&mut self) -> Ty {
         self.stdlib_handle_ty(41, "http::Router")
+    }
+
+    fn http_server_ty(&mut self) -> Ty {
+        self.stdlib_handle_ty(48, "http::Server")
     }
 
     #[allow(
@@ -8764,7 +8839,7 @@ impl<'a> TypeChecker<'a> {
         {
             return ty;
         }
-        if let Some(ty) = self.net_handle_method_ret(method, resolved) {
+        if let Some(ty) = self.net_handle_method_ret(method, resolved, arg_count, receiver.span) {
             return ty;
         }
         // A `json::Value` answers the same surface in method form that
@@ -16930,6 +17005,7 @@ fn seed_checker_stdlib_struct_fields(
                 ("headers", vec_str_pair),
                 ("body", str_ty),
                 ("raw_body", vec_u8),
+                ("peer_addr", str_ty),
                 ("context", context_ty),
             ],
         ),
@@ -18376,10 +18452,8 @@ pub const STDLIB_TRAIT_NAMES: &[&str] = &[
     "Handler",
     "Http2Handler",
     "Http2StreamingHandler",
-    "Probe",
     "Reader",
     "Serialize",
-    "SessionStore",
     "Validate",
     "Writer",
 ];
@@ -18506,12 +18580,22 @@ fn stdlib_handle_ctor(module: &[&str], last: &str) -> Option<(u32, &'static str)
 /// name, reaching whatever runtime symbol shares it.
 fn stdlib_handle_by_path(segments: &[&str]) -> Option<(u32, &'static str)> {
     let last = *segments.last()?;
-    PURE_HANDLES.iter().find_map(|(offset, name, _)| {
+    let written = segments.strip_prefix(&["std"]).unwrap_or(segments);
+    PURE_HANDLES.iter().find_map(|(offset, name, ctors)| {
         let (module, tail) = name.split_once("::")?;
-        (tail == last
-            && (segments.len() == 1
-                || segments[segments.len() - 2] == module
-                || module.split("::").last() == Some(segments[segments.len() - 2])))
+        if tail != last {
+            return None;
+        }
+        // The display name is not always the path the type is written
+        // under - `http::Router` lives in `http::router` - so the module
+        // its own constructors are written under counts too. Without that
+        // a `router::Router` parameter stays an inference variable and its
+        // dispatch falls back to the bare method name.
+        let written_as_ctor = ctors.iter().any(|(path, _)| *path == written);
+        (written_as_ctor
+            || written.len() == 1
+            || written[written.len() - 2] == module
+            || module.split("::").last() == Some(written[written.len() - 2]))
         .then_some((*offset, *name))
     })
 }

@@ -34,7 +34,7 @@ fn main() {
                 label: "inner"
                 value: -0.0
                 scale: 1e300
-            },
+            }
             count: 2
         }
     )

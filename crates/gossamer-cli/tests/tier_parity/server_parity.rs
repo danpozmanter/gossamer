@@ -156,7 +156,11 @@ fn stdlib_http_middleware_stack_parity_across_tiers() {
             "  strict-transport-security: max-age=31536000",
             "  cache-control: no-store",
             "  x-timeout-ms: 2500",
-            "limited status=429 body=rate limit exceeded",
+            // The limiter sheds before the inner handler runs, so the
+            // layers inside it never decorate this answer - only what the
+            // limiter itself owes the client is present.
+            "limited status=429 body=too many requests",
+            "  access-control-allow-origin: <absent>",
             "  retry-after: 1",
         ],
     );
@@ -213,6 +217,112 @@ fn http_bare_handler_parity_across_tiers() {
         &[
             "struct status=200 body=bare struct ok",
             "route status=200 body=bare route ok",
+        ],
+    );
+}
+
+/// A plain `fn` handler must dispatch on every tier: it carries no
+/// environment, so it reaches the runtime's two-argument handler ABI
+/// through the MIR-synthesized `::__env_wrap` thunk. Covers the direct
+/// `http::serve(addr, f)` path and the same function wrapped in
+/// middleware.
+#[test]
+fn http_plain_fn_handler_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_plain_fn_handler.gos",
+        &[
+            "direct status=200 body=plain fn ok",
+            "wrapped status=200 body=wrapped fn ok",
+        ],
+    );
+}
+
+/// The middleware that are controls rather than response decorations
+/// must decide identically on every tier: a body budget refuses an
+/// oversized request before the handler runs, a credential gate answers
+/// 401 without running it, and a rate limit refills over time.
+#[test]
+fn http_middleware_controls_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_middleware_controls.gos",
+        &[
+            "under status=200 body=body=4",
+            "over status=413",
+            "anonymous status=401",
+            "bearer status=200",
+            "limit1 status=200",
+            "limit2 status=200",
+            "limit3 status=429",
+            "limit4 status=200",
+        ],
+    );
+}
+
+/// `std::lifecycle` must answer identically on every tier: readiness
+/// gates a probe endpoint, `shutdown()` begins the drain, and readiness
+/// drops on its own once it has.
+#[test]
+fn lifecycle_readiness_shutdown_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/lifecycle_readiness_shutdown.gos",
+        &[
+            "before ready: 503",
+            "after ready: 200",
+            "ready after shutdown: false",
+        ],
+    );
+}
+
+/// `http::Server` must configure, bind, serve, and drain identically on
+/// every tier: the setters chain, `listen` binds before `serve` blocks so
+/// a port-0 assignment reads back, the body budget is the one the server
+/// was given, and `shutdown` reports whether the drain finished.
+#[test]
+fn http_server_object_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_server_object.gos",
+        &[
+            "bound: true",
+            "get status=200 body=hi",
+            "big status=413",
+            "drained: true",
+        ],
+    );
+}
+
+/// A request carries a `Context` that the server's `request_timeout_ms`
+/// deadline cancels, identically on every tier. A handler that watches it
+/// stops on time instead of running to completion.
+#[test]
+fn http_request_context_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_request_context.gos",
+        &["cancelled after 300ms"],
+    );
+}
+
+/// A handler may write its response body as it goes, and the server
+/// frames each write to the client, identically on every tier.
+#[test]
+fn http_response_stream_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_response_stream.gos",
+        &["status=200 bytes=42"],
+    );
+}
+
+/// A request written as a cohort and as an arena must behave identically
+/// on every tier: the children are joined before the response, a failing
+/// child cancels its siblings and becomes the block's `Err`, and what the
+/// handler allocates inside `arena { }` is released wholesale.
+#[test]
+fn http_request_cohort_arena_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_request_cohort_arena.gos",
+        &[
+            "fanout: 200 fanout ok: a! b!",
+            "fails: 503 dependency failed",
+            "assemble: 200 rows=2000",
         ],
     );
 }

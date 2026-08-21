@@ -1,0 +1,48 @@
+// Cross-tier regression for asset embedding through `comptime`.
+//
+// A `comptime fn` reads the files at compile time and folds the result
+// into the program, so the binary carries its templates, migrations, and
+// static UI and needs nothing beside it at run time.
+//
+// The paths resolve against THIS source file, not the directory the build
+// was started from: an embedded asset belongs to the source that embeds
+// it, and a program whose embedded bytes depend on the caller's working
+// directory is not embedding anything.
+
+use std::fs
+
+// Every file under `comptime_assets/`, folded in as one newline-free
+// table the program parses back into a Map.
+comptime fn asset_table() -> String {
+    let entries = match fs::read_dir("comptime_assets") {
+        Ok(entries) => entries
+        Err(e) => panic!("comptime_assets is unreadable: {}", e)
+    }
+    let mut out = ""
+    for entry in entries {
+        if entry.is_file {
+            let text = match fs::read_to_string(&entry.path) {
+                Ok(text) => text
+                Err(e) => panic!("{} is unreadable: {}", entry.path, e)
+            }
+            out += format!("{}\u{1}{}\u{2}", entry.name, text)
+        }
+    }
+    out
+}
+
+fn main() {
+    let mut assets = {}
+    for record in asset_table().split("\u{2}") {
+        if record.byte_len() > 0 {
+            if let Some((name, text)) = record.split_once("\u{1}") {
+                let _ = assets.insert(name, text)
+            }
+        }
+    }
+    let mut names = assets.keys()
+    names.sort()
+    for name in names {
+        println!("{} -> {} bytes", name, assets.get(name).unwrap_or("").byte_len())
+    }
+}

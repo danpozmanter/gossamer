@@ -120,7 +120,9 @@ fn builtin_os_read_file(args: &[Value]) -> RuntimeResult<Value> {
     let Some(path) = args.first().and_then(as_str) else {
         return Ok(err_variant("read_file: path argument must be a string"));
     };
-    let path = path.to_string();
+    // A relative path inside a `comptime` region reads the file beside
+    // the source that embeds it; at run time it means what it always did.
+    let path = gossamer_runtime::comptime_paths::resolve(path);
     match gossamer_runtime::sched_global::run_blocking("os-read-file", move || {
         os_std::read_file(&path)
     }) {
@@ -142,7 +144,7 @@ fn builtin_os_read_file_to_string(args: &[Value]) -> RuntimeResult<Value> {
             "read_file_to_string: path argument must be a string",
         ));
     };
-    let path = path.to_string();
+    let path = gossamer_runtime::comptime_paths::resolve(path);
     match gossamer_runtime::sched_global::run_blocking("os-read-file-string", move || {
         os_std::read_file_to_string(&path)
     }) {
@@ -290,8 +292,10 @@ fn builtin_os_rename(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_os_exists(args: &[Value]) -> RuntimeResult<Value> {
-    let path = args.first().and_then(as_str).unwrap_or("");
-    Ok(Value::Bool(os_std::exists(path)))
+    let path = gossamer_runtime::comptime_paths::resolve(
+        args.first().and_then(as_str).unwrap_or(""),
+    );
+    Ok(Value::Bool(os_std::exists(&path)))
 }
 
 fn builtin_os_mkdir(args: &[Value]) -> RuntimeResult<Value> {
@@ -342,8 +346,30 @@ fn builtin_time_now(_args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_time_now_ms(_args: &[Value]) -> RuntimeResult<Value> {
-    let ms = time_std::SystemTime::now().unix_millis();
-    Ok(Value::Int(ms))
+    Ok(Value::Int(gossamer_runtime::clock::wall_ms()))
+}
+
+/// `time::freeze(ms)` - pin the wall clock at `ms` since the epoch.
+fn builtin_time_freeze(args: &[Value]) -> RuntimeResult<Value> {
+    gossamer_runtime::clock::freeze(args.first().and_then(value_to_int).unwrap_or(0));
+    Ok(Value::Unit)
+}
+
+/// `time::advance(ms)` - move a frozen wall clock forward.
+fn builtin_time_advance(args: &[Value]) -> RuntimeResult<Value> {
+    let ms = args.first().and_then(value_to_int).unwrap_or(0);
+    Ok(Value::Int(gossamer_runtime::clock::advance(ms)))
+}
+
+/// `time::unfreeze()` - return to the real wall clock.
+fn builtin_time_unfreeze(_args: &[Value]) -> RuntimeResult<Value> {
+    gossamer_runtime::clock::unfreeze();
+    Ok(Value::Unit)
+}
+
+/// `time::is_frozen() -> bool`.
+fn builtin_time_is_frozen(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Bool(gossamer_runtime::clock::is_frozen()))
 }
 
 /// `time::sleep_ctx(ctx, ms)` - sleeps unless the context fires first,
@@ -969,7 +995,8 @@ fn builtin_fs_list_dir(args: &[Value]) -> RuntimeResult<Value> {
     let Some(path) = args.first().and_then(as_str) else {
         return Ok(err_variant("fs::read_dir: path argument must be a string"));
     };
-    let entries = match fs_std::read_dir(fs_std::decode_path(path)) {
+    let path = gossamer_runtime::comptime_paths::resolve(path);
+    let entries = match fs_std::read_dir(fs_std::decode_path(&path)) {
         Ok(es) => es,
         Err(e) => return Ok(err_variant(format!("{e}"))),
     };
@@ -1015,7 +1042,8 @@ fn native_fs_walk_dir(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runt
     let visit = args.get(1).cloned().unwrap_or(Value::Unit);
     let mut stop_err: Option<Value> = None;
     let mut fault: Option<RuntimeError> = None;
-    let visit_result = fs_std::walk_dir(fs_std::decode_path(root), |entry| {
+    let root = gossamer_runtime::comptime_paths::resolve(root);
+    let visit_result = fs_std::walk_dir(fs_std::decode_path(&root), |entry| {
         match dispatch.call_value(&visit, vec![dir_info_value(entry)]) {
             Ok(Value::Variant(v)) if v.name == "Err" => {
                 stop_err = Some(v.fields.first().cloned().unwrap_or(Value::Unit));
@@ -1061,30 +1089,41 @@ fn builtin_slog_debug(args: &[Value]) -> RuntimeResult<Value> {
 
 fn slog_emit(level: slog_std::Level, args: &[Value]) -> RuntimeResult<Value> {
     let msg = args.first().and_then(as_str).unwrap_or("");
-    // Format directly to the interp's `STDERR_WRITER` so the
-    // gossamer-cli test harness's stderr capture works (the
-    // gossamer-std `JsonHandler` writes to `std::io::stderr()`,
-    // which the cli's writer redirect doesn't observe).
-    let mut line = String::with_capacity(64 + msg.len());
-    line.push('{');
-    let _ = write!(line, "\"level\":\"{}\"", level.tag());
-    let _ = write!(line, ",\"msg\":\"{}\"", json_escape_str(msg));
     // Trailing args after the message are key/value pairs:
     // `slog::info("served", "status", 200i64, "path", "/")`.
+    let mut fields = Vec::new();
     let mut iter = args.iter().skip(1);
     while let Some(key) = iter.next() {
         let Some(k) = as_str(key) else { break };
         let Some(value) = iter.next() else { break };
+        fields.push((k.to_string(), format!("{value}")));
+    }
+    slog_record(level, msg, &fields);
+    Ok(Value::Unit)
+}
+
+/// Writes one `slog`-shaped JSON record to stderr.
+///
+/// Formats directly to the interp's `STDERR_WRITER` so the gossamer-cli
+/// test harness's stderr capture observes it (the gossamer-std
+/// `JsonHandler` writes to `std::io::stderr()`, which the cli's writer
+/// redirect does not see). The line shape is the compiled runtime's
+/// `slog_emit`, so a record reads identically on every tier.
+fn slog_record(level: slog_std::Level, msg: &str, fields: &[(String, String)]) {
+    let mut line = String::with_capacity(64 + msg.len());
+    line.push('{');
+    let _ = write!(line, "\"level\":\"{}\"", level.tag());
+    let _ = write!(line, ",\"msg\":\"{}\"", json_escape_str(msg));
+    for (key, value) in fields {
         let _ = write!(
             line,
             ",\"{}\":\"{}\"",
-            json_escape_str(k),
-            json_escape_str(&format!("{value}")),
+            json_escape_str(key),
+            json_escape_str(value),
         );
     }
     line.push_str("}\n");
     STDERR_WRITER.with(|cell| (cell.get())(&line));
-    Ok(Value::Unit)
 }
 
 /// Minimal JSON-string escaper for the slog builtin. Mirrors

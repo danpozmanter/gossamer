@@ -669,6 +669,52 @@ fn render_args(args: &[Value]) -> String {
     out
 }
 
+/// Turns one handler outcome into the response the wire gets, reporting a
+/// fault through the `slog` record shape every tier's server path uses.
+///
+/// A handler that panics, answers `Err`, or answers something that is not
+/// an `http::Response` is a server fault: the client gets a bare 500 and
+/// the operator gets the message together with the request that provoked
+/// it.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn handler_outcome_to_response(
+    outcome: RuntimeResult<Value>,
+    method: &str,
+    path: &str,
+) -> http_std::Response {
+    let fault = match outcome {
+        Ok(value) => match value_to_response(&value) {
+            Some(response) => return response,
+            // An `Err` handler reports its own error; anything else is a
+            // handler that answered something that is not a response.
+            None => match &value {
+                Value::Variant(v) if v.name == "Err" => v
+                    .fields
+                    .first()
+                    .map_or_else(|| "handler returned Err".to_string(), |e| format!("{e}")),
+                _ => "handler did not return http::Response".to_string(),
+            },
+        },
+        // A panic's bare text, so the record reads the same on every tier.
+        Err(RuntimeError::Panic(message)) => message,
+        Err(err) => format!("{err}"),
+    };
+    slog_record(
+        gossamer_std::slog::Level::Error,
+        "http: handler failed",
+        &[
+            ("method".to_string(), method.to_string()),
+            ("path".to_string(), path.to_string()),
+            ("status".to_string(), "500".to_string()),
+            ("error".to_string(), fault),
+        ],
+    );
+    http_std::Response::text(
+        http_std::StatusCode::INTERNAL_SERVER_ERROR,
+        "internal server error",
+    )
+}
+
 /// `http::serve(addr: String, handler: Value) -> Result<(), Error>`.
 ///
 /// Binds a TCP listener on `addr` and serves HTTP/1.1 traffic. Each
@@ -713,46 +759,27 @@ fn native_http_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runti
     let shutdown = Arc::clone(&config.shutdown);
     install_http_shutdown_handler(shutdown);
 
-    let errors = Mutex::new(Vec::<String>::new());
-    let dispatch_cell = std::cell::RefCell::new(dispatch);
-
-    // Resolve serve to the handler's specific impl by struct
-    // name. The bare "serve" global key gets overwritten as
-    // each impl loads, so dispatching on it picks the last-
-    // loaded serve regardless of which type the handler is.
-    let serve_method_name = match &handler {
-        Value::Struct(inner) => format!("{}::serve", inner.name),
-        _ => "serve".to_string(),
-    };
-    let result = http_std::server::bind_and_run(&addr, &config, |request| {
-        let request_value = request_to_value(&request);
-        let mut guard = dispatch_cell.borrow_mut();
-        let dispatched = guard.call_fn(&serve_method_name, vec![handler.clone(), request_value]);
-        drop(guard);
-        match dispatched {
-            Ok(value) => {
-                if let Some(response) = value_to_response(&value) {
-                    response
-                } else {
-                    let mut errs = errors.lock().unwrap();
-                    errs.push("handler did not return http::Response".to_string());
-                    drop(errs);
-                    http_std::Response::text(
-                        http_std::StatusCode::INTERNAL_SERVER_ERROR,
-                        "internal server error",
-                    )
-                }
-            }
-            Err(err) => {
-                let mut errs = errors.lock().unwrap();
-                errs.push(format!("{err}"));
-                drop(errs);
-                http_std::Response::text(
-                    http_std::StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal server error",
-                )
-            }
-        }
+    let (target, leading) = crate::value::SpawnTarget::for_handler(&handler);
+    let result = http_std::server::bind_and_run_dispatch(&addr, &config, |request, sink| {
+        // Each request answers on its own goroutine, so the accept loop
+        // takes the next one while this handler runs and N requests are
+        // served N-ways concurrently.
+        let method = request.method.as_str().to_string();
+        let path = request.path.clone();
+        let (context, context_id) =
+            crate::stdlib_builtins::context::request_context(0, Some(request.context.clone()));
+        let mut args = leading.clone();
+        args.push(request_to_value_with_context(&request, context));
+        dispatch.spawn_with_outcome(
+            target.clone(),
+            args,
+            Box::new(move |outcome| {
+                sink.send(handler_outcome_to_response(outcome, &method, &path));
+                // The request is over: anything the handler started under
+                // its context stops with it.
+                crate::stdlib_builtins::context::cancel_request_context(context_id);
+            }),
+        );
     });
 
     match result {
@@ -761,6 +788,52 @@ fn native_http_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runti
         // failure is an `Err` value for the caller's match, not a
         // panic (native-tier parity).
         Err(err) => Ok(err_variant(format!("http::serve: {err}"))),
+    }
+}
+
+/// `httptest::record(handler, method, path, body)
+/// -> Result<Response, errors::Error>` - calls `handler` with a request
+/// built in memory and answers its response.
+///
+/// No socket, no port, no accept loop: a handler is a function from a
+/// request to a response, and a test that only wants to know what it
+/// answers should not have to run a server to find out.
+#[cfg(not(target_arch = "wasm32"))]
+fn native_httptest_record(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    if args.len() < 4 {
+        return Err(RuntimeError::Arity {
+            expected: 4,
+            found: args.len(),
+        });
+    }
+    let text = |value: &Value| match value {
+        Value::String(s) => s.as_str().to_string(),
+        other => format!("{other}"),
+    };
+    let (path, query) = match text(&args[2]).split_once('?') {
+        Some((path, query)) => (path.to_string(), query.to_string()),
+        None => (text(&args[2]), String::new()),
+    };
+    let request = http_std::Request {
+        method: http_std::Method::parse(&text(&args[1])).unwrap_or(http_std::Method::Get),
+        path,
+        query,
+        headers: http_std::Headers::new(),
+        body: text(&args[3]).into_bytes(),
+        context: gossamer_std::context::Context::background(),
+        trailers: None,
+        peer_addr: String::new(),
+    };
+    let (context, context_id) = crate::stdlib_builtins::context::request_context(0, None);
+    let value = request_to_value_with_context(&request, context);
+    let outcome = crate::value::dispatch_request(dispatch, &args[0], value);
+    crate::stdlib_builtins::context::cancel_request_context(context_id);
+    match outcome {
+        Ok(answer) => Ok(answer),
+        Err(err) => Ok(err_variant(format!("httptest::record: {err}"))),
     }
 }
 
@@ -864,37 +937,30 @@ fn native_http_serve_tls(
     let shutdown = Arc::clone(&config.shutdown);
     install_http_shutdown_handler(shutdown);
 
-    let errors = Mutex::new(Vec::<String>::new());
-    let dispatch_cell = std::cell::RefCell::new(dispatch);
-    let serve_method_name = match &handler {
-        Value::Struct(inner) => format!("{}::serve", inner.name),
-        _ => "serve".to_string(),
-    };
-    let result = http_std::server::bind_and_run_tls(&addr, &tls_config, &config, |request| {
-        let request_value = request_to_value(&request);
-        let mut guard = dispatch_cell.borrow_mut();
-        let dispatched = guard.call_fn(&serve_method_name, vec![handler.clone(), request_value]);
-        drop(guard);
-        match dispatched {
-            Ok(value) => value_to_response(&value).unwrap_or_else(|| {
-                errors
-                    .lock()
-                    .unwrap()
-                    .push("handler did not return http::Response".to_string());
-                http_std::Response::text(
-                    http_std::StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal server error",
-                )
-            }),
-            Err(err) => {
-                errors.lock().unwrap().push(format!("{err}"));
-                http_std::Response::text(
-                    http_std::StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal server error",
-                )
-            }
-        }
-    });
+    let (target, leading) = crate::value::SpawnTarget::for_handler(&handler);
+    let result = http_std::server::bind_and_run_tls_dispatch(
+        &addr,
+        &tls_config,
+        &config,
+        |request, sink| {
+            let method = request.method.as_str().to_string();
+            let path = request.path.clone();
+            let (context, context_id) = crate::stdlib_builtins::context::request_context(
+                0,
+                Some(request.context.clone()),
+            );
+            let mut args = leading.clone();
+            args.push(request_to_value_with_context(&request, context));
+            dispatch.spawn_with_outcome(
+                target.clone(),
+                args,
+                Box::new(move |outcome| {
+                    sink.send(handler_outcome_to_response(outcome, &method, &path));
+                    crate::stdlib_builtins::context::cancel_request_context(context_id);
+                }),
+            );
+        },
+    );
 
     match result {
         Ok(()) => Ok(Value::variant("Ok", vec![Value::Unit])),
@@ -996,7 +1062,7 @@ fn native_http2_bind_and_run_h2c(
         .map_err(|e| RuntimeError::Panic(format!("http2::bind_and_run_h2c spawn: {e}")))?;
     drop(req_tx);
 
-    let dispatch_cell = std::cell::RefCell::new(dispatch);
+    let (target, leading) = crate::value::SpawnTarget::for_handler(&handler);
     let mut served: u64 = 0;
     loop {
         if shutdown.load(Ordering::Acquire) {
@@ -1004,27 +1070,23 @@ fn native_http2_bind_and_run_h2c(
         }
         match req_rx.recv_timeout(Duration::from_millis(50)) {
             Ok((req, resp_tx)) => {
-                let request_value = request_to_value(&req);
-                let mut guard = dispatch_cell.borrow_mut();
-                let dispatched = guard.call_fn("serve", vec![handler.clone(), request_value]);
-                drop(guard);
-                let response = match dispatched {
-                    Ok(value) => value_to_response(&value).unwrap_or_else(|| http_std::Response {
-                        status: http_std::StatusCode(500),
-                        headers: http_std::Headers::new(),
-                        body: b"handler did not return http::Response".to_vec(),
-                        raw_header_pairs: Vec::new(),
-                        body_stream: None,
+                let method = req.method.as_str().to_string();
+                let path = req.path.clone();
+                let (context, context_id) = crate::stdlib_builtins::context::request_context(
+                    0,
+                    Some(req.context.clone()),
+                );
+                let mut args = leading.clone();
+                args.push(request_to_value_with_context(&req, context));
+                dispatch.spawn_with_outcome(
+                    target.clone(),
+                    args,
+                    Box::new(move |outcome| {
+                        let _ =
+                            resp_tx.send(handler_outcome_to_response(outcome, &method, &path));
+                        crate::stdlib_builtins::context::cancel_request_context(context_id);
                     }),
-                    Err(err) => http_std::Response {
-                        status: http_std::StatusCode(500),
-                        headers: http_std::Headers::new(),
-                        body: format!("handler error: {err}").into_bytes(),
-                        raw_header_pairs: Vec::new(),
-                        body_stream: None,
-                    },
-                };
-                let _ = resp_tx.send(response);
+                );
                 served = served.saturating_add(1);
                 if max_requests > 0 && served >= max_requests {
                     shutdown.store(true, Ordering::Release);
@@ -1074,14 +1136,7 @@ fn native_http3_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runt
     let key_path = str_arg(&args[2], "key path")?;
     let handler = args[3].clone();
 
-    // Resolve the handler's specific `T::serve` impl by struct name,
-    // matching `native_http_serve` (the bare `serve` global is
-    // overwritten as each impl loads, so dispatching on it would
-    // pick the last-loaded one).
-    let serve_method_name = match &handler {
-        Value::Struct(inner) => format!("{}::serve", inner.name),
-        _ => "serve".to_string(),
-    };
+    let (target, leading) = crate::value::SpawnTarget::for_handler(&handler);
 
     use std::sync::mpsc;
     let (req_tx, req_rx) = mpsc::channel::<(http_std::Request, mpsc::Sender<http_std::Response>)>();
@@ -1145,7 +1200,6 @@ fn native_http3_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runt
         .map_err(|e| RuntimeError::Panic(format!("http_h3::serve spawn: {e}")))?;
     drop(req_tx);
 
-    let dispatch_cell = std::cell::RefCell::new(dispatch);
     let mut served: u64 = 0;
     loop {
         // A startup failure (bad address, unreadable cert/key, bind
@@ -1159,28 +1213,23 @@ fn native_http3_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runt
         }
         match req_rx.recv_timeout(Duration::from_millis(50)) {
             Ok((req, resp_tx)) => {
-                let request_value = request_to_value(&req);
-                let mut guard = dispatch_cell.borrow_mut();
-                let dispatched =
-                    guard.call_fn(&serve_method_name, vec![handler.clone(), request_value]);
-                drop(guard);
-                let response = match dispatched {
-                    Ok(value) => value_to_response(&value).unwrap_or_else(|| http_std::Response {
-                        status: http_std::StatusCode(500),
-                        headers: http_std::Headers::new(),
-                        body: b"handler did not return http::Response".to_vec(),
-                        raw_header_pairs: Vec::new(),
-                        body_stream: None,
+                let method = req.method.as_str().to_string();
+                let path = req.path.clone();
+                let (context, context_id) = crate::stdlib_builtins::context::request_context(
+                    0,
+                    Some(req.context.clone()),
+                );
+                let mut args = leading.clone();
+                args.push(request_to_value_with_context(&req, context));
+                dispatch.spawn_with_outcome(
+                    target.clone(),
+                    args,
+                    Box::new(move |outcome| {
+                        let _ =
+                            resp_tx.send(handler_outcome_to_response(outcome, &method, &path));
+                        crate::stdlib_builtins::context::cancel_request_context(context_id);
                     }),
-                    Err(err) => http_std::Response {
-                        status: http_std::StatusCode(500),
-                        headers: http_std::Headers::new(),
-                        body: format!("handler error: {err}").into_bytes(),
-                        raw_header_pairs: Vec::new(),
-                        body_stream: None,
-                    },
-                };
-                let _ = resp_tx.send(response);
+                );
                 served = served.saturating_add(1);
                 if max_requests > 0 && served >= max_requests {
                     shutdown.store(true, Ordering::Release);
@@ -1205,7 +1254,25 @@ fn native_http3_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runt
     Ok(Value::variant("Ok", vec![Value::Unit]))
 }
 
-fn request_to_value(request: &http_std::Request) -> Value {
+/// [`request_to_value`] with the request-scoped context a handler reads
+/// off `request.context`.
+pub(crate) fn request_to_value_with_context(
+    request: &http_std::Request,
+    context: Value,
+) -> Value {
+    let Value::Struct(inner) = request_to_value(request) else {
+        return request_to_value(request);
+    };
+    let mut fields: Vec<(&'static str, Value)> = inner
+        .fields
+        .iter()
+        .map(|(name, value)| (*name, value.clone()))
+        .collect();
+    fields.push(("context", context));
+    Value::struct_("Request", fields)
+}
+
+pub(crate) fn request_to_value(request: &http_std::Request) -> Value {
     // Path and query are split at the ABI level since 0.4.
     let bare_path = request.path.clone();
     let query_string = request.query.clone();
@@ -1253,6 +1320,10 @@ fn request_to_value(request: &http_std::Request) -> Value {
         ("headers", Value::Array(Arc::new(headers))),
         ("body", Value::String(body_text.into())),
         ("raw_body", Value::Array(Arc::new(raw_body))),
+        (
+            "peer_addr",
+            Value::String(SmolStr::from(request.peer_addr.as_str())),
+        ),
     ];
     Value::struct_("Request", Arc::unwrap_or_clone(Arc::new(fields)))
 }
@@ -1382,6 +1453,10 @@ fn unwrap_result(value: &Value) -> &Value {
 }
 
 fn install_http_shutdown_handler(shutdown: Arc<AtomicBool>) {
+    // `lifecycle::shutdown()` from Gossamer code stops this server too:
+    // the runtime's process lifecycle owns the one shutdown decision, and
+    // this server's own flag follows it.
+    gossamer_runtime::c_abi::lifecycle::register_shutdown_flag(&shutdown);
     register_http_shutdown(shutdown);
 }
 

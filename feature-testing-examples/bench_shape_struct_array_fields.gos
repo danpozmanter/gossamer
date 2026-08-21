@@ -14,9 +14,9 @@ fn momentum(b: &[Body; 3]) -> f64 {
 
 fn main() {
     let mut bodies: [Body; 3] = [
-        Body { x: 0.0, vx: 0.0, mass: 10.0 },
-        Body { x: 1.0, vx: 0.25, mass: 2.0 },
-        Body { x: -3.0, vx: -0.5, mass: 4.0 },
+        Body { x: 0.0, vx: 0.0, mass: 10.0 }
+        Body { x: 1.0, vx: 0.25, mass: 2.0 }
+        Body { x: -3.0, vx: -0.5, mass: 4.0 }
     ]
 
     bodies[0].vx = -momentum(&bodies) / bodies[0].mass

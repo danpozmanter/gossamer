@@ -53,8 +53,8 @@ println!("count = {}", count(&#["x", "y", "z"]))
 
 // Nested literals build a Vec of Vecs.
 let grid = #[
-    #[1, 2, 3],
-    #[4, 5],
+    #[1, 2, 3]
+    #[4, 5]
     #[6]
 ]
 println!("grid rows = {}, grid[0][2] = {}", grid.len(), grid[0][2])

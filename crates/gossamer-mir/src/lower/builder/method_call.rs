@@ -177,6 +177,18 @@ impl<'a> Builder<'a> {
             };
             return self.lower_method_call(&deref, method, args, ty, span);
         }
+        // `server.serve(handler)` needs the handler's dispatch address
+        // alongside its environment, the same three-argument shape
+        // `http::serve(addr, handler)` lowers to. The generic method
+        // dispatch below passes arguments through unchanged, which would
+        // hand the runtime an environment with no code pointer.
+        if method.name == "serve"
+            && args.len() == 1
+            && self.runtime_kind_from_ty(receiver.ty) == Some("http::Server")
+        {
+            let receiver_local = self.lower_expr(receiver)?;
+            return self.lower_http_server_serve(receiver_local, &args[0], span);
+        }
         // Fuse signed-integer `n.to_string().chars()` into one runtime call.
         // The unfused form allocated a C string, scanned it into a second
         // allocation, then released the temporary string. Numeric text is
@@ -2308,7 +2320,14 @@ impl<'a> Builder<'a> {
                 if matches!(&receiver_kind_flat, TyKind::Adt { .. })
                     && self.is_result_or_option_adt(receiver_ty)
                 {
-                    Some("gos_rt_result_unwrap_or")
+                    // A payload that is itself a carrier was boxed at
+                    // construction, so it is loaded back rather than
+                    // handed over as the address the word helper returns.
+                    if self.carrier_payload_is_carrier(receiver_ty) {
+                        Some("gos_rt_result_unwrap_or_carrier")
+                    } else {
+                        Some("gos_rt_result_unwrap_or")
+                    }
                 } else {
                     Some("")
                 }
@@ -3110,6 +3129,36 @@ impl<'a> Builder<'a> {
             (Some("http::Router"), "head") => Some("gos_rt_router_head"),
             (Some("http::Router"), "options") => Some("gos_rt_router_options"),
             (Some("http::Router"), "serve") => Some("gos_rt_router_serve"),
+            (Some("http::Server"), "read_header_timeout_ms") => {
+                Some("gos_rt_http_server_read_header_timeout_ms")
+            }
+            (Some("http::Server"), "request_timeout_ms") => {
+                Some("gos_rt_http_server_request_timeout_ms")
+            }
+            (Some("http::Server"), "read_body_timeout_ms") => {
+                Some("gos_rt_http_server_read_body_timeout_ms")
+            }
+            (Some("http::Server"), "write_timeout_ms") => {
+                Some("gos_rt_http_server_write_timeout_ms")
+            }
+            (Some("http::Server"), "idle_timeout_ms") => Some("gos_rt_http_server_idle_timeout_ms"),
+            (Some("http::Server"), "max_header_bytes") => {
+                Some("gos_rt_http_server_max_header_bytes")
+            }
+            (Some("http::Server"), "max_body_bytes") => Some("gos_rt_http_server_max_body_bytes"),
+            (Some("http::Server"), "max_connections") => Some("gos_rt_http_server_max_connections"),
+            (Some("http::Server"), "server_name") => Some("gos_rt_http_server_server_name"),
+            (Some("http::ResponseStream"), "write") => Some("gos_rt_http_response_stream_write"),
+            (Some("http::ResponseStream"), "write_bytes") => {
+                Some("gos_rt_http_response_stream_write_bytes")
+            }
+            (Some("http::ResponseStream"), "close") => Some("gos_rt_http_response_stream_close"),
+            (Some("http::ResponseStream"), "is_open") => {
+                Some("gos_rt_http_response_stream_is_open")
+            }
+            (Some("http::Server"), "listen") => Some("gos_rt_http_server_listen"),
+            (Some("http::Server"), "addr") => Some("gos_rt_http_server_addr"),
+            (Some("http::Server"), "shutdown") => Some("gos_rt_http_server_shutdown"),
             (Some("http::FileServer"), "serve") => Some("gos_rt_file_server_serve"),
             (Some("http::NativeClient"), "get") => Some("gos_rt_native_client_get"),
             (Some("http::Proxy"), "forward") => Some("gos_rt_proxy_forward"),
@@ -3894,7 +3943,10 @@ impl<'a> Builder<'a> {
             | "gos_rt_regex_replace_all"
             | "gos_rt_strings_join"
             | "gos_rt_flag_set_usage" => self.tcx.string_ty(),
-            "gos_rt_error_is"
+            "gos_rt_http_server_addr" => self.tcx.string_ty(),
+            "gos_rt_http_response_stream_is_open"
+            | "gos_rt_http_server_shutdown"
+            | "gos_rt_error_is"
             | "gos_rt_error_is_sentinel"
             | "gos_rt_regex_is_match"
             | "gos_rt_bufio_scanner_scan"
@@ -4278,6 +4330,17 @@ impl<'a> Builder<'a> {
             | "gos_rt_http_client_builder_cookie_jar"
             | "gos_rt_http_client_builder_proxy" => Some("http::ClientBuilder"),
             "gos_rt_http_client_builder_build" => Some("http::Client"),
+            // Every `Server` setter answers the server, so a `|>` chain of
+            // them keeps dispatching on `http::Server`.
+            "gos_rt_http_server_read_header_timeout_ms"
+            | "gos_rt_http_server_read_body_timeout_ms"
+            | "gos_rt_http_server_write_timeout_ms"
+            | "gos_rt_http_server_idle_timeout_ms"
+            | "gos_rt_http_server_max_header_bytes"
+            | "gos_rt_http_server_max_body_bytes"
+            | "gos_rt_http_server_max_connections"
+            | "gos_rt_http_server_request_timeout_ms"
+            | "gos_rt_http_server_server_name" => Some("http::Server"),
             "gos_rt_http_response_with_header" => Some("http::Response"),
             "gos_rt_flag_set_string" => Some("flag::Cell::String"),
             "gos_rt_flag_set_int" => Some("flag::Cell::Int"),
@@ -4959,7 +5022,17 @@ impl<'a> Builder<'a> {
                         "gos_rt_result_unwrap"
                     });
                 }
-                "unwrap_or" => runtime_symbol = Some("gos_rt_result_unwrap_or"),
+                "unwrap_or" => {
+                    // The lowered receiver's own type decides, since the
+                    // HIR type is often a variable for a chained call. A
+                    // payload that is itself a carrier was boxed, so it is
+                    // loaded back rather than handed over as an address.
+                    runtime_symbol = Some(if self.carrier_payload_is_carrier(lowered_recv_ty) {
+                        "gos_rt_result_unwrap_or_carrier"
+                    } else {
+                        "gos_rt_result_unwrap_or"
+                    });
+                }
                 "ok" => runtime_symbol = Some("gos_rt_result_to_opt_ok"),
                 "err" => runtime_symbol = Some("gos_rt_result_to_opt_err"),
                 _ => {}

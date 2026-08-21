@@ -304,6 +304,103 @@ fn manifest_functions_have_implementations() {
     );
 }
 
+/// Manifest modules whose surface is real but invisible to the resolver
+/// export table, with the mechanism that reaches it.
+///
+/// A closed, mechanism-annotated list, not a dumping ground. Anything
+/// else that advertises items nothing can reach is a
+/// documented-and-absent module - the shape that let `lifecycle`,
+/// `http::state`, `http::health`, and the session types be listed by
+/// `gos doc`, accepted by `gos check`, and then report `GX0002 ... is not
+/// bound in this scope` at run time.
+const MODULES_REACHED_WITHOUT_A_RESOLVER_EXPORT: &[(&str, &str)] = &[
+    (
+        "http::form",
+        "parse-time injected Gossamer wrappers (`__gos_http_form_*` in \
+         gossamer-parse/src/autoderive/stdlib_wrappers.rs); the rewrite \
+         fires before resolution, so the resolver never sees the names",
+    ),
+    (
+        "http::proxy",
+        "handler-signature shapes; `forward` is the callable and is \
+         gated as a Function",
+    ),
+];
+
+/// Every manifest module that advertises items must expose at least one
+/// item Gossamer code can reach: a `Function` (which the gate above
+/// proves has an implementation) or a `Type` with an exported associated
+/// item. A module with items and no reachable surface is documentation
+/// with nothing behind it.
+///
+/// A module with no items at all passes: it is a pointer to the idiom
+/// that replaced it, and `gos doc` shows its summary and an empty list,
+/// which is the truth.
+#[test]
+fn manifest_modules_expose_a_reachable_item() {
+    use std::collections::HashSet;
+
+    let exported: HashSet<&str> = gossamer_resolve::STDLIB_QUALIFIED.iter().copied().collect();
+    let by_other_mechanism: HashSet<&str> = MODULES_REACHED_WITHOUT_A_RESOLVER_EXPORT
+        .iter()
+        .map(|(path, _)| *path)
+        .collect();
+
+    let hollow: Vec<&str> = gossamer_std::manifest::ALL_MODULES
+        .iter()
+        .filter(|m| !m.items.is_empty())
+        .filter(|m| {
+            let path = m.path.strip_prefix("std::").unwrap_or(m.path);
+            if by_other_mechanism.contains(path) {
+                return false;
+            }
+            let leaf = path.rsplit("::").next().unwrap_or(path);
+            let reachable = m.items.iter().any(|it| match it.kind {
+                gossamer_std::registry::StdItemKind::Function
+                | gossamer_std::registry::StdItemKind::Macro
+                | gossamer_std::registry::StdItemKind::Const => true,
+                _ => {
+                    let full = format!("{path}::{}::", it.name);
+                    let short = format!("{leaf}::{}::", it.name);
+                    exported
+                        .iter()
+                        .any(|e| e.starts_with(&full) || e.starts_with(&short))
+                }
+            });
+            !reachable
+        })
+        .map(|m| m.path)
+        .collect();
+
+    assert!(
+        hollow.is_empty(),
+        "{n} manifest module(s) advertise items and expose nothing \
+         Gossamer code can reach.\nEither wire an item on all three tiers \
+         (interp builtin + c_abi shim + cranelift + llvm dispatch) with a \
+         tier-parity fixture, empty the module's item list and point its \
+         summary at the idiom that replaced it, or add the module to \
+         MODULES_REACHED_WITHOUT_A_RESOLVER_EXPORT with the mechanism \
+         that reaches it:\n  {hollow:#?}",
+        n = hollow.len()
+    );
+
+    // Guard the allowlist against rot.
+    let advertised: HashSet<&str> = gossamer_std::manifest::ALL_MODULES
+        .iter()
+        .filter(|m| !m.items.is_empty())
+        .map(|m| m.path.strip_prefix("std::").unwrap_or(m.path))
+        .collect();
+    let stale: Vec<&&str> = by_other_mechanism
+        .iter()
+        .filter(|p| !advertised.contains(**p))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "MODULES_REACHED_WITHOUT_A_RESOLVER_EXPORT entries no longer \
+         advertise any manifest items (remove them): {stale:#?}"
+    );
+}
+
 #[test]
 fn manifest_functions_have_checker_signatures() {
     use std::collections::HashSet;

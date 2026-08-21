@@ -224,12 +224,39 @@ pub extern "C" fn gos_rt_math_inf(sign: i64) -> f64 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_time_now_ms() -> i64 {
-    ffi_entry!(-1, {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis() as i64)
-    })
+    ffi_entry!(-1, { crate::clock::wall_ms() })
+}
+
+/// `time::freeze(ms)` - pin the wall clock at `ms` since the epoch.
+///
+/// A test over anything time-dependent - a token's expiry, a rate-limit
+/// window, a cache's TTL - reads a clock it controls instead of waiting
+/// for a real one. The monotonic clock is untouched, and so is `sleep`:
+/// this pins what the program is told the time is, not how long anything
+/// takes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_time_freeze(ms: i64) {
+    ffi_entry!((), { crate::clock::freeze(ms) });
+}
+
+/// `time::advance(ms)` - move a frozen clock forward. Freezes it at the
+/// current reading first when it is not already frozen, so a test need not
+/// name a starting instant it does not care about.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_time_advance(ms: i64) -> i64 {
+    ffi_entry!(-1, { crate::clock::advance(ms) })
+}
+
+/// `time::unfreeze()` - return to the real wall clock.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_time_unfreeze() {
+    ffi_entry!((), { crate::clock::unfreeze() });
+}
+
+/// `time::is_frozen() -> bool`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_time_is_frozen() -> i64 {
+    ffi_entry!(0, { i64::from(crate::clock::is_frozen()) })
 }
 
 // ---------------------------------------------------------------

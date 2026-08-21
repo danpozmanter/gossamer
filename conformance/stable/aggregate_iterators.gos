@@ -10,9 +10,9 @@ struct Item {
 
 fn main() {
     let items = #[
-        Item { name: "bolt", qty: 4 },
-        Item { name: "nut", qty: 9 },
-        Item { name: "washer", qty: 2 },
+        Item { name: "bolt", qty: 4 }
+        Item { name: "nut", qty: 9 }
+        Item { name: "washer", qty: 2 }
     ]
 
     println!("total={}", items.iter().map(|i| i.qty).sum())

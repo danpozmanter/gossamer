@@ -21,7 +21,9 @@ use super::crypto::value_to_bytes;
 /// Entry point invoked from `builtins::install`.
 pub(crate) fn install_jwt(globals: &mut Vec<(&'static str, Value)>) {
     for (short, call) in [
-        ("sign_hs", builtin_jwt_sign_hs as BuiltinFnPub),
+        ("verify", builtin_jwt_verify as BuiltinFnPub),
+        ("header", builtin_jwt_header),
+        ("sign_hs", builtin_jwt_sign_hs),
         ("verify_hs", builtin_jwt_verify_hs),
         ("sign_es256", builtin_jwt_sign_es256),
         ("verify_es256", builtin_jwt_verify_es256),
@@ -41,6 +43,29 @@ fn arg_str(args: &[Value], i: usize) -> String {
 
 fn arg_leeway(args: &[Value], i: usize) -> i64 {
     value_to_int(args.get(i).unwrap_or(&Value::Unit)).unwrap_or(0)
+}
+
+/// `jwt::verify(token, alg, key, leeway_secs, issuer, audience)
+/// -> Result<String, errors::Error>`.
+pub(crate) fn builtin_jwt_verify(args: &[Value]) -> RuntimeResult<Value> {
+    let token = arg_str(args, 0);
+    let alg = arg_str(args, 1);
+    let key = arg_str(args, 2);
+    let leeway = arg_leeway(args, 3);
+    let issuer = arg_str(args, 4);
+    let audience = arg_str(args, 5);
+    match gossamer_std::jwt::verify_json(&token, &alg, &key, leeway, &issuer, &audience) {
+        Ok(claims) => Ok(ok_variant(Value::String(claims.into()))),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+/// `jwt::header(token) -> Result<String, errors::Error>`.
+pub(crate) fn builtin_jwt_header(args: &[Value]) -> RuntimeResult<Value> {
+    match gossamer_std::jwt::header_json(&arg_str(args, 0)) {
+        Ok(header) => Ok(ok_variant(Value::String(header.into()))),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
 }
 
 /// `jwt::sign_hs(alg, claims_json, key) -> Result<String, errors::Error>`.

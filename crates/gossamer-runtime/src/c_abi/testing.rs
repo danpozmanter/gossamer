@@ -148,3 +148,58 @@ pub unsafe extern "C" fn gos_rt_httptest_server(status: i64, body: *const c_char
         super::string::alloc_cstring(url.as_bytes())
     })
 }
+
+/// `httptest::record(handler, method, path, body)` - calls `handler` with a
+/// request built in memory and answers its response.
+///
+/// No socket, no port, no accept loop: a handler is a function from a
+/// request to a response, and a test that only wants to know what it
+/// answers should not have to run a server to find out. Use
+/// `http::Server` with port 0 when the test is about the wire.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_httptest_record(
+    method: *const std::os::raw::c_char,
+    path: *const std::os::raw::c_char,
+    body: *const std::os::raw::c_char,
+    handler_env: *mut u8,
+    handler_fn: i64,
+) -> i128 {
+    ffi_entry!(0i128, {
+        if handler_fn == 0 {
+            let err =
+                crate::c_abi::errors::error_new_from_bytes(b"httptest::record: handler is null");
+            return crate::c_abi::vec::pack_result(1, err as i64);
+        }
+        let text = |p: *const std::os::raw::c_char| {
+            if p.is_null() {
+                String::new()
+            } else {
+                unsafe { crate::c_abi::gos_str_arg_string(p) }
+            }
+        };
+        let body_bytes = text(body).into_bytes();
+        let mut request = crate::c_abi::http_client::GosHttpRequest {
+            method: text(method),
+            url: text(path),
+            headers: Vec::new(),
+            body: body_bytes,
+            body_offset: 0,
+            params: Vec::new(),
+            values: Vec::new(),
+            agent: None,
+            peer: String::new(),
+            context: crate::c_abi::context::open_request_context(0),
+        };
+        type HandlerFn = unsafe extern "C-unwind" fn(
+            env: *mut u8,
+            req: *mut crate::c_abi::http_client::GosHttpRequest,
+        ) -> i128;
+        // SAFETY: `handler_fn` came from `gos_fn_addr` over a handler
+        // dispatch symbol at the call site, with `handler_env` alongside.
+        let handler: HandlerFn = unsafe { std::mem::transmute(handler_fn as usize) };
+        let req_ptr: *mut crate::c_abi::http_client::GosHttpRequest = &raw mut request;
+        let result = unsafe { handler(handler_env, req_ptr) };
+        crate::c_abi::context::close_request_context(std::mem::replace(&mut request.context, 0));
+        result
+    })
+}

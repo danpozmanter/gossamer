@@ -54,6 +54,15 @@ impl NativeDispatch for NullDispatch {
     fn spawn_join(&mut self, _callable: Value, _args: Vec<Value>) -> RuntimeResult<Value> {
         Err(RuntimeError::Unsupported("spawn_join"))
     }
+
+    fn spawn_with_outcome(
+        &mut self,
+        _target: gossamer_binding::value::SpawnTarget,
+        _args: Vec<Value>,
+        _sink: Box<dyn FnOnce(RuntimeResult<Value>) + Send>,
+    ) {
+        // A null dispatcher runs nothing, so the sink is never called.
+    }
 }
 
 fn lookup(qualified: &str) -> &'static gossamer_binding::ItemFn {
@@ -237,6 +246,15 @@ impl NativeDispatch for CountingDispatch {
     }
     fn spawn_join(&mut self, _callable: Value, _args: Vec<Value>) -> RuntimeResult<Value> {
         Ok(Value::Unit)
+    }
+
+    fn spawn_with_outcome(
+        &mut self,
+        _target: gossamer_binding::value::SpawnTarget,
+        _args: Vec<Value>,
+        _sink: Box<dyn FnOnce(RuntimeResult<Value>) + Send>,
+    ) {
+        // A null dispatcher runs nothing, so the sink is never called.
     }
 }
 

@@ -169,6 +169,38 @@ pub(crate) fn panic_oob_text(what: &str, idx: i64, len: i64) -> ! {
     );
 }
 
+thread_local! {
+    /// Whether a fault on this thread ends only the work it is serving.
+    ///
+    /// A goroutine is its own fault domain because the scheduler owns it.
+    /// A thread the runtime spawned to serve one unit of work - an HTTP
+    /// connection - is one too: the unit fails, the process keeps running.
+    /// Only the main goroutine's fault is the program's.
+    static ISOLATED_FAULTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Marks the calling thread as its own fault domain for the guard's life.
+pub struct IsolatedFaults(bool);
+
+impl IsolatedFaults {
+    /// Enters an isolated fault domain on this thread.
+    #[must_use]
+    pub fn enter() -> Self {
+        Self(ISOLATED_FAULTS.replace(true))
+    }
+}
+
+impl Drop for IsolatedFaults {
+    fn drop(&mut self) {
+        ISOLATED_FAULTS.set(self.0);
+    }
+}
+
+/// Whether a fault raised on this thread ends only the work it is serving.
+fn faults_are_isolated() -> bool {
+    gossamer_coro::in_goroutine() || ISOLATED_FAULTS.with(std::cell::Cell::get)
+}
+
 /// Raises `text` as a fault carrying diagnostic `code`, rendered as
 /// `error[<code>]: <prefix><text>`.
 ///
@@ -186,7 +218,7 @@ fn raise(code: &str, prefix: &str, text: String) -> ! {
     // goroutine, raise a Rust panic the coroutine wrapper catches - the
     // scheduler continues running other goroutines. If we're on the main thread
     // (no active coroutine), a panic in `fn main()` is fatal, just like in Rust.
-    if gossamer_coro::in_goroutine() {
+    if faults_are_isolated() {
         // Stash the message so a `spawn`-created join handle can deliver
         // `Err(message)` from its unwinding Drop-guard before the coroutine
         // wrapper catches and isolates this panic.
@@ -196,7 +228,12 @@ fn raise(code: &str, prefix: &str, text: String) -> ! {
         // clean, matching the VM's silent `spawn`+`join` path. A fire-and-forget
         // `go` panic is unobserved, so it still reports - eagerly, so the report
         // is reliable even when `main` exits right after.
-        if !hooked && !gossamer_coro::in_joinable_spawn() {
+        // A connection thread reports through the server's own request-fault
+        // record, which carries the method and path this bare line cannot.
+        if !hooked
+            && !gossamer_coro::in_joinable_spawn()
+            && !ISOLATED_FAULTS.with(std::cell::Cell::get)
+        {
             unsafe {
                 gos_rt_flush_stdout();
             }

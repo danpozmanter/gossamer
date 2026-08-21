@@ -119,10 +119,10 @@ fn main() {
     }
 
     let pts = #[
-        Point3 { x: 3, y: 0, z: 0 },
-        Point3 { x: 0, y: 5, z: 0 },
-        Point3 { x: 0, y: 0, z: 7 },
-        Point3 { x: 1, y: 2, z: 3 },
+        Point3 { x: 3, y: 0, z: 0 }
+        Point3 { x: 0, y: 5, z: 0 }
+        Point3 { x: 0, y: 0, z: 7 }
+        Point3 { x: 1, y: 2, z: 3 }
     ]
     for p in pts {
         println!("{}", on_axis(&p))
@@ -134,10 +134,10 @@ fn main() {
     }
 
     let cells = #[
-        Cell::Filled(Signal::Red(7)),
-        Cell::Filled(Signal::Yellow(2)),
-        Cell::Filled(Signal::Green(9)),
-        Cell::Blank,
+        Cell::Filled(Signal::Red(7))
+        Cell::Filled(Signal::Yellow(2))
+        Cell::Filled(Signal::Green(9))
+        Cell::Blank
     ]
     for c in cells {
         println!("cell={}", cell_intensity(&c))

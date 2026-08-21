@@ -1,5 +1,168 @@
 # Changelog
 
+## 0.54.0 - Handler dispatch, concurrent request service, request-fault logging
+
+- `http::serve(addr, handler)` runs a plain `fn` handler. A named function
+  answering `Response` or `Result<Response, Error>` was accepted by `gos check`
+  and then ignored: the native tier served a canned `ok` body and the bytecode
+  VM answered 500. A plain function carries no environment, so it now reaches
+  the runtime's two-argument handler ABI through a synthesized env-ignoring
+  thunk, and the VM calls the handler value directly. Every tier answers the
+  handler's own response. The same thunk carries a plain `fn` wrapped in
+  middleware, which used to answer 500 on every request.
+- The bytecode VM serves requests concurrently. Every request funnelled through
+  one dispatch loop that ran the handler to completion before taking the next,
+  so four parallel requests to a one-second handler took four seconds and no
+  `gos test` could exercise request concurrency. Each request now answers on its
+  own goroutine and the accept loop stays free; four parallel requests to that
+  handler take one second.
+- A request that fails is logged. A handler that panics, answers `Err`, or
+  answers something that is not an `http::Response` produced a bare 500 and a
+  silent server. The fault is now one `slog` record on stderr carrying the
+  method, the path, the status, and the message.
+- A handler that panics no longer takes the whole native server with it. The
+  compiled server serves each connection on its own thread, and the fatality
+  rule read "not inside a goroutine" as "this is `fn main`", so the fault exited
+  the process with 101; the handler pointer was also typed `extern "C"`, which
+  is `nounwind`, so the unwind walked past every recovery point. A connection is
+  now its own fault domain and the dispatch shims are unwind-capable: the
+  panicking request answers 500, the record names it, and the server keeps
+  serving.
+- `middleware::rate_limit` is a rate limit. `RateLimit::per_ip(3, 10)` was a
+  process-global lifetime quota - three requests ever, then 429 forever, drawn
+  after the handler had already run. It is now a per-client token bucket that
+  refills at the configured rate and is drawn before the inner handler, so it
+  sheds load instead of accounting for it.
+- `middleware::body_limit`, `compress_gzip`, `basic_auth`, and `bearer_auth` do
+  what they are named. `body_limit` rejected an oversized *response* after the
+  work was done and now refuses an oversized request with 413 before the handler
+  runs; `compress_gzip` set `Vary` and now gzip-encodes a body the client said
+  it accepts; the two auth wrappers decorated an existing 401 and now answer 401
+  with `WWW-Authenticate` to a request carrying no credential of their scheme,
+  without running the handler. `recoverer` catches a panicking handler rather
+  than rewriting the body of an already-failed response.
+- `request.peer_addr` carries the `host:port` of the client. An access log, an
+  IP allowlist, and a per-client rate limit had no source address to work from.
+  A forwarded address is deliberately not substituted: a deployment behind a
+  proxy resolves the chain against its own trusted-proxy list.
+- The bytecode VM answers an oversized body with 413 and an oversized header
+  block with 431. Both closed the connection with no response at all and one
+  unstructured stderr line, so a client saw a reset it could not attribute.
+- One middleware implementation serves every tier. The transforms lived in two
+  hand-synchronised copies, one per tier, which is how six of them came to
+  differ; `gossamer-std` now re-exports the runtime's.
+- `std::lifecycle` exists at run time. The module whose whole purpose is
+  production process lifecycle was listed by `gos doc`, accepted by `gos check`,
+  and unbound on every tier. It is now seven free functions over one
+  process-global state both tiers read: `ready`, `set_ready`, `is_ready`,
+  `shutdown`, `is_shutting_down`, `await_shutdown`, `notify_status`, with
+  `sd_notify` under a service manager. Shutdown is observed rather than
+  dispatched - wait for it, then drain with the statements after the wait -
+  and readiness drops on its own when it begins, so a readiness probe fails
+  ahead of the drain.
+- `jwt::verify(token, alg, key, leeway, issuer, audience)` accepts a token from
+  a real identity provider and refuses one minted for somebody else. The
+  reachable surface verified HS*, ES256, and EdDSA only, and discarded every
+  option but the clock skew - so RS256, the default at Auth0, Okta, Entra ID,
+  Google, Cognito, and Keycloak, could not be verified at all, and a token from
+  any issuer sharing the key was accepted by any service. One entry point now
+  covers every algorithm including the RS family, and enforces the issuer and
+  the audience when they are given. `jwt::header(token)` reads the JOSE header
+  without verifying, so a service holding a key set can select on `kid`.
+- `html::template` loops and branches. The escaping engine refused every block
+  action, so server-rendered HTML was a choice between escaping without loops
+  and loops through `format!` with no escaping at all. It now renders the
+  block-capable AST - `if`, `range`, `with`, `define`, `template` - and escapes
+  each substitution by the context the literal markup before it puts the value
+  in, so a value reached through a block is protected exactly as one at top
+  level. A function may also be called prefix-first: `{{ len .items }}`.
+- An unknown method on a socket handle is a diagnostic, not a link failure.
+  `stream.read_all()` typechecked, then failed the native build with
+  `undefined symbols before LLVM tools: @read_all` and no source location. The
+  socket handles' method tables are their complete surface, so a name absent
+  from one now reports `GT0002` where it is written.
+- `http::Server` is the configurable server. `http::serve(addr, handler)`
+  blocked forever, kept every default, and read its only knobs from the
+  environment: the 1 MiB body cap could not be raised at all, there was no
+  header deadline, no way to read back a port-0 assignment, and no shutdown the
+  application could drive. A `Server` sets its own `read_header_timeout_ms`,
+  `read_body_timeout_ms`, `write_timeout_ms`, `idle_timeout_ms`,
+  `request_timeout_ms`, `max_header_bytes`, `max_body_bytes`,
+  `max_connections`, and `server_name`; `listen(addr)` binds before `serve`
+  blocks, so `addr()` reads back the port the OS chose; and
+  `shutdown(deadline_ms)` stops accepting, drains, and answers whether the
+  drain finished.
+- A request carries a `Context`. `request.context` is cancelled when the
+  handler returns, when the server's `request_timeout_ms` deadline elapses,
+  when the peer disconnects, and when shutdown begins - so a query, an
+  outbound call, or a spawned worker passed that context stops with the
+  request that asked for it. A client that aborted previously left the handler
+  running to completion.
+- A handler may write its response body as it goes.
+  `http::ResponseStream::new()` opens a body the handler answers with
+  immediately and a goroutine feeds; the server frames each `write` to the
+  client as it arrives. `Response::text` and `Response::json` need the whole
+  body in memory first, which ruled out server-sent events, a large download, a
+  progressive render, and a log tail.
+- `Some(v)` and `Ok(v)` take a reference to a `Vec` payload. A `Vec` carries no
+  reference-count header - it is counted by the vec allocator - so it was
+  missed at the wrap, and `Some(v).unwrap()` left one reference with two
+  owners: the binding the payload came from and the binding it was unwrapped
+  into. Whichever released second freed storage the first had already
+  returned, which read back as a hang under the JIT and a segfault in a native
+  build.
+- `std::net::smtp` sends mail, so an application can offer a password reset, an
+  address verification, a magic link, or a security notice. `send` and
+  `send_auth` each run one transaction: implicit TLS on port 465, STARTTLS
+  elsewhere when the server offers it, AUTH PLAIN or LOGIN, and a refusal
+  rather than credentials sent to a server offering no encryption. A CR or LF
+  in an address or subject becomes a space, so a caller-supplied value cannot
+  end the header and add its own.
+- A `comptime` file read resolves against the source that embeds it. It
+  resolved against the build's working directory, so the same program embedded
+  different bytes depending on where `gos build` ran - which is the one thing
+  an embedded asset must never do. A directory can now be walked and folded in
+  whole, and the resulting binary runs with the files deleted.
+- `httptest::record(handler, method, path, body)` calls a handler in memory and
+  answers its response - no socket, no port, no accept loop. The programmable
+  test server and a free port are `http::Server` over a `Router` bound to
+  `127.0.0.1:0`, whose address reads back before `serve` blocks.
+- `time::freeze(ms)`, `advance(ms)`, `unfreeze()`, and `is_frozen()` give a
+  wall clock a test controls, so a token's expiry, a rate-limit window, or a
+  cache's TTL is decided rather than waited for. The monotonic clock and
+  `sleep` are untouched.
+- A `Result` or `Option` whose payload is itself one answers `unwrap_or`
+  correctly in a compiled build. A carrier does not fit the payload half, so a
+  nested one is boxed - and `unwrap_or` handed the box's address back as though
+  it were the value, which read as `Err` whatever the value was.
+  `spawn(f).join().unwrap_or(Ok(v))` is the shape that meets it.
+- A `router::Router` written as a parameter type resolves to its handle. The
+  annotation never landed on the handle the constructor answers, so the
+  parameter stayed an inference variable and its method dispatch fell back to
+  the bare name - a server handed its router through `go run(server, app)`
+  reached a symbol nothing declares and hung.
+- A handler arriving as a parameter dispatches on its named type. A handler
+  built in place carries a construction tag; one passed in carries none, so it
+  had no dispatch address at all.
+- `select` arms separate with a newline, the way `match` arms and every other
+  delimited list in the language do. A comma still separates two arms written
+  on one line.
+- `gos fmt` removes the optional comma from every multiline delimited list.
+  Struct fields, tuples, and match arms lost theirs; array, `Vec`, and `Set`
+  literals and `use` lists kept theirs, so two shapes of the same list
+  formatted differently.
+- A plain `fn` handler reached through a thunk mis-read its request when the
+  checker resolved the parameter as an aggregate: the thunk treated the
+  address the runtime passes as the aggregate's storage and read the request's
+  first field as if it were the request. The thunk now takes the one word the
+  runtime actually passes.
+- `gos doc` no longer advertises modules with nothing behind them.
+  `http::state`, `http::health`, and `http::query` listed types nothing could
+  construct; their summaries now name the idiom that replaces each - closure
+  capture, `lifecycle::is_ready()`, and `request.query_pairs`. A test gates the
+  class: a manifest module that advertises items must expose at least one
+  item Gossamer code can reach.
+
 ## 0.53.2 - Cross-goroutine sharing, `sync::Shared`, TLS peer certificates, derived ordering over `Option`, git branches
 
 - A goroutine that reads a captured binding whose type holds nested growable

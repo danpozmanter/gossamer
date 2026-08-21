@@ -85,8 +85,8 @@ fn main() {
 
     // A generic struct holding a struct, stored in an array and read in a loop.
     let xs = #[
-        Wrapper { value: Point { x: 1, y: 2 } },
-        Wrapper { value: Point { x: 3, y: 4 } },
+        Wrapper { value: Point { x: 1, y: 2 } }
+        Wrapper { value: Point { x: 3, y: 4 } }
     ]
     let mut sum = 0
     for w in xs {

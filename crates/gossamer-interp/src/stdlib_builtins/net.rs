@@ -1228,3 +1228,72 @@ mod net_registry_tests {
         std::fs::remove_file(path).unwrap();
     }
 }
+
+/// `smtp::send(addr, from, to, subject, body)` and its authenticated
+/// counterpart. Both go through `gossamer_runtime::smtp`, the same
+/// transaction the compiled tiers run.
+pub(crate) fn install_smtp(globals: &mut Vec<(&'static str, Value)>) {
+    for (name, call) in [
+        (
+            "smtp::send",
+            builtin_smtp_send as crate::builtins::BuiltinFnPub,
+        ),
+        ("smtp::send_auth", builtin_smtp_send_auth),
+    ] {
+        globals.push((name, crate::builtins::builtin_pub(name, call)));
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn smtp_arg(args: &[Value], index: usize) -> String {
+    match args.get(index) {
+        Some(Value::String(s)) => s.as_str().to_string(),
+        Some(other) => format!("{other}"),
+        None => String::new(),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn smtp_dispatch(args: &[Value], with_credentials: bool) -> RuntimeResult<Value> {
+    let addr = smtp_arg(args, 0);
+    let from = smtp_arg(args, 1);
+    let to = smtp_arg(args, 2);
+    let subject = smtp_arg(args, 3);
+    let body = smtp_arg(args, 4);
+    let message = gossamer_runtime::smtp::Message {
+        from: &from,
+        to: &to,
+        subject: &subject,
+        body: &body,
+    };
+    let username = smtp_arg(args, 5);
+    let password = smtp_arg(args, 6);
+    let credentials = with_credentials.then(|| gossamer_runtime::smtp::Credentials {
+        username: &username,
+        password: &password,
+    });
+    match gossamer_runtime::smtp::send(&addr, &message, credentials.as_ref()) {
+        Ok(()) => Ok(ok_variant(Value::Unit)),
+        Err(text) => Ok(err_variant(text)),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn builtin_smtp_send(args: &[Value]) -> RuntimeResult<Value> {
+    smtp_dispatch(args, false)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn builtin_smtp_send_auth(args: &[Value]) -> RuntimeResult<Value> {
+    smtp_dispatch(args, true)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn builtin_smtp_send(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(err_variant("smtp::send: no sockets on wasm32"))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn builtin_smtp_send_auth(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(err_variant("smtp::send_auth: no sockets on wasm32"))
+}

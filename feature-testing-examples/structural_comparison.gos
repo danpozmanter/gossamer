@@ -48,9 +48,9 @@ fn main() {
 
     // Ordering powers sort with no derive.
     let mut pts: Vec<Point> = Vec::from([
-        Point { x: 3, y: 1 },
-        Point { x: 1, y: 9 },
-        Point { x: 2, y: 5 },
+        Point { x: 3, y: 1 }
+        Point { x: 1, y: 9 }
+        Point { x: 2, y: 5 }
     ])
     pts.sort_by_key(|p| p.x)
     println!("{} {} {}", pts[0].x, pts[1].x, pts[2].x)

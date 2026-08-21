@@ -509,6 +509,33 @@ impl Vm {
         });
     }
 
+    /// Spawns `callee(args)` on a goroutine and hands the outcome to
+    /// `sink` on that goroutine.
+    ///
+    /// Unlike [`Self::spawn_join_native`] the caller keeps no handle, so
+    /// nothing on the spawning goroutine waits: a native server places a
+    /// request and takes the next one while the handler runs. The
+    /// goroutine has its own `Vm` sharing the program's globals, so N
+    /// handlers run on N workers.
+    pub(crate) fn spawn_with_outcome_native(
+        &self,
+        target: crate::value::SpawnTarget,
+        args: Vec<Value>,
+        sink: Box<dyn FnOnce(RuntimeResult<Value>) + Send>,
+    ) {
+        use crate::value::SpawnTarget;
+        self.spawn_on_pool(move |vm| {
+            let outcome = match target {
+                SpawnTarget::Named(name) => match vm.lookup_global(&name) {
+                    Some(global) => vm.apply(global, args),
+                    None => Err(RuntimeError::UnresolvedName(name)),
+                },
+                SpawnTarget::Callable(callee) => vm.dispatch_call(&callee, args),
+            };
+            sink(outcome);
+        });
+    }
+
     /// Spawns `callee(args)` through the bytecode VM and returns a
     /// one-shot channel handle that `.join()` blocks on for the
     /// outcome. Backs `spawn(f)`: the outcome rides the channel as the

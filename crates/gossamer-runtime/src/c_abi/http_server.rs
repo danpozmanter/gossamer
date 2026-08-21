@@ -38,8 +38,7 @@ use super::*;
 
 const STATIC_OK_RESPONSE: &[u8] =
     b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok";
-const RESPONSE_500_BYTES: &[u8] =
-    b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
+const RESPONSE_500_BYTES: &[u8] = b"HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: keep-alive\r\n\r\ninternal server error";
 const RESPONSE_400_BYTES: &[u8] =
     b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 const RESPONSE_413_BYTES: &[u8] =
@@ -76,14 +75,64 @@ const MAX_CHUNK_SIZE_LINE_BYTES: usize = 1024;
 // trailers are headers.
 const MAX_TRAILER_BYTES: usize = 8 * 1024;
 
-// Cap on the raw (still-encoded) bytes of one chunked frame. The
-// decoded cap above bounds payload; this bounds framing overhead,
-// so a peer drip-feeding pathological 1-byte chunks with maximal
-// extensions cannot grow the accumulator without limit. Any
-// well-formed stream whose framing overhead is at most its payload
-// (plus the trailer/slack allowance) fits; real encoders emit
-// multi-KiB chunks with <1% overhead.
-const MAX_CHUNKED_RAW_BYTES: usize = 2 * MAX_REQUEST_BODY_BYTES + 16 * 1024;
+/// The bounds one server applies to every connection it accepts.
+///
+/// `http::serve` uses the defaults; a `http::Server` sets what it needs.
+/// Every default is the interp tier's `Config::default()`, so the two
+/// tiers refuse and accept the same requests.
+#[derive(Debug, Clone)]
+pub struct ServerLimits {
+    /// How long the request line plus header block has to arrive. Zero
+    /// disables it. Slowloris protection: a socket idle timeout does not
+    /// bound a client that trickles one header every 25 seconds.
+    pub read_header_timeout_ms: u64,
+    /// How long the body has to arrive after the headers. Zero disables.
+    pub read_body_timeout_ms: u64,
+    /// How long a response has to reach a peer that stopped reading.
+    pub write_timeout_ms: u64,
+    /// How long a keep-alive connection may sit between requests.
+    pub idle_timeout_ms: u64,
+    /// Largest accepted header block; past it the answer is 431.
+    pub max_header_bytes: usize,
+    /// Largest accepted body; past it the answer is 413.
+    pub max_body_bytes: usize,
+    /// Largest number of live connections; past it the answer is 503.
+    pub max_connections: usize,
+    /// `Server` response header, or empty to send none.
+    pub server_name: String,
+    /// How long one request's context lives before it is cancelled.
+    /// Zero leaves the request uncancelled by time - it still ends when
+    /// the handler returns, the peer disconnects, or shutdown begins.
+    pub request_timeout_ms: u64,
+}
+
+impl Default for ServerLimits {
+    fn default() -> Self {
+        Self {
+            read_header_timeout_ms: http_read_timeout_ms().unwrap_or(0),
+            read_body_timeout_ms: http_read_timeout_ms().unwrap_or(0),
+            write_timeout_ms: http_write_timeout_ms().unwrap_or(0),
+            idle_timeout_ms: http_read_timeout_ms().unwrap_or(0),
+            max_header_bytes: MAX_REQUEST_HEAD_BYTES,
+            max_body_bytes: MAX_REQUEST_BODY_BYTES,
+            max_connections: http_max_conn(),
+            server_name: concat!("gossamer/", env!("CARGO_PKG_VERSION")).to_string(),
+            request_timeout_ms: 0,
+        }
+    }
+}
+
+impl ServerLimits {
+    /// Cap on the raw, still-encoded bytes of one chunked frame. The
+    /// decoded cap bounds payload; this bounds framing overhead, so a
+    /// peer drip-feeding 1-byte chunks with maximal extensions cannot
+    /// grow the accumulator without limit.
+    fn max_chunked_raw_bytes(&self) -> usize {
+        self.max_body_bytes
+            .saturating_mul(2)
+            .saturating_add(16 * 1024)
+    }
+}
 
 /// Per-connection mutable scratch. Reused across keep-alive
 /// requests so steady state allocates only inside the gossamer
@@ -110,6 +159,8 @@ impl ConnScratch {
                 params: Vec::new(),
                 values: Vec::new(),
                 agent: None,
+                peer: String::new(),
+                context: 0,
             },
             response_buf: Vec::with_capacity(512),
         }
@@ -258,8 +309,11 @@ pub unsafe extern "C-unwind" fn gos_rt_http_serve(
         // through the scheduler's one global poller serializes high-throughput
         // traffic on the poller lock. Admission remains bounded below.
         accept_serve(listener, move |stream| {
+            let peer = stream
+                .peer_addr()
+                .map_or_else(|_| String::new(), |a| a.to_string());
             let mut conn = BlockingTcpConn(stream);
-            handle_http_conn(&mut conn, env_addr, fn_addr);
+            handle_http_conn_from(&mut conn, env_addr, fn_addr, &peer);
         });
     }
     // The accept loop exited: graceful shutdown request or a fatal
@@ -322,6 +376,9 @@ where
                     return;
                 };
                 let _guard = HttpConnGuard;
+                // One connection is one fault domain: a handler panic ends
+                // that request, not the server.
+                let _faults = crate::c_abi::panic::IsolatedFaults::enter();
                 serve(stream);
             });
         if spawned.is_err() {
@@ -333,6 +390,128 @@ where
             }
         }
     }
+}
+
+/// Accept loop for one configured [`ServerLimits`], with its own shutdown
+/// flag and in-flight count.
+///
+/// The process-wide loop [`accept_serve`] drives is the one-line
+/// `http::serve`; this is what a `http::Server` runs, so two servers in
+/// one process apply their own budgets and drain independently.
+pub(crate) fn accept_serve_with<F>(
+    listener: TcpListener,
+    limits: &ServerLimits,
+    shutdown: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    in_flight: &std::sync::Arc<AtomicUsize>,
+    serve_conn: F,
+) where
+    F: Fn(TcpStream, String, &ServerLimits) + Send + Sync + Clone + 'static,
+{
+    install_http_shutdown_signal_handler();
+    let _wake_guard = listener
+        .local_addr()
+        .ok()
+        .map(register_http_shutdown_wake_addr);
+    let live = std::sync::Arc::new(AtomicUsize::new(0));
+    loop {
+        if shutdown.load(Ordering::Acquire) || crate::sched_global::is_shutdown_requested() {
+            break;
+        }
+        let stream = match listener.accept() {
+            Ok((s, _)) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        };
+        if shutdown.load(Ordering::Acquire) || crate::sched_global::is_shutdown_requested() {
+            let _ = stream.shutdown(Shutdown::Both);
+            break;
+        }
+        let _ = stream.set_nodelay(true);
+        apply_socket_timeouts(&stream, limits);
+        if live.load(Ordering::Acquire) >= limits.max_connections {
+            let mut stream = stream;
+            use std::io::Write;
+            let _ = stream.write_all(RESPONSE_503_BYTES);
+            let _ = stream.flush();
+            continue;
+        }
+        let peer = stream
+            .peer_addr()
+            .map_or_else(|_| String::new(), |a| a.to_string());
+        live.fetch_add(1, Ordering::AcqRel);
+        in_flight.fetch_add(1, Ordering::AcqRel);
+        let serve = serve_conn.clone();
+        let conn_limits = limits.clone();
+        let live_for_thread = std::sync::Arc::clone(&live);
+        let in_flight_for_thread = std::sync::Arc::clone(in_flight);
+        let slot = std::sync::Arc::new(parking_lot::Mutex::new(Some(stream)));
+        let task_slot = std::sync::Arc::clone(&slot);
+        let spawned = std::thread::Builder::new()
+            .name("gos-http-conn".to_string())
+            .spawn(move || {
+                let _counts = ConnCounts {
+                    live: live_for_thread,
+                    in_flight: in_flight_for_thread,
+                };
+                let Some(stream) = task_slot.lock().take() else {
+                    return;
+                };
+                // One connection is one fault domain: a handler panic ends
+                // that request, not the server.
+                let _faults = crate::c_abi::panic::IsolatedFaults::enter();
+                serve(stream, peer, &conn_limits);
+            });
+        if spawned.is_err() {
+            live.fetch_sub(1, Ordering::AcqRel);
+            in_flight.fetch_sub(1, Ordering::AcqRel);
+            if let Some(mut stream) = slot.lock().take() {
+                use std::io::Write;
+                let _ = stream.write_all(RESPONSE_503_BYTES);
+                let _ = stream.flush();
+            }
+        }
+    }
+}
+
+/// Decrements a connection's live and in-flight counts on every exit path,
+/// including an unwind, so a shutdown drain cannot wait on a thread that
+/// already ended.
+struct ConnCounts {
+    live: std::sync::Arc<AtomicUsize>,
+    in_flight: std::sync::Arc<AtomicUsize>,
+}
+
+impl Drop for ConnCounts {
+    fn drop(&mut self) {
+        self.live.fetch_sub(1, Ordering::AcqRel);
+        self.in_flight.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Serves one accepted connection under `limits`.
+pub(crate) fn serve_one_connection(
+    stream: TcpStream,
+    peer: String,
+    limits: &ServerLimits,
+    env_addr: usize,
+    fn_addr: usize,
+) {
+    let mut conn = BlockingTcpConn(stream);
+    handle_http_conn_limited(&mut conn, env_addr, fn_addr, &peer, limits);
+}
+
+/// Applies one server's read and write deadlines to an accepted socket.
+fn apply_socket_timeouts(stream: &TcpStream, limits: &ServerLimits) {
+    let millis = |ms: u64| (ms != 0).then(|| std::time::Duration::from_millis(ms));
+    // The socket deadline is the longer of the two read phases; the header
+    // phase's own, shorter bound is enforced against the accumulator.
+    let read = millis(
+        limits
+            .read_header_timeout_ms
+            .max(limits.read_body_timeout_ms),
+    );
+    let _ = stream.set_read_timeout(read);
+    let _ = stream.set_write_timeout(millis(limits.write_timeout_ms));
 }
 
 struct HttpWakeAddrGuard(SocketAddr);
@@ -461,10 +640,13 @@ fn serve_tls_conn(
     let Ok(conn) = rustls::ServerConnection::new(server_config) else {
         return;
     };
+    let peer = stream
+        .peer_addr()
+        .map_or_else(|_| String::new(), |a| a.to_string());
     let mut tls = TlsServerConn {
         inner: rustls::StreamOwned::new(conn, stream),
     };
-    handle_http_conn(&mut tls, env_addr, fn_addr);
+    handle_http_conn_from(&mut tls, env_addr, fn_addr, &peer);
 }
 
 /// Builds a rustls `ServerConfig` from a PEM certificate chain and
@@ -493,7 +675,7 @@ fn build_server_config_from_pem(
     Ok(std::sync::Arc::new(config))
 }
 
-type HandlerFn = unsafe extern "C" fn(env: *mut u8, req: *mut GosHttpRequest) -> i128;
+type HandlerFn = unsafe extern "C-unwind" fn(env: *mut u8, req: *mut GosHttpRequest) -> i128;
 
 /// HTTP/2 cleartext server. Mirror of [`gos_rt_http_serve`] for
 /// HTTP/2 - the MIR lowerer emits this call when the compiled
@@ -525,6 +707,13 @@ pub unsafe extern "C" fn gos_rt_http2_bind_and_run_h2c(
 trait HttpIo {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize>;
     fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()>;
+    /// The socket behind this transport, for a peer-liveness peek. `None`
+    /// where there is no descriptor to peek - a TLS session's plaintext is
+    /// not the wire, and an in-memory transport has no peer at all.
+    #[cfg(unix)]
+    fn peer_socket(&self) -> Option<&TcpStream> {
+        None
+    }
 }
 
 /// Blocking accepted-connection transport. Its socket has deadlines applied
@@ -537,6 +726,10 @@ impl HttpIo for BlockingTcpConn {
     }
     fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
         std::io::Write::write_all(&mut self.0, buf)
+    }
+    #[cfg(unix)]
+    fn peer_socket(&self) -> Option<&TcpStream> {
+        Some(&self.0)
     }
 }
 
@@ -563,7 +756,25 @@ fn read_more<C: HttpIo>(conn: &mut C, accum: &mut Vec<u8>, buf: &mut [u8]) -> bo
     }
 }
 
+#[cfg(test)]
 fn handle_http_conn<C: HttpIo>(conn: &mut C, env_addr: usize, fn_addr: usize) {
+    handle_http_conn_from(conn, env_addr, fn_addr, "");
+}
+
+/// [`handle_http_conn`] with the peer address every request on this
+/// connection is stamped with.
+fn handle_http_conn_from<C: HttpIo>(conn: &mut C, env_addr: usize, fn_addr: usize, peer: &str) {
+    handle_http_conn_limited(conn, env_addr, fn_addr, peer, &ServerLimits::default());
+}
+
+/// [`handle_http_conn_from`] under one server's own limits.
+fn handle_http_conn_limited<C: HttpIo>(
+    conn: &mut C,
+    env_addr: usize,
+    fn_addr: usize,
+    peer: &str,
+    limits: &ServerLimits,
+) {
     let mut scratch = ConnScratch::new();
     let mut accum: Vec<u8> = Vec::with_capacity(8192);
     let mut buf: Vec<u8> = vec![0u8; 8192];
@@ -577,7 +788,7 @@ fn handle_http_conn<C: HttpIo>(conn: &mut C, env_addr: usize, fn_addr: usize) {
             // Bound the request head: a slow client that never sends the
             // terminating CRLFCRLF cannot grow `accum` without limit.
             // Mirrors the interp server's 8 KiB header cap.
-            if accum.len() > MAX_REQUEST_HEAD_BYTES {
+            if accum.len() > limits.max_header_bytes {
                 let _ = conn.write_all(RESPONSE_431_BYTES);
                 return;
             }
@@ -610,7 +821,7 @@ fn handle_http_conn<C: HttpIo>(conn: &mut C, env_addr: usize, fn_addr: usize) {
                 let _ = conn.write_all(RESPONSE_400_BYTES);
                 return;
             }
-            match assemble_chunked_request(&accum, header_end, MAX_REQUEST_BODY_BYTES) {
+            match assemble_chunked_request(&accum, header_end, limits) {
                 ChunkedAssembly::Incomplete => {
                     if read_more(conn, &mut accum, &mut buf) {
                         continue;
@@ -628,7 +839,7 @@ fn handle_http_conn<C: HttpIo>(conn: &mut C, env_addr: usize, fn_addr: usize) {
             }
         } else {
             let body_len = content_length(&accum[..header_end]);
-            if body_len > MAX_REQUEST_BODY_BYTES {
+            if body_len > limits.max_body_bytes {
                 let _ = conn.write_all(RESPONSE_413_BYTES);
                 return;
             }
@@ -660,6 +871,13 @@ fn handle_http_conn<C: HttpIo>(conn: &mut C, env_addr: usize, fn_addr: usize) {
             scratch.request.headers.clear();
             scratch.request.body.clear();
             scratch.request.body_offset = 0;
+            scratch.request.peer.clear();
+            scratch.request.peer.push_str(peer);
+            // The request's own context. It is cancelled below when the
+            // request ends, so anything the handler starts under it stops
+            // with the request rather than outliving it.
+            scratch.request.context =
+                crate::c_abi::context::open_request_context(limits.request_timeout_ms);
 
             // Chunked requests parse from the canonical de-chunked
             // rewrite; everything else parses straight from the
@@ -691,8 +909,36 @@ fn handle_http_conn<C: HttpIo>(conn: &mut C, env_addr: usize, fn_addr: usize) {
             let handler: HandlerFn = unsafe { std::mem::transmute(fn_addr) };
             let env_ptr = env_addr as *mut u8;
             let req_ptr: *mut GosHttpRequest = &raw mut scratch.request;
-            let result_ptr = unsafe { handler(env_ptr, req_ptr) };
+            // A peer that goes away while the handler runs cancels the
+            // request's context, so work it asked for stops instead of
+            // being paid for after it left.
+            #[cfg(unix)]
+            let _peer_watch = conn
+                .peer_socket()
+                .and_then(|socket| watch_for_disconnect(socket, scratch.request.context));
+            // A panicking handler is a server fault, not the program's: the
+            // client gets a 500 and the operator gets the record naming the
+            // request, exactly as the bytecode VM reports it.
+            let result_ptr =
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+                    handler(env_ptr, req_ptr)
+                })) {
+                    Ok(result) => result,
+                    Err(payload) => {
+                        report_request_panic(&payload, &scratch.request);
+                        cancel_request_context(&mut scratch.request);
+                        scratch.response_buf.extend_from_slice(RESPONSE_500_BYTES);
+                        unsafe { gos_rt_gc_reset() };
+                        if conn.write_all(&scratch.response_buf).is_err() {
+                            return;
+                        }
+                        accum.drain(..req_end);
+                        continue_sent = false;
+                        continue;
+                    }
+                };
             if let Some(handle) = streamed_ok_handle(result_ptr) {
+                cancel_request_context(&mut scratch.request);
                 // Streamed response (`Response::stream`): write the
                 // head, then drain the upstream reader straight to
                 // the connection in chunked frames - no buffering.
@@ -714,9 +960,11 @@ fn handle_http_conn<C: HttpIo>(conn: &mut C, env_addr: usize, fn_addr: usize) {
                 continue;
             }
             if !extract_response_into(result_ptr, &mut scratch.response_buf) {
+                report_request_error(result_ptr, &scratch.request);
                 scratch.response_buf.extend_from_slice(RESPONSE_500_BYTES);
             }
             unsafe { drop_handler_result(result_ptr) };
+            cancel_request_context(&mut scratch.request);
 
             // Legacy collector hook. RequestArenaGuard owns real arena
             // cleanup and deliberately remains live until the response has
@@ -734,6 +982,157 @@ fn handle_http_conn<C: HttpIo>(conn: &mut C, env_addr: usize, fn_addr: usize) {
         accum.drain(..req_end);
         continue_sent = false;
     }
+}
+
+/// Reports a handler that answered `Err`, or answered something that is
+/// not a response, in the `slog` record shape every tier's server path
+/// uses. The error's own message reaches the operator; the client still
+/// gets the bare 500 that leaks nothing about the fault.
+fn report_request_error(result: i128, req: &GosHttpRequest) {
+    let message = if crate::c_abi::vec::gos_rt_result_disc(result) == 0 {
+        "handler did not return http::Response".to_string()
+    } else {
+        let err = crate::c_abi::vec::gos_rt_result_payload(result)
+            as *const crate::c_abi::errors::GosError;
+        crate::c_abi::errors::error_chain_text(err)
+    };
+    crate::c_abi::slog::emit_json_line(
+        "ERROR",
+        "http: handler failed",
+        &[
+            ("method", req.method.as_str()),
+            ("path", req.url_path_only()),
+            ("status", "500"),
+            ("error", &message),
+        ],
+    );
+}
+
+/// Whether the peer closed its side of `fd`, by a zero-length peek.
+///
+/// `MSG_PEEK` leaves whatever is queued in place, so a pipelined request
+/// still arrives intact, and `MSG_DONTWAIT` keeps the probe from blocking
+/// on a peer that is merely quiet. Only a zero-byte answer means the peer
+/// is gone. Answers `false` on a platform with no such probe, where a
+/// request simply runs to completion after its client leaves.
+#[cfg(unix)]
+#[allow(unsafe_code)]
+#[must_use]
+pub fn peer_is_gone(fd: std::os::fd::RawFd) -> bool {
+    let mut probe = [0u8; 1];
+    // SAFETY: `fd` is a live socket owned by the caller for the duration
+    // of the call, and the buffer outlives it.
+    let seen = unsafe {
+        libc::recv(
+            fd,
+            probe.as_mut_ptr().cast(),
+            1,
+            libc::MSG_PEEK | libc::MSG_DONTWAIT,
+        )
+    };
+    seen == 0
+}
+
+#[cfg(not(unix))]
+#[must_use]
+pub fn peer_is_gone(_fd: i32) -> bool {
+    false
+}
+
+/// Watches an accepted socket for the peer going away while a request is
+/// in flight, and cancels that request's context when it does.
+///
+/// The connection thread is inside the handler and cannot also read, so
+/// the watch is a zero-length peek from its own thread: it never consumes
+/// a byte, so a pipelined successor still arrives intact. A client that
+/// aborts therefore stops the work it asked for instead of paying for it
+/// to finish.
+#[cfg(unix)]
+fn watch_for_disconnect(stream: &TcpStream, ctx: usize) -> Option<DisconnectWatch> {
+    use std::os::fd::AsRawFd;
+
+    if ctx == 0 {
+        return None;
+    }
+    let fd = stream.as_raw_fd();
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop = std::sync::Arc::clone(&done);
+    let handle = std::thread::Builder::new()
+        .name("gos-http-peer-watch".to_string())
+        .spawn(move || {
+            while !stop.load(Ordering::Acquire) {
+                // MSG_PEEK leaves the byte queued; MSG_DONTWAIT keeps the
+                // probe from blocking on a peer that is merely quiet.
+                // Zero means the peer closed its side.
+                if peer_is_gone(fd) {
+                    crate::c_abi::context::close_request_context(ctx);
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        })
+        .ok()?;
+    Some(DisconnectWatch {
+        done,
+        handle: Some(handle),
+    })
+}
+
+#[cfg(not(unix))]
+fn watch_for_disconnect(_stream: &TcpStream, _ctx: usize) -> Option<DisconnectWatch> {
+    None
+}
+
+/// Stops the peer watch when the request ends.
+struct DisconnectWatch {
+    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for DisconnectWatch {
+    fn drop(&mut self) {
+        self.done.store(true, Ordering::Release);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// Cancels and retires the request's context.
+///
+/// Runs on every path out of a served request, so a handler that spawned
+/// work under the context does not leave it running once the request it
+/// belongs to is over.
+fn cancel_request_context(request: &mut GosHttpRequest) {
+    let ctx = std::mem::replace(&mut request.context, 0);
+    if ctx != 0 {
+        crate::c_abi::context::close_request_context(ctx);
+    }
+}
+
+/// Reports a handler panic in the `slog` record shape every tier's server
+/// path uses, naming the request that provoked it.
+fn report_request_panic(payload: &Box<dyn std::any::Any + Send>, req: &GosHttpRequest) {
+    let message = payload
+        .downcast_ref::<&'static str>()
+        .map(|s| (*s).to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .or_else(|| {
+            payload
+                .downcast_ref::<gossamer_coro::GosPanic>()
+                .map(|p| p.0.clone())
+        })
+        .unwrap_or_else(|| "(non-string panic payload)".to_string());
+    crate::c_abi::slog::emit_json_line(
+        "ERROR",
+        "http: handler failed",
+        &[
+            ("method", req.method.as_str()),
+            ("path", req.url_path_only()),
+            ("status", "500"),
+            ("error", &message),
+        ],
+    );
 }
 
 /// True when the request signals `Expect: 100-continue` (RFC 9110
@@ -987,9 +1386,15 @@ fn find_crlf(buf: &[u8], from: usize, cap: usize) -> Option<usize> {
 /// The scan restarts from `header_end` on every call; cost is
 /// bounded by the caps, and chunked uploads are not the keep-alive
 /// fast path.
-fn assemble_chunked_request(accum: &[u8], header_end: usize, max_body: usize) -> ChunkedAssembly {
+fn assemble_chunked_request(
+    accum: &[u8],
+    header_end: usize,
+    limits: &ServerLimits,
+) -> ChunkedAssembly {
+    let max_body = limits.max_body_bytes;
+    let max_raw = limits.max_chunked_raw_bytes();
     let incomplete = || {
-        if accum.len() - header_end > MAX_CHUNKED_RAW_BYTES {
+        if accum.len() - header_end > max_raw {
             ChunkedAssembly::Reject(RESPONSE_413_BYTES)
         } else {
             ChunkedAssembly::Incomplete
@@ -1589,7 +1994,7 @@ mod tests {
         }
     }
 
-    unsafe extern "C" fn unbalanced_arena_handler(
+    unsafe extern "C-unwind" fn unbalanced_arena_handler(
         _env: *mut u8,
         _req: *mut GosHttpRequest,
     ) -> i128 {
@@ -1601,7 +2006,10 @@ mod tests {
         super::super::vec::pack_result(0, response as i64)
     }
 
-    unsafe extern "C" fn suspended_arena_handler(env: *mut u8, _req: *mut GosHttpRequest) -> i128 {
+    unsafe extern "C-unwind" fn suspended_arena_handler(
+        env: *mut u8,
+        _req: *mut GosHttpRequest,
+    ) -> i128 {
         let resumed = unsafe { &*(env.cast::<std::sync::atomic::AtomicUsize>()) };
         crate::c_abi::rc::gos_rt_arena_push();
         let ptr = crate::c_abi::gc::gos_rt_gc_alloc(64);
@@ -1848,6 +2256,8 @@ mod tests {
             params: Vec::new(),
             values: Vec::new(),
             agent: None,
+            peer: String::new(),
+            context: 0,
         };
         assert!(parse_request_into(&raw, header_end, &mut request));
         assert_eq!(request.method, "POST");
@@ -1883,6 +2293,8 @@ mod tests {
             params: Vec::new(),
             values: Vec::new(),
             agent: None,
+            peer: String::new(),
+            context: 0,
         };
         assert!(parse_request_into(raw, header_end, &mut request));
         // Interp `Headers` map view: lowercase names, trimmed
@@ -1903,7 +2315,7 @@ mod tests {
         let header_end = raw.len();
         raw.extend_from_slice(b"3\r\nabc\r\n0\r\nX-Trailer: tval\r\n\r\n");
         let ChunkedAssembly::Ready(c) =
-            assemble_chunked_request(&raw, header_end, MAX_REQUEST_BODY_BYTES)
+            assemble_chunked_request(&raw, header_end, &ServerLimits::default())
         else {
             panic!("complete frame must assemble");
         };
@@ -2056,6 +2468,8 @@ mod tests {
             params: Vec::new(),
             values: Vec::new(),
             agent: None,
+            peer: String::new(),
+            context: 0,
         }
     }
 
@@ -2092,7 +2506,7 @@ mod tests {
         raw.extend_from_slice(b"\r\n0\r\n\r\n");
 
         let ChunkedAssembly::Ready(c) =
-            assemble_chunked_request(&raw, header_end, MAX_REQUEST_BODY_BYTES)
+            assemble_chunked_request(&raw, header_end, &ServerLimits::default())
         else {
             panic!("complete frame must assemble");
         };
@@ -2119,7 +2533,7 @@ mod tests {
         for cut in header_end..frame_end {
             assert!(
                 matches!(
-                    assemble_chunked_request(&raw[..cut], header_end, MAX_REQUEST_BODY_BYTES),
+                    assemble_chunked_request(&raw[..cut], header_end, &ServerLimits::default()),
                     ChunkedAssembly::Incomplete
                 ),
                 "prefix of {cut} bytes must be Incomplete"
@@ -2129,7 +2543,7 @@ mod tests {
         // Pipelined bytes after the frame must not move the boundary.
         raw.extend_from_slice(b"GET /next HTTP/1.1\r\nHost: x\r\n\r\n");
         let ChunkedAssembly::Ready(c) =
-            assemble_chunked_request(&raw, header_end, MAX_REQUEST_BODY_BYTES)
+            assemble_chunked_request(&raw, header_end, &ServerLimits::default())
         else {
             panic!("complete frame must assemble");
         };
@@ -2146,7 +2560,7 @@ mod tests {
         raw.extend_from_slice(b"3\r\nabc\r\n0\r\nX-Trailer: tval\r\nbogus-no-colon\r\n\r\n");
 
         let ChunkedAssembly::Ready(c) =
-            assemble_chunked_request(&raw, header_end, MAX_REQUEST_BODY_BYTES)
+            assemble_chunked_request(&raw, header_end, &ServerLimits::default())
         else {
             panic!("complete frame must assemble");
         };
@@ -2169,7 +2583,7 @@ mod tests {
         let header_end = raw.len();
         raw.extend_from_slice(b"zz\r\nWiki\r\n0\r\n\r\n");
         let ChunkedAssembly::Reject(resp) =
-            assemble_chunked_request(&raw, header_end, MAX_REQUEST_BODY_BYTES)
+            assemble_chunked_request(&raw, header_end, &ServerLimits::default())
         else {
             panic!("bad hex size must be rejected");
         };
@@ -2180,7 +2594,7 @@ mod tests {
         let header_end = raw.len();
         raw.extend_from_slice(b"4\r\nWikiXX0\r\n\r\n");
         let ChunkedAssembly::Reject(resp) =
-            assemble_chunked_request(&raw, header_end, MAX_REQUEST_BODY_BYTES)
+            assemble_chunked_request(&raw, header_end, &ServerLimits::default())
         else {
             panic!("missing data CRLF must be rejected");
         };
@@ -2193,7 +2607,7 @@ mod tests {
         let header_end = raw.len();
         raw.extend_from_slice(format!("{:x}\r\n", MAX_REQUEST_BODY_BYTES + 1).as_bytes());
         let ChunkedAssembly::Reject(resp) =
-            assemble_chunked_request(&raw, header_end, MAX_REQUEST_BODY_BYTES)
+            assemble_chunked_request(&raw, header_end, &ServerLimits::default())
         else {
             panic!("hostile declared size must be rejected from the size line alone");
         };
@@ -2213,7 +2627,7 @@ mod tests {
         raw.extend_from_slice(b"0\r\n\r\n");
         assert!(17 * chunk.len() > MAX_REQUEST_BODY_BYTES);
         let ChunkedAssembly::Reject(resp) =
-            assemble_chunked_request(&raw, header_end, MAX_REQUEST_BODY_BYTES)
+            assemble_chunked_request(&raw, header_end, &ServerLimits::default())
         else {
             panic!("cumulative de-chunked size past the cap must be rejected");
         };
@@ -2231,11 +2645,11 @@ mod tests {
         // - the raw cap must stop it while still Incomplete.
         let mut raw = chunked_head();
         let header_end = raw.len();
-        while raw.len() - header_end <= MAX_CHUNKED_RAW_BYTES {
+        while raw.len() - header_end <= ServerLimits::default().max_chunked_raw_bytes() {
             raw.extend_from_slice(b"1\r\nA\r\n");
         }
         let ChunkedAssembly::Reject(resp) =
-            assemble_chunked_request(&raw, header_end, MAX_REQUEST_BODY_BYTES)
+            assemble_chunked_request(&raw, header_end, &ServerLimits::default())
         else {
             panic!("unterminated chunk stream past the raw cap must be rejected");
         };
@@ -2245,7 +2659,7 @@ mod tests {
     /// Echo handler used by the loopback tests: renders the body
     /// length, the body text, and the `X-Trailer` header value so
     /// assertions can see exactly what the handler observed.
-    unsafe extern "C" fn echo_handler(_env: *mut u8, req: *mut GosHttpRequest) -> i128 {
+    unsafe extern "C-unwind" fn echo_handler(_env: *mut u8, req: *mut GosHttpRequest) -> i128 {
         let request = unsafe { &*req };
         let body = &request.body[request.body_offset.min(request.body.len())..];
         let trailer = request
@@ -2265,6 +2679,27 @@ mod tests {
         super::super::vec::pack_result(0, resp as i64)
     }
 
+    /// Handler that raises the fault a Gossamer `panic!` raises, so the
+    /// connection core is exercised on the path a panicking handler takes.
+    unsafe extern "C-unwind" fn panicking_handler(
+        _env: *mut u8,
+        _req: *mut GosHttpRequest,
+    ) -> i128 {
+        crate::c_abi::panic::panic_text("handler exploded");
+        0
+    }
+
+    #[test]
+    fn panicking_handler_answers_500_and_keeps_serving() {
+        let addr = (panicking_handler as HandlerFn) as usize;
+        let raw = roundtrip_raw_bytes(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n", addr);
+        let text = String::from_utf8_lossy(&raw);
+        assert!(
+            text.starts_with("HTTP/1.1 500"),
+            "a panicking handler must answer 500, got: {text}"
+        );
+    }
+
     /// Runs the HTTP framing core for one accepted connection and returns
     /// everything the client read until the server closed. Non-blocking
     /// transport behaviour is covered by its dedicated netpoll tests.
@@ -2275,6 +2710,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
+            let _faults = crate::c_abi::panic::IsolatedFaults::enter();
             let mut conn = BlockingTcpConn(stream);
             handle_http_conn(&mut conn, 0, fn_addr);
         });
@@ -2452,6 +2888,8 @@ mod tests {
             params: Vec::new(),
             values: Vec::new(),
             agent: None,
+            peer: String::new(),
+            context: 0,
         };
         assert!(parse_request_into(&raw, header_end, &mut request));
         assert_eq!(request.body_offset, header_end);

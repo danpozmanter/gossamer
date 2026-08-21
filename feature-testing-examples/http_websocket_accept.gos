@@ -65,10 +65,10 @@ fn main() {
     await_ready(&"http://127.0.0.1:23891/x")
 
     let up: Vec<(String, String)> = Vec::from([
-        ("Upgrade", "websocket"),
-        ("Connection", "Upgrade"),
-        ("Sec-WebSocket-Version", "13"),
-        ("Sec-WebSocket-Key", SAMPLE_KEY),
+        ("Upgrade", "websocket")
+        ("Connection", "Upgrade")
+        ("Sec-WebSocket-Version", "13")
+        ("Sec-WebSocket-Key", SAMPLE_KEY)
     ])
     match http::request("GET", "http://127.0.0.1:23891/ws", "", up) {
         Ok(r) => println!("valid={}", r.body)

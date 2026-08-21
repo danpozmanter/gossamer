@@ -19,7 +19,7 @@ fn main() {
     let fast = time::after(time::Duration::from_millis(2))
     let slow = time::after(time::Duration::from_millis(500))
     select {
-        _ = fast.recv() => println!("fast"),
-        _ = slow.recv() => println!("slow"),
+        _ = fast.recv() => println!("fast")
+        _ = slow.recv() => println!("slow")
     }
 }

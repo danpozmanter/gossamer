@@ -148,6 +148,10 @@ fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
             native("httptest::server", native_httptest_server),
         ));
         globals.push((
+            "httptest::record",
+            native("httptest::record", native_httptest_record),
+        ));
+        globals.push((
             "http::serve_tls",
             native("http::serve_tls", native_http_serve_tls),
         ));
@@ -491,6 +495,10 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         &[
             ("now", builtin_time_now),
             ("now_ms", builtin_time_now_ms),
+            ("freeze", builtin_time_freeze),
+            ("advance", builtin_time_advance),
+            ("unfreeze", builtin_time_unfreeze),
+            ("is_frozen", builtin_time_is_frozen),
             ("sleep", crate::stdlib_builtins::time_completeness::builtin_time_sleep),
             ("sleep_ctx", builtin_time_sleep_ctx),
             ("format_rfc3339", builtin_time_format_rfc3339),

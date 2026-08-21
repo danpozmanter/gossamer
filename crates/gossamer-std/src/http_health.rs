@@ -277,6 +277,7 @@ mod tests {
             body: Vec::new(),
             context: crate::context::Context::background(),
             trailers: None,
+            peer_addr: String::new(),
         }
     }
 

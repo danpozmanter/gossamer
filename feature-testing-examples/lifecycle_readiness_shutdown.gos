@@ -1,0 +1,45 @@
+// Cross-tier regression for `std::lifecycle`: readiness gates a probe
+// endpoint, `shutdown()` begins the drain, `await_shutdown()` returns,
+// and readiness drops on its own so a load balancer stops sending work
+// before the drain starts. The state is process-global in the runtime,
+// which is what makes the answer the same on the bytecode VM and in a
+// native build.
+//
+// Self-terminating: the client runs in main and the program returns
+// normally. Binds a fixed loopback port - serialized under
+// SERVER_PORT_LOCK by `lifecycle_readiness_shutdown_parity_across_tiers`
+// in crates/gossamer-cli/tests/tier_parity.rs.
+
+use std::{errors, http, lifecycle, time}
+
+fn healthz(_r: http::Request) -> Result<http::Response, errors::Error> {
+    if lifecycle::is_ready() {
+        Ok(http::Response::text(200, "ready"))
+    } else {
+        Ok(http::Response::text(503, "not ready"))
+    }
+}
+
+fn main() {
+    go serve()
+    time::sleep(300)
+    println!("before ready: {}", probe())
+    lifecycle::ready()
+    println!("after ready: {}", probe())
+    println!("shutting down: {}", lifecycle::is_shutting_down())
+    lifecycle::shutdown()
+    lifecycle::await_shutdown()
+    println!("shutting down: {}", lifecycle::is_shutting_down())
+    println!("ready after shutdown: {}", lifecycle::is_ready())
+}
+
+fn serve() {
+    let _ = http::serve("127.0.0.1:23895", healthz)
+}
+
+fn probe() -> i64 {
+    match http::get("http://127.0.0.1:23895/healthz", Vec::from([])) {
+        Ok(r) => r.status
+        Err(_) => -1
+    }
+}

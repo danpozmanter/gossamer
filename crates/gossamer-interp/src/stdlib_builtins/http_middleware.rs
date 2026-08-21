@@ -356,6 +356,65 @@ fn header_value(pairs: &[(String, String)]) -> Value {
     ))
 }
 
+/// A `Request` value's `name` field as text, or `""` when it is absent or
+/// not a string.
+fn request_field_str<'a>(request: &'a Value, name: &str) -> &'a str {
+    match request {
+        Value::Struct(inner) => inner
+            .fields
+            .iter()
+            .find(|(f, _)| (**f) == name)
+            .and_then(|(_, v)| match v {
+                Value::String(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .unwrap_or(""),
+        _ => "",
+    }
+}
+
+/// A `Request` value's headers as the name/value pairs a middleware reads.
+fn request_header_pairs(request: &Value) -> Vec<(String, String)> {
+    match request {
+        Value::Struct(inner) => header_pairs(
+            inner
+                .fields
+                .iter()
+                .find(|(f, _)| (**f) == "headers")
+                .map(|(_, v)| v),
+        ),
+        _ => Vec::new(),
+    }
+}
+
+/// Byte length of a `Request` value's body.
+fn request_body_len(request: &Value) -> usize {
+    match request {
+        Value::Struct(inner) => inner
+            .fields
+            .iter()
+            .find(|(f, _)| (**f) == "body")
+            .map_or(0, |(_, v)| body_bytes(v).len()),
+        _ => 0,
+    }
+}
+
+/// Builds the `Response` value a control answers with when it decides
+/// before the inner handler runs.
+fn response_value_from_parts(parts: &mw_std::ResponseParts) -> Value {
+    Value::struct_(
+        "Response",
+        vec![
+            ("status", Value::Int(parts.status)),
+            (
+                "body",
+                Value::String(SmolStr::from(String::from_utf8_lossy(&parts.body).as_ref())),
+            ),
+            ("headers", header_value(&parts.headers)),
+        ],
+    )
+}
+
 /// `Middleware::serve(mw, request)` - invoked by `http::serve`'s dispatch
 /// when the handler is a composed `Middleware`. Runs the wrapped handler
 /// (a struct handler's `{T}::serve` or a nested `Middleware::serve`) then
@@ -384,11 +443,22 @@ pub(crate) fn native_middleware_serve(
         return Ok(err_variant("middleware: missing inner handler"));
     };
     let request = args.get(1).cloned().unwrap_or(Value::Unit);
-    let inner_serve = match &inner {
-        Value::Struct(s) => format!("{}::serve", s.name),
-        _ => "serve".to_string(),
+    // Request phase: a control that sheds load, rejects an oversized body,
+    // or demands a credential answers here, before the inner handler runs -
+    // which is the only point at which shedding load saves any work.
+    let request_headers = request_header_pairs(&request);
+    let request_parts = mw_std::RequestParts {
+        method: request_field_str(&request, "method"),
+        path: request_field_str(&request, "path"),
+        headers: &request_headers,
+        body_len: request_body_len(&request),
+        peer_addr: request_field_str(&request, "peer_addr"),
     };
-    let result = dispatch.call_fn(&inner_serve, vec![inner, request])?;
+    let accepts_gzip = request_parts.accepts_gzip();
+    if let mw_std::Before::Answer(parts) = mw_std::apply_request(kind, &config, &request_parts) {
+        return Ok(ok_variant(response_value_from_parts(&parts)));
+    }
+    let result = crate::value::dispatch_request(dispatch, &inner, request)?;
     // The wrapped serve returns `Ok(Response)` or a bare `Response`.
     let response = match &result {
         Value::Variant(v) if v.name == "Ok" && !v.fields.is_empty() => &v.fields[0],
@@ -413,7 +483,7 @@ pub(crate) fn native_middleware_serve(
         body: body_bytes(&body_field),
         headers: header_pairs(field("headers").as_ref()),
     };
-    mw_std::apply(kind, &config, &mut parts);
+    mw_std::apply_with_request(kind, &config, &mut parts, accepts_gzip);
     let mut new_fields: Vec<(&'static str, Value)> = resp_inner
         .fields
         .iter()

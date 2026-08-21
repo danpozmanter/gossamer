@@ -211,6 +211,8 @@ pub fn collect_process_allocator(force: bool) {
 
 pub mod builtins;
 pub mod c_abi;
+pub mod clock;
+pub mod comptime_paths;
 pub mod coverage;
 pub mod pprof;
 pub mod preempt;
@@ -220,6 +222,8 @@ pub mod safe_daemon;
 pub mod safe_env;
 pub mod sampler;
 pub mod sched;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod smtp;
 // The process-global scheduler singleton ties together OS worker
 // threads and a mio netpoller. The wasm playground links a
 // cooperative single-threaded equivalent (eager goroutines; a

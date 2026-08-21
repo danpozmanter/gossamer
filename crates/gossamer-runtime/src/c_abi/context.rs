@@ -173,6 +173,38 @@ fn done_chan_of(node: &GosCtx) -> *mut GosChan {
     *slot as *mut GosChan
 }
 
+/// Contexts belonging to requests currently in flight.
+///
+/// Shutdown cancels every one, so a handler that watches its context
+/// learns the process is going down at the same moment the accept loop
+/// stops taking new work.
+static LIVE_REQUESTS: LazyLock<Mutex<Vec<usize>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+
+/// Opens a request-scoped context, optionally with a deadline, and
+/// records it as in flight.
+#[must_use]
+pub fn open_request_context(timeout_ms: u64) -> usize {
+    let deadline = (timeout_ms != 0).then(|| Instant::now() + Duration::from_millis(timeout_ms));
+    let addr = alloc_ctx(deadline, 0) as usize;
+    LIVE_REQUESTS.lock().push(addr);
+    addr
+}
+
+/// Cancels a request's context and stops tracking it.
+pub fn close_request_context(addr: usize) {
+    LIVE_REQUESTS.lock().retain(|live| *live != addr);
+    cancel_node(addr);
+}
+
+/// Cancels every in-flight request's context. Called when shutdown
+/// begins, so a handler watching its context can stop early rather than
+/// hold the drain to its deadline.
+pub fn cancel_live_requests() {
+    for addr in std::mem::take(&mut *LIVE_REQUESTS.lock()) {
+        cancel_node(addr);
+    }
+}
+
 /// `context::Context::background()` - a root context, never cancelled,
 /// no deadline.
 #[unsafe(no_mangle)]

@@ -768,10 +768,42 @@ pub const OS_USER: StdModule = StdModule {
 
 pub const LIFECYCLE: StdModule = StdModule {
     path: "std::lifecycle",
-    summary: "Graceful-shutdown coordinator with signal handling and sd_notify support.",
-    items: &[StdItem {
-        name: "Lifecycle",
-        kind: StdItemKind::Type,
-        doc: "Registers shutdown hooks, listens for SIGTERM / SIGINT, and notifies systemd.",
-    }],
+    summary: "Process readiness and graceful shutdown, with systemd sd_notify. Shutdown is observed, not dispatched: wait for it, then drain with ordinary statements - `go serve()`, `lifecycle::ready()`, `lifecycle::await_shutdown()`, then the cleanup.",
+    items: &[
+        StdItem {
+            name: "ready",
+            kind: StdItemKind::Function,
+            doc: "`ready()` - declare the process ready to serve traffic; emits `sd_notify(READY=1)` under a service manager.",
+        },
+        StdItem {
+            name: "set_ready",
+            kind: StdItemKind::Function,
+            doc: "`set_ready(ready: bool)` - set readiness explicitly. Readiness also drops on its own when shutdown begins.",
+        },
+        StdItem {
+            name: "is_ready",
+            kind: StdItemKind::Function,
+            doc: "`is_ready() -> bool` - whether the process is ready to serve. False before `ready()` and once shutdown has begun, so a readiness probe fails ahead of the drain.",
+        },
+        StdItem {
+            name: "shutdown",
+            kind: StdItemKind::Function,
+            doc: "`shutdown()` - begin the graceful shutdown sequence: readiness drops and every server stops accepting while in-flight requests finish.",
+        },
+        StdItem {
+            name: "is_shutting_down",
+            kind: StdItemKind::Function,
+            doc: "`is_shutting_down() -> bool` - whether shutdown has begun. A long-running worker polls it to leave on its own terms.",
+        },
+        StdItem {
+            name: "await_shutdown",
+            kind: StdItemKind::Function,
+            doc: "`await_shutdown()` - block until shutdown begins, whether from SIGTERM, SIGINT, or `shutdown()`. The statements after it are the drain sequence.",
+        },
+        StdItem {
+            name: "notify_status",
+            kind: StdItemKind::Function,
+            doc: "`notify_status(message: String)` - report free-text status to the service manager (`sd_notify(STATUS=...)`).",
+        },
+    ],
 };

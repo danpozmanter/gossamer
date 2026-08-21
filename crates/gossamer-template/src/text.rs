@@ -110,6 +110,9 @@ impl Value {
 #[derive(Debug, Clone)]
 pub struct Template {
     nodes: Vec<Node>,
+    /// Bodies bound by `{{define "name"}}`, reachable from anywhere in
+    /// the template through `{{template "name"}}`.
+    defines: std::collections::HashMap<String, Vec<Node>>,
 }
 
 #[derive(Debug, Clone)]
@@ -124,6 +127,19 @@ enum Node {
     Range {
         path: String,
         body: Vec<Node>,
+    },
+    /// `{{with .x}}..{{else}}..{{end}}` - renders the body with `.x` as
+    /// the dot when it is truthy, the else branch otherwise.
+    With {
+        path: String,
+        then_body: Vec<Node>,
+        else_body: Vec<Node>,
+    },
+    /// `{{template "name"}}` / `{{template "name" .arg}}` - renders a
+    /// template `{{define}}` bound, with the argument as its dot.
+    Invoke {
+        name: String,
+        arg: Option<String>,
     },
 }
 
@@ -141,12 +157,28 @@ struct PipelineStage {
 struct Pipeline {
     source: String,
     stages: Vec<PipelineStage>,
+    /// The substitution asked to be written through unescaped, spelled
+    /// `{{ safe .x }}` or `{{ .x | safe }}`. Only an escaping renderer
+    /// acts on it; the text engine escapes nothing either way.
+    raw: bool,
 }
 
 fn parse_pipeline(expr: &str) -> Pipeline {
     let mut parts = expr.split('|').map(str::trim);
-    let source = parts.next().unwrap_or("").to_string();
+    let mut source = parts.next().unwrap_or("").to_string();
+    let mut raw = false;
+    if let Some(rest) = source.strip_prefix("safe ") {
+        raw = true;
+        source = rest.trim().to_string();
+    }
     let stages: Vec<PipelineStage> = parts
+        .filter(|seg| {
+            if seg.trim() == "safe" {
+                raw = true;
+                return false;
+            }
+            true
+        })
         .map(|seg| {
             let mut tokens = seg.split_whitespace();
             let func = tokens.next().unwrap_or("").to_string();
@@ -154,7 +186,11 @@ fn parse_pipeline(expr: &str) -> Pipeline {
             PipelineStage { func, args }
         })
         .collect();
-    Pipeline { source, stages }
+    Pipeline {
+        source,
+        stages,
+        raw,
+    }
 }
 
 /// Registry of named functions usable inside `{{ ... }}`
@@ -272,11 +308,12 @@ pub enum Error {
 pub fn parse(source: &str) -> Result<Template, Error> {
     let tokens = tokenize(source);
     let mut iter = tokens.into_iter().peekable();
-    let nodes = parse_block(&mut iter, false)?;
+    let mut defines = std::collections::HashMap::new();
+    let nodes = parse_block(&mut iter, false, &mut defines)?;
     if iter.peek().is_some() {
         return Err(Error::Unbalanced("trailing tokens".into()));
     }
-    Ok(Template { nodes })
+    Ok(Template { nodes, defines })
 }
 
 impl Template {
@@ -297,16 +334,32 @@ impl Template {
     /// ([`FuncMap::defaults`]). Use [`FuncMap::defaults`] +
     /// [`FuncMap::add`] to extend with custom helpers.
     pub fn render_with_funcs(&self, data: &Value, funcs: &FuncMap) -> Result<String, Error> {
+        self.render_with(data, funcs, None)
+    }
+
+    /// Renders with an optional [`ValueEscaper`] applied to every
+    /// substituted value. The HTML engine renders this AST with one, so a
+    /// value inside `if`, `range`, `with`, or `template` is escaped by the
+    /// context it lands in.
+    pub fn render_with(
+        &self,
+        data: &Value,
+        funcs: &FuncMap,
+        escaper: Option<ValueEscaper<'_>>,
+    ) -> Result<String, Error> {
         let defaults = FuncMap::defaults();
-        let mut out = String::with_capacity(64);
-        render_block(
-            &self.nodes,
-            std::slice::from_ref(data),
+        let ctx = RenderCtx {
             funcs,
-            &defaults,
-            &mut out,
-        )?;
-        Ok(out)
+            defaults: &defaults,
+            defines: &self.defines,
+            escaper,
+        };
+        let mut sink = Sink {
+            out: String::with_capacity(64),
+            literal: String::new(),
+        };
+        render_nodes(&self.nodes, std::slice::from_ref(data), &ctx, &mut sink)?;
+        Ok(sink.out)
     }
 }
 
@@ -325,14 +378,8 @@ pub fn render_with_funcs(source: &str, data: &Value, funcs: &FuncMap) -> Result<
 /// Writes the rendered template into `out`. Useful for streaming.
 pub fn render_to(template: &Template, data: &Value, out: &mut String) -> Result<(), Error> {
     let empty = FuncMap::new();
-    let defaults = FuncMap::defaults();
-    render_block(
-        &template.nodes,
-        std::slice::from_ref(data),
-        &empty,
-        &defaults,
-        out,
-    )
+    out.push_str(&template.render_with(data, &empty, None)?);
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -457,6 +504,7 @@ fn apply_trims(tokens: &mut [Token]) {
 fn parse_block<I>(
     tokens: &mut std::iter::Peekable<I>,
     inside_block: bool,
+    defines: &mut std::collections::HashMap<String, Vec<Node>>,
 ) -> Result<Vec<Node>, Error>
 where
     I: Iterator<Item = Token>,
@@ -484,12 +532,12 @@ where
                 }
                 if let Some(rest) = trimmed.strip_prefix("if ") {
                     let cond = rest.trim().to_string();
-                    let then_body = parse_block(tokens, true)?;
+                    let then_body = parse_block(tokens, true, defines)?;
                     let mut else_body = Vec::new();
                     if let Some(Token::Action { body, .. }) = tokens.peek() {
                         if body.trim() == "else" {
                             tokens.next();
-                            else_body = parse_block(tokens, true)?;
+                            else_body = parse_block(tokens, true, defines)?;
                         }
                     }
                     let closer = tokens.next();
@@ -504,13 +552,55 @@ where
                     });
                 } else if let Some(rest) = trimmed.strip_prefix("range ") {
                     let path = rest.trim().to_string();
-                    let body = parse_block(tokens, true)?;
+                    let body = parse_block(tokens, true, defines)?;
                     let closer = tokens.next();
                     match closer {
                         Some(Token::Action { body, .. }) if body.trim() == "end" => {}
                         _ => return Err(Error::Unbalanced("expected end after range".into())),
                     }
                     nodes.push(Node::Range { path, body });
+                } else if let Some(rest) = trimmed.strip_prefix("with ") {
+                    let path = rest.trim().to_string();
+                    let then_body = parse_block(tokens, true, defines)?;
+                    let mut else_body = Vec::new();
+                    if let Some(Token::Action { body, .. }) = tokens.peek() {
+                        if body.trim() == "else" {
+                            tokens.next();
+                            else_body = parse_block(tokens, true, defines)?;
+                        }
+                    }
+                    match tokens.next() {
+                        Some(Token::Action { body, .. }) if body.trim() == "end" => {}
+                        _ => return Err(Error::Unbalanced("expected end after with".into())),
+                    }
+                    nodes.push(Node::With {
+                        path,
+                        then_body,
+                        else_body,
+                    });
+                } else if let Some(rest) = trimmed.strip_prefix("define ") {
+                    let name = unquote(rest.trim());
+                    let body = parse_block(tokens, true, defines)?;
+                    match tokens.next() {
+                        Some(Token::Action { body, .. }) if body.trim() == "end" => {}
+                        _ => return Err(Error::Unbalanced("expected end after define".into())),
+                    }
+                    // A definition contributes no output where it is
+                    // written; it is reachable by name from anywhere.
+                    defines.insert(name, body);
+                } else if let Some(rest) = trimmed.strip_prefix("template ") {
+                    let mut parts = rest.trim().splitn(2, char::is_whitespace);
+                    let name = unquote(parts.next().unwrap_or("").trim());
+                    let arg = parts
+                        .next()
+                        .map(str::trim)
+                        .filter(|a| !a.is_empty())
+                        .map(str::to_string);
+                    nodes.push(Node::Invoke { name, arg });
+                } else if trimmed == "block" || trimmed.starts_with("block ") {
+                    return Err(Error::Unbalanced(
+                        "block is not supported; write define plus template".into(),
+                    ));
                 } else {
                     nodes.push(Node::Substitute(parse_pipeline(trimmed)));
                 }
@@ -518,6 +608,15 @@ where
         }
     }
     Ok(nodes)
+}
+
+/// Strips one layer of matching double quotes, for a `{{define "x"}}` or
+/// `{{template "x"}}` name.
+fn unquote(text: &str) -> String {
+    text.strip_prefix('"')
+        .and_then(|t| t.strip_suffix('"'))
+        .unwrap_or(text)
+        .to_string()
 }
 
 fn resolve(stack: &[Value], expr: &str) -> Value {
@@ -549,19 +648,55 @@ fn resolve(stack: &[Value], expr: &str) -> Value {
     Value::Null
 }
 
-fn render_block(
+/// Transforms one substituted value before it is written out.
+///
+/// The first argument is the literal template text emitted so far, which
+/// is what decides the context the value lands in - HTML text, an
+/// attribute, a URL, a script. Literal text only: an already-escaped
+/// value cannot change the context of the one after it, and including it
+/// would let data steer the classifier.
+///
+/// The third argument is whether the substitution asked to be written
+/// through unescaped (`{{ safe .x }}`).
+///
+/// The HTML engine supplies one so `if`, `range`, `with`, and `template`
+/// all escape by context; the text engine supplies none and writes the
+/// value through.
+pub type ValueEscaper<'a> = &'a dyn Fn(&str, &str, bool) -> String;
+
+/// Everything a render pass carries that does not change as it descends.
+struct RenderCtx<'a> {
+    funcs: &'a FuncMap,
+    defaults: &'a FuncMap,
+    defines: &'a std::collections::HashMap<String, Vec<Node>>,
+    escaper: Option<ValueEscaper<'a>>,
+}
+
+/// Output being assembled, plus the literal text an escaper classifies by.
+struct Sink {
+    out: String,
+    literal: String,
+}
+
+fn render_nodes(
     nodes: &[Node],
     stack: &[Value],
-    funcs: &FuncMap,
-    defaults: &FuncMap,
-    out: &mut String,
+    ctx: &RenderCtx<'_>,
+    sink: &mut Sink,
 ) -> Result<(), Error> {
     for node in nodes {
         match node {
-            Node::Text(t) => out.push_str(t),
+            Node::Text(t) => {
+                sink.out.push_str(t);
+                sink.literal.push_str(t);
+            }
             Node::Substitute(pipe) => {
-                let value = apply_pipeline(stack, pipe, funcs, defaults)?;
-                out.push_str(&value.to_text());
+                let value = apply_pipeline(stack, pipe, ctx.funcs, ctx.defaults)?;
+                let text = value.to_text();
+                match ctx.escaper {
+                    Some(escape) => sink.out.push_str(&escape(&sink.literal, &text, pipe.raw)),
+                    None => sink.out.push_str(&text),
+                }
             }
             Node::If {
                 cond,
@@ -570,9 +705,36 @@ fn render_block(
             } => {
                 let value = resolve(stack, cond);
                 if value.truthy() {
-                    render_block(then_body, stack, funcs, defaults, out)?;
+                    render_nodes(then_body, stack, ctx, sink)?;
                 } else {
-                    render_block(else_body, stack, funcs, defaults, out)?;
+                    render_nodes(else_body, stack, ctx, sink)?;
+                }
+            }
+            Node::With {
+                path,
+                then_body,
+                else_body,
+            } => {
+                let value = resolve(stack, path);
+                if value.truthy() {
+                    let mut child_stack: Vec<Value> = stack.to_vec();
+                    child_stack.push(value);
+                    render_nodes(then_body, &child_stack, ctx, sink)?;
+                } else {
+                    render_nodes(else_body, stack, ctx, sink)?;
+                }
+            }
+            Node::Invoke { name, arg } => {
+                let Some(body) = ctx.defines.get(name) else {
+                    return Err(Error::Parse(format!("template {name:?} is not defined")));
+                };
+                match arg {
+                    Some(expr) => {
+                        let mut child_stack: Vec<Value> = stack.to_vec();
+                        child_stack.push(resolve(stack, expr));
+                        render_nodes(body, &child_stack, ctx, sink)?;
+                    }
+                    None => render_nodes(body, stack, ctx, sink)?,
                 }
             }
             Node::Range { path, body } => {
@@ -581,7 +743,7 @@ fn render_block(
                     for item in items {
                         let mut child_stack: Vec<Value> = stack.to_vec();
                         child_stack.push(item);
-                        render_block(body, &child_stack, funcs, defaults, out)?;
+                        render_nodes(body, &child_stack, ctx, sink)?;
                     }
                 } else if let Value::Map(map) = value {
                     for (k, v) in map {
@@ -590,7 +752,7 @@ fn render_block(
                         framed.insert("Value".to_string(), v);
                         let mut child_stack: Vec<Value> = stack.to_vec();
                         child_stack.push(Value::Map(framed));
-                        render_block(body, &child_stack, funcs, defaults, out)?;
+                        render_nodes(body, &child_stack, ctx, sink)?;
                     }
                 }
             }
@@ -605,7 +767,7 @@ fn apply_pipeline(
     funcs: &FuncMap,
     defaults: &FuncMap,
 ) -> Result<Value, Error> {
-    let mut value = resolve(stack, &pipe.source);
+    let mut value = resolve_source(stack, &pipe.source, funcs, defaults)?;
     for stage in &pipe.stages {
         let f = lookup_func(stage.func.as_str(), funcs, defaults)?;
         let mut args: Vec<Value> = Vec::with_capacity(1 + stage.args.len());
@@ -616,6 +778,36 @@ fn apply_pipeline(
         value = f(&args)?;
     }
     Ok(value)
+}
+
+/// Resolves a pipeline's head.
+///
+/// A head is normally a field path or a literal. Go also spells a call
+/// prefix-first - `{{ len .items }}` - so a head whose first word names a
+/// function is that call over the words after it. `{{ .items | len }}` is
+/// the same call written pipe-first.
+fn resolve_source(
+    stack: &[Value],
+    source: &str,
+    funcs: &FuncMap,
+    defaults: &FuncMap,
+) -> Result<Value, Error> {
+    let source = source.trim();
+    let Some((head, rest)) = source.split_once(char::is_whitespace) else {
+        return Ok(resolve(stack, source));
+    };
+    let rest = rest.trim();
+    if rest.is_empty() || head.starts_with('.') || head.starts_with('"') {
+        return Ok(resolve(stack, source));
+    }
+    let Ok(f) = lookup_func(head, funcs, defaults) else {
+        return Ok(resolve(stack, source));
+    };
+    let args: Vec<Value> = rest
+        .split_whitespace()
+        .map(|a| resolve_literal_or_field(stack, a))
+        .collect();
+    f(&args)
 }
 
 fn lookup_func(

@@ -38,8 +38,8 @@ fn main() {
     println!("form_count={}", http::form::count(&form))
 
     let dispositions: Vec<String> = Vec::from([
-        "form-data; name=\"alpha\"",
-        "form-data; name=\"file\"; filename=\"data.bin\"",
+        "form-data; name=\"alpha\""
+        "form-data; name=\"file\"; filename=\"data.bin\""
     ])
     let mut fields: Vec<Field> = Vec::from([])
     for disp in dispositions {

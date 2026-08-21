@@ -358,6 +358,71 @@ impl<'a> Builder<'a> {
         Some(dest)
     }
 
+    /// `httptest::record(handler, method, path, body)` - calls a handler
+    /// with a request built in memory. Same handler dispatch as
+    /// [`Self::lower_http_serve`], with the request's parts in place of an
+    /// address and no listener at all.
+    pub(crate) fn lower_httptest_record(
+        &mut self,
+        handler_expr: &HirExpr,
+        method_expr: &HirExpr,
+        path_expr: &HirExpr,
+        body_expr: &HirExpr,
+        span: Span,
+    ) -> Option<Local> {
+        let method_local = self.lower_expr(method_expr)?;
+        let path_local = self.lower_expr(path_expr)?;
+        let body_local = self.lower_expr(body_expr)?;
+        let handler_local = self.lower_expr(handler_expr)?;
+        let fn_addr_local = self.handler_fn_addr_local(handler_local, "serve", span)?;
+        let result_ty = self.result_response_error_adt_ty();
+        let dest = self.fresh(result_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_httptest_record".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(method_local)),
+                Operand::Copy(Place::local(path_local)),
+                Operand::Copy(Place::local(body_local)),
+                Operand::Copy(Place::local(handler_local)),
+                Operand::Copy(Place::local(fn_addr_local)),
+            ],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
+    /// `server.serve(handler)` - the `http::Server` counterpart of
+    /// [`Self::lower_http_serve`]. The server carries its own listener and
+    /// limits, so only the handler's environment and dispatch address
+    /// cross with it.
+    pub(crate) fn lower_http_server_serve(
+        &mut self,
+        server_local: Local,
+        handler_expr: &HirExpr,
+        span: Span,
+    ) -> Option<Local> {
+        let handler_local = self.lower_expr(handler_expr)?;
+        let fn_addr_local = self.handler_fn_addr_local(handler_local, "serve", span)?;
+        let result_ty = self.result_unit_error_adt_ty();
+        let dest = self.fresh(result_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_http_server_serve".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(server_local)),
+                Operand::Copy(Place::local(handler_local)),
+                Operand::Copy(Place::local(fn_addr_local)),
+            ],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
     pub(crate) fn lower_http_serve(
         &mut self,
         addr_expr: &HirExpr,
@@ -440,16 +505,36 @@ impl<'a> Builder<'a> {
         method: &str,
         span: Span,
     ) -> Option<Local> {
-        let handler_runtime_kind = self.local_runtime_kind.get(&handler_local).copied();
+        // A handler built here carries its construction tag; one arriving
+        // as a parameter - the shape `go run(server, app)` takes - carries
+        // none, so its named type answers instead. Without that a `Router`
+        // passed in reached a struct-method symbol nothing declares.
+        let handler_ty = self.locals[handler_local.0 as usize].ty;
+        let handler_runtime_kind = self
+            .local_runtime_kind
+            .get(&handler_local)
+            .copied()
+            .or_else(|| self.runtime_kind_from_ty(handler_ty));
         let serve_fn_name = match handler_runtime_kind {
             Some("http::Router") => "gos_rt_router_serve".to_string(),
             Some("http::FileServer") => "gos_rt_file_server_serve".to_string(),
             Some("http::Proxy") => "gos_rt_proxy_forward".to_string(),
             Some("http::Middleware") => "gos_rt_middleware_serve".to_string(),
             _ => {
-                let handler_ty = self.locals[handler_local.0 as usize].ty;
-                let handler_struct = self.struct_name_of(handler_ty)?;
-                self.handler_dispatch_symbol(format!("{handler_struct}::{method}"))
+                // A plain `fn` is a handler in its own right. It carries no
+                // environment, so it dispatches through its synthesized
+                // env-ignoring thunk and the runtime keeps one call shape for
+                // every handler form. A closure is already env-shaped: the
+                // handler value IS its environment.
+                if let Some(fn_name) = self.local_fn_name.get(&handler_local).cloned() {
+                    crate::lower::helpers::handler_env_wrap_name(&fn_name)
+                } else if let Some(closure_name) = self.local_closure.get(&handler_local).cloned() {
+                    self.handler_dispatch_symbol(closure_name)
+                } else {
+                    let handler_ty = self.locals[handler_local.0 as usize].ty;
+                    let handler_struct = self.struct_name_of(handler_ty)?;
+                    self.handler_dispatch_symbol(format!("{handler_struct}::{method}"))
+                }
             }
         };
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);

@@ -475,11 +475,11 @@ pub unsafe extern "C" fn gos_rt_router_add_fn(
 /// returns its `*mut GosResult`. Returns a 404-shaped result when
 /// nothing matches.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_router_serve(
+pub unsafe extern "C-unwind" fn gos_rt_router_serve(
     router: *const GosRouter,
     req: *mut GosHttpRequest,
 ) -> i128 {
-    ffi_entry!(0i128, {
+    ffi_entry_passthrough!(0i128, {
         if router.is_null() || req.is_null() {
             return router_404_result();
         }
@@ -499,7 +499,7 @@ pub unsafe extern "C" fn gos_rt_router_serve(
                         route.fn_addr,
                         super::fn_registry::FnKind::HttpHandlerBare,
                     );
-                    type BareFn = unsafe extern "C" fn(req: *mut GosHttpRequest) -> i128;
+                    type BareFn = unsafe extern "C-unwind" fn(req: *mut GosHttpRequest) -> i128;
                     let handler: BareFn = unsafe { std::mem::transmute(route.fn_addr) };
                     return unsafe { handler(req) };
                 }
@@ -508,7 +508,7 @@ pub unsafe extern "C" fn gos_rt_router_serve(
                     super::fn_registry::FnKind::HttpHandlerEnv,
                 );
                 type HandlerFn =
-                    unsafe extern "C" fn(env: *mut u8, req: *mut GosHttpRequest) -> i128;
+                    unsafe extern "C-unwind" fn(env: *mut u8, req: *mut GosHttpRequest) -> i128;
                 let handler: HandlerFn = unsafe { std::mem::transmute(route.fn_addr) };
                 return unsafe { handler(route.env as *mut u8, req) };
             }
@@ -1020,7 +1020,7 @@ pub unsafe extern "C" fn gos_rt_ws_frame_text(payload: *const c_char) -> *mut c_
 }
 
 impl GosHttpRequest {
-    fn url_path_only(&self) -> &str {
+    pub(crate) fn url_path_only(&self) -> &str {
         match self.url.split('?').next() {
             Some(p) => p,
             None => self.url.as_str(),

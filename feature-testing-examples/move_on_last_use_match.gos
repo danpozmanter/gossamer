@@ -70,9 +70,9 @@ fn main() {
     let f = two(E::Wrap(11))
 
     let tree = Tree::Node(Vec::from([
-        Tree::Leaf(1),
-        Tree::Node(Vec::from([Tree::Leaf(2), Tree::Leaf(3)])),
-        Tree::Leaf(4),
+        Tree::Leaf(1)
+        Tree::Node(Vec::from([Tree::Leaf(2), Tree::Leaf(3)]))
+        Tree::Leaf(4)
     ]))
     let bumped = bump(tree)
     let s = total(&bumped)

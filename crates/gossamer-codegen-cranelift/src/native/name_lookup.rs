@@ -152,6 +152,8 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
             "gos_rt_http_request_path",
             "gos_rt_http_request_method",
             "gos_rt_http_request_query",
+            "gos_rt_http_request_peer_addr",
+            "gos_rt_http_request_context",
             "gos_rt_http_request_headers",
             "gos_rt_http_request_body_str",
             "gos_rt_http_request_raw_body",

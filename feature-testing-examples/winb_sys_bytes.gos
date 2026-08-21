@@ -46,8 +46,8 @@ fn main() {
 
     // split edge cases.
     let cases = #[
-        ("a,b,,c", ","), ("abc", ","), (",a,", ","),
-        ("a--b--c", "--"), ("", ","), ("xx", ""),
+        ("a,b,,c", ","), ("abc", ","), (",a,", ",")
+        ("a--b--c", "--"), ("", ","), ("xx", "")
     ]
     for (h, sep) in cases {
         let parts = bytes::split(h.as_bytes(), sep.as_bytes())

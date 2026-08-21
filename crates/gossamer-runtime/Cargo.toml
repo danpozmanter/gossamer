@@ -148,6 +148,11 @@ zstd = "0.13"
 bzip2 = { version = "0.5", features = ["static"] }
 ed25519-dalek = { version = "2", default-features = false, features = ["std", "fast", "pkcs8", "pem"] }
 p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std", "pem"] }
+# RSA signature verification for the RS256 / RS384 / RS512 JWT family -
+# what Auth0, Okta, Entra ID, Google, Cognito, and Keycloak mint. Same
+# version and provider `rustls` already links, and verification only, so
+# the compiled tier gains no key-generation surface.
+ring = "0.17"
 signal-hook = { workspace = true }
 libloading = "0.8"
 crossbeam-deque = { workspace = true }

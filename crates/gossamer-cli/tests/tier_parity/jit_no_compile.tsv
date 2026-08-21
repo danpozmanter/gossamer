@@ -110,10 +110,10 @@ feature-testing-examples/crypto_extra.gos	no hot body
 feature-testing-examples/crypto_password.gos	no hot body
 feature-testing-examples/crypto_sha_hex.gos	no hot body
 feature-testing-examples/cycle_shared_goroutines.gos	bytecode-only local
+feature-testing-examples/debug_impl_dispatch.gos	bytecode-only local
 feature-testing-examples/debug_option_result.gos	no hot body
 feature-testing-examples/debugfmt_aggregates.gos	bytecode-only local
 feature-testing-examples/debugfmt_floats.gos	no hot body
-feature-testing-examples/debug_impl_dispatch.gos	bytecode-only local
 feature-testing-examples/debugfmt_nested_adts.gos	bytecode-only local
 feature-testing-examples/debugfmt_nested_floats.gos	bytecode-only local
 feature-testing-examples/deref_string_concat.gos	string append
@@ -173,6 +173,7 @@ feature-testing-examples/http_serve_err_binding.gos	bytecode-only local
 feature-testing-examples/http_session.gos	no hot body
 feature-testing-examples/http_session_roundtrip.gos	bytecode-only local
 feature-testing-examples/http_surface.gos	bytecode-only local
+feature-testing-examples/httptest_record_and_clock.gos	no hot body
 feature-testing-examples/httptest_static_server.gos	no hot body
 feature-testing-examples/inferred_map_dispatch.gos	bytecode-only local
 feature-testing-examples/inline_index_remap.gos	admission gate
@@ -217,6 +218,7 @@ feature-testing-examples/nested_struct_items.gos	no hot body
 feature-testing-examples/nested_struct_record_update.gos	bytecode-only local
 feature-testing-examples/nested_vec_capture.gos	callable local
 feature-testing-examples/net_ip.gos	no hot body
+feature-testing-examples/net_smtp_send.gos	bytecode-only local
 feature-testing-examples/net_tcp_echo.gos	bytecode-only local
 feature-testing-examples/net_tls_client.gos	bytecode-only local
 feature-testing-examples/net_tls_client_modes.gos	bytecode-only local

@@ -834,15 +834,27 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                         retain_sites.push((block_idx, stmt_idx, l, 1));
                     }
                 }
-                // Wrapping an RC value into a `Result` (`Ok(v)` / `Err(v)`).
-                // The Result carries the reference out (it flows into the
-                // return or is unwrapped by `?`), so the payload is
-                // acquired here. Without this, `Ok(J::Obj(ps))` released the
-                // enum payload while the returned Result still pointed at
-                // it - a use-after-free that dropped a node from every
+                // Wrapping a heap value into a `Result` or `Option`
+                // (`Ok(v)` / `Err(v)` / `Some(v)`). The carrier takes the
+                // reference out - it flows into the return, or `unwrap` /
+                // `?` hands it to whoever takes the payload - so the
+                // payload is acquired here. Without this, `Ok(J::Obj(ps))`
+                // released the enum payload while the returned Result
+                // still pointed at it, dropping a node from every
                 // `self.parse()?`-built tree.
+                //
+                // A `Vec` payload counts the same way. It carries no RC
+                // header, so it is reached through the vec allocator's own
+                // count rather than `rc_operand` - and without its share,
+                // `Some(v).unwrap()` left one reference with two owners,
+                // the binding it came from and the binding it was
+                // unwrapped into, so the second release freed storage the
+                // first had already returned.
                 Rvalue::CallIntrinsic { name, args } if *name == "gos_rt_result_new" => {
-                    if let Some(l) = args.get(1).and_then(&rc_operand) {
+                    if let Some(l) = args
+                        .get(1)
+                        .and_then(|a| rc_operand(a).or_else(|| vec_operand(a)))
+                    {
                         retain_sites.push((block_idx, stmt_idx, l, 1));
                     }
                 }

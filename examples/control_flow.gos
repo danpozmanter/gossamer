@@ -82,9 +82,9 @@ fn main() {
 
     // trait-dispatched pattern
     let shapes = #[
-        Shape::Circle(1.5),
-        Shape::Rect(2.0, 4.0),
-        Shape::Line,
+        Shape::Circle(1.5)
+        Shape::Rect(2.0, 4.0)
+        Shape::Line
     ]
     for s in shapes {
         println!("area={}", area(s))

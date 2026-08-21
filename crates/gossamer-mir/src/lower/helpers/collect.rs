@@ -532,6 +532,128 @@ pub(crate) fn handler_ok_wrap_name(fn_name: &str) -> String {
     format!("{fn_name}::__ok_wrap")
 }
 
+/// Symbol name of the synthesized env-ignoring handler thunk for `fn_name`.
+pub(crate) fn handler_env_wrap_name(fn_name: &str) -> String {
+    format!("{fn_name}::__env_wrap")
+}
+
+/// True when `ty` is what an HTTP handler answers - a bare
+/// `http::Response` or a `Result<http::Response, E>`.
+fn is_handler_ret_ty(tcx: &TyCtxt, ty: Ty) -> bool {
+    use gossamer_types::TyKind;
+    if is_bare_response_ty(tcx, ty) {
+        return true;
+    }
+    match tcx.kind_of(ty) {
+        TyKind::Adt { def, substs } if def.local == u32::MAX => substs
+            .types()
+            .first()
+            .is_some_and(|ok| is_bare_response_ty(tcx, *ok)),
+        _ => false,
+    }
+}
+
+/// Synthesizes the `(env, request) -> Result<Response, Error>` adapter for a
+/// handler declared as a plain `fn(http::Request)`.
+///
+/// Every handler slot in the HTTP runtime - `http::serve`, a middleware's
+/// inner handler - invokes its target through the two-argument
+/// `(env, request)` C-ABI a `serve` method and a capturing closure already
+/// have. A plain function has no environment, so the thunk supplies one the
+/// call discards, letting a single dispatch shape serve every handler form.
+fn handler_env_wrap_body(
+    tcx: &mut TyCtxt,
+    wrapped_name: &str,
+    req_ty: Ty,
+    ret_ty: Ty,
+    span: Span,
+) -> Body {
+    let i64_ty = tcx.int_ty(gossamer_types::IntTy::I64);
+    let decl = |ty: Ty| LocalDecl {
+        ty,
+        debug_name: None,
+        mutable: false,
+        region: false,
+    };
+    // [RETURN, env, request] - the wrapped handler's own return type is
+    // what the thunk answers, so a bare-Response handler keeps reaching
+    // its `::__ok_wrap` and the packed-Result ABI stays uniform.
+    let inner_name = if is_bare_response_ty(tcx, ret_ty) {
+        handler_ok_wrap_name(wrapped_name)
+    } else {
+        wrapped_name.to_string()
+    };
+    let thunk_ret = if is_bare_response_ty(tcx, ret_ty) {
+        let e = tcx.dyn_error_ty();
+        let substs = gossamer_types::Substs::from_types([ret_ty, e]);
+        tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX),
+            substs,
+        })
+    } else {
+        ret_ty
+    };
+    // [RETURN, env, request-word, request-slot].
+    //
+    // The runtime hands the thunk ONE WORD - the request's address - so
+    // the incoming parameter is declared as a word. The wrapped handler's
+    // own parameter is an aggregate the caller passes by pointer, so the
+    // word is copied into a local of that shape and the call passes it.
+    // Declaring the parameter with the handler's type instead makes the
+    // backend treat the incoming pointer as the aggregate's storage and
+    // read the request's first field as if it were the request.
+    let locals = vec![decl(thunk_ret), decl(i64_ty), decl(i64_ty), decl(req_ty)];
+    Body {
+        name: handler_env_wrap_name(wrapped_name),
+        def: None,
+        arity: 2,
+        locals,
+        blocks: vec![
+            BasicBlock {
+                id: BlockId(0),
+                stmts: vec![Statement {
+                    kind: StatementKind::Assign {
+                        place: Place::local(Local(3)),
+                        rvalue: Rvalue::Use(Operand::Copy(Place::local(Local(2)))),
+                    },
+                    span,
+                }],
+                terminator: Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(inner_name)),
+                    args: vec![Operand::Copy(Place::local(Local(3)))],
+                    destination: Place::local(Local::RETURN),
+                    target: Some(BlockId(1)),
+                },
+                span,
+            },
+            BasicBlock {
+                id: BlockId(1),
+                stmts: Vec::new(),
+                terminator: Terminator::Return,
+                span,
+            },
+        ],
+        span,
+    }
+}
+
+/// Pushes the env-ignoring thunk for a free `fn` whose shape is a handler's:
+/// one request parameter answering a `Response` or `Result<Response, E>`.
+fn maybe_push_handler_env_wrap(decl: &HirFn, tcx: &mut TyCtxt, span: Span, out: &mut Vec<Body>) {
+    let Some(ret) = decl.ret else { return };
+    if decl.params.len() != 1 || !is_handler_ret_ty(tcx, ret) {
+        return;
+    }
+    let req_ty = decl.params[0].ty;
+    out.push(handler_env_wrap_body(
+        tcx,
+        &decl.name.name,
+        req_ty,
+        ret,
+        span,
+    ));
+}
+
 /// Synthesizes the `(args…) -> Result<Response, Error>` adapter body for a
 /// handler that declares a bare `http::Response` return. The HTTP runtime
 /// invokes every registered handler through the packed-Result i128 C-ABI
@@ -1031,6 +1153,7 @@ pub(crate) fn collect_item(
             ) {
                 out.push(body);
                 maybe_push_handler_ok_wrap(&mangled, 1, tcx, item.span, out);
+                maybe_push_handler_env_wrap(&mangled, tcx, item.span, out);
             }
         }
         HirItemKind::Impl(decl) => {
@@ -1188,6 +1311,13 @@ pub(crate) fn lower_fn(
                 "Response" => Some("http::Response"),
                 "Scanner" => Some("bufio::Scanner"),
                 "Client" => Some("http::Client"),
+                // A server, its router, and a streamed body all reach a
+                // goroutine as parameters - `go run(server, app)` - where
+                // there is no construction to tag, so the named type is
+                // what identifies them.
+                "Router" => Some("http::Router"),
+                "Server" => Some("http::Server"),
+                "ResponseStream" => Some("http::ResponseStream"),
                 _ => None,
             };
             // Secondary fallback: parameters named with stdlib-

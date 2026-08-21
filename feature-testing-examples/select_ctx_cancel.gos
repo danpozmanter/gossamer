@@ -13,8 +13,8 @@ use std::context
 // Reports 1 when the context's done channel is ready (closed), else 0.
 fn poll_done(ctx: context::Context) -> i64 {
     select {
-        _ = ctx.done_chan().recv() => 1,
-        default => 0,
+        _ = ctx.done_chan().recv() => 1
+        default => 0
     }
 }
 
@@ -50,8 +50,8 @@ mod select_ctx_tests {
 
     fn ready(ctx: context::Context) -> i64 {
         select {
-            _ = ctx.done_chan().recv() => 1,
-            default => 0,
+            _ = ctx.done_chan().recv() => 1
+            default => 0
         }
     }
 

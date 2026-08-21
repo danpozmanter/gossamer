@@ -984,6 +984,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/bytes_builder.gos"),
     spec("feature-testing-examples/net_ip.gos"),
     spec("feature-testing-examples/net_tcp_echo.gos"),
+    spec("feature-testing-examples/net_smtp_send.gos"),
     Spec {
         // Unix-domain sockets are POSIX-only; on Windows every entry
         // point returns an Err, so the program prints a bind-failure
@@ -1396,10 +1397,27 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/elemty_struct_keyed_map.gos"),
     spec("feature-testing-examples/elemty_btreemap_shapes.gos"),
     spec("feature-testing-examples/elemty_narrow_element_stride.gos"),
+    // A `Vec` payload wrapped in an `Option` / `Result`: the carrier must
+    // take its own reference, or `unwrap` leaves one reference with two
+    // owners and the second release frees storage the first returned.
+    spec("feature-testing-examples/option_vec_payload_ownership.gos"),
+    // The test surface: a handler called in memory, and a wall clock a test
+    // controls rather than waits on.
+    spec("feature-testing-examples/httptest_record_and_clock.gos"),
+    // Assets folded into the program at compile time, resolved against the
+    // source that embeds them rather than the build's working directory.
+    spec("feature-testing-examples/comptime_embedded_assets.gos"),
 ];
 
 const DEDICATED_FEATURE_TESTING_EXAMPLES: &[&str] = &[
     "http_bare_handler.gos",
+    "http_plain_fn_handler.gos",
+    "http_middleware_controls.gos",
+    "lifecycle_readiness_shutdown.gos",
+    "http_server_object.gos",
+    "http_request_context.gos",
+    "http_response_stream.gos",
+    "http_request_cohort_arena.gos",
     "http_bare_aliases.gos",
     "http_client_cookie_jar.gos",
     "http_client_verbs.gos",

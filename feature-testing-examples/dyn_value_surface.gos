@@ -10,12 +10,12 @@ fn describe(v: DynValue) -> String {
 
 fn scalars() -> String {
     let parts = #[
-        describe(DynValue::nil()),
-        describe(DynValue::bool(true)),
-        describe(DynValue::int(-7)),
-        describe(DynValue::float(1.5)),
-        describe(DynValue::char('z')),
-        describe(DynValue::string("hi")),
+        describe(DynValue::nil())
+        describe(DynValue::bool(true))
+        describe(DynValue::int(-7))
+        describe(DynValue::float(1.5))
+        describe(DynValue::char('z'))
+        describe(DynValue::string("hi"))
     ]
     parts.join(" ")
 }

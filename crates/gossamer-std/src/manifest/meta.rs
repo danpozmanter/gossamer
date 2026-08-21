@@ -296,12 +296,19 @@ pub const TESTING: StdModule = StdModule {
 
 pub const HTTPTEST: StdModule = StdModule {
     path: "std::httptest",
-    summary: "Loopback HTTP fixtures for source integration tests.",
-    items: &[StdItem {
-        name: "server",
-        kind: StdItemKind::Function,
-        doc: "server(status, body) -> String: starts an isolated loopback static-response server and returns its http:// base URL. Use http::get or http::Client as the test client. The server is test-process scoped and stops when that process exits.",
-    }],
+    summary: "Fixtures for testing HTTP code. A handler is a function from a request to a response, so `record` calls one in memory; a test that is about the wire builds an `http::Server`, binds port 0, and reads the address back.",
+    items: &[
+        StdItem {
+            name: "record",
+            kind: StdItemKind::Function,
+            doc: "`record(handler, method, path, body) -> Result<Response, Error>` - calls `handler` with a request built in memory and answers its response. No socket, no port, no accept loop.",
+        },
+        StdItem {
+            name: "server",
+            kind: StdItemKind::Function,
+            doc: "server(status, body) -> String: starts an isolated loopback static-response server and returns its http:// base URL. Use http::get or http::Client as the test client. The server is test-process scoped and stops when that process exits. For a programmable server, build an `http::Server` over a `Router` and bind port 0.",
+        },
+    ],
 };
 
 pub const IMAGE: StdModule = StdModule {
@@ -424,6 +431,26 @@ pub const TIME: StdModule = StdModule {
             name: "parse_rfc3339",
             kind: StdItemKind::Function,
             doc: "Parses an RFC 3339 timestamp into a `SystemTime`.",
+        },
+        StdItem {
+            name: "freeze",
+            kind: StdItemKind::Function,
+            doc: "`freeze(ms)` - pin the wall clock at `ms` since the epoch, so a test over anything time-dependent - a token's expiry, a rate-limit window, a cache's TTL - reads a clock it controls. The monotonic clock and `sleep` are untouched: this pins what the program is told the time is, not how long anything takes.",
+        },
+        StdItem {
+            name: "advance",
+            kind: StdItemKind::Function,
+            doc: "`advance(ms) -> i64` - move a frozen wall clock forward and answer the new reading. Freezes at the current reading first when it is not already frozen.",
+        },
+        StdItem {
+            name: "unfreeze",
+            kind: StdItemKind::Function,
+            doc: "`unfreeze()` - return to the real wall clock.",
+        },
+        StdItem {
+            name: "is_frozen",
+            kind: StdItemKind::Function,
+            doc: "`is_frozen() -> bool` - whether the wall clock is pinned.",
         },
         StdItem {
             name: "now_ms",

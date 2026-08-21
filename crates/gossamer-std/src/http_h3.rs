@@ -61,6 +61,7 @@ fn request_from_wire(req: gossamer_http3::H3Request) -> Request {
         body: req.body,
         context: crate::context::Context::background(),
         trailers: None,
+        peer_addr: String::new(),
     }
 }
 

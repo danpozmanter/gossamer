@@ -22,7 +22,7 @@ use gossamer_http3::{H3Request, H3Response};
 use super::http_client::GosHttpRequest;
 use super::http_server::extract_response_struct;
 
-type HandlerFn = unsafe extern "C" fn(env: *mut u8, req: *mut GosHttpRequest) -> i128;
+type HandlerFn = unsafe extern "C-unwind" fn(env: *mut u8, req: *mut GosHttpRequest) -> i128;
 
 /// Reads a nullable C string into an owned `String`; an empty
 /// default is substituted for a null pointer.
@@ -54,6 +54,8 @@ fn gos_request_from_wire(req: H3Request) -> GosHttpRequest {
         params: Vec::new(),
         values: Vec::new(),
         agent: None,
+        peer: String::new(),
+        context: 0,
     }
 }
 

@@ -1780,6 +1780,16 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::jwt",
+        name: "header",
+        signature: "fn header(token: String) -> Result<String, errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::jwt",
+        name: "verify",
+        signature: "fn verify(token: String, alg: String, key: String, leeway_secs: i64, issuer: String, audience: String) -> Result<String, errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::jwt",
         name: "verify_eddsa",
         signature: "fn verify_eddsa(token: String, verifying_key_pem: String, leeway_secs: i64) -> Result<String, errors::Error>",
     },
@@ -2739,6 +2749,16 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         signature: "fn glob(pattern: String) -> Result<Vec<String>, errors::Error>",
     },
     StdFunctionSignature {
+        module_path: "std::net::smtp",
+        name: "send",
+        signature: "fn send(addr: String, from: String, to: String, subject: String, body: String) -> Result<(), errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::net::smtp",
+        name: "send_auth",
+        signature: "fn send_auth(addr: String, from: String, to: String, subject: String, body: String, username: String, password: String) -> Result<(), errors::Error>",
+    },
+    StdFunctionSignature {
         module_path: "std::sort",
         name: "sort_stable",
         signature: "fn sort_stable(xs: Vec<T>) -> Vec<T>",
@@ -2902,6 +2922,41 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         module_path: "std::result",
         name: "unwrap_or_else",
         signature: "fn unwrap_or_else<T, E>(f: Fn(E) -> T, value: Result<T, E>) -> T",
+    },
+    StdFunctionSignature {
+        module_path: "std::lifecycle",
+        name: "ready",
+        signature: "fn ready() -> ()",
+    },
+    StdFunctionSignature {
+        module_path: "std::lifecycle",
+        name: "set_ready",
+        signature: "fn set_ready(ready: bool) -> ()",
+    },
+    StdFunctionSignature {
+        module_path: "std::lifecycle",
+        name: "is_ready",
+        signature: "fn is_ready() -> bool",
+    },
+    StdFunctionSignature {
+        module_path: "std::lifecycle",
+        name: "shutdown",
+        signature: "fn shutdown() -> ()",
+    },
+    StdFunctionSignature {
+        module_path: "std::lifecycle",
+        name: "is_shutting_down",
+        signature: "fn is_shutting_down() -> bool",
+    },
+    StdFunctionSignature {
+        module_path: "std::lifecycle",
+        name: "await_shutdown",
+        signature: "fn await_shutdown() -> ()",
+    },
+    StdFunctionSignature {
+        module_path: "std::lifecycle",
+        name: "notify_status",
+        signature: "fn notify_status(message: String) -> ()",
     },
     StdFunctionSignature {
         module_path: "std::runtime",
@@ -3315,6 +3370,11 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::httptest",
+        name: "record",
+        signature: "fn record(handler: http::Handler, method: String, path: String, body: String) -> Result<http::Response, errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::httptest",
         name: "server",
         signature: "fn server(status: i64, body: String) -> String",
     },
@@ -3357,6 +3417,26 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         module_path: "std::time",
         name: "now",
         signature: "fn now() -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::time",
+        name: "advance",
+        signature: "fn advance(ms: i64) -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::time",
+        name: "freeze",
+        signature: "fn freeze(ms: i64) -> ()",
+    },
+    StdFunctionSignature {
+        module_path: "std::time",
+        name: "is_frozen",
+        signature: "fn is_frozen() -> bool",
+    },
+    StdFunctionSignature {
+        module_path: "std::time",
+        name: "unfreeze",
+        signature: "fn unfreeze() -> ()",
     },
     StdFunctionSignature {
         module_path: "std::time",

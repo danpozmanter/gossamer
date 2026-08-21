@@ -1250,6 +1250,18 @@ impl<'a> Builder<'a> {
     /// a `HashSet<String>` flowing in as a function parameter or out as a
     /// return value carries no `local_runtime_kind` entry, so method
     /// dispatch on it would miss without this fallback.
+    /// The `context::Context` handle type, as the checker's sentinel Adt,
+    /// so a `request.context` read carries the identity its methods
+    /// dispatch on.
+    pub(crate) fn context_handle_ty(&mut self) -> Ty {
+        let def = gossamer_resolve::DefId::local(u32::MAX - 11);
+        self.tcx.register_def_name(def, "context::Context");
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def,
+            substs: gossamer_types::Substs::new(),
+        })
+    }
+
     pub(crate) fn runtime_kind_from_ty(&self, ty: Ty) -> Option<&'static str> {
         use gossamer_types::TyKind;
         let mut cur = ty;
@@ -1287,6 +1299,17 @@ impl<'a> Builder<'a> {
             // the named sentinel Adt the checker now resolves the
             // annotation to, so `conn.sock.read(..)` dispatches to the
             // runtime helper instead of an undefined name-global symbol.
+            // A `http::Server` passed to a goroutine as a parameter - the
+            // shape `go run_server(s)` takes - carries no construction tag,
+            // so its methods recover the handle kind from the named type.
+            // A `Router` reaching a handler slot as a parameter - the shape
+            // `go run(server, app)` takes - carries no construction tag, so
+            // it recovers its handle kind from the named type and dispatches
+            // through the router's own serve rather than a struct method
+            // nothing declares.
+            "Router" => Some("http::Router"),
+            "ResponseStream" => Some("http::ResponseStream"),
+            "Server" => Some("http::Server"),
             "TcpStream" => Some("net::TcpStream"),
             "TcpListener" => Some("net::TcpListener"),
             "UdpSocket" => Some("net::UdpSocket"),
@@ -1340,6 +1363,31 @@ impl<'a> Builder<'a> {
     /// this structural probe as a fallback.
     pub(crate) fn expr_is_send_result(&self, expr: &HirExpr) -> bool {
         self.expr_runtime_kind(expr) == Some("http::SendResult")
+    }
+
+    /// Whether `ty`'s Ok / Some payload is itself a `Result` or `Option`.
+    ///
+    /// A carrier is two words and does not fit the payload half, so a
+    /// nested one is boxed and the payload holds its address. A reader
+    /// that hands the payload back as a value must load it rather than
+    /// treat the address as the carrier.
+    pub(crate) fn carrier_payload_is_carrier(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        loop {
+            match self.tcx.kind_of(cur) {
+                TyKind::Ref { inner, .. } => cur = *inner,
+                TyKind::Adt { def, substs }
+                    if def.local == u32::MAX || def.local == u32::MAX - 1 =>
+                {
+                    return substs
+                        .types()
+                        .first()
+                        .is_some_and(|payload| self.is_result_or_option_adt(*payload));
+                }
+                _ => return false,
+            }
+        }
     }
 
     pub(crate) fn is_result_or_option_adt(&self, ty: Ty) -> bool {

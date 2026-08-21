@@ -42,6 +42,11 @@ struct CtxNode {
     cancelled: AtomicBool,
     deadline: Option<Instant>,
     parent: Option<i64>,
+    /// A context outside this registry whose cancellation this node
+    /// follows. A request's context takes the server's, so a peer that
+    /// disconnects and a process that begins shutting down each reach the
+    /// handler without a second watcher to keep in step.
+    follows: Option<gossamer_std::context::Context>,
     children: parking_lot::Mutex<Vec<i64>>,
     /// The context's "done" channel. `cancel` closes it so a
     /// `select { _ = ctx.done_chan().recv() => … }` arm becomes ready
@@ -154,11 +159,20 @@ fn node_of(id: i64) -> Option<Arc<CtxNode>> {
 }
 
 fn alloc_node(deadline: Option<Instant>, parent: Option<i64>) -> Value {
+    alloc_node_following(deadline, parent, None)
+}
+
+fn alloc_node_following(
+    deadline: Option<Instant>,
+    parent: Option<i64>,
+    follows: Option<gossamer_std::context::Context>,
+) -> Value {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let node = Arc::new(CtxNode {
         cancelled: AtomicBool::new(false),
         deadline,
         parent,
+        follows,
         children: parking_lot::Mutex::new(Vec::new()),
         chan: Channel::new(),
     });
@@ -178,6 +192,44 @@ fn alloc_node(deadline: Option<Instant>, parent: Option<i64>) -> Value {
         schedule_deadline(deadline, id);
     }
     ctx_handle(id)
+}
+
+/// Contexts belonging to requests currently in flight.
+///
+/// Shutdown cancels every one, so a handler that watches its context
+/// learns the process is going down at the same moment the accept loop
+/// stops taking new work.
+static LIVE_REQUESTS: parking_lot::Mutex<Vec<i64>> = parking_lot::Mutex::new(Vec::new());
+
+/// Cancels every in-flight request's context.
+pub(crate) fn cancel_live_requests() {
+    for id in std::mem::take(&mut *LIVE_REQUESTS.lock()) {
+        cancel_node(id);
+    }
+}
+
+/// Allocates a request-scoped context and answers `(value, id)`.
+///
+/// The id is what the server cancels with when the request ends; the
+/// value is what the handler reads off `request.context`.
+pub(crate) fn request_context(
+    deadline_ms: i64,
+    follows: Option<gossamer_std::context::Context>,
+) -> (Value, i64) {
+    let deadline = (deadline_ms > 0)
+        .then(|| Instant::now() + std::time::Duration::from_millis(deadline_ms as u64));
+    let value = alloc_node_following(deadline, None, follows);
+    let id = ctx_id_of(&value).unwrap_or(-1);
+    LIVE_REQUESTS.lock().push(id);
+    (value, id)
+}
+
+/// Cancels a context the server created, and every descendant.
+pub(crate) fn cancel_request_context(id: i64) {
+    if id >= 0 {
+        LIVE_REQUESTS.lock().retain(|live| *live != id);
+        cancel_node(id);
+    }
 }
 
 pub(crate) fn builtin_ctx_background(_args: &[Value]) -> RuntimeResult<Value> {
@@ -250,6 +302,9 @@ fn node_is_cancelled(id: i64) -> bool {
             return true;
         };
         if node.cancelled.load(Ordering::Acquire) {
+            return true;
+        }
+        if node.follows.as_ref().is_some_and(|ctx| ctx.is_cancelled()) {
             return true;
         }
         if let Some(deadline) = node.deadline

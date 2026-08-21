@@ -369,10 +369,6 @@ fn render_code_line<'src>(
     let mut prev: Option<Emitted<'src>> = None;
     let mut prev_was_comment = false;
     let mut first_code = true;
-    let line_has_field = line
-        .toks
-        .iter()
-        .any(|tok| tok.kind == TokenKind::Punct(Punct::Colon));
     for (tok_index, tok) in line.toks.iter().enumerate() {
         if tok.is_comment() {
             if !body.is_empty() {
@@ -386,11 +382,16 @@ fn render_code_line<'src>(
             prev_was_comment = true;
             continue;
         }
-        let in_optional_comma_list = stack.last().is_some_and(|open| {
-            matches!(open.kind, BraceKind::Paren | BraceKind::DeclList)
-                || (open.kind == BraceKind::Block && line_has_field)
-                || open.kind == BraceKind::Match
-        });
+        // Every delimited list separates with a comma on one line and a
+        // newline when multiline, so a comma that is the last thing on its
+        // line inside ANY delimiter is a separator the newline already
+        // provides. That covers arguments, parameters, struct and enum
+        // fields, tuples, `Vec` / array / `Map` / `Set` literals, patterns,
+        // generic lists, and `use` lists - one rule rather than a list of
+        // shapes to keep in step. A plain code block is included with
+        // them: a statement cannot end in a bare comma, so the only comma
+        // that can be last on a line inside one is a list's.
+        let in_optional_comma_list = !stack.is_empty();
         if in_optional_comma_list
             && tok.kind == TokenKind::Punct(Punct::Comma)
             && line.toks[tok_index + 1..].iter().all(Tok::is_comment)
@@ -1144,7 +1145,57 @@ mod tests {
 
     #[test]
     fn multiline_top_use_list_does_not_gain_blank_after_opener() {
+        // The opener stays tight and the continuation keeps its indent.
+        // The comma before the newline is optional - the newline is the
+        // separator - so it goes, like every other multiline list's.
         let source = "use std::{iter, os,\n    strings}\n\nfn main() { }\n";
+        let expected = "use std::{iter, os\n    strings}\n\nfn main() { }\n";
+        assert_eq!(fmt(source), expected);
+        assert_eq!(fmt(expected), expected);
+    }
+
+    #[test]
+    fn removes_commas_from_multiline_sequence_and_set_literals() {
+        let source = "\
+let defs = [
+    Some(1),
+    Some(2),
+]
+
+let v = #[
+    1,
+    2,
+]
+
+let s = #{
+    1,
+    2,
+}
+";
+        let expected = "\
+let defs = [
+    Some(1)
+    Some(2)
+]
+
+let v = #[
+    1
+    2
+]
+
+let s = #{
+    1
+    2
+}
+";
+        assert_eq!(fmt(source), expected);
+        assert_eq!(fmt(expected), expected);
+    }
+
+    #[test]
+    fn keeps_commas_that_separate_on_one_line() {
+        // Only the comma a newline already replaces is optional.
+        let source = "let v = #[\n    1, 2\n    3, 4\n]\n";
         assert_eq!(fmt(source), source);
     }
 

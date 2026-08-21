@@ -1210,6 +1210,70 @@ pub fn verify_eddsa_json(
     claims_to_json_str(&claims)
 }
 
+/// `jwt::verify(token, alg, key, leeway, issuer, audience)` - the
+/// verifier a service protecting an endpoint uses.
+///
+/// One entry point for every algorithm the library supports, including
+/// the RS family every mainstream identity provider mints with. `key` is
+/// the shared secret for the HS family and the PEM-encoded public key for
+/// the rest.
+///
+/// `issuer` and `audience` are enforced when non-empty. Leaving them empty
+/// accepts a token from any issuer that signed with this key and any
+/// audience it was minted for, which is what makes cross-service replay
+/// possible - a service that shares a key with another must set them.
+///
+/// Answers the canonical claims JSON on success.
+pub fn verify_json(
+    token: &str,
+    alg: &str,
+    key: &str,
+    leeway: i64,
+    issuer: &str,
+    audience: &str,
+) -> Result<String, Error> {
+    let alg = Alg::from_str(alg)?;
+    let mut opts = VerifyOpts::new().leeway(leeway);
+    if !issuer.is_empty() {
+        opts.required_iss = Some(issuer.to_string());
+    }
+    if !audience.is_empty() {
+        opts.required_aud = Some(audience.to_string());
+    }
+    let claims = if alg.is_hmac() {
+        verify_hs(token, alg, key.as_bytes(), &opts)?
+    } else if alg.is_rsa() {
+        verify_rs(token, alg, key, &opts)?
+    } else if alg == Alg::Es256 {
+        verify_es256(token, key, &opts)?
+    } else {
+        verify_eddsa(token, key, &opts)?
+    };
+    claims_to_json_str(&claims)
+}
+
+/// `jwt::header(token)` - the token's JOSE header as JSON, read WITHOUT
+/// verifying the signature.
+///
+/// A service holding a key set reads `kid` and `alg` to choose which key
+/// to verify with. The header is unauthenticated until that verification
+/// succeeds, so nothing in it may be trusted for anything else - in
+/// particular `alg` must be checked against what the chosen key permits,
+/// which `verify` does by taking the expected algorithm as its own
+/// argument rather than reading it from the token.
+pub fn header_json(token: &str) -> Result<String, Error> {
+    let header_b64 = token
+        .split('.')
+        .next()
+        .ok_or_else(|| Error::new("jwt: token has no header segment"))?;
+    let raw = b64url_decode(header_b64)?;
+    let text = std::str::from_utf8(&raw)
+        .map_err(|e| Error::new(format!("jwt: header is not UTF-8: {e}")))?;
+    let value: serde_json::Value = serde_json::from_str(text)
+        .map_err(|e| Error::new(format!("jwt: header is not JSON: {e}")))?;
+    serde_json::to_string(&value).map_err(|e| Error::new(format!("jwt: encode header: {e}")))
+}
+
 // --------------------------------------------------------------------------
 
 #[cfg(test)]

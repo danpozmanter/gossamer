@@ -49,13 +49,7 @@ pub unsafe extern "C" fn gos_rt_monotonic_ms() -> i64 {
 /// `time::now_nanos() -> i64` - nanoseconds since the UNIX epoch.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_time_now_nanos() -> i64 {
-    ffi_entry!(-1, {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        i64::try_from(nanos).unwrap_or(i64::MAX)
-    })
+    ffi_entry!(-1, { crate::clock::wall_nanos() })
 }
 
 /// `time::since_ms(start) -> i64` - monotonic milliseconds elapsed

@@ -603,3 +603,84 @@ pub unsafe extern "C" fn gos_rt_tcp_stream_close(h: i64) {
         }
     });
 }
+
+/// `smtp::send(addr, from, to, subject, body)
+/// -> Result<(), errors::Error>` - one message, unauthenticated.
+#[cfg(not(target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_smtp_send(
+    addr: *const c_char,
+    from: *const c_char,
+    to: *const c_char,
+    subject: *const c_char,
+    body: *const c_char,
+) -> i128 {
+    ffi_entry!(0i128, {
+        unsafe { smtp_send(addr, from, to, subject, body, None) }
+    })
+}
+
+/// `smtp::send_auth(addr, from, to, subject, body, username, password)
+/// -> Result<(), errors::Error>` - the shape a transactional mail provider
+/// takes. Credentials are only ever sent over TLS.
+#[cfg(not(target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_smtp_send_auth(
+    addr: *const c_char,
+    from: *const c_char,
+    to: *const c_char,
+    subject: *const c_char,
+    body: *const c_char,
+    username: *const c_char,
+    password: *const c_char,
+) -> i128 {
+    ffi_entry!(0i128, {
+        let credentials = unsafe { (cstr_or_empty(username), cstr_or_empty(password)) };
+        unsafe { smtp_send(addr, from, to, subject, body, Some(credentials)) }
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+unsafe fn cstr_or_empty(p: *const c_char) -> String {
+    if p.is_null() {
+        String::new()
+    } else {
+        unsafe { crate::c_abi::gos_str_arg_string(p) }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+unsafe fn smtp_send(
+    addr: *const c_char,
+    from: *const c_char,
+    to: *const c_char,
+    subject: *const c_char,
+    body: *const c_char,
+    credentials: Option<(String, String)>,
+) -> i128 {
+    let (addr, from, to, subject, body) = unsafe {
+        (
+            cstr_or_empty(addr),
+            cstr_or_empty(from),
+            cstr_or_empty(to),
+            cstr_or_empty(subject),
+            cstr_or_empty(body),
+        )
+    };
+    let message = crate::smtp::Message {
+        from: &from,
+        to: &to,
+        subject: &subject,
+        body: &body,
+    };
+    let credentials = credentials
+        .as_ref()
+        .map(|(username, password)| crate::smtp::Credentials { username, password });
+    match crate::smtp::send(&addr, &message, credentials.as_ref()) {
+        Ok(()) => crate::c_abi::vec::pack_result(0, 0),
+        Err(message) => {
+            let err = crate::c_abi::errors::error_new_from_bytes(message.as_bytes());
+            crate::c_abi::vec::pack_result(1, err as i64)
+        }
+    }
+}

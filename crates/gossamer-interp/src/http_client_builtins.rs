@@ -478,6 +478,13 @@ static STREAM_REGISTRY: parking_lot::Mutex<
     Option<rustc_hash::FxHashMap<i64, Arc<parking_lot::Mutex<StreamResponse>>>>,
 > = parking_lot::Mutex::new(None);
 
+/// Registers a stream the interpreter itself produced - a response body a
+/// handler writes as it goes - in the same registry a client stream uses,
+/// so one drain serves both.
+pub(crate) fn stream_register_public(stream: StreamResponse) -> i64 {
+    stream_register(stream)
+}
+
 fn stream_register(stream: StreamResponse) -> i64 {
     let handle = NEXT_STREAM_HANDLE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let arc = Arc::new(parking_lot::Mutex::new(stream));

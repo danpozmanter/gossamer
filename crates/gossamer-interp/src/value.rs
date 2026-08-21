@@ -2703,6 +2703,63 @@ pub trait NativeDispatch {
     /// `.join()` blocks on for the outcome (`Ok(value)`, or
     /// `Err(message)` if the callable panicked). Backs `spawn(f)`.
     fn spawn_join(&mut self, callable: Value, args: Vec<Value>) -> RuntimeResult<Value>;
+    /// Spawns `target(args)` on a goroutine and hands the outcome to
+    /// `sink` on that goroutine. A native server answers each request on
+    /// its own goroutine, so its accept loop stays free while a handler
+    /// runs and requests are served concurrently.
+    fn spawn_with_outcome(
+        &mut self,
+        target: SpawnTarget,
+        args: Vec<Value>,
+        sink: Box<dyn FnOnce(RuntimeResult<Value>) + Send>,
+    );
+}
+
+/// What a spawned dispatch invokes.
+#[derive(Debug, Clone)]
+pub enum SpawnTarget {
+    /// A top-level function, resolved on the goroutine that runs it.
+    Named(String),
+    /// A closure, builtin, or other callable value.
+    Callable(Value),
+}
+
+impl SpawnTarget {
+    /// What serving one request through `handler` calls, and the arguments
+    /// that precede the request.
+    ///
+    /// A `Router`, a middleware chain, or any struct answers through its
+    /// `T::serve` impl - named by struct, because the bare `serve` global is
+    /// overwritten as each impl loads, and taking the handler as its
+    /// receiver. A plain function or a closure IS the handler and takes the
+    /// request as its only argument.
+    #[must_use]
+    pub fn for_handler(handler: &Value) -> (Self, Vec<Value>) {
+        match handler {
+            Value::Struct(inner) => (
+                Self::Named(format!("{}::serve", inner.name)),
+                vec![handler.clone()],
+            ),
+            other => (Self::Callable(other.clone()), Vec::new()),
+        }
+    }
+}
+
+/// Invokes `handler` for one request on the calling goroutine.
+///
+/// Follows [`SpawnTarget::for_handler`]'s rule for which callable a handler
+/// value names.
+pub fn dispatch_request(
+    dispatch: &mut dyn NativeDispatch,
+    handler: &Value,
+    request: Value,
+) -> RuntimeResult<Value> {
+    let (target, mut args) = SpawnTarget::for_handler(handler);
+    args.push(request);
+    match target {
+        SpawnTarget::Named(name) => dispatch.call_fn(&name, args),
+        SpawnTarget::Callable(callee) => dispatch.call_value(&callee, args),
+    }
 }
 
 /// Function pointer for [`Value::Native`] builtins.

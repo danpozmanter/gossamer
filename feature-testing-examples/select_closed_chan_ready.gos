@@ -14,8 +14,8 @@ fn main() {
     // 1. Open + empty channel: the recv arm is not ready, default fires.
     let (tx, rx) = channel()
     let open = select {
-        v = rx.recv() => v,
-        default => -1,
+        v = rx.recv() => v
+        default => -1
     }
     println!("open empty = {}", open)
 
@@ -23,8 +23,8 @@ fn main() {
     //    zero value, chosen over the default.
     tx.close()
     let closed = select {
-        v = rx.recv() => v,
-        default => -1,
+        v = rx.recv() => v
+        default => -1
     }
     println!("closed = {}", closed)
 
@@ -35,16 +35,16 @@ fn main() {
     tx2.send(8)
     tx2.close()
     let first = select {
-        v = rx2.recv() => v,
-        default => -1,
+        v = rx2.recv() => v
+        default => -1
     }
     let second = select {
-        v = rx2.recv() => v,
-        default => -1,
+        v = rx2.recv() => v
+        default => -1
     }
     let third = select {
-        v = rx2.recv() => v,
-        default => -1,
+        v = rx2.recv() => v
+        default => -1
     }
     println!("buffered first = {}", first)
     println!("buffered second = {}", second)
@@ -60,8 +60,8 @@ mod select_closed_tests {
     fn open_empty_recv_arm_falls_to_default() {
         let (_tx, rx) = channel()
         let chosen = select {
-            v = rx.recv() => v,
-            default => -1,
+            v = rx.recv() => v
+            default => -1
         }
         let _ = testing::check(chosen == -1, "open+empty recv arm is not ready")
     }
@@ -71,8 +71,8 @@ mod select_closed_tests {
         let (tx, rx) = channel::unbounded()
         tx.close()
         let chosen = select {
-            v = rx.recv() => v,
-            default => -1,
+            v = rx.recv() => v
+            default => -1
         }
         let _ = testing::check(chosen == 0, "closed recv arm yields the zero value")
     }
@@ -83,12 +83,12 @@ mod select_closed_tests {
         tx.send(42)
         tx.close()
         let a = select {
-            v = rx.recv() => v,
-            default => -1,
+            v = rx.recv() => v
+            default => -1
         }
         let b = select {
-            v = rx.recv() => v,
-            default => -1,
+            v = rx.recv() => v
+            default => -1
         }
         let _ = testing::check_eq(&a, &42, "buffered value drains first")
         let _ = testing::check_eq(&b, &0, "zero value once drained")

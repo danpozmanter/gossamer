@@ -45,8 +45,8 @@ fn render(d: &Doc, out: &mut String) {
 fn main() {
     let inner = Vec::from([(String::from("x"), Doc::Leaf(10)), (String::from("y"), Doc::Leaf(20))])
     let doc = Doc::Obj(Vec::from([
-        (String::from("id"), Doc::Leaf(7)),
-        (String::from("body"), Doc::Obj(inner)),
+        (String::from("id"), Doc::Leaf(7))
+        (String::from("body"), Doc::Obj(inner))
     ]))
     let mut out = String::new()
     render(&doc, &mut out)

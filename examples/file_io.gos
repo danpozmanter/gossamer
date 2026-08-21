@@ -30,13 +30,13 @@ println!("read {} bytes: {}", contents.len(), contents.trim())
 
 // --- JSON ---
 let features = #[
-    json::Value::String("http"),
-    json::Value::String("tls"),
+    json::Value::String("http")
+    json::Value::String("tls")
 ]
 let payload = json::Value::object(#[
-    ("port", json::Value::Int(8080)),
-    ("addr", json::Value::String("0.0.0.0")),
-    ("features", json::Value::Array(features)),
+    ("port", json::Value::Int(8080))
+    ("addr", json::Value::String("0.0.0.0"))
+    ("features", json::Value::Array(features))
 ])
 let rendered = json::render(&payload)
 fs::write(&json_path, rendered.as_bytes())

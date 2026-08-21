@@ -16,8 +16,8 @@ fn main() {
 
     // bufio::split_whitespace: pure tokenisation on runs of whitespace.
     let cases = #[
-        "a b  c", "  leading", "trailing  ", "", "   ",
-        "one\ttwo\nthree", "single",
+        "a b  c", "  leading", "trailing  ", "", "   "
+        "one\ttwo\nthree", "single"
     ]
     for c in cases {
         let parts = bufio::split_whitespace(&c)

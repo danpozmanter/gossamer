@@ -1,0 +1,61 @@
+// Cross-tier regression for a `Vec` wrapped in an `Option` or a `Result`.
+//
+// The carrier takes a reference to its payload, and `unwrap` hands that
+// reference to whoever takes the payload out. A `Vec` carries no
+// reference-count header - it is counted by the vec allocator instead -
+// so it was missed at the wrap, leaving one reference with two owners:
+// the binding the payload came from and the binding it was unwrapped
+// into. Whichever was released second freed storage the first had
+// already returned, which read back as a hang under the JIT and a
+// segfault in a native build.
+//
+// Covers the payload built in place, the payload built by a callee, and
+// the array-of-carriers shape the report arrived with.
+
+fn make() -> Option<Vec<String>> {
+    let parts: Vec<String> = #["L", "12"]
+    Some(parts)
+}
+
+fn fallible() -> Result<Vec<String>, String> {
+    let parts: Vec<String> = #["R", "9"]
+    Ok(parts)
+}
+
+fn main() {
+    // Built in place, unwrapped in the same body: the shape that used to
+    // free the same storage twice.
+    let here: Option<Vec<String>> = Some(#["L", "12"])
+    let joined = here.unwrap().join(",")
+    println!("here={}", joined)
+
+    // The joined text then used as an element, which is what made the
+    // second release observable.
+    let mut widths: Vec<i64> = #[]
+    for part in #[joined, "n"] {
+        widths.push(part.byte_len())
+    }
+    println!("widths={:?}", widths)
+
+    // Built by a callee and carried out through the return.
+    println!("from_fn={}", make().unwrap().join(","))
+    println!("from_result={}", fallible().unwrap_or(#[]).join(","))
+
+    // An array of carriers, read by index.
+    let defs: [Option<Vec<String>>; 3] = [
+        Some(#["L", "12"])
+        Some(#["L", "8"])
+        Some(#["L", "10"])
+    ]
+    println!("indexed={}", defs[0].unwrap().join(","))
+
+    // Repeated wrap-and-unwrap: a leak or an over-release compounds here.
+    let mut total = 0
+    let mut i = 0
+    while i < 2000 {
+        let each: Option<Vec<String>> = Some(#["a", "bb"])
+        total += each.unwrap().join("-").byte_len()
+        i += 1
+    }
+    println!("total={}", total)
+}

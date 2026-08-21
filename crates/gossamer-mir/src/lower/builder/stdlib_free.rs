@@ -392,12 +392,17 @@ impl<'a> Builder<'a> {
             Some("http::Router") => Some("gos_rt_router_serve".to_string()),
             _ => {
                 // A bare function is a handler in its own right, the shape the
-                // router already accepts for a route. Dispatch through its own
-                // symbol - `handler_dispatch_symbol` routes a bare-`Response`
-                // return through the synthesized `::__ok_wrap` thunk so the
-                // packed-Result ABI the runtime invokes is preserved.
+                // router already accepts for a route. Middleware invokes its
+                // inner handler through the two-argument `(env, request)` ABI,
+                // so a plain fn reaches it through its synthesized
+                // env-ignoring thunk - which in turn routes a bare-`Response`
+                // return through `::__ok_wrap`, preserving the packed-Result
+                // ABI the runtime reads back.
                 if let Some(fn_name) = self.local_fn_name.get(&inner_local).cloned() {
-                    return Some(self.handler_dispatch_symbol(fn_name));
+                    return Some(crate::lower::helpers::handler_env_wrap_name(&fn_name));
+                }
+                if let Some(closure_name) = self.local_closure.get(&inner_local).cloned() {
+                    return Some(self.handler_dispatch_symbol(closure_name));
                 }
                 let inner_ty = self.locals[inner_local.0 as usize].ty;
                 let struct_name = self.struct_name_of(inner_ty)?;
@@ -1748,6 +1753,8 @@ impl<'a> Builder<'a> {
             ),
             "jwt::sign_hs" => ("gos_rt_jwt_sign_hs", self.result_string_error_adt_ty()),
             "jwt::verify_hs" => ("gos_rt_jwt_verify_hs", self.result_string_error_adt_ty()),
+            "jwt::verify" => ("gos_rt_jwt_verify", self.result_string_error_adt_ty()),
+            "jwt::header" => ("gos_rt_jwt_header", self.result_string_error_adt_ty()),
             "jwt::sign_es256" => ("gos_rt_jwt_sign_es256", self.result_string_error_adt_ty()),
             "jwt::verify_es256" => ("gos_rt_jwt_verify_es256", self.result_string_error_adt_ty()),
             "jwt::sign_eddsa" => ("gos_rt_jwt_sign_eddsa", self.result_string_error_adt_ty()),
@@ -3212,6 +3219,15 @@ impl<'a> Builder<'a> {
             // these arms route the language-level calls to them.
             "time::sleep" => ("gos_rt_sleep_ms", self.tcx.unit()),
             "time::sleep_ctx" => ("gos_rt_sleep_ms_ctx", self.tcx.bool_ty()),
+            "smtp::send" => ("gos_rt_smtp_send", self.result_unit_error_adt_ty()),
+            "smtp::send_auth" => ("gos_rt_smtp_send_auth", self.result_unit_error_adt_ty()),
+            "time::freeze" => ("gos_rt_time_freeze", self.tcx.unit()),
+            "time::advance" => (
+                "gos_rt_time_advance",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "time::unfreeze" => ("gos_rt_time_unfreeze", self.tcx.unit()),
+            "time::is_frozen" => ("gos_rt_time_is_frozen", self.tcx.bool_ty()),
             "time::now" | "time::unix_ms" => (
                 "gos_rt_time_now_ms",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
@@ -3853,6 +3869,15 @@ impl<'a> Builder<'a> {
             ),
             "runtime::cohort_join" => ("gos_rt_cohort_join", self.result_unit_error_adt_ty()),
             "runtime::cohort_pop" => ("gos_rt_cohort_pop", self.tcx.unit()),
+            "lifecycle::ready" => ("gos_rt_lifecycle_ready", self.tcx.unit()),
+            "lifecycle::set_ready" => ("gos_rt_lifecycle_set_ready", self.tcx.unit()),
+            "lifecycle::is_ready" => ("gos_rt_lifecycle_is_ready", self.tcx.bool_ty()),
+            "lifecycle::shutdown" => ("gos_rt_lifecycle_shutdown", self.tcx.unit()),
+            "lifecycle::is_shutting_down" => {
+                ("gos_rt_lifecycle_is_shutting_down", self.tcx.bool_ty())
+            }
+            "lifecycle::await_shutdown" => ("gos_rt_lifecycle_await_shutdown", self.tcx.unit()),
+            "lifecycle::notify_status" => ("gos_rt_lifecycle_notify_status", self.tcx.unit()),
             "runtime::cohort_cancelled" => ("gos_rt_cohort_cancelled", self.tcx.bool_ty()),
             "runtime::cohort_cancel" => ("gos_rt_cohort_cancel", self.tcx.unit()),
             "testing::check" => ("gos_rt_testing_check", self.tcx.bool_ty()),
@@ -4180,6 +4205,14 @@ impl<'a> Builder<'a> {
             ),
             "http::proxy::Proxy::new" | "proxy::Proxy::new" | "Proxy::new" => (
                 "gos_rt_proxy_new",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "http::ResponseStream::new" | "ResponseStream::new" => (
+                "gos_rt_http_response_stream_open",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "http::Server::new" | "Server::new" => (
+                "gos_rt_http_server_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
             _ => return None,
@@ -4614,6 +4647,8 @@ impl<'a> Builder<'a> {
             "gos_rt_udp_bind" => Some("net::UdpSocket"),
             // 0.4.0 stateful HTTP types.
             "gos_rt_router_new" => Some("http::Router"),
+            "gos_rt_http_server_new" => Some("http::Server"),
+            "gos_rt_http_response_stream_open" => Some("http::ResponseStream"),
             "gos_rt_file_server_new" => Some("http::FileServer"),
             "gos_rt_native_client_new" => Some("http::NativeClient"),
             "gos_rt_proxy_new" => Some("http::Proxy"),

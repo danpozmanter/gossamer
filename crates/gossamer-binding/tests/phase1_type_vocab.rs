@@ -111,6 +111,15 @@ impl gossamer_binding::value::NativeDispatch for NullDispatch {
             "no dispatch".into(),
         ))
     }
+
+    fn spawn_with_outcome(
+        &mut self,
+        _target: gossamer_binding::value::SpawnTarget,
+        _args: Vec<Value>,
+        _sink: Box<dyn FnOnce(gossamer_binding::value::RuntimeResult<Value>) + Send>,
+    ) {
+        // A null dispatcher runs nothing, so the sink is never called.
+    }
 }
 
 fn call(name: &str, args: Vec<Value>) -> Value {

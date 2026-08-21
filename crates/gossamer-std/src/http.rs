@@ -212,6 +212,13 @@ pub struct Request {
     /// the server-side bridge and the peer sent a `END_STREAM`
     /// trailing HEADERS frame.
     pub trailers: Option<Headers>,
+    /// Socket address of the peer that sent this request, `host:port`.
+    /// Empty when there is no socket behind the request. An access log,
+    /// an IP allowlist, and a per-IP rate limit read it; a
+    /// proxy-forwarded address is NOT substituted here, so a deployment
+    /// behind a proxy resolves the forwarded chain against its own
+    /// trusted-proxy list.
+    pub peer_addr: String,
 }
 
 impl Request {
@@ -641,6 +648,33 @@ pub mod server {
         }
     }
 
+    /// Where a dispatched request's response is written.
+    ///
+    /// A dispatcher that answers off the accept loop carries one of these
+    /// into whatever runs the handler; the connection worker waits on the
+    /// matching receiver. The in-flight count a graceful shutdown drains on
+    /// is held until the sink is used or dropped, so a handler that never
+    /// answers still releases the drain.
+    pub struct ResponseSink {
+        tx: Option<std::sync::mpsc::Sender<Response>>,
+        in_flight: Arc<AtomicUsize>,
+    }
+
+    impl ResponseSink {
+        /// Writes `response` back to the waiting connection worker.
+        pub fn send(mut self, response: Response) {
+            if let Some(tx) = self.tx.take() {
+                let _ = tx.send(response);
+            }
+        }
+    }
+
+    impl Drop for ResponseSink {
+        fn drop(&mut self) {
+            self.in_flight.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+
     /// Runs the accept loop on `listener`. Each accepted connection
     /// gets its own worker thread - Gossamer's goroutine-per-
     /// connection story for the single-threaded interpreter. The
@@ -651,12 +685,9 @@ pub mod server {
     /// subsequent requests unless the peer (or handler) asked to
     /// close.
     ///
-    /// The handler still runs on the main thread - the interpreter
-    /// is not `Send` - so handler invocation remains serialised.
-    /// The important part is that slow clients no longer block
-    /// accept or other in-flight handlers during their read / write
-    /// phases, and a single TCP connection is reused across
-    /// requests.
+    /// `handle` answers on the dispatch thread, so one request at a time.
+    /// Use [`run_dispatch`] to answer each request elsewhere and keep the
+    /// dispatch thread free.
     ///
     /// Shutdown: when `config.shutdown` flips to `true`, the main
     /// loop connects to the bound address to break the acceptor out
@@ -665,6 +696,25 @@ pub mod server {
     pub fn run<H>(listener: TcpListener, config: &Config, mut handle: H) -> io::Result<()>
     where
         H: FnMut(Request) -> Response,
+    {
+        run_dispatch(listener, config, move |request, sink| {
+            sink.send(handle(request));
+        })
+    }
+
+    /// Accept loop that hands each parsed request to `dispatch` together
+    /// with the [`ResponseSink`] its answer belongs in.
+    ///
+    /// `dispatch` returns as soon as the request is placed, so a dispatcher
+    /// that runs the handler on a goroutine serves requests concurrently -
+    /// the bound is the runtime's, not this loop's.
+    pub fn run_dispatch<H>(
+        listener: TcpListener,
+        config: &Config,
+        mut dispatch: H,
+    ) -> io::Result<()>
+    where
+        H: FnMut(Request, ResponseSink),
     {
         use std::sync::mpsc::{RecvTimeoutError, sync_channel};
 
@@ -708,12 +758,17 @@ pub mod server {
             }
             match dispatch_rx.recv_timeout(Duration::from_millis(50)) {
                 Ok((req, responder)) => {
-                    // Track in-flight count so a graceful
-                    // shutdown can drain.
+                    // Track in-flight count so a graceful shutdown can
+                    // drain. The sink owns the decrement, so the count
+                    // covers the whole handler, wherever it runs.
                     config.in_flight.fetch_add(1, Ordering::AcqRel);
-                    let response = handle(req);
-                    let _ = responder.send(response);
-                    config.in_flight.fetch_sub(1, Ordering::AcqRel);
+                    dispatch(
+                        req,
+                        ResponseSink {
+                            tx: Some(responder),
+                            in_flight: Arc::clone(&config.in_flight),
+                        },
+                    );
                     served = served.saturating_add(1);
                     if let Some(max) = config.max_requests {
                         if served >= max {
@@ -883,10 +938,7 @@ pub mod server {
                 }
                 check_deadline(body_deadline)?;
                 if payload.len() + n > config.max_body_bytes {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("chunked body exceeds {}-byte cap", config.max_body_bytes),
-                    ));
+                    return Err(reject(413, "payload too large"));
                 }
                 payload.extend_from_slice(&tmp[..n]);
             }
@@ -900,13 +952,7 @@ pub mod server {
             return Ok(payload);
         }
         if content_length > config.max_body_bytes {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "body length {content_length} exceeds {}-byte cap",
-                    config.max_body_bytes
-                ),
-            ));
+            return Err(reject(413, "payload too large"));
         }
         let mut body = vec![0u8; content_length];
         if content_length > 0 {
@@ -951,6 +997,10 @@ pub mod server {
         // Disable Nagle so short responses land on the wire right
         // away. Dominant workload here is small keep-alive replies.
         let _ = stream.set_nodelay(true);
+        let peer_addr = stream
+            .peer_addr()
+            .map_or_else(|_| String::new(), |a| a.to_string());
+        let watch_fd = peer_watch_fd(&stream);
 
         // One BufReader lives across every request on this
         // connection so any bytes pipelined after the request line
@@ -980,6 +1030,14 @@ pub mod server {
                                 if let Some(c) = active_cancel_w.lock().take() {
                                     c.cancel_with("server shutdown");
                                 }
+                            } else if peer_is_gone(watch_fd) {
+                                // The peer left while its request was
+                                // still running: cancel it so the work it
+                                // asked for stops instead of being paid
+                                // for after it went away.
+                                if let Some(c) = active_cancel_w.lock().take() {
+                                    c.cancel_with("client disconnected");
+                                }
                             }
                         }
                     }
@@ -1003,7 +1061,8 @@ pub mod server {
                 let _ = reader.get_mut().set_read_timeout(Some(idle));
             }
             match read_request(&mut reader, &config) {
-                Ok(Some((request, http10, client_close, cancel))) => {
+                Ok(Some((mut request, http10, client_close, cancel))) => {
+                    request.peer_addr.clone_from(&peer_addr);
                     *active_cancel.lock() = Some(cancel);
                     let (resp_tx, resp_rx) = std::sync::mpsc::channel::<Response>();
                     if dispatch_tx.send((request, resp_tx)).is_err() {
@@ -1050,7 +1109,14 @@ pub mod server {
                 }
                 Ok(None) => break, // clean EOF between requests
                 Err(err) => {
-                    if !is_ignorable(&err) {
+                    if let Some(rejected) = rejection_of(&err) {
+                        let mut response = rejection_response(rejected);
+                        let _ = write_response_generic(
+                            reader.get_mut(),
+                            &mut response,
+                            config.server_name.as_deref(),
+                        );
+                    } else if !is_ignorable(&err) {
                         eprintln!("http: parse error: {err}");
                     }
                     break;
@@ -1063,6 +1129,78 @@ pub mod server {
             let _ = w.join();
         }
         let _ = reader.get_mut().shutdown(Shutdown::Both);
+    }
+
+    /// A request the server refused before dispatch, and the status it
+    /// owes the client.
+    ///
+    /// Carried as the payload of the `io::Error` the read path returns, so
+    /// the worker answers the client rather than closing the connection on
+    /// it: a client that sent too large a body learns it was too large.
+    #[derive(Debug)]
+    pub(crate) struct Rejected {
+        /// Status the client is answered with.
+        pub status: u16,
+        /// Plain-text body, also the reason phrase in the log.
+        pub reason: &'static str,
+    }
+
+    impl std::fmt::Display for Rejected {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}", self.reason)
+        }
+    }
+
+    impl std::error::Error for Rejected {}
+
+    /// The `io::Error` shape a refusal travels in.
+    pub(crate) fn reject(status: u16, reason: &'static str) -> io::Error {
+        io::Error::new(io::ErrorKind::InvalidData, Rejected { status, reason })
+    }
+
+    /// The refusal `err` carries, if it is one.
+    fn rejection_of(err: &io::Error) -> Option<&Rejected> {
+        err.get_ref()?.downcast_ref::<Rejected>()
+    }
+
+    /// The status line + body a refusal is answered with.
+    fn rejection_response(rejected: &Rejected) -> Response {
+        let mut headers = super::Headers::new();
+        headers.insert("content-type", "text/plain; charset=utf-8");
+        headers.insert("connection", "close");
+        Response {
+            status: super::StatusCode(rejected.status),
+            headers,
+            body: rejected.reason.as_bytes().to_vec(),
+            raw_header_pairs: Vec::new(),
+            body_stream: None,
+        }
+    }
+
+    /// The descriptor a peer-liveness peek reads.
+    #[cfg(unix)]
+    fn peer_watch_fd(stream: &TcpStream) -> std::os::fd::RawFd {
+        use std::os::fd::AsRawFd;
+        stream.as_raw_fd()
+    }
+
+    /// No such probe here, so the watch has nothing to read and a request
+    /// runs to completion after its client leaves.
+    #[cfg(not(unix))]
+    fn peer_watch_fd(_stream: &TcpStream) -> i32 {
+        -1
+    }
+
+    /// Whether the peer closed its side. The probe itself lives in the
+    /// runtime, which is the crate allowed to make the syscall.
+    #[cfg(unix)]
+    fn peer_is_gone(fd: std::os::fd::RawFd) -> bool {
+        gossamer_runtime::c_abi::http_server::peer_is_gone(fd)
+    }
+
+    #[cfg(not(unix))]
+    fn peer_is_gone(_fd: i32) -> bool {
+        false
     }
 
     fn is_ignorable(err: &io::Error) -> bool {
@@ -1309,10 +1447,7 @@ pub mod server {
                 .position(|b| *b == b'\n')
                 .map_or(available.len(), |idx| idx + 1);
             if out.len().saturating_add(take) > limit {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "request header line exceeds configured cap",
-                ));
+                return Err(reject(431, "request header fields too large"));
             }
             out.extend_from_slice(&available[..take]);
             reader.consume(take);
@@ -1391,6 +1526,7 @@ pub mod server {
                 body,
                 context: ctx,
                 trailers: None,
+                peer_addr: String::new(),
             },
             head.http10,
             client_close,
@@ -1416,6 +1552,15 @@ pub mod server {
         run(listener, config, handle)
     }
 
+    /// [`run_dispatch`] over a freshly bound `addr`.
+    pub fn bind_and_run_dispatch<H>(addr: &str, config: &Config, dispatch: H) -> io::Result<()>
+    where
+        H: FnMut(Request, ResponseSink),
+    {
+        let listener = TcpListener::bind(addr)?;
+        run_dispatch(listener, config, dispatch)
+    }
+
     /// Expose [`Method`] to downstream tests without a star re-export.
     #[doc(hidden)]
     pub const fn _touch(_m: Method) {}
@@ -1433,6 +1578,23 @@ pub mod server {
     ) -> io::Result<()>
     where
         H: FnMut(Request) -> Response,
+    {
+        bind_and_run_tls_dispatch(addr, tls_config, config, move |request, sink| {
+            sink.send(handle(request));
+        })
+    }
+
+    /// [`run_dispatch`]'s contract over TLS: `dispatch` returns as soon as
+    /// the request is placed, so a dispatcher that answers on a goroutine
+    /// serves requests concurrently.
+    pub fn bind_and_run_tls_dispatch<H>(
+        addr: &str,
+        tls_config: &crate::tls::ServerConfig,
+        config: &Config,
+        mut dispatch: H,
+    ) -> io::Result<()>
+    where
+        H: FnMut(Request, ResponseSink),
     {
         use std::io::ErrorKind;
         use std::sync::mpsc::{RecvTimeoutError, sync_channel};
@@ -1476,12 +1638,17 @@ pub mod server {
             }
             match dispatch_rx.recv_timeout(Duration::from_millis(50)) {
                 Ok((req, responder)) => {
-                    // Track in-flight count so a graceful
-                    // shutdown can drain.
+                    // Track in-flight count so a graceful shutdown can
+                    // drain. The sink owns the decrement, so the count
+                    // covers the whole handler, wherever it runs.
                     config.in_flight.fetch_add(1, Ordering::AcqRel);
-                    let response = handle(req);
-                    let _ = responder.send(response);
-                    config.in_flight.fetch_sub(1, Ordering::AcqRel);
+                    dispatch(
+                        req,
+                        ResponseSink {
+                            tx: Some(responder),
+                            in_flight: Arc::clone(&config.in_flight),
+                        },
+                    );
                     served = served.saturating_add(1);
                     if let Some(max) = config.max_requests {
                         if served >= max {
@@ -1649,6 +1816,9 @@ pub mod server {
             let _ = stream.set_write_timeout(Some(timeout));
         }
         let _ = stream.set_nodelay(true);
+        let peer_addr = stream
+            .peer_addr()
+            .map_or_else(|_| String::new(), |a| a.to_string());
 
         let Ok(conn) = rustls::ServerConnection::new(server_config) else {
             let _ = stream.shutdown(Shutdown::Both);
@@ -1675,7 +1845,8 @@ pub mod server {
                 }
             };
             match req_outcome {
-                Ok(Some((request, http10, client_close, cancel))) => {
+                Ok(Some((mut request, http10, client_close, cancel))) => {
+                    request.peer_addr.clone_from(&peer_addr);
                     let (resp_tx, resp_rx) = std::sync::mpsc::channel::<Response>();
                     if dispatch_tx.send((request, resp_tx)).is_err() {
                         drop(cancel);
@@ -1711,7 +1882,17 @@ pub mod server {
                     }
                 }
                 Ok(None) => break,
-                Err(_) => break,
+                Err(err) => {
+                    if let Some(rejected) = rejection_of(&err) {
+                        let mut response = rejection_response(rejected);
+                        let _ = write_response_generic(
+                            reader.get_mut(),
+                            &mut response,
+                            config.server_name.as_deref(),
+                        );
+                    }
+                    break;
+                }
             }
         }
     }
@@ -2293,6 +2474,20 @@ impl std::fmt::Debug for StreamResponse {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl StreamResponse {
+    /// Wraps `reader` as a streaming response body.
+    ///
+    /// A server-side stream is one of these over the reading end of a
+    /// queue a handler writes into, so the same drain serves a proxied
+    /// upstream and a body the handler produces itself.
+    #[must_use]
+    pub fn from_reader(status: StatusCode, reader: Box<dyn Read + Send + Sync + 'static>) -> Self {
+        Self {
+            status,
+            headers: Headers::new(),
+            reader: std::io::BufReader::new(reader),
+        }
+    }
+
     /// Reads one line (terminated by `\n`) from the body, blocking
     /// until a newline arrives or the stream closes. Returns
     /// `Ok(None)` at EOF, `Err` on I/O failure. The trailing newline

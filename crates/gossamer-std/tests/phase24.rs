@@ -97,6 +97,7 @@ fn request_accessor_returns_path() {
         body: Vec::new(),
         context: gossamer_std::context::Context::background(),
         trailers: None,
+        peer_addr: String::new(),
     };
     assert_eq!(req.path(), "/a/b");
 }

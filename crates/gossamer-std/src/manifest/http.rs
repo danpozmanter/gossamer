@@ -87,12 +87,12 @@ pub const HTML_TEMPLATE: StdModule = StdModule {
 
 pub const HTTP: StdModule = StdModule {
     path: "std::http",
-    summary: "HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit.",
+    summary: "HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit. Write a handler as a cohort and an arena: `cohort { }` joins or cancels every goroutine the request spawned before the response is written, and its first child failure becomes the block's `Err` for the handler to turn into a status; `arena { }` bump-allocates what the request builds and frees it wholesale on every exit path, with escape checked at compile time. Dependency injection is closure capture - build the router from closures capturing the pool and the configuration.",
     items: &[
         StdItem {
             name: "Request",
             kind: StdItemKind::Type,
-            doc: "HTTP request value passed to a handler.",
+            doc: "HTTP request value passed to a handler. Fields: `method`, `path`, `query`, `query_pairs`, `headers`, `body`, `raw_body`, `peer_addr`.",
         },
         StdItem {
             name: "Response",
@@ -117,7 +117,7 @@ pub const HTTP: StdModule = StdModule {
         StdItem {
             name: "Server",
             kind: StdItemKind::Type,
-            doc: "HTTP server bound to a TCP listener.",
+            doc: "A configured server. `http::serve(addr, handler)` keeps every default; build a `Server` when a deployment needs its own budgets, its bound address read back, or a shutdown it drives. Setters chain and answer the server: `read_header_timeout_ms`, `read_body_timeout_ms`, `write_timeout_ms`, `idle_timeout_ms`, `request_timeout_ms`, `max_header_bytes`, `max_body_bytes`, `max_connections`, `server_name`. Then `listen(addr) -> Result<(), Error>` binds - so `addr() -> String` reads back a port-0 assignment before `serve(handler)` blocks - and `shutdown(deadline_ms) -> bool` stops accepting and waits for in-flight requests, answering whether the drain finished.",
         },
         StdItem {
             name: "serve",
@@ -137,7 +137,7 @@ pub const HTTP: StdModule = StdModule {
         StdItem {
             name: "ResponseStream",
             kind: StdItemKind::Type,
-            doc: "Streaming response body from `http::stream`; `next_line` / `next_chunk`, consumed by `Response::stream`.",
+            doc: "A streaming response body. `http::stream` produces one over an upstream response, read with `next_line` / `next_chunk`; `ResponseStream::new()` opens one the handler writes itself, with `write(text)` and `write_bytes(bytes)` answering the queued byte count (or -1 once closed), `is_open()` saying whether the client is still there, and `close()` ending the body. Either kind is consumed by `Response::stream(status, content_type, body)` - write from a goroutine and the handler answers immediately while the bytes are framed as they arrive.",
         },
         StdItem {
             name: "request",
@@ -722,19 +722,8 @@ pub const HTTP_FORM: StdModule = StdModule {
 
 pub const HTTP_HEALTH: StdModule = StdModule {
     path: "std::http::health",
-    summary: "Liveness / readiness probes for HTTP health endpoints.",
-    items: &[
-        StdItem {
-            name: "Probe",
-            kind: StdItemKind::Trait,
-            doc: "One health check returning Ok or Err with a short message.",
-        },
-        StdItem {
-            name: "Health",
-            kind: StdItemKind::Type,
-            doc: "Aggregates a set of named probes into a single status.",
-        },
-    ],
+    summary: "Liveness and readiness endpoints are ordinary handlers over `std::lifecycle`: answer 200 from a liveness route, and 200/503 from `lifecycle::is_ready()` on a readiness route, which drops to false on its own when shutdown begins. A probe registry with per-check timeouts belongs in an application package.",
+    items: &[],
 };
 
 pub const HTTP_MULTIPART: StdModule = StdModule {
@@ -771,43 +760,14 @@ pub const HTTP_MULTIPART: StdModule = StdModule {
 
 pub const HTTP_QUERY: StdModule = StdModule {
     path: "std::http::query",
-    summary: "Typed wrapper over URL query strings.",
-    items: &[StdItem {
-        name: "Query",
-        kind: StdItemKind::Type,
-        doc: "Parsed query string with typed get / get_all / contains.",
-    }],
+    summary: "A request's query string is already parsed: read `request.query` for the raw text and `request.query_pairs` for the decoded name/value pairs.",
+    items: &[],
 };
 
 pub const HTTP_SESSION: StdModule = StdModule {
     path: "std::http::session",
-    summary: "Signed-cookie session store with pluggable backend trait.",
+    summary: "Signs and verifies a session payload. The cookie itself - name, attributes, expiry, a server-side store, id rotation on privilege change, revocation - is application policy and belongs in a session package built on these two.",
     items: &[
-        StdItem {
-            name: "Session",
-            kind: StdItemKind::Type,
-            doc: "Per-request session view; mutations persist on response.",
-        },
-        StdItem {
-            name: "SessionConfig",
-            kind: StdItemKind::Type,
-            doc: "Cookie name, domain, signing key, serialization mode.",
-        },
-        StdItem {
-            name: "SessionStore",
-            kind: StdItemKind::Trait,
-            doc: "Backend interface: load / save / delete by session id.",
-        },
-        StdItem {
-            name: "SignedCookieStore",
-            kind: StdItemKind::Type,
-            doc: "Cookie-backed store with HMAC signature; no server state.",
-        },
-        StdItem {
-            name: "SerializationMode",
-            kind: StdItemKind::Type,
-            doc: "Session payload encoding: Json or Bincode.",
-        },
         StdItem {
             name: "with_session",
             kind: StdItemKind::Function,
@@ -828,44 +788,23 @@ pub const HTTP_SESSION: StdModule = StdModule {
 
 pub const HTTP_STATE: StdModule = StdModule {
     path: "std::http::state",
-    summary: "Handler-side dependency injection via a typed AppState.",
-    items: &[
-        StdItem {
-            name: "AppState",
-            kind: StdItemKind::Type,
-            doc: "TypeMap of Arc<T> values shared across handlers.",
-        },
-        StdItem {
-            name: "State",
-            kind: StdItemKind::Type,
-            doc: "Newtype wrapper Arc<T> for ergonomic handler arguments.",
-        },
-    ],
+    summary: "Dependency injection is closure capture: build the router from closures that capture the pool, the cache, and the configuration, and each handler reads what it captured. A captured heap value is shared, so one map serves every request.",
+    items: &[],
 };
 
 pub const JWT: StdModule = StdModule {
     path: "std::jwt",
-    summary: "RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens.",
+    summary: "RFC 7519 tokens. Signs with HS256 / HS384 / HS512, ES256, and EdDSA; verifies those plus the RS256 / RS384 / RS512 family every mainstream identity provider mints with. Claims cross the boundary as JSON text.",
     items: &[
         StdItem {
-            name: "Alg",
-            kind: StdItemKind::Type,
-            doc: "Signing algorithm: HS256 / HS384 / HS512 / ES256 / EdDSA.",
+            name: "verify",
+            kind: StdItemKind::Function,
+            doc: "`verify(token, alg, key, leeway_secs, issuer, audience) -> Result<String, errors::Error>` - the verifier a service protecting an endpoint uses. One entry point for every algorithm, RS* included; `key` is the shared secret for HS* and the PEM public key for the rest. `issuer` and `audience` are enforced when non-empty - leaving them empty accepts a token minted for another service by anyone sharing the key.",
         },
         StdItem {
-            name: "Header",
-            kind: StdItemKind::Type,
-            doc: "JWS / JWT header (alg, kid, typ).",
-        },
-        StdItem {
-            name: "Claims",
-            kind: StdItemKind::Type,
-            doc: "Standard registered claims plus a free-form custom map.",
-        },
-        StdItem {
-            name: "VerifyOpts",
-            kind: StdItemKind::Type,
-            doc: "Expected issuer / audience / clock leeway used by verify.",
+            name: "header",
+            kind: StdItemKind::Function,
+            doc: "`header(token) -> Result<String, errors::Error>` - the JOSE header as JSON, read WITHOUT verifying the signature. Read `kid` to choose a key from a key set; nothing in it is trustworthy until `verify` succeeds.",
         },
         StdItem {
             name: "sign_hs",
@@ -875,7 +814,7 @@ pub const JWT: StdModule = StdModule {
         StdItem {
             name: "verify_hs",
             kind: StdItemKind::Function,
-            doc: "Verify an HS* token; checks signature plus VerifyOpts.",
+            doc: "Verify an HS* token against a shared key with a clock-skew allowance. Prefer `verify`, which also enforces the issuer and the audience.",
         },
         StdItem {
             name: "sign_es256",
@@ -885,7 +824,7 @@ pub const JWT: StdModule = StdModule {
         StdItem {
             name: "verify_es256",
             kind: StdItemKind::Function,
-            doc: "Verify an ES256 token against a PEM-encoded public key.",
+            doc: "Verify an ES256 token against a PEM-encoded public key. Prefer `verify`, which also enforces the issuer and the audience.",
         },
         StdItem {
             name: "sign_eddsa",
@@ -895,7 +834,7 @@ pub const JWT: StdModule = StdModule {
         StdItem {
             name: "verify_eddsa",
             kind: StdItemKind::Function,
-            doc: "Verify an EdDSA token against a PEM-encoded public key.",
+            doc: "Verify an EdDSA token against a PEM-encoded public key. Prefer `verify`, which also enforces the issuer and the audience.",
         },
     ],
 };

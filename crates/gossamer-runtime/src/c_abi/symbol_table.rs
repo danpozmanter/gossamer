@@ -2076,6 +2076,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_http_request_query as *const u8,
         ),
         (
+            "gos_rt_http_request_peer_addr",
+            crate::c_abi::gos_rt_http_request_peer_addr as *const u8,
+        ),
+        (
+            "gos_rt_http_request_context",
+            crate::c_abi::gos_rt_http_request_context as *const u8,
+        ),
+        (
             "gos_rt_http_request_raw_body",
             crate::c_abi::gos_rt_http_request_raw_body as *const u8,
         ),
@@ -2882,6 +2890,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_jwt_verify_hs",
             crate::c_abi::gos_rt_jwt_verify_hs as *const u8,
+        ),
+        (
+            "gos_rt_jwt_verify",
+            crate::c_abi::crypto_jwt::gos_rt_jwt_verify as *const u8,
+        ),
+        (
+            "gos_rt_jwt_header",
+            crate::c_abi::crypto_jwt::gos_rt_jwt_header as *const u8,
         ),
         (
             "gos_rt_lcg_jump",
@@ -4451,6 +4467,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_result_unwrap_or as *const u8,
         ),
         (
+            "gos_rt_result_unwrap_or_carrier",
+            crate::c_abi::vec::gos_rt_result_unwrap_or_carrier as *const u8,
+        ),
+        (
             "gos_rt_router_add",
             crate::c_abi::gos_rt_router_add as *const u8,
         ),
@@ -4829,6 +4849,139 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_cohort_pop",
             crate::c_abi::cohort::gos_rt_cohort_pop as *const u8,
+        ),
+        (
+            "gos_rt_lifecycle_ready",
+            crate::c_abi::lifecycle::gos_rt_lifecycle_ready as *const u8,
+        ),
+        (
+            "gos_rt_lifecycle_set_ready",
+            crate::c_abi::lifecycle::gos_rt_lifecycle_set_ready as *const u8,
+        ),
+        (
+            "gos_rt_lifecycle_is_ready",
+            crate::c_abi::lifecycle::gos_rt_lifecycle_is_ready as *const u8,
+        ),
+        (
+            "gos_rt_lifecycle_shutdown",
+            crate::c_abi::lifecycle::gos_rt_lifecycle_shutdown as *const u8,
+        ),
+        (
+            "gos_rt_lifecycle_is_shutting_down",
+            crate::c_abi::lifecycle::gos_rt_lifecycle_is_shutting_down as *const u8,
+        ),
+        (
+            "gos_rt_lifecycle_await_shutdown",
+            crate::c_abi::lifecycle::gos_rt_lifecycle_await_shutdown as *const u8,
+        ),
+        (
+            "gos_rt_lifecycle_notify_status",
+            crate::c_abi::lifecycle::gos_rt_lifecycle_notify_status as *const u8,
+        ),
+        (
+            "gos_rt_http_server_new",
+            crate::c_abi::http_server_handle::gos_rt_http_server_new as *const u8,
+        ),
+        (
+            "gos_rt_time_freeze",
+            crate::c_abi::gos_rt_time_freeze as *const u8,
+        ),
+        (
+            "gos_rt_smtp_send",
+            crate::c_abi::gos_rt_smtp_send as *const u8,
+        ),
+        (
+            "gos_rt_smtp_send_auth",
+            crate::c_abi::gos_rt_smtp_send_auth as *const u8,
+        ),
+        (
+            "gos_rt_httptest_record",
+            crate::c_abi::testing::gos_rt_httptest_record as *const u8,
+        ),
+        (
+            "gos_rt_time_advance",
+            crate::c_abi::gos_rt_time_advance as *const u8,
+        ),
+        (
+            "gos_rt_time_unfreeze",
+            crate::c_abi::gos_rt_time_unfreeze as *const u8,
+        ),
+        (
+            "gos_rt_time_is_frozen",
+            crate::c_abi::gos_rt_time_is_frozen as *const u8,
+        ),
+        (
+            "gos_rt_http_response_stream_open",
+            crate::c_abi::http_stream_writer::gos_rt_http_response_stream_open as *const u8,
+        ),
+        (
+            "gos_rt_http_response_stream_write",
+            crate::c_abi::http_stream_writer::gos_rt_http_response_stream_write as *const u8,
+        ),
+        (
+            "gos_rt_http_response_stream_write_bytes",
+            crate::c_abi::http_stream_writer::gos_rt_http_response_stream_write_bytes as *const u8,
+        ),
+        (
+            "gos_rt_http_response_stream_close",
+            crate::c_abi::http_stream_writer::gos_rt_http_response_stream_close as *const u8,
+        ),
+        (
+            "gos_rt_http_response_stream_is_open",
+            crate::c_abi::http_stream_writer::gos_rt_http_response_stream_is_open as *const u8,
+        ),
+        (
+            "gos_rt_http_server_read_header_timeout_ms",
+            crate::c_abi::http_server_handle::gos_rt_http_server_read_header_timeout_ms
+                as *const u8,
+        ),
+        (
+            "gos_rt_http_server_request_timeout_ms",
+            crate::c_abi::http_server_handle::gos_rt_http_server_request_timeout_ms as *const u8,
+        ),
+        (
+            "gos_rt_http_server_read_body_timeout_ms",
+            crate::c_abi::http_server_handle::gos_rt_http_server_read_body_timeout_ms as *const u8,
+        ),
+        (
+            "gos_rt_http_server_write_timeout_ms",
+            crate::c_abi::http_server_handle::gos_rt_http_server_write_timeout_ms as *const u8,
+        ),
+        (
+            "gos_rt_http_server_idle_timeout_ms",
+            crate::c_abi::http_server_handle::gos_rt_http_server_idle_timeout_ms as *const u8,
+        ),
+        (
+            "gos_rt_http_server_max_header_bytes",
+            crate::c_abi::http_server_handle::gos_rt_http_server_max_header_bytes as *const u8,
+        ),
+        (
+            "gos_rt_http_server_max_body_bytes",
+            crate::c_abi::http_server_handle::gos_rt_http_server_max_body_bytes as *const u8,
+        ),
+        (
+            "gos_rt_http_server_max_connections",
+            crate::c_abi::http_server_handle::gos_rt_http_server_max_connections as *const u8,
+        ),
+        (
+            "gos_rt_http_server_server_name",
+            crate::c_abi::http_server_handle::gos_rt_http_server_server_name as *const u8,
+        ),
+        (
+            "gos_rt_http_server_listen",
+            crate::c_abi::http_server_handle::gos_rt_http_server_listen as *const u8,
+        ),
+        (
+            "gos_rt_http_server_addr",
+            crate::c_abi::http_server_handle::gos_rt_http_server_addr as *const u8,
+        ),
+        (
+            "gos_rt_http_server_serve",
+            crate::c_abi::http_server_handle::gos_rt_http_server_serve as *const u8,
+        ),
+        (
+            "gos_rt_http_server_shutdown",
+            crate::c_abi::http_server_handle::gos_rt_http_server_shutdown as *const u8,
         ),
         (
             "gos_rt_cohort_cancelled",

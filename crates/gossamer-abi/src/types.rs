@@ -158,7 +158,9 @@ impl RuntimeEntry {
             // `visited[nb]` read out of a loop and CSE repeated reads -
             // `nounwind` alone is insufficient because, without a memory-effect
             // bound, LLVM must assume the call clobbers all memory.
-            let attrs = if PURE_ARGMEM_READ.contains(&self.name) {
+            let attrs = if self.unwinds {
+                ""
+            } else if PURE_ARGMEM_READ.contains(&self.name) {
                 "nounwind memory(argmem: read)"
             } else {
                 "nounwind"

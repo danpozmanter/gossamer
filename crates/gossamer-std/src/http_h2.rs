@@ -1136,6 +1136,7 @@ where
         body,
         context: crate::context::with_deadline(&crate::context::Context::background(), deadline),
         trailers,
+        peer_addr: String::new(),
     };
 
     // Invoke handler (catch panics so a single bad handler does
@@ -1473,6 +1474,7 @@ where
         body,
         context: crate::context::with_deadline(&crate::context::Context::background(), deadline),
         trailers,
+        peer_addr: String::new(),
     };
 
     let writer = ResponseWriter {
@@ -1545,6 +1547,7 @@ mod tests {
             body: Vec::new(),
             context: crate::context::Context::background(),
             trailers: None,
+            peer_addr: String::new(),
         });
         assert_eq!(r.status, StatusCode(200));
     }

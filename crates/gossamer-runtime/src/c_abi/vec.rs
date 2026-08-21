@@ -2373,6 +2373,28 @@ pub extern "C" fn gos_rt_result_unwrap_or(r: i128, default: i64) -> i64 {
     }
 }
 
+/// `unwrap_or` where the payload is itself a `Result` / `Option` carrier -
+/// `spawn(f).join().unwrap_or(Ok(v))` is the shape that reaches it.
+///
+/// A carrier is two words, so the word-returning `unwrap_or` above keeps
+/// only the payload half and loses the discriminant, which reads back as
+/// an `Err` whatever the value was.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_result_unwrap_or_carrier(r: i128, default: i128) -> i128 {
+    if result_disc_of(r) != 0 {
+        return default;
+    }
+    // A carrier does not fit the payload half, so a nested one is boxed
+    // and the payload holds its address. Read the carrier back out.
+    let boxed = result_payload_of(r) as usize as *const i128;
+    if boxed.is_null() {
+        return default;
+    }
+    // SAFETY: the pointer is the 16-byte aggregate `gos_rt_aggr_alloc`
+    // handed the constructor, alive for as long as the carrier is.
+    unsafe { boxed.read_unaligned() }
+}
+
 /// `result.ok()` / `option.ok()`. Returns the payload on Ok/Some, else 0.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_result_ok(r: i128) -> i64 {

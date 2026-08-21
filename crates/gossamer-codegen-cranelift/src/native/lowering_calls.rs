@@ -1123,6 +1123,8 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_http_request_path" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_http_request_method" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_http_request_query" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_http_request_peer_addr" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_http_request_context" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_http_request_headers" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_http_request_body_str" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_http_request_raw_body" => (&[ptr_ty], Some(ptr_ty)),

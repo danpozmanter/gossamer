@@ -362,7 +362,7 @@ async fn send_response_body(
     Ok(())
 }
 
-type HandlerFn = unsafe extern "C" fn(env: *mut u8, req: *mut GosHttpRequest) -> i128;
+type HandlerFn = unsafe extern "C-unwind" fn(env: *mut u8, req: *mut GosHttpRequest) -> i128;
 
 /// Parses the HTTP/1.1 wire buffer `extract_response_into`
 /// emits - `HTTP/1.1 <status> <reason>\r\n[headers]\r\n\r\n<body>` -

@@ -2041,7 +2041,13 @@ impl Parser<'_> {
                     }
                 }
             }
-            if !self.eat_punct(Punct::Comma) {
+            // A comma separates two arms on one line; a newline separates
+            // them across lines, the way every other delimited list in the
+            // language reads. Only a run that is neither ends the body.
+            if !self.eat_punct(Punct::Comma) && !self.at_punct(Punct::RBrace) && !self.at_eof() {
+                continue;
+            }
+            if self.at_punct(Punct::RBrace) || self.at_eof() {
                 break;
             }
         }

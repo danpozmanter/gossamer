@@ -39,12 +39,12 @@ fn classify_color(c: &Color) -> String {
 
 fn main() {
     let shapes = #[
-        Shape::Circle(1.0, Color::Red),
-        Shape::Circle(2.0, Color::Green),
-        Shape::Rect(3.0, 4.0, Color::Blue),
-        Shape::Triangle(5.0, 5.0),
-        Shape::Triangle(3.0, 4.0),
-        Shape::Point,
+        Shape::Circle(1.0, Color::Red)
+        Shape::Circle(2.0, Color::Green)
+        Shape::Rect(3.0, 4.0, Color::Blue)
+        Shape::Triangle(5.0, 5.0)
+        Shape::Triangle(3.0, 4.0)
+        Shape::Point
     ]
 
     for s in shapes {

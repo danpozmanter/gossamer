@@ -119,6 +119,22 @@ pub struct GosHttpRequest {
     /// apply. `None` for server-side requests and standalone pending
     /// requests, which fall back to the default-policy agent.
     pub agent: Option<ureq::Agent>,
+    /// Request-scoped `context::Context`, as its pointer address, or 0
+    /// when the request has none.
+    ///
+    /// The server creates one per request and cancels it when the request
+    /// ends - whether the handler returned, the deadline elapsed, the peer
+    /// disconnected, or the process began shutting down. Work a handler
+    /// starts under it therefore stops when the request it belongs to is
+    /// over, which is the guarantee a caller can act on.
+    pub context: usize,
+    /// Socket address of the peer that sent this request, `host:port`.
+    /// Empty for a client-side request and for any server path that has
+    /// no socket behind it. An access log, an IP allowlist, and a
+    /// per-IP rate limit read it; a proxy-forwarded address is NOT
+    /// substituted here, so a deployment behind a proxy resolves the
+    /// forwarded chain itself against its own trusted-proxy list.
+    pub peer: String,
 }
 
 /// Body slice of a request: past `body_offset` when the h1 server
@@ -150,6 +166,8 @@ impl GosHttpRequest {
             params: Vec::new(),
             values: Vec::new(),
             agent: None,
+            peer: String::new(),
+            context: 0,
         }
     }
 }
@@ -312,6 +330,8 @@ unsafe fn client_pending_request(
         params: Vec::new(),
         values: Vec::new(),
         agent,
+        peer: String::new(),
+        context: 0,
     }))
 }
 
@@ -490,6 +510,8 @@ pub unsafe extern "C" fn gos_rt_http_request_send(req: *mut GosHttpRequest) -> i
             params: _,
             values: _,
             agent,
+            peer: _,
+            context: _,
         } = *unsafe { Box::from_raw(req) };
         // Reuse the originating client's agent (cookie jar / proxy /
         // policy) when this request came from `client.<verb>(url)`;
@@ -513,6 +535,42 @@ pub unsafe extern "C" fn gos_rt_http_request_query(req: *const GosHttpRequest) -
         } else {
             alloc_cstring(b"")
         }
+    })
+}
+
+/// `request.context` - the request-scoped context, cancelled when the
+/// request ends.
+///
+/// A handler passes it to anything that should stop with the request: a
+/// database query, an outbound call, a spawned worker. It answers a
+/// background context when the request has none, so a caller never has to
+/// branch on its absence.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_request_context(
+    req: *const GosHttpRequest,
+) -> *mut crate::c_abi::context::GosCtx {
+    ffi_entry!(std::ptr::null_mut(), {
+        let ctx = if req.is_null() {
+            0
+        } else {
+            unsafe { &*req }.context
+        };
+        if ctx == 0 {
+            return unsafe { crate::c_abi::context::gos_rt_ctx_background() };
+        }
+        ctx as *mut crate::c_abi::context::GosCtx
+    })
+}
+
+/// `request.peer_addr` - the `host:port` of the peer that sent this
+/// request, or `""` when there is no socket behind it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_request_peer_addr(req: *const GosHttpRequest) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if req.is_null() {
+            return alloc_cstring(b"");
+        }
+        alloc_cstring(unsafe { &*req }.peer.as_bytes())
     })
 }
 
@@ -1141,6 +1199,14 @@ pub(crate) fn stream_take_for_serve(
 /// Box-allocated so the pointer outlives any LLVM
 /// `arena_save`/`arena_restore` window the caller's compiled code
 /// emits - see fix_architecture_ownership.md Stage 4.
+pub(crate) fn alloc_response_stream_blob_public(
+    handle: i64,
+    status: i64,
+    content_type: &str,
+) -> *mut i64 {
+    alloc_response_stream_blob(handle, status, content_type)
+}
+
 fn alloc_response_stream_blob(handle: i64, status: i64, content_type: &str) -> *mut i64 {
     let ct_cs = alloc_cstring(content_type.as_bytes()) as i64;
     Box::into_raw(Box::new([handle, status, ct_cs])).cast::<i64>()
@@ -2193,6 +2259,8 @@ mod tests {
             params: Vec::new(),
             values: Vec::new(),
             agent: None,
+            peer: String::new(),
+            context: 0,
         };
         let v = unsafe { gos_rt_http_request_headers(std::ptr::from_ref(&req)) };
         assert!(!v.is_null());
@@ -2242,6 +2310,8 @@ mod tests {
             params: Vec::new(),
             values: Vec::new(),
             agent: None,
+            peer: String::new(),
+            context: 0,
         };
         let cases = [
             ("/a?x=1", "/a"),
