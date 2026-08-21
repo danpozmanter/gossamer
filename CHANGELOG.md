@@ -20,6 +20,13 @@
   answers something that is not an `http::Response` produced a bare 500 and a
   silent server. The fault is now one `slog` record on stderr carrying the
   method, the path, the status, and the message.
+- `lifecycle::shutdown()` stops the compiled tier's accept loop. The loop tests
+  its shutdown flag at the top of each iteration, so an acceptor parked in
+  `accept()` held its port until a connection happened to arrive - only a
+  `SIGINT`/`SIGTERM` delivered the wake that ends it, and never on Windows. The
+  shutdown now connects to every bound address the way the bytecode VM's
+  acceptor already did, so a program that calls `shutdown()` drains and exits on
+  every tier and platform.
 - A handler that panics no longer takes the whole native server with it. The
   compiled server serves each connection on its own thread, and the fatality
   rule read "not inside a goroutine" as "this is `fn main`", so the fault exited

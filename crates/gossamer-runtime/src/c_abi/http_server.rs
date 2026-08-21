@@ -532,8 +532,15 @@ fn http_wake_addrs() -> &'static parking_lot::Mutex<Vec<SocketAddr>> {
     ADDRS.get_or_init(|| parking_lot::Mutex::new(Vec::new()))
 }
 
-#[cfg(unix)]
-fn wake_http_acceptors() {
+/// Breaks every live accept loop out of its blocking `accept()` by
+/// connecting to the address it is bound to.
+///
+/// An acceptor parked in `accept()` reaches its shutdown check only when a
+/// connection arrives, so the flag alone leaves it parked until one does.
+/// The self-connect is the arrival, and the loop's own check closes the
+/// connection and leaves. This is what the interp tier's acceptor does, so
+/// a shutdown ends the same way on every tier.
+pub(crate) fn wake_http_acceptors() {
     let addrs = http_wake_addrs().lock().clone();
     for addr in addrs {
         let _ = TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(200));
@@ -3013,5 +3020,59 @@ mod tests {
         assert!(!text.contains("X-MiXeD"), "head: {text}");
         assert!(text.contains("transfer-encoding: chunked\r\nconnection: keep-alive\r\n"));
         assert!(text.contains("content-type: text/csv\r\n"));
+    }
+
+    /// A shutdown reaches an acceptor parked inside `accept()` only as a
+    /// connection: the wake is what carries it, so it must arrive on every
+    /// platform the server runs on.
+    #[test]
+    fn the_wake_releases_a_thread_parked_in_accept() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let _registered = register_http_shutdown_wake_addr(addr);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let parked = std::thread::spawn(move || {
+            let _ = tx.send(listener.accept().is_ok());
+        });
+
+        wake_http_acceptors();
+
+        let accepted = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the parked accept returns once the wake connects");
+        assert!(accepted, "the wake connection is the one `accept` answers");
+        parked.join().expect("parked thread ends");
+    }
+
+    /// The server's own accept loop ends on the same pair - its shutdown
+    /// flag plus the wake that delivers it - and stops holding the port.
+    #[test]
+    fn the_accept_loop_ends_on_a_flagged_wake() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let limits = ServerLimits::default();
+        let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let in_flight = std::sync::Arc::new(AtomicUsize::new(0));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let acceptor = {
+            let shutdown = std::sync::Arc::clone(&shutdown);
+            let in_flight = std::sync::Arc::clone(&in_flight);
+            std::thread::spawn(move || {
+                accept_serve_with(listener, &limits, &shutdown, &in_flight, |_, _, _| {});
+                let _ = tx.send(());
+            })
+        };
+
+        // Serving one connection puts the loop back at `accept()`, which is
+        // where a shutdown has to be able to find it.
+        let served = std::net::TcpStream::connect(addr).expect("connect");
+        drop(served);
+
+        shutdown.store(true, Ordering::Release);
+        wake_http_acceptors();
+
+        rx.recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the woken loop leaves instead of holding the port");
+        acceptor.join().expect("acceptor thread ends");
     }
 }

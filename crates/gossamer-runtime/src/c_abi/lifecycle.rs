@@ -96,6 +96,11 @@ pub fn begin_shutdown() {
     sd_notify("STOPPING=1\n");
     crate::sched_global::request_shutdown();
     wake_shutdown_watchers();
+    // An acceptor parked in `accept()` tests its shutdown flag only when a
+    // connection arrives, so the flag has to be delivered as one. wasm32
+    // has no listening server to reach.
+    #[cfg(not(target_arch = "wasm32"))]
+    crate::c_abi::http_server::wake_http_acceptors();
     crate::c_abi::context::cancel_live_requests();
 }
 
