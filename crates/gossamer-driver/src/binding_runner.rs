@@ -918,7 +918,7 @@ fn render_one(
             };
             let mut parts: Vec<String> = Vec::new();
             if let Some(v) = version {
-                parts.push(format!("version = \"{}\"", v.minimum));
+                parts.push(format!("version = \"{}\"", cargo_version_requirement(v)));
             }
             parts.push(toml_path_kv("path", &abs));
             push_cargo_features(&mut parts, features, *default_features);
@@ -937,7 +937,7 @@ fn render_one(
         } => {
             let mut parts: Vec<String> = Vec::new();
             if let Some(v) = version {
-                parts.push(format!("version = \"{}\"", v.minimum));
+                parts.push(format!("version = \"{}\"", cargo_version_requirement(v)));
             }
             parts.push(format!("git = \"{url}\""));
             if let Some(r) = reference {
@@ -960,7 +960,10 @@ fn render_one(
             default_features,
         } => {
             let mut parts: Vec<String> = Vec::new();
-            parts.push(format!("version = \"{}\"", version.minimum));
+            parts.push(format!(
+                "version = \"{}\"",
+                cargo_version_requirement(version)
+            ));
             push_cargo_features(&mut parts, features, *default_features);
             (
                 format!("{name} = {{ {} }}", parts.join(", ")),
@@ -1057,6 +1060,19 @@ pub fn toml_path_kv(key: &str, path: &Path) -> String {
     } else {
         let escaped = display.replace('\\', "\\\\").replace('"', "\\\"");
         format!("{key} = \"{escaped}\"")
+    }
+}
+
+/// Renders a Gossamer version requirement in Cargo's grammar.
+///
+/// The two grammars disagree about the default: a bare literal pins in
+/// `project.toml` and means a caret range in `Cargo.toml`, so writing
+/// one through unchanged would silently widen a pin. Each bound is
+/// spelled explicitly instead.
+fn cargo_version_requirement(requirement: &gossamer_pkg::VersionReq) -> String {
+    match requirement.bound {
+        gossamer_pkg::VersionBound::Exact => format!("={}", requirement.version),
+        gossamer_pkg::VersionBound::AtLeast => format!(">={}", requirement.version),
     }
 }
 

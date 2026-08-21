@@ -19,12 +19,7 @@ fn main() {
 
     // A policy is built by chaining; each step answers the policy as it
     // now stands, so `|>` reads as one expression.
-    let policy = sandbox::Policy::new()
-        |> $.read_write(&".")
-        |> $.network(false)
-        |> $.env_allow(&"PATH")
-        |> $.timeout(30_000)
-        |> $.level(&"none")
+    let policy = sandbox::Policy::new().read_write(&".").network(false).env_allow(&"PATH").timeout(30_000).level(&"none")
 
     let explained = policy.explain()
     println!("explain names the level: {}", explained.contains(&"level none"))
@@ -41,7 +36,7 @@ fn main() {
 
     // A level the host cannot honor fails closed rather than quietly
     // becoming something weaker.
-    let impossible = sandbox::Policy::new() |> $.level(&"strict")
+    let impossible = sandbox::Policy::new().level(&"strict")
     let verdict = impossible.explain()
     println!("strict is decided: {}", verdict.len() > 0)
 }

@@ -145,9 +145,9 @@ pub unsafe extern "C" fn gos_rt_sandbox_policy_deny(handle: i64, path: *const c_
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_sandbox_policy_network(handle: i64, allow: i64) -> i64 {
     let network = if allow == 0 {
-        Network::Deny
+        Network::None
     } else {
-        Network::Allow
+        Network::Open
     };
     edit(handle, |policy| policy.network(network))
 }
@@ -410,7 +410,7 @@ mod sandbox_abi_tests {
         assert!(peek(first).is_none(), "the consumed handle is reclaimed");
         assert_eq!(
             peek(second).expect("the new handle is live").network,
-            Network::Allow
+            Network::Open
         );
     }
 

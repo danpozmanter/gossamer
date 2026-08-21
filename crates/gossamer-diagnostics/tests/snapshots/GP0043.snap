@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0043]: A call argument used the retired `$`-projection callback shorthand. - here
+--- framed ---
+error[GP0043]: A call argument used the retired `$`-projection callback shorthand.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

@@ -2,850 +2,862 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/codegen_abi/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/collection_literals/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/compatibility/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/contributing/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/deployment/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/examples/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/install/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/libraries/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/memory/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/method_support/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/prelude/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/running/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/rust_bindings/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/security/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib_coverage/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/supported_targets/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/syntax/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/toolchain/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/wasm/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/design/diagnostics/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/design/goroutine_stacks/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/design/incremental/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/design/jit_native_memory_ownership/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/design/lazy_iterators/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/design/memory_model/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/design/runtime/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/design/selfhosting/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/design/sequence_reference_safety/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/arena/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/async_await/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/attribute/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/break/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/callback_shorthand/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/cfg/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/channel/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/closure/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/cohort/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/comptime/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/const/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/continue/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/doctest/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/enum/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/fn/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/for/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/generics/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/go/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/if/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/if_let/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/impl/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/keyword_arguments/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/let/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/let_mut/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/lifetimes/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/loop/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/macros/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/match/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/move_keyword/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/mut_ref_params/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/opaque_nominal_alias/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/pipe/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/question_mark/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/return/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/select/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/slicing/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/spawn/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/static/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/struct/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/top_level_statements/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/trait/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/triple_quoted_string/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/tuples/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/type_alias/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/unicode_identifiers/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/visibility/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/weak_references/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/language/while_let/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/migration/fsharp/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/migration/go/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/migration/kotlin/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/migration/python/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/migration/rust/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/misc/tooling_faithful_fmt/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/archive_tar/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/archive_zip/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/bufio/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/bytes/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/collection_patterns/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/collections/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/collections_deque/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/collections_heap/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/collections_ordered_map/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/collections_ordered_set/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/collections_ordered_vec/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/collections_queue/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/collections_stack/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/compress_bzip2/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/compress_flate/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/compress_gzip/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/compress_zlib/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/compress_zstd/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/context/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/crypto_aead/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/crypto_blake3/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/crypto_ecdsa/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/crypto_ed25519/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/crypto_hmac/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/crypto_insecure/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/crypto_kdf/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/crypto_password/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/crypto_rand/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/crypto_sha256/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/crypto_sha512/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/crypto_subtle/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/crypto_x509/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/database_sql/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/encoding_ascii85/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/encoding_base32/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/encoding_base64/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/encoding_binary/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/encoding_csv/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/encoding_hex/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/encoding_json/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/encoding_pem/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/encoding_toml/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/encoding_xml/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/encoding_yaml/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/env/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/errors/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/flag/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/fmt/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/fs/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/hash_adler32/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/hash_crc32/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/hash_fnv/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/html/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/html_template/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_binary_bodies/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_chunked/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_client_request_native/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_cookie/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_csrf/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_form/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_h3/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_health/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_middleware/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_multipart/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_native_client/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_proxy/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_query/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_redirect_policy/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_request_streaming/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_response_headers/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_router/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_server_request_headers/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_session/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_sse/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_state/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_static_files/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_streaming_responses/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/http_websocket/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/httptest/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/image/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/io/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/iter/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/jwt/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/lifecycle/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/math/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/math_big/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/math_bits/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/math_rand/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/metrics/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/mime/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/net/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/net_ip/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/net_netip/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
+    </url>
+    <url>
+         <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/net_smtp/</loc>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/net_url/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/option/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/os/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/os_exec/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/os_signal/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/os_user/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/panic/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/path/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/pprof/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/process/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/regex/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/result/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/runtime/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/runtime_collect_cycles/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
+    </url>
+    <url>
+         <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/sandbox/</loc>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/slog/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/sort/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/strconv/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/strings/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/sync/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/testing/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/thread/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/time/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/tls/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/trace/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/unicode/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/utf16/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/utf8/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/uuid/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/stdlib/validate/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/toolchain/diagnostics/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/toolchain/lints/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
+    </url>
+    <url>
+         <loc>https://danpozmanter.github.io/gossamer/docs/toolchain/sandbox/</loc>
+         <lastmod>2026-08-21</lastmod>
     </url>
     <url>
          <loc>https://danpozmanter.github.io/gossamer/docs/toolchain/zig/</loc>
-         <lastmod>2026-08-19</lastmod>
+         <lastmod>2026-08-21</lastmod>
     </url>
 </urlset>

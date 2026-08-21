@@ -173,59 +173,114 @@ pub enum VersionError {
     Malformed(String),
 }
 
-/// Caret range `^x.y.z` per SPEC §16.4. Matches everything from the
-/// minimum up to (exclusive) the next major boundary.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CaretRange {
-    /// Inclusive minimum version.
-    pub minimum: Version,
+/// How a requirement compares a candidate version against the one it
+/// names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VersionBound {
+    /// `=x.y.z`, or a bare `x.y.z`: this version and no other.
+    Exact,
+    /// `^x.y.z`: this version or any later one.
+    AtLeast,
 }
 
-impl CaretRange {
-    /// Constructs a caret range with `minimum` as the lower bound.
+/// A dependency's version requirement.
+///
+/// Two spellings, and no third. A bare literal pins, because a
+/// manifest that names a version and gets a different one is a
+/// surprise nobody asked for; `^` opts into anything newer. There is
+/// deliberately no upper bound and no comparator grammar: a range with
+/// a ceiling is a guess about code that has not been written yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionReq {
+    /// Whether the requirement pins or sets a floor.
+    pub bound: VersionBound,
+    /// The version the requirement names.
+    pub version: Version,
+}
+
+impl VersionReq {
+    /// A requirement that accepts `version` and nothing else.
     #[must_use]
-    pub fn new(minimum: Version) -> Self {
-        Self { minimum }
+    pub fn exact(version: Version) -> Self {
+        Self {
+            bound: VersionBound::Exact,
+            version,
+        }
     }
 
-    /// Parses a `^x.y.z` or `x.y.z` literal. The leading `^` is
-    /// optional because the manifest format treats a bare version
-    /// literal as a caret range (SPEC §16.4 default).
+    /// A requirement that accepts `version` or anything later.
+    #[must_use]
+    pub fn at_least(version: Version) -> Self {
+        Self {
+            bound: VersionBound::AtLeast,
+            version,
+        }
+    }
+
+    /// Parses `x.y.z`, `=x.y.z`, or `^x.y.z`.
+    ///
+    /// A leading `v` is accepted on every form, because that is how the
+    /// release tags are written and a manifest that copies one should
+    /// not have to remember to strip it.
     pub fn parse(text: &str) -> Result<Self, VersionError> {
-        let stripped = text.trim().strip_prefix('^').unwrap_or(text.trim());
-        let minimum = Version::parse(stripped)?;
-        Ok(Self { minimum })
+        let trimmed = text.trim();
+        let (bound, rest) = match trimmed.strip_prefix('^') {
+            Some(rest) => (VersionBound::AtLeast, rest),
+            None => (
+                VersionBound::Exact,
+                trimmed.strip_prefix('=').unwrap_or(trimmed),
+            ),
+        };
+        let rest = rest.trim();
+        let rest = rest.strip_prefix('v').unwrap_or(rest);
+        Ok(Self {
+            bound,
+            version: Version::parse(rest)?,
+        })
     }
 
-    /// Returns whether `version` is satisfied by this range.
+    /// Whether `version` satisfies this requirement.
+    ///
+    /// A prerelease is selected only by a requirement that names a
+    /// prerelease of the same `x.y.z`, whichever bound it carries:
+    /// `^1.2.0` must not quietly resolve to `1.3.0-rc.1`, and neither
+    /// must `^1.2.0-rc.1`.
     #[must_use]
     pub fn matches(&self, version: impl Borrow<Version>) -> bool {
         let version = version.borrow();
-        // A normal caret requirement does not opt into prereleases. A
-        // prerelease minimum explicitly does, but only within its base tuple.
         if version.prerelease.is_some()
-            && (self.minimum.prerelease.is_none()
-                || (self.minimum.major, self.minimum.minor, self.minimum.patch)
+            && (self.version.prerelease.is_none()
+                || (self.version.major, self.version.minor, self.version.patch)
                     != (version.major, version.minor, version.patch))
         {
             return false;
         }
-        if version < &self.minimum {
-            return false;
+        match self.bound {
+            VersionBound::Exact => {
+                // Build metadata is retained but does not participate in
+                // precedence, so `Version`'s own equality decides.
+                version == &self.version
+            }
+            VersionBound::AtLeast => version >= &self.version,
         }
-        // For 0.x.y, a caret range pins to the same minor; for x.y.z
-        // (x ≥ 1) it pins to the same major.
-        if self.minimum.major == 0 {
-            self.minimum.major == version.major && self.minimum.minor == version.minor
-        } else {
-            self.minimum.major == version.major
-        }
+    }
+
+    /// Whether the requirement pins a single version.
+    #[must_use]
+    pub const fn is_exact(&self) -> bool {
+        matches!(self.bound, VersionBound::Exact)
     }
 }
 
-impl fmt::Display for CaretRange {
+impl fmt::Display for VersionReq {
+    /// Renders the canonical spelling: a bare literal for a pin, `^`
+    /// for a floor. Both re-parse to the same requirement, so a
+    /// manifest this writes means what it said.
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(out, "^{}", self.minimum)
+        match self.bound {
+            VersionBound::Exact => write!(out, "{}", self.version),
+            VersionBound::AtLeast => write!(out, "^{}", self.version),
+        }
     }
 }
 
@@ -253,11 +308,57 @@ mod tests {
     }
 
     #[test]
-    fn caret_ranges_exclude_prereleases_unless_explicitly_requested() {
-        let stable = CaretRange::parse("^1.0.0").unwrap();
+    fn a_bare_literal_pins_and_a_caret_sets_a_floor() {
+        let pinned = VersionReq::parse("1.2.3").unwrap();
+        assert!(pinned.is_exact());
+        assert!(pinned.matches(Version::parse("1.2.3").unwrap()));
+        assert!(!pinned.matches(Version::parse("1.2.4").unwrap()));
+        assert!(!pinned.matches(Version::parse("1.2.2").unwrap()));
+
+        let floor = VersionReq::parse("^1.2.3").unwrap();
+        assert!(!floor.is_exact());
+        assert!(floor.matches(Version::parse("1.2.3").unwrap()));
+        assert!(floor.matches(Version::parse("1.2.4").unwrap()));
+        assert!(floor.matches(Version::parse("2.0.0").unwrap()));
+        assert!(!floor.matches(Version::parse("1.2.2").unwrap()));
+    }
+
+    #[test]
+    fn an_explicit_equals_means_the_same_as_a_bare_literal() {
+        assert_eq!(
+            VersionReq::parse("=1.2.3").unwrap(),
+            VersionReq::parse("1.2.3").unwrap()
+        );
+    }
+
+    #[test]
+    fn a_leading_v_is_accepted_on_every_spelling() {
+        let bare = VersionReq::parse("v1.2.3").unwrap();
+        assert_eq!(bare, VersionReq::exact(Version::parse("1.2.3").unwrap()));
+        let floor = VersionReq::parse("^v1.2.3").unwrap();
+        assert_eq!(
+            floor,
+            VersionReq::at_least(Version::parse("1.2.3").unwrap())
+        );
+    }
+
+    #[test]
+    fn every_spelling_round_trips_through_display() {
+        for text in ["1.2.3", "^1.2.3"] {
+            let parsed = VersionReq::parse(text).unwrap();
+            assert_eq!(parsed.to_string(), text);
+            assert_eq!(VersionReq::parse(&parsed.to_string()).unwrap(), parsed);
+        }
+    }
+
+    #[test]
+    fn a_prerelease_is_selected_only_by_a_requirement_naming_one() {
+        let stable = VersionReq::parse("^1.0.0").unwrap();
         assert!(!stable.matches(Version::parse("1.1.0-beta.1").unwrap()));
-        let prerelease = CaretRange::parse("^1.0.0-beta.1").unwrap();
+        let prerelease = VersionReq::parse("^1.0.0-beta.1").unwrap();
         assert!(prerelease.matches(Version::parse("1.0.0-beta.2").unwrap()));
+        // A prerelease floor does not drag in a later base tuple's
+        // prereleases, which is the surprise the confinement prevents.
         assert!(!prerelease.matches(Version::parse("1.1.0-beta.1").unwrap()));
     }
 

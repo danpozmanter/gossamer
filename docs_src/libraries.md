@@ -30,15 +30,17 @@ Rust](rust_bindings.md)).
 [project]
 id      = "example.com/widget"
 version = "0.1.0"
-# The exact toolchain this project is written against, matching the
-# release tag. `gos new` stamps the toolchain that scaffolded the
-# project; an older toolchain refuses to build it rather than failing
-# later on a surface it does not have.
-gossamer-version = "v0.55.0"
+# Which toolchain this project is written against, matching the release
+# tag. A bare version names that toolchain and no other; `^v0.55.0`
+# names it as a floor and accepts every later one. `gos new` stamps a
+# floor. A toolchain the requirement does not accept refuses to build
+# the project rather than failing later on a surface it does not have.
+gossamer-version = "^v0.55.0"
 authors = ["Leslie Tungsten <ltungsten@example.com>"]
 license = "Apache-2.0"
 
 [dependencies]
+# A bare version pins; `^1.2.3` accepts 1.2.3 or anything later.
 "example.org/lib" = "1.2.3"
 
 [registries]
@@ -91,8 +93,14 @@ A git source is versioned by the reference it is checked out at: `tag`,
 pgsql_gos = { git = "https://github.com/danpozmanter/pgsql-gos", tag = "v1.2.3" }
 ```
 
-A `version` range belongs to a registry dependency, which resolves within it;
-writing one beside `git` is rejected rather than silently ignored. A third
+A `version` requirement belongs to a registry dependency, which resolves
+within it; writing one beside `git` is rejected rather than silently ignored.
+There are two spellings and no third: `"1.2.3"` (or `"=1.2.3"`) is exactly
+that version, and `"^1.2.3"` is that version or any later one. A bare literal
+pins because a manifest that names a version and gets a different one is a
+surprise nobody asked for, and `^` has no ceiling because a ceiling would be a
+guess about code that has not been written yet - `project.lock` is where a
+reproducible graph is recorded. A third
 source form names an archive directly, pinned by digest:
 
 ```toml

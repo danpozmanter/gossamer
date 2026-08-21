@@ -1,6 +1,58 @@
 # Changelog
 
-## 0.55.0 - Compile-time capability policy and an OS-native process sandbox
+## 0.55.0 - Compile-time capability policy, an OS-native process sandbox, \>/$ syntax refinement
+
+- `|>` is the composition operator for free functions, and says which argument
+  it fills. A step is a bare callable (`x |> f`), or a call that names the
+  piped value's slot with `$` (`x |> f(a, $)`, `x |> f($, a)`); exactly one
+  `$` per step, anywhere along the step's call chain. The old rule threaded
+  into the trailing slot with no `$` written, which silently mis-filled every
+  data-first callee: `"a,b,c" |> strings::split(",")` answered `[,]` rather
+  than `[a, b, c]`, and `#[1,3,5] |> sort::binary_search(3)` answered `None`
+  rather than `Some(1)`, with no diagnostic and nothing for the type checker
+  to catch. An argument-taking step with no `$` now reports `GP0041`.
+- `$` no longer pastes the piped value back on as a method receiver. `x |> $.trim`,
+  `x |> $.0`, `x |> $[i]`, and the identity `x |> $` report `GP0042`: a method
+  already chains, and `x.trim()` is the shorter spelling. A method chain is an
+  ordinary pipe operand, so `"  Hi  ".trim().to_lowercase() |> shout` reads as
+  one expression.
+- `$` is no longer a callback shorthand. `xs.map($.abs)` reports `GP0043`;
+  write `xs.map(math::abs)`, which a std function in value position already
+  covers, or the closure `xs.map(|v| v.abs())`. `$.name` was a nullary method
+  call rather than a field read, so `people.map($.name)` never meant what it
+  looked like.
+- `gos check --fix` rewrites all three retired forms, and a chain converges in
+  one pass. On `GP0041` it appends `$` in the trailing slot, preserving the
+  behaviour of the rule it replaces, and the diagnostic says so - a data-first
+  callee needs the slot moved by hand.
+- A traversal with no receiver form names the spelling that exists.
+  `xs.reduce(f)` suggested `remove`, `xs.partition(f)` suggested `position`,
+  and `xs.unzip()` suggested `zip` - each sending the reader to a different
+  operation. The thirteen free-call-only traversals now report
+  `iter::<name>(.., <sequence>)` and the pipe form beside it.
+- A method reached on a function or closure is unresolved rather than answering
+  the function's own name. `wrap.len()` returned `4` and `wrap.to_string()`
+  returned `"wrap"`, both passing `gos check`; a callable is a code address and
+  declares no methods, so each reports `GT0002`.
+
+- A version requirement has two spellings and no third. `x.y.z`, or an
+  explicit `=x.y.z`, is exactly that version; `^x.y.z` is that version or any
+  later one, with no upper bound. A bare literal used to mean a caret range,
+  so a manifest naming `1.2.0` could resolve to `1.9.0`; it now pins, and a
+  project that wants the old behavior writes `^1.2.0`.
+- `project.gossamer-version` reads the same two spellings. `"v0.55.0"` names
+  that toolchain and no other, and `"^v0.55.0"` names it as a floor. The field
+  was documented as exact and enforced as a floor; both spellings now mean what
+  they say, and the diagnostic for a pin that does not match names the `^` form
+  that would accept a later release.
+- `gos new` scaffolds `gossamer-version = "^vX.Y.Z"`, and `gos add ID` with no
+  version writes a floor: a tool that pins on the user's behalf decides that a
+  project stops building at the next release, which is not its decision to
+  make. `gos add ID@1.2.3` pins and `gos add ID@^1.2.3` does not.
+- A `[rust-bindings]` version is translated into Cargo's grammar rather than
+  copied through. The two disagree about the default - a bare literal pins in
+  `project.toml` and means a caret range in `Cargo.toml` - so a pin is written
+  as `=1.2.3` and a floor as `>=1.2.3`.
 
 - `comptime` regions run under a capability policy. Compile-time evaluation
   reached the whole host with the privileges of whoever typed `gos check`: a
@@ -5201,7 +5253,7 @@ Many modules and methods had an interpreter implementation but no compiled-tier 
 
 - **`value_to_bytes` accepts a byte-array literal.** The interpreter's crypto helpers read `[u8]` arguments via `value_to_bytes`, which only handled the boxed `Array` shape and returned empty for the packed `IntArray` a `[112, 97, …]` literal lowers to - so VM crypto (`pbkdf2`/`argon2id`/`aead`) silently hashed *nothing*. The `IntArray` arm fixes the whole family.
 - **`.len()` on a runtime-helper String temporary.** `crypto::sha256::hex(x).len()` (and the other hex/`unicode::nfc` temporaries) read a `GosVec` header out of a c-string pointer on the compiled tier because the inline-receiver dispatch keyed on the unresolved HIR type; it now re-keys off the resolved (`String`) type and routes to `gos_rt_str_len`.
-- **`iter::min`/`max` carry a real `Option<i64>`.** The shims returned a bare `i64` while the static type was `Option<i64>`, so `iter::min(xs) |> option::default(0)` read garbage through the Option ABI; the shims now return the boxed Option.
+- **`iter::min`/`max` carry a real `Option<i64>`.** The shims returned a bare `i64` while the static type was `Option<i64>`, so `iter::min(xs) |> option::default(0, $)` read garbage through the Option ABI; the shims now return the boxed Option.
 - **`HashMap<String, Vec<i64>>` get/or_insert.** A String-keyed, aggregate-valued map stored via the i64-keyed path and could never be read back, and `or_insert` build-failed; dispatch now routes by key kind, with RC blob retain/release parity, and an `or_insert` of a fresh aggregate no longer double-frees at teardown.
 - **`fs::metadata(p)` returns a struct.** Field access (`m.size`, `m.is_file`) segfaulted on the compiled tier (the shim returned only the size as `Result<i64>`); it now uses the injected-source-struct pattern (a `__gos_fs_Metadata` wrapper over a 6-tuple leaf), matching the VM's `fs::Metadata`.
 - **`flag::Set::parse([literal])`** no longer segfaults - the `[String]` array literal is coerced to a heap `GosVec` before the shim (the same whitelist `http::Client::request` uses).

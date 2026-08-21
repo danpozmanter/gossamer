@@ -60,7 +60,7 @@ fn build_source(target_bytes: usize) -> String {
         "}\n",
         "\n",
         "fn pipeline(values: Vec<i64>) -> i64 {\n",
-        "    values |> iter::filter(|n| n % 2 == 0) |> iter::sum::<i64>()\n",
+        "    values |> iter::filter(|n| n % 2 == 0, $) |> iter::sum::<i64>()\n",
         "}\n",
         "\n",
         "// A short comment to exercise the comment path.\n",

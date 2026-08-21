@@ -225,7 +225,7 @@ pub fn compile(
     policy = match phase {
         Phase::Fetch => policy.for_fetch_phase(),
         Phase::Build if request.network_in_build => policy.for_fetch_phase(),
-        Phase::Build => policy.network(Network::Deny),
+        Phase::Build => policy.network(Network::None),
     };
     Sandbox::new(&policy).map_err(|error| error.to_string())
 }
@@ -247,8 +247,9 @@ pub fn explain(request: &BuildSandbox, roots: &BuildRoots) -> String {
                 out.push_str(&format!(
                     "  network:     {}\n",
                     match policy.network {
-                        Network::Deny => "denied",
-                        Network::Allow => "allowed",
+                        Network::None => "denied",
+                        Network::Client => "outbound only",
+                        Network::Open => "allowed",
                     }
                 ));
                 for line in sandbox.mechanisms() {
@@ -291,7 +292,7 @@ mod build_sandbox_tests {
     }
 
     #[test]
-    fn the_fetch_phase_allows_the_network_and_the_build_phase_denies_it() {
+    fn the_fetch_phase_allows_outbound_only_and_the_build_phase_denies_it() {
         let project = std::env::temp_dir().canonicalize().expect("canonicalize");
         let roots = BuildRoots::discover(&project);
         let request = BuildSandbox {
@@ -300,8 +301,10 @@ mod build_sandbox_tests {
         };
         let fetch = compile(&request, &roots, Phase::Fetch, &[]).expect("compile fetch");
         let build = compile(&request, &roots, Phase::Build, &[]).expect("compile build");
-        assert_eq!(fetch.policy().network, Network::Allow);
-        assert_eq!(build.policy().network, Network::Deny);
+        // A fetch connects out and never listens, so the phase grants
+        // client access rather than the caller's whole network.
+        assert_eq!(fetch.policy().network, Network::Client);
+        assert_eq!(build.policy().network, Network::None);
     }
 
     #[test]

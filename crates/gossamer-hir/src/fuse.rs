@@ -3,7 +3,7 @@
 //! inlined at its use site. A chain such as
 //!
 //! ```text
-//! iter::range_inclusive(1, n) |> iter::filter(|k| k % 2 == 0) |> iter::sum_by(|k| k * k)
+//! iter::range_inclusive(1, n) |> iter::filter(|k| k % 2 == 0, $) |> iter::sum_by(|k| k * k, $)
 //! ```
 //!
 //! otherwise materialises the whole range as a `Vec`, then a second

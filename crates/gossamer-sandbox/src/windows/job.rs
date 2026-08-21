@@ -16,7 +16,7 @@
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
-    JOB_OBJECT_LIMIT_JOB_MEMORY, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOB_OBJECT_LIMIT_JOB_MEMORY, JOB_OBJECT_LIMIT_JOB_TIME, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOBOBJECT_BASIC_LIMIT_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     JobObjectExtendedLimitInformation, SetInformationJobObject,
 };
@@ -70,6 +70,15 @@ impl Job {
         if let Some(bytes) = resources.max_memory {
             flags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
             extended.JobMemoryLimit = usize::try_from(bytes).unwrap_or(usize::MAX);
+        }
+        if let Some(limit) = resources.max_cpu_time {
+            // `PerJobUserTimeLimit` counts user-mode time across every
+            // process in the job, in 100-nanosecond units, and ends the
+            // job when the total is reached.
+            flags |= JOB_OBJECT_LIMIT_JOB_TIME;
+            let units = limit.as_nanos() / 100;
+            extended.BasicLimitInformation.PerJobUserTimeLimit =
+                i64::try_from(units).unwrap_or(i64::MAX);
         }
         extended.BasicLimitInformation.LimitFlags = flags;
         let applied = unsafe {

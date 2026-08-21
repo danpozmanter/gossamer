@@ -1057,11 +1057,14 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
         "lang::question_mark",
         "Short-circuit Result / Option propagation operator.",
     ),
-    lang("lang::pipe", "Forward-pipe operator `|>`."),
+    lang(
+        "lang::pipe",
+        "Forward-pipe operator `|>`, for composing free functions in a functional style. A step is either a bare callable (`x |> f`) or a call that names the piped value's slot with `$` (`x |> f(a, $)`). Methods chain on their own and are the shorter spelling; a method chain can feed a pipe.",
+    ),
     lang("lang::closure", "Lambda expression `|args| body`."),
     lang(
         "lang::callback_shorthand",
-        "A callback written without `|v|`: a std free function named in value position, and a `$`-headed projection argument (`xs.map($.abs)`), both stand for the closure that calls them.",
+        "A callback written without `|v|`: a std free function named in value position stands for the closure that calls it, as in `xs.map(math::abs)`.",
     ),
     lang("lang::fn", "Function declaration."),
     lang("lang::struct", "Product type declaration."),

@@ -1089,6 +1089,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1224,6 +1226,34 @@
 
 
     Diagnostics
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../toolchain/sandbox/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Sandboxing
 
 
 
@@ -2081,10 +2111,10 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#a-headed-projection" class="md-nav__link">
+  <a href="#everything-else-is-a-written-closure" class="md-nav__link">
     <span class="md-ellipsis">
 
-        A $-headed projection
+        Everything else is a written closure
 
     </span>
   </a>
@@ -2109,12 +2139,11 @@
 
 
 <h1 id="langcallback_shorthand"><code>lang::callback_shorthand</code><a class="headerlink" href="#langcallback_shorthand" title="Permanent link">&para;</a></h1>
-<p>A callback written without <code>|v|</code>: a std free function named in value position, and a <code>$</code>-headed projection argument (<code>xs.map($.abs)</code>), both stand for the closure that calls them.</p>
+<p>A callback written without <code>|v|</code>: a std free function named in value position stands for the closure that calls it, as in <code>xs.map(math::abs)</code>.</p>
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 <p>A callback slot takes a closure. When that closure would do nothing but
-call one function on its parameter, two shorthands write the call
-directly.</p>
+call one std function on its parameter, name the function instead.</p>
 <h2 id="a-std-function-in-value-position">A std function in value position<a class="headerlink" href="#a-std-function-in-value-position" title="Permanent link">&para;</a></h2>
 <p>Naming a std free function where a callback is expected takes the closure
 that calls it:</p>
@@ -2126,35 +2155,31 @@ that calls it:</p>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">}</span>
 </code></pre></div>
 <p>Each of those is the closure <code>|v| math::abs(v)</code> / <code>|v| base64::encode(v)</code>.
-The parameter count comes from the function's own signature, so a function
-with no fixed parameter list - <code>fmt::format</code>, which is variadic - has no
-closure to stand for and reports <code>GT0015</code>. Write that one out:</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">fmt</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="cp">#[1, 2]</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">fmt</span>::<span class="n">format</span><span class="p">(</span><span class="s">&quot;&lt;{}&gt;&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">v</span><span class="p">)))</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="p">}</span>
+The parameter count comes from the function's own signature, so a std item
+with no fixed parameter list has no closure to stand for and reports
+<code>GT0015</code>. A macro is not a function at all: <code>fmt::format</code> reports <code>GR0018</code>
+and is written <code>format!(..)</code>, inside a closure of your own:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="cp">#[1, 2]</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="fm">format!</span><span class="p">(</span><span class="s">&quot;&lt;{}&gt;&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">v</span><span class="p">)))</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="p">}</span>
 </code></pre></div>
-<h2 id="a-headed-projection">A <code>$</code>-headed projection<a class="headerlink" href="#a-headed-projection" title="Permanent link">&para;</a></h2>
-<p>A <code>$</code> projection written as a call argument is the closure over that
-argument, with the forms <code>$</code> already has in a pipe step:</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="cp">#[1.0, -2.0]</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="cp">$</span><span class="p">.</span><span class="n">abs</span><span class="p">))</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="cp">#[</span><span class="s">&quot;a&quot;</span><span class="cp">, </span><span class="s">&quot;bb&quot;</span><span class="cp">]</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="cp">$</span><span class="p">.</span><span class="n">len</span><span class="p">()))</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="cp">#[(1, 2), (3, 4)]</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="cp">$</span><span class="p">.</span><span class="mi">0</span><span class="p">))</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="p">}</span>
+<h2 id="everything-else-is-a-written-closure">Everything else is a written closure<a class="headerlink" href="#everything-else-is-a-written-closure" title="Permanent link">&para;</a></h2>
+<p>There is no projection shorthand. A method call, a field read, an index,
+and a tuple projection are each written as the closure they are:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">struct</span> <span class="nc">Person</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">name</span>: <span class="nb">String</span> <span class="p">}</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="cp">#[</span><span class="s">&quot; a &quot;</span><span class="cp">, </span><span class="s">&quot; b &quot;</span><span class="cp">]</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">v</span><span class="p">.</span><span class="n">trim</span><span class="p">()))</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="cp">#[(1, 2), (3, 4)]</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="o">|</span><span class="n">t</span><span class="o">|</span><span class="w"> </span><span class="n">t</span><span class="p">.</span><span class="mi">0</span><span class="p">))</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">people</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[Person { name: </span><span class="s">&quot;ada&quot;</span><span class="cp"> }, Person { name: </span><span class="s">&quot;grace&quot;</span><span class="cp"> }]</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">people</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="o">|</span><span class="n">p</span><span class="o">|</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="n">name</span><span class="p">))</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="p">}</span>
 </code></pre></div>
-<p><code>$.name</code> is the nullary method call, exactly as in a pipe step, so it does
-not read a struct field. A field projection stays a written closure:</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">struct</span> <span class="nc">Person</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">name</span>: <span class="nb">String</span> <span class="p">}</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">people</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[Person { name: </span><span class="s">&quot;ada&quot;</span><span class="cp"> }, Person { name: </span><span class="s">&quot;grace&quot;</span><span class="cp"> }]</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">people</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="o">|</span><span class="n">p</span><span class="o">|</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="n">name</span><span class="p">))</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="p">}</span>
-</code></pre></div>
-<p>A bare <code>$</code> argument keeps its pipe meaning - it selects the slot the piped
-value lands in - so <code>x |&gt; f($, k)</code> is <code>f(x, k)</code>, not a callback.</p>
+<p><code>$</code> is not a callback shorthand - it belongs to <a href="../pipe/"><code>|&gt;</code></a>, where it
+names the slot the piped value fills. A <code>$</code>-headed projection in an
+argument reports <code>GP0043</code>, and <code>gos check --fix</code> rewrites it to the
+closure it abbreviated.</p>
 
 
 

@@ -125,8 +125,8 @@ fn parses_crates_form() {
             features,
             default_features,
         } => {
-            assert_eq!(version.minimum.major, 0);
-            assert_eq!(version.minimum.minor, 26);
+            assert_eq!(version.version.major, 0);
+            assert_eq!(version.version.minor, 26);
             assert_eq!(features, &vec!["crossterm".to_string()]);
             assert!(*default_features);
         }

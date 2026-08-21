@@ -26,8 +26,7 @@ fn show(r: http::Request) -> http::Response {
 }
 
 fn serve_router() {
-    let r = router::Router::new()
-        |> $.get("/p/{id}/{amt}", show)
+    let r = router::Router::new().get("/p/{id}/{amt}", show)
     if let Err(e) = http::serve("127.0.0.1:23884", r) {
         eprintln!("serve failed: {e}")
     }

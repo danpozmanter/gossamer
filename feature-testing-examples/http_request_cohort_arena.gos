@@ -87,10 +87,7 @@ fn status_and_body(url: &String) -> String {
 }
 
 fn main() -> Result<(), errors::Error> {
-    let app = router::Router::new()
-        |> $.get("/fanout", fanout)
-        |> $.get("/fanout-fails", fanout_fails)
-        |> $.get("/assemble", assemble)
+    let app = router::Router::new().get("/fanout", fanout).get("/fanout-fails", fanout_fails).get("/assemble", assemble)
     let s = http::Server::new()
     s.listen("127.0.0.1:0")?
     let addr = s.addr()

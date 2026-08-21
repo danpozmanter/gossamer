@@ -324,7 +324,7 @@ fn parse(s: &String) -> Result<i64, errors::Error> {
 }
 fn main() {
     let v = parse(&"x") |> result::unwrap_or_else(|e| { let _ = e
- -1 })
+ -1 }, $)
     println!("{}", v)
 }
 "#,

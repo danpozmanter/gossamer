@@ -96,8 +96,11 @@ are built through their type with `new()` or `from([...])`.
 
 ## Pipe Operator
 
-F# pipes into the next function's first argument. Gossamer pipes into
-the next function's last positional argument.
+F# pipes into the next function's first argument, which works because
+currying makes `List.filter f` a genuine one-argument function.
+Gossamer has no currying, so a step that writes arguments names the slot
+the piped value fills with `$` - anywhere in the argument list, not a
+fixed end.
 
 ```fsharp
 [1; 2; 3; 4]
@@ -109,12 +112,25 @@ the next function's last positional argument.
 use std::iter
 
 [1, 2, 3, 4]
-    |> iter::filter(|n: i64| n % 2 == 0)
-    |> iter::sum_by(|n: i64| n * n)
+    |> iter::filter(|n: i64| n % 2 == 0, $)
+    |> iter::sum_by(|n: i64| n * n, $)
 ```
 
-This is why Gossamer stdlib pipeline helpers put the data argument
-last.
+Naming the slot is what lets one operator serve both stdlib
+conventions: `iter::`, `option::`, and `result::` take their data last,
+while `strings::`, `path::`, `bytes::`, and `sort::` take it first,
+mirroring the method receiver.
+
+```gos
+use std::strings
+
+let parts = "a,b,c" |> strings::split($, ",")
+```
+
+The other half of the translation is that Gossamer has methods and F#
+does not. Where F# must pipe, Gossamer usually chains - `s.trim()`,
+`xs.iter().filter(f).sum()` - and the pipe is for the free functions
+that have no receiver to chain from. A method chain can feed a pipe.
 
 ## Records To Structs
 
@@ -187,8 +203,8 @@ let parsed = input |> Option.bind tryParse |> Option.defaultValue 0
 use std::option
 
 let parsed = input
-    |> option::and_then(try_parse)
-    |> option::unwrap_or(0)
+    |> option::and_then(try_parse, $)
+    |> option::unwrap_or(0, $)
 ```
 
 For fallible work, `?` is usually clearer than a pipeline:
@@ -314,9 +330,9 @@ they appear.
 | `Environment.GetCommandLineArgs` | `env::args()` |
 | `Console.WriteLine` | `println!(...)` |
 | `sprintf "%s %d" s n` | `format!("{s} {n}")` |
-| `List.map f xs` | `xs |> iter::map(f)` |
-| `List.filter f xs` | `xs |> iter::filter(f)` |
-| `List.fold f init xs` | `xs |> iter::fold(init, f)` |
+| `List.map f xs` | `xs |> iter::map(f, $)` |
+| `List.filter f xs` | `xs |> iter::filter(f, $)` |
+| `List.fold f init xs` | `xs |> iter::fold(init, f, $)` |
 | `Map.find k m` | `m.get(&k)` |
 | `Set.contains x s` | `s.contains(&x)` |
 | `String.trim s` | `strings::trim(&s)` |

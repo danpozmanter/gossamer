@@ -881,10 +881,10 @@ struct TypeChecker<'a> {
     /// Supertrait names of each trait, keyed by trait name, from the
     /// `trait Pet: Animal` clause.
     trait_supertraits: HashMap<String, Vec<String>>,
-    /// Callee nodes of a call sitting on the right of `|>`. The pipe
-    /// desugars `x |> f(a)` to `f(a, x)` during HIR lowering, so such a
-    /// call supplies one fewer explicit argument than the callee's
-    /// arity; the arity check accounts for the implicit piped argument.
+    /// Callee nodes of a call sitting on the right of `|>`. A step with no
+    /// arguments takes the piped value as its only one, supplied during HIR
+    /// lowering, so the call writes one fewer argument than the callee's
+    /// arity; the arity check accounts for the piped argument.
     pipe_stage_callees: std::collections::HashSet<NodeId>,
     /// Type of the value piped into a method call on the right of `|>`,
     /// keyed by the method-call node. The value lands in the method's
@@ -11021,6 +11021,12 @@ impl<'a> TypeChecker<'a> {
             }
             return Some(self.tcx.error_ty());
         }
+        // A callable carries no method surface, so a method reached on one is
+        // rejected before the conversion and representation paths below: those
+        // would otherwise type `into` / `to_string` against a code address.
+        if let Some(ty) = self.reject_method_on_callable(receiver_ty, method, args, span) {
+            return Some(ty);
+        }
         // `into` / `try_into` are conversions rather than surface the
         // receiver has to declare, and are typed further down. An opaque
         // alias formats as its representation does, so `to_string` is its own
@@ -11029,6 +11035,63 @@ impl<'a> TypeChecker<'a> {
             return None;
         }
         self.reject_nominal_repr_method(receiver_ty, method, args, span)
+    }
+
+    /// Rejects any method reached on a function, closure, or `Fn(..)` value.
+    ///
+    /// A callable is a code address: it declares no methods of its own and
+    /// inherits none, so every such call is unresolved. Naming it here keeps
+    /// the receiver from reaching the generic method paths, which would treat
+    /// an unconstrained callable as text and answer the function's own name.
+    /// Returns the error type when a diagnostic was emitted.
+    fn reject_method_on_callable(
+        &mut self,
+        receiver_ty: Ty,
+        method: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Option<Ty> {
+        let mut r = self.infer.resolve(self.tcx, receiver_ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(r) {
+            r = self.infer.resolve(self.tcx, *inner);
+        }
+        if !matches!(
+            self.tcx.kind(r),
+            Some(
+                TyKind::FnDef { .. }
+                    | TyKind::FnPtr(_)
+                    | TyKind::FnTrait(_)
+                    | TyKind::Closure { .. }
+            )
+        ) {
+            return None;
+        }
+        for arg in args {
+            self.check_expr(arg);
+        }
+        // `FnDef` and `Closure` print with an internal def index, which says
+        // nothing to a reader; name the callable by what it is instead.
+        let ty = match self.tcx.kind(r) {
+            Some(TyKind::FnDef { def, .. }) => {
+                let def = *def;
+                match self.tcx.def_name(def) {
+                    Some(name) => format!("fn {name}"),
+                    None => "fn".to_string(),
+                }
+            }
+            Some(TyKind::Closure { .. }) => "closure".to_string(),
+            _ => self.render_public_ty(r),
+        };
+        self.emit(
+            TypeError::UnresolvedMethod {
+                ty,
+                name: method.to_string(),
+                available: Vec::new(),
+                field_of_same_name: false,
+            },
+            span,
+        );
+        Some(self.tcx.error_ty())
     }
 
     /// Rejects a method reached on an opaque alias that only its
@@ -12269,9 +12332,8 @@ impl<'a> TypeChecker<'a> {
                 }
                 ty
             }
-            // Partial application (`xs |> iter::map(f)`) is completed
-            // at the pipe site, where the data argument's type is
-            // known.
+            // A step naming its slot (`xs |> iter::map(f, $)`) is typed at
+            // the pipe site, where the data argument's type is known.
             Some(_) => None,
             // A std combinator the checker has no signature row for
             // cannot type its closure argument; the compiled tiers
@@ -12871,7 +12933,7 @@ impl<'a> TypeChecker<'a> {
         }
         self.check_piped_user_method_arg(lhs, lhs_ty, rhs);
         // Data-last std combinators, partially applied through the
-        // pipe (`xs |> iter::map(f)`, `r |> result::map_err(f)`,
+        // pipe (`xs |> iter::map(f, $)`, `r |> result::map_err(f, $)`,
         // `r |> result::ok`): the piped value is the data argument,
         // so its payload types pin the closure params here.
         let combinator: Option<(&gossamer_ast::PathExpr, &[Expr])> = match &rhs.kind {
@@ -12919,9 +12981,9 @@ impl<'a> TypeChecker<'a> {
                 }
             }
         }
-        // rhs_ty might be an unresolved Var when `rhs` is a partial-application
-        // Call (e.g. `add(1)` from `x |> add(1)` where check_call's arity guard
-        // fired). Recover by inspecting the call's inner callee type directly.
+        // rhs_ty might be an unresolved Var when `rhs` is a call whose arity
+        // guard fired in check_call. Recover by inspecting the call's inner
+        // callee type directly.
         if let ExprKind::Call {
             callee: inner_callee,
             args,

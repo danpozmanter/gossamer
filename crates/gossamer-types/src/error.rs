@@ -1266,6 +1266,11 @@ impl TypeDiagnostic {
                         .with_note(
                             "`set` is the `json::Value` field-update helper, not a map method",
                         )
+                } else if is_callable_ty_spelling(ty) {
+                    out.with_help(format!(
+                        "call it first and reach `{name}` on what it answers: `<call>(..).{name}(..)`"
+                    ))
+                    .with_note("a callable is a code address, not data, and declares no methods")
                 } else if *field_of_same_name {
                     out.with_help(format!(
                         "`{name}` is a field of `{ty}`, so it is read without parentheses: \
@@ -2010,6 +2015,17 @@ fn unknown_field_diagnostic(
 /// Attaches the GT0002 did-you-mean and the receiver's method surface.
 /// Split out of `to_diagnostic` to keep that match within the line-count
 /// lint budget.
+/// Whether a rendered type is a callable: `fn(..) -> ..`, `Fn(..) -> ..`, or a
+/// closure. These share one property the method paths care about - no method
+/// surface at all - so the diagnostic speaks to the shape rather than the name.
+fn is_callable_ty_spelling(ty: &str) -> bool {
+    ty == "fn"
+        || ty == "closure"
+        || ty.starts_with("fn(")
+        || ty.starts_with("fn ")
+        || ty.starts_with("Fn(")
+}
+
 fn unresolved_method_diagnostic(
     out: gossamer_diagnostics::Diagnostic,
     ty: &str,
@@ -2017,6 +2033,17 @@ fn unresolved_method_diagnostic(
     available: &[String],
 ) -> gossamer_diagnostics::Diagnostic {
     let mut out = out;
+    // A traversal that only has a data-last free call is not a near-miss for
+    // some other method: naming the spelling that exists beats sending the
+    // reader to a different operation with a similar name.
+    if crate::is_free_call_only_traversal(name) {
+        return out
+            .with_help(format!(
+                "`{name}` is written as a free call taking the sequence last: \
+                 `iter::{name}(.., <sequence>)`, or `<sequence> |> iter::{name}(.., $)`"
+            ))
+            .with_note("this traversal has no receiver form on any tier");
+    }
     if let Some(candidate) = gossamer_diagnostics::suggest(
         name,
         available.iter().map(String::as_str),

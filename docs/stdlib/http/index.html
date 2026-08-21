@@ -1089,6 +1089,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1224,6 +1226,34 @@
 
 
     Diagnostics
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../toolchain/sandbox/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Sandboxing
 
 
 
@@ -2215,7 +2245,7 @@
 
 <h1 id="stdhttp"><code>std::http</code><a class="headerlink" href="#stdhttp" title="Permanent link">&para;</a></h1>
 <p>Status: experimental</p>
-<p>HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit.</p>
+<p>HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit. Write a handler as a cohort and an arena: <code>cohort { }</code> joins or cancels every goroutine the request spawned before the response is written, and its first child failure becomes the block's <code>Err</code> for the handler to turn into a status; <code>arena { }</code> bump-allocates what the request builds and frees it wholesale on every exit path, with escape checked at compile time. Dependency injection is closure capture - build the router from closures capturing the pool and the configuration.</p>
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 <h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>

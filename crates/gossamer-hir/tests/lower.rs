@@ -38,7 +38,7 @@ fn simple_function_lowers_to_hir_fn() {
 #[test]
 fn pipe_rewrites_to_call_with_appended_argument() {
     let (program, _tcx) = lower(
-        "fn wrap(a: i32, b: i32) -> i32 { a }\n\nfn caller(x: i32) -> i32 { x |> wrap(0i32) }\n",
+        "fn wrap(a: i32, b: i32) -> i32 { a }\n\nfn caller(x: i32) -> i32 { x |> wrap(0i32, $) }\n",
     );
     let caller = program
         .items

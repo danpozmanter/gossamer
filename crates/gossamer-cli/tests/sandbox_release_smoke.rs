@@ -32,11 +32,11 @@ fn main() {
     println!("json: {}", sandbox::capabilities_json().contains(&"max_level"))
 
     let policy = sandbox::Policy::new()
-        |> $.read_write(&".")
-        |> $.network(false)
-        |> $.env_allow(&"PATH")
-        |> $.timeout(30_000)
-        |> $.level(&"none")
+        .read_write(&".")
+        .network(false)
+        .env_allow(&"PATH")
+        .timeout(30_000)
+        .level(&"none")
 
     println!("explain: {}", policy.explain().contains(&"level none"))
 
@@ -47,7 +47,7 @@ fn main() {
 
     // A preset carries the whole build policy, so a program does not
     // reassemble a dozen grants and get one wrong.
-    let preset = sandbox::Policy::build_default(&".") |> $.level(&"none")
+    let preset = sandbox::Policy::build_default(&".").level(&"none")
     println!("preset: {}", preset.explain().len() > 0)
 }
 "#;

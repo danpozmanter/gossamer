@@ -186,17 +186,14 @@ Write clear, low-complexity, concise code.
   materialised sequence, or use `BTreeSet`, when order is part of the
   answer. Printing (`{:?}`) and serialization sort both kinds, so rendered
   output is stable whatever order the elements went in.
-- **A callback has two shorthands.** A std free function named in
+- **A callback has one shorthand.** A std free function named in
   value position IS the closure that calls it, so `xs.map(math::abs)`
   and `xs.map(base64::encode)` need no `|v|` (a macro is not a function:
   `fmt::format` reports GR0018 and is written `format!(..)`, so pass a
-  closure that calls it). A `$`-headed projection in an argument is the closure
-  over that argument: `xs.map($.abs)` is `xs.map(|v| v.abs())`,
-  `$.len()` calls with arguments, and `$.0` / `$[i]` project. `$.name`
-  is the nullary METHOD call, exactly as in a pipe step, so read a
-  struct field with the closure instead: `people.map(|p| p.name)`. A
-  bare `$` argument keeps its pipe meaning - it selects the slot the
-  piped value lands in.
+  closure that calls it). Everything else is a written closure:
+  `xs.map(|v| v.abs())`, `people.map(|p| p.name)`. `$` is not a
+  callback shorthand - it belongs to `|>`, where it names the slot the
+  piped value fills, and `xs.map($.abs)` reports GP0043.
 - **Use metadata already returned by an API.** For entries from
   `fs::read_dir` or `fs::walk_dir`, inspect `entry.is_file`,
   `entry.is_dir`, `entry.is_symlink`, `entry.size`, `entry.path`, and
@@ -301,21 +298,39 @@ Write clear, low-complexity, concise code.
 
 ## 5. The `|>` forward-pipe
 
-Prefer `|>` when a value flows through two or more transforms.
-Left-associative, very low precedence.
+`|>` composes FREE FUNCTIONS, which have no receiver to chain from.
+Reach for it in functional-style code - a value flowing through two or
+more free-function transforms. Everything with a receiver chains on its
+own, and a method chain is the shorter spelling: prefer
+`s.trim().to_lowercase()` over any pipe form of it. The two mix freely,
+and a chain can feed a pipe. Left-associative, very low precedence.
 
-- `x |> f` is `f(x)`; `x |> f(a, b)` puts `x` in the LAST slot:
-  `f(a, b, x)`; same for `x |> recv.m(a)`.
-- `$` makes the piped value the RECEIVER: `x |> $.m(a)` is `x.m(a)`;
-  bare `s |> $.trim |> $.to_uppercase` chains nullary methods; `$.0`,
-  `$[i]`, and bare `$` (identity) work. One direct `$` also selects an
-  argument slot: `x |> f($, k)` is `f(x, k)`.
-- Closure steps thread the value into the last slot too.
-- A `$` inside a step's ARGUMENT belongs to that argument's callback,
-  not to the pipe: `xs |> $.map($.abs)` maps `|v| v.abs()` over `xs`.
+- `x |> f` is `f(x)` - a bare callable takes the value as its only
+  argument. `x |> f()` is the same.
+- A step that writes arguments must name the piped value's slot with
+  `$`: `x |> f(a, $)` is `f(a, x)`, and `x |> f($, a)` is `f(x, a)`.
+  Exactly one `$` per step, anywhere along the step's call chain, so
+  `x |> f(a, $).len()` is `f(a, x).len()`. No argument order is
+  assumed, so a data-first callee (`strings::`, `path::`, `bytes::`,
+  `sort::`) reads like a data-last one (`iter::`, `option::`,
+  `result::`). Omitting `$` on an argument-taking step is GP0041.
+- `x |> recv.m(a, $)` pipes into a method on an external receiver.
+- Closure steps take the value as the closure's parameter:
+  `x |> |v| v * 2`.
+- `$` has no other meaning. It is not a callback shorthand
+  (`xs.map($.abs)` is GP0043 - write `xs.map(math::abs)` or
+  `xs.map(|v| v.abs())`), and it does not paste a receiver back on
+  (`x |> $.trim` is GP0042 - write `x.trim()`).
+- `gos check --fix` rewrites all three retired forms. On GP0041 it
+  appends `$` in the trailing slot, which preserves the old implicit
+  behaviour - confirm that is the slot the call needs.
 
 ```gossamer
-let n = 3 |> double |> add(10) |> clamp(0, 100)
+// free functions: the pipe earns its place
+let n = 3 |> double |> add(10, $) |> clamp(0, 100, $)
+
+// methods: chain them, and feed the chain to a pipe
+let shout = "  Hi  ".trim().to_lowercase() |> exclaim
 ```
 
 ## 6. Grammar essentials
@@ -436,8 +451,8 @@ fn load(path: &String) -> Result<String, errors::Error> {
 `is(err, needle)` / `join([..])`; walk chains with `err.cause()`.
 `{}` on a wrapped error prints the colon-joined chain;
 `.message()` is the top message only. Ok-path piping:
-`fs::read_to_string(f) |> result::map(|s| print!("{s}"))
-|> result::unwrap_or_else(|e| eprintln!("{e}"))`.
+`fs::read_to_string(f) |> result::map(|s| print!("{s}"), $)
+|> result::unwrap_or_else(|e| eprintln!("{e}"), $)`.
 
 Panics are goroutine-scoped: a spawned goroutine's panic ends only
 that goroutine; a main-goroutine panic is fatal (exit 101). Integer
@@ -663,7 +678,7 @@ Full path spelling is validated (GR0005); discover signatures with
   (client: `Client::builder()` or free `http::get/post/..`,
   `stream` for SSE; server: `http::serve(addr, handler)`,
   `Response::text/json`, `raw_body`, bodies cap 1 MiB),
-  `http::router` (verb methods chain with `|>`; params via
+  `http::router` (verb methods chain; params via
   `r.path_value("name")` / `r.path_int("id")`), `http::websocket`
   (no `wss://` yet), `http_h3`, `http::static_files`, `http::proxy`,
   middleware/session/csrf/form/multipart/state/health, `html`,
@@ -673,7 +688,7 @@ Full path spelling is validated (GR0005); discover signatures with
   `sandbox::Policy::new()` then `read_write` / `read_only` / `deny` /
   `network(bool)` / `env_allow` / `env_set` / `timeout(ms)` /
   `level("standard")` / `working_directory`, each answering the policy
-  as it stands so a `|>` chain reads as one expression;
+  as it stands so a method chain reads as one expression;
   `Policy::build_default(&root)` and `Policy::command_default(&cwd)`
   are the shipped policies as constructors. `sandbox::run(&policy,
   &argv) -> Result<Output, errors::Error>` answers the same
@@ -698,8 +713,8 @@ use std::http
 use std::http::router
 
 let r = router::Router::new()
-    |> $.get("/", handler_fn)
-    |> $.get("/ping", |_r| Ok(http::Response::text(200, "ok")))
+    .get("/", handler_fn)
+    .get("/ping", |_r| Ok(http::Response::text(200, "ok")))
 http::serve("0.0.0.0:8080", r)?
 ```
 
@@ -714,8 +729,12 @@ src/main.gos       # binary entry (lib.gos for libraries;
 tests/             # integration tests
 ```
 
-`gossamer-version` is the exact toolchain the project is written
-against; an older `gos` refuses the project rather than failing later.
+A version requirement has two spellings and no third: `x.y.z` (or
+`=x.y.z`) pins that version, and `^x.y.z` accepts it or anything later.
+This holds for `[dependencies]` and for `gossamer-version`, which names
+the toolchain the project is written against - a pin there means that
+toolchain and no other, and `gos new` scaffolds `^` so a project keeps
+building across releases.
 Native Rust is reached ONLY through a binding crate named under
 `[rust-bindings]`: `gos new ID --template binding` scaffolds one, its
 `pub fn`s live inside a `#[gos_module("name")]` block (keep `use`

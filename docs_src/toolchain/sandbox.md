@@ -132,12 +132,12 @@ use std::sandbox
 
 fn main() {
     let policy = sandbox::Policy::new()
-        |> $.read_write(&".")
-        |> $.read_only(&"/usr")
-        |> $.network(false)
-        |> $.env_allow(&"PATH")
-        |> $.timeout(30_000)
-        |> $.level(&"standard")
+        .read_write(&".")
+        .read_only(&"/usr")
+        .network(false)
+        .env_allow(&"PATH")
+        .timeout(30_000)
+        .level(&"standard")
 
     // The capability report is a value, so a program branches on what
     // the host honors instead of assuming one operating system.

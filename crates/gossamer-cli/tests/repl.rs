@@ -2610,7 +2610,7 @@ fn repl_iter_receiver_methods_pipe_dotdot_and_range_index_work() {
          a.iter().skip(2).collect()\n\
          a.iter().enumerate().collect()\n\
          a.iter().zip(0..).collect()\n\
-         a |> iter::zip(..) |> $.collect()\n\
+         a |> iter::zip(.., $).collect()\n\
          a[..2]\n\
          Vec::from([1, 1, 2, 2]).iter().dedup()\n\
          a.iter().windows(2)\n\
@@ -3857,25 +3857,42 @@ fn repl_info_names_a_builtin_type_once() {
 /// named in value position, and a `$`-headed callback, both stand for
 /// the closure that calls them.
 #[test]
-fn repl_accepts_the_callback_shorthands() {
+fn repl_accepts_the_callback_shorthand() {
     let out = run_repl(
         "use std::math\n\
          #[1.0, -2.0].map(math::abs)\n\
-         #[1.0, -2.0].map($.abs)\n\
-         #[\" a \"].map($.trim)\n",
+         #[\" a \"].map(|v| v.trim())\n",
     );
     assert!(
-        out.stdout.matches("[1.0, 2.0]").count() == 2,
-        "both shorthands should answer the mapped Vec: {}\n{}",
+        out.stdout.contains("[1.0, 2.0]"),
+        "a std fn in value position should answer the mapped Vec: {}\n{}",
         out.stdout,
         out.stderr
     );
     assert!(
         out.stdout.contains("[\"a\"]"),
-        "a nullary method shorthand should run: {}\n{}",
+        "a written closure should run: {}\n{}",
         out.stdout,
         out.stderr
     );
+}
+
+/// The REPL runs its own front end, so it holds the same contract the
+/// compiled tiers do: the retired `$` forms report rather than desugar.
+#[test]
+fn repl_rejects_the_retired_placeholder_forms() {
+    let out = run_repl(
+        "#[1.0, -2.0].map($.abs)\n\
+         \"  a  \" |> $.trim\n\
+         \"a,b\" |> strings::split(\",\")\n",
+    );
+    let combined = format!("{}{}", out.stdout, out.stderr);
+    for code in ["GP0043", "GP0042", "GP0041"] {
+        assert!(
+            combined.contains(code),
+            "expected {code} from the REPL front end: {combined}"
+        );
+    }
 }
 
 /// A traversal on a reference to a map walks the map the reference names, so

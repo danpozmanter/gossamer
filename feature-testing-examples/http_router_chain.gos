@@ -1,8 +1,8 @@
-// Cross-tier regression for Router verb-method chaining via |>.
+// Cross-tier regression for Router verb-method chaining.
 // Building the route table as an expression:
-//   Router::new() |> $.get("/a", fa) |> $.post("/b", fb) |> $.get("/c", fc)
-// requires each verb method to return the router so the pipe delivers a typed
-// value to the next call.
+//   Router::new().get("/a", fa).post("/b", fb).get("/c", fc)
+// requires each verb method to return the router so the next call has a typed
+// receiver.
 //
 // Self-terminating: the client runs in main and exits explicitly, so the
 // fixture is a plain stdout-parity comparison. Binds a fixed loopback port,
@@ -28,10 +28,7 @@ fn get_c(_r: http::Request) -> http::Response {
 }
 
 fn serve_chained() {
-    let r = router::Router::new()
-        |> $.get("/a", get_a)
-        |> $.post("/b", post_b)
-        |> $.get("/c", get_c)
+    let r = router::Router::new().get("/a", get_a).post("/b", post_b).get("/c", get_c)
     if let Err(e) = http::serve("127.0.0.1:23882", r) {
         eprintln!("serve failed: {e}")
     }

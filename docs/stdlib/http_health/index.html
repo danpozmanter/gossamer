@@ -1089,6 +1089,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1224,6 +1226,34 @@
 
 
     Diagnostics
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../toolchain/sandbox/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Sandboxing
 
 
 
@@ -2099,7 +2129,7 @@
 
 <h1 id="stdhttphealth"><code>std::http::health</code><a class="headerlink" href="#stdhttphealth" title="Permanent link">&para;</a></h1>
 <p>Status: experimental</p>
-<p>Liveness / readiness probes for HTTP health endpoints.</p>
+<p>Liveness and readiness endpoints are ordinary handlers over <code>std::lifecycle</code>: answer 200 from a liveness route, and 200/503 from <code>lifecycle::is_ready()</code> on a readiness route, which drops to false on its own when shutdown begins. A probe registry with per-check timeouts belongs in an application package.</p>
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 <h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>

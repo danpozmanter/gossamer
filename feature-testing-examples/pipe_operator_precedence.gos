@@ -12,19 +12,19 @@ fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
 fn main() {
     // Pure arithmetic chain - piped value lands in last slot:
     // double(5)=10; add(3,10)=13; sub(1,13)=-12
-    let a = 5 |> double |> add(3) |> sub(1)
+    let a = 5 |> double |> add(3, $) |> sub(1, $)
     println!("5*2+3-1 via pipe = {}", a)
 
     // Mixed with clamp landing in last slot
-    let b = 7 |> double |> add(10) |> clamp(0, 20)
+    let b = 7 |> double |> add(10, $) |> clamp(0, 20, $)
     println!("clamp(0,20, 7*2+10) = {}", b)
 
     // Closure inline in pipe
-    let c = 4 |> |x| x * x |> add(1)
+    let c = 4 |> |x| x * x |> add(1, $)
     println!("closure pipe result = {}", c)
 
     // Nested pipe inside arithmetic
-    let d = 2 |> double |> double |> add(1)
+    let d = 2 |> double |> double |> add(1, $)
     println!("2*2*2+1 = {}", d)
 
     // String pipeline
@@ -33,10 +33,10 @@ fn main() {
 
     // Multi-step numeric pipeline
     let result = 1
-        |> add(2)
+        |> add(2, $)
         |> double
-        |> sub(3)
-        |> clamp(0, 100)
+        |> sub(3, $)
+        |> clamp(0, 100, $)
     println!("multi-step = {}", result)
 }
 
@@ -66,7 +66,7 @@ mod tests {
     #[test]
     fn pipe_chain() {
         // pipe sends value to last arg: double(5)=10; add(3,10)=13; sub(1,13)=-12
-        let a = 5 |> super::double |> super::add(3) |> super::sub(1)
+        let a = 5 |> super::double |> super::add(3, $) |> super::sub(1, $)
         let _ = testing::check_eq(&a, &-12, "pipe chain = -12")
     }
 }

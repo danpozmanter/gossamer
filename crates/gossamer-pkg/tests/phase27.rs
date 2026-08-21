@@ -1,8 +1,8 @@
 //!: manifest, MVS resolver, lockfile, scaffolders.
 
 use gossamer_pkg::{
-    CaretRange, DependencySpec, InlineDependency, LockedEntry, Lockfile, Manifest, ManifestError,
-    ProjectId, ProjectIdError, Resolved, ResolvedSource, Resolver, Version, VersionCatalogue,
+    DependencySpec, InlineDependency, LockedEntry, Lockfile, Manifest, ManifestError, ProjectId,
+    ProjectIdError, Resolved, ResolvedSource, Resolver, Version, VersionCatalogue, VersionReq,
     add_registry, pin_to_resolved, remove, render_initial_manifest, render_main_source, tidy,
 };
 
@@ -44,17 +44,23 @@ fn version_parses_and_orders_lexicographically() {
     assert!(b < c);
 }
 
+/// A `^` requirement has no ceiling: it accepts the version it names
+/// and every later one, across minor and major alike. A bare literal
+/// accepts that version and nothing else.
 #[test]
-fn caret_range_handles_zero_minor_pinning() {
-    let range = CaretRange::parse("^0.1.5").unwrap();
-    assert!(range.matches(Version::new(0, 1, 5)));
-    assert!(range.matches(Version::new(0, 1, 9)));
-    assert!(!range.matches(Version::new(0, 2, 0)));
+fn a_caret_is_a_floor_and_a_bare_literal_is_a_pin() {
+    let floor = VersionReq::parse("^0.1.5").unwrap();
+    assert!(floor.matches(Version::new(0, 1, 5)));
+    assert!(floor.matches(Version::new(0, 1, 9)));
+    assert!(floor.matches(Version::new(0, 2, 0)));
+    assert!(floor.matches(Version::new(1, 0, 0)));
+    assert!(!floor.matches(Version::new(0, 1, 4)));
 
-    let stable = CaretRange::parse("1.2.3").unwrap();
-    assert!(stable.matches(Version::new(1, 2, 3)));
-    assert!(stable.matches(Version::new(1, 9, 0)));
-    assert!(!stable.matches(Version::new(2, 0, 0)));
+    let pinned = VersionReq::parse("1.2.3").unwrap();
+    assert!(pinned.matches(Version::new(1, 2, 3)));
+    assert!(!pinned.matches(Version::new(1, 2, 4)));
+    assert!(!pinned.matches(Version::new(1, 9, 0)));
+    assert!(!pinned.matches(Version::new(2, 0, 0)));
 }
 
 #[test]
@@ -113,32 +119,63 @@ fn manifest_rejects_missing_id_or_version() {
     ));
 }
 
-#[test]
-fn resolver_picks_highest_matching_version_from_catalogue() {
-    // 0.8.0 flipped from MVS to highest-matching to match Cargo
-    // semantics. Range `^1.2.0` admits everything in `1.x.x`, so
-    // 1.4.0 wins over 1.2.3 / 1.2.5 / 2.0.0.
-    let manifest = Manifest::parse(
-        r#"[project]
-id = "example.com/app"
-version = "0.1.0"
-
-[dependencies]
-"example.org/lib" = "1.2.0"
-"#,
-    )
-    .unwrap();
+fn catalogue_with(versions: &[(u32, u32, u32)]) -> (VersionCatalogue, ProjectId) {
     let mut catalogue = VersionCatalogue::new();
     let lib = ProjectId::parse("example.org/lib").unwrap();
-    for (maj, min, pat) in [(1, 2, 3), (1, 2, 5), (1, 4, 0), (2, 0, 0)] {
-        catalogue.add(&lib, Version::new(maj, min, pat));
+    for (major, minor, patch) in versions {
+        catalogue.add(&lib, Version::new(*major, *minor, *patch));
     }
-    let resolved = Resolver::new(catalogue).resolve(&manifest).unwrap();
+    (catalogue, lib)
+}
+
+fn app_depending_on(requirement: &str) -> Manifest {
+    Manifest::parse(&format!(
+        "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\n\n\
+         [dependencies]\n\"example.org/lib\" = \"{requirement}\"\n",
+    ))
+    .unwrap()
+}
+
+/// A `^` requirement is a floor with no ceiling, so the resolver takes
+/// the highest thing the registry has - including across a major
+/// boundary, which is what distinguishes it from a caret range.
+#[test]
+fn a_floor_resolves_to_the_highest_version_available() {
+    let (catalogue, _) = catalogue_with(&[(1, 2, 3), (1, 2, 5), (1, 4, 0), (2, 0, 0)]);
+    let resolved = Resolver::new(catalogue)
+        .resolve(&app_depending_on("^1.2.0"))
+        .unwrap();
     assert_eq!(resolved.len(), 1);
     match &resolved[0].pin {
-        ResolvedSource::Registry(v) => assert_eq!(*v, Version::new(1, 4, 0)),
+        ResolvedSource::Registry(v) => assert_eq!(*v, Version::new(2, 0, 0)),
         other => panic!("unexpected: {other:?}"),
     }
+}
+
+/// A bare literal pins, so the resolver takes that version even when
+/// newer ones are available - and fails when it is not published.
+#[test]
+fn a_pin_resolves_to_the_version_it_names_and_no_other() {
+    let (catalogue, _) = catalogue_with(&[(1, 2, 3), (1, 2, 5), (1, 4, 0), (2, 0, 0)]);
+    let resolved = Resolver::new(catalogue)
+        .resolve(&app_depending_on("1.2.3"))
+        .unwrap();
+    match &resolved[0].pin {
+        ResolvedSource::Registry(v) => assert_eq!(*v, Version::new(1, 2, 3)),
+        other => panic!("unexpected: {other:?}"),
+    }
+
+    let (catalogue, _) = catalogue_with(&[(1, 2, 3), (1, 4, 0)]);
+    let error = Resolver::new(catalogue)
+        .resolve(&app_depending_on("1.3.0"))
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            gossamer_pkg::ResolveError::IncompatibleVersions { .. }
+        ),
+        "{error:?}"
+    );
 }
 
 #[test]
@@ -231,18 +268,28 @@ fn lockfile_round_trips_through_render() {
 fn add_registry_inserts_or_updates_entry() {
     let mut manifest = Manifest::parse("[project]\nid = \"a.b/c\"\nversion = \"0.1.0\"\n").unwrap();
     let id = ProjectId::parse("example.org/lib").unwrap();
-    let changed = add_registry(&mut manifest, &id, Version::new(1, 0, 0));
+    let pin = |major, minor| VersionReq::exact(Version::new(major, minor, 0));
+    let changed = add_registry(&mut manifest, &id, pin(1, 0));
     assert!(changed);
     assert!(manifest.dependencies.contains_key(id.as_str()));
-    let unchanged = add_registry(&mut manifest, &id, Version::new(1, 0, 0));
+    let unchanged = add_registry(&mut manifest, &id, pin(1, 0));
     assert!(!unchanged);
-    let updated = add_registry(&mut manifest, &id, Version::new(1, 1, 0));
+    let updated = add_registry(&mut manifest, &id, pin(1, 1));
     assert!(updated);
-    if let Some(DependencySpec::Registry(range)) = manifest.dependencies.get(id.as_str()) {
-        assert_eq!(range.minimum, Version::new(1, 1, 0));
+    if let Some(DependencySpec::Registry(requirement)) = manifest.dependencies.get(id.as_str()) {
+        assert_eq!(requirement, &pin(1, 1));
     } else {
         panic!("expected registry entry");
     }
+
+    // A floor is a different requirement from the pin on the same
+    // version, so replacing one with the other is a change.
+    let floor = add_registry(
+        &mut manifest,
+        &id,
+        VersionReq::at_least(Version::new(1, 1, 0)),
+    );
+    assert!(floor);
 }
 
 #[test]
@@ -273,7 +320,7 @@ fn tidy_keeps_only_resolved_entries() {
 }
 
 #[test]
-fn pin_to_resolved_updates_registry_minimum() {
+fn pin_to_resolved_writes_an_exact_pin() {
     let mut manifest = Manifest::parse(
         "[project]\nid = \"a.b/c\"\nversion = \"0.1.0\"\n\n[dependencies]\n\"example.org/lib\" = \"1.0.0\"\n",
     )
@@ -283,8 +330,11 @@ fn pin_to_resolved_updates_registry_minimum() {
         pin: ResolvedSource::Registry(Version::new(1, 4, 2)),
     };
     pin_to_resolved(&mut manifest, &resolved);
-    if let Some(DependencySpec::Registry(range)) = manifest.dependencies.get("example.org/lib") {
-        assert_eq!(range.minimum, Version::new(1, 4, 2));
+    if let Some(DependencySpec::Registry(requirement)) =
+        manifest.dependencies.get("example.org/lib")
+    {
+        assert_eq!(requirement, &VersionReq::exact(Version::new(1, 4, 2)));
+        assert!(requirement.is_exact());
     } else {
         panic!("expected registry entry");
     }
@@ -296,11 +346,20 @@ fn scaffold_renders_initial_manifest_and_main_source() {
     let manifest = render_initial_manifest(&id, Version::new(0, 1, 0));
     assert!(manifest.contains("id = \"example.com/widget\""));
     assert!(manifest.contains("version = \"0.1.0\""));
+    // A scaffolded project states a floor, not a pin: it must keep
+    // building on the next toolchain without an edit.
+    assert!(manifest.contains("gossamer-version = \"^v"), "{manifest}");
     let main = render_main_source(&id);
     assert!(main.contains("hello from widget"));
     // The scaffolded manifest should round-trip through the parser.
     let parsed = Manifest::parse(&manifest).unwrap();
     assert_eq!(parsed.project.id.as_str(), "example.com/widget");
+    assert!(
+        parsed
+            .project
+            .gossamer_version
+            .is_some_and(|requirement| !requirement.is_exact())
+    );
 }
 
 #[test]

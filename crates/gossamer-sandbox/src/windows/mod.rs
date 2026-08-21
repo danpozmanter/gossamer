@@ -97,7 +97,12 @@ pub(crate) fn capabilities() -> SandboxCapabilities {
         } else {
             Enforcement::Partial("job object only: tree cleanup, not isolation".to_string())
         },
-        resource_limits: Enforcement::Full,
+        // Job objects bound processes, memory, and CPU time. A
+        // per-file size limit has no job-object equivalent, so it is
+        // named here rather than accepted and dropped.
+        resource_limits: Enforcement::Partial(
+            "job objects only: processes, memory, and CPU time; no per-file size limit".to_string(),
+        ),
         max_level,
         notes,
     }
@@ -126,14 +131,18 @@ pub(crate) fn mechanisms(policy: &CompiledPolicy) -> Vec<String> {
                 "host ACL grants on {} path(s), revoked on exit",
                 policy.grants().count()
             ));
-            if policy.network == Network::Deny {
-                lines.push("no INTERNET_CLIENT capability".to_string());
-            } else {
-                lines.push(
-                    "INTERNET_CLIENT granted; loopback still blocked without an admin \
+            match policy.network {
+                Network::None => lines.push("no network capability SID".to_string()),
+                Network::Client => lines.push(
+                    "INTERNET_CLIENT capability; loopback still blocked without an admin \
                      exemption"
                         .to_string(),
-                );
+                ),
+                Network::Open => lines.push(
+                    "INTERNET_CLIENT, INTERNET_CLIENT_SERVER, and \
+                     PRIVATE_NETWORK_CLIENT_SERVER capabilities"
+                        .to_string(),
+                ),
             }
             lines.push("job object with kill-on-close".to_string());
         }

@@ -1089,6 +1089,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1224,6 +1226,34 @@
 
 
     Diagnostics
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../toolchain/sandbox/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Sandboxing
 
 
 
@@ -2099,7 +2129,7 @@
 
 <h1 id="stdlifecycle"><code>std::lifecycle</code><a class="headerlink" href="#stdlifecycle" title="Permanent link">&para;</a></h1>
 <p>Status: unproven</p>
-<p>Graceful-shutdown coordinator with signal handling and sd_notify support.</p>
+<p>Process readiness and graceful shutdown, with systemd sd_notify. Shutdown is observed, not dispatched: wait for it, then drain with ordinary statements - <code>go serve()</code>, <code>lifecycle::ready()</code>, <code>lifecycle::await_shutdown()</code>, then the cleanup.</p>
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 <h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>

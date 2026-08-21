@@ -1095,6 +1095,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1230,6 +1232,34 @@
 
 
     Diagnostics
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../toolchain/sandbox/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Sandboxing
 
 
 
@@ -2144,7 +2174,7 @@
 </tr>
 <tr>
 <td><a href="pipe/"><code>lang::pipe</code></a></td>
-<td>Forward-pipe operator <code>|&gt;</code>.</td>
+<td>Forward-pipe operator <code>|&gt;</code>, for composing free functions in a functional style. A step is either a bare callable (<code>x |&gt; f</code>) or a call that names the piped value's slot with <code>$</code> (<code>x |&gt; f(a, $)</code>). Methods chain on their own and are the shorter spelling; a method chain can feed a pipe.</td>
 </tr>
 <tr>
 <td><a href="closure/"><code>lang::closure</code></a></td>
@@ -2152,7 +2182,7 @@
 </tr>
 <tr>
 <td><a href="callback_shorthand/"><code>lang::callback_shorthand</code></a></td>
-<td>A callback written without <code>|v|</code>: a std free function named in value position, and a <code>$</code>-headed projection argument (<code>xs.map($.abs)</code>), both stand for the closure that calls them.</td>
+<td>A callback written without <code>|v|</code>: a std free function named in value position stands for the closure that calls it, as in <code>xs.map(math::abs)</code>.</td>
 </tr>
 <tr>
 <td><a href="fn/"><code>lang::fn</code></a></td>

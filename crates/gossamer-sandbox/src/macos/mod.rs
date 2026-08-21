@@ -77,7 +77,7 @@ pub(crate) fn mechanisms(policy: &CompiledPolicy) -> Vec<String> {
                 applier.name().to_string()
             });
             lines.push(format!("Seatbelt profile via {applied}"));
-            if policy.network == Network::Deny {
+            if policy.network == Network::None {
                 lines.push("(deny network*) - every protocol".to_string());
             }
             lines.push("mach-lookup allowlist".to_string());

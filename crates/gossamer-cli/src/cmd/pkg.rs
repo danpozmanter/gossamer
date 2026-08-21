@@ -136,23 +136,29 @@ fn build_cache() -> gossamer_pkg::Cache {
 }
 
 /// `gos add SPEC [--manifest PATH]` - declares a registry
-/// dependency. `SPEC` is `<id>` or `<id>@<version>`.
+/// dependency. `SPEC` is `<id>` or `<id>@<requirement>`, where the
+/// requirement is `x.y.z` to pin that version, or `^x.y.z` to accept it
+/// or anything later.
+///
+/// A spec with no requirement writes a floor rather than a pin: the
+/// user named no version, so pinning one they never chose would be the
+/// tool making the decision for them.
 pub(crate) fn add(spec: &str, manifest: Option<PathBuf>) -> Result<()> {
     let path = manifest.unwrap_or_else(|| PathBuf::from("project.toml"));
-    let (id_text, version_text) = match spec.split_once('@') {
-        Some((id, ver)) => (id, ver),
-        None => (spec, "0.1.0"),
+    let (id_text, requirement_text) = match spec.split_once('@') {
+        Some((id, requirement)) => (id, requirement.to_string()),
+        None => (spec, "^0.1.0".to_string()),
     };
     let id = gossamer_pkg::ProjectId::parse(id_text)
         .with_context(|| format!("invalid id `{id_text}`"))?;
-    let version = gossamer_pkg::Version::parse(version_text)
-        .with_context(|| format!("invalid version `{version_text}`"))?;
+    let requirement = gossamer_pkg::VersionReq::parse(&requirement_text)
+        .with_context(|| format!("invalid version requirement `{requirement_text}`"))?;
     let source = fs::read_to_string(&path).map_err(|e| friendly_io_error(e, &path))?;
     let mut m = gossamer_pkg::Manifest::parse(&source)?;
-    let changed = gossamer_pkg::add_registry(&mut m, &id, version.clone());
+    let changed = gossamer_pkg::add_registry(&mut m, &id, requirement.clone());
     fs::write(&path, m.render()).with_context(|| format!("writing {}", path.display()))?;
     println!(
-        "add: {action} {id} ({version})",
+        "add: {action} {id} ({requirement})",
         action = if changed { "added" } else { "kept" }
     );
     Ok(())
@@ -229,7 +235,7 @@ fn parse_rust_binding_spec(
     };
     let version_text = version.unwrap_or_else(|| "0.0.1".to_string());
     let normalized = normalize_version(&version_text);
-    let range = gossamer_pkg::CaretRange::parse(&normalized)
+    let range = gossamer_pkg::VersionReq::parse(&normalized)
         .with_context(|| format!("parsing version `{version_text}`"))?;
     let binding = gossamer_pkg::RustBindingSpec::Crates {
         version: range,
@@ -239,14 +245,25 @@ fn parse_rust_binding_spec(
     Ok((name, binding))
 }
 
+/// Completes a partial version literal to a `MAJOR.MINOR.PATCH` triple,
+/// keeping whatever bound it carries: stripping the `^` here would turn
+/// a floor into a pin without the user asking.
 fn normalize_version(input: &str) -> String {
-    let stripped = input.trim().trim_start_matches('^');
-    let parts: Vec<&str> = stripped.split('.').collect();
-    match parts.len() {
+    let trimmed = input.trim();
+    let (bound, rest) = match trimmed.strip_prefix('^') {
+        Some(rest) => ("^", rest),
+        None => match trimmed.strip_prefix('=') {
+            Some(rest) => ("=", rest),
+            None => ("", trimmed),
+        },
+    };
+    let parts: Vec<&str> = rest.split('.').collect();
+    let completed = match parts.len() {
         1 => format!("{}.0.0", parts[0]),
         2 => format!("{}.{}.0", parts[0], parts[1]),
-        _ => stripped.to_string(),
-    }
+        _ => rest.to_string(),
+    };
+    format!("{bound}{completed}")
 }
 
 fn read_cargo_package_name(crate_root: &std::path::Path) -> Result<String> {

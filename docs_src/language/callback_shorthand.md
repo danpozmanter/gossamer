@@ -1,12 +1,11 @@
 # `lang::callback_shorthand`
 
-A callback written without `|v|`: a std free function named in value position, and a `$`-headed projection argument (`xs.map($.abs)`), both stand for the closure that calls them.
+A callback written without `|v|`: a std free function named in value position stands for the closure that calls it, as in `xs.map(math::abs)`.
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 A callback slot takes a closure. When that closure would do nothing but
-call one function on its parameter, two shorthands write the call
-directly.
+call one std function on its parameter, name the function instead.
 
 ## A std function in value position
 
@@ -23,42 +22,35 @@ fn main() {
 ```
 
 Each of those is the closure `|v| math::abs(v)` / `|v| base64::encode(v)`.
-The parameter count comes from the function's own signature, so a function
-with no fixed parameter list - `fmt::format`, which is variadic - has no
-closure to stand for and reports `GT0015`. Write that one out:
-
-```gossamer
-use std::fmt
-
-fn main() {
-    println!("{:?}", #[1, 2].map(|v| fmt::format("<{}>", v)))
-}
-```
-
-## A `$`-headed projection
-
-A `$` projection written as a call argument is the closure over that
-argument, with the forms `$` already has in a pipe step:
+The parameter count comes from the function's own signature, so a std item
+with no fixed parameter list has no closure to stand for and reports
+`GT0015`. A macro is not a function at all: `fmt::format` reports `GR0018`
+and is written `format!(..)`, inside a closure of your own:
 
 ```gossamer
 fn main() {
-    println!("{:?}", #[1.0, -2.0].map($.abs))
-    println!("{:?}", #["a", "bb"].map($.len()))
-    println!("{:?}", #[(1, 2), (3, 4)].map($.0))
+    println!("{:?}", #[1, 2].map(|v| format!("<{}>", v)))
 }
 ```
 
-`$.name` is the nullary method call, exactly as in a pipe step, so it does
-not read a struct field. A field projection stays a written closure:
+## Everything else is a written closure
+
+There is no projection shorthand. A method call, a field read, an index,
+and a tuple projection are each written as the closure they are:
 
 ```gossamer
 struct Person { name: String }
 
 fn main() {
+    println!("{:?}", #[" a ", " b "].map(|v| v.trim()))
+    println!("{:?}", #[(1, 2), (3, 4)].map(|t| t.0))
+
     let people = #[Person { name: "ada" }, Person { name: "grace" }]
     println!("{:?}", people.map(|p| p.name))
 }
 ```
 
-A bare `$` argument keeps its pipe meaning - it selects the slot the piped
-value lands in - so `x |> f($, k)` is `f(x, k)`, not a callback.
+`$` is not a callback shorthand - it belongs to [`|>`](pipe.md), where it
+names the slot the piped value fills. A `$`-headed projection in an
+argument reports `GP0043`, and `gos check --fix` rewrites it to the
+closure it abbreviated.

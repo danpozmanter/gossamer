@@ -14,10 +14,7 @@ fn hello(_r: http::Request) -> Result<http::Response, errors::Error> {
 }
 
 fn main() -> Result<(), errors::Error> {
-    let s = http::Server::new()
-        |> $.read_header_timeout_ms(5000)
-        |> $.max_body_bytes(32)
-        |> $.server_name("srvtest")
+    let s = http::Server::new().read_header_timeout_ms(5000).max_body_bytes(32).server_name("srvtest")
     s.listen("127.0.0.1:0")?
     let addr = s.addr()
     println!("bound: {}", addr.contains("127.0.0.1:"))

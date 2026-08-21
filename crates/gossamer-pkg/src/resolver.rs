@@ -27,7 +27,7 @@ use crate::cache::{Cache, CachedSource};
 use crate::id::ProjectId;
 use crate::manifest::{DependencySpec, InlineDependency, Manifest};
 use crate::transport::{Transport, TransportError};
-use crate::version::{CaretRange, Version};
+use crate::version::{Version, VersionReq};
 
 const MAX_REGISTRY_INDEX_BYTES: usize = 1024 * 1024;
 const MAX_REGISTRY_VERSIONS: usize = 16_384;
@@ -302,7 +302,7 @@ pub struct Requirement {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequirementSpec {
     /// Versioned registry dependency.
-    Range(CaretRange),
+    Range(VersionReq),
     /// Pinned non-registry source.
     Inline(InlineDependency),
 }
@@ -448,7 +448,7 @@ impl Resolver {
                 pin,
             });
         }
-        let ranges: Vec<&CaretRange> = specs
+        let ranges: Vec<&VersionReq> = specs
             .iter()
             .filter_map(|s| match s {
                 RequirementSpec::Range(r) => Some(r),
@@ -576,7 +576,7 @@ pub fn resolve_transitive(
     catalogue: &VersionCatalogue,
     loader: &dyn TransitiveLoader,
 ) -> Result<Vec<Resolved>, ResolveError> {
-    let mut ranges: BTreeMap<String, Vec<CaretRange>> = BTreeMap::new();
+    let mut ranges: BTreeMap<String, Vec<VersionReq>> = BTreeMap::new();
     let mut inlines: BTreeMap<String, Vec<InlineDependency>> = BTreeMap::new();
     let mut id_index: BTreeMap<String, ProjectId> = BTreeMap::new();
     let mut visited: BTreeSet<String> = BTreeSet::new();
@@ -648,7 +648,7 @@ pub fn resolve_transitive(
 
 fn pick_highest(
     id: &ProjectId,
-    ranges: &[CaretRange],
+    ranges: &[VersionReq],
     catalogue: &VersionCatalogue,
 ) -> Result<ResolvedSource, ResolveError> {
     let candidates = catalogue.versions(id);

@@ -1,14 +1,14 @@
-// `_.method` pipe placeholder: `_` reads as "the value flowing through here",
-// so the piped value becomes the receiver of the step. A pure parse-time
-// desugar, so it runs identically on the VM, Cranelift, and LLVM tiers:
+// `|>` composes free functions, which have no receiver to chain from. A step
+// is a bare callable, or a call that names the piped value's slot with `$`.
+// A pure parse-time desugar, so it runs identically on the VM, Cranelift, and
+// LLVM tiers:
 //
-//   x |> $.trim          => x.trim()      (bare ident => nullary method)
-//   x |> $.replace(a, b) => x.replace(a, b)
-//   x |> $.0             => x.0           (tuple index)
-//   x |> $[i]                => x[i]
-//   x |> $               => x
+//   x |> f            => f(x)
+//   x |> f(a, $)      => f(a, x)
+//   x |> f($, a)      => f(x, a)
+//   x |> |v| v + 1    => the closure applied to x
 //
-// `_.method` composes with the data-last `iter::*` free-function pipe steps.
+// A method already chains, and a chain can feed a pipe.
 
 use std::iter
 use std::strings
@@ -19,93 +19,69 @@ struct Point {
 }
 
 fn label(p: Point) -> String {
-    // bare-method and tuple/field steps thread `p` in as the receiver.
     format!("{},{}", p.x, p.y)
 }
 
+fn shout(s: String) -> String {
+    s + "!"
+}
+
+fn scale(factor: i64, n: i64) -> i64 {
+    n * factor
+}
+
 fn main() {
-    // bare method, no parens => nullary method call
-    let t = "  hello  " |> $.trim
-    println!("[{}]", t)
+    // a bare callable takes the value as its only argument
+    println!("{}", "hi" |> shout)
 
-    // method with args: piped value is the receiver, not an appended arg
-    let r = "a,b,c" |> $.replace(",", "-")
-    println!("{}", r)
+    // a method chain feeds a pipe; the chain is the shorter spelling
+    println!("{}", "  Ab  ".trim().to_lowercase() |> shout)
 
-    // chained method steps
-    let up = "go" |> $.to_uppercase |> $.repeat(3)
-    println!("{}", up)
-
-    // tuple index and array index
-    let pair = (10, 20)
-    println!("{}", pair |> $.1)
-    let xs = #[3, 6, 9]
-    println!("{}", xs |> $[1])
-
-    // identity
-    println!("{}", 42 |> $)
-
-    // a direct `_` selects an argument position, including inside a format
-    // macro after it expands to its ordinary call form.
-    println!("{}", "world" |> format!("hello, {}", $))
+    // `$` names the slot, so a data-first callee reads like a data-last one
+    println!("{}", 3 |> scale(10, $))
     match "world" |> strings::slice($, 1, 4) {
         Ok(part) => println!("{}", part)
         Err(_) => println!("slice failed")
     }
 
-    // mixed with data-last iter steps; `_.len()` consumes the iter result
-    let evens = #[1, 2, 3, 4, 5, 6] |> iter::filter(|x: i64| x % 2 == 0) |> $.len()
+    // a format macro takes the value through the same explicit slot
+    println!("{}", "world" |> format!("hello, {}", $))
+
+    // data-last `iter::` steps name the slot too, and the result chains
+    let evens = #[1, 2, 3, 4, 5, 6] |> iter::filter(|x: i64| x % 2 == 0, $).len()
     println!("{}", evens)
 
-    // in-place method through a pipe, used as a statement
-    let mut v = #[3, 1, 2]
-    v |> $.sort()
-    println!("{} {} {}", v[0], v[1], v[2])
-
-    // placeholder threads a struct receiver into a free function's last slot
-    // is still available the old way; `_.field`-style access uses a closure:
-    let lab = Point { x: 7, y: 9 } |> |p: Point| label(p)
-    println!("{}", lab)
+    // a bare callable takes a struct the same way it takes a scalar
+    println!("{}", Point { x: 7, y: 9 } |> label)
 }
 
 #[cfg(test)]
-mod tests {
-    use std::testing
+mod pipe_placeholder_tests {
     use std::iter
+    use std::strings
+    use std::testing
 
     #[test]
-    fn bare_method_trims() {
-        let _ = testing::check(("  hi  " |> $.trim) == "hi", "_.trim => x.trim()")
+    fn bare_callable_step() {
+        let _ = testing::check(("hi" |> super::shout) == "hi!", "x |> f is f(x)")
     }
 
     #[test]
-    fn method_with_args() {
-        let _ = testing::check(("a,b" |> $.replace(",", "-")) == "a-b", "_.replace threads receiver")
+    fn method_chain_feeds_a_pipe() {
+        let piped = "  Ab  ".trim().to_lowercase() |> super::shout
+        let _ = testing::check(piped == "ab!", "a chain is an ordinary pipe operand")
     }
 
     #[test]
-    fn chained_methods() {
-        let _ = testing::check(("go" |> $.to_uppercase |> $.repeat(2)) == "GOGO", "chains compose")
+    fn placeholder_names_the_trailing_slot() {
+        let _ = testing::check((3 |> super::scale(10, $)) == 30, "x |> f(a, $) is f(a, x)")
     }
 
     #[test]
-    fn tuple_and_index() {
-        let _ = testing::check(((1, 2) |> $.1) == 2, "_.1 tuple index")
-        let _ = testing::check((#[7, 8, 9] |> $[2]) == 9, "_[i] index")
-    }
-
-    #[test]
-    fn identity_pipe() {
-        let _ = testing::check((99 |> $) == 99, "x |> $ is identity")
-    }
-
-    #[test]
-    fn direct_argument_placeholder() {
-        let greeting = "world" |> format!("hello, {}", $)
-        let _ = testing::check(greeting == "hello, world", "format argument receives pipe value")
+    fn placeholder_names_a_leading_slot() {
         match "world" |> strings::slice($, 1, 4) {
             Ok(part) => {
-                let _ = testing::check(part == "orl", "non-trailing placeholder selects first argument")
+                let _ = testing::check(part == "orl", "x |> f($, a) is f(x, a)")
             }
             Err(_) => {
                 let _ = testing::check(false, "slice should succeed")
@@ -114,8 +90,14 @@ mod tests {
     }
 
     #[test]
+    fn format_argument_receives_the_value() {
+        let greeting = "world" |> format!("hello, {}", $)
+        let _ = testing::check(greeting == "hello, world", "a macro slot is named too")
+    }
+
+    #[test]
     fn mixed_with_iter() {
-        let n = #[1, 2, 3, 4] |> iter::filter(|x: i64| x % 2 == 0) |> $.len()
-        let _ = testing::check(n == 2, "_.len() consumes an iter result")
+        let n = #[1, 2, 3, 4] |> iter::filter(|x: i64| x % 2 == 0, $).len()
+        let _ = testing::check(n == 2, "an iter step chains into a method")
     }
 }

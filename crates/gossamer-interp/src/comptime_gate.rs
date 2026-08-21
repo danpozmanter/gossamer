@@ -243,7 +243,7 @@ const MODULE_CAPABILITIES: &[(&str, Option<Capability>)] = &[
 ];
 
 /// Capability an individual qualified name needs, overriding its
-/// module's classification. Every member of a [`MIXED_MODULES`] module
+/// module's classification. Every member of a mixed module
 /// that needs a capability is listed here; the rest are pure and are
 /// asserted so by `every_mixed_module_member_is_classified`.
 const NAME_CAPABILITIES: &[(&str, Capability)] = &[

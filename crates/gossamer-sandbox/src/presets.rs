@@ -194,7 +194,7 @@ impl SandboxPolicy {
             .read_write(working_directory)
             .working_directory(working_directory)
             .temp(Temp::Private)
-            .network(Network::Deny)
+            .network(Network::None)
             .env_allow(base_environment())
             .level(Level::Standard);
         for path in system_read_paths() {
@@ -225,7 +225,7 @@ impl SandboxPolicy {
             .read_write(project_root)
             .working_directory(project_root)
             .temp(Temp::Private)
-            .network(Network::Deny)
+            .network(Network::None)
             .env_allow(build_environment())
             .level(Level::Standard);
         for root in cache_roots {
@@ -254,7 +254,11 @@ impl SandboxPolicy {
     /// policy: the resolver files, the CA bundle, and the network.
     #[must_use]
     pub fn for_fetch_phase(mut self) -> Self {
-        self = self.network(Network::Allow);
+        // A fetch connects out and never listens, so client access is
+        // what the phase needs; a caller that asked for more keeps it.
+        if self.network == Network::None {
+            self = self.network(Network::Client);
+        }
         for path in resolver_read_paths() {
             self = self.read_only(path);
         }
@@ -317,7 +321,7 @@ mod preset_tests {
     fn the_command_default_grants_the_working_directory_and_denies_the_network() {
         let cwd = std::env::temp_dir().canonicalize().expect("canonicalize");
         let policy = SandboxPolicy::command_default(&cwd);
-        assert_eq!(policy.network, Network::Deny);
+        assert_eq!(policy.network, Network::None);
         let compiled = policy.compile().expect("compile");
         assert_eq!(compiled.access(&cwd), Access::ReadWrite);
     }
@@ -368,7 +372,8 @@ mod preset_tests {
     fn the_fetch_phase_adds_the_network_and_what_resolving_a_name_needs() {
         let cwd = std::env::temp_dir().canonicalize().expect("canonicalize");
         let policy = SandboxPolicy::command_default(&cwd).for_fetch_phase();
-        assert_eq!(policy.network, Network::Allow);
+        // A fetch connects out and never listens.
+        assert_eq!(policy.network, Network::Client);
         for path in resolver_read_paths() {
             assert!(
                 policy.read_only_paths.contains(&path),

@@ -1233,7 +1233,7 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
     // method dispatch (Option::map, Result::filter, Vec::any, etc.).
     //
     // Argument order is DATA-LAST throughout, matching SPEC §4.6 so
-    // `xs |> iter::map(f)` desugars to `iter::map(f, xs)` and threads.
+    // `xs |> iter::map(f, $)` desugars to `iter::map(f, xs)` and threads.
     let static_entries: &[(&str, BuiltinFnPub)] = &[
         ("empty", builtin_iter_empty),
         ("once", builtin_iter_once),
@@ -1878,7 +1878,7 @@ pub(crate) fn builtin_iter_sum(args: &[Value]) -> RuntimeResult<Value> {
 //
 // Each native reads its callable(s) from the head of `args` and the data
 // from `args.last()`. This matches SPEC §4.6 so the pipe form
-// `xs |> iter::f(g)` desugars to `iter::f(g, xs)` and threads.
+// `xs |> iter::f(g, $)` desugars to `iter::f(g, xs)` and threads.
 
 pub(crate) fn native_iter_collect(
     dispatch: &mut dyn NativeDispatch,

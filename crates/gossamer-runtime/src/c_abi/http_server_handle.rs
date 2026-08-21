@@ -10,8 +10,8 @@
 //!
 //! ```text
 //! let s = http::Server::new()
-//!     |> $.read_header_timeout_ms(5000)
-//!     |> $.max_body_bytes(20 * 1024 * 1024)
+//!     .read_header_timeout_ms(5000)
+//!     .max_body_bytes(20 * 1024 * 1024)
 //! s.listen("127.0.0.1:0")?
 //! println!("listening on {}", s.addr())
 //! s.serve(app)?

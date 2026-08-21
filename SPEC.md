@@ -85,7 +85,7 @@ The language is designed so that:
   mut` accumulator. `for` loops keep their place for side-effects
   and complex state; transformations should compose. Gossamer
   follows F#'s "data-last" argument-order convention in stdlib free
-  functions so `x |> f(a, b)` reads as `f(a, b, x)` naturally.
+  functions so `x |> f(a, b, $)` reads as `f(a, b, x)` with the slot named.
 - A single pass over the source file classifies it into tokens.
 - A single recursive-descent parser produces an AST without
   context-dependent parsing tricks beyond bounded lookahead.
@@ -285,7 +285,7 @@ So:
 
 ```
 let s = read_file(path)?
-&s |> strings::lines |> iter::for_each(handle)   // two statements
+&s |> strings::lines |> iter::for_each(handle, $)   // two statements
 ```
 
 parses as a let followed by a pipe-expression statement, not as
@@ -1384,55 +1384,52 @@ coverage across all three tiers.
 PipeExpr = Expr "|>" Expr
 ```
 
-The forward-pipe operator `|>` feeds the value of its left operand to
-the callable on its right. Semantics follow F#: the piped value is
-passed as the **last** positional argument of the right-hand call.
-The operator is **left-associative** and has very low precedence (just
-above assignment), so `a |> f |> g` parses as `(a |> f) |> g` and means
-`g(f(a))`.
+The forward-pipe operator `|>` composes **free functions**, which have no
+receiver to chain from. The operator is **left-associative** and has very
+low precedence (just above assignment), so `a |> f |> g` parses as
+`(a |> f) |> g` and means `g(f(a))`.
 
-Desugaring rules (applied after parsing, before HIR lowering):
+A step either takes the piped value as its only argument, or names the
+slot the value fills with `$`. No argument order is assumed: a data-first
+callee (`strings::`, `bytes::`, `path::`, `sort::`, `fs::`) and a
+data-last one (`iter::`, `option::`, `result::`) are written alike.
+
+Desugaring rules (the `$` substitutions are applied during parsing; the
+implicit forms are applied during HIR lowering):
 
 1. `x |> path` where `path` resolves to a callable of arity 1:
    → `path(x)`.
-2. `x |> path(a1, ..., an)` where `path` is callable of arity `n+1`:
-   → `path(a1, ..., an, x)`.
-3. `x |> recv.method` (no parens):
-   → `recv.method(x)`.
-4. `x |> recv.method(a1, ..., an)`:
-   → `recv.method(a1, ..., an, x)`.
-5. `x |> (closure_expr)` where `closure_expr` evaluates to a callable:
+2. `x |> path()` and `x |> recv.method()`, with no written arguments:
+   → `path(x)` and `recv.method(x)`.
+3. `x |> (closure_expr)` where `closure_expr` evaluates to a callable:
    → `(closure_expr)(x)` (arity must be 1).
-6. `x |> path::<T1, ..., Tk>(a1, ..., an)`:
-   → `path::<T1, ..., Tk>(a1, ..., an, x)`.
-7. `x |> path(a1, ..., $, ..., an)` with exactly one direct `$` argument:
-   → `path(a1, ..., x, ..., an)`. This selects a non-trailing argument
-   position that the default data-last rule cannot express. A trailing `$` is
-   valid but redundant.
-8. `x |> $.method(a1, ..., an)`, `x |> $.name`, `x |> $.i`, `x |> $[i]`,
-   and `x |> $`:
-   → `x.method(a1, ..., an)`, `x.name()`, `x.i`, `x[i]`, and `x`
-   respectively. A `$.name` with no parentheses is the nullary method
-   call; a numeric `$.i` is a tuple index. Reading a named field
-   through a pipe uses a closure step (`x |> |v| v.name`).
+4. `x |> path(a1, ..., $, ..., an)` with exactly one direct `$` argument:
+   → `path(a1, ..., x, ..., an)`. The same holds for
+   `x |> recv.method(a1, ..., $, ..., an)` and for a turbofish call
+   `x |> path::<T1, ..., Tk>(a1, ..., $, ..., an)`.
+5. The `$` may sit anywhere along the step's call chain, so
+   `x |> f(a, $).method()` is `f(a, x).method()`.
 
-The direct-call placeholder may occur exactly once. It must be an immediate
-call argument, not part of a nested expression. The receiver forms in rule 8
-also consume the one available placeholder, so `x |> $.method($, y)` is
-invalid.
+The placeholder must occur exactly **once** across the step's chain, and
+must be an immediate call argument rather than part of a nested
+expression. Two placeholders, or one nested inside another expression,
+report `GP0027`.
 
-**Placeholder closures.** A `$`-headed projection written as a call
-argument abbreviates the one-parameter closure over that argument, so
-the shorthand is available wherever a callback is: `xs.map($.abs)` is
-`xs.map(|v| v.abs())`. The projection forms are the ones rule 8 lists -
-`$.name` is the nullary method call, `$.name(a1, ..., an)` passes
-arguments, `$.i` and `$[i]` project - and they may chain. An argument
-that is a BARE `$` is not this shorthand: that spelling already selects
-the slot a pipe threads its value into (rule 7). Because the closure is
-built where the argument is parsed, a `$` inside an argument of a pipe
-step belongs to that argument's callback and the step's own `$` is
-still the piped value: `xs |> $.map($.abs)` maps `|v| v.abs()` over
-`xs`.
+A step that writes arguments and contains no `$` reports `GP0041`: the
+slot the value fills would otherwise have to be assumed, and the
+signatures where that assumption is wrong are frequently homogeneous
+enough that type checking cannot detect it.
+
+**Retired forms.** Three spellings that earlier releases accepted are now
+diagnostics, each with a `gos check --fix` rewrite:
+
+- `x |> $.method(..)`, `x |> $.name`, `x |> $.i`, `x |> $[i]`, and the
+  identity `x |> $` report `GP0042`. A method already chains, so
+  `x.method(..)` and `x.name()` say the same thing with less punctuation.
+  A method chain is an ordinary operand and may feed a pipe step.
+- A `$`-headed projection written as a call argument reports `GP0043`. A
+  callback is a closure (`xs.map(|v| v.abs())`) or a std function named in
+  value position (`xs.map(math::abs)`).
 
 **Std functions in value position.** A stdlib free function named where
 a value is expected is rewritten into the closure that calls it, using
@@ -1445,20 +1442,20 @@ family, `panic::panic`) has no such closure and is reported as
 If the right operand is not a call form matching one of the above, the
 compiler emits `E0601: right-hand side of '|>' must be a callable`.
 
-Type-checking rule: the type of the piped value must unify with the
-type of the implicit trailing parameter of the right-hand callable.
-Method lookup, trait resolution, auto-deref, and the `?` operator all
-apply to the desugared call exactly as they would to a hand-written
-call.
+Type-checking rule: the type of the piped value must unify with the type
+of the parameter it fills in the right-hand callable. Method lookup,
+trait resolution, auto-deref, and the `?` operator all apply to the
+desugared call exactly as they would to a hand-written call.
 
 Examples:
 
 ```
-// The trailing `$` is explicit but has the same result as the default rule.
+// The slot is named, so a data-first callee reads like a data-last one.
+text |> strings::slice($, 1, 3)
 name |> format!("hello {}", $) |> println
 
-// `$` is useful when the piped value belongs before other arguments.
-text |> strings::slice($, 1, 3)
+// A bare callable needs no placeholder.
+3 |> double |> negate
 ```
 
 Idiomatic iterator chains:
@@ -1466,8 +1463,8 @@ Idiomatic iterator chains:
 ```
 let total =
   1..=100
-  |> iter::filter(|n| n % 2 == 0)
-  |> iter::map(|n| n * n)
+  |> iter::filter(|n| n % 2 == 0, $)
+  |> iter::map(|n| n * n, $)
   |> iter::sum::<i64>()
 ```
 
@@ -1481,7 +1478,7 @@ let total = iter::sum::<i64>(iter::map(|n| n * n, iter::filter(|n| n % 2 == 0, 1
 piped into (`std::iter`, `std::option`, `std::result`, and most of
 `std::strings`) follow a uniform "data-last" rule: the value being
 transformed is the **last** positional parameter. This is what makes
-`x |> f(a, b)` thread cleanly without explicit placeholders. The
+`x |> f(a, b, $)` thread cleanly without explicit placeholders. The
 convention is documented per-module; APIs that diverge from it (for
 historical or readability reasons) are called out at their declaration.
 
@@ -2447,8 +2444,8 @@ Current eager example:
 
 ```
 let squares = [1, 2, 3, 4]
-  |> iter::filter(|n| n % 2 == 0)
-  |> iter::map(|n| n * n)
+  |> iter::filter(|n| n % 2 == 0, $)
+  |> iter::map(|n| n * n, $)
 let total = squares |> iter::sum
 ```
 
@@ -2881,7 +2878,7 @@ Expr         = LiteralExpr | PathExpr | CallExpr | MethodCall | FieldAccess
 
 PipeExpr     = Expr "|>" PipeRhs
 PipeRhs      = PathExpr                                  // x |> f
-             | PathExpr "(" [ ArgList ] ")"              // x |> f(a, b)
+             | PathExpr "(" [ ArgList ] ")"              // x |> f(a, b, $)
              | Expr "." Ident                            // x |> obj.m
              | Expr "." Ident "(" [ ArgList ] ")"        // x |> obj.m(a)
              | "(" Expr ")"                              // x |> (closure)
@@ -2927,15 +2924,30 @@ tree sha256. Checked into version control for reproducible builds.
 
 ### 16.4 Version selection
 
-Each dependency declares a semver **range** (default: `^x.y.z`). The resolver
-picks the highest available version that satisfies every consumer range. The
-selected graph is pinned by `project.lock`; `--locked` rejects drift instead of
-selecting a newer version.
+A dependency declares a version **requirement** in one of two spellings, and
+there is no third:
 
-Prerelease versions participate in SemVer precedence but are excluded from a
-normal caret requirement. A requirement must itself name a prerelease, such as
-`^1.2.0-rc.1`, to select prerelease candidates. Build metadata is retained in
-published versions and lockfiles but does not change resolution precedence.
+| Spelling | Meaning |
+|---|---|
+| `x.y.z`, or `=x.y.z` | Exactly that version |
+| `^x.y.z` | That version or any later one |
+
+A bare literal pins, because a manifest that names a version and gets a
+different one is a surprise nobody asked for. `^` opts into anything newer,
+with no upper bound: a ceiling would be a guess about code that has not been
+written yet, and `project.lock` is where a reproducible graph is recorded.
+
+The resolver picks the highest available version that satisfies every
+consumer's requirement, so a pin and a floor on the same dependency resolve
+only when the pinned version also clears the floor. The selected graph is
+pinned by `project.lock`; `--locked` rejects drift instead of selecting a newer
+version.
+
+Prerelease versions participate in SemVer precedence but are selected only by a
+requirement that itself names a prerelease of the same `x.y.z`: `^1.2.0` never
+resolves to `1.3.0-rc.1`, and neither does `^1.2.0-rc.1`. Build metadata is
+retained in published versions and lockfiles but does not change resolution
+precedence.
 ### 16.5 Caches
 
 Package source trees are content-addressed under
@@ -3009,13 +3021,17 @@ The first index response alone must never establish publisher identity.
 
 ### 17.1 Language version and compatibility
 
-- `gossamer-version` in the manifest states the exact toolchain a project is
-  written against, spelled the way the release tag is: `gossamer-version =
-  "v0.52.2"`. The leading `v` is optional. `edition` is Rust's spelling and is
-  rejected by name.
-- The field is optional. A project that states a version newer than the
-  running toolchain is rejected by name, so a missing surface is reported
-  against the manifest rather than the source that uses it.
+- `gossamer-version` in the manifest states which toolchain a project is
+  written against, spelled the way the release tag is. A bare version - or an
+  explicit `=` - names that toolchain and no other; a `^` version names it as a
+  floor and accepts every later one. `gossamer-version = "v0.55.0"` pins;
+  `gossamer-version = "^v0.55.0"` does not. The leading `v` is optional on both.
+  `edition` is Rust's spelling and is rejected by name.
+- The field is optional. A toolchain the requirement does not accept is
+  rejected by name, so a missing surface is reported against the manifest
+  rather than the source that uses it. `gos new` scaffolds a `^` floor,
+  because a project should not stop building at the next release unless its
+  author asked for that.
 - One toolchain has one source language: there is no edition selector, and no
   two projects built by the same `gos` see different semantics.
 - Experimental syntax may change between versions, but it must be reported as
@@ -3125,7 +3141,7 @@ idiom, a new type-system theory, or machinery the reader cannot see.
 - **Computation expressions / generic monad syntax.** `?`, goroutines, and
   `|>` cover the concrete cases without the abstraction.
 - **Scope functions (`let` / `run` / `with` / `apply` / `also`).** Five
-  interchangeable spellings with documented team confusion. `|> $.method`
+  interchangeable spellings with documented team confusion. A method chain
   is one mechanism with an explicit receiver (§4.6).
 - **Context parameters and implicit receivers.** Implicitness is the cost
   center.

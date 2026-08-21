@@ -13,7 +13,7 @@
 //!
 //! let policy = SandboxPolicy::new()
 //!     .read_write(".")
-//!     .network(Network::Deny)
+//!     .network(Network::None)
 //!     .env_allow(["PATH", "HOME"])
 //!     .level(Level::Standard);
 //! let sandbox = Sandbox::new(&policy)?;

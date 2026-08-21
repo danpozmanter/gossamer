@@ -8,4 +8,4 @@
 use std::{env, iter}
 
 println!("program: {}", env::program_name())
-env::args() |> iter::for_each(|a| println!("arg: {}", a))
+env::args() |> iter::for_each(|a| println!("arg: {}", a), $)

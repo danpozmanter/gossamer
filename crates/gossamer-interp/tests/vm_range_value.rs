@@ -76,7 +76,7 @@ fn main() {
 fn open_range_can_be_bounded_before_collection() {
     let src = r#"
 fn main() {
-    let first = 10.. |> iter::take(3) |> iter::collect()
+    let first = 10.. |> iter::take(3, $) |> iter::collect()
     println!("{:?}", first)
 }
 "#;
@@ -127,7 +127,7 @@ fn main() {
 fn open_range_matches_rust_overflow_profile() {
     let src = r#"
 fn main() {
-    let edge = 9223372036854775805.. |> iter::take(4) |> iter::collect()
+    let edge = 9223372036854775805.. |> iter::take(4, $) |> iter::collect()
     println!("{:?}", edge)
 }
 "#;

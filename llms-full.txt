@@ -720,8 +720,12 @@ src/main.gos       # binary entry (lib.gos for libraries;
 tests/             # integration tests
 ```
 
-`gossamer-version` is the exact toolchain the project is written
-against; an older `gos` refuses the project rather than failing later.
+A version requirement has two spellings and no third: `x.y.z` (or
+`=x.y.z`) pins that version, and `^x.y.z` accepts it or anything later.
+This holds for `[dependencies]` and for `gossamer-version`, which names
+the toolchain the project is written against - a pin there means that
+toolchain and no other, and `gos new` scaffolds `^` so a project keeps
+building across releases.
 Native Rust is reached ONLY through a binding crate named under
 `[rust-bindings]`: `gos new ID --template binding` scaffolds one, its
 `pub fn`s live inside a `#[gos_module("name")]` block (keep `use`

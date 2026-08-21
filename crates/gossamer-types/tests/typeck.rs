@@ -536,7 +536,7 @@ fn function_boundaries_reject_wrong_float_callable_and_pipeline_types() {
         "fn take(v: i64) {}\nfn main() { take(1.5) }\n",
         "fn wrong(v: String) -> bool { true }\nfn take(f: Fn(i64) -> bool) {}\nfn main() { take(wrong) }\n",
         "fn invoke(f: Fn(i64) -> bool) { let _ = f(\"wrong\") }\nfn main() {}\n",
-        "struct A(i64)\nstruct B(i64)\nfn take(v: A, n: i64) {}\nfn main() { 1 |> take(B(2)) }\n",
+        "struct A(i64)\nstruct B(i64)\nfn take(v: A, n: i64) {}\nfn main() { 1 |> take(B(2), $) }\n",
         "fn pair(a: i64, b: i64) -> i64 { a + b }\nfn main() { let _ = 1 |> pair }\n",
     ];
     for source in rejected {
@@ -1535,7 +1535,7 @@ fn iter_map_free_fn_closure_param_pins_to_elem_type() {
 fn piped_iter_map_closure_param_pins_to_elem_type() {
     let checked = run("use std::iter\n\
          fn main() { let xs: Vec<String> = Vec::from([\"a\"])\n\
-         let ys = xs |> iter::map(|s| format!(\"({s})\")) }\n");
+         let ys = xs |> iter::map(|s| format!(\"({s})\"), $) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
     let init = let_init(&checked, "main", 1);
     assert!(
@@ -1553,7 +1553,7 @@ fn piped_iter_map_closure_param_pins_to_elem_type() {
 fn piped_result_default_with_closure_param_pins_to_err_type() {
     let checked = run("use std::result\n\
          fn fail() -> Result<i64, String> { Err(\"boom\") }\n\
-         fn main() { let v = fail() |> result::unwrap_or_else(|e| println!(\"{e}\")) }\n");
+         fn main() { let v = fail() |> result::unwrap_or_else(|e| println!(\"{e}\"), $) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
     let init = let_init(&checked, "main", 0);
     assert!(
@@ -1766,7 +1766,7 @@ fn std_fn_in_callee_position_stays_legal() {
     // GT0015 only fires on genuine value positions.
     let source = "use std::strings\n\
                   fn main() { let a = strings::repeat(\"ab\", 2)\n\
-                  let b = \"x\" |> strings::repeat(2)\nlet _ = a\nlet _ = b }\n";
+                  let b = \"x\" |> strings::repeat($, 2)\nlet _ = a\nlet _ = b }\n";
     let diagnostics = diagnostics_for(source);
     assert!(
         !diagnostics
@@ -1821,7 +1821,7 @@ fn formatting_a_lazy_iterator_is_rejected() {
 #[test]
 fn lazy_iterator_step_by_is_accepted() {
     let d = diagnostics_for(
-        "use std::iter\nfn main() { let xs = iter::range(0, 9) |> iter::step_by(2)\n let _ = xs }\n",
+        "use std::iter\nfn main() { let xs = iter::range(0, 9) |> iter::step_by(2, $)\n let _ = xs }\n",
     );
     assert!(d.is_empty(), "{d:?}");
 }
@@ -1848,7 +1848,7 @@ fn iterator_parameters_cannot_be_reused_after_consuming_methods_or_for_loops() {
 #[test]
 fn reusing_pipe_consumed_lazy_iterator_is_rejected() {
     let d = diagnostics_for(
-        "use std::iter\nfn main() { let xs = 0..3\n let out = xs |> iter::take(1)\n let _ = xs\n let _ = out }\n",
+        "use std::iter\nfn main() { let xs = 0..3\n let out = xs |> iter::take(1, $)\n let _ = xs\n let _ = out }\n",
     );
     assert!(has_code(&d, "GT0042"), "{d:?}");
 }
@@ -2157,7 +2157,7 @@ fn method_call_with_correct_arity_is_accepted() {
 fn piped_method_call_counts_the_implicit_argument() {
     // `5 |> a.add(2)` desugars to `a.add(2, 5)`: arity is satisfied.
     let d = diagnostics_for(
-        "struct A { x: i64 }\nimpl A { fn add(&self, a: i64, b: i64) -> i64 { self.x + a + b } }\nfn main() { let a = A { x: 1 }\n println!(\"{}\", 5 |> a.add(2)) }\n",
+        "struct A { x: i64 }\nimpl A { fn add(&self, a: i64, b: i64) -> i64 { self.x + a + b } }\nfn main() { let a = A { x: 1 }\n println!(\"{}\", 5 |> a.add(2, $)) }\n",
     );
     assert!(!has_code(&d, "GT0018"), "{d:?}");
 }
@@ -4194,8 +4194,8 @@ fn a_math_method_on_a_numeric_receiver_answers_concretely() {
             "fn main() { let a: Vec<String> = #[1, -2].map(|x| x.abs())\n let _ = a }\n",
         ),
         (
-            "fn main() { let a: Vec<f64> = #[1.0, -2.0].map($.abs)\n let _ = a }\n",
-            "fn main() { let a: Vec<String> = #[1.0, -2.0].map($.abs)\n let _ = a }\n",
+            "fn main() { let a: Vec<f64> = #[1.0, -2.0].map(|v| v.abs())\n let _ = a }\n",
+            "fn main() { let a: Vec<String> = #[1.0, -2.0].map(|v| v.abs())\n let _ = a }\n",
         ),
     ] {
         let d = diagnostics_for(accepted);
@@ -4328,4 +4328,33 @@ fn json_value_accessor_methods_typecheck_clean() {
         "use std::encoding::json\nfn main() { let v = json::parse(\"{}\").unwrap()\n let n: Option<i64> = v.as_i64()\n let s: Option<String> = v.as_str()\n let k: Option<json::Value> = v.get(\"a\")\n let l: i64 = v.len()\n let z: bool = v.is_null()\n println!(\"{:?} {:?} {:?} {} {}\", n, s, k, l, z) }\n",
     );
     assert!(d.is_empty(), "the json accessor surface types: {d:?}");
+}
+
+/// A callable declares no methods, so a method reached on a named function,
+/// a closure binding, or an `Fn(..)` parameter is unresolved rather than
+/// silently answering against the function's own name.
+#[test]
+fn a_method_on_a_callable_is_unresolved() {
+    for source in [
+        "fn wrap(s: String) -> String { s }\n\
+         fn main() { let _ = wrap.len() }\n",
+        "fn main() { let f = |v: i64| v + 1\n let _ = f.len() }\n",
+        "fn call(f: Fn(i64) -> i64) -> i64 { f.len() }\n",
+        "fn wrap(s: String) -> String { s }\n\
+         fn main() { let _ = wrap.to_string() }\n",
+    ] {
+        let d = diagnostics_for(source);
+        assert!(has_code(&d, "GT0002"), "{source} -> {d:?}");
+    }
+}
+
+/// A callable in value position stays a callback: the receiver rejection
+/// covers method calls only, not the eta-expansion that feeds combinators.
+#[test]
+fn a_callable_in_value_position_still_feeds_a_combinator() {
+    let d = diagnostics_for(
+        "fn dbl(v: i64) -> i64 { v * 2 }\n\
+         fn main() { let xs = #[1, 2]\n let _ = xs.map(dbl) }\n",
+    );
+    assert!(!has_code(&d, "GT0002"), "{d:?}");
 }

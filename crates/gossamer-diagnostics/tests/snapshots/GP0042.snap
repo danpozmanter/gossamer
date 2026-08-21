@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0042]: A `|>` step pasted the piped value back on as a method receiver. - here
+--- framed ---
+error[GP0042]: A `|>` step pasted the piped value back on as a method receiver.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

@@ -24,7 +24,7 @@ gos build example.gos        # compile one non-channel example to native
 | `pattern_match_exhaustiveness.gos` | Nested enums, guards, `if let` | Works on all tiers |
 | `option_unwrap_chain.gos` | `Option`/`Result` chaining with `?` | Works on all tiers |
 | `closure_capture_mutation.gos` | Immutable capture + higher-order functions | Works on all tiers |
-| `pipe_operator_precedence.gos` | Long `|>` chains with arithmetic | Works on all tiers (pipe passes to last arg) |
+| `pipe_operator_precedence.gos` | Long `|>` chains with arithmetic | Works on all tiers (the step names its slot) |
 | `recursive_enum_walk.gos` | Recursive `enum` + `Box` list/tree | Works on all tiers |
 | `tuple_destructuring_loop.gos` | Destructuring in `for`, `let`, `while let`, rest `..` | Works on all tiers |
 | `string_concatenation_stress.gos` | `+`, `+=`, `format!`, `println!` | Works on all tiers |

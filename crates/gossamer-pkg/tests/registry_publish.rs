@@ -294,9 +294,10 @@ fn credentials_round_trip_through_disk() {
 
 #[test]
 fn resolver_picks_highest_when_multiple_consumers_overlap() {
-    // Two requirements: ^1.2.0 and ^1.4.0. Both satisfied by 1.5.0.
+    // A `^` floor has no ceiling, so the highest published version
+    // satisfies it.
     let manifest = Manifest::parse(
-        "[project]\nid = \"r.test/r\"\nversion = \"0.1.0\"\n\n[dependencies]\n\"l.test/lib\" = \"1.2.0\"\n",
+        "[project]\nid = \"r.test/r\"\nversion = \"0.1.0\"\n\n[dependencies]\n\"l.test/lib\" = \"^1.2.0\"\n",
     )
     .unwrap();
     let mut catalogue = VersionCatalogue::new();
@@ -306,7 +307,7 @@ fn resolver_picks_highest_when_multiple_consumers_overlap() {
     }
     let plan = Resolver::new(catalogue).resolve(&manifest).unwrap();
     match &plan[0].pin {
-        ResolvedSource::Registry(v) => assert_eq!(*v, Version::new(1, 5, 0)),
+        ResolvedSource::Registry(v) => assert_eq!(*v, Version::new(2, 0, 0)),
         other => panic!("expected registry, got {other:?}"),
     }
 }
@@ -314,7 +315,7 @@ fn resolver_picks_highest_when_multiple_consumers_overlap() {
 #[test]
 fn resolver_excludes_prereleases_for_a_stable_caret_requirement() {
     let manifest = Manifest::parse(
-        "[project]\nid = \"r.test/app\"\nversion = \"0.1.0\"\n\n[dependencies]\n\"l.test/lib\" = \"1.0.0\"\n",
+        "[project]\nid = \"r.test/app\"\nversion = \"0.1.0\"\n\n[dependencies]\n\"l.test/lib\" = \"^1.0.0\"\n",
     )
     .unwrap();
     let id = ProjectId::parse("l.test/lib").unwrap();

@@ -859,7 +859,7 @@ fn result_map_err_free_call_lowers_to_runtime_shim() {
     // `@result::map_err` symbol that fails the native link.
     let source = "use std::result\n\
                   fn fail() -> Result<i64, String> { Err(\"boom\") }\n\
-                  fn main() { let r = fail() |> result::map_err(|e| format!(\"p: {e}\"))\n\
+                  fn main() { let r = fail() |> result::map_err(|e| format!(\"p: {e}\"), $)\n\
                   let _ = r }\n";
     let (bodies, _) = build_with_lift(source);
     let main = bodies.iter().find(|b| b.name == "main").expect("main");
@@ -1447,13 +1447,13 @@ const COMBINATOR_MATRIX: &[(&str, &str, &str)] = &[
     (
         "result::and_then",
         "use std::{errors, result}\nfn main() { let r: Result<i64, errors::Error> = Ok(2)\n\
-             let m = r |> result::and_then(|x: i64| if x > 0 { Ok(x) } else { Err(errors::new(\"n\")) })\nlet _ = m }",
+             let m = r |> result::and_then(|x: i64| if x > 0 { Ok(x) } else { Err(errors::new(\"n\")) }, $)\nlet _ = m }",
         "gos_rt_result_and_then",
     ),
     (
         "result::or_else",
         "use std::{errors, result}\nfn main() { let r: Result<i64, errors::Error> = Err(errors::new(\"b\"))\n\
-             let m = r |> result::or_else(|_e| Ok(7))\nlet _ = m }",
+             let m = r |> result::or_else(|_e| Ok(7), $)\nlet _ = m }",
         "gos_rt_result_or_else",
     ),
     (
@@ -1483,37 +1483,37 @@ const COMBINATOR_MATRIX: &[(&str, &str, &str)] = &[
     (
         "option::and_then",
         "use std::option\nfn main() { let o: Option<i64> = Some(3)\n\
-             let m = o |> option::and_then(|x: i64| if x > 2 { Some(x) } else { None })\nlet _ = m }",
+             let m = o |> option::and_then(|x: i64| if x > 2 { Some(x) } else { None }, $)\nlet _ = m }",
         "gos_rt_option_and_then",
     ),
     (
         "option::filter",
         "use std::option\nfn main() { let o: Option<i64> = Some(3)\n\
-             let m = o |> option::filter(|x: i64| x > 2)\nlet _ = m }",
+             let m = o |> option::filter(|x: i64| x > 2, $)\nlet _ = m }",
         "gos_rt_option_filter",
     ),
     (
         "option::or",
         "use std::option\nfn main() { let o: Option<i64> = None\n\
-             let m = o |> option::or(Some(8))\nlet _ = m }",
+             let m = o |> option::or(Some(8), $)\nlet _ = m }",
         "gos_rt_option_or",
     ),
     (
         "option::or_else",
         "use std::option\nfn main() { let o: Option<i64> = None\n\
-             let m = o |> option::or_else(|| Some(8))\nlet _ = m }",
+             let m = o |> option::or_else(|| Some(8), $)\nlet _ = m }",
         "gos_rt_option_or_else",
     ),
     (
         "option::unwrap_or_else",
         "use std::option\nfn main() { let o: Option<i64> = None\n\
-             let v = o |> option::unwrap_or_else(|| 6)\nlet _ = v }",
+             let v = o |> option::unwrap_or_else(|| 6, $)\nlet _ = v }",
         "gos_rt_option_default_with",
     ),
     (
         "option::zip",
         "use std::option\nfn main() { let a: Option<i64> = Some(1)\n\
-             let b: Option<i64> = Some(2)\nlet m = a |> option::zip(b)\nlet _ = m }",
+             let b: Option<i64> = Some(2)\nlet m = a |> option::zip(b, $)\nlet _ = m }",
         "gos_rt_option_zip",
     ),
     (
@@ -1536,7 +1536,7 @@ const COMBINATOR_MATRIX: &[(&str, &str, &str)] = &[
     ),
     (
         "iter::filter_map",
-        "use std::iter\nfn main() { let xs = #[1, 2] |> iter::filter_map(|x: i64| if x > 1 { Some(x) } else { None })\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[1, 2] |> iter::filter_map(|x: i64| if x > 1 { Some(x) } else { None }, $)\nlet _ = xs }",
         "gos_rt_iter_filter_map_i64",
     ),
     (
@@ -1561,92 +1561,92 @@ const COMBINATOR_MATRIX: &[(&str, &str, &str)] = &[
     ),
     (
         "iter::step_by",
-        "use std::iter\nfn main() { let xs = #[1, 2, 3] |> iter::step_by(2)\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[1, 2, 3] |> iter::step_by(2, $)\nlet _ = xs }",
         "gos_rt_vec_step_by",
     ),
     (
         "iter::flat_map (fixed array literal)",
-        "use std::iter\nfn main() { let xs = [1, 2] |> iter::flat_map(|x: i64| [x, x * 10])\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = [1, 2] |> iter::flat_map(|x: i64| [x, x * 10], $)\nlet _ = xs }",
         "gos_rt_iter_flat_map_arr_i64",
     ),
     (
         "iter::reduce",
-        "use std::iter\nfn main() { let v = #[1, 2] |> iter::reduce(|a: i64, b: i64| a + b)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[1, 2] |> iter::reduce(|a: i64, b: i64| a + b, $)\nlet _ = v }",
         "gos_rt_iter_reduce_i64",
     ),
     (
         "iter::scan",
-        "use std::iter\nfn main() { let xs = #[1, 2] |> iter::scan(0, |a: i64, x: i64| a + x)\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[1, 2] |> iter::scan(0, |a: i64, x: i64| a + x, $)\nlet _ = xs }",
         "gos_rt_iter_scan_i64",
     ),
     (
         "iter::product_by",
-        "use std::iter\nfn main() { let v = #[1, 2] |> iter::product_by(|x: i64| x + 1)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[1, 2] |> iter::product_by(|x: i64| x + 1, $)\nlet _ = v }",
         "gos_rt_iter_product_by_i64",
     ),
     (
         "iter::position",
-        "use std::iter\nfn main() { let v = #[5, 6] |> iter::position(|x: i64| x == 6)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[5, 6] |> iter::position(|x: i64| x == 6, $)\nlet _ = v }",
         "gos_rt_iter_position_i64",
     ),
     (
         "iter::find_map",
-        "use std::iter\nfn main() { let v = #[1, 2] |> iter::find_map(|x: i64| if x > 1 { Some(x) } else { None })\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[1, 2] |> iter::find_map(|x: i64| if x > 1 { Some(x) } else { None }, $)\nlet _ = v }",
         "gos_rt_iter_find_map_i64",
     ),
     (
         "iter::take_while",
-        "use std::iter\nfn main() { let xs = #[1, 9] |> iter::take_while(|x: i64| x < 5)\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[1, 9] |> iter::take_while(|x: i64| x < 5, $)\nlet _ = xs }",
         "gos_rt_iter_take_while_i64",
     ),
     (
         "iter::skip_while",
-        "use std::iter\nfn main() { let xs = #[1, 9] |> iter::skip_while(|x: i64| x < 5)\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[1, 9] |> iter::skip_while(|x: i64| x < 5, $)\nlet _ = xs }",
         "gos_rt_iter_skip_while_i64",
     ),
     (
         "iter::partition",
-        "use std::iter\nfn main() { let (a, b) = #[1, 2] |> iter::partition(|x: i64| x % 2 == 0)\nlet _ = a\nlet _ = b }",
+        "use std::iter\nfn main() { let (a, b) = #[1, 2] |> iter::partition(|x: i64| x % 2 == 0, $)\nlet _ = a\nlet _ = b }",
         "gos_rt_iter_partition_i64",
     ),
     (
         "iter::sort_by",
-        "use std::iter\nfn main() { let xs = #[3, 1] |> iter::sort_by(|a: i64, b: i64| a - b)\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[3, 1] |> iter::sort_by(|a: i64, b: i64| a - b, $)\nlet _ = xs }",
         "gos_rt_iter_sorted_by_i64",
     ),
     (
         "iter::sort_by_key",
-        "use std::iter\nfn main() { let xs = #[3, 1] |> iter::sort_by_key(|x: i64| 0 - x)\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[3, 1] |> iter::sort_by_key(|x: i64| 0 - x, $)\nlet _ = xs }",
         "gos_rt_iter_sorted_by_key_i64",
     ),
     (
         "iter::min_by",
-        "use std::iter\nfn main() { let v = #[3, 1] |> iter::min_by(|a: i64, b: i64| a - b)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[3, 1] |> iter::min_by(|a: i64, b: i64| a - b, $)\nlet _ = v }",
         "gos_rt_iter_min_by_i64",
     ),
     (
         "iter::max_by",
-        "use std::iter\nfn main() { let v = #[3, 1] |> iter::max_by(|a: i64, b: i64| a - b)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[3, 1] |> iter::max_by(|a: i64, b: i64| a - b, $)\nlet _ = v }",
         "gos_rt_iter_max_by_i64",
     ),
     (
         "iter::min_by_key",
-        "use std::iter\nfn main() { let v = #[3, 1] |> iter::min_by_key(|x: i64| 0 - x)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[3, 1] |> iter::min_by_key(|x: i64| 0 - x, $)\nlet _ = v }",
         "gos_rt_iter_min_by_key_i64",
     ),
     (
         "iter::max_by_key",
-        "use std::iter\nfn main() { let v = #[3, 1] |> iter::max_by_key(|x: i64| 0 - x)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[3, 1] |> iter::max_by_key(|x: i64| 0 - x, $)\nlet _ = v }",
         "gos_rt_iter_max_by_key_i64",
     ),
     (
         "iter::chunk_by",
-        "use std::iter\nfn main() { let m = #[1, 2] |> iter::chunk_by(|x: i64| x % 2)\nlet _ = m }",
+        "use std::iter\nfn main() { let m = #[1, 2] |> iter::chunk_by(|x: i64| x % 2, $)\nlet _ = m }",
         "gos_rt_iter_group_by_i64",
     ),
     (
         "iter::count_by",
-        "use std::iter\nfn main() { let m = #[1, 2] |> iter::count_by(|x: i64| x % 2)\nlet _ = m }",
+        "use std::iter\nfn main() { let m = #[1, 2] |> iter::count_by(|x: i64| x % 2, $)\nlet _ = m }",
         "gos_rt_iter_count_by_i64",
     ),
 ];
@@ -1725,7 +1725,7 @@ fn std_fn_value_map_err_resolves_to_runtime_symbol() {
 #[test]
 fn std_fn_value_iter_map_resolves_to_runtime_symbol() {
     let source = "use std::{iter, strings}\n\
-                  fn main() { let out = #[\"ab\"] |> iter::map(strings::to_uppercase)\nlet _ = out }";
+                  fn main() { let out = #[\"ab\"] |> iter::map(strings::to_uppercase, $)\nlet _ = out }";
     let (bodies, _) = build_with_lift(source);
     let main = bodies.iter().find(|b| b.name == "main").expect("main");
     let strings = const_strings(main);

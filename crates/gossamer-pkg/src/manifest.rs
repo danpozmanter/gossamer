@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 use crate::id::{ProjectId, ProjectIdError};
-use crate::version::{CaretRange, Version, VersionError};
+use crate::version::{Version, VersionError, VersionReq};
 
 const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
 
@@ -76,10 +76,11 @@ pub struct ProjectTable {
     pub id: ProjectId,
     /// `project.version`.
     pub version: Version,
-    /// `project.gossamer-version` - the exact toolchain version this
-    /// project is written against, matching the release tag. Absent when
-    /// the manifest does not state one.
-    pub gossamer_version: Option<Version>,
+    /// `project.gossamer-version` - which toolchain this project is
+    /// written against. A bare version (or an explicit `=`) names that
+    /// toolchain and no other; a `^` version names it as a floor.
+    /// Absent when the manifest does not state one.
+    pub gossamer_version: Option<VersionReq>,
     /// `project.authors`. Empty when omitted.
     pub authors: Vec<String>,
     /// `project.license`. Empty string when omitted.
@@ -115,7 +116,7 @@ pub struct ProjectTable {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DependencySpec {
     /// Bare version literal - registry source by default.
-    Registry(CaretRange),
+    Registry(VersionReq),
     /// Inline table form: `git`, `path`, or `tarball`.
     Inline(InlineDependency),
 }
@@ -127,7 +128,7 @@ pub enum RustBindingSpec {
     /// `{ path = "..." }` - local Cargo path-dep.
     Path {
         /// Optional informational version range.
-        version: Option<CaretRange>,
+        version: Option<VersionReq>,
         /// Path as written in the manifest (relative to the
         /// manifest dir or absolute).
         path: String,
@@ -139,7 +140,7 @@ pub enum RustBindingSpec {
     /// `{ git = "..." }` - Cargo git-dep.
     Git {
         /// Optional informational version range.
-        version: Option<CaretRange>,
+        version: Option<VersionReq>,
         /// Repository URL.
         url: String,
         /// Optional reference (branch/tag/rev).
@@ -152,7 +153,7 @@ pub enum RustBindingSpec {
     /// `{ version = "..." }` - crates.io passthrough.
     Crates {
         /// Required version range.
-        version: CaretRange,
+        version: VersionReq,
         /// Cargo features.
         features: Vec<String>,
         /// Whether `default-features` is enabled.
@@ -260,14 +261,26 @@ pub enum ManifestError {
     },
     /// The manifest's `gossamer-version` is not a toolchain version.
     #[error(
-        "unsupported gossamer-version {0:?}; state the exact toolchain version, \
-         such as \"v0.52.2\", matching the release tag"
+        "unsupported gossamer-version {0:?}; state a toolchain version matching \
+         the release tag, such as \"v0.55.0\" for that toolchain exactly or \
+         \"^v0.55.0\" for that one or later"
     )]
     UnsupportedGossamerVersion(String),
-    /// The manifest names a toolchain newer than the one running.
-    #[error("this project requires gossamer v{required}; this toolchain is v{running}")]
+    /// The manifest pins a toolchain and this is not it.
+    #[error(
+        "this project is written against gossamer v{required}; this toolchain is \
+         v{running}. Write \"^v{required}\" to accept v{required} or later"
+    )]
+    GossamerVersionMismatch {
+        /// Version the manifest pins.
+        required: String,
+        /// Version of the running toolchain.
+        running: String,
+    },
+    /// The manifest names a floor above the running toolchain.
+    #[error("this project requires gossamer v{required} or later; this toolchain is v{running}")]
     GossamerVersionTooNew {
-        /// Version the manifest states.
+        /// Lowest version the manifest accepts.
         required: String,
         /// Version of the running toolchain.
         running: String,
@@ -374,23 +387,30 @@ impl Manifest {
                 new: "gossamer-version",
             });
         }
-        // The stated toolchain version is exact and matches the release
-        // tag. A project written against a newer toolchain than the one
-        // running is named here rather than failing later on a surface
-        // this build does not have.
+        // A toolchain the project cannot run on is named here rather
+        // than failing later on a surface this build does not have.
+        // A bare version pins - the project is written against that
+        // toolchain and no other - and `^` states a floor.
         let gossamer_version =
             match optional_toml_str(project, "gossamer-version", "project.gossamer-version")? {
                 Some(text) => {
-                    let parsed = crate::parse_gossamer_version(&text)
+                    let required = crate::parse_gossamer_version(&text)
                         .map_err(ManifestError::UnsupportedGossamerVersion)?;
                     let running = crate::toolchain_version();
-                    if parsed > running {
-                        return Err(ManifestError::GossamerVersionTooNew {
-                            required: parsed.to_string(),
-                            running: running.to_string(),
+                    if !required.matches(&running) {
+                        return Err(if required.is_exact() {
+                            ManifestError::GossamerVersionMismatch {
+                                required: required.to_string(),
+                                running: running.to_string(),
+                            }
+                        } else {
+                            ManifestError::GossamerVersionTooNew {
+                                required: required.version.to_string(),
+                                running: running.to_string(),
+                            }
                         });
                     }
-                    Some(parsed)
+                    Some(required)
                 }
                 None => None,
             };
@@ -557,8 +577,15 @@ impl Manifest {
         out.push_str("[project]\n");
         out.push_str(&format!("id = \"{}\"\n", self.project.id));
         out.push_str(&format!("version = \"{}\"\n", self.project.version));
-        if let Some(version) = &self.project.gossamer_version {
-            out.push_str(&format!("gossamer-version = \"v{version}\"\n"));
+        if let Some(requirement) = &self.project.gossamer_version {
+            // Rendered with the `v` inside the requirement's spelling,
+            // so `^0.55.0` round-trips as `^v0.55.0` rather than losing
+            // its bound.
+            let rendered = match requirement.bound {
+                crate::version::VersionBound::Exact => format!("v{}", requirement.version),
+                crate::version::VersionBound::AtLeast => format!("^v{}", requirement.version),
+            };
+            out.push_str(&format!("gossamer-version = \"{rendered}\"\n"));
         }
         if !self.project.authors.is_empty() {
             out.push_str("authors = [");
@@ -618,7 +645,7 @@ fn render_rust_binding(spec: &RustBindingSpec) -> String {
             default_features,
         } => {
             if let Some(v) = version {
-                parts.push(format!("version = \"{}\"", v.minimum));
+                parts.push(format!("version = \"{v}\""));
             }
             parts.push(format!("path = \"{path}\""));
             push_features(&mut parts, features, *default_features);
@@ -631,7 +658,7 @@ fn render_rust_binding(spec: &RustBindingSpec) -> String {
             default_features,
         } => {
             if let Some(v) = version {
-                parts.push(format!("version = \"{}\"", v.minimum));
+                parts.push(format!("version = \"{v}\""));
             }
             parts.push(format!("git = \"{url}\""));
             if let Some(r) = reference {
@@ -648,7 +675,7 @@ fn render_rust_binding(spec: &RustBindingSpec) -> String {
             features,
             default_features,
         } => {
-            parts.push(format!("version = \"{}\"", version.minimum));
+            parts.push(format!("version = \"{version}\""));
             push_features(&mut parts, features, *default_features);
         }
         RustBindingSpec::Src { src, deps } => {
@@ -686,7 +713,7 @@ fn canonical_binding_kv(spec: &RustBindingSpec, manifest_dir: &std::path::Path) 
         } => {
             entries.push("kind=path".to_string());
             if let Some(v) = version {
-                entries.push(format!("version={}", v.minimum));
+                entries.push(format!("version={v}"));
             }
             let resolved = resolve_path(manifest_dir, path);
             entries.push(format!("path={}", resolved.display()));
@@ -701,7 +728,7 @@ fn canonical_binding_kv(spec: &RustBindingSpec, manifest_dir: &std::path::Path) 
         } => {
             entries.push("kind=git".to_string());
             if let Some(v) = version {
-                entries.push(format!("version={}", v.minimum));
+                entries.push(format!("version={v}"));
             }
             entries.push(format!("url={url}"));
             if let Some(r) = reference {
@@ -719,7 +746,7 @@ fn canonical_binding_kv(spec: &RustBindingSpec, manifest_dir: &std::path::Path) 
             default_features,
         } => {
             entries.push("kind=crates".to_string());
-            entries.push(format!("version={}", version.minimum));
+            entries.push(format!("version={version}"));
             push_canonical_features(&mut entries, features, *default_features);
         }
         RustBindingSpec::Src { src, deps } => {
@@ -886,7 +913,7 @@ fn render_table_key(key: &str) -> String {
 
 fn parse_dependency_toml(value: &toml::Value, key: &str) -> Result<DependencySpec, ManifestError> {
     if let Some(literal) = value.as_str() {
-        return Ok(DependencySpec::Registry(CaretRange::parse(literal)?));
+        return Ok(DependencySpec::Registry(VersionReq::parse(literal)?));
     }
     let Some(table) = value.as_table() else {
         return Err(ManifestError::WrongType {
@@ -982,7 +1009,7 @@ fn parse_rust_binding_toml(
         });
     };
     let version = optional_toml_str(table, "version", &format!("rust-bindings.{key}.version"))?
-        .map(|v| CaretRange::parse(&v))
+        .map(|v| VersionReq::parse(&v))
         .transpose()?;
     let path = optional_toml_str(table, "path", &format!("rust-bindings.{key}.path"))?;
     let git = optional_toml_str(table, "git", &format!("rust-bindings.{key}.git"))?;
@@ -1098,7 +1125,7 @@ fn is_valid_binding_name(name: &str) -> bool {
 
 fn render_dependency(spec: &DependencySpec) -> String {
     match spec {
-        DependencySpec::Registry(range) => format!("\"{}\"", range.minimum),
+        DependencySpec::Registry(requirement) => format!("\"{requirement}\""),
         DependencySpec::Inline(InlineDependency::Git { url, reference }) => {
             format!("{{ git = \"{url}\", tag = \"{reference}\" }}")
         }
@@ -1135,18 +1162,25 @@ mod entry_field_tests {
 mod gossamer_version_tests {
     use super::*;
 
+    fn manifest_with(gossamer_version: &str) -> Result<Manifest, ManifestError> {
+        Manifest::parse(&format!(
+            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\n\
+             gossamer-version = \"{gossamer_version}\"\n",
+        ))
+    }
+
     #[test]
-    fn an_absent_gossamer_version_is_none_and_an_exact_one_round_trips() {
+    fn an_absent_gossamer_version_is_none_and_a_pin_round_trips() {
         let bare =
             Manifest::parse("[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\n").unwrap();
         assert_eq!(bare.project.gossamer_version, None);
 
         let running = crate::toolchain_version();
-        let stated = Manifest::parse(&format!(
-            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\ngossamer-version = \"v{running}\"\n",
-        ))
-        .unwrap();
-        assert_eq!(stated.project.gossamer_version, Some(running));
+        let stated = manifest_with(&format!("v{running}")).unwrap();
+        assert_eq!(
+            stated.project.gossamer_version,
+            Some(crate::VersionReq::exact(running))
+        );
         assert_eq!(Manifest::parse(&stated.render()).unwrap(), stated);
     }
 
@@ -1154,11 +1188,59 @@ mod gossamer_version_tests {
     #[test]
     fn a_bare_version_spelling_parses_to_the_same_value() {
         let running = crate::toolchain_version();
-        let stated = Manifest::parse(&format!(
-            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\ngossamer-version = \"{running}\"\n",
-        ))
-        .unwrap();
-        assert_eq!(stated.project.gossamer_version, Some(running));
+        let stated = manifest_with(&running.to_string()).unwrap();
+        assert_eq!(
+            stated.project.gossamer_version,
+            Some(crate::VersionReq::exact(running))
+        );
+    }
+
+    /// A pin names one toolchain. A project written against an older
+    /// one is refused by name rather than compiled against a surface it
+    /// was never checked on.
+    #[test]
+    fn a_pin_refuses_a_toolchain_that_is_not_the_one_it_names() {
+        let running = crate::toolchain_version();
+        let older = format!("v{}.{}.{}", running.major, running.minor, running.patch + 1);
+        let error = manifest_with(&older).unwrap_err();
+        assert!(
+            matches!(error, ManifestError::GossamerVersionMismatch { .. }),
+            "{error:?}"
+        );
+
+        let earlier = if running.patch > 0 {
+            format!("v{}.{}.{}", running.major, running.minor, running.patch - 1)
+        } else {
+            return;
+        };
+        let error = manifest_with(&earlier).unwrap_err();
+        assert!(
+            matches!(error, ManifestError::GossamerVersionMismatch { .. }),
+            "{error:?}"
+        );
+    }
+
+    /// A `^` floor accepts this toolchain and every later one, which is
+    /// what a project that wants to keep working across releases writes.
+    #[test]
+    fn a_caret_floor_accepts_this_toolchain_and_anything_later() {
+        let running = crate::toolchain_version();
+        let stated = manifest_with(&format!("^v{running}")).unwrap();
+        assert_eq!(
+            stated.project.gossamer_version,
+            Some(crate::VersionReq::at_least(running.clone()))
+        );
+        assert_eq!(Manifest::parse(&stated.render()).unwrap(), stated);
+
+        if running.patch > 0 {
+            let earlier = format!(
+                "^v{}.{}.{}",
+                running.major,
+                running.minor,
+                running.patch - 1
+            );
+            assert!(manifest_with(&earlier).is_ok());
+        }
     }
 
     #[test]
@@ -1173,14 +1255,13 @@ mod gossamer_version_tests {
     }
 
     #[test]
-    fn a_newer_toolchain_than_this_one_is_named() {
+    fn a_floor_above_this_toolchain_is_named() {
         let running = crate::toolchain_version();
-        let error = Manifest::parse(&format!(
-            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\ngossamer-version = \"v{}.0.0\"\n",
-            running.major + 1,
-        ))
-        .unwrap_err();
-        assert!(matches!(error, ManifestError::GossamerVersionTooNew { .. }));
+        let error = manifest_with(&format!("^v{}.0.0", running.major + 1)).unwrap_err();
+        assert!(
+            matches!(error, ManifestError::GossamerVersionTooNew { .. }),
+            "{error:?}"
+        );
     }
 
     /// `edition` is Rust's spelling, so a manifest still carrying it is named

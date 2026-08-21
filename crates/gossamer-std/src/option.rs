@@ -1,7 +1,7 @@
 //! Chaining combinators for `std::option`.
 //!
 //! Generic, data-last. Mirrors F#'s `Option` module so
-//! `opt |> option::map(f) |> option::unwrap_or(0)` threads cleanly.
+//! `opt |> option::map(f, $) |> option::unwrap_or(0, $)` threads cleanly.
 //!
 //! The user-facing dispatch in `.gos` programs lives in
 //! `crates/gossamer-interp/src/stdlib_builtins.rs::install_option` -

@@ -126,8 +126,12 @@ pub(crate) fn mechanisms(policy: &CompiledPolicy) -> Vec<String> {
             if policy.level == Level::Strict {
                 lines.push("user, mount, IPC, UTS, and PID namespaces".to_string());
                 lines.push("private /proc, reaper at PID 1".to_string());
-                if policy.network == Network::Deny {
-                    lines.push("network namespace".to_string());
+                match policy.network {
+                    Network::None => lines.push("network namespace".to_string()),
+                    Network::Client => {
+                        lines.push("Landlock TCP bind denied, connect allowed".to_string());
+                    }
+                    Network::Open => {}
                 }
                 lines.push(format!(
                     "seccomp filter refusing {} syscalls",
@@ -168,12 +172,13 @@ fn install_enforcement(command: &mut Command, policy: &CompiledPolicy) {
         return;
     }
     let level = policy.level;
-    let deny_network = policy.network == Network::Deny;
+    let deny_network = policy.network == Network::None;
+    let network = policy.network;
     let private_temp = (policy.temp == Temp::Private)
         .then(|| policy.temp_directory.clone())
         .flatten();
     let abi = landlock::abi_version();
-    let ruleset = abi.map(|abi| landlock::Ruleset::compile(abi, &policy.rules, deny_network));
+    let ruleset = abi.map(|abi| landlock::Ruleset::compile(abi, &policy.rules, network));
     let namespace_plan =
         (level == Level::Strict).then(|| namespaces::Plan::new(private_temp.as_deref()));
     let filter =

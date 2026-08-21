@@ -45,9 +45,19 @@ gossamer-version = "v0.55.0"
 ```
 
 There are no editions: one toolchain version reads one language, and
-the manifest names which version that is. A toolchain older than the
-one stated refuses the project rather than failing later on a surface
-it does not have, so the mismatch is reported where it can be acted on.
+the manifest names which version that is. The spelling decides how
+strictly:
+
+| Spelling | Meaning |
+|---|---|
+| `"v0.55.0"`, or `"=v0.55.0"` | That toolchain and no other |
+| `"^v0.55.0"` | That toolchain or any later one |
+
+A toolchain the requirement does not accept refuses the project rather
+than failing later on a surface it does not have, so the mismatch is
+reported where it can be acted on. `gos new` scaffolds a `^` floor,
+because a project should not stop building at the next release unless
+its author asked for that.
 `gos new` stamps the toolchain that scaffolded the project; raise the
 value when you adopt a newer one, after `gos fix` has carried the
 source across.

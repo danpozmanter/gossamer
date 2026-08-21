@@ -20,7 +20,7 @@ JIT, and the `gos build` native binary).
 | `errors.gos` | `Result<T, E>` + `?` + `std::errors::wrap` | runs |
 | `concurrency.gos` | Goroutines + channels - producer / consumer | runs (`gos` and `gos build`) |
 | `go_spawn.gos` | Goroutines without channels - fan-out sketch | runs and builds natively |
-| `function_piping.gos` | `|>` forward-pipe operator tour | runs |
+| `function_piping.gos` | `|>` forward-pipe: composing free functions | runs |
 | `semicolon_separators.gos` | Optional same-line statement separators | runs |
 | `grep.gos` | Simple Unix-style CLI tool | runs (reads stdin) |
 | `testing.gos` | `#[test]` harness + `std::testing` | runs via `gos test` |

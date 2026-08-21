@@ -224,10 +224,12 @@ println!("Hello World")
 A top-level `?` makes the implicit main return `Result<(),
 errors::Error>`; set a process exit code with `std::process::exit(n)`.
 
-Gossamer leans on a forward-pipe operator (`|>`) so data flows
-left-to-right. `x |> f(a, b)` desugars to
-`f(a, b, x)`, and `|>` chains cleanly with methods, closures, and
-plain functions:
+Gossamer has a forward-pipe operator (`|>`) for composing free
+functions, which have no receiver to chain from. `x |> f` is `f(x)`; a
+step that writes arguments names the piped value's slot with `$`, so
+`x |> f(a, $)` is `f(a, x)` and `x |> g($, a)` is `g(x, a)`. Anything
+with a receiver already chains, and the method chain is the shorter
+spelling - the two mix freely:
 
 ```gossamer
 use std::{iter, strings}
@@ -240,12 +242,11 @@ fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
 
 fn main() {
     // 3 -> double -> add 10 -> clamp to [0, 100]
-    let n = 3 |> double |> add(10) |> clamp(0, 100)
+    let n = 3 |> double |> add(10, $) |> clamp(0, 100, $)
     println!("arithmetic: {}", n)
 
-    // Free functions pipe the same way.
-    let words = "  Hello  World  "
-        |> strings::to_lowercase
+    // A method chain is an ordinary operand, so it can feed a pipe.
+    let words = "  Hello  World  ".to_lowercase()
         |> strings::split_whitespace
         |> iter::count
 
@@ -281,7 +282,7 @@ fn add(a: i64, b: i64) -> i64 { a + b }
 
 fn main() {
     let (tx, rx) = channel::<i64>()
-    go fn() { tx.send(40 |> add(2)) }()
+    go fn() { tx.send(40 |> add(2, $)) }()
     if let Some(answer) = rx.recv() {
         println!("answer: {}", answer)
     }
@@ -295,7 +296,7 @@ if it panicked:
 fn add(a: i64, b: i64) -> i64 { a + b }
 
 fn main() {
-    let h = spawn(|| 40 |> add(2))
+    let h = spawn(|| 40 |> add(2, $))
     match h.join() {
         Ok(v) => println!("answer: {}", v),
         Err(e) => println!("worker failed: {}", e),

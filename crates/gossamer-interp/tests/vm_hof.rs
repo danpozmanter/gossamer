@@ -55,7 +55,7 @@ fn for_each_runs_closure_once_per_element() {
 use std::iter
 fn main() {
     let xs = [1, 2, 3, 4, 5]
-    xs |> iter::for_each(|n| println!("each={}", n))
+    xs |> iter::for_each(|n| println!("each={}", n), $)
 }
 "#;
     assert_eq!(run_main(src), "each=1\neach=2\neach=3\neach=4\neach=5\n");
@@ -84,11 +84,11 @@ fn map_filter_fold_thread_closures_through_the_vm() {
 use std::iter
 fn main() {
     let xs = [1, 2, 3, 4, 5]
-    let doubled = xs |> iter::map(|n| n * 2)
+    let doubled = xs |> iter::map(|n| n * 2, $)
     println!("doubled={:?}", doubled)
-    let evens = xs |> iter::filter(|n| n % 2 == 0)
+    let evens = xs |> iter::filter(|n| n % 2 == 0, $)
     println!("evens={:?}", evens)
-    let product = xs |> iter::fold(1, |acc, n| acc * n)
+    let product = xs |> iter::fold(1, |acc, n| acc * n, $)
     println!("product={}", product)
 }
 "#;
@@ -120,7 +120,7 @@ use std::iter
 fn triple(n: i64) -> i64 { n * 3 }
 fn main() {
     let xs = [1, 2, 3, 4, 5]
-    let tripled = xs |> iter::map(triple)
+    let tripled = xs |> iter::map(triple, $)
     println!("tripled={:?}", tripled)
 }
 "#;
@@ -156,11 +156,11 @@ fn result_map_and_option_map_callbacks_run_on_the_vm() {
 use std::{result, option}
 fn main() {
     let r: Result<i64, String> = Ok(21)
-    let mapped = r |> result::map(|v| v * 2)
+    let mapped = r |> result::map(|v| v * 2, $)
     println!("result_map={:?}", mapped)
 
     let o = Some(10)
-    let omap = o |> option::map(|v| v + 5)
+    let omap = o |> option::map(|v| v + 5, $)
     println!("option_map={:?}", omap)
 }
 "#;
@@ -176,7 +176,7 @@ fn capturing_closure_through_a_hof_uses_native_capture() {
 use std::iter
 fn main() {
     let factor = 4
-    let scaled = [1, 2, 3] |> iter::map(|n| n * factor)
+    let scaled = [1, 2, 3] |> iter::map(|n| n * factor, $)
     println!("{:?}", scaled)
 }
 "#;

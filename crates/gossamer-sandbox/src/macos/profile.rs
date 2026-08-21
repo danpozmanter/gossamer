@@ -64,8 +64,14 @@ pub(crate) fn render(policy: &CompiledPolicy) -> String {
     match policy.network {
         // Complete, every protocol - which is more than Landlock's
         // TCP-only layer can say.
-        Network::Deny => out.push_str("(deny network*)\n"),
-        Network::Allow => out.push_str("(allow network*)\n"),
+        Network::None => out.push_str("(deny network*)\n"),
+        // Seatbelt names the direction, so client-only is the outbound
+        // filter over a closed default rather than a port rule.
+        Network::Client => {
+            out.push_str("(deny network*)\n");
+            out.push_str("(allow network-outbound)\n");
+        }
+        Network::Open => out.push_str("(allow network*)\n"),
     }
 
     out.push_str("\n;; System paths every process needs to start.\n");

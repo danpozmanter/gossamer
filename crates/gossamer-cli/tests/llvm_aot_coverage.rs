@@ -607,7 +607,7 @@ fn aot_iter_sum_by() {
 use std::iter
 fn main() {
     let xs = [1, 2, 3]
-    let total = xs |> iter::sum_by(|n| n*2)
+    let total = xs |> iter::sum_by(|n| n*2, $)
     println!("total={}", total)
 }
 "#,
@@ -623,7 +623,7 @@ fn aot_option_map() {
 use std::option
 fn main() {
     let o = Some(2)
-    let m = o |> option::map(|n| n + 1)
+    let m = o |> option::map(|n| n + 1, $)
     if let Some(v) = m { println!("v={}", v) }
 }
 "#,
@@ -640,7 +640,7 @@ use std::result
 use std::errors
 fn main() {
     let r: Result<i64, errors::Error> = Ok(2)
-    let m = r |> result::map(|n| n + 1)
+    let m = r |> result::map(|n| n + 1, $)
     if let Ok(v) = m { println!("v={}", v) }
 }
 "#,
@@ -803,7 +803,7 @@ fn aot_iter_for_each_runtime() {
 use std::iter
 fn main() {
     let xs = [10, 20, 30]
-    xs |> iter::for_each(|n| println!("n={}", n))
+    xs |> iter::for_each(|n| println!("n={}", n), $)
 }
 "#,
         "n=10\nn=20\nn=30\n",

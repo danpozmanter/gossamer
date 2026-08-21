@@ -1089,6 +1089,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1224,6 +1226,34 @@
 
 
     Diagnostics
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../toolchain/sandbox/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Sandboxing
 
 
 
@@ -2080,7 +2110,7 @@
 
 <h1 id="stdhttptest"><code>std::httptest</code><a class="headerlink" href="#stdhttptest" title="Permanent link">&para;</a></h1>
 <p>Status: experimental</p>
-<p>Loopback HTTP fixtures for source integration tests.</p>
+<p>Fixtures for testing HTTP code. A handler is a function from a request to a response, so <code>record</code> calls one in memory; a test that is about the wire builds an <code>http::Server</code>, binds port 0, and reads the address back.</p>
 
 
 

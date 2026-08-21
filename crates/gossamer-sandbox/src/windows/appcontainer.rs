@@ -14,17 +14,27 @@
 use std::process::Command;
 
 use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, LocalFree};
+use windows_sys::Win32::Security::Authorization::ConvertStringSidToSidW;
 use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeleteAppContainerProfile, DeriveAppContainerSidFromAppContainerName,
 };
-use windows_sys::Win32::Security::SECURITY_CAPABILITIES;
+use windows_sys::Win32::Security::{SECURITY_CAPABILITIES, SID_AND_ATTRIBUTES};
 
-use crate::policy::{Access, CompiledPolicy};
+/// `SE_GROUP_ENABLED`: the capability is active for the container.
+const GROUP_ENABLED: u32 = 0x0000_0004;
+
+use crate::policy::{Access, CompiledPolicy, Network};
 
 use super::acl::{self, Sid};
 
 /// `HRESULT` as every entry point below returns it.
 type HResult = i32;
+
+/// Well-known capability SIDs. `internetClient` is the outbound
+/// capability; the other two add the listening side.
+const CAPABILITY_INTERNET_CLIENT: &str = "S-1-15-3-1";
+const CAPABILITY_INTERNET_CLIENT_SERVER: &str = "S-1-15-3-2";
+const CAPABILITY_PRIVATE_NETWORK_CLIENT_SERVER: &str = "S-1-15-3-3";
 
 /// Container name, stable across runs so a crashed run's grants are
 /// findable by name rather than by search.
@@ -51,6 +61,13 @@ pub(crate) struct Container {
     record: acl::GrantRecord,
     granted: Vec<std::path::PathBuf>,
     capabilities: Box<SECURITY_CAPABILITIES>,
+    /// Backing storage for the pointer in `capabilities`. Never read:
+    /// holding it is what keeps that pointer valid until the process
+    /// has been created.
+    #[allow(dead_code, reason = "lifetime anchor for a raw pointer's target")]
+    capability_sids: Vec<SID_AND_ATTRIBUTES>,
+    /// `LocalFree` targets for the SIDs the array points at.
+    owned_sids: Vec<*mut std::ffi::c_void>,
 }
 
 // Owned by this value; a SID is a plain allocation with no thread
@@ -115,13 +132,48 @@ impl Container {
             granted.push(rule.path.clone());
         }
 
+        // An AppContainer reaches the network only through a capability
+        // SID, so the network policy is this list and nothing else.
+        // Client is INTERNET_CLIENT; Open adds the server side.
+        let mut capability_sids: Vec<SID_AND_ATTRIBUTES> = Vec::new();
+        let mut owned_sids: Vec<*mut std::ffi::c_void> = Vec::new();
+        let wanted: &[&str] = match policy.network {
+            Network::None => &[],
+            Network::Client => &[CAPABILITY_INTERNET_CLIENT],
+            Network::Open => &[
+                CAPABILITY_INTERNET_CLIENT,
+                CAPABILITY_INTERNET_CLIENT_SERVER,
+                CAPABILITY_PRIVATE_NETWORK_CLIENT_SERVER,
+            ],
+        };
+        for text in wanted {
+            let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+            let mut raw: *mut std::ffi::c_void = std::ptr::null_mut();
+            // SAFETY: `wide` is a NUL-terminated UTF-16 buffer that
+            // outlives the call, and `raw` is written only on success.
+            if unsafe { ConvertStringSidToSidW(wide.as_ptr(), &raw mut raw) } == 0 {
+                for sid in &owned_sids {
+                    unsafe { LocalFree(*sid) };
+                }
+                return Err(format!(
+                    "converting capability SID {text}: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            owned_sids.push(raw);
+            capability_sids.push(SID_AND_ATTRIBUTES {
+                Sid: raw.cast(),
+                Attributes: GROUP_ENABLED,
+            });
+        }
         let capabilities = Box::new(SECURITY_CAPABILITIES {
             AppContainerSid: sid.cast(),
-            Capabilities: std::ptr::null_mut(),
-            // `network = Allow` would add INTERNET_CLIENT here; denial
-            // is simply not granting it, which is why the deny path
-            // needs no capability list at all.
-            CapabilityCount: 0,
+            Capabilities: if capability_sids.is_empty() {
+                std::ptr::null_mut()
+            } else {
+                capability_sids.as_mut_ptr()
+            },
+            CapabilityCount: u32::try_from(capability_sids.len()).unwrap_or(0),
             Reserved: 0,
         });
         Ok(Self {
@@ -129,6 +181,8 @@ impl Container {
             record,
             granted,
             capabilities,
+            capability_sids,
+            owned_sids,
         })
     }
 
@@ -150,6 +204,11 @@ impl Drop for Container {
             let _ = acl::revoke(path, self.sid);
         }
         self.record.close();
+        // Each capability SID was allocated by `ConvertStringSidToSid`
+        // and is freed the same way the container SID is.
+        for sid in &self.owned_sids {
+            unsafe { LocalFree(*sid) };
+        }
         unsafe { LocalFree(self.sid.cast()) };
     }
 }

@@ -35,7 +35,7 @@ fn widths(rounds: i64) -> i64 {
 fn main() {
     println!("{}", encode(&7))
     println!("{}", encode(&"hi"))
-    let c = Cmd { args: #[] } |> $.arg(1) |> $.arg("two")
+    let c = Cmd { args: #[] }.arg(1).arg("two")
     println!("{:?}", c.args)
     println!("{}", widths(200))
 }

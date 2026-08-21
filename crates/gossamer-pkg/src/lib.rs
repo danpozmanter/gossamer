@@ -110,4 +110,4 @@ pub use transport::{
     HttpTransport, HttpsTransport, StaticTransport, Transport, TransportError, fetch_verified,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use version::{CaretRange, Version, VersionError};
+pub use version::{Version, VersionBound, VersionError, VersionReq};

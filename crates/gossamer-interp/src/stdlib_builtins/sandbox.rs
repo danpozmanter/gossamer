@@ -147,7 +147,7 @@ fn builtin_policy_deny(args: &[Value]) -> RuntimeResult<Value> {
 fn builtin_policy_network(args: &[Value]) -> RuntimeResult<Value> {
     let allow = matches!(args.get(1), Some(Value::Bool(true)));
     edited(args, |policy| {
-        policy.network(if allow { Network::Allow } else { Network::Deny })
+        policy.network(if allow { Network::Open } else { Network::None })
     })
 }
 
@@ -322,7 +322,7 @@ mod sandbox_builtin_tests {
         let policy = builtin_policy_new(&[]).expect("new");
         let with_network = builtin_policy_network(&[policy, Value::Bool(true)]).expect("network");
         let loaded = load(Some(&with_network)).expect("live policy");
-        assert_eq!(loaded.network, Network::Allow);
+        assert_eq!(loaded.network, Network::Open);
     }
 
     #[test]

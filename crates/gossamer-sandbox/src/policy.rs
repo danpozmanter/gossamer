@@ -57,9 +57,13 @@ pub enum Temp {
 pub enum Network {
     /// No network at all, every protocol.
     #[default]
-    Deny,
+    None,
+    /// Outbound connections only: the child may connect out and may not
+    /// bind or listen. This is what a dependency fetch needs and what a
+    /// service does not.
+    Client,
     /// The network as the caller has it.
-    Allow,
+    Open,
 }
 
 /// Limits a policy asks for. A backend that cannot enforce one reports
@@ -183,7 +187,7 @@ impl SandboxPolicy {
             read_write_paths: Vec::new(),
             deny_paths: Vec::new(),
             temp: Temp::Private,
-            network: Network::Deny,
+            network: Network::None,
             environment_allowlist: Vec::new(),
             environment_set: BTreeMap::new(),
             allow_exec: true,
@@ -677,6 +681,6 @@ mod policy_tests {
             .expect("compile")
             .to_json();
         assert!(json.contains("\"level\": \"standard\""), "{json}");
-        assert!(json.contains("\"network\": \"deny\""), "{json}");
+        assert!(json.contains("\"network\": \"none\""), "{json}");
     }
 }

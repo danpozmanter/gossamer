@@ -95,6 +95,8 @@ fn main() {
 }
 "#;
 
+// Used only by the symlink case, which needs a platform that has them.
+#[cfg(unix)]
 const READ_THROUGH_SYMLINK: &str = r#"use std::fs
 
 fn main() {

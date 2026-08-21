@@ -31,8 +31,8 @@
 //! directly so user code reads:
 //!
 //! ```text
-//! cfg::load(path) |> result::map(use_config)
-//!                 |> result::default_with(|e| log("load: {}", e))
+//! cfg::load(path) |> result::map(use_config, $)
+//!                 |> result::default_with(|e| log("load: {}", e), $)
 //! ```
 //!
 //! Compiled tier: routes through the existing `GosVariant` shape

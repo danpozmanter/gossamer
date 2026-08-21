@@ -527,7 +527,7 @@ use std::{iter, strings}
 
 fn main() {
     let s = "alpha\nbeta"
-    &s |> strings::lines |> iter::for_each(|l| println!("{}", l))
+    &s |> strings::lines |> iter::for_each(|l| println!("{}", l), $)
 
     let n = 5
     -n

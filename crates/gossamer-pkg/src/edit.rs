@@ -8,13 +8,17 @@ use std::collections::BTreeSet;
 use crate::id::ProjectId;
 use crate::manifest::{DependencySpec, Manifest};
 use crate::resolver::{Resolved, ResolvedSource};
-use crate::version::{CaretRange, Version};
+use crate::version::VersionReq;
 
-/// Inserts a registry dependency on `id` at `version`. Returns `true`
-/// when the manifest changed.
-pub fn add_registry(manifest: &mut Manifest, id: &ProjectId, version: Version) -> bool {
+/// Inserts a registry dependency on `id` at `requirement`. Returns
+/// `true` when the manifest changed.
+///
+/// The requirement is taken rather than built here, because a bare
+/// version and a `^` version mean different things and only the caller
+/// knows which the user asked for.
+pub fn add_registry(manifest: &mut Manifest, id: &ProjectId, requirement: VersionReq) -> bool {
     let key = id.as_str().to_string();
-    let new_spec = DependencySpec::Registry(CaretRange::new(version));
+    let new_spec = DependencySpec::Registry(requirement);
     match manifest.dependencies.get(&key) {
         Some(existing) if existing == &new_spec => false,
         _ => {
@@ -36,12 +40,11 @@ pub fn tidy(manifest: &mut Manifest, keep: &[Resolved]) {
     manifest.dependencies.retain(|k, _| kept.contains(k));
 }
 
-/// Updates the manifest entry for `id` with the resolver pin so the
-/// declared range matches the actually-selected version. No-op for
-/// inline dependencies.
+/// Rewrites the manifest entry for `id` as an exact pin on the version
+/// the resolver selected. No-op for inline dependencies.
 pub fn pin_to_resolved(manifest: &mut Manifest, resolved: &Resolved) {
     if let ResolvedSource::Registry(version) = &resolved.pin {
-        let spec = DependencySpec::Registry(CaretRange::new(version.clone()));
+        let spec = DependencySpec::Registry(VersionReq::exact(version.clone()));
         manifest
             .dependencies
             .insert(resolved.id.as_str().to_string(), spec);

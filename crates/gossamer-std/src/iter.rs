@@ -2,7 +2,7 @@
 //!
 //! Generic, eager, data-last. Every closure-taking combinator in this
 //! module takes the callable first and the data last, mirroring F#'s
-//! `Seq`/`List`/`Array` modules so `xs |> iter::map(f)` desugars
+//! `Seq`/`List`/`Array` modules so `xs |> iter::map(f, $)` desugars
 //! (per SPEC §4.6) to `iter::map(f, xs)` and threads cleanly.
 //!
 //! These Rust-side helpers exist for stdlib code that wants to call

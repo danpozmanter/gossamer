@@ -1,21 +1,27 @@
 /*
- * Forward-pipe operator `|>` and the F#-style combinator surface.
+ * Forward-pipe operator `|>`: composing free functions.
  *
- * `x |> f` desugars to `f(x)`; `x |> f(a, b)` desugars to
- * `f(a, b, x)` (the piped value lands in the *last* positional
- * slot). `x |> recv.m(a)` pipes into an external receiver's last
- * argument: `recv.m(a, x)`. One direct `_` selects another argument
- * position: `x |> f($, a)` is `f(x, a)`. The `_` placeholder instead
- * makes the piped value the *receiver* in `x |> $.m(a)`, and bare
- * `x |> $.trim` is `x.trim()`. `|>` is left-associative with very
- * low precedence, so `a |> f |> g` reads as `g(f(a))` without
- * parentheses.
+ * A free function has no receiver, so a chain of them nests inside-out
+ * and reads right to left. `|>` puts it back in reading order. This is
+ * the functional-style tool - reach for it when a value flows through
+ * two or more free-function transforms.
  *
- * Combinator surfaces in `std::iter` / `std::option` / `std::result`
- * (SPEC §10.4-§10.4b) keep transformation pipelines at the
- * expression level instead of dropping to procedural `for` loops.
- * Argument order across the surface is data-last, so every helper
- * threads through `|>` without an explicit placeholder.
+ * A step is one of two shapes:
+ *   x |> f          a bare callable takes the value as its only argument
+ *   x |> f(a, $)    a step that writes arguments names the value's slot
+ *
+ * Exactly one `$` per step, anywhere along the step's call chain. No
+ * argument order is assumed, so a data-first callee reads like a
+ * data-last one: `text |> strings::split($, ",")` alongside
+ * `xs |> iter::map(f, $)`.
+ *
+ * Anything with a receiver already chains, and the method chain is the
+ * shorter spelling - prefer `s.trim().to_lowercase()` over any pipe
+ * form of it. The two mix: a method chain is an ordinary operand, so it
+ * can feed a pipe step.
+ *
+ * `|>` is left-associative with very low precedence, so `a |> f |> g`
+ * reads as `g(f(a))` without parentheses.
  */
 
 use std::iter
@@ -34,39 +40,42 @@ fn split_words(s: String) -> Vec<String> {
 }
 
 // Arithmetic chain: 3 -> double -> add 10 -> clamp to [0, 100].
-let n = 3 |> double |> add(10) |> clamp(0, 100)
+let n = 3 |> double |> add(10, $) |> clamp(0, 100, $)
 println!("arithmetic: {n}")
 
-// Equivalent nested form (what `|>` desugars to):
+// Equivalent nested form - what the pipe saves the reader.
 let same = clamp(0, 100, add(10, double(3)))
 println!("nested: {same}")
 
-// `_.method` pipes the value through its own methods - `_` is the
-// receiver of the step, so `_.trim` is `x.trim()`.
-let shout = "  hello  " |> $.trim |> $.to_uppercase
+// Methods chain on their own; the pipe is not involved.
+let shout = "  hello  ".trim().to_uppercase()
 println!("shout: {shout}")
+
+// A method chain is an ordinary operand, so it can feed a pipe step.
+let loud = "  hello  ".trim().to_uppercase() |> split_words
+println!("from a chain: {}", loud |> iter::count)
 
 // Word count, top-down: split on whitespace, drop empties, count.
 let words = "  Hello  World  "
     |> split_words
-    |> iter::filter(|w: String| w.len() > 0)
+    |> iter::filter(|w: String| w.len() > 0, $)
     |> iter::count
 println!("words: {words}")
 
 // Sum of squares of evens in 1..=10 - one expression, no `let mut`.
 let total = iter::range_inclusive(1, 10)
-    |> iter::filter(|n: i64| n % 2 == 0)
-    |> iter::sum_by(|n: i64| n * n)
+    |> iter::filter(|n: i64| n % 2 == 0, $)
+    |> iter::sum_by(|n: i64| n * n, $)
 println!("sum of even squares: {total}")
 
 // Pipeline through Option: first match, fall back to a default.
 let xs = #[1, 3, 5, 9, 14, 21]
 let first_big = xs
-    |> iter::find(|n: i64| n > 10)
-    |> option::unwrap_or(-1)
+    |> iter::find(|n: i64| n > 10, $)
+    |> option::unwrap_or(-1, $)
 println!("first > 10 (or -1): {first_big}")
 
 // Filter twice - `iter::count` reports each subset's size.
-let evens = xs |> iter::filter(|n: i64| n % 2 == 0)
-let odds = xs |> iter::filter(|n: i64| n % 2 != 0)
+let evens = xs |> iter::filter(|n: i64| n % 2 == 0, $)
+let odds = xs |> iter::filter(|n: i64| n % 2 != 0, $)
 println!("evens: {}, odds: {}", evens |> iter::count, odds |> iter::count)

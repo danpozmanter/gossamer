@@ -1095,6 +1095,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1230,6 +1232,34 @@
 
 
     Diagnostics
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../toolchain/sandbox/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Sandboxing
 
 
 
@@ -2309,7 +2339,7 @@
 </tr>
 <tr>
 <td><a href="http/"><code>std::http</code></a></td>
-<td>HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit.</td>
+<td>HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit. Write a handler as a cohort and an arena: <code>cohort { }</code> joins or cancels every goroutine the request spawned before the response is written, and its first child failure becomes the block's <code>Err</code> for the handler to turn into a status; <code>arena { }</code> bump-allocates what the request builds and frees it wholesale on every exit path, with escape checked at compile time. Dependency injection is closure capture - build the router from closures capturing the pool and the configuration.</td>
 </tr>
 <tr>
 <td><a href="http_chunked/"><code>std::http::chunked</code></a></td>
@@ -2329,7 +2359,7 @@
 </tr>
 <tr>
 <td><a href="http_health/"><code>std::http::health</code></a></td>
-<td>Liveness / readiness probes for HTTP health endpoints.</td>
+<td>Liveness and readiness endpoints are ordinary handlers over <code>std::lifecycle</code>: answer 200 from a liveness route, and 200/503 from <code>lifecycle::is_ready()</code> on a readiness route, which drops to false on its own when shutdown begins. A probe registry with per-check timeouts belongs in an application package.</td>
 </tr>
 <tr>
 <td><a href="http_middleware/"><code>std::http::middleware</code></a></td>
@@ -2349,7 +2379,7 @@
 </tr>
 <tr>
 <td><a href="http_query/"><code>std::http::query</code></a></td>
-<td>Typed wrapper over URL query strings.</td>
+<td>A request's query string is already parsed: read <code>request.query</code> for the raw text and <code>request.query_pairs</code> for the decoded name/value pairs.</td>
 </tr>
 <tr>
 <td><a href="http_router/"><code>std::http::router</code></a></td>
@@ -2357,7 +2387,7 @@
 </tr>
 <tr>
 <td><a href="http_session/"><code>std::http::session</code></a></td>
-<td>Signed-cookie session store with pluggable backend trait.</td>
+<td>Signs and verifies a session payload. The cookie itself - name, attributes, expiry, a server-side store, id rotation on privilege change, revocation - is application policy and belongs in a session package built on these two.</td>
 </tr>
 <tr>
 <td><a href="http_sse/"><code>std::http::sse</code></a></td>
@@ -2365,7 +2395,7 @@
 </tr>
 <tr>
 <td><a href="http_state/"><code>std::http::state</code></a></td>
-<td>Handler-side dependency injection via a typed AppState.</td>
+<td>Dependency injection is closure capture: build the router from closures that capture the pool, the cache, and the configuration, and each handler reads what it captured. A captured heap value is shared, so one map serves every request.</td>
 </tr>
 <tr>
 <td><a href="http_static_files/"><code>std::http::static_files</code></a></td>
@@ -2381,7 +2411,7 @@
 </tr>
 <tr>
 <td><a href="httptest/"><code>std::httptest</code></a></td>
-<td>Loopback HTTP fixtures for source integration tests.</td>
+<td>Fixtures for testing HTTP code. A handler is a function from a request to a response, so <code>record</code> calls one in memory; a test that is about the wire builds an <code>http::Server</code>, binds port 0, and reads the address back.</td>
 </tr>
 <tr>
 <td><a href="image/"><code>std::image</code></a></td>
@@ -2397,11 +2427,11 @@
 </tr>
 <tr>
 <td><a href="jwt/"><code>std::jwt</code></a></td>
-<td>RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens.</td>
+<td>RFC 7519 tokens. Signs with HS256 / HS384 / HS512, ES256, and EdDSA; verifies those plus the RS256 / RS384 / RS512 family every mainstream identity provider mints with. Claims cross the boundary as JSON text.</td>
 </tr>
 <tr>
 <td><a href="lifecycle/"><code>std::lifecycle</code></a></td>
-<td>Graceful-shutdown coordinator with signal handling and sd_notify support.</td>
+<td>Process readiness and graceful shutdown, with systemd sd_notify. Shutdown is observed, not dispatched: wait for it, then drain with ordinary statements - <code>go serve()</code>, <code>lifecycle::ready()</code>, <code>lifecycle::await_shutdown()</code>, then the cleanup.</td>
 </tr>
 <tr>
 <td><a href="math/"><code>std::math</code></a></td>
@@ -2438,6 +2468,10 @@
 <tr>
 <td><a href="net_netip/"><code>std::net::netip</code></a></td>
 <td>Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip shape).</td>
+</tr>
+<tr>
+<td><a href="net_smtp/"><code>std::net::smtp</code></a></td>
+<td>Sends one message per call, so an application can mail a password reset, an address verification, a magic link, or a security notice. A pool, a queue, retries, and bounce handling are application policy and belong in a package built on these. Port 465 speaks TLS from the first byte; any other port starts in the clear and upgrades through STARTTLS when the server offers it, and credentials are refused rather than sent to a server offering no encryption.</td>
 </tr>
 <tr>
 <td><a href="net_url/"><code>std::net::url</code></a></td>
@@ -2490,6 +2524,10 @@
 <tr>
 <td><a href="runtime/"><code>std::runtime</code></a></td>
 <td>Goroutine / scheduler introspection and tuning.</td>
+</tr>
+<tr>
+<td><a href="sandbox/"><code>std::sandbox</code></a></td>
+<td>Run a command under an OS-native sandbox: one policy model, three backends, no daemon or root.</td>
 </tr>
 <tr>
 <td><a href="slog/"><code>std::slog</code></a></td>

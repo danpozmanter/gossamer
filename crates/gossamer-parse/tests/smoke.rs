@@ -599,7 +599,7 @@ fn pipe_direct_argument_placeholder_parses_and_desugars() {
 fn pipe_rejects_multiple_direct_argument_placeholders() {
     let source = "fn main() {\n\
         let _ = 1 |> pair($, $)\n\
-        let _ = 1 |> outer(inner($))\n\
+        let _ = 1 |> outer(inner($), $)\n\
     }\n";
     let mut map = SourceMap::new();
     let file = map.add_file("pipe_many_args.gos", source.to_string());
@@ -614,7 +614,7 @@ fn pipe_rejects_multiple_direct_argument_placeholders() {
 
 #[test]
 fn pipe_accepts_dotdot_as_range_argument() {
-    let source = "fn main() { let _ = [1, 2] |> iter::zip(..) |> $.collect() }\n";
+    let source = "fn main() { let _ = [1, 2] |> iter::zip(.., $).collect() }\n";
     let mut map = SourceMap::new();
     let file = map.add_file("pipe_dotdot.gos", source.to_string());
     let (_sf, diags) = parse_source_file(source, file);

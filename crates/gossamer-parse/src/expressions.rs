@@ -355,53 +355,46 @@ impl Parser<'_> {
         )
     }
 
+    /// Reduces one `|>` step.
+    ///
+    /// The pipe composes free functions, which have no receiver to chain
+    /// from. A step is either a bare callable (`x |> f`), which takes the
+    /// value as its only argument, or a call that names the slot the value
+    /// fills with `$` (`x |> f(a, $)`). No argument order is assumed, so a
+    /// data-first callee reads the same as a data-last one, and a step that
+    /// pastes the value back on as a method receiver is rejected in favour of
+    /// the method chain that already says it.
     fn validate_pipe_rhs(&mut self, lhs: Expr, mut rhs: Expr) -> Expr {
-        // `$`-headed RHS threads the piped value in as the receiver, so the
-        // resolver only ever sees an ordinary method/field/index expression -
-        // no `$` placeholder escapes into later passes.
-        //   x |> $.trim          => x.trim()      (bare ident => nullary method)
-        //   x |> $.replace(a, b) => x.replace(a, b)
-        //   x |> $.0             => x.0           (tuple index)
-        //   x |> $[i]            => x[i]
-        //   x |> $               => x
-        // A direct `$.ident` with no parens is a nullary method call, not a
-        // field access (bare `s.trim` is a field access elsewhere and would
-        // not resolve). Field access through a pipe keeps the closure idiom
-        // (`x |> |v| v.field`).
-        let legacy_placeholder = contains_legacy_pipe_placeholder(&rhs);
-        if legacy_placeholder {
+        if contains_legacy_pipe_placeholder(&rhs) {
             self.record(ParseError::PipeUnderscorePlaceholder, rhs.span);
         }
-        if let ExprKind::FieldAccess { receiver, field } = &rhs.kind {
-            if let (ExprKind::Path(p), FieldSelector::Named(name)) = (&receiver.kind, field) {
-                if is_pipe_placeholder(p) {
-                    let span = self.join(lhs.span, rhs.span);
-                    let id = self.alloc_id();
-                    return Expr::new(
-                        id,
-                        span,
-                        ExprKind::MethodCall {
-                            receiver: Box::new(lhs),
-                            name: name.clone(),
-                            name_span: rhs.span,
-                            generics: Vec::new(),
-                            args: Vec::new(),
-                        },
-                    );
-                }
-            }
+        if let Some(spelling) = pipe_receiver_projection_spelling(&rhs) {
+            // The span runs from the `|>` through the step, so the rewrite of
+            // each step in a chain is independent and one `--fix` pass
+            // converges, and the caret sits on the step it names.
+            let step_span = self.pipe_step_span(lhs.span, rhs.span);
+            // The rewrite appends a postfix chain to the left operand, so it
+            // is only offered when that operand already binds tighter than
+            // postfix. `a |> b |> $.m()` would otherwise become `a |> b.m()`,
+            // which reads `.m()` as a call on `b`.
+            let replacement = postfix_binds_to(&lhs)
+                .then(|| self.receiver_projection_rewrite(&rhs))
+                .flatten();
+            self.record(
+                ParseError::PipeReceiverProjection {
+                    spelling,
+                    replacement,
+                },
+                step_span,
+            );
+            // The step still desugars, so a later step in the chain sees a
+            // well-formed receiver and reports its own rewrite rather than
+            // cascading off an error node.
+            return self.desugar_receiver_projection(lhs, rhs);
         }
         let lhs_span = lhs.span;
         let mut piped = Some(lhs);
-        if substitute_pipe_placeholder(&mut rhs, &mut piped) {
-            if contains_pipe_placeholder(&rhs) {
-                self.record(ParseError::PipePlaceholderInvalid, rhs.span);
-            }
-            rhs.span = self.join(lhs_span, rhs.span);
-            return rhs;
-        }
         match substitute_pipe_argument_placeholder(&mut rhs, &mut piped) {
-            PipeArgumentPlaceholder::None => {}
             PipeArgumentPlaceholder::Substituted => {
                 if contains_pipe_placeholder(&rhs) {
                     self.record(ParseError::PipePlaceholderInvalid, rhs.span);
@@ -412,9 +405,9 @@ impl Parser<'_> {
             PipeArgumentPlaceholder::Invalid => {
                 self.record(ParseError::PipePlaceholderInvalid, rhs.span);
             }
+            PipeArgumentPlaceholder::None => {}
         }
         match substitute_pipe_format_macro_placeholder(&mut rhs, &mut piped) {
-            PipeArgumentPlaceholder::None => {}
             PipeArgumentPlaceholder::Substituted => {
                 if contains_pipe_placeholder(&rhs) {
                     self.record(ParseError::PipePlaceholderInvalid, rhs.span);
@@ -425,6 +418,7 @@ impl Parser<'_> {
             PipeArgumentPlaceholder::Invalid => {
                 self.record(ParseError::PipePlaceholderInvalid, rhs.span);
             }
+            PipeArgumentPlaceholder::None => {}
         }
         if is_format_macro_expansion(&rhs) {
             self.record(ParseError::PipedFormatArgumentNeedsPlaceholder, rhs.span);
@@ -439,8 +433,16 @@ impl Parser<'_> {
                 | ExprKind::MacroCall(_)
                 | ExprKind::Closure { .. }
         );
-        if !valid && !legacy_placeholder {
+        if !valid {
             self.record(ParseError::PipeRhsInvalid, rhs_span);
+        } else if pipe_step_has_arguments(&rhs) {
+            // Every argument is written, so which one the value fills would
+            // have to be assumed; the slot is named instead.
+            let replacement = self.trailing_placeholder_rewrite(rhs_span);
+            self.record(
+                ParseError::PipeStepNeedsPlaceholder { replacement },
+                rhs_span,
+            );
         }
         let span = self.join(lhs.span, rhs.span);
         let id = self.alloc_id();
@@ -913,57 +915,126 @@ impl Parser<'_> {
         (args, labels)
     }
 
-    /// Rewrites a `$`-headed argument into the one-parameter closure it
-    /// abbreviates: `xs.map($.abs)` is `xs.map(|v| v.abs())`.
+    /// Span covering the `|>` operator and the step after it. Anchoring at
+    /// the operator keeps a multi-line chain's caret and rewrite on the step's
+    /// own line rather than the end of the previous one.
+    fn pipe_step_span(&self, lhs: Span, rhs: Span) -> Span {
+        let between = self
+            .source
+            .get(lhs.end as usize..rhs.start as usize)
+            .unwrap_or("");
+        let start = match between.find("|>") {
+            Some(offset) => lhs.end + offset as u32,
+            None => lhs.end,
+        };
+        Span::new(rhs.file, start, rhs.end)
+    }
+
+    /// Source text of `span`, for building a rewrite that keeps the author's
+    /// own spelling of the surrounding code.
+    fn span_text(&self, span: Span) -> &str {
+        self.source
+            .get(span.start as usize..span.end as usize)
+            .unwrap_or("")
+    }
+
+    /// Rewrites a call that names every argument into one that also names the
+    /// piped value's slot: `f(a)` becomes `f(a, $)`. Answers an empty string
+    /// when the call's own text cannot be recovered, which suppresses the
+    /// suggestion rather than offering a wrong one.
+    fn trailing_placeholder_rewrite(&self, span: Span) -> Option<String> {
+        let text = self.span_text(span);
+        let close = text.rfind(')')?;
+        Some(format!("{}, $)", &text[..close]))
+    }
+
+    /// Rewrites a receiver-pasting pipe step into the method chain it stands
+    /// for: `|> $.trim` becomes `.trim()`, and `|> $[i]` becomes `[i]`.
+    fn receiver_projection_rewrite(&self, rhs: &Expr) -> Option<String> {
+        let text = self.span_text(rhs.span);
+        let rest = text.strip_prefix(PIPE_PLACEHOLDER)?.trim();
+        // A bare `$` step is the identity, so the step goes away entirely.
+        if rest.is_empty() {
+            return Some(String::new());
+        }
+        // A bare `$.name` step is a nullary method call, so the rewrite spells
+        // the parentheses the shorthand left out.
+        if matches!(rhs.kind, ExprKind::FieldAccess { .. })
+            && rest.starts_with('.')
+            && !rest[1..].starts_with(|c: char| c.is_ascii_digit())
+        {
+            return Some(format!("{rest}()"));
+        }
+        Some(rest.to_string())
+    }
+
+    /// Rewrites a `$`-projection callback argument into the closure it
+    /// abbreviated: `$.abs` becomes `|v| v.abs()`.
+    fn placeholder_callback_rewrite(&self, arg: &Expr) -> Option<String> {
+        let text = self.span_text(arg.span);
+        let rest = text.strip_prefix(PIPE_PLACEHOLDER)?;
+        if rest.is_empty() {
+            return None;
+        }
+        let nullary = matches!(arg.kind, ExprKind::FieldAccess { .. })
+            && rest.starts_with('.')
+            && !rest[1..].starts_with(|c: char| c.is_ascii_digit());
+        let call = if nullary { "()" } else { "" };
+        Some(format!("|v| v{rest}{call}"))
+    }
+
+    /// Rebuilds a receiver-pasting step as the expression it desugars to, so a
+    /// chain keeps parsing and each step reports its own rewrite.
+    fn desugar_receiver_projection(&mut self, lhs: Expr, mut rhs: Expr) -> Expr {
+        let span = self.join(lhs.span, rhs.span);
+        // `$.name` with no parentheses is the nullary method call, matching
+        // what the step meant before the spelling was retired.
+        if let ExprKind::FieldAccess { receiver, field } = &rhs.kind
+            && let (ExprKind::Path(p), FieldSelector::Named(name)) = (&receiver.kind, field)
+            && is_pipe_placeholder(p)
+        {
+            let id = self.alloc_id();
+            return Expr::new(
+                id,
+                span,
+                ExprKind::MethodCall {
+                    receiver: Box::new(lhs),
+                    name: name.clone(),
+                    name_span: rhs.span,
+                    generics: Vec::new(),
+                    args: Vec::new(),
+                },
+            );
+        }
+        let mut piped = Some(lhs);
+        if substitute_projection_head(&mut rhs, &mut piped) {
+            rhs.span = span;
+            return rhs;
+        }
+        // A bare `$` step is the identity, so the value passes through.
+        piped.take().unwrap_or(rhs)
+    }
+
+    /// Rejects the retired `$`-projection callback shorthand.
     ///
-    /// `$` carries the same meaning it has in a pipe step - the value
-    /// stands where `$` is written, and `$.name` with no parentheses is
-    /// a nullary method call rather than a field read. A bare `$`
-    /// argument is left alone: that spelling already selects which
-    /// parameter of the call a pipe threads its value into.
+    /// A callback is a closure or a function named in value position. `$`
+    /// belongs to the `|>` pipe, where it names the slot the piped value
+    /// fills; letting it also stand for a callback's parameter gave one
+    /// character two meanings whose scopes were decided by parse order.
     fn expand_placeholder_closure(&mut self, arg: &mut Expr) {
         if !placeholder_heads_projection(arg) {
             return;
         }
-        let span = arg.span;
-        let name = PLACEHOLDER_CLOSURE_PARAM.to_string();
-        rebind_placeholder_head(arg, &name);
-        if let ExprKind::FieldAccess { receiver, field } = &arg.kind
-            && let (ExprKind::Path(p), FieldSelector::Named(method)) = (&receiver.kind, field)
-            && p.segments.len() == 1
-            && p.segments[0].name.name == name
-        {
-            let receiver = receiver.clone();
-            let method = method.clone();
-            arg.kind = ExprKind::MethodCall {
-                receiver,
-                name: method,
-                name_span: span,
-                generics: Vec::new(),
-                args: Vec::new(),
-            };
-        }
-        // The body keeps its own node id; `arg`'s stays with the closure
-        // that now sits in its place, so no two nodes share an id.
-        let body_kind = std::mem::replace(&mut arg.kind, ExprKind::Error);
-        let body = Box::new(Expr::new(self.alloc_id(), span, body_kind));
-        let param = ClosureParam {
-            pattern: Pattern::new(
-                self.alloc_id(),
-                span,
-                PatternKind::Ident {
-                    mutability: gossamer_ast::Mutability::Immutable,
-                    name: Ident::new(&name),
-                    subpattern: None,
-                },
-            ),
-            ty: None,
-        };
-        arg.kind = ExprKind::Closure {
-            params: vec![param],
-            ret: None,
-            body,
-        };
+        let spelling = placeholder_projection_spelling(arg);
+        let replacement = self.placeholder_callback_rewrite(arg);
+        self.record(
+            ParseError::PlaceholderCallbackRetired {
+                spelling,
+                replacement,
+            },
+            arg.span,
+        );
+        arg.kind = ExprKind::Error;
     }
 
     fn parse_arg_list(&mut self, allow_labels: bool) -> (Vec<Expr>, Vec<gossamer_ast::NamedArg>) {
@@ -3005,9 +3076,78 @@ fn is_pipe_placeholder(path: &PathExpr) -> bool {
         && path.segments[0].generics.is_empty()
 }
 
-/// Parameter the placeholder-closure shorthand binds. `$` is
-/// punctuation, so this name cannot collide with one the author wrote.
-pub(crate) const PLACEHOLDER_CLOSURE_PARAM: &str = "__gos_ph";
+/// Renders a `$`-rooted projection back to its source spelling, for the
+/// diagnostic that names it. Method arguments are elided: the shape is what
+/// the message is about.
+fn placeholder_projection_spelling(expr: &Expr) -> String {
+    match &expr.kind {
+        ExprKind::MethodCall { receiver, name, .. } => format!(
+            "{}.{}(..)",
+            placeholder_projection_spelling(receiver),
+            name.name
+        ),
+        ExprKind::FieldAccess { receiver, field } => {
+            let base = placeholder_projection_spelling(receiver);
+            match field {
+                FieldSelector::Named(name) => format!("{base}.{}", name.name),
+                FieldSelector::Index(index) => format!("{base}.{index}"),
+            }
+        }
+        ExprKind::Index { base, .. } => format!("{}[..]", placeholder_projection_spelling(base)),
+        _ => PIPE_PLACEHOLDER.to_string(),
+    }
+}
+
+/// The source spelling of a `|>` step that pastes the piped value back on as
+/// a method receiver (`$.trim`, `$.0`, `$[i]`, or a bare `$`), or `None` when
+/// the step is an ordinary call.
+///
+/// These are the forms a method chain already expresses; the pipe keeps only
+/// what a free function needs.
+fn pipe_receiver_projection_spelling(expr: &Expr) -> Option<String> {
+    if let ExprKind::Path(path) = &expr.kind
+        && is_pipe_placeholder(path)
+    {
+        return Some(PIPE_PLACEHOLDER.to_string());
+    }
+    placeholder_heads_projection(expr).then(|| placeholder_projection_spelling(expr))
+}
+
+/// True when a postfix chain written directly after `expr` would attach to
+/// `expr` itself rather than to part of it.
+fn postfix_binds_to(expr: &Expr) -> bool {
+    matches!(
+        expr.kind,
+        ExprKind::Path(_)
+            | ExprKind::Literal(_)
+            | ExprKind::Call { .. }
+            | ExprKind::MethodCall { .. }
+            | ExprKind::FieldAccess { .. }
+            | ExprKind::Index { .. }
+            | ExprKind::Tuple(_)
+            | ExprKind::Array(_)
+            | ExprKind::FixedArray(_)
+            | ExprKind::MapLiteral(_)
+            | ExprKind::SetLiteral(_)
+            | ExprKind::MacroCall(_)
+    )
+}
+
+/// True when a pipe step is a call that already writes every argument, so the
+/// piped value has no slot of its own.
+fn pipe_step_has_arguments(expr: &Expr) -> bool {
+    let own = match &expr.kind {
+        ExprKind::Call { args, .. } | ExprKind::MethodCall { args, .. } => !args.is_empty(),
+        _ => false,
+    };
+    own || match &expr.kind {
+        ExprKind::MethodCall { receiver, .. } | ExprKind::FieldAccess { receiver, .. } => {
+            pipe_step_has_arguments(receiver)
+        }
+        ExprKind::Index { base, .. } => pipe_step_has_arguments(base),
+        _ => false,
+    }
+}
 
 /// True when `expr` projects out of a leading `$`: `$.name`,
 /// `$.name(a)`, `$.0`, `$[i]`, and any chain of those. A bare `$` is
@@ -3031,21 +3171,6 @@ fn placeholder_chain_head(expr: &Expr) -> bool {
         ExprKind::Index { base, .. } => placeholder_chain_head(base),
         ExprKind::Path(path) => is_pipe_placeholder(path),
         _ => false,
-    }
-}
-
-/// Renames the `$` at the head of `expr`'s receiver/base chain to
-/// `name`, so the chain reads through the closure's parameter.
-fn rebind_placeholder_head(expr: &mut Expr, name: &str) {
-    match &mut expr.kind {
-        ExprKind::MethodCall { receiver, .. } | ExprKind::FieldAccess { receiver, .. } => {
-            rebind_placeholder_head(receiver, name);
-        }
-        ExprKind::Index { base, .. } => rebind_placeholder_head(base, name),
-        ExprKind::Path(path) if is_pipe_placeholder(path) => {
-            *path = PathExpr::single(name.to_string());
-        }
-        _ => {}
     }
 }
 
@@ -3078,17 +3203,14 @@ fn contains_legacy_pipe_placeholder(expr: &Expr) -> bool {
     }
 }
 
-/// Replaces a `$` placeholder at the head of `expr`'s receiver/base chain
-/// with the piped value, consuming `value`. Walks through `MethodCall`,
-/// `FieldAccess`, and `Index` receivers down to the leading placeholder. Returns
-/// true (and leaves `value` taken) when a placeholder was substituted;
-/// returns false and leaves `value` intact when the RHS has no `_` head.
-fn substitute_pipe_placeholder(expr: &mut Expr, value: &mut Option<Expr>) -> bool {
+/// Replaces the `$` at the head of `expr`'s receiver/base chain with the
+/// piped value. Returns true when a placeholder was substituted.
+fn substitute_projection_head(expr: &mut Expr, value: &mut Option<Expr>) -> bool {
     match &mut expr.kind {
         ExprKind::MethodCall { receiver, .. } | ExprKind::FieldAccess { receiver, .. } => {
-            substitute_pipe_placeholder(receiver, value)
+            substitute_projection_head(receiver, value)
         }
-        ExprKind::Index { base, .. } => substitute_pipe_placeholder(base, value),
+        ExprKind::Index { base, .. } => substitute_projection_head(base, value),
         ExprKind::Path(path) if is_pipe_placeholder(path) => {
             if let Some(piped) = value.take() {
                 *expr = piped;
@@ -3117,10 +3239,58 @@ fn substitute_pipe_argument_placeholder(
     expr: &mut Expr,
     value: &mut Option<Expr>,
 ) -> PipeArgumentPlaceholder {
-    let (ExprKind::Call { args, .. } | ExprKind::MethodCall { args, .. }) = &mut expr.kind else {
-        return PipeArgumentPlaceholder::None;
+    match count_chain_placeholders(expr) {
+        0 => PipeArgumentPlaceholder::None,
+        1 => {
+            substitute_chain_placeholder(expr, value);
+            PipeArgumentPlaceholder::Substituted
+        }
+        _ => PipeArgumentPlaceholder::Invalid,
+    }
+}
+
+/// Counts direct `$` arguments across a step's call chain. A step may end in
+/// a method call on what an earlier call answered - `x |> f(a, $).len()` -
+/// so the slot can sit anywhere along that chain, and exactly one must.
+fn count_chain_placeholders(expr: &Expr) -> usize {
+    let own = match &expr.kind {
+        ExprKind::Call { args, .. } | ExprKind::MethodCall { args, .. } => args
+            .iter()
+            .filter(|a| matches!(&a.kind, ExprKind::Path(p) if is_pipe_placeholder(p)))
+            .count(),
+        _ => 0,
     };
-    substitute_pipe_placeholder_in_args(args, value)
+    own + match &expr.kind {
+        ExprKind::MethodCall { receiver, .. } | ExprKind::FieldAccess { receiver, .. } => {
+            count_chain_placeholders(receiver)
+        }
+        ExprKind::Index { base, .. } => count_chain_placeholders(base),
+        _ => 0,
+    }
+}
+
+/// Fills the one direct `$` along a step's call chain with the piped value,
+/// innermost call first so the substitution lands where the count found it.
+fn substitute_chain_placeholder(expr: &mut Expr, value: &mut Option<Expr>) -> bool {
+    let inner = match &mut expr.kind {
+        ExprKind::MethodCall { receiver, .. } | ExprKind::FieldAccess { receiver, .. } => {
+            substitute_chain_placeholder(receiver, value)
+        }
+        ExprKind::Index { base, .. } => substitute_chain_placeholder(base, value),
+        _ => false,
+    };
+    if inner {
+        return true;
+    }
+    match &mut expr.kind {
+        ExprKind::Call { args, .. } | ExprKind::MethodCall { args, .. } => {
+            matches!(
+                substitute_pipe_placeholder_in_args(args, value),
+                PipeArgumentPlaceholder::Substituted
+            )
+        }
+        _ => false,
+    }
 }
 
 /// Replaces the direct placeholder inside a formatting macro's synthesized
@@ -3218,7 +3388,7 @@ fn callee_path_name(expr: &Expr) -> Option<&str> {
 
 /// Whether an unsubstituted `_` remains anywhere in the immediate pipe step.
 /// This rejects both repeated placeholders and nested forms such as
-/// `x |> outer(inner(_))`; only the top-level call argument list may select
+/// `x |> outer(inner(_), $)`; only the top-level call argument list may select
 /// the value being piped.
 fn contains_pipe_placeholder(expr: &Expr) -> bool {
     match &expr.kind {
@@ -3696,14 +3866,25 @@ fn is_errors_newf_path(expr: &Expr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::Parser;
+    use crate::diagnostic::ParseError;
     use gossamer_ast::{BinaryOp, ExprKind};
     use gossamer_lex::SourceMap;
 
     fn parse_expr_for_test(source: &str) -> gossamer_ast::Expr {
+        parse_expr_with_diagnostics(source).0
+    }
+
+    /// The parsed expression alongside whatever the parse reported, for the
+    /// forms that are now diagnostics rather than desugarings.
+    fn parse_expr_with_diagnostics(
+        source: &str,
+    ) -> (gossamer_ast::Expr, Vec<crate::diagnostic::ParseDiagnostic>) {
         let mut source_map = SourceMap::new();
         let file = source_map.add_file("test.gos", source.to_string());
         let mut parser = Parser::new(source, file);
-        parser.parse_expr()
+        let expr = parser.parse_expr();
+        let diagnostics = std::mem::take(&mut parser.diagnostics);
+        (expr, diagnostics)
     }
 
     #[test]
@@ -3730,34 +3911,25 @@ mod tests {
     }
 
     #[test]
-    fn a_placeholder_projection_argument_becomes_a_closure() {
-        let arg = mapped_argument("xs.map($.abs)");
-        let ExprKind::Closure { params, body, .. } = arg.kind else {
-            panic!("expected a closure");
-        };
-        assert_eq!(params.len(), 1);
+    fn a_placeholder_projection_argument_is_rejected() {
+        let (_expr, diags) = parse_expr_with_diagnostics("xs.map($.abs)");
         assert!(
-            matches!(body.kind, ExprKind::MethodCall { ref args, .. } if args.is_empty()),
-            "`$.name` is the nullary method call: {:?}",
-            body.kind
+            diags
+                .iter()
+                .any(|d| matches!(d.error, ParseError::PlaceholderCallbackRetired { .. })),
+            "the `$` callback shorthand is retired: {diags:?}"
         );
-        assert_ne!(arg.id, body.id, "closure and body must not share a node id");
     }
 
     #[test]
-    fn a_placeholder_index_and_tuple_projection_stay_projections() {
-        for source in ["xs.map($[1])", "xs.map($.0)"] {
-            let arg = mapped_argument(source);
-            let ExprKind::Closure { body, .. } = arg.kind else {
-                panic!("expected a closure for {source}");
-            };
+    fn every_placeholder_projection_argument_is_rejected() {
+        for source in ["xs.map($[1])", "xs.map($.0)", "xs.map($.trim())"] {
+            let (_expr, diags) = parse_expr_with_diagnostics(source);
             assert!(
-                matches!(
-                    body.kind,
-                    ExprKind::Index { .. } | ExprKind::FieldAccess { .. }
-                ),
-                "{source} should keep its projection: {:?}",
-                body.kind
+                diags
+                    .iter()
+                    .any(|d| matches!(d.error, ParseError::PlaceholderCallbackRetired { .. })),
+                "{source} should report the retired shorthand: {diags:?}"
             );
         }
     }
@@ -3777,21 +3949,41 @@ mod tests {
     }
 
     #[test]
-    fn a_pipe_receiver_placeholder_is_not_a_closure() {
-        let expression = parse_expr_for_test("xs |> $.map($.abs)");
-        let ExprKind::MethodCall { receiver, args, .. } = expression.kind else {
-            panic!("expected the piped method call: {:?}", expression.kind);
-        };
+    fn a_pipe_receiver_projection_is_rejected() {
+        for source in ["xs |> $.len()", "x |> $.0", "xs |> $[1]", "x |> $"] {
+            let (_expr, diags) = parse_expr_with_diagnostics(source);
+            assert!(
+                diags
+                    .iter()
+                    .any(|d| matches!(d.error, ParseError::PipeReceiverProjection { .. })),
+                "{source} should report the retired receiver step: {diags:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pipe_step_with_arguments_must_name_its_slot() {
+        let (_expr, diags) = parse_expr_with_diagnostics("x |> f(a)");
         assert!(
-            matches!(receiver.kind, ExprKind::Path(ref p) if p.segments[0].name.name == "xs"),
-            "the outer `$` takes the piped value: {:?}",
-            receiver.kind
+            diags
+                .iter()
+                .any(|d| matches!(d.error, ParseError::PipeStepNeedsPlaceholder { .. })),
+            "an argument-taking step names the slot: {diags:?}"
         );
-        assert!(
-            matches!(args[0].kind, ExprKind::Closure { .. }),
-            "the inner `$` opens the callback: {:?}",
-            args[0].kind
-        );
+    }
+
+    #[test]
+    fn a_bare_callable_step_stays_implicit() {
+        let (_expr, diags) = parse_expr_with_diagnostics("x |> f");
+        assert!(diags.is_empty(), "a one-slot step needs no `$`: {diags:?}");
+    }
+
+    #[test]
+    fn a_named_slot_anywhere_in_the_step_chain_is_accepted() {
+        for source in ["x |> f(a, $)", "x |> f($, a)", "x |> f(a, $).len()"] {
+            let (_expr, diags) = parse_expr_with_diagnostics(source);
+            assert!(diags.is_empty(), "{source} should parse clean: {diags:?}");
+        }
     }
 
     #[test]

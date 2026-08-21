@@ -2,17 +2,17 @@ use std::iter
 
 fn main() {
     let lazy = (0..100000)
-        |> iter::map(|x| x + 1)
-        |> iter::filter(|x| x % 2 == 0)
-        |> iter::take(1000)
+        |> iter::map(|x| x + 1, $)
+        |> iter::filter(|x| x % 2 == 0, $)
+        |> iter::take(1000, $)
         |> iter::sum
 
     let eager = (0..100000)
-        |> iter::collect
-        |> $.map(|x| x + 1)
-        |> $.filter(|x| x % 2 == 0)
-        |> $.take(1000)
-        |> $.sum
+        .collect()
+        .map(|x| x + 1)
+        .filter(|x| x % 2 == 0)
+        .take(1000)
+        .sum()
 
     println!("{lazy} {eager}")
 }

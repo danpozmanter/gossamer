@@ -248,8 +248,8 @@ let total: i64 = xs.iter()
 use std::iter
 
 let total = xs
-    |> iter::filter(|n: i64| n % 2 == 0)
-    |> iter::sum_by(|n: i64| n * n)
+    |> iter::filter(|n: i64| n % 2 == 0, $)
+    |> iter::sum_by(|n: i64| n * n, $)
 ```
 
 Mutating collection helpers such as `push`, `sort`, `insert`, and

@@ -4,9 +4,13 @@
 //! Happy-path tests prove a sandbox does not break a build. Only these
 //! prove it contains one.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use gossamer_sandbox::{Level, Network, Sandbox, SandboxPolicy, Stdio};
+use gossamer_sandbox::{Level, Sandbox, SandboxPolicy, Stdio};
+// `Network` is named only by the Linux cases, whose policies state a
+// verdict the portable ones inherit from the preset.
+#[cfg(target_os = "linux")]
+use gossamer_sandbox::Network;
 
 fn workspace(tag: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("gos-sandbox-enforce-{tag}"));
@@ -17,13 +21,19 @@ fn workspace(tag: &str) -> PathBuf {
 
 /// A policy that grants `root` read-write plus the system directories
 /// a shell needs to start, and nothing else.
+///
+/// Linux-only, with the cases that use it: the grants below name a
+/// POSIX layout, and what they prove is Landlock's behaviour on it.
+/// The macOS and Windows backends are covered by the portable cases at
+/// the bottom of this file and by the unit tests in the crate.
+#[cfg(target_os = "linux")]
 fn shell_policy(root: &PathBuf, level: Level) -> SandboxPolicy {
     let mut policy = SandboxPolicy::new()
         .read_write(root)
         .working_directory(root)
         .env_allow(["PATH"])
         .env_set("PATH", "/usr/bin:/bin")
-        .network(Network::Deny)
+        .network(Network::None)
         .level(level);
     for system in ["/usr", "/bin", "/lib", "/lib64", "/etc/ld.so.cache"] {
         if PathBuf::from(system).exists() {
@@ -33,6 +43,7 @@ fn shell_policy(root: &PathBuf, level: Level) -> SandboxPolicy {
     policy
 }
 
+#[cfg(target_os = "linux")]
 fn shell(sandbox: &Sandbox, script: &str) -> Result<i32, String> {
     let argv = vec!["/bin/sh".to_string(), "-c".to_string(), script.to_string()];
     sandbox
@@ -41,6 +52,7 @@ fn shell(sandbox: &Sandbox, script: &str) -> Result<i32, String> {
         .map_err(|error| error.to_string())
 }
 
+#[cfg(target_os = "linux")]
 fn skip_unless_enforcing() -> bool {
     let host = gossamer_sandbox::capabilities();
     if host.max_level < Level::Standard {
@@ -271,6 +283,136 @@ fn strict_denies_every_network_protocol_or_fails_closed() {
     ];
     let output = sandbox.run_with(&argv, Stdio::Capture).expect("run");
     assert_ne!(output.code, 0, "a network namespace denies UDP too");
+}
+
+// ----------------------------------------------------------------
+// Portable cases.
+//
+// These run on every backend, so macOS and Windows are covered by
+// something that spawns a real child rather than only by the policy
+// unit tests. What they prove is the shared contract - the level gate,
+// the environment allowlist, the private temp, the captured streams,
+// and the exit code - not any one kernel's enforcement.
+// ----------------------------------------------------------------
+
+/// A command that prints one known line, spelled for the host's shell.
+fn echo_command() -> Vec<String> {
+    if cfg!(windows) {
+        vec![
+            "cmd".to_string(),
+            "/C".to_string(),
+            "echo sandboxed".to_string(),
+        ]
+    } else {
+        vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            "echo sandboxed".to_string(),
+        ]
+    }
+}
+
+/// A policy that grants the workspace and whatever the host needs for a
+/// command to start at all.
+fn portable_policy(root: &Path, level: Level) -> SandboxPolicy {
+    let mut policy = SandboxPolicy::command_default(root).level(level);
+    if cfg!(windows) {
+        // `command_default` grants the `PATH` directories, which is
+        // where `cmd.exe` lives; the system root is what it loads from.
+        for system in ["C:\\Windows", "C:\\Windows\\System32"] {
+            if std::path::Path::new(system).exists() {
+                policy = policy.read_only(system);
+            }
+        }
+    }
+    policy
+}
+
+#[test]
+fn a_child_runs_and_its_output_and_exit_code_come_back() {
+    let root = workspace("portable-run");
+    let sandbox = Sandbox::new(&portable_policy(&root, Level::Basic)).expect("build sandbox");
+    let output = sandbox
+        .run_with(&echo_command(), Stdio::Capture)
+        .expect("run the child");
+    assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
+    assert_eq!(output.stdout_text().trim(), "sandboxed");
+}
+
+#[test]
+fn the_environment_allowlist_holds_on_every_backend() {
+    let root = workspace("portable-environment");
+    // Cargo sets this for the test process, so it is a variable the
+    // caller genuinely has and the policy genuinely does not name.
+    assert!(std::env::var("CARGO_PKG_NAME").is_ok());
+    let compiled = portable_policy(&root, Level::Basic)
+        .compile()
+        .expect("compile");
+    assert!(!compiled.environment().contains_key("CARGO_PKG_NAME"));
+    for never in gossamer_sandbox::NEVER_PASSED_ENVIRONMENT {
+        assert!(!compiled.environment().contains_key(*never));
+    }
+}
+
+#[test]
+fn a_private_temp_is_a_real_directory_the_policy_grants() {
+    let root = workspace("portable-temp");
+    let sandbox = Sandbox::new(&portable_policy(&root, Level::Basic)).expect("build sandbox");
+    let temp = sandbox
+        .policy()
+        .temp_directory
+        .clone()
+        .expect("a private temp resolves to a directory");
+    assert!(temp.is_dir(), "{} is not a directory", temp.display());
+    assert_eq!(
+        sandbox.policy().access(&temp),
+        gossamer_sandbox::Access::ReadWrite
+    );
+    assert_eq!(
+        sandbox
+            .policy()
+            .environment()
+            .get("TMPDIR")
+            .map(String::as_str),
+        Some(temp.to_string_lossy().as_ref()),
+        "a toolchain looks for its temp directory in the environment"
+    );
+}
+
+#[test]
+fn a_command_that_does_not_exist_is_reported_as_such() {
+    let root = workspace("portable-not-found");
+    let sandbox = Sandbox::new(&portable_policy(&root, Level::Basic)).expect("build sandbox");
+    let error = sandbox
+        .run_with(
+            &["gossamer-sandbox-no-such-command-9f3a".to_string()],
+            Stdio::Capture,
+        )
+        .expect_err("a missing command is an error, not an exit code");
+    assert_eq!(
+        error.exit_code(),
+        gossamer_sandbox::EXIT_COMMAND_NOT_FOUND,
+        "{error}"
+    );
+}
+
+#[test]
+fn the_hosts_own_maximum_level_actually_runs_a_child() {
+    let host = gossamer_sandbox::capabilities();
+    if host.max_level < Level::Basic {
+        return;
+    }
+    let root = workspace("portable-max-level");
+    // The level the capability report claims is the level a child must
+    // actually start under: a report that promises more than the
+    // backend delivers is the failure this whole design is against.
+    let sandbox =
+        Sandbox::new(&portable_policy(&root, host.max_level)).expect("the reported level builds");
+    let output = sandbox
+        .run_with(&echo_command(), Stdio::Capture)
+        .expect("a child runs at the level the host reports");
+    assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
+    assert_eq!(output.stdout_text().trim(), "sandboxed");
 }
 
 #[test]

@@ -187,8 +187,8 @@ Gossamer:
 use std::iter
 
 let total = iter::range_inclusive(1, 10)
-    |> iter::filter(|n: i64| n % 2 == 0)
-    |> iter::sum_by(|n: i64| n * n)
+    |> iter::filter(|n: i64| n % 2 == 0, $)
+    |> iter::sum_by(|n: i64| n * n, $)
 ```
 
 For stateful code, ordinary loops are still idiomatic:

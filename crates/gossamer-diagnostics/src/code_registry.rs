@@ -496,8 +496,9 @@ pub const REGISTRY: &[(&str, &str)] = &[
     (
         "GP0038",
         "A `|>` right-hand side used `_` where the pipe placeholder belongs.\n\
-            The placeholder is `$`: `s |> $.trim()` makes the piped value the\n\
-            receiver, and `x |> f($, k)` selects which argument it fills.",
+            The placeholder is `$`, and it names the argument the piped value\n\
+            fills: `x |> f($, k)` is `f(x, k)`. A method already chains, so a\n\
+            step never pastes the value back on as a receiver.",
     ),
     (
         "GP0039",
@@ -515,6 +516,33 @@ pub const REGISTRY: &[(&str, &str)] = &[
             at the first one and the rest reads as an expression. A\n\
             dependency's module name is its package name with each `-`\n\
             replaced by `_`, so `pgsql-gos` is imported as `use pgsql_gos`.",
+    ),
+    (
+        "GP0041",
+        "A `|>` step took arguments without naming the piped value's slot.\n\
+            The pipe composes free functions; when a step writes other\n\
+            arguments the slot is named with `$`, as in `x |> f(a, $)`. No\n\
+            argument order is assumed, so a data-first callee such as\n\
+            `strings::split($, sep)` reads the same as a data-last one.\n\
+            The implicit rule this replaces threaded into the trailing slot,\n\
+            which silently mis-filled a data-first callee; `--fix` preserves\n\
+            that behaviour by appending `$`, so confirm the slot is the one\n\
+            the call needs.",
+    ),
+    (
+        "GP0042",
+        "A `|>` step pasted the piped value back on as a method receiver.\n\
+            A method already chains, so `x.trim().to_lowercase()` says what\n\
+            `x |> $.trim |> $.to_lowercase` said, with less punctuation. The\n\
+            pipe is for free functions, which have no receiver to chain from;\n\
+            a method chain can feed one directly.",
+    ),
+    (
+        "GP0043",
+        "A call argument used the retired `$`-projection callback shorthand.\n\
+            A callback is written as a closure, `xs.map(|v| v.abs())`, or as a\n\
+            function passed by name, `xs.map(math::abs)`. `$` belongs to the\n\
+            `|>` pipe, where it names the slot the piped value fills.",
     ),
     (
         "GR0001",

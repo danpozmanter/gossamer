@@ -30,13 +30,13 @@ fn main() {
             Err(errors::new("odd"))
         }
     }
-    let widen = |v: Option<i64>| v |> option::unwrap_or(-1)
+    let widen = |v: Option<i64>| v |> option::unwrap_or(-1, $)
 
     let mut opt_total = 0
     let mut res_total = 0
     for i in 0..2000 {
-        opt_total += apply_opt(tenfold, i % 3) |> option::unwrap_or(0)
-        res_total += apply_res(checked, i % 4) |> result::unwrap_or(0)
+        opt_total += apply_opt(tenfold, i % 3) |> option::unwrap_or(0, $)
+        res_total += apply_res(checked, i % 4) |> result::unwrap_or(0, $)
     }
     println!("opt {opt_total} res {res_total}")
 

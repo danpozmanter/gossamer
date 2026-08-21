@@ -155,13 +155,19 @@ always requires an upper bound; `10..=` is a parse error.
 
 ## Forward pipe (`|>`)
 
-The forward-pipe operator threads a value through a chain of
-calls. `x |> f` desugars to `f(x)`; `x |> f(a, b)` to
-`f(a, b, x)` - the piped value lands in the last positional
-slot. Methods work the same way: `x |> recv.m(a)` becomes
-`recv.m(a, x)`. `|>` is left-associative with very low
-precedence, so `a |> f |> g` reads as `g(f(a))` with no
-parentheses needed:
+The forward-pipe operator composes free functions, which have no
+receiver to chain from. It is the functional-style tool: reach for it
+when a value flows through two or more free-function transforms.
+Anything with a receiver already chains, and the method chain is the
+shorter spelling - prefer `s.trim().to_lowercase()` over any pipe form
+of it. The two mix freely, and a method chain can feed a pipe.
+
+`|>` is left-associative with very low precedence, so `a |> f |> g`
+reads as `g(f(a))` with no parentheses needed.
+
+A step is one of two shapes. A **bare callable** takes the piped value
+as its only argument; a step that **writes arguments** names the slot
+the value fills with `$`:
 
 ```gossamer
 fn double(x: i64) -> i64 { x * 2 }
@@ -171,46 +177,72 @@ fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
 }
 
 // Reads left-to-right instead of inside-out.
-let n = 3 |> double |> add(10) |> clamp(0, 100)
+let n = 3 |> double |> add(10, $) |> clamp(0, 100, $)
 
 // Equivalent nested form:
 let same = clamp(0, 100, add(10, double(3)))
 ```
 
-Use one direct `$` argument when the value belongs in a different
-position: `text |> strings::slice($, 1, 3)` becomes
-`strings::slice(text, 1, 3)`. A trailing `$` is accepted but is only
-an explicit spelling of the default data-last rule. `$` can also be
-the receiver in forms such as `text |> $.trim`; it may not be used
-more than once in one pipe step. `$` is punctuation rather than an
-identifier, so it never collides with a name in scope.
+Exactly one `$` per step, and it may sit anywhere along the step's call
+chain, so `xs |> f(a, $).len()` is `f(a, xs).len()`. A closure step
+takes the value as the closure's parameter: `x |> |v| v * 2`. Piping
+into a method on an external receiver works the same way:
+`x |> recv.m(a, $)`.
 
-## Callback shorthands
+`$` is punctuation rather than an identifier, so it never collides with
+a name in scope.
 
-A callback that only calls one thing can be written without `|v|`.
+### Why the slot is named
+
+Gossamer's free functions do not share one argument convention.
+`iter::`, `option::`, and `result::` take their data last; `strings::`,
+`bytes::`, `path::`, `sort::`, and `fs::` take it first, mirroring the
+method receiver. An operator that assumed one convention would silently
+mis-fill the other, and those signatures are homogeneous enough that the
+type checker could not catch it - `strings::split(String, String)`
+accepts its arguments either way round.
+
+Naming the slot removes the assumption, so both conventions read alike:
+
+```gossamer
+use std::{iter, strings}
+
+let parts = "a,b,c" |> strings::split($, ",")     // data first
+let doubled = #[1, 2] |> iter::map(|v| v * 2, $)  // data last
+```
+
+An argument-taking step with no `$` reports `GP0041`. Pasting the value
+back on as a method receiver (`x |> $.trim`) reports `GP0042` - write
+`x.trim()`. `gos check --fix` rewrites both; on `GP0041` it appends `$`
+in the trailing slot, which preserves the behaviour of the implicit rule
+it replaces, so confirm that is the slot the call needs.
+
+## Callback shorthand
+
+A callback that only calls one std function can be written without `|v|`.
 
 A std free function named where a value is expected is the closure that
 calls it, so `#[1.0, -2.0].map(math::abs)` means
-`map(|v| math::abs(v))`. A function with no fixed parameter list - the
-formatting family, `panic!`'s target - has no such closure and reports
-`GT0015`.
+`map(|v| math::abs(v))`. A std item with no fixed parameter list has no
+such closure and reports `GT0015`; a macro is not a function at all, so
+`fmt::format` reports `GR0018` and is written `format!(..)` inside a
+closure of your own.
 
-A `$`-headed projection written as a call argument is the closure over
-that argument, with the forms `$` already has in a pipe step:
+Everything else is a written closure - a method call, a field read, an
+index, and a tuple projection each spell out what they do:
 
 ```gossamer
-#[1.0, -2.0].map($.abs)        // |v| v.abs()      - nullary method call
-#["hi", "yo"].map($.to_uppercase)
-#["ab", "cde"].map($.len())    // |v| v.len()
-#[(1, 2), (3, 4)].map($.0)     // |v| v.0          - tuple index
-#[#[1, 2], #[3, 4]].map($[1])  // |v| v[1]
+struct Person { name: String }
+
+let trimmed = #[" a ", " b "].map(|v| v.trim())
+let firsts = #[(1, 2), (3, 4)].map(|t| t.0)
+let people = #[Person { name: "ada" }].map(|p| p.name)
 ```
 
-`$.name` is the method call, so read a named struct field with the
-closure instead: `people.map(|p| p.name)`. A bare `$` argument keeps its
-pipe meaning - it selects the slot the piped value lands in - and inside
-a pipe step the two readings compose: `xs |> $.map($.abs)` maps
-`|v| v.abs()` over `xs`.
+`$` is not a callback shorthand - it belongs to the pipe, where it names
+the slot the piped value fills. A `$`-headed projection in an argument
+reports `GP0043`, and `gos check --fix` rewrites it to the closure it
+abbreviated.
 
 ## Pattern matching
 

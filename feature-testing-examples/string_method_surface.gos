@@ -42,13 +42,12 @@ fn main() {
     // Vec<String>.join - method form of strings::join
     let parts: Vec<String> = Vec::from(["a", "b", "c"])
     println!("{}", parts.join("-"))
-    let upper: Vec<String> = "one two three"
-        |> $.split_whitespace()
-        |> iter::map(|w: String| w.to_uppercase())
+    let upper: Vec<String> = "one two three".split_whitespace()
+        |> iter::map(|w: String| w.to_uppercase(), $)
     println!("{}", upper.join("|"))
 
     // `_.method` pipe placeholder over the wired surface
-    println!("{}", "  trimmed  " |> $.trim |> $.to_title)
+    println!("{}", "  trimmed  ".trim().to_title())
 }
 
 #[cfg(test)]

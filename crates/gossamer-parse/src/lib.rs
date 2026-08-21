@@ -220,10 +220,15 @@ mod top_level_stmt_tests {
     }
 
     #[test]
-    fn pipe_placeholder_indexing_parses_as_rhs_index() {
+    fn a_pipe_receiver_projection_reports_the_method_chain() {
         let (_sf, diags) =
             parse("fn main() { let xs = [7, 8, 9]\n println!(\"{}\", xs |> $[1]) }\n");
-        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert!(
+            diags
+                .iter()
+                .any(|diag| matches!(diag.error, ParseError::PipeReceiverProjection { .. })),
+            "expected the receiver-step diagnostic: {diags:?}"
+        );
     }
 
     #[test]
