@@ -30,6 +30,7 @@ gossamer-lex = { workspace = true }
 gossamer-mir = { workspace = true }
 gossamer-parse = { workspace = true }
 gossamer-pkg = { workspace = true }
+gossamer-sandbox = { workspace = true }
 gossamer-resolve = { workspace = true }
 gossamer-runner-template = { workspace = true }
 gossamer-types = { workspace = true }

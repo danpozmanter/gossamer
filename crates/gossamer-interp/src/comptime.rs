@@ -31,12 +31,35 @@ pub fn fold_into_source(
     augmented: &str,
     file_label: &str,
 ) -> Result<String, String> {
+    fold_into_source_anchored(program, tcx, augmented, file_label, file_label)
+}
+
+/// Same as [`fold_into_source`], with the directory that relative
+/// paths resolve against - and that a `confined` read may not escape -
+/// taken from `anchor_source` rather than from `file_label`.
+///
+/// A front end whose label is not a filesystem path, such as the
+/// editor's, names the real document here so an embedded asset resolves
+/// the same file the command line reads.
+pub fn fold_into_source_anchored(
+    program: &HirProgram,
+    tcx: gossamer_types::TyCtxt,
+    augmented: &str,
+    file_label: &str,
+    anchor_source: &str,
+) -> Result<String, String> {
     // An embedded asset belongs to the source that embeds it, so a
     // relative path inside a `comptime` region reads the same file
     // whatever directory the build was started from.
-    let _anchor = gossamer_runtime::comptime_paths::Anchored::at_source(file_label);
+    let _anchor = gossamer_runtime::comptime_paths::Anchored::at_source(anchor_source);
+    // A compile-time region runs with the privileges of whoever
+    // started the compile, so the capability policy is in force for
+    // the length of the fold and the source's own directory is the
+    // root a confined read may not escape.
+    let _confinement = gossamer_runtime::comptime_policy::Confined::at_source(anchor_source);
     let mut vm = crate::vm::Vm::new();
     vm.set_collect_comptime(true);
+    vm.set_comptime_gate(true);
     vm.load(program, tcx, false)
         .map_err(|err| format!("comptime evaluation failed: {err}"))?;
     let folds = vm.take_comptime_folds();

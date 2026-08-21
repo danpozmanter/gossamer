@@ -1,0 +1,47 @@
+// `std::sandbox`: one policy model, three OS backends, no daemon or
+// root. A policy says what a command may reach; the host decides which
+// mechanism enforces it, and says so through the capability report.
+//
+// Output is host-independent on purpose: the capability report differs
+// by machine, so the fixture asserts the shape of what it answers and
+// the behaviour of a policy, not this host's Landlock ABI.
+
+use std::sandbox
+
+fn main() {
+    // A capability report is a value, not a printout, so a program can
+    // branch on what the host honors instead of assuming Linux.
+    let level = sandbox::max_level()
+    let known = level == "none" || level == "basic" || level == "standard" || level == "strict"
+    println!("max_level known: {}", known)
+    println!("platform known: {}", sandbox::platform().len() > 0)
+    println!("notes are a list: {}", sandbox::notes().len() >= 0)
+
+    // A policy is built by chaining; each step answers the policy as it
+    // now stands, so `|>` reads as one expression.
+    let policy = sandbox::Policy::new()
+        |> $.read_write(&".")
+        |> $.network(false)
+        |> $.env_allow(&"PATH")
+        |> $.timeout(30_000)
+        |> $.level(&"none")
+
+    let explained = policy.explain()
+    println!("explain names the level: {}", explained.contains(&"level none"))
+
+    // At level `none` nothing is enforced, so this runs everywhere and
+    // exercises the run path itself rather than the host's enforcement.
+    match sandbox::run(&policy, &#["echo", "sandboxed"]) {
+        Ok(out) => {
+            println!("code: {}", out.code)
+            println!("stdout: {}", out.stdout.trim())
+        }
+        Err(e) => println!("run failed: {}", e)
+    }
+
+    // A level the host cannot honor fails closed rather than quietly
+    // becoming something weaker.
+    let impossible = sandbox::Policy::new() |> $.level(&"strict")
+    let verdict = impossible.explain()
+    println!("strict is decided: {}", verdict.len() > 0)
+}

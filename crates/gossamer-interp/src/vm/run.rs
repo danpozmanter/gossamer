@@ -476,7 +476,7 @@ impl Vm {
                         Some(Global::Value(v)) => v.clone(),
                         Some(Global::MutStatic(cell)) => cell.lock().clone(),
                         Some(Global::Fn(_)) => Value::String(SmolStr::from(name)),
-                        None => return Err(RuntimeError::UnresolvedName(name.to_string())),
+                        None => return Err(self.unresolved(name)),
                     };
                     registers[dst as usize] = value;
                 }
@@ -976,7 +976,7 @@ impl Vm {
                             Some(g) => self.apply(g, arg_values)?,
                             None => {
                                 if let Some(name) = direct_name {
-                                    return Err(RuntimeError::UnresolvedName(name.to_string()));
+                                    return Err(self.unresolved(name));
                                 }
                                 self.dispatch_call(
                                     callee_val.expect("dynamic unresolved call has a callee"),
@@ -1148,7 +1148,7 @@ impl Vm {
                                     apply_or_suspend_bytecode!(dst, g, v)
                                 }
                                 None => {
-                                    return Err(RuntimeError::UnresolvedName(name.to_owned()));
+                                    return Err(self.unresolved(name));
                                 }
                             }
                         }
@@ -1196,7 +1196,7 @@ impl Vm {
                                 }
                                 Some(g) => apply_or_suspend_bytecode!(dst, g, call_args),
                                 None => {
-                                    return Err(RuntimeError::UnresolvedName(name.to_owned()));
+                                    return Err(self.unresolved(name));
                                 }
                             }
                         }
@@ -1269,7 +1269,7 @@ impl Vm {
                             }
                             Some(g) => apply_or_suspend_bytecode!(dst, g, args),
                             None => {
-                                return Err(RuntimeError::UnresolvedName("write_byte".to_string()));
+                                return Err(self.unresolved("write_byte"));
                             }
                         };
                         registers[dst as usize] = result;
@@ -1345,7 +1345,7 @@ impl Vm {
                         }
                         Some(g) => apply_or_suspend_bytecode!(dst, g, args),
                         None => {
-                            return Err(RuntimeError::UnresolvedName("set_byte".to_string()));
+                            return Err(self.unresolved("set_byte"));
                         }
                     };
                     registers[dst as usize] = result;
@@ -1409,7 +1409,7 @@ impl Vm {
                         }
                         Some(g) => self.apply(g, args)?,
                         None => {
-                            return Err(RuntimeError::UnresolvedName("get_byte".to_string()));
+                            return Err(self.unresolved("get_byte"));
                         }
                     };
                     let n = match result {
@@ -1464,7 +1464,7 @@ impl Vm {
                         }
                         Some(g) => apply_or_suspend_bytecode!(dst, g, args),
                         None => {
-                            return Err(RuntimeError::UnresolvedName("substring".to_string()));
+                            return Err(self.unresolved("substring"));
                         }
                     };
                     registers[dst as usize] = result;
@@ -1543,7 +1543,7 @@ impl Vm {
                         }
                         Some(g) => apply_or_suspend_bytecode!(dst, g, args),
                         None => {
-                            return Err(RuntimeError::UnresolvedName("inc".to_string()));
+                            return Err(self.unresolved("inc"));
                         }
                     };
                     registers[dst as usize] = result;
@@ -4575,7 +4575,7 @@ impl Vm {
                         Some(Global::MutStatic(cell)) => cell.lock().clone(),
                         Some(Global::Fn(_)) => Value::String(SmolStr::from(name.to_string())),
                         None => {
-                            return Err(RuntimeError::UnresolvedName(name.to_string()));
+                            return Err(self.unresolved(name));
                         }
                     };
                     self.spawn_goroutine_native(callee_val, arg_values);

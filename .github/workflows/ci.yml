@@ -562,6 +562,65 @@ jobs:
             -p gossamer-coro -p gossamer-std -p gossamer-pkg \
             -p gossamer-http3 -p gossamer-ws -- --nocapture
 
+  sandbox:
+    name: Sandbox enforcement (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-test-setup
+        with:
+          cache-prefix: v1-sandbox
+      # The adversarial suites: each case tries an escape and passes
+      # when the attempt is denied. A backend that stops enforcing
+      # fails here rather than in a user's build.
+      - name: Policy model and enforcement
+        shell: bash
+        env:
+          RUST_BACKTRACE: "full"
+        run: |
+          "$CARGO_BIN" test --no-fail-fast --lib --tests \
+            -p gossamer-sandbox -- --nocapture
+      - name: The compile-time capability policy
+        shell: bash
+        run: |
+          "$CARGO_BIN" test --no-fail-fast -p gossamer-cli \
+            --test comptime_capability_policy -- --nocapture
+      - name: The build sandbox policy
+        shell: bash
+        run: |
+          "$CARGO_BIN" test --no-fail-fast -p gossamer-driver \
+            --lib build_sandbox -- --nocapture
+
+  sandbox-without-user-namespaces:
+    name: Sandbox with user namespaces disabled
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-test-setup
+        with:
+          cache-prefix: v1-sandbox-no-userns
+      # `strict` must fail closed and name the blocking sysctl, and
+      # `standard` must keep working: Landlock needs no user namespace,
+      # which is the whole reason the level ladder has that rung.
+      - name: Disable unprivileged user namespaces
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1 || true
+          sudo sysctl -w kernel.unprivileged_userns_clone=0 || true
+          sudo sysctl -w user.max_user_namespaces=0 || true
+      - name: strict fails closed and standard still enforces
+        shell: bash
+        env:
+          RUST_BACKTRACE: "full"
+        run: |
+          "$CARGO_BIN" test --no-fail-fast --lib --tests \
+            -p gossamer-sandbox -- --nocapture
+
   musl-build:
     name: Musl build check
     runs-on: ubuntu-latest

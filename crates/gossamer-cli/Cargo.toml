@@ -78,6 +78,7 @@ gossamer-mcp = { workspace = true }
 gossamer-parse = { workspace = true }
 gossamer-pkg = { workspace = true }
 gossamer-resolve = { workspace = true }
+gossamer-sandbox = { workspace = true }
 gossamer-runtime = { workspace = true }
 gossamer-types = { workspace = true }
 parking_lot = { workspace = true }

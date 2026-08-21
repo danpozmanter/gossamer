@@ -1187,6 +1187,20 @@ fn run_cargo_build(
     crate_label: &str,
 ) -> Result<(), BindingRunnerError> {
     let cargo = which::which("cargo").map_err(|_| BindingRunnerError::CargoMissing)?;
+    let request = crate::build_sandbox::active();
+    if request.is_active() {
+        return run_cargo_build_sandboxed(
+            &request,
+            &cargo,
+            manifest_path,
+            target_dir,
+            profile,
+            cargo_target,
+            kind_flag,
+            kind_value,
+            crate_label,
+        );
+    }
     let mut cmd = Command::new(cargo);
     cmd.arg("build");
     if matches!(profile, Profile::Release) {
@@ -1225,6 +1239,110 @@ fn run_cargo_build(
         return Err(BindingRunnerError::CargoFailed {
             crate_name: crate_label.to_string(),
             stderr: stderr_text,
+        });
+    }
+    Ok(())
+}
+
+/// Runs the same Cargo build inside the sandbox `--sandbox` asked for.
+///
+/// Two invocations rather than one: `cargo fetch` with the network and
+/// no dependency code running, then `cargo build --offline` with the
+/// network denied and every `build.rs`, proc macro, and linker
+/// invocation inside the policy. `cargo fetch` does not run `build.rs`,
+/// which is what makes the split sound.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors run_cargo_build's parameter list one for one"
+)]
+fn run_cargo_build_sandboxed(
+    request: &crate::build_sandbox::BuildSandbox,
+    cargo: &Path,
+    manifest_path: &Path,
+    target_dir: &Path,
+    profile: Profile,
+    cargo_target: Option<&str>,
+    kind_flag: &str,
+    kind_value: &str,
+    crate_label: &str,
+) -> Result<(), BindingRunnerError> {
+    use crate::build_sandbox::{BuildRoots, Phase};
+
+    let project = manifest_path.parent().unwrap_or(manifest_path);
+    let mut roots = BuildRoots::discover(project);
+    roots.project.push(target_dir.to_path_buf());
+
+    let mut environment: Vec<(String, String)> = vec![(
+        "CARGO_TARGET_DIR".to_string(),
+        target_dir.to_string_lossy().into_owned(),
+    )];
+    if crate::macos_deployment::is_macos_target(cargo_target, cfg!(target_os = "macos")) {
+        environment.push((
+            "MACOSX_DEPLOYMENT_TARGET".to_string(),
+            crate::macos_deployment::effective_deployment_target(),
+        ));
+    }
+
+    let sandbox_error = |reason: String| BindingRunnerError::CargoFailed {
+        crate_name: crate_label.to_string(),
+        stderr: reason,
+    };
+
+    // Phase 1: download, with the network and without executing what
+    // was downloaded. A failure here is not fatal on its own - an
+    // already-populated cache makes the fetch a no-op and an offline
+    // machine has nothing to fetch - so only phase 2 decides the
+    // outcome.
+    let fetch_argv = vec![
+        cargo.to_string_lossy().into_owned(),
+        "fetch".to_string(),
+        "--manifest-path".to_string(),
+        manifest_path.to_string_lossy().into_owned(),
+    ];
+    let _ = crate::build_sandbox::run_under_sandbox(
+        request,
+        &roots,
+        Phase::Fetch,
+        &fetch_argv,
+        &environment,
+    );
+
+    // Phase 2: compile, offline, with dependency code running inside
+    // the policy.
+    let mut build_argv = vec![cargo.to_string_lossy().into_owned(), "build".to_string()];
+    if matches!(profile, Profile::Release) {
+        build_argv.push("--release".to_string());
+    }
+    if let Some(target) = cargo_target {
+        build_argv.push("--target".to_string());
+        build_argv.push(target.to_string());
+    }
+    build_argv.push("--manifest-path".to_string());
+    build_argv.push(manifest_path.to_string_lossy().into_owned());
+    if kind_value.is_empty() {
+        build_argv.push(kind_flag.to_string());
+    } else {
+        build_argv.push(kind_flag.to_string());
+        build_argv.push(kind_value.to_string());
+    }
+    if !request.network_in_build {
+        build_argv.push("--offline".to_string());
+    }
+
+    let run = crate::build_sandbox::run_under_sandbox(
+        request,
+        &roots,
+        Phase::Build,
+        &build_argv,
+        &environment,
+    )
+    .map_err(sandbox_error)?;
+    if run.code != 0 {
+        let _ = writeln!(io::stderr(), "{}", run.stdout);
+        let _ = writeln!(io::stderr(), "{}", run.stderr);
+        return Err(BindingRunnerError::CargoFailed {
+            crate_name: crate_label.to_string(),
+            stderr: run.stderr,
         });
     }
     Ok(())

@@ -213,6 +213,7 @@ pub mod builtins;
 pub mod c_abi;
 pub mod clock;
 pub mod comptime_paths;
+pub mod comptime_policy;
 pub mod coverage;
 pub mod pprof;
 pub mod preempt;

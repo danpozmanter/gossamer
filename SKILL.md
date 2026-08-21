@@ -669,6 +669,19 @@ Full path spelling is validated (GR0005); discover signatures with
   middleware/session/csrf/form/multipart/state/health, `html`,
   `mime`. Experimental: `html::template::render_json`, `tls`,
   `database::sql` (drivers via `[rust-bindings]`).
+- Sandbox: `sandbox` - one policy, three OS backends.
+  `sandbox::Policy::new()` then `read_write` / `read_only` / `deny` /
+  `network(bool)` / `env_allow` / `env_set` / `timeout(ms)` /
+  `level("standard")` / `working_directory`, each answering the policy
+  as it stands so a `|>` chain reads as one expression;
+  `Policy::build_default(&root)` and `Policy::command_default(&cwd)`
+  are the shipped policies as constructors. `sandbox::run(&policy,
+  &argv) -> Result<Output, errors::Error>` answers the same
+  `{stdout, stderr, code}` `process::run` does. The capability report
+  is a value, not a printout: `max_level()`, `platform()`,
+  `filesystem()`, `network_enforcement()`, `process_isolation()`,
+  `resource_limits()`, `notes()`, `capabilities_json()`. A level a
+  host cannot honor fails closed rather than downgrading.
 - Misc: `sort`, `math::{rand, big}`, `crypto::{rand, sha256, sha512,
   hmac, blake3, aead, ed25519, ecdsa, x509, kdf, password
   (Argon2id), subtle}` (`crypto::insecure` = MD5/SHA1 compat only),
@@ -766,6 +779,8 @@ output wraps to the terminal width, capped at 80 columns.
 | `gos new / init / add / remove / tidy / fetch / vendor / publish` | Scaffold (`--template bin\|lib\|service\|workspace\|binding`) and package management: `fetch` / `vendor` prepare git, registry, and tarball dependency sources for an Ed25519-signed registry. |
 | `gos watch / clean / env / completion / bindgen / feature-status` | Re-run on change; caches; toolchain info; shell completions; Rust-binding skeletons; feature registry. |
 | `gos skill-prompt` | Print this card (`gos skill-prompt \| claude --append-system-prompt`). |
+| `--comptime-io=none\|confined\|full` | Capabilities a `comptime` region may reach while compiling. `confined` is the default: reads under the source tree, everything else denied. A denial is `GX0010`. `project.comptime-io` pins it; the more restrictive of manifest and command line wins. |
+| `gos build --sandbox[=basic\|standard\|strict]` | Compile `[rust-bindings]` inside an OS-native sandbox; covers `check`, `doc`, `repl`, `run`, `test` too. Fetch runs networked, build runs `--offline`. `--sandbox-rw` / `--sandbox-ro` / `--sandbox-network` / `--sandbox-explain`. Default `none` this release. |
 
 ## 16. When in doubt
 

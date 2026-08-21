@@ -37,6 +37,63 @@ unfixed vulnerabilities.
   controlled source files.
 - Launcher-script injection via crafted paths or file names.
 
+## Compile-time evaluation is capability-controlled
+
+A `comptime { ... }` region and every `comptime fn` call are evaluated
+on the bytecode VM while the program is compiled, so they run with the
+privileges of whoever started the compile - including on source
+somebody else wrote, and on the `gos check` an editor, the language
+server, the MCP server, and CI run unattended.
+
+`--comptime-io` bounds what that evaluation may reach:
+
+| Level | Compile-time capabilities |
+|---|---|
+| `none` | No I/O at all. A comptime region is pure computation over its inputs. |
+| `confined` (default) | Reads under the source tree. Writes, process spawn, network, environment mutation, and reads that leave the tree are denied. |
+| `full` | Everything the compiling user can do. Never a default. |
+
+A read is compared against the canonical path, so a symlink pointing
+out of the source tree is denied at its target. `project.comptime-io`
+pins a posture for a project; the toolchain takes the more restrictive
+of the manifest and the command line, because the manifest is written
+by the party the policy defends against. `codegen!` is pure computation
+and is unaffected at every level.
+
+A denied call reports `GX0010` naming the builtin, the capability
+class, and the option that would permit it. Run
+`gos explain GX0010` for the long form.
+
+## Sandboxing
+
+`gos build --sandbox` puts `[rust-bindings]` compilation - Cargo, every
+dependency `build.rs`, every procedural macro, the linker, and every
+descendant - inside an OS-native policy, and covers `check`, `doc`,
+`repl`, `run`, and `test` with it. `std::sandbox` exposes the same
+policy model to a Gossamer program.
+
+A level name means the same guarantee on every operating system. A host
+that cannot meet a level reports it unavailable and names the blocking
+primitive; it never offers a weaker thing under the same name. macOS has
+no process-namespace equivalent, so it reports `strict` unavailable
+rather than delivering `standard` under that name.
+
+What is deliberately not claimed:
+
+- Not a defense against a kernel local-privilege-escalation exploit.
+- Not equivalent to a VM or a hypervisor boundary.
+- Not a defense against a hostile process already running as another
+  user.
+- Not a side-channel or timing-attack boundary.
+- On macOS, not a supported-API boundary at all: the platform offers no
+  supported public API for sandboxing an arbitrary child, so the backend
+  rides Seatbelt, which is deprecated SPI.
+
+Every escape the sandbox cannot close is documented with the mechanism
+named, alongside the adversarial corpus that produced it.
+`sandbox::capabilities_json()` reports what the host in front of you
+actually honors.
+
 ## Out of scope
 
 - Self-DoS: slow programs, large files, or runaway recursion in the

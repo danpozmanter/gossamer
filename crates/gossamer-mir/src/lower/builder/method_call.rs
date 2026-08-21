@@ -3584,6 +3584,18 @@ impl<'a> Builder<'a> {
             (Some("net::UdpSocket"), "recv_from") => Some("gos_rt_udp_recv_from"),
             (Some("net::UdpSocket"), "local_addr") => Some("gos_rt_udp_local_addr"),
             (Some("net::UdpSocket"), "close") => Some("gos_rt_udp_close"),
+            (Some("sandbox::Policy"), "read_write") => Some("gos_rt_sandbox_policy_read_write"),
+            (Some("sandbox::Policy"), "read_only") => Some("gos_rt_sandbox_policy_read_only"),
+            (Some("sandbox::Policy"), "deny") => Some("gos_rt_sandbox_policy_deny"),
+            (Some("sandbox::Policy"), "network") => Some("gos_rt_sandbox_policy_network"),
+            (Some("sandbox::Policy"), "env_allow") => Some("gos_rt_sandbox_policy_env_allow"),
+            (Some("sandbox::Policy"), "env_set") => Some("gos_rt_sandbox_policy_env_set"),
+            (Some("sandbox::Policy"), "timeout") => Some("gos_rt_sandbox_policy_timeout"),
+            (Some("sandbox::Policy"), "level") => Some("gos_rt_sandbox_policy_level"),
+            (Some("sandbox::Policy"), "working_directory") => {
+                Some("gos_rt_sandbox_policy_working_directory")
+            }
+            (Some("sandbox::Policy"), "explain") => Some("gos_rt_sandbox_policy_explain"),
             (Some("process::Child"), "write_stdin") => Some("gos_rt_child_write_stdin"),
             (Some("process::Child"), "close_stdin") => Some("gos_rt_child_close_stdin"),
             (Some("process::Child"), "read_line") => Some("gos_rt_child_read_line"),
@@ -4032,6 +4044,19 @@ impl<'a> Builder<'a> {
             // match extraction reads the packed enum correctly.
             "gos_rt_child_read_line" | "gos_rt_stream_next_line" => self.option_string_adt_ty(),
             "gos_rt_stream_read_line" => self.result_i64_error_adt_ty(),
+            // Every `sandbox::Policy` builder answers the policy as it
+            // now stands, so the dest holds the handle's own Adt and a
+            // chained call finds the sandbox kind again.
+            "gos_rt_sandbox_policy_read_write"
+            | "gos_rt_sandbox_policy_read_only"
+            | "gos_rt_sandbox_policy_deny"
+            | "gos_rt_sandbox_policy_network"
+            | "gos_rt_sandbox_policy_env_allow"
+            | "gos_rt_sandbox_policy_env_set"
+            | "gos_rt_sandbox_policy_timeout"
+            | "gos_rt_sandbox_policy_level"
+            | "gos_rt_sandbox_policy_working_directory" => self.sandbox_policy_ty(),
+            "gos_rt_sandbox_policy_explain" => self.tcx.string_ty(),
             "gos_rt_child_read_stdout" => self.tcx.string_ty(),
             "gos_rt_option_unwrap"
             | "gos_rt_result_unwrap"
@@ -4330,6 +4355,17 @@ impl<'a> Builder<'a> {
             | "gos_rt_http_client_builder_cookie_jar"
             | "gos_rt_http_client_builder_proxy" => Some("http::ClientBuilder"),
             "gos_rt_http_client_builder_build" => Some("http::Client"),
+            // Every sandbox builder answers the policy as it now
+            // stands, so a `|>` chain keeps dispatching on it.
+            "gos_rt_sandbox_policy_read_write"
+            | "gos_rt_sandbox_policy_read_only"
+            | "gos_rt_sandbox_policy_deny"
+            | "gos_rt_sandbox_policy_network"
+            | "gos_rt_sandbox_policy_env_allow"
+            | "gos_rt_sandbox_policy_env_set"
+            | "gos_rt_sandbox_policy_timeout"
+            | "gos_rt_sandbox_policy_level"
+            | "gos_rt_sandbox_policy_working_directory" => Some("sandbox::Policy"),
             // Every `Server` setter answers the server, so a `|>` chain of
             // them keeps dispatching on `http::Server`.
             "gos_rt_http_server_read_header_timeout_ms"
@@ -4753,6 +4789,18 @@ impl<'a> Builder<'a> {
             (Some("net::UdpSocket"), "recv_from") => Some("gos_rt_udp_recv_from"),
             (Some("net::UdpSocket"), "local_addr") => Some("gos_rt_udp_local_addr"),
             (Some("net::UdpSocket"), "close") => Some("gos_rt_udp_close"),
+            (Some("sandbox::Policy"), "read_write") => Some("gos_rt_sandbox_policy_read_write"),
+            (Some("sandbox::Policy"), "read_only") => Some("gos_rt_sandbox_policy_read_only"),
+            (Some("sandbox::Policy"), "deny") => Some("gos_rt_sandbox_policy_deny"),
+            (Some("sandbox::Policy"), "network") => Some("gos_rt_sandbox_policy_network"),
+            (Some("sandbox::Policy"), "env_allow") => Some("gos_rt_sandbox_policy_env_allow"),
+            (Some("sandbox::Policy"), "env_set") => Some("gos_rt_sandbox_policy_env_set"),
+            (Some("sandbox::Policy"), "timeout") => Some("gos_rt_sandbox_policy_timeout"),
+            (Some("sandbox::Policy"), "level") => Some("gos_rt_sandbox_policy_level"),
+            (Some("sandbox::Policy"), "working_directory") => {
+                Some("gos_rt_sandbox_policy_working_directory")
+            }
+            (Some("sandbox::Policy"), "explain") => Some("gos_rt_sandbox_policy_explain"),
             (Some("process::Child"), "write_stdin") => Some("gos_rt_child_write_stdin"),
             (Some("process::Child"), "close_stdin") => Some("gos_rt_child_close_stdin"),
             (Some("process::Child"), "read_line") => Some("gos_rt_child_read_line"),

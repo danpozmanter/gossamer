@@ -168,6 +168,63 @@ pub const OS_SIGNAL: StdModule = StdModule {
     ],
 };
 
+pub const SANDBOX: StdModule = StdModule {
+    path: "std::sandbox",
+    summary: "Run a command under an OS-native sandbox: one policy model, three backends, no daemon or root.",
+    items: &[
+        StdItem {
+            name: "Policy",
+            kind: StdItemKind::Type,
+            doc: "What a command may reach. Built with read_write / read_only / deny / network / env_allow / env_set / temp / timeout / level / working_directory, each answering the policy as it now stands.",
+        },
+        StdItem {
+            name: "run",
+            kind: StdItemKind::Function,
+            doc: "run(policy, argv) -> Result<Output, errors::Error>. Runs argv under the policy and answers the same { stdout, stderr, code } shape process::run does. Blocks for the length of the child, off the scheduler.",
+        },
+        StdItem {
+            name: "max_level",
+            kind: StdItemKind::Function,
+            doc: "The highest level this host can honor: none, basic, standard, or strict. A level above it fails closed rather than downgrading.",
+        },
+        StdItem {
+            name: "platform",
+            kind: StdItemKind::Function,
+            doc: "Which backend answers here: linux, macos, windows, or unsupported.",
+        },
+        StdItem {
+            name: "filesystem",
+            kind: StdItemKind::Function,
+            doc: "How completely a filesystem policy is enforced here: full, partial (reason), or none.",
+        },
+        StdItem {
+            name: "network_enforcement",
+            kind: StdItemKind::Function,
+            doc: "How completely network denial is enforced here.",
+        },
+        StdItem {
+            name: "process_isolation",
+            kind: StdItemKind::Function,
+            doc: "How completely the process table is isolated here.",
+        },
+        StdItem {
+            name: "resource_limits",
+            kind: StdItemKind::Function,
+            doc: "How completely resource limits are enforced here.",
+        },
+        StdItem {
+            name: "notes",
+            kind: StdItemKind::Function,
+            doc: "Everything the scalar accessors cannot say: the Landlock ABI the kernel reports, the sysctl that blocks strict, whether loopback works inside an AppContainer.",
+        },
+        StdItem {
+            name: "capabilities_json",
+            kind: StdItemKind::Function,
+            doc: "The whole host capability report as JSON, for a program that wants more than the scalar accessors give it.",
+        },
+    ],
+};
+
 pub const PATH: StdModule = StdModule {
     path: "std::path",
     summary: "Lexical filesystem-path operations; platform path grammar, no URL parsing.",

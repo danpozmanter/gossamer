@@ -43,6 +43,7 @@ impl Vm {
             source_map: None,
             collect_comptime: Cell::new(false),
             comptime_folds: RefCell::new(Vec::new()),
+            comptime_gate: Cell::new(false),
         };
         // Late-registered binding natives go into the per-Vm overlay
         // because they can be added between Vm constructions; the
@@ -107,6 +108,10 @@ impl Vm {
             // Comptime folding is a main-VM compile-time concern only.
             collect_comptime: Cell::new(false),
             comptime_folds: RefCell::new(Vec::new()),
+            // The spawner stamps this from its own state; a pooled
+            // worker `Vm` is reused across programs, so the flag is
+            // re-stamped per task rather than assumed.
+            comptime_gate: Cell::new(false),
         }
     }
 
@@ -196,6 +201,9 @@ impl Vm {
         if let Some(g) = self.globals.get(name) {
             return Some(g.clone());
         }
+        if self.comptime_denial(name).is_some() {
+            return None;
+        }
         self.prelude.get(name).cloned()
     }
 
@@ -206,7 +214,54 @@ impl Vm {
         if let Some(g) = self.globals.get(name) {
             return Some(g);
         }
+        if self.comptime_denial(name).is_some() {
+            return None;
+        }
         self.prelude.get(name)
+    }
+
+    /// Whether this `Vm` is subject to the compile-time capability
+    /// policy.
+    pub fn set_comptime_gate(&self, on: bool) {
+        self.comptime_gate.set(on);
+    }
+
+    /// The capability `name` needs when the compile-time policy in
+    /// force refuses it, or `None` when the call is permitted or this
+    /// `Vm` is not folding.
+    ///
+    /// A user item shadows a builtin in the per-Vm overlay, so this is
+    /// consulted only after the overlay misses: a program's own
+    /// function named `write` is never a capability.
+    #[inline]
+    #[must_use]
+    pub(crate) fn comptime_denial(
+        &self,
+        name: &str,
+    ) -> Option<gossamer_runtime::comptime_policy::Capability> {
+        if !self.comptime_gate.get() {
+            return None;
+        }
+        crate::comptime_gate::denied(name, gossamer_runtime::comptime_policy::level())
+    }
+
+    /// The error a failed name resolution should report: a capability
+    /// denial when the compile-time policy withheld the name, and an
+    /// ordinary unresolved-name failure otherwise.
+    #[must_use]
+    pub(crate) fn unresolved(&self, name: &str) -> RuntimeError {
+        match self.comptime_denial(name) {
+            Some(capability) => RuntimeError::ComptimeDenied(
+                gossamer_runtime::comptime_policy::Denied {
+                    operation: name.to_string(),
+                    capability,
+                    level: gossamer_runtime::comptime_policy::level(),
+                    path: None,
+                }
+                .to_string(),
+            ),
+            None => RuntimeError::UnresolvedName(name.to_string()),
+        }
     }
 
     /// Bumps the `globals_generation` counter and returns the new

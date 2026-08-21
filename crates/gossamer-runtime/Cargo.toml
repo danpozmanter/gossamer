@@ -68,6 +68,7 @@ rustc-hash = "2"
 indexmap = { workspace = true }
 gossamer-coro = { workspace = true }
 gossamer-pkg = { workspace = true }
+gossamer-sandbox = { workspace = true }
 gossamer-abi = { workspace = true }
 gossamer-template = { workspace = true }
 gossamer-ws = { workspace = true }

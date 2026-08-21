@@ -1322,6 +1322,10 @@ impl<'a> Builder<'a> {
             // `write_stdin` / `read_line` / `wait` / ... to the
             // child shims.
             "Child" => Some("process::Child"),
+            // A sandbox policy handle, from `sandbox::Policy::new()` or
+            // one of the presets; routes the builder methods and
+            // `explain` to the sandbox shims.
+            "Policy" => Some("sandbox::Policy"),
             "Stream" => Some("io::Stream"),
             "Notifier" => Some("signal::Notifier"),
             _ => None,
@@ -1353,6 +1357,15 @@ impl<'a> Builder<'a> {
             // route through the result helpers instead of the
             // identity copy.
             ("http::Request", "send") => Some("http::SendResult"),
+            // Every sandbox builder answers the policy as it now
+            // stands, so a `|>` chain - whose receiver is the previous
+            // step's expression rather than a bound local - keeps
+            // dispatching on the policy kind.
+            (
+                "sandbox::Policy",
+                "read_write" | "read_only" | "deny" | "network" | "env_allow" | "env_set"
+                | "timeout" | "level" | "working_directory",
+            ) => Some("sandbox::Policy"),
             _ => None,
         }
     }

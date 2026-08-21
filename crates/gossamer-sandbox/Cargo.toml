@@ -1,0 +1,46 @@
+[package]
+name = "gossamer-sandbox"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Cross-platform OS-native process sandbox with one policy model."
+
+[lints]
+workspace = true
+
+# No dependency on any other Gossamer crate: the sandbox is the thing
+# that contains the build system, so it must not need the build system
+# to exist. That also keeps it publishable on its own.
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+# Landlock, seccomp, the namespace syscalls, and the Windows token and
+# job APIs are reached through raw syscalls rather than a wrapper
+# crate: the ABI is a handful of structs, and a security boundary is
+# better owned than depended upon.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+    "Win32_System_JobObjects",
+    "Win32_System_Memory",
+    "Win32_System_SystemServices",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_Security_Isolation",
+    "Win32_System_Pipes",
+    "Win32_System_Console",
+    "Win32_Security_Authorization",
+] }
+
+[dev-dependencies]

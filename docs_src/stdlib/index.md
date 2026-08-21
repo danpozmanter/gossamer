@@ -106,6 +106,7 @@ For receiver methods on built-in types, see [`Methods by type`](../method_suppor
 | [`std::regex`](regex.md) | Compiled regular expressions (Rust `regex` crate syntax; no backreferences or look-around). |
 | [`std::result`](result.md) | Data-last Result combinators for pipeline chaining: map, map_err, unwrap_or_else, etc. |
 | [`std::runtime`](runtime.md) | Goroutine / scheduler introspection and tuning. |
+| [`std::sandbox`](sandbox.md) | Run a command under an OS-native sandbox: one policy model, three backends, no daemon or root. |
 | [`std::slog`](slog.md) | Structured, levelled logging. |
 | [`std::sort`](sort.md) | Explicit stable ordering and sorted-sequence search, the deliberate counterpart to Vec's unstable inherent `sort`. |
 | [`std::strconv`](strconv.md) | Conversions between strings and primitive numeric types. |

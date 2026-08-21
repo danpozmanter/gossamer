@@ -1359,11 +1359,11 @@ dependencies = [
 
 [[package]]
 name = "gossamer-abi"
-version = "0.54.0"
+version = "0.55.0"
 
 [[package]]
 name = "gossamer-ast"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "gossamer-lex",
  "serde",
@@ -1371,7 +1371,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-binding"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "gossamer-binding-macros",
  "gossamer-codegen-cranelift",
@@ -1386,7 +1386,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-binding-macros"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1395,7 +1395,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-cli"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1417,6 +1417,7 @@ dependencies = [
  "gossamer-pkg",
  "gossamer-resolve",
  "gossamer-runtime",
+ "gossamer-sandbox",
  "gossamer-std",
  "gossamer-types",
  "h2",
@@ -1437,7 +1438,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-codegen-cranelift"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "anyhow",
  "cranelift-codegen",
@@ -1464,7 +1465,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-codegen-llvm"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "anyhow",
  "gossamer-abi",
@@ -1482,14 +1483,14 @@ dependencies = [
 
 [[package]]
 name = "gossamer-coro"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "corosensei",
 ]
 
 [[package]]
 name = "gossamer-diagnostics"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-lex",
@@ -1501,7 +1502,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-driver"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "anyhow",
  "gossamer-ast",
@@ -1515,6 +1516,7 @@ dependencies = [
  "gossamer-pkg",
  "gossamer-resolve",
  "gossamer-runner-template",
+ "gossamer-sandbox",
  "gossamer-types",
  "libc",
  "parking_lot",
@@ -1529,7 +1531,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-hir"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-lex",
@@ -1541,7 +1543,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-http3"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "bytes",
  "h3",
@@ -1557,7 +1559,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-interp"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-codegen-cranelift",
@@ -1568,6 +1570,7 @@ dependencies = [
  "gossamer-parse",
  "gossamer-resolve",
  "gossamer-runtime",
+ "gossamer-sandbox",
  "gossamer-std",
  "gossamer-types",
  "gossamer-ws",
@@ -1584,7 +1587,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lex"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "insta",
  "serde",
@@ -1594,7 +1597,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lint"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1604,7 +1607,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lsp"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1615,6 +1618,7 @@ dependencies = [
  "gossamer-parse",
  "gossamer-pkg",
  "gossamer-resolve",
+ "gossamer-runtime",
  "gossamer-std",
  "gossamer-types",
  "unicode-ident",
@@ -1622,7 +1626,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-mcp"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "gossamer-lsp",
  "gossamer-std",
@@ -1630,7 +1634,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-mir"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "gossamer-abi",
  "gossamer-ast",
@@ -1644,7 +1648,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-parse"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1655,7 +1659,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-pkg"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "ed25519-dalek",
  "gossamer-resolve",
@@ -1674,7 +1678,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-playground"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "console_error_panic_hook",
  "gossamer-ast",
@@ -1692,7 +1696,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-resolve"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1705,7 +1709,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-runner-template"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "syn",
  "toml",
@@ -1713,7 +1717,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-runtime"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -1732,6 +1736,7 @@ dependencies = [
  "gossamer-coro",
  "gossamer-http3",
  "gossamer-pkg",
+ "gossamer-sandbox",
  "gossamer-template",
  "gossamer-ws",
  "h2",
@@ -1785,15 +1790,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "gossamer-sandbox"
+version = "0.55.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "gossamer-sched"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "gossamer-runtime",
 ]
 
 [[package]]
 name = "gossamer-std"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1872,7 +1888,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-template"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "serde_json",
  "thiserror",
@@ -1880,7 +1896,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-types"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1894,7 +1910,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-ws"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "parking_lot",
  "thiserror",
@@ -4311,7 +4327,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.54.0"
+version = "0.55.0"
 dependencies = [
  "anyhow",
  "gossamer-diagnostics",

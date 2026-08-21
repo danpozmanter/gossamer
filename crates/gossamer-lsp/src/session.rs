@@ -201,8 +201,15 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
     // The comptime fold lowers the program, so it runs only once every
     // earlier phase has accepted it - exactly the order `gos check` uses.
     if diagnostics.is_empty()
-        && let Some(diag) =
-            crate::comptime::fold_diagnostic(&augmented, &sf, &resolutions, &types, &mut tcx, file)
+        && let Some(diag) = crate::comptime::fold_diagnostic(
+            uri,
+            &augmented,
+            &sf,
+            &resolutions,
+            &types,
+            &mut tcx,
+            file,
+        )
     {
         diagnostics.push(diag);
     }

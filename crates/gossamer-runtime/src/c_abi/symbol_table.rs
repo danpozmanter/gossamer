@@ -6491,6 +6491,94 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             "gos_rt_uuid_simple",
             crate::c_abi::gos_rt_uuid_simple as *const u8,
         ),
+        (
+            "gos_rt_sandbox_policy_new",
+            crate::c_abi::gos_rt_sandbox_policy_new as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_build_default",
+            crate::c_abi::gos_rt_sandbox_policy_build_default as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_command_default",
+            crate::c_abi::gos_rt_sandbox_policy_command_default as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_read_write",
+            crate::c_abi::gos_rt_sandbox_policy_read_write as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_read_only",
+            crate::c_abi::gos_rt_sandbox_policy_read_only as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_deny",
+            crate::c_abi::gos_rt_sandbox_policy_deny as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_network",
+            crate::c_abi::gos_rt_sandbox_policy_network as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_env_allow",
+            crate::c_abi::gos_rt_sandbox_policy_env_allow as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_env_set",
+            crate::c_abi::gos_rt_sandbox_policy_env_set as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_timeout",
+            crate::c_abi::gos_rt_sandbox_policy_timeout as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_level",
+            crate::c_abi::gos_rt_sandbox_policy_level as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_working_directory",
+            crate::c_abi::gos_rt_sandbox_policy_working_directory as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_explain",
+            crate::c_abi::gos_rt_sandbox_policy_explain as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_run",
+            crate::c_abi::gos_rt_sandbox_run as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_max_level",
+            crate::c_abi::gos_rt_sandbox_max_level as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_platform",
+            crate::c_abi::gos_rt_sandbox_platform as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_filesystem",
+            crate::c_abi::gos_rt_sandbox_filesystem as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_network_enforcement",
+            crate::c_abi::gos_rt_sandbox_network_enforcement as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_process_isolation",
+            crate::c_abi::gos_rt_sandbox_process_isolation as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_resource_limits",
+            crate::c_abi::gos_rt_sandbox_resource_limits as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_capabilities_json",
+            crate::c_abi::gos_rt_sandbox_capabilities_json as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_notes",
+            crate::c_abi::gos_rt_sandbox_notes as *const u8,
+        ),
         ("gos_rt_uuid_v4", crate::c_abi::gos_rt_uuid_v4 as *const u8),
         ("gos_rt_uuid_v7", crate::c_abi::gos_rt_uuid_v7 as *const u8),
         (

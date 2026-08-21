@@ -123,6 +123,7 @@ fn builtin_os_read_file(args: &[Value]) -> RuntimeResult<Value> {
     // A relative path inside a `comptime` region reads the file beside
     // the source that embeds it; at run time it means what it always did.
     let path = gossamer_runtime::comptime_paths::resolve(path);
+    crate::comptime_gate::guard_read("fs::read", &path)?;
     match gossamer_runtime::sched_global::run_blocking("os-read-file", move || {
         os_std::read_file(&path)
     }) {
@@ -145,6 +146,7 @@ fn builtin_os_read_file_to_string(args: &[Value]) -> RuntimeResult<Value> {
         ));
     };
     let path = gossamer_runtime::comptime_paths::resolve(path);
+    crate::comptime_gate::guard_read("fs::read_to_string", &path)?;
     match gossamer_runtime::sched_global::run_blocking("os-read-file-string", move || {
         os_std::read_file_to_string(&path)
     }) {
@@ -240,21 +242,25 @@ fn builtin_fs_remove_dir(args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_fs_is_file(args: &[Value]) -> RuntimeResult<Value> {
     let path = args.first().and_then(as_str).unwrap_or("");
+    crate::comptime_gate::guard_read("fs::is_file", path)?;
     Ok(Value::Bool(fs_std::is_file(path)))
 }
 
 fn builtin_fs_is_dir(args: &[Value]) -> RuntimeResult<Value> {
     let path = args.first().and_then(as_str).unwrap_or("");
+    crate::comptime_gate::guard_read("fs::is_dir", path)?;
     Ok(Value::Bool(fs_std::is_dir(path)))
 }
 
 fn builtin_fs_is_symlink(args: &[Value]) -> RuntimeResult<Value> {
     let path = args.first().and_then(as_str).unwrap_or("");
+    crate::comptime_gate::guard_read("fs::is_symlink", path)?;
     Ok(Value::Bool(fs_std::is_symlink(path)))
 }
 
 fn builtin_fs_file_size(args: &[Value]) -> RuntimeResult<Value> {
     let path = args.first().and_then(as_str).unwrap_or("");
+    crate::comptime_gate::guard_read("fs::file_size", path)?;
     let size = fs_std::file_size(path);
     Ok(Value::Int(i64::try_from(size).unwrap_or(i64::MAX)))
 }
@@ -264,6 +270,7 @@ fn builtin_fs_canonicalize(args: &[Value]) -> RuntimeResult<Value> {
         return Ok(err_variant("canonicalize: path argument must be a string"));
     };
     let path = path.to_string();
+    crate::comptime_gate::guard_read("fs::canonicalize", &path)?;
     match gossamer_runtime::sched_global::run_blocking("fs-canonicalize", move || {
         fs_std::canonicalize(&path)
     }) {
@@ -295,6 +302,7 @@ fn builtin_os_exists(args: &[Value]) -> RuntimeResult<Value> {
     let path = gossamer_runtime::comptime_paths::resolve(
         args.first().and_then(as_str).unwrap_or(""),
     );
+    crate::comptime_gate::guard_read("fs::exists", &path)?;
     Ok(Value::Bool(os_std::exists(&path)))
 }
 
@@ -331,6 +339,7 @@ fn builtin_os_read_dir(args: &[Value]) -> RuntimeResult<Value> {
     let Some(path) = args.first().and_then(as_str) else {
         return Ok(err_variant("read_dir: path argument must be a string"));
     };
+    crate::comptime_gate::guard_read("fs::read_dir", path)?;
     match os_std::read_dir(path) {
         Ok(names) => {
             let values: Vec<Value> = names.into_iter().map(|s| Value::String(s.into())).collect();
@@ -996,6 +1005,7 @@ fn builtin_fs_list_dir(args: &[Value]) -> RuntimeResult<Value> {
         return Ok(err_variant("fs::read_dir: path argument must be a string"));
     };
     let path = gossamer_runtime::comptime_paths::resolve(path);
+    crate::comptime_gate::guard_read("fs::read_dir", &path)?;
     let entries = match fs_std::read_dir(fs_std::decode_path(&path)) {
         Ok(es) => es,
         Err(e) => return Ok(err_variant(format!("{e}"))),
@@ -1043,6 +1053,7 @@ fn native_fs_walk_dir(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runt
     let mut stop_err: Option<Value> = None;
     let mut fault: Option<RuntimeError> = None;
     let root = gossamer_runtime::comptime_paths::resolve(root);
+    crate::comptime_gate::guard_read("fs::walk_dir", &root)?;
     let visit_result = fs_std::walk_dir(fs_std::decode_path(&root), |entry| {
         match dispatch.call_value(&visit, vec![dir_info_value(entry)]) {
             Ok(Value::Variant(v)) if v.name == "Err" => {

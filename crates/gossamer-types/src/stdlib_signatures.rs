@@ -2499,6 +2499,51 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         signature: "fn wait_timeout(pid: i64, ms: i64) -> i64",
     },
     StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "run",
+        signature: "fn run(policy: sandbox::Policy, argv: Vec<String>) -> Result<process::Output, errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "max_level",
+        signature: "fn max_level() -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "platform",
+        signature: "fn platform() -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "filesystem",
+        signature: "fn filesystem() -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "network_enforcement",
+        signature: "fn network_enforcement() -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "process_isolation",
+        signature: "fn process_isolation() -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "resource_limits",
+        signature: "fn resource_limits() -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "notes",
+        signature: "fn notes() -> Vec<String>",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "capabilities_json",
+        signature: "fn capabilities_json() -> String",
+    },
+    StdFunctionSignature {
         module_path: "std::os::signal",
         name: "on",
         signature: "fn on(signum: i64) -> os::signal::Notifier",

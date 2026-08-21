@@ -1233,6 +1233,21 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      fuel-enabled hosts such as the playground to stop unbounded\n\
                      programs. Reduce the work or fix the non-terminating loop.",
     ),
+    (
+        "GX0010",
+        "A `comptime` region reached a capability its compile-time policy\n\
+                     withholds. Compile-time evaluation runs with the privileges of\n\
+                     whoever started the compile, so `--comptime-io` bounds what it\n\
+                     may touch: `none` denies all I/O, `confined` (the default)\n\
+                     permits reads under the source tree and denies writes, process\n\
+                     spawn, network, and environment mutation, and `full` restores\n\
+                     unrestricted evaluation. A project pins its own posture with\n\
+                     `project.comptime-io` in `project.toml`; the toolchain takes\n\
+                     the more restrictive of the manifest and the command line, so a\n\
+                     manifest can tighten the posture and can never loosen it.\n\
+                     Move the work out of the comptime region, read a file from\n\
+                     inside the project, or pass `--comptime-io=full` deliberately.",
+    ),
 ];
 
 /// Returns the explanation text for `code`, or `None` when the code

@@ -31,6 +31,50 @@ pub(crate) struct Cli {
     /// Execute inline Gossamer source instead of running a file.
     #[arg(short = 'e', long = "eval", value_name = "STRING")]
     execute: Option<String>,
+    /// Capabilities a `comptime` region may reach while the program is
+    /// compiled.
+    ///
+    /// `none` denies all compile-time I/O, `confined` (the default)
+    /// permits reads under the source tree and denies writes, process
+    /// spawn, network, and environment mutation, and `full` restores
+    /// unrestricted evaluation. Resolved against `project.comptime-io`
+    /// by taking the more restrictive of the two.
+    #[arg(long = "comptime-io", global = true, value_enum, value_name = "LEVEL")]
+    comptime_io: Option<ComptimeIoArg>,
+    /// Compile `[rust-bindings]` inside an OS-native sandbox.
+    ///
+    /// Contains the Cargo invocation, every `build.rs` and proc macro
+    /// it runs, the linker, and every descendant. Applies to every
+    /// subcommand that compiles bindings - `build`, `check`, `doc`,
+    /// `repl`, `run`, and `test` - because a sandbox attached to one
+    /// of them would leave the other five open. It does not sandbox
+    /// your own program under `gos run`; build a policy with
+    /// `std::sandbox` for that.
+    #[arg(
+        long = "sandbox",
+        global = true,
+        value_enum,
+        value_name = "LEVEL",
+        num_args = 0..=1,
+        default_missing_value = "standard"
+    )]
+    sandbox: Option<SandboxLevelArg>,
+    /// Let the build phase reach the network, for a build that
+    /// genuinely needs it. The fetch phase always may.
+    #[arg(long = "sandbox-network", global = true)]
+    sandbox_network: bool,
+    /// Add a read-write grant to the build sandbox. Repeatable.
+    #[arg(long = "sandbox-rw", global = true, value_name = "PATH")]
+    sandbox_rw: Vec<PathBuf>,
+    /// Add a read-only grant to the build sandbox. Repeatable. A grant
+    /// never lifts a denial, so naming a credential path is refused
+    /// rather than honored.
+    #[arg(long = "sandbox-ro", global = true, value_name = "PATH")]
+    sandbox_ro: Vec<PathBuf>,
+    /// Print the compiled build-sandbox policy and the enforcement
+    /// mechanisms, then exit.
+    #[arg(long = "sandbox-explain", global = true)]
+    sandbox_explain: bool,
     /// Subcommand to dispatch; omit to start the REPL.
     #[command(subcommand)]
     command: Option<Command>,
@@ -696,6 +740,18 @@ enum Command {
 /// `Err` into a non-zero exit code with a styled `error:` prefix.
 pub(crate) fn run() -> ExitCode {
     let cli = parse_cli();
+    crate::comptime_fold::set_command_line_level(cli.comptime_io.map(ComptimeIoArg::level));
+    let sandbox = gossamer_driver::build_sandbox::BuildSandbox {
+        level: resolve_sandbox_level(cli.sandbox.map(SandboxLevelArg::level)),
+        network_in_build: cli.sandbox_network,
+        read_write: cli.sandbox_rw,
+        read_only: cli.sandbox_ro,
+        explain: cli.sandbox_explain,
+    };
+    if sandbox.explain {
+        return explain_build_sandbox(&sandbox);
+    }
+    gossamer_driver::build_sandbox::set(sandbox);
     match dispatch(cli.command, cli.verbose, cli.execute) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
@@ -703,6 +759,41 @@ pub(crate) fn run() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// The level the build sandbox runs at.
+///
+/// A project raises its own floor with `project.sandbox`; the command
+/// line raises it further. The stronger of the two wins, which is the
+/// opposite of the comptime rule and correct for the same reason: the
+/// build sandbox defends the machine running the build, so nobody -
+/// manifest or operator - should be able to lower what the other asked
+/// for.
+fn resolve_sandbox_level(command_line: Option<gossamer_sandbox::Level>) -> gossamer_sandbox::Level {
+    let from_manifest = crate::paths::project_context()
+        .manifest_result()
+        .and_then(Result::ok)
+        .and_then(|manifest| manifest.project.sandbox.clone())
+        .and_then(|text| gossamer_sandbox::Level::parse(&text));
+    command_line
+        .into_iter()
+        .chain(from_manifest)
+        .max()
+        .unwrap_or(gossamer_sandbox::Level::None)
+}
+
+/// Prints the compiled build-sandbox policy for both phases and
+/// exits, so a policy gap is visible before it breaks a build.
+fn explain_build_sandbox(request: &gossamer_driver::build_sandbox::BuildSandbox) -> ExitCode {
+    let root = crate::paths::find_project_root()
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let roots = gossamer_driver::build_sandbox::BuildRoots::discover(&root);
+    print!(
+        "{}",
+        gossamer_driver::build_sandbox::explain(request, &roots)
+    );
+    ExitCode::SUCCESS
 }
 
 /// Executes an unambiguous common `gos run` command without constructing
@@ -1445,6 +1536,58 @@ pub enum MessageFormat {
     /// One JSON object per diagnostic, single line, stable schema.
     /// See `gossamer_diagnostics::render_json`.
     Json,
+}
+
+/// Build-sandbox level selected by `--sandbox`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum SandboxLevelArg {
+    /// No sandbox. Today's behavior, and the default for this release.
+    None,
+    /// Environment allowlist, private temp, descriptor hygiene, tree
+    /// cleanup.
+    Basic,
+    /// OS-enforced filesystem policy and network denial, inherited by
+    /// every descendant.
+    Standard,
+    /// Process-table isolation and a reduced kernel surface. Fails
+    /// closed when the host cannot honor it.
+    Strict,
+}
+
+impl SandboxLevelArg {
+    /// The level this spelling selects.
+    fn level(self) -> gossamer_sandbox::Level {
+        use gossamer_sandbox::Level;
+        match self {
+            Self::None => Level::None,
+            Self::Basic => Level::Basic,
+            Self::Standard => Level::Standard,
+            Self::Strict => Level::Strict,
+        }
+    }
+}
+
+/// Compile-time capability posture selected by `--comptime-io`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum ComptimeIoArg {
+    /// No compile-time I/O at all.
+    None,
+    /// Reads under the source tree; everything else denied (default).
+    Confined,
+    /// Unrestricted compile-time evaluation.
+    Full,
+}
+
+impl ComptimeIoArg {
+    /// The policy level this spelling selects.
+    fn level(self) -> gossamer_runtime::comptime_policy::ComptimeIo {
+        use gossamer_runtime::comptime_policy::ComptimeIo;
+        match self {
+            Self::None => ComptimeIo::None,
+            Self::Confined => ComptimeIo::Confined,
+            Self::Full => ComptimeIo::Full,
+        }
+    }
 }
 
 /// Linker strategy. `Static` (Linux release) drives `rust-lld -static`

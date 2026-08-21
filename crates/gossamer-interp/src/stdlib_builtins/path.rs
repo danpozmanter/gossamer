@@ -199,6 +199,7 @@ pub(crate) fn builtin_path_matches(args: &[Value]) -> RuntimeResult<Value> {
 /// filesystem matches for a `*` / `?` / `[abc]` / `**` pattern.
 pub(crate) fn builtin_path_glob(args: &[Value]) -> RuntimeResult<Value> {
     let pattern = args.first().and_then(as_str).unwrap_or("");
+    crate::comptime_gate::guard_read("path::glob", pattern)?;
     match path_std::glob(pattern) {
         Ok(paths) => Ok(ok_variant(string_array(paths))),
         Err(e) => Ok(err_variant(e.to_string())),

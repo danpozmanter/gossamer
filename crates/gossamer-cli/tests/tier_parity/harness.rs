@@ -164,6 +164,11 @@ const SPECS: &[Spec] = &[
         ..spec("examples/cli_args.gos")
     },
     spec("feature-testing-examples/triple_quoted_strings.gos"),
+    // `std::sandbox`: the policy builder, the capability report, and a
+    // run under a level-`none` policy, which is what makes the fixture
+    // host-independent - every tier answers the same lines whatever the
+    // host can enforce.
+    spec("feature-testing-examples/sandbox.gos"),
     // Callback shorthands: a std free function named in value position
     // and a `$`-headed projection both stand for the closure that calls
     // them, so every tier sees the same closure.

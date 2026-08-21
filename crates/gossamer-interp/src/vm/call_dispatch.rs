@@ -6,7 +6,7 @@ impl Vm {
     pub fn call(&self, name: &str, args: Vec<Value>) -> RuntimeResult<Value> {
         let callee = self
             .lookup_global(name)
-            .ok_or_else(|| RuntimeError::UnresolvedName(name.to_string()))?;
+            .ok_or_else(|| self.unresolved(name))?;
         let interned = crate::value::intern_type_name(name);
         self.call_stack.borrow_mut().clear();
         self.call_stack
@@ -448,6 +448,8 @@ impl Vm {
         let struct_shape_handles = self.struct_shape_handles.borrow().clone();
         let jit_eager_names = Arc::clone(&self.jit_eager_names.borrow());
         let jit_cache_key = self.jit_cache_key.borrow().clone();
+        let comptime_gate = self.comptime_gate.get();
+        let comptime_root = gossamer_runtime::comptime_policy::Confined::root();
         crate::vm::goroutine::GoroutinePool::spawn(
             crate::vm::goroutine::pool(),
             Box::new(move || {
@@ -484,6 +486,16 @@ impl Vm {
                         ));
                     }
                     let vm = slot.as_mut().expect("THREAD_VM init");
+                    // Re-stamped per task: a pooled worker `Vm` outlives
+                    // the program it was built for, so the compile-time
+                    // policy travels with the spawn rather than the thread.
+                    vm.set_comptime_gate(comptime_gate);
+                    // The confinement root travels with the spawn, so a
+                    // compile-time goroutine reads under the same tree
+                    // the folding thread is held to.
+                    let _confinement = comptime_root
+                        .clone()
+                        .map(gossamer_runtime::comptime_policy::Confined::at_root);
                     task(vm);
                     vm.reset_after_task();
                 });
@@ -528,7 +540,7 @@ impl Vm {
             let outcome = match target {
                 SpawnTarget::Named(name) => match vm.lookup_global(&name) {
                     Some(global) => vm.apply(global, args),
-                    None => Err(RuntimeError::UnresolvedName(name)),
+                    None => Err(vm.unresolved(&name)),
                 },
                 SpawnTarget::Callable(callee) => vm.dispatch_call(&callee, args),
             };
@@ -602,7 +614,7 @@ impl Vm {
                     .globals
                     .get(name.as_str())
                     .cloned()
-                    .ok_or_else(|| RuntimeError::UnresolvedName(name.to_string()))?;
+                    .ok_or_else(|| self.unresolved(name))?;
                 self.apply(entry, args)
             }
             // Closures run natively via their compiled body chunk.

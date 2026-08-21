@@ -515,6 +515,30 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_io_write_str" => (&[types::I64, ptr_ty], Some(types::I64)),
         "gos_rt_io_close_writer" => (&[types::I64], None),
         "gos_rt_io_read_all" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_sandbox_policy_new" => (&[], Some(types::I64)),
+        "gos_rt_sandbox_policy_build_default" | "gos_rt_sandbox_policy_command_default" => {
+            (&[ptr_ty], Some(types::I64))
+        }
+        "gos_rt_sandbox_policy_read_write"
+        | "gos_rt_sandbox_policy_read_only"
+        | "gos_rt_sandbox_policy_deny"
+        | "gos_rt_sandbox_policy_env_allow"
+        | "gos_rt_sandbox_policy_level"
+        | "gos_rt_sandbox_policy_working_directory" => (&[types::I64, ptr_ty], Some(types::I64)),
+        "gos_rt_sandbox_policy_env_set" => (&[types::I64, ptr_ty, ptr_ty], Some(types::I64)),
+        "gos_rt_sandbox_policy_network" | "gos_rt_sandbox_policy_timeout" => {
+            (&[types::I64, types::I64], Some(types::I64))
+        }
+        "gos_rt_sandbox_policy_explain" => (&[types::I64], Some(ptr_ty)),
+        "gos_rt_sandbox_run" => (&[types::I64, ptr_ty], Some(types::I128)),
+        "gos_rt_sandbox_max_level"
+        | "gos_rt_sandbox_platform"
+        | "gos_rt_sandbox_filesystem"
+        | "gos_rt_sandbox_network_enforcement"
+        | "gos_rt_sandbox_process_isolation"
+        | "gos_rt_sandbox_resource_limits"
+        | "gos_rt_sandbox_capabilities_json"
+        | "gos_rt_sandbox_notes" => (&[], Some(ptr_ty)),
         "gos_rt_uuid_v4" => (&[], Some(ptr_ty)),
         "gos_rt_uuid_v7" => (&[], Some(ptr_ty)),
         "gos_rt_uuid_is_valid" => (&[ptr_ty], Some(types::I64)),

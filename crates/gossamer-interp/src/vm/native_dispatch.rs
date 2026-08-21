@@ -31,7 +31,7 @@ impl NativeDispatch for VmDispatch<'_> {
         let callee = self
             .vm
             .lookup_global(name)
-            .ok_or_else(|| RuntimeError::UnresolvedName(name.to_string()))?;
+            .ok_or_else(|| self.vm.unresolved(name))?;
         self.vm.apply(callee, args)
     }
 

@@ -1,5 +1,70 @@
 # Changelog
 
+## 0.55.0 - Compile-time capability policy and an OS-native process sandbox
+
+- `comptime` regions run under a capability policy. Compile-time evaluation
+  reached the whole host with the privileges of whoever typed `gos check`: a
+  `comptime { process::run(..) }` executed the command and printed `check: ok`,
+  and the `fs::write` twin wrote an arbitrary file. `--comptime-io` now bounds
+  it. `confined`, the default, permits reads under the source tree and denies
+  writes, process spawn, network, and environment mutation; `none` denies all
+  compile-time I/O; `full` is the explicit escape. A denied call reports
+  `GX0010` naming the builtin, the capability class, and the option that would
+  permit it.
+- `project.comptime-io` pins a project's posture. The toolchain takes the more
+  restrictive of the manifest and the command line, so a manifest can tighten
+  the posture permanently and can never loosen it.
+- A `confined` read is checked against the canonical path, so a symlink
+  pointing out of the source tree is denied at its target.
+- The editor anchors a comptime fold at the document being edited. A relative
+  path inside a `comptime` region read against the language server's working
+  directory, so an embedded asset resolved to a different file in the editor
+  than on the command line.
+- New crate `gossamer-sandbox`: one policy model, three OS backends. A policy
+  names read-only, read-write, and denied paths, a network verdict, an
+  environment allowlist, a temp-directory choice, and resource limits; a
+  backend compiles it into Landlock plus namespaces plus seccomp on Linux, a
+  Seatbelt profile on macOS, and a restricted token plus a job object plus an
+  `AppContainer` on Windows.
+- A level name means the same guarantee on every OS. `basic` is an environment
+  allowlist, a private temp, descriptor hygiene, and tree cleanup; `standard`
+  adds an OS-enforced filesystem policy and network denial inherited by every
+  descendant; `strict` adds process-table isolation and a reduced kernel
+  surface. A host that cannot meet a level reports it unavailable and names the
+  blocking primitive - macOS has no process-namespace equivalent, so it reports
+  `strict` unavailable rather than offering something weaker under the name.
+- Every path in a policy is canonicalized before it is enforced, so a symlink
+  out of the sandbox is denied at its target. A grant naming a path that does
+  not resolve is a policy error rather than a silently dropped rule.
+- The well-known daemon sockets and the loader environment variables
+  (`LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`, and their kin) are
+  denied under every policy and cannot be granted back.
+- A grant never lifts a denial. A read-only grant on a path the policy denies
+  is refused as a policy error rather than silently honored, and a denial
+  inside a grant is enforced on Linux by granting the directory's other
+  children, so the three backends agree on what a policy means.
+- `gos build --sandbox[=LEVEL]` compiles `[rust-bindings]` inside the sandbox,
+  and covers `check`, `doc`, `repl`, `run`, and `test` with it, because all six
+  reach the same Cargo invocation. The run is split: `cargo fetch` with the
+  network and no dependency code running, then `cargo build --offline` with the
+  network denied and every `build.rs`, proc macro, and linker invocation inside
+  the policy. `--sandbox-rw`, `--sandbox-ro`, `--sandbox-network`, and
+  `--sandbox-explain` adjust and inspect it; `project.sandbox` raises a
+  project's floor permanently. `--sandbox=none` is the default for this
+  release.
+- New module `std::sandbox`. A Gossamer program builds the same policy the
+  build sandbox uses - `Policy::new()` plus `read_write` / `read_only` / `deny` /
+  `network` / `env_allow` / `env_set` / `timeout` / `level` /
+  `working_directory`, or the `build_default` and `command_default` presets -
+  and runs a command under it with `sandbox::run(&policy, &argv)`, which
+  answers the same `{ stdout, stderr, code }` shape `process::run` does and
+  blocks off the scheduler rather than holding a worker for the length of the
+  child. The host capability report is a value, not a printout:
+  `max_level()`, `platform()`, `filesystem()`, `network_enforcement()`,
+  `process_isolation()`, `resource_limits()`, `notes()`, and
+  `capabilities_json()`, so a program branches on what the host honors instead
+  of assuming one operating system.
+
 ## 0.54.0 - Handler dispatch, concurrent request service, request-fault logging
 
 - `http::serve(addr, handler)` runs a plain `fn` handler. A named function

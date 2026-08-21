@@ -24,7 +24,7 @@ const FOLD_LABEL: &str = "comptime";
 /// failure is a VM failure, so the message usually already names one of
 /// these; carrying it through keeps the editor's code identical to the
 /// one `gos check` prints for the same source.
-const VM_CODES: [Code; 9] = [
+const VM_CODES: [Code; 10] = [
     Code("GX0001"),
     Code("GX0002"),
     Code("GX0003"),
@@ -34,6 +34,7 @@ const VM_CODES: [Code; 9] = [
     Code("GX0007"),
     Code("GX0008"),
     Code("GX0009"),
+    Code("GX0010"),
 ];
 
 /// Used when the evaluator's message names no code of its own: the
@@ -51,6 +52,7 @@ const FALLBACK_CODE: Code = Code("GX0007");
 /// lowers the program to HIR, which is only meaningful for a program
 /// that resolved and typechecked.
 pub(crate) fn fold_diagnostic(
+    uri: &str,
     augmented: &str,
     sf: &SourceFile,
     resolutions: &Resolutions,
@@ -61,9 +63,50 @@ pub(crate) fn fold_diagnostic(
     if !augmented.contains("comptime") {
         return None;
     }
+    install_level(uri);
+    let anchor = document_path(uri).map_or_else(
+        || FOLD_LABEL.to_string(),
+        |path| path.to_string_lossy().into_owned(),
+    );
     let program = gossamer_hir::lower_source_file(sf, resolutions, types, tcx);
-    let message = fold_on_vm_stack(program, tcx.clone(), augmented.to_string()).err()?;
+    let message = fold_on_vm_stack(program, tcx.clone(), augmented.to_string(), anchor).err()?;
     Some(to_diagnostic(&message, augmented, file))
+}
+
+/// Installs the compile-time capability level for a fold of the
+/// document at `uri`.
+///
+/// The editor has no command line to read, so the level is the
+/// `confined` default tightened by whatever the nearest
+/// `project.comptime-io` asks for. Keeping the editor on the same
+/// policy as `gos check` is what stops a file reading clean here and
+/// failing there.
+fn install_level(uri: &str) {
+    use gossamer_runtime::comptime_policy::{self, ComptimeIo};
+    let from_manifest = document_path(uri)
+        .and_then(|path| nearest_manifest(&path))
+        .and_then(|text| gossamer_pkg::Manifest::parse(&text).ok())
+        .and_then(|manifest| manifest.project.comptime_io.clone())
+        .and_then(|text| ComptimeIo::parse(&text));
+    comptime_policy::set_level(comptime_policy::resolve(None, from_manifest));
+}
+
+/// Filesystem path a `file://` document URI names.
+fn document_path(uri: &str) -> Option<std::path::PathBuf> {
+    let rest = uri.strip_prefix("file://")?;
+    Some(std::path::PathBuf::from(rest))
+}
+
+/// Text of the nearest `project.toml` at or above `path`.
+fn nearest_manifest(path: &std::path::Path) -> Option<String> {
+    let mut dir = path.parent()?;
+    loop {
+        let candidate = dir.join("project.toml");
+        if candidate.is_file() {
+            return std::fs::read_to_string(candidate).ok();
+        }
+        dir = dir.parent()?;
+    }
 }
 
 /// Runs the fold on a thread with the VM's native stack reserve, so the
@@ -75,11 +118,16 @@ fn fold_on_vm_stack(
     program: gossamer_hir::HirProgram,
     tcx: TyCtxt,
     augmented: String,
+    anchor: String,
 ) -> Result<String, String> {
     std::thread::Builder::new()
         .name("gos-lsp-comptime".to_string())
         .stack_size(gossamer_interp::VM_THREAD_STACK_BYTES)
-        .spawn(move || gossamer_interp::fold_into_source(&program, tcx, &augmented, FOLD_LABEL))
+        .spawn(move || {
+            gossamer_interp::fold_into_source_anchored(
+                &program, tcx, &augmented, FOLD_LABEL, &anchor,
+            )
+        })
         .map_err(|err| format!("comptime evaluation could not start: {err}"))?
         .join()
         .unwrap_or_else(|_| Err("comptime evaluation panicked".to_string()))
@@ -91,8 +139,9 @@ fn fold_on_vm_stack(
     program: gossamer_hir::HirProgram,
     tcx: TyCtxt,
     augmented: String,
+    anchor: String,
 ) -> Result<String, String> {
-    gossamer_interp::fold_into_source(&program, tcx, &augmented, FOLD_LABEL)
+    gossamer_interp::fold_into_source_anchored(&program, tcx, &augmented, FOLD_LABEL, &anchor)
 }
 
 /// Turns the fold's `comptime:LINE:COL: message` string into a located

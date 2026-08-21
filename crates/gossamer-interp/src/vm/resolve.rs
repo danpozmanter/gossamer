@@ -6,7 +6,7 @@ impl Vm {
         let entry = self
             .globals
             .get(name)
-            .ok_or_else(|| RuntimeError::UnresolvedName(name.to_string()))?;
+            .ok_or_else(|| self.unresolved(name))?;
         match entry {
             Global::Value(value) => Ok(value.clone()),
             Global::MutStatic(cell) => Ok(cell.lock().clone()),

@@ -124,6 +124,7 @@ pub(crate) fn builtin_bufio_read_to_string(args: &[Value]) -> RuntimeResult<Valu
         Err(v) => return Ok(v),
     };
     let read_path = path.clone();
+    crate::comptime_gate::guard_read("bufio::read_to_string", &read_path)?;
     match gossamer_runtime::sched_global::run_blocking("bufio-read-to-string", move || {
         let file = std::fs::File::open(&read_path)?;
         let mut reader = bufio_std::Reader::new(file);
@@ -149,6 +150,7 @@ pub(crate) fn builtin_bufio_read_lines_of(args: &[Value]) -> RuntimeResult<Value
         Ok(s) => s,
         Err(v) => return Ok(v),
     };
+    crate::comptime_gate::guard_read("bufio::read_lines_of", &path)?;
     match gossamer_runtime::sched_global::run_blocking("bufio-read-lines", move || {
         std::fs::read_to_string(path)
     }) {

@@ -143,6 +143,13 @@ pub struct Vm {
     /// dynamically assembled method spellings use [`Self::qualified_names`]
     /// and are not inserted here.
     pub(crate) globals: Arc<rustc_hash::FxHashMap<&'static str, Global>>,
+    /// Whether builtin resolution on this `Vm` is subject to the
+    /// compile-time capability policy. Set on the throwaway `Vm` a
+    /// comptime fold builds, and inherited by any goroutine that fold
+    /// spawns, so a compile-time region cannot reach a capability its
+    /// `--comptime-io` level withholds by taking a detour through a
+    /// method spelling or another thread.
+    pub(crate) comptime_gate: Cell<bool>,
     /// Process-shared prelude of built-in callables - built once
     /// from a `OnceLock` and `Arc::clone`d into every Vm at
     /// construction. Pre-lazy: every `Vm::new` cloned all ~330
@@ -1419,6 +1426,9 @@ impl Vm {
         // guess: honour it as written.
         if name.contains("::") {
             return self.lookup_global(name);
+        }
+        if self.comptime_denial(name).is_some() {
+            return None;
         }
         // The prelude alone, never the program's own globals: a user function
         // sharing a builtin's bare name is a free function, and a receiver

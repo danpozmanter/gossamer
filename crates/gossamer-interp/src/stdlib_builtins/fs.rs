@@ -296,6 +296,7 @@ pub(crate) fn builtin_fs_file_open(args: &[Value]) -> RuntimeResult<Value> {
         Err(v) => return Ok(v),
     };
     let path_context = path.clone();
+    crate::comptime_gate::guard_read("fs::open", &path_context)?;
     match gossamer_runtime::sched_global::run_blocking("fs-file-open", move || {
         std::fs::File::open(path)
     }) {
@@ -735,6 +736,7 @@ pub(crate) fn builtin_fs_file_close(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_fs_metadata_raw(args: &[Value]) -> RuntimeResult<Value> {
     let path = args.first().and_then(as_str).unwrap_or("");
+    crate::comptime_gate::guard_read("fs::metadata", path)?;
     match std::fs::metadata(path) {
         Ok(meta) => {
             let modified = meta
@@ -757,6 +759,7 @@ pub(crate) fn builtin_fs_metadata_raw(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_fs_metadata(args: &[Value]) -> RuntimeResult<Value> {
     let path = args.first().and_then(as_str).unwrap_or("");
+    crate::comptime_gate::guard_read("fs::metadata", path)?;
     match std::fs::metadata(path) {
         Ok(meta) => {
             let fields = vec![

@@ -660,6 +660,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/weak_into_strong_cycle.gos",
         ],
     ),
+    ("std::sandbox", &["feature-testing-examples/sandbox.gos"]),
     ("std::slog", &["feature-testing-examples/stdlib_slog.gos"]),
     (
         "std::sort",

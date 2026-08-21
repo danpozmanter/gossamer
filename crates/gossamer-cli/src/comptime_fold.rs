@@ -13,7 +13,39 @@
 //! to the core. Programs with no `comptime` spelling skip the whole
 //! pass.
 
+use std::path::Path;
+use std::sync::OnceLock;
+
 use anyhow::{Result, anyhow};
+use gossamer_runtime::comptime_policy::{self, ComptimeIo};
+
+/// The level `--comptime-io` asked for, or `None` when the flag was
+/// not given. Written once by the argument parser before any command
+/// runs.
+static COMMAND_LINE_LEVEL: OnceLock<Option<ComptimeIo>> = OnceLock::new();
+
+/// Records what `--comptime-io` asked for.
+pub(crate) fn set_command_line_level(level: Option<ComptimeIo>) {
+    let _ = COMMAND_LINE_LEVEL.set(level);
+}
+
+/// Resolves the effective compile-time capability level for a fold of
+/// `file_label` and installs it.
+///
+/// The manifest may tighten the command line's posture and may never
+/// loosen it, because the manifest is written by the party the policy
+/// defends against.
+fn install_level(file_label: &str) -> ComptimeIo {
+    let from_manifest = crate::paths::project_context_for_entry(Path::new(file_label))
+        .manifest_result()
+        .and_then(Result::ok)
+        .and_then(|manifest| manifest.project.comptime_io.clone())
+        .and_then(|text| ComptimeIo::parse(&text));
+    let level =
+        comptime_policy::resolve(COMMAND_LINE_LEVEL.get().copied().flatten(), from_manifest);
+    comptime_policy::set_level(level);
+    level
+}
 
 /// Evaluates every comptime region in `augmented` (autoderive-augmented
 /// source) and returns the source with each region replaced by its
@@ -26,6 +58,7 @@ pub(crate) fn fold_comptime(augmented: String, file_label: &str) -> Result<Strin
     if !augmented.contains("comptime") {
         return Ok(augmented);
     }
+    install_level(file_label);
 
     // Comptime evaluation runs the bytecode VM during compilation, whose
     // native dispatch and in-process JIT grow the real machine stack just

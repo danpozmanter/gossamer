@@ -21,6 +21,7 @@ mod bytecode;
 mod cast;
 mod compile;
 mod comptime;
+mod comptime_gate;
 pub mod external_natives;
 mod flag_set_builtins;
 #[cfg(feature = "fuel")]
@@ -154,7 +155,7 @@ pub fn flush_runtime_stdout() {
     }
 }
 pub use bytecode::{FnChunk, InstructionLocation, Op, SourceLocation};
-pub use comptime::fold_into_source;
+pub use comptime::{fold_into_source, fold_into_source_anchored};
 pub use external_natives::{
     clear_external_natives_for_test, external_natives_snapshot, register_external_native,
 };

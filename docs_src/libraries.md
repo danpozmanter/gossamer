@@ -34,7 +34,7 @@ version = "0.1.0"
 # release tag. `gos new` stamps the toolchain that scaffolded the
 # project; an older toolchain refuses to build it rather than failing
 # later on a surface it does not have.
-gossamer-version = "v0.54.0"
+gossamer-version = "v0.55.0"
 authors = ["Leslie Tungsten <ltungsten@example.com>"]
 license = "Apache-2.0"
 

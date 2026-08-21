@@ -21,6 +21,7 @@ gossamer-lint = { workspace = true }
 gossamer-parse = { workspace = true }
 gossamer-pkg = { workspace = true }
 gossamer-resolve = { workspace = true }
+gossamer-runtime = { workspace = true }
 gossamer-std = { workspace = true }
 gossamer-types = { workspace = true }
 unicode-ident = { workspace = true }

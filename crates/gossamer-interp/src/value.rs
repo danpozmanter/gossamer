@@ -3805,6 +3805,11 @@ pub enum RuntimeError {
     #[cfg(feature = "fuel")]
     #[error("error[GX0009]: execution limit reached - the program ran too long")]
     FuelExhausted,
+    /// A compile-time region reached a capability its `--comptime-io`
+    /// level withholds. Carries the rendered denial, which names the
+    /// builtin, the capability class, and the option that permits it.
+    #[error("{0}")]
+    ComptimeDenied(String),
 }
 
 impl RuntimeError {
@@ -3824,6 +3829,7 @@ impl RuntimeError {
             Self::StackOverflow(_) => "GX0008",
             #[cfg(feature = "fuel")]
             Self::FuelExhausted => "GX0009",
+            Self::ComptimeDenied(_) => "GX0010",
         }
     }
 }

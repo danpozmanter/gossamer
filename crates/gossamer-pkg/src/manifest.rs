@@ -97,6 +97,18 @@ pub struct ProjectTable {
     /// once that canonical formatting is part of passing rather than a
     /// separate step someone has to remember.
     pub enforce_format: bool,
+    /// `project.comptime-io` - the capability posture compile-time
+    /// evaluation runs under, spelled `none`, `confined`, or `full`.
+    /// The toolchain resolves it against `--comptime-io` and takes the
+    /// more restrictive of the two, so a manifest may tighten the
+    /// posture and may never loosen it.
+    pub comptime_io: Option<String>,
+    /// `project.sandbox` - the level `[rust-bindings]` compilation
+    /// runs at, spelled `none`, `basic`, `standard`, or `strict`. The
+    /// toolchain takes the more restrictive of the manifest and
+    /// `--sandbox`, so a project may raise its own floor and a fetched
+    /// dependency's manifest can never lower it.
+    pub sandbox: Option<String>,
 }
 
 /// One entry in `[dependencies]`.
@@ -391,6 +403,29 @@ impl Manifest {
             .get("enforce-format")
             .and_then(toml::Value::as_bool)
             .unwrap_or(false);
+        let comptime_io = optional_toml_str(project, "comptime-io", "project.comptime-io")?;
+        if let Some(level) = &comptime_io {
+            if !matches!(level.as_str(), "none" | "confined" | "full") {
+                return Err(ManifestError::Malformed {
+                    line_no: 0,
+                    line: format!(
+                        "project.comptime-io must be one of `none`, `confined`, `full`; found `{level}`"
+                    ),
+                });
+            }
+        }
+        let sandbox = optional_toml_str(project, "sandbox", "project.sandbox")?;
+        if let Some(level) = &sandbox {
+            if !matches!(level.as_str(), "none" | "basic" | "standard" | "strict") {
+                return Err(ManifestError::Malformed {
+                    line_no: 0,
+                    line: format!(
+                        "project.sandbox must be one of `none`, `basic`, `standard`, \
+                         `strict`; found `{level}`"
+                    ),
+                });
+            }
+        }
 
         let mut deps: BTreeMap<String, DependencySpec> = BTreeMap::new();
         let mut dep_modules: BTreeMap<String, String> = BTreeMap::new();
@@ -471,6 +506,8 @@ impl Manifest {
                 output,
                 entry,
                 enforce_format,
+                comptime_io,
+                sandbox,
             },
             dependencies: deps,
             dependency_modules: dep_modules,

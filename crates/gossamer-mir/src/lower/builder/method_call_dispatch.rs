@@ -992,6 +992,19 @@ impl<'a> Builder<'a> {
             // the HTTP stream's line reader.
             "gos_rt_child_read_line" | "gos_rt_stream_next_line" => self.option_string_adt_ty(),
             "gos_rt_stream_read_line" => self.result_i64_error_adt_ty(),
+            // Every `sandbox::Policy` builder answers the policy as it
+            // now stands, so the dest holds the handle's own Adt and a
+            // chained call finds the sandbox kind again.
+            "gos_rt_sandbox_policy_read_write"
+            | "gos_rt_sandbox_policy_read_only"
+            | "gos_rt_sandbox_policy_deny"
+            | "gos_rt_sandbox_policy_network"
+            | "gos_rt_sandbox_policy_env_allow"
+            | "gos_rt_sandbox_policy_env_set"
+            | "gos_rt_sandbox_policy_timeout"
+            | "gos_rt_sandbox_policy_level"
+            | "gos_rt_sandbox_policy_working_directory" => self.sandbox_policy_ty(),
+            "gos_rt_sandbox_policy_explain" => self.tcx.string_ty(),
             "gos_rt_child_read_stdout" => self.tcx.string_ty(),
             "gos_rt_child_write_stdin" | "gos_rt_child_kill" => self.tcx.bool_ty(),
             // `Child::wait() -> Result<i64, errors::Error>`.
@@ -1072,6 +1085,17 @@ impl<'a> Builder<'a> {
             | "gos_rt_http_client_delete"
             | "gos_rt_http_client_head" => Some("http::Request"),
             "gos_rt_arr_iter" => Some("vec::Iter"),
+            // Every sandbox builder answers the policy as it now
+            // stands, so the chain's next method finds the same kind.
+            "gos_rt_sandbox_policy_read_write"
+            | "gos_rt_sandbox_policy_read_only"
+            | "gos_rt_sandbox_policy_deny"
+            | "gos_rt_sandbox_policy_network"
+            | "gos_rt_sandbox_policy_env_allow"
+            | "gos_rt_sandbox_policy_env_set"
+            | "gos_rt_sandbox_policy_timeout"
+            | "gos_rt_sandbox_policy_level"
+            | "gos_rt_sandbox_policy_working_directory" => Some("sandbox::Policy"),
             _ => None,
         };
         if let Some(rk) = dest_kind {
