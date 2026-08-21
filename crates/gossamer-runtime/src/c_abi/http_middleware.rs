@@ -576,7 +576,7 @@ pub fn apply_with_request(
         | middleware_kind::BASIC_AUTH
         | middleware_kind::BEARER_AUTH => {}
         middleware_kind::HSTS => {
-            set_header(&mut parts.headers, "Strict-Transport-Security", config)
+            set_header(&mut parts.headers, "Strict-Transport-Security", config);
         }
         middleware_kind::CACHE_CONTROL => set_header(&mut parts.headers, "Cache-Control", config),
         middleware_kind::COMPRESS_GZIP => {

@@ -2,7 +2,7 @@
 
 Status: experimental
 
-HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit.
+HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit. Write a handler as a cohort and an arena: `cohort { }` joins or cancels every goroutine the request spawned before the response is written, and its first child failure becomes the block's `Err` for the handler to turn into a status; `arena { }` bump-allocates what the request builds and frees it wholesale on every exit path, with escape checked at compile time. Dependency injection is closure capture - build the router from closures capturing the pool and the configuration.
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 

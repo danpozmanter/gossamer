@@ -341,6 +341,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/from_json_infer.gos",
             "feature-testing-examples/fs_file_positional_io.gos",
             "feature-testing-examples/fs_temp_file_lifecycle.gos",
+            "feature-testing-examples/httptest_record_and_clock.gos",
             "feature-testing-examples/jit_admission_shapes.gos",
             "feature-testing-examples/json_parse_jit.gos",
             "feature-testing-examples/method_name_collision.gos",
@@ -387,6 +388,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
         &[
             "examples/file_io.gos",
             "examples/list_dir.gos",
+            "feature-testing-examples/comptime_embedded_assets.gos",
             "feature-testing-examples/fs_dir_ops.gos",
             "feature-testing-examples/fs_error_text.gos",
             "feature-testing-examples/fs_file_positional_io.gos",
@@ -442,6 +444,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/http_session.gos",
             "feature-testing-examples/http_session_roundtrip.gos",
             "feature-testing-examples/http_surface.gos",
+            "feature-testing-examples/httptest_record_and_clock.gos",
             "feature-testing-examples/httptest_static_server.gos",
             "feature-testing-examples/option_none_variant_collision.gos",
             "feature-testing-examples/router_closure_route.gos",
@@ -463,6 +466,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
         "std::httptest",
         &[
             "examples/http_diagnostics_transport.gos",
+            "feature-testing-examples/httptest_record_and_clock.gos",
             "feature-testing-examples/httptest_static_server.gos",
         ],
     ),
@@ -539,6 +543,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
         "std::net",
         &[
             "feature-testing-examples/net_ip.gos",
+            "feature-testing-examples/net_smtp_send.gos",
             "feature-testing-examples/net_tcp_echo.gos",
             "feature-testing-examples/net_tls_client.gos",
             "feature-testing-examples/net_tls_client_modes.gos",
@@ -546,6 +551,10 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
         ],
     ),
     ("std::net::netip", &["examples/netip_demo.gos"]),
+    (
+        "std::net::smtp",
+        &["feature-testing-examples/net_smtp_send.gos"],
+    ),
     ("std::net::url", &["examples/url_escape_demo.gos"]),
     (
         "std::option",
@@ -713,6 +722,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/goroutine_shared_map.gos",
             "feature-testing-examples/mutex_poison_recovery.gos",
             "feature-testing-examples/mutex_vs_channel_counter.gos",
+            "feature-testing-examples/net_smtp_send.gos",
             "feature-testing-examples/net_tcp_echo.gos",
             "feature-testing-examples/net_tls_client.gos",
             "feature-testing-examples/net_tls_client_modes.gos",
@@ -824,6 +834,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/flag_cell_duration.gos",
             "feature-testing-examples/go_stdlib_spawn.gos",
             "feature-testing-examples/goroutine_panic_isolation.gos",
+            "feature-testing-examples/httptest_record_and_clock.gos",
             "feature-testing-examples/instant_methods.gos",
             "feature-testing-examples/mut_ref_container_params.gos",
             "feature-testing-examples/mutex_poison_recovery.gos",

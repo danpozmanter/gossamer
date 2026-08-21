@@ -50,6 +50,7 @@
   {"name":"std::mime","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::net","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::net::netip","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
+  {"name":"std::net::smtp","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::net::url","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::option","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::os","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},

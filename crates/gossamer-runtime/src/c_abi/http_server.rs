@@ -710,7 +710,7 @@ trait HttpIo {
     /// The socket behind this transport, for a peer-liveness peek. `None`
     /// where there is no descriptor to peek - a TLS session's plaintext is
     /// not the wire, and an in-memory transport has no peer at all.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn peer_socket(&self) -> Option<&TcpStream> {
         None
     }
@@ -727,7 +727,7 @@ impl HttpIo for BlockingTcpConn {
     fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
         std::io::Write::write_all(&mut self.0, buf)
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn peer_socket(&self) -> Option<&TcpStream> {
         Some(&self.0)
     }
@@ -912,7 +912,7 @@ fn handle_http_conn_limited<C: HttpIo>(
             // A peer that goes away while the handler runs cancels the
             // request's context, so work it asked for stops instead of
             // being paid for after it left.
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             let _peer_watch = conn
                 .peer_socket()
                 .and_then(|socket| watch_for_disconnect(socket, scratch.request.context));
@@ -1008,7 +1008,19 @@ fn report_request_error(result: i128, req: &GosHttpRequest) {
     );
 }
 
-/// Whether the peer closed its side of `fd`, by a zero-length peek.
+/// The raw socket a peer probe reads from, as each platform names it.
+#[cfg(unix)]
+pub type RawPeerSocket = std::os::fd::RawFd;
+
+/// The raw socket a peer probe reads from, as each platform names it.
+#[cfg(windows)]
+pub type RawPeerSocket = std::os::windows::io::RawSocket;
+
+/// The raw socket a peer probe reads from, as each platform names it.
+#[cfg(not(any(unix, windows)))]
+pub type RawPeerSocket = i32;
+
+/// Whether the peer closed its side of `socket`, by a zero-length peek.
 ///
 /// `MSG_PEEK` leaves whatever is queued in place, so a pipelined request
 /// still arrives intact, and `MSG_DONTWAIT` keeps the probe from blocking
@@ -1018,13 +1030,13 @@ fn report_request_error(result: i128, req: &GosHttpRequest) {
 #[cfg(unix)]
 #[allow(unsafe_code)]
 #[must_use]
-pub fn peer_is_gone(fd: std::os::fd::RawFd) -> bool {
+pub fn peer_is_gone(socket: RawPeerSocket) -> bool {
     let mut probe = [0u8; 1];
-    // SAFETY: `fd` is a live socket owned by the caller for the duration
-    // of the call, and the buffer outlives it.
+    // SAFETY: `socket` is a live socket owned by the caller for the
+    // duration of the call, and the buffer outlives it.
     let seen = unsafe {
         libc::recv(
-            fd,
+            socket,
             probe.as_mut_ptr().cast(),
             1,
             libc::MSG_PEEK | libc::MSG_DONTWAIT,
@@ -1033,9 +1045,54 @@ pub fn peer_is_gone(fd: std::os::fd::RawFd) -> bool {
     seen == 0
 }
 
-#[cfg(not(unix))]
+/// Whether the peer closed its side of `socket`, by a zero-length peek.
+///
+/// Winsock has no `MSG_DONTWAIT`, and putting the socket in non-blocking
+/// mode would change it for the connection thread too, so readiness comes
+/// from a `select` with a zero timeout instead: a socket that is not
+/// readable has neither data nor an end-of-stream waiting, and a readable
+/// one answers the `MSG_PEEK` immediately without consuming the byte.
+#[cfg(windows)]
+#[allow(unsafe_code)]
 #[must_use]
-pub fn peer_is_gone(_fd: i32) -> bool {
+pub fn peer_is_gone(socket: RawPeerSocket) -> bool {
+    use windows_sys::Win32::Networking::WinSock::{FD_SET, MSG_PEEK, TIMEVAL, recv, select};
+
+    let handle = socket as windows_sys::Win32::Networking::WinSock::SOCKET;
+    let mut readable = FD_SET {
+        fd_count: 1,
+        fd_array: [0; 64],
+    };
+    readable.fd_array[0] = handle;
+    let immediate = TIMEVAL {
+        tv_sec: 0,
+        tv_usec: 0,
+    };
+    // SAFETY: `socket` is a live socket owned by the caller for the
+    // duration of the call, and both structures outlive it. Winsock
+    // ignores `nfds`.
+    let ready = unsafe {
+        select(
+            0,
+            &raw mut readable,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &raw const immediate,
+        )
+    };
+    if ready <= 0 {
+        return false;
+    }
+    let mut probe = [0u8; 1];
+    // SAFETY: as above; the probe buffer outlives the call and
+    // `MSG_PEEK` leaves whatever is queued in place.
+    let seen = unsafe { recv(handle, probe.as_mut_ptr(), 1, MSG_PEEK) };
+    seen == 0
+}
+
+#[cfg(not(any(unix, windows)))]
+#[must_use]
+pub fn peer_is_gone(_socket: RawPeerSocket) -> bool {
     false
 }
 
@@ -1047,14 +1104,21 @@ pub fn peer_is_gone(_fd: i32) -> bool {
 /// a byte, so a pipelined successor still arrives intact. A client that
 /// aborts therefore stops the work it asked for instead of paying for it
 /// to finish.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn watch_for_disconnect(stream: &TcpStream, ctx: usize) -> Option<DisconnectWatch> {
-    use std::os::fd::AsRawFd;
-
     if ctx == 0 {
         return None;
     }
-    let fd = stream.as_raw_fd();
+    #[cfg(unix)]
+    let socket = {
+        use std::os::fd::AsRawFd;
+        stream.as_raw_fd()
+    };
+    #[cfg(windows)]
+    let socket = {
+        use std::os::windows::io::AsRawSocket;
+        stream.as_raw_socket()
+    };
     let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stop = std::sync::Arc::clone(&done);
     let handle = std::thread::Builder::new()
@@ -1064,7 +1128,7 @@ fn watch_for_disconnect(stream: &TcpStream, ctx: usize) -> Option<DisconnectWatc
                 // MSG_PEEK leaves the byte queued; MSG_DONTWAIT keeps the
                 // probe from blocking on a peer that is merely quiet.
                 // Zero means the peer closed its side.
-                if peer_is_gone(fd) {
+                if peer_is_gone(socket) {
                     crate::c_abi::context::close_request_context(ctx);
                     return;
                 }
@@ -1078,17 +1142,14 @@ fn watch_for_disconnect(stream: &TcpStream, ctx: usize) -> Option<DisconnectWatc
     })
 }
 
-#[cfg(not(unix))]
-fn watch_for_disconnect(_stream: &TcpStream, _ctx: usize) -> Option<DisconnectWatch> {
-    None
-}
-
 /// Stops the peer watch when the request ends.
+#[cfg(any(unix, windows))]
 struct DisconnectWatch {
     done: std::sync::Arc<std::sync::atomic::AtomicBool>,
     handle: Option<std::thread::JoinHandle<()>>,
 }
 
+#[cfg(any(unix, windows))]
 impl Drop for DisconnectWatch {
     fn drop(&mut self) {
         self.done.store(true, Ordering::Release);

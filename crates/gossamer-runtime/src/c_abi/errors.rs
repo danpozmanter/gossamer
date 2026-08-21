@@ -128,6 +128,7 @@ pub unsafe extern "C" fn gos_rt_error_message(err: *const GosError) -> *mut c_ch
 
 /// The colon-joined cause chain of `err` as Rust text, for a runtime
 /// caller that already holds the error pointer and reports it itself.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn error_chain_text(err: *const GosError) -> String {
     let mut text = String::new();
     let mut cur = err;

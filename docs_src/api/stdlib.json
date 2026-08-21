@@ -5668,7 +5668,7 @@
       "name": "std::http::Request",
       "kind": "type",
       "signature": null,
-      "description": "HTTP request value passed to a handler.",
+      "description": "HTTP request value passed to a handler. Fields: `method`, `path`, `query`, `query_pairs`, `headers`, `body`, `raw_body`, `peer_addr`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -5706,7 +5706,7 @@
       "name": "std::http::ResponseStream",
       "kind": "type",
       "signature": null,
-      "description": "Streaming response body from `http::stream`; `next_line` / `next_chunk`, consumed by `Response::stream`.",
+      "description": "A streaming response body. `http::stream` produces one over an upstream response, read with `next_line` / `next_chunk`; `ResponseStream::new()` opens one the handler writes itself, with `write(text)` and `write_bytes(bytes)` answering the queued byte count (or -1 once closed), `is_open()` saying whether the client is still there, and `close()` ending the body. Either kind is consumed by `Response::stream(status, content_type, body)` - write from a goroutine and the handler answers immediately while the bytes are framed as they arrive.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -5725,7 +5725,7 @@
       "name": "std::http::Server",
       "kind": "type",
       "signature": null,
-      "description": "HTTP server bound to a TCP listener.",
+      "description": "A configured server. `http::serve(addr, handler)` keeps every default; build a `Server` when a deployment needs its own budgets, its bound address read back, or a shutdown it drives. Setters chain and answer the server: `read_header_timeout_ms`, `read_body_timeout_ms`, `write_timeout_ms`, `idle_timeout_ms`, `request_timeout_ms`, `max_header_bytes`, `max_body_bytes`, `max_connections`, `server_name`. Then `listen(addr) -> Result<(), Error>` binds - so `addr() -> String` reads back a port-0 assignment before `serve(handler)` blocks - and `shutdown(deadline_ms) -> bool` stops accepting and waits for in-flight requests, answering whether the drain finished.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -6211,44 +6211,6 @@
       "limits": [],
       "cookbook_tags": [],
       "doc_anchor": "docs_src/stdlib.md#stdhttp",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-http-health-Health",
-      "name": "std::http::health::Health",
-      "kind": "type",
-      "signature": null,
-      "description": "Aggregates a set of named probes into a single status.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdhttphealth",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-http-health-Probe",
-      "name": "std::http::health::Probe",
-      "kind": "trait",
-      "signature": null,
-      "description": "One health check returning Ok or Err with a short message.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdhttphealth",
       "example_id": null,
       "reference_status": "catalog_only"
     },
@@ -7089,25 +7051,6 @@
       "reference_status": "catalog_only"
     },
     {
-      "id": "std-http-query-Query",
-      "name": "std::http::query::Query",
-      "kind": "type",
-      "signature": null,
-      "description": "Parsed query string with typed get / get_all / contains.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdhttpquery",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
       "id": "std-http-request",
       "name": "std::http::request",
       "kind": "function",
@@ -7317,101 +7260,6 @@
       "reference_status": "catalog_only"
     },
     {
-      "id": "std-http-session-SerializationMode",
-      "name": "std::http::session::SerializationMode",
-      "kind": "type",
-      "signature": null,
-      "description": "Session payload encoding: Json or Bincode.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdhttpsession",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-http-session-Session",
-      "name": "std::http::session::Session",
-      "kind": "type",
-      "signature": null,
-      "description": "Per-request session view; mutations persist on response.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdhttpsession",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-http-session-SessionConfig",
-      "name": "std::http::session::SessionConfig",
-      "kind": "type",
-      "signature": null,
-      "description": "Cookie name, domain, signing key, serialization mode.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdhttpsession",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-http-session-SessionStore",
-      "name": "std::http::session::SessionStore",
-      "kind": "trait",
-      "signature": null,
-      "description": "Backend interface: load / save / delete by session id.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdhttpsession",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-http-session-SignedCookieStore",
-      "name": "std::http::session::SignedCookieStore",
-      "kind": "type",
-      "signature": null,
-      "description": "Cookie-backed store with HMAC signature; no server state.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdhttpsession",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
       "id": "std-http-session-sign",
       "name": "std::http::session::sign",
       "kind": "function",
@@ -7560,44 +7408,6 @@
       "limits": [],
       "cookbook_tags": [],
       "doc_anchor": "docs_src/stdlib.md#stdhttpsse",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-http-state-AppState",
-      "name": "std::http::state::AppState",
-      "kind": "type",
-      "signature": null,
-      "description": "TypeMap of Arc<T> values shared across handlers.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdhttpstate",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-http-state-State",
-      "name": "std::http::state::State",
-      "kind": "type",
-      "signature": null,
-      "description": "Newtype wrapper Arc<T> for ergonomic handler arguments.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdhttpstate",
       "example_id": null,
       "reference_status": "catalog_only"
     },
@@ -7982,11 +7792,30 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-httptest-record",
+      "name": "std::httptest::record",
+      "kind": "function",
+      "signature": "fn record(handler: http::Handler, method: String, path: String, body: String) -> Result<http::Response, errors::Error>",
+      "description": "`record(handler, method, path, body) -> Result<Response, Error>` - calls `handler` with a request built in memory and answers its response. No socket, no port, no accept loop.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhttptest",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-httptest-server",
       "name": "std::httptest::server",
       "kind": "function",
       "signature": "fn server(status: i64, body: String) -> String",
-      "description": "server(status, body) -> String: starts an isolated loopback static-response server and returns its http:// base URL. Use http::get or http::Client as the test client. The server is test-process scoped and stops when that process exits.",
+      "description": "server(status, body) -> String: starts an isolated loopback static-response server and returns its http:// base URL. Use http::get or http::Client as the test client. The server is test-process scoped and stops when that process exits. For a programmable server, build an `http::Server` over a `Router` and bind port 0.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -9521,68 +9350,11 @@
       "reference_status": "catalog_only"
     },
     {
-      "id": "std-jwt-Alg",
-      "name": "std::jwt::Alg",
-      "kind": "type",
-      "signature": null,
-      "description": "Signing algorithm: HS256 / HS384 / HS512 / ES256 / EdDSA.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdjwt",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-jwt-Claims",
-      "name": "std::jwt::Claims",
-      "kind": "type",
-      "signature": null,
-      "description": "Standard registered claims plus a free-form custom map.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdjwt",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-jwt-Header",
-      "name": "std::jwt::Header",
-      "kind": "type",
-      "signature": null,
-      "description": "JWS / JWT header (alg, kid, typ).",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdjwt",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-jwt-VerifyOpts",
-      "name": "std::jwt::VerifyOpts",
-      "kind": "type",
-      "signature": null,
-      "description": "Expected issuer / audience / clock leeway used by verify.",
+      "id": "std-jwt-header",
+      "name": "std::jwt::header",
+      "kind": "function",
+      "signature": "fn header(token: String) -> Result<String, errors::Error>",
+      "description": "`header(token) -> Result<String, errors::Error>` - the JOSE header as JSON, read WITHOUT verifying the signature. Read `kid` to choose a key from a key set; nothing in it is trustworthy until `verify` succeeds.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -9654,11 +9426,30 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-jwt-verify",
+      "name": "std::jwt::verify",
+      "kind": "function",
+      "signature": "fn verify(token: String, alg: String, key: String, leeway_secs: i64, issuer: String, audience: String) -> Result<String, errors::Error>",
+      "description": "`verify(token, alg, key, leeway_secs, issuer, audience) -> Result<String, errors::Error>` - the verifier a service protecting an endpoint uses. One entry point for every algorithm, RS* included; `key` is the shared secret for HS* and the PEM public key for the rest. `issuer` and `audience` are enforced when non-empty - leaving them empty accepts a token minted for another service by anyone sharing the key.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdjwt",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-jwt-verify-eddsa",
       "name": "std::jwt::verify_eddsa",
       "kind": "function",
       "signature": "fn verify_eddsa(token: String, verifying_key_pem: String, leeway_secs: i64) -> Result<String, errors::Error>",
-      "description": "Verify an EdDSA token against a PEM-encoded public key.",
+      "description": "Verify an EdDSA token against a PEM-encoded public key. Prefer `verify`, which also enforces the issuer and the audience.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -9677,7 +9468,7 @@
       "name": "std::jwt::verify_es256",
       "kind": "function",
       "signature": "fn verify_es256(token: String, verifying_key_pem: String, leeway_secs: i64) -> Result<String, errors::Error>",
-      "description": "Verify an ES256 token against a PEM-encoded public key.",
+      "description": "Verify an ES256 token against a PEM-encoded public key. Prefer `verify`, which also enforces the issuer and the audience.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -9696,7 +9487,7 @@
       "name": "std::jwt::verify_hs",
       "kind": "function",
       "signature": "fn verify_hs(token: String, alg: String, key: Vec<u8>, leeway_secs: i64) -> Result<String, errors::Error>",
-      "description": "Verify an HS* token; checks signature plus VerifyOpts.",
+      "description": "Verify an HS* token against a shared key with a clock-skew allowance. Prefer `verify`, which also enforces the issuer and the audience.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -9711,11 +9502,125 @@
       "reference_status": "catalog_only"
     },
     {
-      "id": "std-lifecycle-Lifecycle",
-      "name": "std::lifecycle::Lifecycle",
-      "kind": "type",
-      "signature": null,
-      "description": "Registers shutdown hooks, listens for SIGTERM / SIGINT, and notifies systemd.",
+      "id": "std-lifecycle-await-shutdown",
+      "name": "std::lifecycle::await_shutdown",
+      "kind": "function",
+      "signature": "fn await_shutdown() -> ()",
+      "description": "`await_shutdown()` - block until shutdown begins, whether from SIGTERM, SIGINT, or `shutdown()`. The statements after it are the drain sequence.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdlifecycle",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-lifecycle-is-ready",
+      "name": "std::lifecycle::is_ready",
+      "kind": "function",
+      "signature": "fn is_ready() -> bool",
+      "description": "`is_ready() -> bool` - whether the process is ready to serve. False before `ready()` and once shutdown has begun, so a readiness probe fails ahead of the drain.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdlifecycle",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-lifecycle-is-shutting-down",
+      "name": "std::lifecycle::is_shutting_down",
+      "kind": "function",
+      "signature": "fn is_shutting_down() -> bool",
+      "description": "`is_shutting_down() -> bool` - whether shutdown has begun. A long-running worker polls it to leave on its own terms.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdlifecycle",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-lifecycle-notify-status",
+      "name": "std::lifecycle::notify_status",
+      "kind": "function",
+      "signature": "fn notify_status(message: String) -> ()",
+      "description": "`notify_status(message: String)` - report free-text status to the service manager (`sd_notify(STATUS=...)`).",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdlifecycle",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-lifecycle-ready",
+      "name": "std::lifecycle::ready",
+      "kind": "function",
+      "signature": "fn ready() -> ()",
+      "description": "`ready()` - declare the process ready to serve traffic; emits `sd_notify(READY=1)` under a service manager.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdlifecycle",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-lifecycle-set-ready",
+      "name": "std::lifecycle::set_ready",
+      "kind": "function",
+      "signature": "fn set_ready(ready: bool) -> ()",
+      "description": "`set_ready(ready: bool)` - set readiness explicitly. Readiness also drops on its own when shutdown begins.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdlifecycle",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-lifecycle-shutdown",
+      "name": "std::lifecycle::shutdown",
+      "kind": "function",
+      "signature": "fn shutdown() -> ()",
+      "description": "`shutdown()` - begin the graceful shutdown sequence: readiness drops and every server stops accepting while in-flight requests finish.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -12291,6 +12196,44 @@
       "limits": [],
       "cookbook_tags": [],
       "doc_anchor": "docs_src/stdlib.md#stdnetnetip",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-net-smtp-send",
+      "name": "std::net::smtp::send",
+      "kind": "function",
+      "signature": "fn send(addr: String, from: String, to: String, subject: String, body: String) -> Result<(), errors::Error>",
+      "description": "`send(addr, from, to, subject, body) -> Result<(), errors::Error>` - one unauthenticated message. `to` may name several recipients, comma-separated. A CR or LF in an address or the subject is replaced with a space, so a caller-supplied value cannot end the header and add its own.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdnetsmtp",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-net-smtp-send-auth",
+      "name": "std::net::smtp::send_auth",
+      "kind": "function",
+      "signature": "fn send_auth(addr: String, from: String, to: String, subject: String, body: String, username: String, password: String) -> Result<(), errors::Error>",
+      "description": "`send_auth(addr, from, to, subject, body, username, password) -> Result<(), errors::Error>` - the shape a transactional mail provider takes. Authenticates with AUTH PLAIN or AUTH LOGIN, whichever the server advertises, and only over TLS.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdnetsmtp",
       "example_id": null,
       "reference_status": "catalog_only"
     },
@@ -16190,6 +16133,25 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-time-advance",
+      "name": "std::time::advance",
+      "kind": "function",
+      "signature": "fn advance(ms: i64) -> i64",
+      "description": "`advance(ms) -> i64` - move a frozen wall clock forward and answer the new reading. Freezes at the current reading first when it is not already frozen.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdtime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-time-format-in",
       "name": "std::time::format_in",
       "kind": "function",
@@ -16214,6 +16176,44 @@
       "kind": "function",
       "signature": "fn format_rfc3339(ms: i64) -> Result<String, errors::Error>",
       "description": "Formats a `SystemTime` in RFC 3339 (`YYYY-MM-DDTHH:MM:SSZ`).",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdtime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-time-freeze",
+      "name": "std::time::freeze",
+      "kind": "function",
+      "signature": "fn freeze(ms: i64) -> ()",
+      "description": "`freeze(ms)` - pin the wall clock at `ms` since the epoch, so a test over anything time-dependent - a token's expiry, a rate-limit window, a cache's TTL - reads a clock it controls. The monotonic clock and `sleep` are untouched: this pins what the program is told the time is, not how long anything takes.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdtime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-time-is-frozen",
+      "name": "std::time::is_frozen",
+      "kind": "function",
+      "signature": "fn is_frozen() -> bool",
+      "description": "`is_frozen() -> bool` - whether the wall clock is pinned.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -16385,6 +16385,25 @@
       "kind": "function",
       "signature": "fn sleep_ctx(ctx: &context::Context, ms: i64) -> bool",
       "description": "Sleeps unless the context fires first; false when it cancelled the wait.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdtime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-time-unfreeze",
+      "name": "std::time::unfreeze",
+      "kind": "function",
+      "signature": "fn unfreeze() -> ()",
+      "description": "`unfreeze()` - return to the real wall clock.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",

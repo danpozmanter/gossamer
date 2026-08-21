@@ -2,7 +2,7 @@
 
 Status: experimental
 
-Signed-cookie session store with pluggable backend trait.
+Signs and verifies a session payload. The cookie itself - name, attributes, expiry, a server-side store, id rotation on privilege change, revocation - is application policy and belongs in a session package built on these two.
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 

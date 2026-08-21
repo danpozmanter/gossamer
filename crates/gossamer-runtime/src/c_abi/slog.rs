@@ -58,13 +58,11 @@ fn json_escape_str(value: &str) -> String {
     out
 }
 
-/// Emit one JSON-line record at `level` to stderr, appending the
-/// paired key/value `fields` after `msg`. Both keys and values are
-/// rendered as JSON strings, matching the VM's `slog_emit`.
 /// Writes one JSON-line record at `level` to stderr with `fields` as its
 /// trailing key/value pairs. The record shape every tier reports a server
 /// fault in, so a log line reads identically under `gos run` and a native
 /// build.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn emit_json_line(level: &str, msg: &str, fields: &[(&str, &str)]) {
     let mut line = String::with_capacity(64 + msg.len());
     line.push('{');

@@ -156,6 +156,7 @@ pub unsafe extern "C" fn gos_rt_httptest_server(status: i64, body: *const c_char
 /// request to a response, and a test that only wants to know what it
 /// answers should not have to run a server to find out. Use
 /// `http::Server` with port 0 when the test is about the wire.
+#[cfg(not(target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_httptest_record(
     method: *const std::os::raw::c_char,

@@ -2,7 +2,7 @@
 
 Status: experimental
 
-RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens.
+RFC 7519 tokens. Signs with HS256 / HS384 / HS512, ES256, and EdDSA; verifies those plus the RS256 / RS384 / RS512 family every mainstream identity provider mints with. Claims cross the boundary as JSON text.
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 

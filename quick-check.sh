@@ -2,15 +2,19 @@
 # Fast pre-commit gate: the checks that catch what a session most often
 # breaks, in a couple of minutes.
 #
-# Default gates, in the order a failure is cheapest to read:
+# Default gates, cheapest first, so the gate that costs seconds reports
+# before the one that costs minutes. The times are what each phase takes
+# after an edit to the runtime and the interpreter, the common shape:
 #
-#   core          fmt, clippy (`--workspace --all-targets -D warnings`)
+#   formatting    `cargo fmt` - compiles nothing                      (2s)
+#   codegen       the ABI / dispatch unit gates - the boundary shapes
+#                 that only break on a platform this box never runs   (14s)
+#   portability   `cargo check` for wasm32 and for Windows, whose
+#                 targets are built in CI and not here                (21s)
+#   core          clippy (`--workspace --all-targets -D warnings`)    (77s)
 #   generated     the checked-in tables and pages that go stale when a
-#                 stdlib module, a CLI argument, or a doc line changes
-#   codegen       the ABI / dispatch unit gates - the boundary shapes that
-#                 only break on a platform this machine does not run
-#   portability   `cargo check` for wasm32 and for Windows, whose targets
-#                 are built in CI and not here
+#                 stdlib module, a CLI argument, or a doc line
+#                 changes - the `gos` binary they need dominates      (90s)
 #   behavior      every fixture through the VM and the JIT, compared
 #
 # The slow gates that mirror the rest of CI are opt-in, since they take
@@ -119,34 +123,17 @@ phase() {
     echo "-- $1 --"
 }
 
-phase "core Rust gates"
+# `cargo fmt` compiles nothing, so it reports before any other gate has
+# finished linking.
+phase "formatting gate"
 run_step "cargo fmt"                                       cargo fmt
-run_step "cargo clippy --workspace --all-targets"          cargo clippy --workspace --all-targets -- -D warnings
-
-# The generated tables and pages that track the stdlib manifest and the
-# CLI surface. They run in seconds and are what an ordinary edit - a new
-# stdlib module, a reworded argument, a moved doc line - makes stale.
-phase "generated-artifact gates"
-run_step "cargo build --bin gos"                           cargo build --bin gos
-run_step "gos doc --emit-stdlib --check"                   ./target/debug/gos doc --emit-stdlib docs_src/stdlib --check
-run_step "cargo xtask docs-llm --check"                    cargo xtask docs-llm --check
-run_step "cargo xtask item-fixtures --check"               cargo xtask item-fixtures --check
-# Do not filter by status: a filtered check can hide a broken contract class.
-run_step "gos feature-status --check"                      ./target/debug/gos feature-status --check
-run_step "cargo test -p gossamer-std --test resolver_manifest_items" \
-    cargo test -p gossamer-std --test resolver_manifest_items
-run_step "cargo test -p gossamer-resolve --lib stdlib_exports" \
-    cargo test -p gossamer-resolve --lib stdlib_exports
-# The whole lib suite rather than one module: it also holds the check
-# that the committed tier-parity evidence still names every stdlib module
-# a fixture imports, and it finishes in under two seconds.
-run_step "cargo test -p gossamer-cli --lib" cargo test -p gossamer-cli --lib
 
 # The boundary shapes. A wrong one is invisible on this machine - it
 # miscompiles on a target the dev box never runs - so these unit gates
 # stand in for the platform: the Cranelift ABI tests build a Win64 ISA on
 # any host, and the dispatch-parity test proves every runtime helper the
-# codegen names is one the runtime defines.
+# codegen names is one the runtime defines. Two crates' worth of build,
+# which is why they precede the whole-workspace gates.
 phase "codegen boundary gates"
 run_step "cargo test -p gossamer-codegen-cranelift --lib" \
     cargo test -p gossamer-codegen-cranelift --lib
@@ -155,7 +142,8 @@ run_step "cargo test -p gossamer-codegen-cranelift --test dispatch_parity" \
 
 # Targets CI builds and this machine does not. `wasm32` breaks whenever a
 # crate picks up a native-only dependency; the Windows target catches the
-# `#[cfg(unix)]`-shaped edit that compiles fine here.
+# `#[cfg(unix)]`-shaped edit that compiles fine here. A crate subset per
+# target rather than the workspace, so both land before clippy does.
 phase "portability gates"
 if rustup target list --installed 2>/dev/null | grep -q '^wasm32-unknown-unknown$'; then
     run_step "cargo check --target wasm32-unknown-unknown (wasm-portable crates)" \
@@ -173,6 +161,32 @@ if rustup target list --installed 2>/dev/null | grep -q '^x86_64-pc-windows-gnu$
 else
     echo "windows check skipped (run \`rustup target add x86_64-pc-windows-gnu\` to enable)"
 fi
+
+# The whole workspace, every target, under clippy - the broadest of the
+# compile-bound gates, so the narrower ones above have already reported.
+phase "core Rust gates"
+run_step "cargo clippy --workspace --all-targets"          cargo clippy --workspace --all-targets -- -D warnings
+
+# The generated tables and pages that track the stdlib manifest and the
+# CLI surface. Each check itself runs in seconds - what an ordinary edit
+# (a new stdlib module, a reworded argument, a moved doc line) makes
+# stale - but they need the `gos` binary, so the phase carries a full
+# workspace build.
+phase "generated-artifact gates"
+run_step "cargo build --bin gos"                           cargo build --bin gos
+run_step "gos doc --emit-stdlib --check"                   ./target/debug/gos doc --emit-stdlib docs_src/stdlib --check
+run_step "cargo xtask docs-llm --check"                    cargo xtask docs-llm --check
+run_step "cargo xtask item-fixtures --check"               cargo xtask item-fixtures --check
+# Do not filter by status: a filtered check can hide a broken contract class.
+run_step "gos feature-status --check"                      ./target/debug/gos feature-status --check
+run_step "cargo test -p gossamer-std --test resolver_manifest_items" \
+    cargo test -p gossamer-std --test resolver_manifest_items
+run_step "cargo test -p gossamer-resolve --lib stdlib_exports" \
+    cargo test -p gossamer-resolve --lib stdlib_exports
+# The whole lib suite rather than one module: it also holds the check
+# that the committed tier-parity evidence still names every stdlib module
+# a fixture imports, and it finishes in under two seconds.
+run_step "cargo test -p gossamer-cli --lib" cargo test -p gossamer-cli --lib
 
 # Every fixture through both execution paths of `gos run`. The full
 # tier-parity walk also builds each fixture natively and takes tens of

@@ -86,6 +86,7 @@ macro_rules! ffi_entry {
 /// names the request. Catching the fault here would replace that answer
 /// with a sentinel, so a Gossamer panic is re-raised and only a fault
 /// raised by the shim itself is caught.
+#[cfg(not(target_arch = "wasm32"))]
 macro_rules! ffi_entry_passthrough {
     ($sentinel:expr, $body:block) => {{
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $body));
@@ -242,7 +243,9 @@ pub mod http_request_values;
 pub mod http_security;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod http_server;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod http_server_handle;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod http_stream_writer;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod http_ws;

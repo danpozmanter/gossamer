@@ -59,30 +59,30 @@ For receiver methods on built-in types, see [`Methods by type`](../method_suppor
 | [`std::hash::fnv`](hash_fnv.md) | FNV-1a non-cryptographic hash (32-bit, 64-bit). |
 | [`std::html`](html.md) | HTML text escaping and unescaping. |
 | [`std::html::template`](html_template.md) | Context-aware HTML templates with auto-escape (text/attr/URL/JS). The context classifier is heuristic - sound for typical server-rendered responses but NOT a content-security-policy substitute; sanitize untrusted HTML fragments with a dedicated sanitizer. |
-| [`std::http`](http.md) | HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit. |
+| [`std::http`](http.md) | HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit. Write a handler as a cohort and an arena: `cohort { }` joins or cancels every goroutine the request spawned before the response is written, and its first child failure becomes the block's `Err` for the handler to turn into a status; `arena { }` bump-allocates what the request builds and frees it wholesale on every exit path, with escape checked at compile time. Dependency injection is closure capture - build the router from closures capturing the pool and the configuration. |
 | [`std::http::chunked`](http_chunked.md) | RFC 7230 §4.1 chunked transfer-encoding reader and writer. |
 | [`std::http::cookie`](http_cookie.md) | RFC 6265 cookie parser and Set-Cookie builder. |
 | [`std::http::csrf`](http_csrf.md) | Double-submit-cookie CSRF protection with Origin / Referer allowlist. |
 | [`std::http::form`](http_form.md) | application/x-www-form-urlencoded parser and builder. |
-| [`std::http::health`](http_health.md) | Liveness / readiness probes for HTTP health endpoints. |
+| [`std::http::health`](http_health.md) | Liveness and readiness endpoints are ordinary handlers over `std::lifecycle`: answer 200 from a liveness route, and 200/503 from `lifecycle::is_ready()` on a readiness route, which drops to false on its own when shutdown begins. A probe registry with per-check timeouts belongs in an application package. |
 | [`std::http::middleware`](http_middleware.md) | Composable middleware: request_id, cors, security_headers, hsts, cache_control, etag, rate_limit, body_limit, timeout, compress_gzip, logger, recoverer, basic_auth, bearer_auth, safe_defaults. |
 | [`std::http::multipart`](http_multipart.md) | RFC 7578 multipart/form-data streaming parser. |
 | [`std::http::native_client`](http_native_client.md) | Goroutine-driven HTTP/1.1 client over std::net (no ureq, no blocking pool). |
 | [`std::http::proxy`](http_proxy.md) | Reverse proxy on top of http::Client. Director-style request mutator + hop-by-hop strip + error handler. |
-| [`std::http::query`](http_query.md) | Typed wrapper over URL query strings. |
+| [`std::http::query`](http_query.md) | A request's query string is already parsed: read `request.query` for the raw text and `request.query_pairs` for the decoded name/value pairs. |
 | [`std::http::router`](http_router.md) | Go 1.22-class ServeMux: method-aware path patterns with parameter captures + prefix routes. |
-| [`std::http::session`](http_session.md) | Signed-cookie session store with pluggable backend trait. |
+| [`std::http::session`](http_session.md) | Signs and verifies a session payload. The cookie itself - name, attributes, expiry, a server-side store, id rotation on privilege change, revocation - is application policy and belongs in a session package built on these two. |
 | [`std::http::sse`](http_sse.md) | Server-Sent Events (text/event-stream) emitter with heartbeat ticks and retry hint. |
-| [`std::http::state`](http_state.md) | Handler-side dependency injection via a typed AppState. |
+| [`std::http::state`](http_state.md) | Dependency injection is closure capture: build the router from closures that capture the pool, the cache, and the configuration, and each handler reads what it captured. A captured heap value is shared, so one map serves every request. |
 | [`std::http::static_files`](http_static_files.md) | Caching static-file handler: ETag, Last-Modified, byte ranges, MIME sniff. |
 | [`std::http::websocket`](http_websocket.md) | RFC 6455 WebSocket support. Server-side accept + send_text / send_binary / ping / pong / close. |
 | [`std::http_h3`](http_h3.md) | HTTP/3 over QUIC. std::http_h3 is the retained 0.27 spelling; no std::http::h3 alias. |
-| [`std::httptest`](httptest.md) | Loopback HTTP fixtures for source integration tests. |
+| [`std::httptest`](httptest.md) | Fixtures for testing HTTP code. A handler is a function from a request to a response, so `record` calls one in memory; a test that is about the wire builds an `http::Server`, binds port 0, and reads the address back. |
 | [`std::image`](image.md) | Opaque RGBA8 image handles with PNG and JPEG codecs. |
 | [`std::io`](io.md) | Stream-oriented I/O abstractions and process standard streams. |
 | [`std::iter`](iter.md) | Sequence adapters: map, filter, fold, zip, enumerate, chain, etc. A `Vec` argument is traversed eagerly; an `Iterator` argument keeps the adapter lazy and answers with another iterator. |
-| [`std::jwt`](jwt.md) | RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens. |
-| [`std::lifecycle`](lifecycle.md) | Graceful-shutdown coordinator with signal handling and sd_notify support. |
+| [`std::jwt`](jwt.md) | RFC 7519 tokens. Signs with HS256 / HS384 / HS512, ES256, and EdDSA; verifies those plus the RS256 / RS384 / RS512 family every mainstream identity provider mints with. Claims cross the boundary as JSON text. |
+| [`std::lifecycle`](lifecycle.md) | Process readiness and graceful shutdown, with systemd sd_notify. Shutdown is observed, not dispatched: wait for it, then drain with ordinary statements - `go serve()`, `lifecycle::ready()`, `lifecycle::await_shutdown()`, then the cleanup. |
 | [`std::math`](math.md) | Mathematical constants and f64 functions (Go's math package shape). |
 | [`std::math::big`](math_big.md) | Arbitrary-precision integers (num-bigint). |
 | [`std::math::bits`](math_bits.md) | Integer bit-manipulation operations (Go's math/bits shape). |
@@ -92,6 +92,7 @@ For receiver methods on built-in types, see [`Methods by type`](../method_suppor
 | [`std::net`](net.md) | TCP/UDP networking primitives. |
 | [`std::net::ip`](net_ip.md) | String-level IPv4 / IPv6 parsing and classification helpers. |
 | [`std::net::netip`](net_netip.md) | Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip shape). |
+| [`std::net::smtp`](net_smtp.md) | Sends one message per call, so an application can mail a password reset, an address verification, a magic link, or a security notice. A pool, a queue, retries, and bounce handling are application policy and belong in a package built on these. Port 465 speaks TLS from the first byte; any other port starts in the clear and upgrades through STARTTLS when the server offers it, and credentials are refused rather than sent to a server offering no encryption. |
 | [`std::net::url`](net_url.md) | Network URL parsing and component escaping; never use filesystem-path rules. |
 | [`std::option`](option.md) | Data-last Option combinators for pipeline chaining: map, filter, unwrap_or, and_then, etc. |
 | [`std::os`](os.md) | Operating-system identity. |

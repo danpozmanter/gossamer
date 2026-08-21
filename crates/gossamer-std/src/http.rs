@@ -975,6 +975,62 @@ pub mod server {
         Ok(body)
     }
 
+    /// The raw socket a peer probe reads from, as each platform names it.
+    type RawPeerSocket = gossamer_runtime::c_abi::http_server::RawPeerSocket;
+
+    /// The cancel token of whichever request is in flight on a connection.
+    type ActiveCancel = Arc<parking_lot::Mutex<Option<crate::context::Cancel>>>;
+
+    /// Starts the connection's watcher thread and hands back the sender
+    /// whose drop retires it.
+    ///
+    /// One watcher serves every request on the connection rather than one
+    /// per request: it cancels whatever is in flight when the server is
+    /// shutting down or the peer goes away. A per-request thread would put
+    /// its ~13us spawn on the request path, which caps interpreted-mode
+    /// throughput near 50k RPS against the ~175k RPS available without it.
+    fn spawn_connection_watcher(
+        config: &Config,
+        active_cancel: &ActiveCancel,
+        watch_socket: RawPeerSocket,
+    ) -> (
+        std::sync::mpsc::Sender<()>,
+        io::Result<std::thread::JoinHandle<()>>,
+    ) {
+        use std::sync::mpsc::RecvTimeoutError;
+
+        let active_cancel = Arc::clone(active_cancel);
+        let shutdown = Arc::clone(&config.shutdown);
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        let watcher = std::thread::Builder::new()
+            .name("gossamer-http-watcher".into())
+            .spawn(move || {
+                loop {
+                    match done_rx.recv_timeout(Duration::from_millis(10)) {
+                        Ok(()) | Err(RecvTimeoutError::Disconnected) => return,
+                        Err(RecvTimeoutError::Timeout) => {
+                            if shutdown.load(Ordering::Acquire) {
+                                if let Some(c) = active_cancel.lock().take() {
+                                    c.cancel_with("server shutdown");
+                                }
+                            } else if gossamer_runtime::c_abi::http_server::peer_is_gone(
+                                watch_socket,
+                            ) {
+                                // The peer left while its request was still
+                                // running: cancel it so the work it asked
+                                // for stops instead of being paid for after
+                                // it went away.
+                                if let Some(c) = active_cancel.lock().take() {
+                                    c.cancel_with("client disconnected");
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        (done_tx, watcher)
+    }
+
     /// Per-connection worker. Runs as a goroutine on the M:N
     /// scheduler; reads requests from a persistent buffered reader,
     /// hands each to the handler dispatch thread via `dispatch_tx`,
@@ -1000,49 +1056,16 @@ pub mod server {
         let peer_addr = stream
             .peer_addr()
             .map_or_else(|_| String::new(), |a| a.to_string());
-        let watch_fd = peer_watch_fd(&stream);
+        let watch_socket = peer_watch_socket(&stream);
 
         // One BufReader lives across every request on this
         // connection so any bytes pipelined after the request line
         // aren't lost when the next read starts.
         let mut reader = BufReader::new(stream);
 
-        // One shutdown-watcher per connection (not per request). The
-        // watcher monitors the shutdown flag and fires the cancel token
-        // for whatever request is currently in-flight. Using a
-        // connection-scoped thread avoids the per-request thread-spawn
-        // cost (~13µs) that would otherwise cap interpreted-mode
-        // throughput at ~50k RPS instead of the achievable ~175k RPS.
-        let active_cancel: Arc<parking_lot::Mutex<Option<crate::context::Cancel>>> =
-            Arc::new(parking_lot::Mutex::new(None));
-        let active_cancel_w = Arc::clone(&active_cancel);
-        let shutdown_w = Arc::clone(&config.shutdown);
-        let (watcher_done_tx, watcher_done_rx) = std::sync::mpsc::channel::<()>();
-        let watcher = std::thread::Builder::new()
-            .name("gossamer-http-watcher".into())
-            .spawn(move || {
-                use std::sync::mpsc::RecvTimeoutError;
-                loop {
-                    match watcher_done_rx.recv_timeout(Duration::from_millis(10)) {
-                        Ok(()) | Err(RecvTimeoutError::Disconnected) => return,
-                        Err(RecvTimeoutError::Timeout) => {
-                            if shutdown_w.load(Ordering::Acquire) {
-                                if let Some(c) = active_cancel_w.lock().take() {
-                                    c.cancel_with("server shutdown");
-                                }
-                            } else if peer_is_gone(watch_fd) {
-                                // The peer left while its request was
-                                // still running: cancel it so the work it
-                                // asked for stops instead of being paid
-                                // for after it went away.
-                                if let Some(c) = active_cancel_w.lock().take() {
-                                    c.cancel_with("client disconnected");
-                                }
-                            }
-                        }
-                    }
-                }
-            });
+        let active_cancel: ActiveCancel = Arc::new(parking_lot::Mutex::new(None));
+        let (watcher_done_tx, watcher) =
+            spawn_connection_watcher(&config, &active_cancel, watch_socket);
 
         loop {
             // Drop the connection promptly when shutdown trips.
@@ -1177,30 +1200,25 @@ pub mod server {
         }
     }
 
-    /// The descriptor a peer-liveness peek reads.
+    /// The socket a peer-liveness peek reads.
     #[cfg(unix)]
-    fn peer_watch_fd(stream: &TcpStream) -> std::os::fd::RawFd {
+    fn peer_watch_socket(stream: &TcpStream) -> RawPeerSocket {
         use std::os::fd::AsRawFd;
         stream.as_raw_fd()
     }
 
+    /// The socket a peer-liveness peek reads.
+    #[cfg(windows)]
+    fn peer_watch_socket(stream: &TcpStream) -> RawPeerSocket {
+        use std::os::windows::io::AsRawSocket;
+        stream.as_raw_socket()
+    }
+
     /// No such probe here, so the watch has nothing to read and a request
     /// runs to completion after its client leaves.
-    #[cfg(not(unix))]
-    fn peer_watch_fd(_stream: &TcpStream) -> i32 {
+    #[cfg(not(any(unix, windows)))]
+    fn peer_watch_socket(_stream: &TcpStream) -> RawPeerSocket {
         -1
-    }
-
-    /// Whether the peer closed its side. The probe itself lives in the
-    /// runtime, which is the crate allowed to make the syscall.
-    #[cfg(unix)]
-    fn peer_is_gone(fd: std::os::fd::RawFd) -> bool {
-        gossamer_runtime::c_abi::http_server::peer_is_gone(fd)
-    }
-
-    #[cfg(not(unix))]
-    fn peer_is_gone(_fd: i32) -> bool {
-        false
     }
 
     fn is_ignorable(err: &io::Error) -> bool {

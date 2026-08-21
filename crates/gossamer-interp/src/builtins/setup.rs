@@ -304,6 +304,7 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     crate::stdlib_builtins::install(globals);
     #[cfg(not(target_arch = "wasm32"))]
     globals.push(("serve", native("serve", native_http_serve)));
+    #[cfg(not(target_arch = "wasm32"))]
     for key in ["Server::serve", "http::Server::serve"] {
         globals.push((
             key,
