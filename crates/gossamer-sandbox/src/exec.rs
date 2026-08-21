@@ -199,7 +199,10 @@ fn wait_bounded<C: ChildProcess>(
 fn finish(exit: Exit, stdout: Vec<u8>, stderr: Vec<u8>) -> Result<SandboxOutput, SandboxError> {
     match exit {
         #[cfg(unix)]
-        Exit::Signal(signal) => Err(SandboxError::Signalled(signal)),
+        Exit::Signal(signal) => Err(SandboxError::Signalled {
+            signal,
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        }),
         Exit::Code(code) => Ok(SandboxOutput {
             code,
             stdout,

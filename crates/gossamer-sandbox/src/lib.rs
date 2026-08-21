@@ -183,6 +183,7 @@ fn materialize_temp(
                     directory.display()
                 ))
             })?;
+            let directory = resolved(&directory)?;
             policy = grant_temp(policy, &directory);
             Ok((policy, None))
         }
@@ -194,10 +195,27 @@ fn materialize_temp(
                     directory.display()
                 ))
             })?;
+            let directory = resolved(&directory)?;
             policy = grant_temp(policy, &directory);
             Ok((policy, Some(directory)))
         }
     }
+}
+
+/// The temp directory in the same resolved form the policy compiler
+/// gives every other path.
+///
+/// The grant, the recorded directory, and the `TMPDIR` the child reads
+/// must all name one path: a backend that compares them - or a caller
+/// that asks [`CompiledPolicy::access`] about its own
+/// temp directory - otherwise sees two directories where there is one.
+fn resolved(directory: &std::path::Path) -> Result<std::path::PathBuf, SandboxError> {
+    directory.canonicalize().map_err(|error| {
+        SandboxError::Policy(format!(
+            "the temp directory {} could not be resolved: {error}",
+            directory.display()
+        ))
+    })
 }
 
 /// Grants `directory` read-write, names it in every spelling a

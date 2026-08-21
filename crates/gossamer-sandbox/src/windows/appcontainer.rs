@@ -85,6 +85,11 @@ impl Container {
         let name = wide(CONTAINER_NAME);
         let display = wide(CONTAINER_NAME);
         let description = wide("Gossamer sandboxed build");
+        // The out parameter is required: a null one is `E_INVALIDARG`,
+        // not a way to say the SID is unwanted. The profile's SID is
+        // freed here and derived below instead, so both this call and
+        // the already-exists path reach the same SID.
+        let mut profile_sid: Sid = std::ptr::null_mut();
         let created: HResult = unsafe {
             CreateAppContainerProfile(
                 name.as_ptr(),
@@ -92,9 +97,12 @@ impl Container {
                 description.as_ptr(),
                 std::ptr::null(),
                 0,
-                std::ptr::null_mut(),
+                &raw mut profile_sid,
             )
         };
+        if !profile_sid.is_null() {
+            unsafe { LocalFree(profile_sid.cast()) };
+        }
         // A profile that already exists is the normal case: the name is
         // deliberately stable.
         let already = created == hresult_from_win32(ERROR_ALREADY_EXISTS);
@@ -118,6 +126,13 @@ impl Container {
             .iter()
             .filter(|rule| rule.access != Access::Deny)
         {
+            let writable = rule.access == Access::ReadWrite;
+            // The system directories are reachable by every app
+            // container already, so the grant is a no-op there and the
+            // ACL is left alone.
+            if acl::already_reachable(&rule.path, sid, writable) {
+                continue;
+            }
             if !acl::is_owned_by_current_user(&rule.path) {
                 return Err(format!(
                     "refusing to modify the ACL of {}, which this user does not own",
@@ -128,7 +143,7 @@ impl Container {
             // leaves a revoke that finds nothing rather than a grant
             // nothing knows about.
             record.add(&rule.path);
-            acl::grant(&rule.path, sid, rule.access == Access::ReadWrite)?;
+            acl::grant(&rule.path, sid, writable)?;
             granted.push(rule.path.clone());
         }
 

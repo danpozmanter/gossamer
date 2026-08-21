@@ -55,8 +55,15 @@ pub enum SandboxError {
     CommandNotFound(String),
 
     /// The child died on a signal rather than exiting.
-    #[error("child terminated by signal {0}")]
-    Signalled(i32),
+    #[error("child terminated by signal {signal}{}", said(.stderr))]
+    Signalled {
+        /// The signal that ended the child.
+        signal: i32,
+        /// What the child printed before it died, when the streams were
+        /// captured. A child the loader or a policy denial kills says
+        /// why on stderr, and a bare signal number does not.
+        stderr: String,
+    },
 
     /// The child outlived the policy's timeout and its tree was killed.
     #[error("child exceeded the {} ms timeout and its process tree was killed", .0.as_millis())]
@@ -78,8 +85,18 @@ impl SandboxError {
             // the caller's side: nothing ran, so the child's own codes
             // are not in play.
             Self::Spawn(_) | Self::Timeout(_) => EXIT_POLICY_ERROR,
-            Self::Signalled(signal) => EXIT_SIGNAL_BASE + *signal,
+            Self::Signalled { signal, .. } => EXIT_SIGNAL_BASE + *signal,
         }
+    }
+}
+
+/// The child's last words, as a clause to append to a signal report.
+fn said(stderr: &str) -> String {
+    let text = stderr.trim();
+    if text.is_empty() {
+        String::new()
+    } else {
+        format!(": {text}")
     }
 }
 
@@ -147,7 +164,30 @@ mod error_tests {
             .exit_code(),
             EXIT_LEVEL_UNAVAILABLE
         );
-        assert_eq!(SandboxError::Signalled(9).exit_code(), 137);
+        assert_eq!(
+            SandboxError::Signalled {
+                signal: 9,
+                stderr: String::new(),
+            }
+            .exit_code(),
+            137
+        );
+    }
+
+    #[test]
+    fn a_signalled_child_reports_what_it_printed_before_it_died() {
+        let error = SandboxError::Signalled {
+            signal: 6,
+            stderr: "dyld: could not map the shared cache\n".to_string(),
+        };
+        let text = error.to_string();
+        assert!(text.contains("signal 6"), "{text}");
+        assert!(text.contains("could not map the shared cache"), "{text}");
+        let bare = SandboxError::Signalled {
+            signal: 9,
+            stderr: String::new(),
+        };
+        assert_eq!(bare.to_string(), "child terminated by signal 9");
     }
 
     #[test]

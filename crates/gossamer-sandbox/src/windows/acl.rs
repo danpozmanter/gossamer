@@ -20,8 +20,9 @@ use windows_sys::Win32::Foundation::{ERROR_SUCCESS, LocalFree};
 /// A security identifier, as every Win32 entry point below takes it.
 pub(crate) type Sid = *mut std::ffi::c_void;
 use windows_sys::Win32::Security::Authorization::{
-    EXPLICIT_ACCESS_W, GetNamedSecurityInfoW, SE_FILE_OBJECT, SET_ACCESS, SetEntriesInAclW,
-    SetNamedSecurityInfoW, TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
+    ConvertStringSidToSidW, EXPLICIT_ACCESS_W, GetEffectiveRightsFromAclW, GetNamedSecurityInfoW,
+    SE_FILE_OBJECT, SET_ACCESS, SetEntriesInAclW, SetNamedSecurityInfoW, TRUSTEE_IS_SID,
+    TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
 };
 use windows_sys::Win32::Security::{
     ACL, DACL_SECURITY_INFORMATION, NO_INHERITANCE, PSECURITY_DESCRIPTOR,
@@ -124,6 +125,127 @@ pub(crate) fn is_owned_by_current_user(path: &Path) -> bool {
         .ok()
         .and_then(|file| file.metadata().ok())
         .is_some_and(|metadata| !metadata.permissions().readonly() || path.is_dir())
+}
+
+/// `ALL APPLICATION PACKAGES`, the group every app container belongs
+/// to. Windows puts an ACE for it on the system directories, which is
+/// how a store app reads a system DLL without anyone granting it.
+const ALL_APPLICATION_PACKAGES: &str = "S-1-15-2-1";
+
+/// Whether an app container already reaches `path` with the rights the
+/// grant would add.
+///
+/// The system directories carry an `ALL APPLICATION PACKAGES` ACE, so
+/// a read-only grant on one of them is already satisfied and adding an
+/// ACE would mutate a system object's ACL for nothing. The container's
+/// own package SID counts for the same reason: an object a previous
+/// run granted needs no second grant.
+#[must_use]
+pub(crate) fn already_reachable(path: &Path, sid: Sid, writable: bool) -> bool {
+    let mut needed = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
+    if writable {
+        needed |= FILE_GENERIC_WRITE;
+    }
+    let Some(dacl) = Dacl::read(path) else {
+        return false;
+    };
+    if dacl.rights_of(sid) & needed == needed {
+        return true;
+    }
+    let Some(packages) = OwnedSid::from_text(ALL_APPLICATION_PACKAGES) else {
+        return false;
+    };
+    dacl.rights_of(packages.raw()) & needed == needed
+}
+
+/// A SID this module allocated and frees.
+struct OwnedSid(Sid);
+
+impl OwnedSid {
+    fn from_text(text: &str) -> Option<Self> {
+        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut sid: Sid = std::ptr::null_mut();
+        // SAFETY: `wide` is a NUL-terminated UTF-16 buffer that outlives
+        // the call, and `sid` is written only when the call succeeds.
+        if unsafe { ConvertStringSidToSidW(wide.as_ptr(), &raw mut sid) } == 0 || sid.is_null() {
+            return None;
+        }
+        Some(Self(sid))
+    }
+
+    const fn raw(&self) -> Sid {
+        self.0
+    }
+}
+
+impl Drop for OwnedSid {
+    fn drop(&mut self) {
+        unsafe { LocalFree(self.0.cast()) };
+    }
+}
+
+/// An object's DACL, borrowed from the security descriptor that owns
+/// it, so the descriptor is freed once rather than per query.
+struct Dacl {
+    acl: *mut ACL,
+    descriptor: PSECURITY_DESCRIPTOR,
+}
+
+impl Dacl {
+    fn read(path: &Path) -> Option<Self> {
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut acl: *mut ACL = std::ptr::null_mut();
+        let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+        // SAFETY: both out parameters are written only on success, and
+        // the descriptor owns the ACL until `LocalFree` in `Drop`.
+        let read = unsafe {
+            GetNamedSecurityInfoW(
+                wide.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &raw mut acl,
+                std::ptr::null_mut(),
+                &raw mut descriptor,
+            )
+        };
+        if read != ERROR_SUCCESS || acl.is_null() {
+            if !descriptor.is_null() {
+                unsafe { LocalFree(descriptor.cast()) };
+            }
+            return None;
+        }
+        Some(Self { acl, descriptor })
+    }
+
+    /// The rights this ACL grants `sid`, or none when the ACL cannot be
+    /// evaluated for it.
+    fn rights_of(&self, sid: Sid) -> u32 {
+        let trustee = TRUSTEE_W {
+            pMultipleTrustee: std::ptr::null_mut(),
+            MultipleTrusteeOperation: 0,
+            TrusteeForm: TRUSTEE_IS_SID,
+            TrusteeType: TRUSTEE_IS_UNKNOWN,
+            ptstrName: sid.cast(),
+        };
+        let mut rights: u32 = 0;
+        // SAFETY: the ACL is live for the length of this value, and the
+        // trustee names a SID the caller keeps alive across the call.
+        let read =
+            unsafe { GetEffectiveRightsFromAclW(self.acl, &raw const trustee, &raw mut rights) };
+        if read == ERROR_SUCCESS { rights } else { 0 }
+    }
+}
+
+impl Drop for Dacl {
+    fn drop(&mut self) {
+        unsafe { LocalFree(self.descriptor.cast()) };
+    }
 }
 
 /// Grants `sid` access to `path` and everything beneath it.

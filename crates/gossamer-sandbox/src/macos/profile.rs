@@ -39,6 +39,10 @@ const SYSTEM_READ_PATHS: &[&str] = &[
     "/System/Library",
     "/Library/Preferences",
     "/private/var/db/dyld",
+    // macOS 13 moved the dyld shared cache into a cryptex, and Seatbelt
+    // matches the path the cache is actually mounted at rather than the
+    // one it is presented under, so a process cannot start without it.
+    "/System/Volumes/Preboot/Cryptexes",
     "/dev/null",
     "/dev/random",
     "/dev/urandom",
@@ -74,10 +78,20 @@ pub(crate) fn render(policy: &CompiledPolicy) -> String {
         Network::Open => out.push_str("(allow network*)\n"),
     }
 
+    // Resolving any path walks its ancestors, and Seatbelt asks for
+    // metadata on each one; a deny-default profile that grants only
+    // subpaths cannot open a file whose parent it never named. Contents
+    // stay denied - this is names, sizes, and timestamps.
+    out.push_str("(allow file-read-metadata)\n");
+
     out.push_str("\n;; System paths every process needs to start.\n");
     for path in SYSTEM_READ_PATHS {
         out.push_str(&format!("(allow file-read* (subpath {}))\n", quote(path)));
     }
+
+    // libSystem registers with the DTrace helper as a process starts,
+    // and the registration is an ioctl on this node rather than a read.
+    out.push_str("(allow file-read* file-write-data (literal \"/dev/dtracehelper\"))\n");
 
     out.push_str("\n;; Mach services a toolchain asks for; the rest are denied.\n");
     for service in MACH_SERVICES {
@@ -160,6 +174,23 @@ mod profile_tests {
     }
 
     #[test]
+    fn the_loader_reaches_what_it_needs_before_any_grant_of_the_policy() {
+        let rendered = render(&compiled());
+        // A process that cannot map the shared cache, stat a path's
+        // ancestors, or register with the DTrace helper never reaches
+        // its own first instruction.
+        assert!(
+            rendered.contains("(subpath \"/System/Volumes/Preboot/Cryptexes\")"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("(allow file-read-metadata)"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("/dev/dtracehelper"), "{rendered}");
+    }
+
+    #[test]
     fn network_denial_covers_every_protocol() {
         let rendered = render(&compiled());
         assert!(rendered.contains("(deny network*)"), "{rendered}");
@@ -171,8 +202,8 @@ mod profile_tests {
         let rendered = render(&compiled());
         assert!(
             rendered.contains(&format!(
-                "(allow file-read* file-write* (subpath \"{}\"))",
-                root.display()
+                "(allow file-read* file-write* (subpath {}))",
+                quote(&root.to_string_lossy())
             )),
             "{rendered}"
         );
@@ -190,10 +221,10 @@ mod profile_tests {
             .expect("compile");
         let rendered = render(&policy);
         let grant = rendered
-            .find(&format!("(subpath \"{}\"))", root.display()))
+            .find(&format!("(subpath {}))", quote(&root.to_string_lossy())))
             .expect("grant present");
         let denial = rendered
-            .find(&format!("(subpath \"{}\"))", inner.display()))
+            .find(&format!("(subpath {}))", quote(&inner.to_string_lossy())))
             .expect("denial present");
         assert!(
             denial > grant,

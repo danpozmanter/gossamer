@@ -345,11 +345,16 @@ mod preset_tests {
         let compiled = SandboxPolicy::command_default(&cwd)
             .compile()
             .expect("compile");
-        assert_eq!(compiled.access(Path::new("/dev/null")), Access::ReadWrite);
-        assert_eq!(
-            compiled.access(Path::new("/dev/urandom")),
-            Access::ReadWrite
-        );
+        // Device nodes are a POSIX concept, so on Windows none of them
+        // exist and none are granted; the denials below hold anywhere.
+        #[cfg(unix)]
+        {
+            assert_eq!(compiled.access(Path::new("/dev/null")), Access::ReadWrite);
+            assert_eq!(
+                compiled.access(Path::new("/dev/urandom")),
+                Access::ReadWrite
+            );
+        }
         assert_eq!(compiled.access(Path::new("/dev/mem")), Access::Deny);
         assert_eq!(compiled.access(Path::new("/dev/kvm")), Access::Deny);
     }

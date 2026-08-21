@@ -34,7 +34,6 @@
   the function's own name. `wrap.len()` returned `4` and `wrap.to_string()`
   returned `"wrap"`, both passing `gos check`; a callable is a code address and
   declares no methods, so each reports `GT0002`.
-
 - A version requirement has two spellings and no third. `x.y.z`, or an
   explicit `=x.y.z`, is exactly that version; `^x.y.z` is that version or any
   later one, with no upper bound. A bare literal used to mean a caret range,
@@ -53,7 +52,6 @@
   copied through. The two disagree about the default - a bare literal pins in
   `project.toml` and means a caret range in `Cargo.toml` - so a pin is written
   as `=1.2.3` and a floor as `>=1.2.3`.
-
 - `comptime` regions run under a capability policy. Compile-time evaluation
   reached the whole host with the privileges of whoever typed `gos check`: a
   `comptime { process::run(..) }` executed the command and printed `check: ok`,

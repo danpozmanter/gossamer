@@ -51,15 +51,19 @@ const ATTRIBUTE_MITIGATION_POLICY: usize = 0x0002_0007;
 /// Mitigation policies applied to every sandboxed child.
 ///
 /// Each removes an execution path the child never needs and an
-/// attacker does: a dynamic code page, a non-signed image, an
-/// extension point DLL, or a Win32k call.
+/// attacker does: a dynamic code page, or an extension-point DLL that
+/// a third party injects into any process that starts.
+///
+/// `BLOCK_NON_MICROSOFT_BINARIES` is deliberately absent. It bars every
+/// image and DLL Microsoft did not sign, which is what a sandbox exists
+/// to run: a toolchain, a build script, a linker, a test binary. Its
+/// protection is signature provenance, and the policy already decides
+/// what the child may reach by path.
 const MITIGATIONS: u64 = PROCESS_CREATION_MITIGATION_POLICY_PROHIBIT_DYNAMIC_CODE_ALWAYS_ON
-    | PROCESS_CREATION_MITIGATION_POLICY_EXTENSION_POINT_DISABLE_ALWAYS_ON
-    | PROCESS_CREATION_MITIGATION_POLICY_BLOCK_NON_MICROSOFT_BINARIES_ALWAYS_ON;
+    | PROCESS_CREATION_MITIGATION_POLICY_EXTENSION_POINT_DISABLE_ALWAYS_ON;
 
 const PROCESS_CREATION_MITIGATION_POLICY_PROHIBIT_DYNAMIC_CODE_ALWAYS_ON: u64 = 0x01 << 36;
 const PROCESS_CREATION_MITIGATION_POLICY_EXTENSION_POINT_DISABLE_ALWAYS_ON: u64 = 0x01 << 32;
-const PROCESS_CREATION_MITIGATION_POLICY_BLOCK_NON_MICROSOFT_BINARIES_ALWAYS_ON: u64 = 0x01 << 44;
 
 /// A child created directly through Win32.
 pub(crate) struct RawChild {

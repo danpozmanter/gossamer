@@ -493,8 +493,13 @@ fn sort_rules(rules: &mut Vec<PathRule>) {
 }
 
 /// First-match access lookup over rules ordered by [`sort_rules`].
+///
+/// The query path is resolved the way the rules were, so a caller that
+/// names a directory through a symlink - or, on Windows, without the
+/// verbatim prefix canonicalization answers with - gets the verdict
+/// that actually applies to it rather than a default denial.
 fn access_for(rules: &[PathRule], path: &Path) -> Access {
-    let target = absolute(path);
+    let target = canonicalize(path).unwrap_or_else(|| absolute(path));
     rules
         .iter()
         .find(|rule| target.starts_with(&rule.path))
@@ -538,6 +543,22 @@ mod policy_tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("inner")).expect("create fixture tree");
         root.canonicalize().expect("canonicalize fixture")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_grant_is_found_through_a_path_that_reaches_it_by_another_name() {
+        let root = temp_tree("resolved-lookup");
+        let link = std::env::temp_dir().join("gos-sandbox-policy-resolved-link");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(root.join("inner"), &link).expect("symlink");
+        let compiled = SandboxPolicy::new()
+            .read_write(&root)
+            .compile()
+            .expect("compile");
+        // The rules name resolved paths, so the lookup resolves too:
+        // one directory reached by two names has one verdict.
+        assert_eq!(compiled.access(&link), Access::ReadWrite);
     }
 
     #[test]

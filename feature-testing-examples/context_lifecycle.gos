@@ -27,8 +27,14 @@ fn main() {
     println!("repeat {}", parent.is_cancelled())
     println!("done-chan {:?}", parent.done_chan().recv())
 
+    // Two properties, two contexts: a deadline no run reaches proves a
+    // fresh one is not cancelled, and a short one proves a deadline
+    // fires on its own. Reading a short deadline's freshness would race
+    // the clock instead of testing either.
+    let pending = context::Context::with_timeout(&root, 3600000)
+    println!("timed-fresh {}", pending.is_cancelled())
+
     let timed = context::Context::with_timeout(&root, 20)
-    println!("timed-fresh {}", timed.is_cancelled())
     println!("timed-chan {:?}", timed.done_chan().recv())
     println!("timed-after {}", timed.is_cancelled())
 
