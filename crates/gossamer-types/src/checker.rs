@@ -284,6 +284,19 @@ const LEGACY_HANDLE_CTORS: &[LegacyHandleCtor] = &[
     (&["http", "Response"], "text", 5, "http::Response"),
     (&["http", "Response"], "json", 5, "http::Response"),
     (&["http", "Response"], "stream", 5, "http::Response"),
+    (&["sandbox", "Policy"], "new", 13, "sandbox::Policy"),
+    (
+        &["sandbox", "Policy"],
+        "build_default",
+        13,
+        "sandbox::Policy",
+    ),
+    (
+        &["sandbox", "Policy"],
+        "command_default",
+        13,
+        "sandbox::Policy",
+    ),
 ];
 
 /// Eager sequence combinators callable in method form on a `Vec`.
@@ -7061,6 +7074,83 @@ impl<'a> TypeChecker<'a> {
         Some(ret)
     }
 
+    /// Types a `sandbox::Policy` method.
+    ///
+    /// Every builder answers the policy, so a chain keeps the handle
+    /// type; every reader answers what it reads. Without this the
+    /// receiver would stay an inference variable, `println!("{}", p)`
+    /// would pass `gos check` and fail the LLVM build, and a mistyped
+    /// builder would reach a bare-name lookup instead of a diagnostic.
+    fn sandbox_handle_method_ret(
+        &mut self,
+        method: &str,
+        args: &[Expr],
+        arg_tys: &[Ty],
+        resolved: Ty,
+        span: Span,
+    ) -> Option<Ty> {
+        let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved) else {
+            return None;
+        };
+        let owner = self.tcx.def_name(*def)?.to_string();
+        if owner != "sandbox::Policy" {
+            return None;
+        }
+        let i64_ty = self.tcx.int_ty(IntTy::I64);
+        let bool_ty = self.tcx.bool_ty();
+        let string = self.tcx.string_ty();
+        let strings = self.tcx.intern(TyKind::Vec(string));
+        let unit = self.tcx.unit();
+        let policy = resolved;
+        let (params, ret) = match method {
+            // Builders: each answers the policy as it now stands.
+            "read_write" | "read_only" | "deny" | "working_directory" | "temp" | "temp_path"
+            | "network_mode" | "level" | "env_allow" => (vec![string], policy),
+            "env_set" => (vec![string, string], policy),
+            "network" => (vec![bool_ty], policy),
+            "timeout" | "max_processes" | "max_memory" | "max_cpu_time" | "max_file_size"
+            | "max_temp_size" => (vec![i64_ty], policy),
+            "for_fetch_phase" => (vec![], policy),
+            // Readers.
+            "explain"
+            | "to_json"
+            | "level_name"
+            | "network_name"
+            | "working_directory_path"
+            | "level_blocker"
+            | "network_enforcement_kind"
+            | "network_enforcement_reason"
+            | "resource_enforcement_kind"
+            | "resource_enforcement_reason" => (vec![], string),
+            "access" | "environment_value" => (vec![string], string),
+            "mechanisms" | "read_write_grants" | "read_only_grants" | "denials"
+            | "environment_names" => (vec![], strings),
+            "check" => (vec![], self.fallible(unit)),
+            _ => {
+                let error =
+                    self.unresolved_method_call(owner.clone(), method, resolved, args.len());
+                self.emit(error, span);
+                return Some(self.tcx.error_ty());
+            }
+        };
+        if args.len() != params.len() {
+            self.emit(
+                TypeError::CallArityMismatch {
+                    callee: format!("{owner}::{method}"),
+                    expected: params.len(),
+                    found: args.len(),
+                },
+                span,
+            );
+            return Some(self.tcx.error_ty());
+        }
+        for (param, (arg_ty, arg)) in params.iter().zip(arg_tys.iter().zip(args)) {
+            self.check_expected_integer_literal_range(arg, Expectation::HasType(*param), *arg_ty);
+            self.check_sig_param_arg(*param, *arg_ty, arg);
+        }
+        Some(ret)
+    }
+
     fn bytes_handle_method_ret(
         &mut self,
         method: &str,
@@ -8849,6 +8939,11 @@ impl<'a> TypeChecker<'a> {
         }
         if let Some(ty) =
             self.bytes_handle_method_ret(method, args, &arg_tys, resolved, receiver.span)
+        {
+            return ty;
+        }
+        if let Some(ty) =
+            self.sandbox_handle_method_ret(method, args, &arg_tys, resolved, receiver.span)
         {
             return ty;
         }

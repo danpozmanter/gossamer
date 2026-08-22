@@ -191,6 +191,12 @@
   where `{}` on the same value printed the whole cause chain. `to_string` now
   routes to the same renderer `{}` does, and `DynError` answers the
   `errors::Error` receiver kind so every dispatch that asks recovers it.
+- A `sandbox::Policy` is a typed handle at check time. Printing one passed
+  `gos check` and then failed the LLVM build, and a mistyped builder reached a
+  bare-name lookup rather than a diagnostic; now `println!("{}", policy)`
+  reports `GT0062` where every other runtime handle already did, an unknown
+  method reports `GT0002` with the surface it was looked for in, and a builder
+  called with the wrong arity or argument type is reported where it is written.
 - A `sandbox::Policy` builder leaves the policy it was read from live. The
   compiled tiers consumed the handle, so `let a = p.read_write(x)` left `p`
   naming nothing and a second builder off the same `p` answered an empty
