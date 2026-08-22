@@ -2238,6 +2238,7 @@ fn is_consuming_call(name: &str) -> bool {
         // elements from then on, so the store mints the container's share the
         // way a push does.
         || name.starts_with("gos_rt_vec_set_i64")
+        || name.starts_with("gos_rt_vec_set_i128")
         || name.starts_with("gos_rt_vec_insert")
         || name.starts_with("gos_rt_set_insert")
         || name.starts_with("gos_rt_map_insert")

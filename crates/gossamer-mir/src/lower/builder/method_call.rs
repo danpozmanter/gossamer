@@ -3610,6 +3610,9 @@ impl<'a> Builder<'a> {
             (Some("sandbox::Policy"), "for_fetch_phase") => {
                 Some("gos_rt_sandbox_policy_for_fetch_phase")
             }
+            (Some("sandbox::Policy"), "read_only_cwd") => {
+                Some("gos_rt_sandbox_policy_read_only_cwd")
+            }
             (Some("sandbox::Policy"), "temp") => Some("gos_rt_sandbox_policy_temp"),
             (Some("sandbox::Policy"), "temp_path") => Some("gos_rt_sandbox_policy_temp_path"),
             (Some("sandbox::Policy"), "max_processes") => {
@@ -4123,6 +4126,7 @@ impl<'a> Builder<'a> {
             | "gos_rt_sandbox_policy_working_directory"
             | "gos_rt_sandbox_policy_network_mode"
             | "gos_rt_sandbox_policy_for_fetch_phase"
+            | "gos_rt_sandbox_policy_read_only_cwd"
             | "gos_rt_sandbox_policy_temp"
             | "gos_rt_sandbox_policy_temp_path"
             | "gos_rt_sandbox_policy_max_processes"
@@ -4466,6 +4470,7 @@ impl<'a> Builder<'a> {
             | "gos_rt_sandbox_policy_working_directory"
             | "gos_rt_sandbox_policy_network_mode"
             | "gos_rt_sandbox_policy_for_fetch_phase"
+            | "gos_rt_sandbox_policy_read_only_cwd"
             | "gos_rt_sandbox_policy_temp"
             | "gos_rt_sandbox_policy_temp_path"
             | "gos_rt_sandbox_policy_max_processes"
@@ -4914,6 +4919,9 @@ impl<'a> Builder<'a> {
             (Some("sandbox::Policy"), "network_mode") => Some("gos_rt_sandbox_policy_network_mode"),
             (Some("sandbox::Policy"), "for_fetch_phase") => {
                 Some("gos_rt_sandbox_policy_for_fetch_phase")
+            }
+            (Some("sandbox::Policy"), "read_only_cwd") => {
+                Some("gos_rt_sandbox_policy_read_only_cwd")
             }
             (Some("sandbox::Policy"), "temp") => Some("gos_rt_sandbox_policy_temp"),
             (Some("sandbox::Policy"), "temp_path") => Some("gos_rt_sandbox_policy_temp_path"),

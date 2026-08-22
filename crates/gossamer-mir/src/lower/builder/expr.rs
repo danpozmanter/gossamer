@@ -1919,9 +1919,11 @@ impl<'a> Builder<'a> {
             while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
                 peeled = *inner;
             }
-            let is_vec_or_slice =
-                matches!(self.tcx.kind_of(peeled), TyKind::Vec(_) | TyKind::Slice(_));
-            if is_vec_or_slice {
+            let elem_ty = match self.tcx.kind_of(peeled) {
+                TyKind::Vec(elem) | TyKind::Slice(elem) => Some(*elem),
+                _ => None,
+            };
+            if let Some(elem_ty) = elem_ty {
                 let Some(value_local) = self.lower_expr(value) else {
                     return;
                 };
@@ -1931,11 +1933,20 @@ impl<'a> Builder<'a> {
                 let Some(idx_local) = self.lower_expr(index) else {
                     return;
                 };
+                // An `Option` / `Result` / inline enum element is the 16-byte
+                // by-value carrier: the i64 store keeps only the discriminant
+                // and drops the payload, so a two-word carrier writes both
+                // words through the i128 store.
+                let setter = if crate::lower::carrier_ref::is_two_word_carrier(self.tcx, elem_ty) {
+                    "gos_rt_vec_set_i128"
+                } else {
+                    "gos_rt_vec_set_i64"
+                };
                 let unit_ty = self.tcx.unit();
                 let dest = self.fresh(unit_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("gos_rt_vec_set_i64".to_string())),
+                    callee: Operand::Const(ConstValue::Str(setter.to_string())),
                     args: vec![
                         Operand::Copy(Place::local(base_local)),
                         Operand::Copy(Place::local(idx_local)),

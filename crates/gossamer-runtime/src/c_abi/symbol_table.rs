@@ -6560,6 +6560,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_sandbox_policy_for_fetch_phase as *const u8,
         ),
         (
+            "gos_rt_sandbox_policy_read_only_cwd",
+            crate::c_abi::gos_rt_sandbox_policy_read_only_cwd as *const u8,
+        ),
+        (
             "gos_rt_sandbox_policy_temp",
             crate::c_abi::gos_rt_sandbox_policy_temp as *const u8,
         ),
@@ -6884,6 +6888,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_vec_get_i128",
             crate::c_abi::gos_rt_vec_get_i128 as *const u8,
+        ),
+        (
+            "gos_rt_vec_set_i128",
+            crate::c_abi::gos_rt_vec_set_i128 as *const u8,
         ),
         (
             "gos_rt_vec_get_opt",

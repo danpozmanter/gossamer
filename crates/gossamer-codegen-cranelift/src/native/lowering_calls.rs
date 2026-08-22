@@ -543,7 +543,9 @@ pub(super) fn lower_generic_rt_call(
         | "gos_rt_sandbox_policy_temp"
         | "gos_rt_sandbox_policy_temp_path"
         | "gos_rt_sandbox_run_inherit" => (&[types::I64, ptr_ty], Some(types::I64)),
-        "gos_rt_sandbox_policy_for_fetch_phase" => (&[types::I64], Some(types::I64)),
+        "gos_rt_sandbox_policy_for_fetch_phase" | "gos_rt_sandbox_policy_read_only_cwd" => {
+            (&[types::I64], Some(types::I64))
+        }
         "gos_rt_sandbox_policy_max_processes"
         | "gos_rt_sandbox_policy_max_memory"
         | "gos_rt_sandbox_policy_max_cpu_time"
@@ -1072,6 +1074,7 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_vec_get_i64" => (&[ptr_ty, types::I64], Some(types::I64)),
         "gos_rt_vec_reserve_at_least" | "gos_rt_vec_reserve_exact" => (&[ptr_ty, types::I64], None),
         "gos_rt_vec_set_i64" => (&[ptr_ty, types::I64, types::I64], None),
+        "gos_rt_vec_set_i128" => (&[ptr_ty, types::I64, types::I128], None),
         "gos_rt_vec_format_i64" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_vec_format_u64" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_tuple_format" => (&[ptr_ty, types::I64, ptr_ty], Some(ptr_ty)),

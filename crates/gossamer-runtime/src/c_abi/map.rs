@@ -1953,16 +1953,22 @@ pub(crate) unsafe fn render_desc_storage(
             *cursor += 1;
             let arity = tags.byte(*cursor) as usize;
             *cursor += 1;
-            let mut slot_cursor = 0usize;
-            unsafe {
-                render_tuple_elements(
-                    out,
-                    slot.cast::<i64>(),
-                    tags,
-                    arity,
-                    &mut slot_cursor,
-                    cursor,
-                );
+            // A tuple reached as another value's payload - an `Option` /
+            // `Result` arm - is boxed, so the slot holds a pointer to its
+            // flat words; an inline tuple begins at the slot itself.
+            let base: *const i64 = if storage == Storage::Inline {
+                slot.cast::<i64>()
+            } else {
+                let word = unsafe { (slot as *const i64).read_unaligned() };
+                std::ptr::with_exposed_provenance(word as usize)
+            };
+            if base.is_null() {
+                out.push_str("()");
+            } else {
+                let mut slot_cursor = 0usize;
+                unsafe {
+                    render_tuple_elements(out, base, tags, arity, &mut slot_cursor, cursor);
+                }
             }
         }
         gossamer_abi::DESC_VEC => {

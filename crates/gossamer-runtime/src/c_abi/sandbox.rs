@@ -432,6 +432,13 @@ pub extern "C" fn gos_rt_sandbox_policy_for_fetch_phase(handle: i64) -> i64 {
     edit(handle, SandboxPolicy::for_fetch_phase)
 }
 
+/// `policy.read_only_cwd()` - downgrades the working directory grant
+/// from read-write to read-only.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_sandbox_policy_read_only_cwd(handle: i64) -> i64 {
+    edit(handle, SandboxPolicy::read_only_cwd)
+}
+
 /// `policy.temp(mode)` - `private` or `inherit`.
 ///
 /// An unknown name leaves the choice unchanged, so a typo never turns a

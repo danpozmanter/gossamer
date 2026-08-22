@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.55.1 - Native enum-payload fixes, `.into()` diagnostics, sandbox `read_only_cwd`
+
+- On the native backend, `{:?}` on a collection of `Option` / `Result` whose
+  payload is a tuple now renders the real values. It read the boxed tuple
+  payload at the wrong offset before, printing pointer-like junk; the bytecode
+  VM was already correct.
+- `xs[i] = v` on a `Vec` of an `Option` / `Result` (or inline enum) now stores
+  both words of the carrier. The native store kept only the discriminant and
+  dropped the payload, so the element silently lost its value or crashed on the
+  next read.
+- `.into()` with no `From` impl behind it is now rejected at `gos check`
+  (`GT0066`), including a redundant same-type conversion such as `String` into
+  `String`. It previously passed the checker and then failed at run time
+  (`GX0002`) or broke the native link.
+- `sandbox::Policy` gains `read_only_cwd()`, which downgrades the working
+  directory grant from read-write to read-only. Appending a plain `read_only`
+  rule for the working directory does not, since the stronger read-write rule
+  wins.
+- The Rust and Kotlin migration guides no longer describe `|>` as sending the
+  left-hand value to the last argument; a step is a bare callable or a closure
+  that names the slot the value fills.
+
 ## 0.55.0 - Compile-time capability policy, OS-native process sandbox, syntax refinement
 
 - `|>` is the composition operator for free functions, and says which argument

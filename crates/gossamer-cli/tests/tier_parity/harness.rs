@@ -215,6 +215,7 @@ const SPECS: &[Spec] = &[
     // value carries only its variant name at run time, so the receiver's
     // type has to come from the call site.
     spec("feature-testing-examples/enum_method_dispatch_and_generics.gos"),
+    spec("feature-testing-examples/enum_tuple_payload_collections.gos"),
     // Every goroutine blocks at some point here; a pending handoff is
     // progress, so none of it reads as a deadlock.
     spec("feature-testing-examples/channel_progress_not_deadlock.gos"),

@@ -1,0 +1,48 @@
+// A collection whose element is an `Option` / `Result` with a multi-field
+// tuple payload. The payload is boxed (the carrier's payload word is a
+// pointer to the flat tuple), so both `{:?}` rendering and an indexed store
+// have to reach it through that pointer rather than reading the word inline.
+// Regression for the native backend rendering pointer junk and for
+// `xs[i] = Some((..))` on a Vec dropping the payload. Bit-identical on the
+// VM, Cranelift, and LLVM tiers.
+
+fn main() {
+    // Fixed array: element store, then debug.
+    let mut a: [Option<(i64, i64)>; 4] = [None; 4]
+    a[1] = Some((7, 9))
+    a[3] = Some((5, 2))
+    println!("array: {:?}", a)
+
+    // Vec built by push.
+    let mut pushed: Vec<Option<(i64, i64)>> = #[]
+    pushed.push(Some((1, 2)))
+    pushed.push(None)
+    pushed.push(Some((3, 4)))
+    println!("pushed: {:?}", pushed)
+
+    // Vec built by indexed store over a pre-sized buffer.
+    let mut assigned: Vec<Option<(i64, i64)>> = #[None; 3]
+    assigned[0] = Some((11, 22))
+    assigned[2] = Some((33, 44))
+    println!("assigned: {:?}", assigned)
+
+    // The data itself is intact under a match, not only under {:?}.
+    match assigned[0] {
+        Some((x, y)) => println!("match: {} {}", x, y),
+        None => println!("match: none"),
+    }
+
+    // Scalar and String payloads through the same indexed-store path.
+    let mut nums: Vec<Option<i64>> = #[None; 2]
+    nums[1] = Some(42)
+    println!("nums: {:?}", nums)
+
+    let mut words: Vec<Option<String>> = #[None; 2]
+    words[0] = Some("hi")
+    println!("words: {:?}", words)
+
+    // A Result carrier with a tuple Ok arm, in a Vec, index-stored.
+    let mut results: Vec<Result<(i64, i64), i64>> = #[Err(0); 2]
+    results[0] = Ok((8, 13))
+    println!("results: {:?}", results)
+}

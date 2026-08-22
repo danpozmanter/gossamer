@@ -1,0 +1,5 @@
+// ERROR: GT0066
+fn main() {
+    let s: String = "neg".into()
+    println!("{}", s)
+}

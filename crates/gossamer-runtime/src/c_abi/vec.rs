@@ -1669,6 +1669,26 @@ pub unsafe extern "C" fn gos_rt_vec_get_i128(v: *const GosVec, idx: i64) -> i128
     })
 }
 
+/// Writes the 16-byte `i128` (the by-value `Result` / `Option` carrier) at
+/// `idx`. The store counterpart of [`gos_rt_vec_get_i128`]: `xs[i] = v` on a
+/// `Vec` of a two-word carrier writes both words, where the i64 store would
+/// keep only the discriminant and drop the payload. Invalid indexing is a
+/// bounds panic, matching [`gos_rt_vec_set_i64`](super::signal::gos_rt_vec_set_i64).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_set_i128(v: *mut GosVec, idx: i64, value: i128) {
+    ffi_entry!((), {
+        if v.is_null() {
+            crate::c_abi::panic::panic_oob_text("vec index", idx, 0);
+        }
+        let vec = unsafe { &mut *v };
+        if idx < 0 || idx >= vec.len {
+            crate::c_abi::panic::panic_oob_text("vec index", idx, vec.len);
+        }
+        let p = unsafe { vec.ptr.add((idx as usize) * (vec.elem_bytes as usize)) };
+        unsafe { (p as *mut i128).write_unaligned(value) };
+    });
+}
+
 fn next_geometric_cap(old_cap: i64, min_cap: i64) -> i64 {
     let mut cap = if old_cap <= 0 { 4 } else { old_cap };
     while cap < min_cap {

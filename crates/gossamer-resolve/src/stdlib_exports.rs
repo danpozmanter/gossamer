@@ -1378,6 +1378,7 @@ pub const STDLIB_QUALIFIED: &[&str] = &[
     "sandbox::Policy::network_name",
     "sandbox::Policy::new",
     "sandbox::Policy::read_only",
+    "sandbox::Policy::read_only_cwd",
     "sandbox::Policy::read_only_grants",
     "sandbox::Policy::read_write",
     "sandbox::Policy::read_write_grants",

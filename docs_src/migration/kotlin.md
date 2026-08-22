@@ -199,7 +199,9 @@ let cfg = match read_config(&path) {
 ## Collections
 
 Kotlin collection chains become `std::iter` pipelines. The pipe operator
-passes the value on the left into the last argument of the next call.
+passes the value on the left into a free function: a bare callable takes
+it as its only argument, and a closure names the slot it fills (`v`
+below), so a data-first callee reads left to right.
 
 ```kotlin
 val total = listOf(1, 2, 3, 4)

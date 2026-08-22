@@ -312,6 +312,7 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_sandbox_notes" => Some("gos_rt_sandbox_notes"),
         "gos_rt_sandbox_policy_network_mode" => Some("gos_rt_sandbox_policy_network_mode"),
         "gos_rt_sandbox_policy_for_fetch_phase" => Some("gos_rt_sandbox_policy_for_fetch_phase"),
+        "gos_rt_sandbox_policy_read_only_cwd" => Some("gos_rt_sandbox_policy_read_only_cwd"),
         "gos_rt_sandbox_policy_temp" => Some("gos_rt_sandbox_policy_temp"),
         "gos_rt_sandbox_policy_temp_path" => Some("gos_rt_sandbox_policy_temp_path"),
         "gos_rt_sandbox_policy_max_processes" => Some("gos_rt_sandbox_policy_max_processes"),
@@ -788,6 +789,7 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         // behavior, bit-identical to the VM and the checked path.
         "gos_rt_vec_get_i64_unchecked" => Some("gos_rt_vec_get_i64"),
         "gos_rt_vec_set_i64" => Some("gos_rt_vec_set_i64"),
+        "gos_rt_vec_set_i128" => Some("gos_rt_vec_set_i128"),
         // The JIT is not the perf target: resolve the bounds-free counted-loop
         // writer to the checked symbol so it keeps the lenient null/OOB no-op
         // behavior, bit-identical to the VM and the checked path.

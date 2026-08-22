@@ -235,7 +235,9 @@ operations where the standard library provides integration.
 ## Collections And Pipelines
 
 Rust iterator method chains become `std::iter` pipelines. Gossamer's
-pipe operator sends the left-hand value to the last argument.
+pipe operator passes the left-hand value into a free function: a bare
+callable takes it as its only argument, and a closure names the slot it
+fills (`v` below), so a data-first callee reads left to right.
 
 ```rust
 let total: i64 = xs.iter()

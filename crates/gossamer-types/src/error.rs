@@ -1442,12 +1442,18 @@ impl TypeDiagnostic {
                     .with_note(format!("cannot cast `{from}` to `{to}`"));
             }
             TypeError::NoConversion { from, to } => {
-                out = out
-                    .with_help(format!("write `impl From<{from}> for {to}`"))
-                    .with_note(
-                        "an opaque alias converts to and from its own representation with `.into()`; every other pair needs a `From` impl"
-                            .to_string(),
-                    );
+                if from == to {
+                    out = out.with_help(format!(
+                        "`.into()` here converts `{to}` to itself and nothing backs it; remove it - the value is already `{to}`"
+                    ));
+                } else {
+                    out = out
+                        .with_help(format!("write `impl From<{from}> for {to}`"))
+                        .with_note(
+                            "an opaque alias converts to and from its own representation with `.into()`; every other pair needs a `From` impl"
+                                .to_string(),
+                        );
+                }
             }
             TypeError::UnknownField {
                 ty,

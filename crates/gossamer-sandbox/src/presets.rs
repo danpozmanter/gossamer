@@ -264,6 +264,22 @@ impl SandboxPolicy {
         }
         self
     }
+
+    /// Downgrades the working directory from read-write to read-only.
+    ///
+    /// The grant is rebuilt rather than appended to: a policy that
+    /// carries both a read-write and a read-only rule for one path
+    /// resolves to the stronger, so a bare `read_only` on the working
+    /// directory would leave it writable. A command wrapper that offers
+    /// a read-only-working-directory switch needs the downgrade to hold.
+    #[must_use]
+    pub fn read_only_cwd(mut self) -> Self {
+        if let Some(directory) = self.working_directory.clone() {
+            self.read_write_paths.retain(|path| path != &directory);
+            self = self.read_only(directory);
+        }
+        self
+    }
 }
 
 /// Environment a build passes through, on top of [`base_environment`].
@@ -329,6 +345,16 @@ mod preset_tests {
         assert_eq!(policy.network, Network::None);
         let compiled = policy.compile().expect("compile");
         assert_eq!(compiled.access(&cwd), Access::ReadWrite);
+    }
+
+    #[test]
+    fn read_only_cwd_downgrades_the_working_directory_grant() {
+        let cwd = std::env::temp_dir().canonicalize().expect("canonicalize");
+        let compiled = SandboxPolicy::command_default(&cwd)
+            .read_only_cwd()
+            .compile()
+            .expect("compile");
+        assert_eq!(compiled.access(&cwd), Access::ReadOnly);
     }
 
     #[test]

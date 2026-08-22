@@ -7210,7 +7210,7 @@ impl<'a> TypeChecker<'a> {
             "network" => (vec![bool_ty], policy),
             "timeout" | "max_processes" | "max_memory" | "max_cpu_time" | "max_file_size"
             | "max_temp_size" => (vec![i64_ty], policy),
-            "for_fetch_phase" => (vec![], policy),
+            "for_fetch_phase" | "read_only_cwd" => (vec![], policy),
             // Readers.
             "explain"
             | "to_json"
@@ -11401,12 +11401,23 @@ impl<'a> TypeChecker<'a> {
                 recv = self.deep_resolve(*inner);
             }
             let result = self.deep_resolve(result);
-            let recv_nominal = matches!(self.tcx.kind(recv), Some(TyKind::Nominal { .. }));
-            let result_nominal = matches!(self.tcx.kind(result), Some(TyKind::Nominal { .. }));
-            if !recv_nominal && !result_nominal {
+            // An unresolved side has nothing to audit yet; an ambiguous
+            // `.into()` with no target is caught where its type stays open.
+            if matches!(self.tcx.kind(recv), Some(TyKind::Var(_)))
+                || matches!(self.tcx.kind(result), Some(TyKind::Var(_)))
+            {
                 continue;
             }
-            if recv == result || self.is_nominal_repr_pair(recv, result) {
+            // A repr pair converts in both directions.
+            if self.is_nominal_repr_pair(recv, result) {
+                continue;
+            }
+            // An opaque alias converts to itself for free - one runtime
+            // value. A primitive `.into()` to its own type has no `From`
+            // behind it and lowers to an unbound `into`, so identity is a
+            // conversion only for a nominal type.
+            let recv_nominal = matches!(self.tcx.kind(recv), Some(TyKind::Nominal { .. }));
+            if recv == result && recv_nominal {
                 continue;
             }
             // A user `From` impl on the target answers for the pair.

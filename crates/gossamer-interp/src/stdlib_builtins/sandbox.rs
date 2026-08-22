@@ -93,6 +93,7 @@ pub(crate) fn install_sandbox(globals: &mut Vec<(&'static str, Value)>) {
         ("Policy::explain", builtin_policy_explain),
         ("Policy::network_mode", builtin_policy_network_mode),
         ("Policy::for_fetch_phase", builtin_policy_for_fetch_phase),
+        ("Policy::read_only_cwd", builtin_policy_read_only_cwd),
         ("Policy::temp", builtin_policy_temp),
         ("Policy::temp_path", builtin_policy_temp_path),
         ("Policy::max_processes", builtin_policy_max_processes),
@@ -426,6 +427,10 @@ fn builtin_policy_network_mode(args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_policy_for_fetch_phase(args: &[Value]) -> RuntimeResult<Value> {
     edited(args, SandboxPolicy::for_fetch_phase)
+}
+
+fn builtin_policy_read_only_cwd(args: &[Value]) -> RuntimeResult<Value> {
+    edited(args, SandboxPolicy::read_only_cwd)
 }
 
 fn builtin_policy_temp(args: &[Value]) -> RuntimeResult<Value> {
