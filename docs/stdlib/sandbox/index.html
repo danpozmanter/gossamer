@@ -2093,6 +2093,86 @@
 
 
 
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+
+        <li class="md-nav__item">
+  <a href="#api-details-and-source" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        API details and source
+
+    </span>
+  </a>
+
+    <nav class="md-nav" aria-label="API details and source">
+      <ul class="md-nav__list">
+
+          <li class="md-nav__item">
+  <a href="#building-a-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Building a policy
+
+    </span>
+  </a>
+
+</li>
+
+          <li class="md-nav__item">
+  <a href="#running-a-command" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Running a command
+
+    </span>
+  </a>
+
+</li>
+
+          <li class="md-nav__item">
+  <a href="#reading-a-policy-back" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Reading a policy back
+
+    </span>
+  </a>
+
+</li>
+
+          <li class="md-nav__item">
+  <a href="#what-the-host-will-actually-honor" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        What the host will actually honor
+
+    </span>
+  </a>
+
+</li>
+
+          <li class="md-nav__item">
+  <a href="#discovery-and-host-upkeep" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Discovery and host upkeep
+
+    </span>
+  </a>
+
+</li>
+
+      </ul>
+    </nav>
+
+</li>
+
+    </ul>
+
 </nav>
                   </div>
                 </div>
@@ -2111,6 +2191,268 @@
 <h1 id="stdsandbox"><code>std::sandbox</code><a class="headerlink" href="#stdsandbox" title="Permanent link">&para;</a></h1>
 <p>Status: experimental</p>
 <p>Run a command under an OS-native sandbox: one policy model, three backends, no daemon or root.</p>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-sandbox/src/lib.rs">policy model and the three backends</a> live in their own crate, which depends on no other Gossamer crate: a sandbox exists to contain a build system, so it must not need one in order to build. The <a href="https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-runtime/src/c_abi/sandbox.rs">language binding</a> exposes that model unchanged.</p>
+<p>A level the host cannot honor fails closed and names the blocking primitive; it is never quietly downgraded. An unknown enum spelling - a level, a network mode, a temp mode - leaves the setting as it was, so a typo can never weaken a policy.</p>
+<h3 id="building-a-policy">Building a policy<a class="headerlink" href="#building-a-policy" title="Permanent link">&para;</a></h3>
+<p>Every builder answers the policy as it now stands, so a chain reads as one expression.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Policy</code></td>
+<td><code>type Policy</code></td>
+<td>What a command may reach. An opaque handle, as <code>fs::File</code> is.</td>
+</tr>
+<tr>
+<td><code>Policy::new</code></td>
+<td><code>fn new() -&gt; sandbox::Policy</code></td>
+<td>Nothing reachable, no network, a private temp, level <code>standard</code>.</td>
+</tr>
+<tr>
+<td><code>Policy::build_default</code></td>
+<td><code>fn build_default(root: String) -&gt; sandbox::Policy</code></td>
+<td>The policy <code>gos build --sandbox</code> compiles under.</td>
+</tr>
+<tr>
+<td><code>Policy::command_default</code></td>
+<td><code>fn command_default(cwd: String) -&gt; sandbox::Policy</code></td>
+<td>The working directory read-write, the network denied, credentials denied.</td>
+</tr>
+<tr>
+<td><code>read_write</code> / <code>read_only</code> / <code>deny</code></td>
+<td><code>fn read_write(path: String) -&gt; sandbox::Policy</code></td>
+<td>Grants or refuses a path and everything beneath it. A denial beats a grant at equal specificity.</td>
+</tr>
+<tr>
+<td><code>network</code></td>
+<td><code>fn network(allow: bool) -&gt; sandbox::Policy</code></td>
+<td>The two-way form: open or denied.</td>
+</tr>
+<tr>
+<td><code>network_mode</code></td>
+<td><code>fn network_mode(name: String) -&gt; sandbox::Policy</code></td>
+<td><code>none</code>, <code>client</code> (outbound only), or <code>open</code>.</td>
+</tr>
+<tr>
+<td><code>for_fetch_phase</code></td>
+<td><code>fn for_fetch_phase() -&gt; sandbox::Policy</code></td>
+<td>Outbound-only plus the resolver files a name lookup needs.</td>
+</tr>
+<tr>
+<td><code>env_allow</code> / <code>env_set</code></td>
+<td><code>fn env_allow(name: String) -&gt; sandbox::Policy</code></td>
+<td>The environment is an allowlist, not an addition. Loader variables are refused outright.</td>
+</tr>
+<tr>
+<td><code>temp</code> / <code>temp_path</code></td>
+<td><code>fn temp(mode: String) -&gt; sandbox::Policy</code></td>
+<td><code>private</code> (default, removed on exit) or <code>inherit</code>; <code>temp_path</code> names one.</td>
+</tr>
+<tr>
+<td><code>timeout</code></td>
+<td><code>fn timeout(ms: i64) -&gt; sandbox::Policy</code></td>
+<td>Wall-clock bound on the whole process tree.</td>
+</tr>
+<tr>
+<td><code>max_processes</code> / <code>max_memory</code> / <code>max_cpu_time</code> / <code>max_file_size</code> / <code>max_temp_size</code></td>
+<td><code>fn max_memory(bytes: i64) -&gt; sandbox::Policy</code></td>
+<td>Resource bounds. A value at or below zero clears the bound.</td>
+</tr>
+<tr>
+<td><code>level</code></td>
+<td><code>fn level(name: String) -&gt; sandbox::Policy</code></td>
+<td><code>none</code>, <code>basic</code>, <code>standard</code>, or <code>strict</code>.</td>
+</tr>
+<tr>
+<td><code>working_directory</code></td>
+<td><code>fn working_directory(path: String) -&gt; sandbox::Policy</code></td>
+<td>Where the child starts.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="running-a-command">Running a command<a class="headerlink" href="#running-a-command" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>run</code></td>
+<td><code>fn run(policy: sandbox::Policy, argv: Vec&lt;String&gt;) -&gt; Result&lt;process::Output, errors::Error&gt;</code></td>
+<td>Captures the child's output and answers the same <code>{ stdout, stderr, code }</code> shape <code>process::run</code> does. Blocks off the scheduler.</td>
+</tr>
+<tr>
+<td><code>run_inherit</code></td>
+<td><code>fn run_inherit(policy: sandbox::Policy, argv: Vec&lt;String&gt;) -&gt; i64</code></td>
+<td>Gives the child the caller's own streams and answers the exit-code contract. The wrapper-command shape.</td>
+</tr>
+<tr>
+<td><code>exit_policy_error</code> / <code>exit_command_not_found</code> / <code>exit_level_unavailable</code> / <code>exit_signal_base</code></td>
+<td><code>fn exit_policy_error() -&gt; i64</code></td>
+<td>The shared contract, so every consumer reports the same failure the same way.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="reading-a-policy-back">Reading a policy back<a class="headerlink" href="#reading-a-policy-back" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>check</code></td>
+<td><code>fn check() -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>What a run would refuse before anything is spawned.</td>
+</tr>
+<tr>
+<td><code>explain</code></td>
+<td><code>fn explain() -&gt; String</code></td>
+<td>The compiled policy and the mechanisms a run would install, as text.</td>
+</tr>
+<tr>
+<td><code>mechanisms</code></td>
+<td><code>fn mechanisms() -&gt; Vec&lt;String&gt;</code></td>
+<td>The enforcement a run installs, in the order it is applied.</td>
+</tr>
+<tr>
+<td><code>to_json</code></td>
+<td><code>fn to_json() -&gt; String</code></td>
+<td>The compiled policy as JSON.</td>
+</tr>
+<tr>
+<td><code>access</code></td>
+<td><code>fn access(path: String) -&gt; String</code></td>
+<td><code>read-write</code>, <code>read-only</code>, or <code>deny</code> for that exact path.</td>
+</tr>
+<tr>
+<td><code>read_write_grants</code> / <code>read_only_grants</code> / <code>denials</code></td>
+<td><code>fn denials() -&gt; Vec&lt;String&gt;</code></td>
+<td>The compiled paths carrying each access.</td>
+</tr>
+<tr>
+<td><code>environment_names</code> / <code>environment_value</code></td>
+<td><code>fn environment_names() -&gt; Vec&lt;String&gt;</code></td>
+<td>Every name the child will actually see, and what it will see for one.</td>
+</tr>
+<tr>
+<td><code>level_name</code> / <code>network_name</code> / <code>working_directory_path</code></td>
+<td><code>fn level_name() -&gt; String</code></td>
+<td>What the policy asks for.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="what-the-host-will-actually-honor">What the host will actually honor<a class="headerlink" href="#what-the-host-will-actually-honor" title="Permanent link">&para;</a></h3>
+<p>A policy's request and a host's guarantee are different questions, so they are different calls. A consumer that reports the request as the guarantee tells an operator a denial is in force that the kernel never installed.</p>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>level_blocker</code></td>
+<td><code>fn level_blocker() -&gt; String</code></td>
+<td>What stops this host honoring the level, or the empty string.</td>
+</tr>
+<tr>
+<td><code>network_enforcement_kind</code> / <code>_reason</code></td>
+<td><code>fn network_enforcement_kind() -&gt; String</code></td>
+<td>How completely this run's network setting is enforced.</td>
+</tr>
+<tr>
+<td><code>resource_enforcement_kind</code> / <code>_reason</code></td>
+<td><code>fn resource_enforcement_kind() -&gt; String</code></td>
+<td>Whether every limit the policy names will be applied.</td>
+</tr>
+<tr>
+<td><code>max_level</code> / <code>platform</code> / <code>os_description</code></td>
+<td><code>fn max_level() -&gt; String</code></td>
+<td>The highest level this host can honor, which backend answers, and the machine.</td>
+</tr>
+<tr>
+<td><code>filesystem</code> / <code>network_enforcement</code> / <code>process_isolation</code> / <code>resource_limits</code></td>
+<td><code>fn filesystem() -&gt; String</code></td>
+<td>Each dimension as a sentence: <code>full</code>, <code>partial (reason)</code>, or <code>none</code>.</td>
+</tr>
+<tr>
+<td><code>filesystem_kind</code> / <code>network_kind</code> / <code>process_isolation_kind</code> / <code>resource_limits_kind</code></td>
+<td><code>fn filesystem_kind() -&gt; String</code></td>
+<td>The same verdict as an arm to match on: <code>full</code>, <code>partial</code>, or <code>none</code>.</td>
+</tr>
+<tr>
+<td><code>filesystem_reason</code> / <code>network_reason</code> / <code>process_isolation_reason</code> / <code>resource_limits_reason</code></td>
+<td><code>fn filesystem_reason() -&gt; String</code></td>
+<td>What a partial verdict does not cover, or the empty string.</td>
+</tr>
+<tr>
+<td><code>notes</code></td>
+<td><code>fn notes() -&gt; Vec&lt;String&gt;</code></td>
+<td>Everything the scalar accessors cannot say: the Landlock ABI, the sysctl that blocks <code>strict</code>, whether loopback works inside an <code>AppContainer</code>.</td>
+</tr>
+<tr>
+<td><code>capabilities_json</code></td>
+<td><code>fn capabilities_json() -&gt; String</code></td>
+<td>The whole report, for a program that wants more than the accessors give it.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="discovery-and-host-upkeep">Discovery and host upkeep<a class="headerlink" href="#discovery-and-host-upkeep" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Canonical signature or declaration</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>expand</code></td>
+<td><code>fn expand(text: String) -&gt; Option&lt;String&gt;</code></td>
+<td>A written path with <code>~</code> and environment references resolved.</td>
+</tr>
+<tr>
+<td><code>prefix_of</code> / <code>resolve_on_path</code></td>
+<td><code>fn prefix_of(name: String) -&gt; Option&lt;String&gt;</code></td>
+<td>The install prefix of a tool on <code>PATH</code>, and where <code>PATH</code> resolves a name.</td>
+</tr>
+<tr>
+<td><code>home_directory</code></td>
+<td><code>fn home_directory() -&gt; Option&lt;String&gt;</code></td>
+<td>The caller's home, as the presets resolve it.</td>
+</tr>
+<tr>
+<td><code>rust_toolchain_paths</code></td>
+<td><code>fn rust_toolchain_paths() -&gt; Vec&lt;String&gt;</code></td>
+<td>Every path a policy that has to run cargo must grant.</td>
+</tr>
+<tr>
+<td><code>stale_grant_count</code> / <code>clean_stale_grants</code></td>
+<td><code>fn clean_stale_grants() -&gt; Result&lt;i64, errors::Error&gt;</code></td>
+<td>The ACL grants an interrupted Windows run leaves behind. Zero everywhere else: no other backend reaches a path by editing its permissions.</td>
+</tr>
+</tbody>
+</table>
 
 
 
