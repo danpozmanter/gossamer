@@ -4202,6 +4202,85 @@ fn a_fixed_array_converts_into_a_vec_but_a_reference_to_one_does_not() {
 // and the field reads a scalar cannot answer.
 // ---------------------------------------------------------------
 
+/// The target of a conversion comes from the use site, never from the
+/// receiver, so a call nothing constrains has nothing to convert to. Such
+/// a call reached an unbound `into` at run time before it was named here.
+#[test]
+fn a_conversion_with_no_target_is_rejected() {
+    for (source, method) in [
+        ("fn main() { let _ = (1, 2).into() }\n", "into"),
+        ("fn main() { let _ = (1, 2).try_into() }\n", "try_into"),
+        ("fn main() { let _ = \"hi\".into() }\n", "into"),
+        ("fn main() { println((1, 2).into()) }\n", "into"),
+    ] {
+        let d = diagnostics_for(source);
+        assert!(
+            d.iter().any(|diag| matches!(
+                &diag.error,
+                TypeError::ConversionTargetUnknown { method: m } if m == method
+            )),
+            "{source} should report an unknown conversion target: {d:?}"
+        );
+    }
+}
+
+/// A use site that does fix the target keeps the conversion, so the
+/// report cannot fire on a working `From` impl.
+#[test]
+fn a_conversion_the_use_site_targets_still_resolves() {
+    for source in [
+        "type Id = new i64\nfn main() { let a: Id = 5.into()\n let _b: i64 = a.into() }\n",
+        "struct P { a: i64 }\n         impl From<(i64, i64)> for P { fn from(t: (i64, i64)) -> P { P { a: t.0 } } }\n         fn main() { let p: P = (1, 2).into()\n let _ = p.a }\n",
+        "fn take(v: Vec<i64>) -> i64 { v[0] }\nfn main() { let _ = take([1, 2].into()) }\n",
+    ] {
+        let d = diagnostics_for(source);
+        assert!(d.is_empty(), "{source}: {d:?}");
+    }
+}
+
+/// A number answers the `math` surface and the conversions, and nothing
+/// else. An unsuffixed literal is an inference variable while its call is
+/// checked, so its report waits for defaulting; without that wait the call
+/// typed as a fresh variable and ran.
+#[test]
+fn a_collection_method_on_a_numeric_literal_is_rejected() {
+    for (source, ty, method) in [
+        ("fn main() { let _ = 12.len() }\n", "i64", "len"),
+        ("fn main() { let _ = (12).len() }\n", "i64", "len"),
+        ("fn main() { let _ = 1.2.len() }\n", "f64", "len"),
+        ("fn main() { let _ = 12.is_empty() }\n", "i64", "is_empty"),
+        ("fn main() { let _ = 12.get(0) }\n", "i64", "get"),
+        ("fn main() { let _ = 12u8.len() }\n", "u8", "len"),
+    ] {
+        let d = diagnostics_for(source);
+        assert!(
+            d.iter().any(|diag| matches!(
+                &diag.error,
+                TypeError::UnresolvedMethod { ty: t, name, .. } if t == ty && name == method
+            )),
+            "{method} on {ty} should not resolve: {d:?}"
+        );
+    }
+}
+
+/// The surface a numeric literal does answer stays reachable, so the
+/// deferred report cannot fire on a `math` row or a conversion.
+#[test]
+fn the_numeric_literal_surface_still_resolves() {
+    for source in [
+        "fn main() { let _ = (-1.5).abs() }\n",
+        "fn main() { let _ = 9.sqrt() }\n",
+        "fn main() { let _ = 2.pow(3) }\n",
+        "fn main() { let _ = 3.max(4) }\n",
+        "fn main() { let _ = 5.to_string() }\n",
+        "fn main() { let _ = 12.clone() }\n",
+        "fn main() { let _ = 12.wrapping_add(1) }\n",
+    ] {
+        let d = diagnostics_for(source);
+        assert!(d.is_empty(), "{source}: {d:?}");
+    }
+}
+
 #[test]
 fn a_math_method_on_a_numeric_receiver_answers_concretely() {
     // A concrete answer is one an annotation can agree or disagree

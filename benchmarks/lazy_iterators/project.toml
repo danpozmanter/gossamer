@@ -1,6 +1,6 @@
 [project]
 id = "benchmarks.local/lazy_iterators"
 version = "0.1.0"
-gossamer-version = "v0.55.0"
+gossamer-version = "^v0.55.0"
 
 [dependencies]

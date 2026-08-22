@@ -53,11 +53,24 @@ fn std_macro_help(
 
 /// Suggestion or help for a `use` path that names no module: the closest
 /// real module path when one is near, otherwise how a path is spelled.
+/// Built-in type names no module exports and no `use` reaches: the
+/// language declares them, so writing an import for one names a module
+/// that was never going to exist.
+const BUILTIN_TYPE_NAMES: &[&str] = &[
+    "String", "Tuple", "bool", "char", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
+    "isize", "usize", "f32", "f64",
+];
+
 fn unknown_module_help(
     out: gossamer_diagnostics::Diagnostic,
     location: gossamer_diagnostics::Location,
     path: &str,
 ) -> gossamer_diagnostics::Diagnostic {
+    if BUILTIN_TYPE_NAMES.contains(&path) {
+        return out.with_help(format!(
+            "`{path}` is a built-in type, in scope everywhere; drop the `use`"
+        ));
+    }
     match closest_module_path(path) {
         Some(known) => out.with_suggestion(gossamer_diagnostics::Suggestion::replacement(
             location,

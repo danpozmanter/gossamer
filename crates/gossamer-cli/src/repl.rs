@@ -233,14 +233,18 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         name: "into",
         kind: "method",
         signature: "fn into<B>(self: Tuple) -> B",
-        doc: "Converts through the target's `From` impl, fixed by the use site.",
+        doc: "Converts to the type the use site fixes, through that type's \
+              `From` impl. The target never comes from the receiver, so a \
+              bare `(1, 2).into()` has nothing to convert to.",
     },
     CoreMethodHelp {
         owner: "Tuple",
         name: "try_into",
         kind: "method",
         signature: "fn try_into<B, E>(self: Tuple) -> Result<B, E>",
-        doc: "Fallible conversion through the target's `TryFrom` impl.",
+        doc: "The fallible form, answering `Result<B, E>` through the \
+              target's `TryFrom` impl. The target is fixed by the use site \
+              the same way `into` is.",
     },
     CoreMethodHelp {
         owner: "Buffer",

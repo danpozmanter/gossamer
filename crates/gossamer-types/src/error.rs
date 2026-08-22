@@ -323,6 +323,13 @@ pub enum TypeError {
         /// with `to_vec()` rather than through a `From` impl.
         borrowed_sequence: bool,
     },
+    /// `.into()` / `.try_into()` written where nothing says what to
+    /// convert to, so the target stays an inference variable.
+    #[error("cannot infer the target type of `{method}`")]
+    ConversionTargetUnknown {
+        /// The conversion method as written, `into` or `try_into`.
+        method: String,
+    },
     /// Field access (`value.field`) on a type that has no such field.
     /// Splits two failure modes: `opaque` is true when the receiver's
     /// type is known but the checker has no field map for it (typical
@@ -941,6 +948,7 @@ impl TypeError {
             Self::TooManyStructFields { .. } => "too-many-struct-fields",
             Self::InvalidCast { .. } => "invalid-cast",
             Self::NoConversion { .. } => "no-conversion",
+            Self::ConversionTargetUnknown { .. } => "conversion-target-unknown",
             Self::UnknownField { .. } => "unknown-field",
             Self::DiscardedResult => "discarded-result",
             Self::DiscardedMustUse { .. } => "discarded-must-use",
@@ -1037,6 +1045,7 @@ impl TypeError {
             Self::TooManyStructFields { .. } => "GT0037",
             Self::InvalidCast { .. } => "GT0005",
             Self::NoConversion { .. } => "GT0066",
+            Self::ConversionTargetUnknown { .. } => "GT0066",
             Self::UnknownField { .. } => "GT0006",
             Self::DiscardedResult => "GT0007",
             Self::DiscardedMustUse { .. } => "GT0064",
@@ -1467,6 +1476,16 @@ impl TypeDiagnostic {
                                 .to_string(),
                         );
                 }
+            }
+            TypeError::ConversionTargetUnknown { method } => {
+                out = out
+                    .with_help(format!(
+                        "give the call a target: annotate the binding, pass it to a typed parameter, or return it - `let x: Target = value.{method}()`"
+                    ))
+                    .with_note(
+                        "the target of a conversion comes from the use site, never from the receiver"
+                            .to_string(),
+                    );
             }
             TypeError::UnknownField {
                 ty,

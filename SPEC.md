@@ -928,9 +928,15 @@ type UserId = new i64
 ```
 
 An opaque alias converts to and from its own representation with
-`.into()`, in both directions and without work. Every other pair requires
-an `impl From` written for it; reaching for `.into()` without one is
-GT0066.
+`.into()`, in both directions and without work. A fixed array converts
+into the `Vec` of its element the same way. Every other pair requires an
+`impl From` written for it; reaching for `.into()` without one is GT0066.
+
+The target of `.into()` - and of the fallible `.try_into()`, which reaches
+an `impl TryFrom` and answers `Result<B, E>` - comes from the use site,
+never from the receiver. An annotated binding, a typed parameter, and a
+return position each fix it; a call none of them reach has no target at
+all, which is GT0066 as well.
 
 An opaque alias inherits equality, ordering, hashing, and formatting from
 its representation, which is what lets it be a `Map` or `Set` key, sort,

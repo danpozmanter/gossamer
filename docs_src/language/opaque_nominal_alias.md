@@ -41,7 +41,9 @@ let raw: i64 = id.into()
 
 Every other pair needs a conversion written for it. Reaching for
 `.into()` without one is reported at check time rather than failing when
-the program runs:
+the program runs. So is a call no use site gives a target: the target of
+`.into()` comes from the annotation, parameter, or return that receives
+it, never from the receiver.
 
 ```gossamer
 let s: Score = id.into()

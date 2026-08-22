@@ -1087,9 +1087,16 @@ pub const REGISTRY: &[(&str, &str)] = &[
         "`.into()` was written between two types with no conversion\n\
                      behind it. An opaque alias (`type Id = new i64`) converts\n\
                      to and from its own representation for free, because the\n\
-                     two share one runtime value. Any other pair - including\n\
-                     two distinct aliases over the same representation - needs\n\
-                     an explicit `impl From<Source> for Target`.",
+                     two share one runtime value. A fixed array converts into\n\
+                     the `Vec` of its element. Any other pair - including two\n\
+                     distinct aliases over the same representation - needs an\n\
+                     explicit `impl From<Source> for Target`.\n\n\
+                     The same code covers `.into()` / `.try_into()` with no\n\
+                     target at all. A conversion's target comes from the use\n\
+                     site, never from the receiver, so a call nothing\n\
+                     annotates has nothing to convert to. Annotate the\n\
+                     binding, pass the call to a typed parameter, or return\n\
+                     it.",
     ),
     (
         "GT0067",

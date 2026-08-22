@@ -88,8 +88,10 @@ impl TypeChecker<'_> {
         self.check_deferred_reference_storage();
         self.check_deferred_adt_bounds();
         self.check_deferred_type_mismatches();
+        self.check_deferred_conversion_targets();
         self.check_deferred_into_conversions();
         self.check_deferred_literal_type_mismatches();
+        self.check_deferred_scalar_method_rejections();
         self.check_deferred_mutating_receivers();
         self.check_deferred_private_fields();
         self.check_deferred_structural();
@@ -704,6 +706,15 @@ struct TypeChecker<'a> {
     /// it.
     deferred_into_conversions: Vec<(Ty, Ty, Span)>,
     deferred_literal_type_mismatches: Vec<(Ty, &'static str, Span)>,
+    /// `x.name()` on an unsuffixed numeric literal, recorded as
+    /// (receiver, method, span). The literal's width is pinned by
+    /// defaulting after the last item is checked, so whether the receiver
+    /// is a scalar - and which scalar to name - is only known then.
+    deferred_scalar_method_rejections: Vec<(Ty, String, Span)>,
+    /// `.into()` / `.try_into()` call sites, recorded as (result, method,
+    /// span). The target comes from the use site, so whether one was given
+    /// at all is only known once unification has run.
+    deferred_conversion_targets: Vec<(Ty, &'static str, Span)>,
     /// Tuple-variant payload types keyed by `(enum_name,
     /// variant_name)`. Drives literal re-typing at variant
     /// constructor sites so `Value::Blob([1, 2, 3])` records a heap
@@ -979,6 +990,8 @@ impl<'a> TypeChecker<'a> {
             deferred_type_mismatches: Vec::new(),
             deferred_into_conversions: Vec::new(),
             deferred_literal_type_mismatches: Vec::new(),
+            deferred_scalar_method_rejections: Vec::new(),
+            deferred_conversion_targets: Vec::new(),
             enum_variant_payloads: HashMap::new(),
             variant_ctor_substs: HashMap::new(),
             enum_variant_named_payloads: HashMap::new(),
@@ -9113,10 +9126,17 @@ impl<'a> TypeChecker<'a> {
     /// Anything else has no binding on any tier and can only fail at run
     /// time, so it is named here instead.
     fn reject_unknown_scalar_method(&mut self, resolved: Ty, method: &str, span: Span) -> bool {
-        if !matches!(
-            self.tcx.kind(resolved),
-            Some(TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char)
-        ) {
+        // An unsuffixed literal is still an inference variable here: its
+        // width is pinned by defaulting once every item is checked, so the
+        // report waits until the scalar it names is known.
+        let literal = self.infer.is_integer_constrained_var(self.tcx, resolved)
+            || self.infer.is_float_literal_var(self.tcx, resolved);
+        if !literal
+            && !matches!(
+                self.tcx.kind(resolved),
+                Some(TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char)
+            )
+        {
             return false;
         }
         let declared = self.user_method_owners.contains_key(method)
@@ -9140,10 +9160,33 @@ impl<'a> TypeChecker<'a> {
         if declared {
             return false;
         }
+        if literal {
+            self.deferred_scalar_method_rejections
+                .push((resolved, method.to_string(), span));
+            return false;
+        }
         let ty = self.render_public_ty(resolved);
         let error = self.unresolved_method(ty, method, resolved);
         self.emit(error, span);
         true
+    }
+
+    /// Reports `x.name()` on a numeric literal, once defaulting has given
+    /// the literal the width its diagnostic names.
+    fn check_deferred_scalar_method_rejections(&mut self) {
+        let deferred = std::mem::take(&mut self.deferred_scalar_method_rejections);
+        for (resolved, method, span) in deferred {
+            let resolved = self.deep_resolve(resolved);
+            if !matches!(
+                self.tcx.kind(resolved),
+                Some(TyKind::Int(_) | TyKind::Float(_))
+            ) {
+                continue;
+            }
+            let ty = self.render_public_ty(resolved);
+            let error = self.unresolved_method(ty, &method, resolved);
+            self.emit(error, span);
+        }
     }
 
     /// Whether a `use` in this file binds `name` as an unqualified value,
@@ -11084,6 +11127,21 @@ impl<'a> TypeChecker<'a> {
         self.result_adt_ty(payload, e)
     }
 
+    /// The `Ok` payload of a resolved `Result<T, E>`, or `None` for any
+    /// other type.
+    fn result_ok_payload(&self, ty: Ty) -> Option<Ty> {
+        let TyKind::Adt { def, substs } = self.tcx.kind(ty)? else {
+            return None;
+        };
+        if def.local != RESULT_DEF_LOCAL && self.tcx.def_name(*def) != Some("Result") {
+            return None;
+        }
+        match substs.as_slice().first()? {
+            crate::GenericArg::Type(ok) => Some(*ok),
+            crate::GenericArg::Const(_) => None,
+        }
+    }
+
     fn result_ok_expectation(&mut self, expected: Expectation) -> Option<Ty> {
         self.result_payload_expectation(expected).map(|(ok, _)| ok)
     }
@@ -11381,8 +11439,44 @@ impl<'a> TypeChecker<'a> {
         if method == "into" {
             self.deferred_into_conversions
                 .push((receiver_ty, result, span));
+            self.deferred_conversion_targets
+                .push((result, "into", span));
+        } else if method == "try_into" {
+            self.deferred_conversion_targets
+                .push((result, "try_into", span));
         }
         result
+    }
+
+    /// Reports `.into()` / `.try_into()` written where no use site fixes
+    /// the target.
+    ///
+    /// The target of a conversion never comes from the receiver, so a call
+    /// nothing constrains leaves its result an inference variable. Such a
+    /// call has no `From` impl to reach and lowers to a bare `into`, which
+    /// no tier binds; naming it here keeps the failure at `check`.
+    fn check_deferred_conversion_targets(&mut self) {
+        let deferred = std::mem::take(&mut self.deferred_conversion_targets);
+        for (result, method, span) in deferred {
+            let result = self.deep_resolve(result);
+            let open = match self.tcx.kind(result) {
+                Some(TyKind::Var(_)) => true,
+                // `try_into` answers `Result<B, E>`; the target is `B`.
+                _ => self
+                    .result_ok_payload(result)
+                    .map(|ok| self.deep_resolve(ok))
+                    .is_some_and(|ok| matches!(self.tcx.kind(ok), Some(TyKind::Var(_)))),
+            };
+            if !open {
+                continue;
+            }
+            self.emit(
+                TypeError::ConversionTargetUnknown {
+                    method: method.to_string(),
+                },
+                span,
+            );
+        }
     }
 
     /// Reports `.into()` across an opaque alias boundary with nothing

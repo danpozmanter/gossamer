@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.55.2 - Numeric-literal method surface, conversions with no target
+
+- `12.len()`, `(12).len()`, and `1.2.len()` are rejected at `gos check`
+  (`GT0002`), as `12u8.len()` already was. An unsuffixed literal is still an
+  inference variable when the receiver's surface is checked, so the report now
+  waits until defaulting has pinned the literal to `i64` / `f64`; the call
+  previously typed as a fresh variable and answered `0` at run time. The same
+  goes for every other name a number does not answer, `is_empty` and `get`
+  among them.
+- `.into()` and `.try_into()` written where no use site fixes the target are
+  rejected at `gos check` (`GT0066`). A conversion's target comes from the
+  annotation, parameter, or return that receives it, never from the receiver,
+  so a bare `(1, 2).into()` had nothing to convert to and reached an unbound
+  `into` at run time.
+- `use` of a built-in type name says the type is already in scope instead of
+  suggesting a standard library path.
+- The `From` / `TryFrom` documentation, the opaque-alias page, the language
+  spec, and the REPL's `Tuple` entries all state that the target comes from
+  the use site.
+- The stdlib reference lists the `std::sandbox` surface that 0.55.1 added.
+
 ## 0.55.1 - Native enum-payload fixes, `.into()` diagnostics, sandbox `read_only_cwd`
 
 - On the native backend, `{:?}` on a collection of `Option` / `Result` whose

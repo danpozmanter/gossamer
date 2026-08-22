@@ -127,7 +127,8 @@ traits are **not** `#[derive]`-able.
 A `from` impl powers both `B::from(x)` and `x.into()`; a `try_from` impl
 powers `B::try_from(x)` and `x.try_into() -> Result<B, E>`. The `into` /
 `try_into` target is inferred from the use site (`let B`, a `B` parameter
-or return):
+or return) and never from the receiver, so a bare `x.into()` that no use
+site reaches has no target at all and is reported as `GT0066`:
 
 ```gossamer
 struct Celsius { t: i64 }
