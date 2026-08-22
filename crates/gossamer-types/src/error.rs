@@ -137,6 +137,9 @@ pub enum TypeError {
         /// The receiver declares a field under this name, so the call
         /// spelling is what missed, not the name.
         field_of_same_name: bool,
+        /// The program declares a free function under this name, so the
+        /// call spelling is what missed, not the name.
+        free_fn_of_same_name: bool,
     },
     /// A heap (`MaxHeap`, `MinHeap`) named an element the language has no
     /// ordering for, so the heap has nothing to order it by.
@@ -1250,6 +1253,7 @@ impl TypeDiagnostic {
                 name,
                 available,
                 field_of_same_name,
+                free_fn_of_same_name,
             } => {
                 out = if (ty.starts_with("Set<") || ty.starts_with("BTreeSet<"))
                     && crate::is_iterator_method(name)
@@ -1271,6 +1275,12 @@ impl TypeDiagnostic {
                         "call it first and reach `{name}` on what it answers: `<call>(..).{name}(..)`"
                     ))
                     .with_note("a callable is a code address, not data, and declares no methods")
+                } else if *free_fn_of_same_name {
+                    out.with_help(format!(
+                        "`{name}` is a function, so it is written as the free call \
+                         `{name}(value)`"
+                    ))
+                    .with_note("a receiver reaches only the methods its own type declares")
                 } else if *field_of_same_name {
                     out.with_help(format!(
                         "`{name}` is a field of `{ty}`, so it is read without parentheses: \
@@ -2026,6 +2036,18 @@ fn is_callable_ty_spelling(ty: &str) -> bool {
         || ty.starts_with("Fn(")
 }
 
+/// The free call that sorts a sequence the way the named method sorts a
+/// buffer it owns. `sort_by_key_desc` has no free twin: a descending sort is
+/// the ascending one over a reversed key.
+fn sort_free_call_form(name: &str) -> Option<&'static str> {
+    match name {
+        "sort_by" => Some("iter::sort_by(cmp, <sequence>)"),
+        "sort_by_key" => Some("iter::sort_by_key(key, <sequence>)"),
+        "sort_by_key_desc" => Some("iter::sort_by_key(|v| Reverse(key(v)), <sequence>)"),
+        _ => None,
+    }
+}
+
 fn unresolved_method_diagnostic(
     out: gossamer_diagnostics::Diagnostic,
     ty: &str,
@@ -2033,6 +2055,17 @@ fn unresolved_method_diagnostic(
     available: &[String],
 ) -> gossamer_diagnostics::Diagnostic {
     let mut out = out;
+    // Sorting is a receiver form on the types that hold an ordered buffer, so
+    // a receiver without one is told what it lacks rather than that the
+    // method does not exist anywhere.
+    if let Some(free_call) = sort_free_call_form(name) {
+        return out
+            .with_help(format!("write it as the free call `{free_call}`"))
+            .with_note(
+                "this receiver holds no ordered buffer to sort; `Vec`, an array, \
+                 and a slice sort in place",
+            );
+    }
     // A traversal that only has a data-last free call is not a near-miss for
     // some other method: naming the spelling that exists beats sending the
     // reader to a different operation with a similar name.
@@ -2040,7 +2073,7 @@ fn unresolved_method_diagnostic(
         return out
             .with_help(format!(
                 "`{name}` is written as a free call taking the sequence last: \
-                 `iter::{name}(.., <sequence>)`, or `<sequence> |> iter::{name}(.., $)`"
+                 `iter::{name}(.., <sequence>)`, or `<sequence> |> |v| iter::{name}(.., v)`"
             ))
             .with_note("this traversal has no receiver form on any tier");
     }

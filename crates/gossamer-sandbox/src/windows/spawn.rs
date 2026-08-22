@@ -164,7 +164,7 @@ pub(crate) fn spawn(
     capabilities: Option<*mut std::ffi::c_void>,
 ) -> Result<RawChild, String> {
     let command_line = wide(&quote_command_line(argv));
-    let environment = environment_block(policy);
+    let environment = environment_block(policy, capabilities.is_some());
     let working_directory = policy
         .working_directory
         .as_deref()
@@ -411,12 +411,42 @@ impl Drop for AttributeList {
     }
 }
 
+/// Variables Windows rewrites while it builds an `AppContainer` child.
+///
+/// Each is pointed at a directory inside the container profile, so the
+/// value the child reads is the container's, never the host's. The
+/// rewrite is a lookup in the block the caller supplies: a block that
+/// names none of them leaves creation with nothing to rewrite, which is
+/// `ERROR_ENVVAR_NOT_FOUND`.
+const APP_CONTAINER_REDIRECTED_ENVIRONMENT: &[&str] = &["LOCALAPPDATA", "TEMP", "TMP"];
+
 /// The child's environment as a NUL-separated, double-NUL-terminated
 /// UTF-16 block, which is what `CREATE_UNICODE_ENVIRONMENT` reads.
-fn environment_block(policy: &CompiledPolicy) -> Vec<u16> {
+///
+/// An `AppContainer` child also carries whatever the container profile
+/// redirects, whether or not the policy allows those names through.
+fn environment_block(policy: &CompiledPolicy, app_container: bool) -> Vec<u16> {
+    let mut variables = policy.environment();
+    if app_container {
+        for name in APP_CONTAINER_REDIRECTED_ENVIRONMENT {
+            if let Ok(value) = std::env::var(name) {
+                variables.entry((*name).to_string()).or_insert(value);
+            }
+        }
+    }
+    encode_environment(&variables)
+}
+
+/// `NAME=VALUE` pairs as the block `CREATE_UNICODE_ENVIRONMENT` reads.
+fn encode_environment(variables: &std::collections::BTreeMap<String, String>) -> Vec<u16> {
     let mut block: Vec<u16> = Vec::new();
-    for (name, value) in policy.environment() {
+    for (name, value) in variables {
         block.extend(wide(&format!("{name}={value}")));
+    }
+    // The block ends with an empty string, so an environment with no
+    // variables is that terminator alone: two NULs, not one.
+    if variables.is_empty() {
+        block.push(0);
     }
     block.push(0);
     block
@@ -468,11 +498,30 @@ mod spawn_tests {
 
     #[test]
     fn an_environment_block_is_double_nul_terminated() {
+        let variables = std::collections::BTreeMap::from([("A".to_string(), "1".to_string())]);
+        let mut expected = wide("A=1");
+        expected.push(0);
+        assert_eq!(encode_environment(&variables), expected);
+    }
+
+    #[test]
+    fn an_environment_with_no_variables_is_still_two_nuls() {
+        assert_eq!(
+            encode_environment(&std::collections::BTreeMap::new()),
+            vec![0, 0]
+        );
+    }
+
+    #[test]
+    fn an_app_container_block_carries_what_the_profile_redirects() {
         let policy = crate::policy::SandboxPolicy::new()
-            .env_set("A", "1")
             .compile()
             .expect("compile");
-        let block = environment_block(&policy);
-        assert_eq!(block.last(), Some(&0));
+        let block = String::from_utf16_lossy(&environment_block(&policy, true));
+        for name in APP_CONTAINER_REDIRECTED_ENVIRONMENT {
+            if std::env::var(name).is_ok() {
+                assert!(block.contains(&format!("{name}=")), "{name} in {block:?}");
+            }
+        }
     }
 }

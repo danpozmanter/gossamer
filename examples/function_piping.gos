@@ -7,13 +7,12 @@
  * two or more free-function transforms.
  *
  * A step is one of two shapes:
- *   x |> f          a bare callable takes the value as its only argument
- *   x |> f(a, $)    a step that writes arguments names the value's slot
+ *   x |> f            a bare callable takes the value as its only argument
+ *   x |> |v| f(a, v)  a closure whose parameter is the value's slot
  *
- * Exactly one `$` per step, anywhere along the step's call chain. No
- * argument order is assumed, so a data-first callee reads like a
- * data-last one: `text |> strings::split($, ",")` alongside
- * `xs |> iter::map(f, $)`.
+ * No argument order is assumed, so a data-first callee reads like a
+ * data-last one: `text |> |v| strings::split(v, ",")` alongside
+ * `xs |> |v| iter::map(f, v)`.
  *
  * Anything with a receiver already chains, and the method chain is the
  * shorter spelling - prefer `s.trim().to_lowercase()` over any pipe
@@ -40,7 +39,7 @@ fn split_words(s: String) -> Vec<String> {
 }
 
 // Arithmetic chain: 3 -> double -> add 10 -> clamp to [0, 100].
-let n = 3 |> double |> add(10, $) |> clamp(0, 100, $)
+let n = 3 |> double |> |v| add(10, v) |> |v| clamp(0, 100, v)
 println!("arithmetic: {n}")
 
 // Equivalent nested form - what the pipe saves the reader.
@@ -58,24 +57,24 @@ println!("from a chain: {}", loud |> iter::count)
 // Word count, top-down: split on whitespace, drop empties, count.
 let words = "  Hello  World  "
     |> split_words
-    |> iter::filter(|w: String| w.len() > 0, $)
+    |> |v| iter::filter(|w: String| w.len() > 0, v)
     |> iter::count
 println!("words: {words}")
 
 // Sum of squares of evens in 1..=10 - one expression, no `let mut`.
 let total = iter::range_inclusive(1, 10)
-    |> iter::filter(|n: i64| n % 2 == 0, $)
-    |> iter::sum_by(|n: i64| n * n, $)
+    |> |v| iter::filter(|n: i64| n % 2 == 0, v)
+    |> |v| iter::sum_by(|n: i64| n * n, v)
 println!("sum of even squares: {total}")
 
 // Pipeline through Option: first match, fall back to a default.
 let xs = #[1, 3, 5, 9, 14, 21]
 let first_big = xs
-    |> iter::find(|n: i64| n > 10, $)
-    |> option::unwrap_or(-1, $)
+    |> |v| iter::find(|n: i64| n > 10, v)
+    |> |v| option::unwrap_or(-1, v)
 println!("first > 10 (or -1): {first_big}")
 
 // Filter twice - `iter::count` reports each subset's size.
-let evens = xs |> iter::filter(|n: i64| n % 2 == 0, $)
-let odds = xs |> iter::filter(|n: i64| n % 2 != 0, $)
+let evens = xs |> |v| iter::filter(|n: i64| n % 2 == 0, v)
+let odds = xs |> |v| iter::filter(|n: i64| n % 2 != 0, v)
 println!("evens: {}, odds: {}", evens |> iter::count, odds |> iter::count)

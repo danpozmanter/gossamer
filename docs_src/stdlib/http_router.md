@@ -49,7 +49,7 @@ fn main() -> Result<(), http::Error> {
         .get("/users", list_users)
         .post("/users", create_user)
         .get("/users/{id}", show_user)
-        |> http::serve("0.0.0.0:8080", $)
+        |> |v| http::serve("0.0.0.0:8080", v)
 }
 ```
 

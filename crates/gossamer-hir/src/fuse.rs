@@ -3,7 +3,7 @@
 //! inlined at its use site. A chain such as
 //!
 //! ```text
-//! iter::range_inclusive(1, n) |> iter::filter(|k| k % 2 == 0, $) |> iter::sum_by(|k| k * k, $)
+//! iter::range_inclusive(1, n) |> |v| iter::filter(|k| k % 2 == 0, v) |> |v| iter::sum_by(|k| k * k, v)
 //! ```
 //!
 //! otherwise materialises the whole range as a `Vec`, then a second
@@ -19,11 +19,14 @@
 //! closures throughout. Anything else is left untouched and lowered by
 //! the existing combinator path - correct, just unfused.
 
+use std::collections::HashSet;
+
 use gossamer_ast::Ident;
 use gossamer_lex::Span;
 use gossamer_types::{IntTy, Ty, TyCtxt, TyKind};
 
 use crate::ids::HirIdGenerator;
+use crate::lift::collect_free_vars;
 use crate::tree::{
     HirArrayExpr, HirBinaryOp, HirBlock, HirExpr, HirExprKind, HirFn, HirItem, HirItemKind,
     HirLiteral, HirParam, HirPat, HirPatKind, HirProgram, HirStmt, HirStmtKind, HirUnaryOp,
@@ -107,6 +110,7 @@ impl Fuser<'_> {
     /// bodies) first, then attempt to fuse this node.
     fn visit_expr(&mut self, expr: &mut HirExpr) {
         self.walk_children(expr);
+        unwrap_pipe_step_block(expr);
         if let Some(plan) = self.plan(expr) {
             let span = expr.span;
             *expr = self.build(plan, span);
@@ -732,6 +736,76 @@ impl Fuser<'_> {
     }
 }
 
+/// Rewrites the block a closure `|>` step lowers to back into the call it
+/// stands for: `{ let v = piped; iter::name(a.., v) }` becomes
+/// `iter::name(a.., piped)`.
+///
+/// Recognition below reads one shape - a nest of `iter::` calls - and a
+/// closure step reaches the same pipeline through a binding. Only a step
+/// whose binding is read exactly once, as the data argument, is rewritten:
+/// the other arguments move out of the block, so they must not mention the
+/// binding.
+fn unwrap_pipe_step_block(expr: &mut HirExpr) {
+    let HirExprKind::Block(block) = &expr.kind else {
+        return;
+    };
+    let ([binding], Some(tail)) = (block.stmts.as_slice(), block.tail.as_ref()) else {
+        return;
+    };
+    let HirStmtKind::Let {
+        pattern,
+        init: Some(_),
+        ..
+    } = &binding.kind
+    else {
+        return;
+    };
+    let HirPatKind::Binding { name, .. } = &pattern.kind else {
+        return;
+    };
+    let HirExprKind::Call { callee, args } = &tail.kind else {
+        return;
+    };
+    let Some((data, lead)) = args.split_last() else {
+        return;
+    };
+    if as_iter_call(tail).is_none() || !is_binding_path(data, &name.name) {
+        return;
+    }
+    let bound: HashSet<String> = HashSet::new();
+    let shadowed: HashSet<String> = HashSet::new();
+    if lead
+        .iter()
+        .any(|arg| collect_free_vars(arg, &bound, &shadowed).contains(&name.name))
+    {
+        return;
+    }
+    let callee = callee.clone();
+    let mut new_args = lead.to_vec();
+    let HirExprKind::Block(block) = &mut expr.kind else {
+        return;
+    };
+    let HirStmtKind::Let { init, .. } = &mut block.stmts[0].kind else {
+        return;
+    };
+    let Some(piped) = init.take() else {
+        return;
+    };
+    new_args.push(piped);
+    expr.kind = HirExprKind::Call {
+        callee,
+        args: new_args,
+    };
+}
+
+/// Whether `expr` is a bare reference to the binding `name`.
+fn is_binding_path(expr: &HirExpr, name: &str) -> bool {
+    let HirExprKind::Path { segments, .. } = &expr.kind else {
+        return false;
+    };
+    segments.len() == 1 && segments[0].name == name
+}
+
 /// Matches `iter::<name>(args...)`, returning the trailing name and args.
 fn as_iter_call(expr: &HirExpr) -> Option<(&str, &[HirExpr])> {
     let HirExprKind::Call { callee, args } = &expr.kind else {
@@ -779,7 +853,7 @@ fn n_closure(expr: &HirExpr, n: usize) -> Option<&HirExpr> {
 /// its control flow targets. `loop_depth` counts loops entered *within*
 /// the body, so a `break` inside a nested loop is local and safe. Nested
 /// closures are opaque boundaries - their control flow stays local.
-fn inline_safe(expr: &HirExpr, loop_depth: u32) -> bool {
+pub(crate) fn inline_safe(expr: &HirExpr, loop_depth: u32) -> bool {
     match &expr.kind {
         HirExprKind::Return(_) => false,
         HirExprKind::Break { .. } | HirExprKind::Continue { .. } => loop_depth > 0,

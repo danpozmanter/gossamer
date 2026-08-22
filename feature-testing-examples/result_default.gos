@@ -12,17 +12,17 @@ fn ok_float() -> Result<f64, String> { Ok(2.5) }
 fn err_float() -> Result<f64, String> { Err("nope") }
 
 fn main() {
-    println!("{}", ok_int() |> result::unwrap_or(-1, $))
-    println!("{}", err_int() |> result::unwrap_or(-1, $))
-    println!("{}", ok_str() |> result::unwrap_or("fallback", $))
-    println!("{}", err_str() |> result::unwrap_or("fallback", $))
-    println!("{}", ok_float() |> result::unwrap_or(0.5, $))
-    println!("{}", err_float() |> result::unwrap_or(0.5, $))
+    println!("{}", ok_int() |> |v| result::unwrap_or(-1, v))
+    println!("{}", err_int() |> |v| result::unwrap_or(-1, v))
+    println!("{}", ok_str() |> |v| result::unwrap_or("fallback", v))
+    println!("{}", err_str() |> |v| result::unwrap_or("fallback", v))
+    println!("{}", ok_float() |> |v| result::unwrap_or(0.5, v))
+    println!("{}", err_float() |> |v| result::unwrap_or(0.5, v))
 
     let direct = result::unwrap_or(7, err_int())
     println!("{}", direct)
 
-    let bound = ok_str() |> result::unwrap_or("unused", $)
+    let bound = ok_str() |> |v| result::unwrap_or("unused", v)
     let twice = bound + "!"
     println!("{}", twice)
 }

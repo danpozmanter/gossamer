@@ -7,7 +7,7 @@ use std::iter
 fn main() {
     let xs = #[1.5, 2.25, 3.75, 4.0]
 
-    let doubled = xs |> iter::map(|x| x * 2.0, $) |> iter::collect
+    let doubled = xs |> |v| iter::map(|x| x * 2.0, v) |> iter::collect
     for v in doubled {
         println!("{v:.2}")
     }
@@ -16,7 +16,7 @@ fn main() {
     println!("scaled={:.4}", xs.iter().map(|x| x * 0.5).sum())
     println!("kept={:.4}", xs.iter().filter(|x| x > 2.0).sum())
 
-    let big = xs |> iter::filter(|x| x > 2.0, $) |> iter::count
+    let big = xs |> |v| iter::filter(|x| x > 2.0, v) |> iter::count
     println!("big={big}")
 
     match xs.iter().max() {

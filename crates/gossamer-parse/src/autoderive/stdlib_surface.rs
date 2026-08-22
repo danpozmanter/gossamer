@@ -425,7 +425,11 @@ impl SbkBuilder {
     fn rewrite(&mut self, e: &mut SbkExpr, desc: bool) {
         let span = e.span;
         let SbkExprKind::MethodCall {
-            receiver, mut args, ..
+            receiver,
+            name: written,
+            name_span: written_span,
+            mut args,
+            ..
         } = std::mem::replace(&mut e.kind, SbkExprKind::Tuple(Vec::new()))
         else {
             return;
@@ -463,7 +467,10 @@ impl SbkBuilder {
             SbkExprKind::MethodCall {
                 receiver,
                 name: gossamer_ast::Ident::new("sort_by"),
-                name_span: span,
+                // The name the source wrote, so a diagnostic about this call
+                // reports the spelling the reader can find in the file.
+                name_span: written_span,
+                desugared_from: Some(written),
                 generics: Vec::new(),
                 args: vec![comparator],
             },

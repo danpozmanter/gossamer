@@ -3,9 +3,9 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GP0041]: A `|>` step took arguments without naming the piped value's slot. - here
+error[GP0041]: A `|>` step wrote its own arguments, so the piped value has no slot - here
 --- framed ---
-error[GP0041]: A `|>` step took arguments without naming the piped value's slot.
+error[GP0041]: A `|>` step wrote its own arguments, so the piped value has no slot
   --> snap.gos:2:5
      2 |     let x = 1
        |     ^^^^^

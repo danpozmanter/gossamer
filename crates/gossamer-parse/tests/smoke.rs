@@ -577,26 +577,25 @@ fn use_brace_group_accepts_nested_groups() {
     );
 }
 
-/// A direct `_` in a pipe call is replaced before resolution. This covers the
-/// macro-expansion path as well as a non-trailing argument, which the default
-/// data-last pipe rule cannot express.
+/// A closure step names the slot the piped value fills, including the
+/// non-trailing one that a bare callable cannot reach.
 #[test]
-fn pipe_direct_argument_placeholder_parses_and_desugars() {
+fn pipe_closure_step_parses() {
     let source = "use std::strings\nfn main() {\n\
-        let greeting = \"world\" |> format!(\"hello, {}\", $)\n\
-        let part = \"world\" |> strings::slice($, 1, 4)\n\
+        let greeting = \"world\" |> |v| format!(\"hello, {}\", v)\n\
+        let part = \"world\" |> |v| strings::slice(v, 1, 4)\n\
     }\n";
     let mut map = SourceMap::new();
     let file = map.add_file("pipe_args.gos", source.to_string());
     let (_sf, diags) = parse_source_file(source, file);
     assert!(
         diags.is_empty(),
-        "direct pipe placeholders must be consumed during parsing: {diags:?}"
+        "a closure step is the way a slot is named: {diags:?}"
     );
 }
 
 #[test]
-fn pipe_rejects_multiple_direct_argument_placeholders() {
+fn pipe_rejects_the_retired_dollar_placeholder() {
     let source = "fn main() {\n\
         let _ = 1 |> pair($, $)\n\
         let _ = 1 |> outer(inner($), $)\n\
@@ -607,14 +606,14 @@ fn pipe_rejects_multiple_direct_argument_placeholders() {
     assert!(
         diags
             .iter()
-            .any(|diag| matches!(diag.error, ParseError::PipePlaceholderInvalid)),
-        "repeated or nested pipe placeholders need a focused parse error: {diags:?}"
+            .any(|diag| matches!(diag.error, ParseError::PipePlaceholderRetired)),
+        "the retired `$` placeholder needs a focused parse error: {diags:?}"
     );
 }
 
 #[test]
 fn pipe_accepts_dotdot_as_range_argument() {
-    let source = "fn main() { let _ = [1, 2] |> iter::zip(.., $).collect() }\n";
+    let source = "fn main() { let _ = [1, 2] |> |v| iter::zip(.., v).collect() }\n";
     let mut map = SourceMap::new();
     let file = map.add_file("pipe_dotdot.gos", source.to_string());
     let (_sf, diags) = parse_source_file(source, file);
@@ -691,29 +690,29 @@ fn format_macro_family_requires_literal_templates() {
 }
 
 #[test]
-fn pipes_require_an_explicit_format_macro_placeholder() {
+fn a_format_macro_is_not_a_pipe_step() {
     let source = "fn main() {\n\
         let value = \"world\"\n\
-        value |> println!(\"hello, {}\", $)\n\
+        value |> |v| println!(\"hello, {}\", v)\n\
     }\n";
     let mut map = SourceMap::new();
-    let file = map.add_file("pipe_format_placeholder.gos", source.to_string());
+    let file = map.add_file("pipe_format_closure.gos", source.to_string());
     let (_sf, diags) = parse_source_file(source, file);
     assert!(
         diags.is_empty(),
-        "an explicit placeholder should accept the piped value: {diags:?}"
+        "a closure step reaches a formatting macro: {diags:?}"
     );
 
     for macro_name in ["format", "println", "print", "eprintln", "eprint", "panic"] {
         let source = format!("fn main() {{ \"world\" |> {macro_name}!(\"hello\") }}");
         let mut map = SourceMap::new();
-        let file = map.add_file("pipe_format_implicit.gos", source.clone());
+        let file = map.add_file("pipe_format_step.gos", source.clone());
         let (_sf, diags) = parse_source_file(&source, file);
         assert!(
             diags
                 .iter()
-                .any(|diag| matches!(diag.error, ParseError::PipedFormatArgumentNeedsPlaceholder)),
-            "{macro_name}! must not accept an implicit piped format value: {diags:?}"
+                .any(|diag| matches!(diag.error, ParseError::PipedFormatMacroStep)),
+            "{macro_name}! must not be a pipe step: {diags:?}"
         );
     }
 }

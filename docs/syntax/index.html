@@ -2776,8 +2776,8 @@ of it. The two mix freely, and a method chain can feed a pipe.</p>
 <p><code>|&gt;</code> is left-associative with very low precedence, so <code>a |&gt; f |&gt; g</code>
 reads as <code>g(f(a))</code> with no parentheses needed.</p>
 <p>A step is one of two shapes. A <strong>bare callable</strong> takes the piped value
-as its only argument; a step that <strong>writes arguments</strong> names the slot
-the value fills with <code>$</code>:</p>
+as its only argument; a step that <strong>writes arguments</strong> is a <strong>closure</strong>,
+whose parameter is the slot the value fills:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">fn</span> <span class="nf">double</span><span class="p">(</span><span class="n">x</span>: <span class="kt">i64</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="p">}</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="k">fn</span> <span class="nf">add</span><span class="p">(</span><span class="n">a</span>: <span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">b</span>: <span class="kt">i64</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="p">}</span>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="k">fn</span> <span class="nf">clamp</span><span class="p">(</span><span class="n">lo</span>: <span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">hi</span>: <span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">x</span>: <span class="kt">i64</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span>
@@ -2785,18 +2785,15 @@ the value fills with <code>$</code>:</p>
 <a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="p">}</span>
 <a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>
 <a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="c1">// Reads left-to-right instead of inside-out.</span>
-<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="kd">let</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">double</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">add</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="cp">$)</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span><span class="w"> </span><span class="cp">$)</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="kd">let</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">double</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">add</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="n">v</span><span class="p">)</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span><span class="w"> </span><span class="n">v</span><span class="p">)</span>
 <a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>
 <a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="c1">// Equivalent nested form:</span>
 <a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="kd">let</span><span class="w"> </span><span class="n">same</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span><span class="w"> </span><span class="n">add</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="n">double</span><span class="p">(</span><span class="mi">3</span><span class="p">)))</span>
 </code></pre></div>
-<p>Exactly one <code>$</code> per step, and it may sit anywhere along the step's call
-chain, so <code>xs |&gt; f(a, $).len()</code> is <code>f(a, xs).len()</code>. A closure step
-takes the value as the closure's parameter: <code>x |&gt; |v| v * 2</code>. Piping
-into a method on an external receiver works the same way:
-<code>x |&gt; recv.m(a, $)</code>.</p>
-<p><code>$</code> is punctuation rather than an identifier, so it never collides with
-a name in scope.</p>
+<p>The parameter may sit anywhere the body reaches, so
+<code>xs |&gt; |v| f(a, v).len()</code> is <code>f(a, xs).len()</code>. The body needs no call at
+all: <code>x |&gt; |v| v * 2</code>. Piping into a method on an external receiver
+works the same way: <code>x |&gt; |v| recv.m(a, v)</code>.</p>
 <h3 id="why-the-slot-is-named">Why the slot is named<a class="headerlink" href="#why-the-slot-is-named" title="Permanent link">&para;</a></h3>
 <p>Gossamer's free functions do not share one argument convention.
 <code>iter::</code>, <code>option::</code>, and <code>result::</code> take their data last; <code>strings::</code>,
@@ -2808,14 +2805,16 @@ accepts its arguments either way round.</p>
 <p>Naming the slot removes the assumption, so both conventions read alike:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="p">{</span><span class="n">iter</span><span class="p">,</span><span class="w"> </span><span class="n">strings</span><span class="p">}</span>
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">parts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;a,b,c&quot;</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">strings</span>::<span class="n">split</span><span class="p">(</span><span class="cp">$,</span><span class="w"> </span><span class="s">&quot;,&quot;</span><span class="p">)</span><span class="w">     </span><span class="c1">// data first</span>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">doubled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[1, 2]</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">iter</span>::<span class="n">map</span><span class="p">(</span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="cp">$)</span><span class="w">  </span><span class="c1">// data last</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">parts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;a,b,c&quot;</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">strings</span>::<span class="n">split</span><span class="p">(</span><span class="n">v</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;,&quot;</span><span class="p">)</span><span class="w">     </span><span class="c1">// data first</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">doubled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[1, 2]</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">value</span><span class="o">|</span><span class="w"> </span><span class="n">iter</span>::<span class="n">map</span><span class="p">(</span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="n">value</span><span class="p">)</span><span class="w">  </span><span class="c1">// data last</span>
 </code></pre></div>
-<p>An argument-taking step with no <code>$</code> reports <code>GP0041</code>. Pasting the value
-back on as a method receiver (<code>x |&gt; $.trim</code>) reports <code>GP0042</code> - write
-<code>x.trim()</code>. <code>gos check --fix</code> rewrites both; on <code>GP0041</code> it appends <code>$</code>
-in the trailing slot, which preserves the behaviour of the implicit rule
-it replaces, so confirm that is the slot the call needs.</p>
+<p>An argument-taking step that is not a closure reports <code>GP0041</code>, and a
+formatting macro written as a step reports <code>GP0025</code>. <code>$</code>, which spelled
+the slot in earlier releases, is no longer part of the language and
+reports <code>GP0027</code> wherever it appears. <code>gos check --fix</code> rewrites an
+argument-taking step into the closure it stands for, putting the
+parameter in the trailing slot, so confirm that is the slot the call
+needs.</p>
 <h2 id="callback-shorthand">Callback shorthand<a class="headerlink" href="#callback-shorthand" title="Permanent link">&para;</a></h2>
 <p>A callback that only calls one std function can be written without <code>|v|</code>.</p>
 <p>A std free function named where a value is expected is the closure that
@@ -2832,10 +2831,8 @@ index, and a tuple projection each spell out what they do:</p>
 <a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">firsts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[(1, 2), (3, 4)]</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="o">|</span><span class="n">t</span><span class="o">|</span><span class="w"> </span><span class="n">t</span><span class="p">.</span><span class="mi">0</span><span class="p">)</span>
 <a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="kd">let</span><span class="w"> </span><span class="n">people</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[Person { name: </span><span class="s">&quot;ada&quot;</span><span class="cp"> }]</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="o">|</span><span class="n">p</span><span class="o">|</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="n">name</span><span class="p">)</span>
 </code></pre></div>
-<p><code>$</code> is not a callback shorthand - it belongs to the pipe, where it names
-the slot the piped value fills. A <code>$</code>-headed projection in an argument
-reports <code>GP0043</code>, and <code>gos check --fix</code> rewrites it to the closure it
-abbreviated.</p>
+<p><code>$</code> is not a callback shorthand, and is not part of the language at all:
+<code>xs.map($.abs)</code> reports <code>GP0027</code>.</p>
 <h2 id="pattern-matching">Pattern matching<a class="headerlink" href="#pattern-matching" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>_</code> - wildcard.</li>

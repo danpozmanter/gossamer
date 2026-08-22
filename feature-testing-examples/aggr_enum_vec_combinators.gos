@@ -43,16 +43,16 @@ fn main() {
     shapes.sort_by_key_desc(|s| area(&s))
     println!("desc {}", shapes.iter().map(|s| area(&s)).collect().join(" "))
 
-    let biggest = shapes |> iter::max_by_key(|s| area(&s), $)
+    let biggest = shapes |> |v| iter::max_by_key(|s| area(&s), v)
     if let Some(s) = biggest {
         println!("max {}", area(&s))
     }
-    let smallest = shapes |> iter::min_by_key(|s| area(&s), $)
+    let smallest = shapes |> |v| iter::min_by_key(|s| area(&s), v)
     if let Some(s) = smallest {
         println!("min {}", area(&s))
     }
 
     // Non-mutating free form returns a fresh Vec of the same handles.
-    let ordered = shapes |> iter::sort_by_key(|s| area(&s), $)
+    let ordered = shapes |> |v| iter::sort_by_key(|s| area(&s), v)
     println!("free {}", ordered.iter().map(|s| area(&s)).collect().join(" "))
 }

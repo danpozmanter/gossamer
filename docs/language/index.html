@@ -2174,7 +2174,7 @@
 </tr>
 <tr>
 <td><a href="pipe/"><code>lang::pipe</code></a></td>
-<td>Forward-pipe operator <code>|&gt;</code>, for composing free functions in a functional style. A step is either a bare callable (<code>x |&gt; f</code>) or a call that names the piped value's slot with <code>$</code> (<code>x |&gt; f(a, $)</code>). Methods chain on their own and are the shorter spelling; a method chain can feed a pipe.</td>
+<td>Forward-pipe operator <code>|&gt;</code>, for composing free functions in a functional style. A step is either a bare callable (<code>x |&gt; f</code>) or a closure whose parameter is the piped value (<code>x |&gt; |v| f(a, v)</code>). Methods chain on their own and are the shorter spelling; a method chain can feed a pipe.</td>
 </tr>
 <tr>
 <td><a href="closure/"><code>lang::closure</code></a></td>

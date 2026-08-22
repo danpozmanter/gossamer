@@ -120,6 +120,7 @@ Receiver methods on built-in types such as `String`, `Vec`, `Map`, `Option`, and
 | [`std::regex`](#stdregex) | 10 | Compiled regular expressions (Rust `regex` crate syntax; no backreferences or look-around). |
 | [`std::result`](#stdresult) | 10 | Data-last Result combinators for pipeline chaining: map, map_err, unwrap_or_else, etc. |
 | [`std::runtime`](#stdruntime) | 11 | Goroutine / scheduler introspection and tuning. |
+| [`std::sandbox`](#stdsandbox) | 10 | Run a command under an OS-native sandbox: one policy model, three backends, no daemon or root. |
 | [`std::slog`](#stdslog) | 8 | Structured, levelled logging. |
 | [`std::sort`](#stdsort) | 3 | Explicit stable ordering and sorted-sequence search, the deliberate counterpart to Vec's unstable inherent `sort`. |
 | [`std::strconv`](#stdstrconv) | 10 | Conversions between strings and primitive numeric types. |
@@ -1588,6 +1589,23 @@ Goroutine / scheduler introspection and tuning.
 | `cycle_collection_supported` | fn | Reports whether this execution tier reclaims unreachable reference cycles. |
 | `scheduler_stats_json` | fn | Returns a compact JSON snapshot of goroutine scheduler counters. |
 | `set_panic_hook` | fn | Installs a hook invoked with the message on panic. |
+
+## `std::sandbox`
+
+Run a command under an OS-native sandbox: one policy model, three backends, no daemon or root.
+
+| Item | Kind | Doc |
+|------|------|-----|
+| `Policy` | type | What a command may reach. Built with read_write / read_only / deny / network / env_allow / env_set / temp / timeout / level / working_directory, each answering the policy as it now stands. |
+| `capabilities_json` | fn | The whole host capability report as JSON, for a program that wants more than the scalar accessors give it. |
+| `filesystem` | fn | How completely a filesystem policy is enforced here: full, partial (reason), or none. |
+| `max_level` | fn | The highest level this host can honor: none, basic, standard, or strict. A level above it fails closed rather than downgrading. |
+| `network_enforcement` | fn | How completely network denial is enforced here. |
+| `notes` | fn | Everything the scalar accessors cannot say: the Landlock ABI the kernel reports, the sysctl that blocks strict, whether loopback works inside an AppContainer. |
+| `platform` | fn | Which backend answers here: linux, macos, windows, or unsupported. |
+| `process_isolation` | fn | How completely the process table is isolated here. |
+| `resource_limits` | fn | How completely resource limits are enforced here. |
+| `run` | fn | run(policy, argv) -> Result<Output, errors::Error>. Runs argv under the policy and answers the same { stdout, stderr, code } shape process::run does. Blocks for the length of the child, off the scheduler. |
 
 ## `std::slog`
 

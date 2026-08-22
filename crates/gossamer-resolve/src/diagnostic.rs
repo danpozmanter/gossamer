@@ -444,14 +444,6 @@ impl ResolveDiagnostic {
         let mut out =
             Diagnostic::error(Code(self.error.code()), title.clone()).with_primary(location, title);
         if let ResolveError::UnresolvedName { name } = &self.error {
-            if name == "$" {
-                return out.with_help(
-                    "`$` stands for a value the surrounding form supplies: the piped value \
-                     in a `|>` step, or the argument of the callback a projection like \
-                     `$.method` abbreviates"
-                        .to_string(),
-                );
-            }
             if let Some(replacement) = crate::stdlib_exports::canonical_collection_name(name) {
                 return out.with_help(format!(
                     "`{replacement}` is the one spelling for this type; write `{replacement}` \

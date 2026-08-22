@@ -18,7 +18,7 @@ fn method_forms() {
     let ns = #[1, 2, 3]
     let names = #["one", "two", "three"]
     println!("{:?}", ns.zip(names))
-    println!("{:?}", ns |> iter::zip(names, $))
+    println!("{:?}", ns |> |v| iter::zip(names, v))
     println!("{:?}", Some(1).zip(Some("x")))
 }
 

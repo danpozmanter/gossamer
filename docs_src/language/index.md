@@ -16,7 +16,7 @@ One page per language feature. Source is `crates/gossamer-std/src/manifest/featu
 | [`lang::continue`](continue.md) | Skip to the next iteration of the innermost loop. |
 | [`lang::return`](return.md) | Exit the enclosing function with a value. |
 | [`lang::question_mark`](question_mark.md) | Short-circuit Result / Option propagation operator. |
-| [`lang::pipe`](pipe.md) | Forward-pipe operator `|>`, for composing free functions in a functional style. A step is either a bare callable (`x |> f`) or a call that names the piped value's slot with `$` (`x |> f(a, $)`). Methods chain on their own and are the shorter spelling; a method chain can feed a pipe. |
+| [`lang::pipe`](pipe.md) | Forward-pipe operator `|>`, for composing free functions in a functional style. A step is either a bare callable (`x |> f`) or a closure whose parameter is the piped value (`x |> |v| f(a, v)`). Methods chain on their own and are the shorter spelling; a method chain can feed a pipe. |
 | [`lang::closure`](closure.md) | Lambda expression `|args| body`. |
 | [`lang::callback_shorthand`](callback_shorthand.md) | A callback written without `|v|`: a std free function named in value position stands for the closure that calls it, as in `xs.map(math::abs)`. |
 | [`lang::fn`](fn.md) | Function declaration. |

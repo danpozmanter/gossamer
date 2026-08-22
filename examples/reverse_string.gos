@@ -31,6 +31,6 @@ for s in inputs {
     let label = if is_palindrome(&s) { "palindrome" } else { "not palindrome" }
     println!("{} rev-bytes={} ({})", s, rev.len(), label)
     print!("  codes:")
-    rev |> iter::for_each(|code: i64| print!(" {}", code), $)
+    rev |> |v| iter::for_each(|code: i64| print!(" {}", code), v)
     println!()
 }

@@ -2610,7 +2610,7 @@ fn repl_iter_receiver_methods_pipe_dotdot_and_range_index_work() {
          a.iter().skip(2).collect()\n\
          a.iter().enumerate().collect()\n\
          a.iter().zip(0..).collect()\n\
-         a |> iter::zip(.., $).collect()\n\
+         a |> |v| iter::zip(.., v).collect()\n\
          a[..2]\n\
          Vec::from([1, 1, 2, 2]).iter().dedup()\n\
          a.iter().windows(2)\n\
@@ -3853,9 +3853,8 @@ fn repl_info_names_a_builtin_type_once() {
 }
 
 /// The REPL runs the front end phase by phase, so it has to perform
-/// the same caller-side normalisation a file gets: a std function
-/// named in value position, and a `$`-headed callback, both stand for
-/// the closure that calls them.
+/// the same caller-side normalisation a file gets: a std function named
+/// in value position stands for the closure that calls it.
 #[test]
 fn repl_accepts_the_callback_shorthand() {
     let out = run_repl(
@@ -3878,16 +3877,16 @@ fn repl_accepts_the_callback_shorthand() {
 }
 
 /// The REPL runs its own front end, so it holds the same contract the
-/// compiled tiers do: the retired `$` forms report rather than desugar.
+/// compiled tiers do: `$` and an argument-taking step report rather
+/// than desugar.
 #[test]
 fn repl_rejects_the_retired_placeholder_forms() {
     let out = run_repl(
         "#[1.0, -2.0].map($.abs)\n\
-         \"  a  \" |> $.trim\n\
          \"a,b\" |> strings::split(\",\")\n",
     );
     let combined = format!("{}{}", out.stdout, out.stderr);
-    for code in ["GP0043", "GP0042", "GP0041"] {
+    for code in ["GP0027", "GP0041"] {
         assert!(
             combined.contains(code),
             "expected {code} from the REPL front end: {combined}"

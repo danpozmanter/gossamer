@@ -98,9 +98,9 @@ are built through their type with `new()` or `from([...])`.
 
 F# pipes into the next function's first argument, which works because
 currying makes `List.filter f` a genuine one-argument function.
-Gossamer has no currying, so a step that writes arguments names the slot
-the piped value fills with `$` - anywhere in the argument list, not a
-fixed end.
+Gossamer has no currying, so a step that writes arguments is a closure
+whose parameter is the slot the piped value fills - anywhere in the
+argument list, not a fixed end.
 
 ```fsharp
 [1; 2; 3; 4]
@@ -112,8 +112,8 @@ fixed end.
 use std::iter
 
 [1, 2, 3, 4]
-    |> iter::filter(|n: i64| n % 2 == 0, $)
-    |> iter::sum_by(|n: i64| n * n, $)
+    |> |v| iter::filter(|n: i64| n % 2 == 0, v)
+    |> |v| iter::sum_by(|n: i64| n * n, v)
 ```
 
 Naming the slot is what lets one operator serve both stdlib
@@ -124,7 +124,7 @@ mirroring the method receiver.
 ```gos
 use std::strings
 
-let parts = "a,b,c" |> strings::split($, ",")
+let parts = "a,b,c" |> |v| strings::split(v, ",")
 ```
 
 The other half of the translation is that Gossamer has methods and F#
@@ -203,8 +203,8 @@ let parsed = input |> Option.bind tryParse |> Option.defaultValue 0
 use std::option
 
 let parsed = input
-    |> option::and_then(try_parse, $)
-    |> option::unwrap_or(0, $)
+    |> |v| option::and_then(try_parse, v)
+    |> |v| option::unwrap_or(0, v)
 ```
 
 For fallible work, `?` is usually clearer than a pipeline:
@@ -330,9 +330,9 @@ they appear.
 | `Environment.GetCommandLineArgs` | `env::args()` |
 | `Console.WriteLine` | `println!(...)` |
 | `sprintf "%s %d" s n` | `format!("{s} {n}")` |
-| `List.map f xs` | `xs |> iter::map(f, $)` |
-| `List.filter f xs` | `xs |> iter::filter(f, $)` |
-| `List.fold f init xs` | `xs |> iter::fold(init, f, $)` |
+| `List.map f xs` | `xs |> |v| iter::map(f, v)` |
+| `List.filter f xs` | `xs |> |v| iter::filter(f, v)` |
+| `List.fold f init xs` | `xs |> |v| iter::fold(init, f, v)` |
 | `Map.find k m` | `m.get(&k)` |
 | `Set.contains x s` | `s.contains(&x)` |
 | `String.trim s` | `strings::trim(&s)` |

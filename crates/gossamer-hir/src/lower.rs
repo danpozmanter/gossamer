@@ -8,7 +8,7 @@ use gossamer_ast::{
     FieldPattern as AstFieldPat, FnDecl as AstFnDecl, FnParam as AstFnParam, Ident, ImplDecl,
     ImplItem, Item as AstItem, ItemKind as AstItemKind, Literal as AstLiteral, MatchArm,
     Mutability, NodeId, Pattern as AstPat, PatternKind as AstPatKind, SourceFile, Stmt as AstStmt,
-    StmtKind as AstStmtKind, StructDecl, TraitDecl, TraitItem, UnaryOp,
+    StmtKind as AstStmtKind, StructDecl, TraitDecl, TraitItem, Type as AstType, UnaryOp,
 };
 use gossamer_lex::Span;
 use gossamer_resolve::{Resolution, Resolutions};
@@ -1371,12 +1371,82 @@ impl Lowerer<'_> {
                     args: new_args,
                 }
             }
+            AstExprKind::Closure { params, ret, body } if params.len() == 1 => {
+                self.lower_closure_pipe_step(&params[0], ret.as_ref(), body, rhs, piped)
+            }
             AstExprKind::Path(_) | AstExprKind::Closure { .. } => HirExprKind::Call {
                 callee: Box::new(self.lower_expr(rhs)),
                 args: vec![piped],
             },
             _ => HirExprKind::Placeholder,
         }
+    }
+
+    /// Lowers `x |> |v| body` to the block `{ let v = x; body }`.
+    ///
+    /// A closure written directly as a step is a spelling of the call it
+    /// makes, not a value: binding the parameter keeps the step's arguments in
+    /// the caller's frame, so a combinator chain stays one chain and a `Copy`
+    /// scalar the body mutates is the caller's, not a copy of it.
+    ///
+    /// A body whose control flow leaves the closure - a `return`, a `?`, a
+    /// `break` or `continue` targeting an outer loop - keeps the closure it
+    /// was written against, since those target the closure rather than the
+    /// enclosing function.
+    fn lower_closure_pipe_step(
+        &mut self,
+        param: &AstClosureParam,
+        ret: Option<&AstType>,
+        body: &AstExpr,
+        rhs: &AstExpr,
+        piped: HirExpr,
+    ) -> HirExprKind {
+        let ty = match &param.ty {
+            Some(ast_ty) => self.ty_of(ast_ty.id),
+            None => self.ty_of(param.pattern.id),
+        };
+        let pattern = self.lower_pat_with_ty(&param.pattern, ty);
+        let lowered_body = self.lower_expr(body);
+        if !matches!(pattern.kind, HirPatKind::Binding { .. })
+            || !crate::fuse::inline_safe(&lowered_body, 0)
+        {
+            let closure = HirExpr {
+                id: self.fresh(),
+                span: rhs.span,
+                ty: self.ty_of(rhs.id),
+                kind: HirExprKind::Closure {
+                    params: vec![HirParam {
+                        pattern,
+                        ty,
+                        is_comptime: false,
+                    }],
+                    ret: ret.map(|ty| self.ty_of(ty.id)),
+                    body: Box::new(lowered_body),
+                },
+            };
+            return HirExprKind::Call {
+                callee: Box::new(closure),
+                args: vec![piped],
+            };
+        }
+        let span = rhs.span;
+        let binding = HirStmt {
+            id: self.fresh(),
+            span,
+            kind: HirStmtKind::Let {
+                pattern,
+                ty,
+                init: Some(piped),
+            },
+        };
+        HirExprKind::Block(HirBlock {
+            id: self.fresh(),
+            span,
+            ty: lowered_body.ty,
+            stmts: vec![binding],
+            tail: Some(Box::new(lowered_body)),
+            is_comptime: false,
+        })
     }
 
     fn lower_assign(

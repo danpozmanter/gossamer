@@ -19,21 +19,21 @@ fn main() {
     }
 
     let name: Option<String> = Some("ada")
-    let loud = name |> option::map(|s| strings::to_uppercase(&s), $) |> option::unwrap_or("none", $)
+    let loud = name |> |v| option::map(|s| strings::to_uppercase(&s), v) |> |v| option::unwrap_or("none", v)
     println!("option_map={}", loud)
 
     let words = #["alpha", "be", "gamma"]
-    let banged = words |> iter::map(|w| w + "!", $)
+    let banged = words |> |v| iter::map(|w| w + "!", v)
     for w in banged {
         println!("iter_map={}", w)
     }
-    let long = words |> iter::filter(|w| w.len() > 2, $)
+    let long = words |> |v| iter::filter(|w| w.len() > 2, v)
     for w in long {
         println!("iter_filter={}", w)
     }
 
     let failing: Result<i64, errors::Error> = Err(errors::new("nope"))
-    failing |> result::unwrap_or_else(|e| println!("unwrap_or_else={e}"), $)
+    failing |> |v| result::unwrap_or_else(|e| println!("unwrap_or_else={e}"), v)
 
     let eta: Result<i64, String> = Err("raw")
     let lifted = eta.map_err(errors::new)

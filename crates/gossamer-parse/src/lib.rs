@@ -199,53 +199,39 @@ mod top_level_stmt_tests {
     }
 
     #[test]
-    fn piped_format_with_an_extra_placeholder_reports_only_arity() {
-        let (_sf, diags) = parse("\"two\" |> println!(\"one\", $)\n");
+    fn a_format_macro_step_reports_that_a_macro_is_not_a_step() {
+        let (_sf, diags) = parse("\"two\" |> println!(\"one\")\n");
         assert!(
-            diags.iter().any(|diag| matches!(
-                diag.error,
-                ParseError::FormatArgumentCount {
-                    expected: 0,
-                    found: 1
-                }
-            )),
-            "expected format arity diagnostic: {diags:?}"
-        );
-        assert!(
-            !diags
+            diags
                 .iter()
-                .any(|diag| matches!(diag.error, ParseError::PipedFormatArgumentNeedsPlaceholder)),
-            "explicit `$` must not trigger a missing-placeholder diagnostic: {diags:?}"
+                .any(|diag| matches!(diag.error, ParseError::PipedFormatMacroStep)),
+            "expected the format-macro step diagnostic: {diags:?}"
         );
     }
 
     #[test]
-    fn a_pipe_receiver_projection_reports_the_method_chain() {
+    fn a_dollar_reports_that_the_placeholder_is_retired() {
         let (_sf, diags) =
             parse("fn main() { let xs = [7, 8, 9]\n println!(\"{}\", xs |> $[1]) }\n");
         assert!(
             diags
                 .iter()
-                .any(|diag| matches!(diag.error, ParseError::PipeReceiverProjection { .. })),
-            "expected the receiver-step diagnostic: {diags:?}"
+                .any(|diag| matches!(diag.error, ParseError::PipePlaceholderRetired)),
+            "expected the retired-placeholder diagnostic: {diags:?}"
         );
     }
 
     #[test]
-    fn retired_underscore_placeholder_reports_the_dollar_spelling() {
-        let (_sf, diags) = parse("fn main() { let t = \"  hi  \" |> _.trim }\n");
-        assert!(
-            diags
-                .iter()
-                .any(|diag| matches!(diag.error, ParseError::PipeUnderscorePlaceholder)),
-            "expected the `$` migration diagnostic: {diags:?}"
-        );
-        assert!(
-            !diags
-                .iter()
-                .any(|diag| matches!(diag.error, ParseError::PipeRhsInvalid)),
-            "the migration diagnostic must not cascade into GP0007: {diags:?}"
-        );
+    fn a_step_that_writes_its_arguments_reports_the_closure_rewrite() {
+        let (_sf, diags) = parse("fn main() { let n = 7 |> two(100) }\n");
+        let step = diags
+            .iter()
+            .find_map(|diag| match &diag.error {
+                ParseError::PipeStepNeedsClosure { replacement } => Some(replacement.clone()),
+                _ => None,
+            })
+            .expect("expected the closure-step diagnostic");
+        assert_eq!(step.as_deref(), Some("|v| two(100, v)"));
     }
 
     #[test]

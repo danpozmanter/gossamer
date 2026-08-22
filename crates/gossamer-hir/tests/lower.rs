@@ -1,7 +1,7 @@
 //! End-to-end tests for AST → HIR lowering.
 
 use gossamer_hir::{
-    HirBinaryOp, HirExprKind, HirItemKind, HirLiteral, HirPatKind, HirStmtKind, lower_source_file,
+    HirBinaryOp, HirExprKind, HirItemKind, HirPatKind, HirStmtKind, lower_source_file,
 };
 use gossamer_lex::SourceMap;
 use gossamer_resolve::resolve_source_file;
@@ -36,34 +36,88 @@ fn simple_function_lowers_to_hir_fn() {
 }
 
 #[test]
-fn pipe_rewrites_to_call_with_appended_argument() {
-    let (program, _tcx) = lower(
-        "fn wrap(a: i32, b: i32) -> i32 { a }\n\nfn caller(x: i32) -> i32 { x |> wrap(0i32, $) }\n",
-    );
-    let caller = program
-        .items
-        .iter()
-        .find_map(|item| match &item.kind {
-            HirItemKind::Fn(f) if f.name.name == "caller" => Some(f),
-            _ => None,
-        })
-        .expect("caller lowered");
-    let body = caller.body.as_ref().unwrap();
-    let tail = body.block.tail.as_ref().expect("tail present");
+fn pipe_into_a_bare_callable_appends_the_piped_argument() {
+    let (program, _tcx) =
+        lower("fn wrap(a: i32) -> i32 { a }\n\nfn caller(x: i32) -> i32 { x |> wrap }\n");
+    let tail = tail_of(&program, "caller");
     match &tail.kind {
         HirExprKind::Call { args, .. } => {
-            assert_eq!(args.len(), 2, "expected appended pipe argument");
+            assert_eq!(args.len(), 1, "the piped value is the only argument");
             match &args[0].kind {
-                HirExprKind::Literal(HirLiteral::Int(text)) => assert!(text.starts_with('0')),
-                other => panic!("unexpected first arg: {other:?}"),
-            }
-            match &args[1].kind {
                 HirExprKind::Path { segments, .. } => assert_eq!(segments[0].name, "x"),
-                other => panic!("unexpected second arg: {other:?}"),
+                other => panic!("unexpected argument: {other:?}"),
             }
         }
         other => panic!("pipe did not rewrite to call: {other:?}"),
     }
+}
+
+#[test]
+fn a_closure_step_lowers_to_the_call_it_stands_for() {
+    // The closure is a spelling of the call, so the step binds its parameter
+    // in the caller's frame rather than building a closure to invoke.
+    let (program, _tcx) = lower(
+        "fn wrap(a: i32, b: i32) -> i32 { a }\n\nfn caller(x: i32) -> i32 { x |> |v| wrap(0i32, v) }\n",
+    );
+    let tail = tail_of(&program, "caller");
+    let HirExprKind::Block(block) = &tail.kind else {
+        panic!("expected the step's block: {:?}", tail.kind);
+    };
+    assert_eq!(block.stmts.len(), 1, "one binding for the piped value");
+    let HirStmtKind::Let {
+        init: Some(init), ..
+    } = &block.stmts[0].kind
+    else {
+        panic!("expected a let binding: {:?}", block.stmts[0].kind);
+    };
+    match &init.kind {
+        HirExprKind::Path { segments, .. } => assert_eq!(segments[0].name, "x"),
+        other => panic!("the binding takes the piped value: {other:?}"),
+    }
+    let tail = block.tail.as_ref().expect("body tail");
+    assert!(
+        matches!(tail.kind, HirExprKind::Call { .. }),
+        "the body is the call as written: {:?}",
+        tail.kind
+    );
+}
+
+#[test]
+fn a_closure_step_whose_body_returns_keeps_its_closure() {
+    // `return` targets the closure, so splicing the body into the caller
+    // would return from the wrong function.
+    let (program, _tcx) = lower("fn caller(x: i32) -> i32 { x |> |v| { return v } }\n");
+    let tail = tail_of(&program, "caller");
+    match &tail.kind {
+        HirExprKind::Call { callee, args } => {
+            assert!(
+                matches!(callee.kind, HirExprKind::Closure { .. }),
+                "the step stays a closure: {:?}",
+                callee.kind
+            );
+            assert_eq!(args.len(), 1);
+        }
+        other => panic!("expected a closure call: {other:?}"),
+    }
+}
+
+/// The tail expression of the named function in `program`.
+fn tail_of<'a>(program: &'a gossamer_hir::HirProgram, name: &str) -> &'a gossamer_hir::HirExpr {
+    let f = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            HirItemKind::Fn(f) if f.name.name == name => Some(f),
+            _ => None,
+        })
+        .expect("function lowered");
+    f.body
+        .as_ref()
+        .expect("body")
+        .block
+        .tail
+        .as_ref()
+        .expect("tail present")
 }
 
 #[test]

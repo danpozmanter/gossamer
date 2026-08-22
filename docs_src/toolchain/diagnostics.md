@@ -36,10 +36,9 @@ version. This page is auto-generated from the catalogue in
 | [`GP0022`](#gp0022) | Parser | unserializable derived field |
 | [`GP0023`](#gp0023) | Parser | format argument count mismatch |
 | [`GP0024`](#gp0024) | Parser | non-literal format template |
-| [`GP0025`](#gp0025) | Parser | piped format value has no placeholder |
+| [`GP0025`](#gp0025) | Parser | formatting macro used as a pipe step |
 | [`GP0026`](#gp0026) | Parser | inclusive range missing upper bound |
-| [`GP0027`](#gp0027) | Parser | invalid pipe placeholder |
-| [`GP0028`](#gp0028) | Parser | range used as pipe placeholder |
+| [`GP0027`](#gp0027) | Parser | `$` is not part of the language |
 | [`GP0029`](#gp0029) | Parser | match arm missing arrow |
 | [`GP0030`](#gp0030) | Parser | match arm missing body |
 | [`GP0031`](#gp0031) | Parser | match arm missing separator |
@@ -49,6 +48,10 @@ version. This page is auto-generated from the catalogue in
 | [`GP0035`](#gp0035) | Parser | duplicate slice-pattern rest |
 | [`GP0036`](#gp0036) | Parser | duplicate struct-literal spread |
 | [`GP0037`](#gp0037) | Parser | refutable let without else |
+| [`GP0038`](#gp0038) | Parser | unsupported visibility restriction |
+| [`GP0039`](#gp0039) | Parser | serde turbofish names an uncovered type |
+| [`GP0040`](#gp0040) | Parser | hyphen in a `use` path |
+| [`GP0041`](#gp0041) | Parser | pipe step with arguments is not a closure |
 | [`GR0001`](#gr0001) | Resolve | unresolved name |
 | [`GR0002`](#gr0002) | Resolve | wrong namespace |
 | [`GR0003`](#gr0003) | Resolve | duplicate item |
@@ -212,9 +215,9 @@ Format macros require a literal template so placeholders can be checked at compi
 
 ## `GP0025` <a id="gp0025"></a>
 
-**Parser** - piped format value has no placeholder
+**Parser** - formatting macro used as a pipe step
 
-A value piped into a format macro needs an explicit positional placeholder.
+A macro takes its arguments as written, so the piped value has no slot of its own. Write the step as a closure: `value |> |v| println!("{}", v)`.
 
 ## `GP0026` <a id="gp0026"></a>
 
@@ -224,15 +227,9 @@ The inclusive range operator `..=` requires an upper bound. Use `..` for an open
 
 ## `GP0027` <a id="gp0027"></a>
 
-**Parser** - invalid pipe placeholder
+**Parser** - `$` is not part of the language
 
-A pipe placeholder must occur exactly once as a direct call argument.
-
-## `GP0028` <a id="gp0028"></a>
-
-**Parser** - range used as pipe placeholder
-
-The token `..` starts a range. Use `_` as the pipe placeholder.
+`$` used to spell the slot a `|>` step filled. A step that needs the value in a particular slot is a closure, as in `x |> |v| f(a, v)`; a method already chains, as in `x.trim()`; a callback is a closure or a function named in value position.
 
 ## `GP0029` <a id="gp0029"></a>
 
@@ -287,6 +284,30 @@ A struct literal wrote more than one `..base` functional update. Keep a single b
 **Parser** - refutable let without else
 
 A `let` whose pattern can fail to match was written without an `else` block. Give the failure a diverging path: `let Some(x) = opt else { return }`.
+
+## `GP0038` <a id="gp0038"></a>
+
+**Parser** - unsupported visibility restriction
+
+The three visibilities are private (no annotation), `pub(package)`, and `pub`.
+
+## `GP0039` <a id="gp0039"></a>
+
+**Parser** - serde turbofish names an uncovered type
+
+A codec is synthesized per concrete struct whose fields the synthesizer can classify. Exchange a concrete struct, read the document dynamically with `json::parse`, or hand-write the function.
+
+## `GP0040` <a id="gp0040"></a>
+
+**Parser** - hyphen in a `use` path
+
+`-` is subtraction, never part of an identifier. A dependency's module name is its package name with each `-` replaced by `_`, so `pgsql-gos` is imported as `use pgsql_gos`.
+
+## `GP0041` <a id="gp0041"></a>
+
+**Parser** - pipe step with arguments is not a closure
+
+A `|>` step that writes its own arguments leaves the piped value no slot. Write it as a closure whose parameter is that slot: `x |> |v| f(a, v)`.
 
 ## `GR0001` <a id="gr0001"></a>
 

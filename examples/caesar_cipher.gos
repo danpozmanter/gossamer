@@ -24,7 +24,7 @@ fn shift_byte(b: i64, key: i64) -> i64 {
 }
 
 fn shift_codes(codes: &[i64], key: i64) -> Vec<i64> {
-    codes |> iter::map(|c: i64| shift_byte(c, key), $)
+    codes |> |v| iter::map(|c: i64| shift_byte(c, key), v)
 }
 
 // "Hello, world!" as ASCII codes.

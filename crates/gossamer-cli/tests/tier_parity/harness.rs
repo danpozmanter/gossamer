@@ -1040,7 +1040,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/panic_recover_round_trip.gos"),
     spec("feature-testing-examples/pattern_match_exhaustiveness.gos"),
     spec("feature-testing-examples/pipe_operator_precedence.gos"),
-    spec("feature-testing-examples/pipe_placeholder.gos"),
+    spec("feature-testing-examples/pipe_closure_step.gos"),
     Spec {
         // The example exercises `exec::run` against `echo`, `printf`,
         // `sh`, `true`, `false` - all Unix-only standalone executables

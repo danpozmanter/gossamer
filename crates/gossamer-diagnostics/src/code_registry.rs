@@ -432,7 +432,9 @@ pub const REGISTRY: &[(&str, &str)] = &[
     ),
     (
         "GP0025",
-        "A value piped into a format macro needs an explicit positional placeholder. Add a positional placeholder and place the pipe placeholder in the corresponding argument position.",
+        "A formatting macro was written as a `|>` step. A macro takes its\n\
+            arguments as written, so the piped value has no slot of its own.\n\
+            Write the step as a closure: `value |> |v| println!(\"{}\", v)`.",
     ),
     (
         "GP0026",
@@ -440,11 +442,11 @@ pub const REGISTRY: &[(&str, &str)] = &[
     ),
     (
         "GP0027",
-        "A pipe placeholder must occur exactly once as a direct call argument. Move it into the argument list and remove any duplicate placeholder.",
-    ),
-    (
-        "GP0028",
-        "Two dots start a range, not a pipe placeholder. Use the underscore placeholder, or omit it when the piped value belongs in the final argument slot.",
+        "`$` was written where an expression belongs. It used to spell the\n\
+            slot a `|>` step filled; a step that needs the value in a\n\
+            particular slot is now a closure, as in `x |> |v| f(a, v)`. A\n\
+            method already chains, as in `x.trim()`, and a callback is a\n\
+            closure or a function named in value position.",
     ),
     (
         "GP0029",
@@ -495,10 +497,9 @@ pub const REGISTRY: &[(&str, &str)] = &[
     ),
     (
         "GP0038",
-        "A `|>` right-hand side used `_` where the pipe placeholder belongs.\n\
-            The placeholder is `$`, and it names the argument the piped value\n\
-            fills: `x |> f($, k)` is `f(x, k)`. A method already chains, so a\n\
-            step never pastes the value back on as a receiver.",
+        "A visibility was written with a restriction Gossamer does not have.\n\
+            The three visibilities are private (no annotation),\n\
+            `pub(package)`, and `pub`.",
     ),
     (
         "GP0039",
@@ -519,30 +520,14 @@ pub const REGISTRY: &[(&str, &str)] = &[
     ),
     (
         "GP0041",
-        "A `|>` step took arguments without naming the piped value's slot.\n\
-            The pipe composes free functions; when a step writes other\n\
-            arguments the slot is named with `$`, as in `x |> f(a, $)`. No\n\
-            argument order is assumed, so a data-first callee such as\n\
-            `strings::split($, sep)` reads the same as a data-last one.\n\
-            The implicit rule this replaces threaded into the trailing slot,\n\
-            which silently mis-filled a data-first callee; `--fix` preserves\n\
-            that behaviour by appending `$`, so confirm the slot is the one\n\
-            the call needs.",
-    ),
-    (
-        "GP0042",
-        "A `|>` step pasted the piped value back on as a method receiver.\n\
-            A method already chains, so `x.trim().to_lowercase()` says what\n\
-            `x |> $.trim |> $.to_lowercase` said, with less punctuation. The\n\
-            pipe is for free functions, which have no receiver to chain from;\n\
-            a method chain can feed one directly.",
-    ),
-    (
-        "GP0043",
-        "A call argument used the retired `$`-projection callback shorthand.\n\
-            A callback is written as a closure, `xs.map(|v| v.abs())`, or as a\n\
-            function passed by name, `xs.map(math::abs)`. `$` belongs to the\n\
-            `|>` pipe, where it names the slot the piped value fills.",
+        "A `|>` step wrote its own arguments, so the piped value has no slot\n\
+            left. The pipe composes free functions; a step that writes other\n\
+            arguments is a closure whose parameter is that slot, as in\n\
+            `x |> |v| f(a, v)`. No argument order is assumed, so a data-first\n\
+            callee such as `|v| strings::split(v, sep)` reads the same as a\n\
+            data-last one. `--fix` puts the parameter in the trailing slot,\n\
+            which a data-first callee does not want, so confirm the slot is\n\
+            the one the call needs.",
     ),
     (
         "GR0001",

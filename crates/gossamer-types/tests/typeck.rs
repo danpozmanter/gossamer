@@ -536,7 +536,7 @@ fn function_boundaries_reject_wrong_float_callable_and_pipeline_types() {
         "fn take(v: i64) {}\nfn main() { take(1.5) }\n",
         "fn wrong(v: String) -> bool { true }\nfn take(f: Fn(i64) -> bool) {}\nfn main() { take(wrong) }\n",
         "fn invoke(f: Fn(i64) -> bool) { let _ = f(\"wrong\") }\nfn main() {}\n",
-        "struct A(i64)\nstruct B(i64)\nfn take(v: A, n: i64) {}\nfn main() { 1 |> take(B(2), $) }\n",
+        "struct A(i64)\nstruct B(i64)\nfn take(v: A, n: i64) {}\nfn main() { 1 |> |v| take(B(2), v) }\n",
         "fn pair(a: i64, b: i64) -> i64 { a + b }\nfn main() { let _ = 1 |> pair }\n",
     ];
     for source in rejected {
@@ -1432,7 +1432,20 @@ fn let_init<'a>(checked: &'a Checked, fn_name: &str, stmt_idx: usize) -> &'a gos
 
 /// Resolved first-parameter type of the first closure nested in `root`.
 fn closure_param_kind(checked: &Checked, root: &gossamer_ast::Expr) -> TyKind {
-    let closure = find_closure(root).expect("closure expr");
+    closure_param_kind_of(checked, find_closure(root).expect("closure expr"))
+}
+
+/// [`closure_param_kind`] for the callback inside a `|>` closure step, whose
+/// own parameter is the outermost closure.
+fn step_callback_param_kind(checked: &Checked, root: &gossamer_ast::Expr) -> TyKind {
+    let step = find_closure(root).expect("step closure");
+    let ExprKind::Closure { body, .. } = &step.kind else {
+        panic!("expected a closure step");
+    };
+    closure_param_kind_of(checked, find_closure(body).expect("callback closure"))
+}
+
+fn closure_param_kind_of(checked: &Checked, closure: &gossamer_ast::Expr) -> TyKind {
     let ty = checked.table.get(closure.id).expect("closure typed");
     match checked.tcx.kind(ty).expect("closure ty kind") {
         TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
@@ -1535,11 +1548,11 @@ fn iter_map_free_fn_closure_param_pins_to_elem_type() {
 fn piped_iter_map_closure_param_pins_to_elem_type() {
     let checked = run("use std::iter\n\
          fn main() { let xs: Vec<String> = Vec::from([\"a\"])\n\
-         let ys = xs |> iter::map(|s| format!(\"({s})\"), $) }\n");
+         let ys = xs |> |v| iter::map(|s| format!(\"({s})\"), v) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
     let init = let_init(&checked, "main", 1);
     assert!(
-        matches!(closure_param_kind(&checked, init), TyKind::String),
+        matches!(step_callback_param_kind(&checked, init), TyKind::String),
         "piped iter::map closure param must pin to the Vec element String"
     );
     let pipe_ty = checked.table.get(init.id).expect("pipe typed");
@@ -1553,11 +1566,11 @@ fn piped_iter_map_closure_param_pins_to_elem_type() {
 fn piped_result_default_with_closure_param_pins_to_err_type() {
     let checked = run("use std::result\n\
          fn fail() -> Result<i64, String> { Err(\"boom\") }\n\
-         fn main() { let v = fail() |> result::unwrap_or_else(|e| println!(\"{e}\"), $) }\n");
+         fn main() { let v = fail() |> |v| result::unwrap_or_else(|e| println!(\"{e}\"), v) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
     let init = let_init(&checked, "main", 0);
     assert!(
-        matches!(closure_param_kind(&checked, init), TyKind::String),
+        matches!(step_callback_param_kind(&checked, init), TyKind::String),
         "result::unwrap_or_else closure param must pin to the Err payload String"
     );
 }
@@ -1766,7 +1779,7 @@ fn std_fn_in_callee_position_stays_legal() {
     // GT0015 only fires on genuine value positions.
     let source = "use std::strings\n\
                   fn main() { let a = strings::repeat(\"ab\", 2)\n\
-                  let b = \"x\" |> strings::repeat($, 2)\nlet _ = a\nlet _ = b }\n";
+                  let b = \"x\" |> |v| strings::repeat(v, 2)\nlet _ = a\nlet _ = b }\n";
     let diagnostics = diagnostics_for(source);
     assert!(
         !diagnostics
@@ -1821,7 +1834,7 @@ fn formatting_a_lazy_iterator_is_rejected() {
 #[test]
 fn lazy_iterator_step_by_is_accepted() {
     let d = diagnostics_for(
-        "use std::iter\nfn main() { let xs = iter::range(0, 9) |> iter::step_by(2, $)\n let _ = xs }\n",
+        "use std::iter\nfn main() { let xs = iter::range(0, 9) |> |v| iter::step_by(2, v)\n let _ = xs }\n",
     );
     assert!(d.is_empty(), "{d:?}");
 }
@@ -1848,7 +1861,7 @@ fn iterator_parameters_cannot_be_reused_after_consuming_methods_or_for_loops() {
 #[test]
 fn reusing_pipe_consumed_lazy_iterator_is_rejected() {
     let d = diagnostics_for(
-        "use std::iter\nfn main() { let xs = 0..3\n let out = xs |> iter::take(1, $)\n let _ = xs\n let _ = out }\n",
+        "use std::iter\nfn main() { let xs = 0..3\n let out = xs |> |v| iter::take(1, v)\n let _ = xs\n let _ = out }\n",
     );
     assert!(has_code(&d, "GT0042"), "{d:?}");
 }
@@ -2157,7 +2170,7 @@ fn method_call_with_correct_arity_is_accepted() {
 fn piped_method_call_counts_the_implicit_argument() {
     // `5 |> a.add(2)` desugars to `a.add(2, 5)`: arity is satisfied.
     let d = diagnostics_for(
-        "struct A { x: i64 }\nimpl A { fn add(&self, a: i64, b: i64) -> i64 { self.x + a + b } }\nfn main() { let a = A { x: 1 }\n println!(\"{}\", 5 |> a.add(2, $)) }\n",
+        "struct A { x: i64 }\nimpl A { fn add(&self, a: i64, b: i64) -> i64 { self.x + a + b } }\nfn main() { let a = A { x: 1 }\n println!(\"{}\", 5 |> |v| a.add(2, v)) }\n",
     );
     assert!(!has_code(&d, "GT0018"), "{d:?}");
 }
@@ -4357,4 +4370,117 @@ fn a_callable_in_value_position_still_feeds_a_combinator() {
          fn main() { let xs = #[1, 2]\n let _ = xs.map(dbl) }\n",
     );
     assert!(!has_code(&d, "GT0002"), "{d:?}");
+}
+
+// A receiver that holds no ordered buffer cannot sort: on 0.55.0 these
+// typechecked and then reordered nothing, so a top-N report printed its
+// first N entries in the source's own traversal order.
+
+#[test]
+fn sorting_a_lazy_iterator_is_rejected() {
+    let d = diagnostics_for(
+        "fn main() { let mut m = {}\n m.inc(\"a\")\n \
+         let mut pairs = m.iter()\n pairs.sort_by_key(|p| p.1)\n let _ = pairs }\n",
+    );
+    assert!(has_code(&d, "GT0002"), "{d:?}");
+}
+
+#[test]
+fn sorting_a_range_is_rejected() {
+    let d = diagnostics_for("fn main() { let xs = (1..6).sort_by(|a, b| a - b)\n let _ = xs }\n");
+    assert!(has_code(&d, "GT0002"), "{d:?}");
+}
+
+#[test]
+fn sorting_a_vec_in_place_is_accepted() {
+    let d = diagnostics_for(
+        "fn main() { let mut xs = #[3, 1, 2]\n xs.sort_by_key(|v| v)\n let _ = xs }\n",
+    );
+    assert!(d.is_empty(), "{d:?}");
+}
+
+// A scalar orders with `<`, compares with `==`, and renders through `{}`.
+// The method spellings typechecked on 0.55.0 and then failed at run time
+// as an unbound name on every tier.
+
+#[test]
+fn derived_trait_methods_on_a_scalar_are_rejected() {
+    for call in ["a.cmp(b)", "a.eq(b)", "a.fmt()", "a.hash()"] {
+        let source = format!("fn main() {{ let a = 3\n let b = 5\n let _ = {call} }}\n");
+        let d = diagnostics_for(&source);
+        assert!(has_code(&d, "GT0002"), "{call}: {d:?}");
+    }
+}
+
+#[test]
+fn conversions_on_a_scalar_are_accepted() {
+    let d = diagnostics_for(
+        "fn main() { let a = 3\n let _ = a.clone()\n let _ = a.to_string()\n \
+         let _ = a.wrapping_add(1) }\n",
+    );
+    assert!(d.is_empty(), "{d:?}");
+}
+
+#[test]
+fn a_free_function_in_method_position_on_a_scalar_is_rejected() {
+    let d = diagnostics_for(
+        "fn double(v: i64) -> i64 { v * 2 }\nfn main() { let a = 3\n let _ = a.double() }\n",
+    );
+    assert!(has_code(&d, "GT0002"), "{d:?}");
+}
+
+#[test]
+fn an_item_imported_free_function_reaches_a_scalar_receiver() {
+    let d = diagnostics_for("use std::math::abs\nfn main() { let a = -3.0\n let _ = a.abs() }\n");
+    assert!(d.is_empty(), "{d:?}");
+}
+
+/// A parse-time desugar renames the call it builds, and a diagnostic that
+/// named the rewritten method sent the reader hunting for a word their file
+/// does not contain. Each sort spelling reports itself.
+#[test]
+fn a_rejected_sort_reports_the_spelling_the_source_wrote() {
+    for (source, written) in [
+        (
+            "fn main() { let xs = (1..6).sort_by_key(|n: i64| n)\n let _ = xs }\n",
+            "sort_by_key",
+        ),
+        (
+            "fn main() { let xs = (1..6).sort_by_key_desc(|n: i64| n)\n let _ = xs }\n",
+            "sort_by_key_desc",
+        ),
+        (
+            "fn main() { let xs = (1..6).sort_by(|a: i64, b: i64| a - b)\n let _ = xs }\n",
+            "sort_by",
+        ),
+    ] {
+        let diagnostics = diagnostics_for(source);
+        let Some(found) = diagnostics.iter().find(|d| d.error.code() == "GT0002") else {
+            panic!("{written}: expected GT0002, got {diagnostics:?}");
+        };
+        let reported = format!("{}", found.error);
+        assert!(
+            reported.contains(&format!("`{written}`")),
+            "expected the diagnostic to name `{written}`, got: {reported}"
+        );
+    }
+}
+
+/// The sort family keeps its receiver form on the types that hold an ordered
+/// buffer, so the rejection names what this receiver lacks rather than
+/// claiming the method exists nowhere.
+#[test]
+fn a_rejected_sort_names_a_free_call_that_exists() {
+    let diagnostics = diagnostics_for(
+        "fn main() { let xs = (1..6).sort_by_key_desc(|n: i64| n)\n let _ = xs }\n",
+    );
+    let rendered = diagnostics
+        .iter()
+        .find(|d| d.error.code() == "GT0002")
+        .map(|d| format!("{:?}", d.to_diagnostic()))
+        .expect("expected GT0002");
+    assert!(
+        rendered.contains("iter::sort_by_key"),
+        "the help names the free call that sorts a sequence: {rendered}"
+    );
 }

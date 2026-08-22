@@ -1581,17 +1581,6 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#gp0028" class="md-nav__link">
-    <span class="md-ellipsis">
-
-        GP0028
-
-    </span>
-  </a>
-
-</li>
-
-        <li class="md-nav__item">
   <a href="#gp0029" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -1684,6 +1673,50 @@
     <span class="md-ellipsis">
 
         GP0037
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gp0038" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GP0038
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gp0039" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GP0039
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gp0040" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GP0040
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gp0041" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GP0041
 
     </span>
   </a>
@@ -3033,17 +3066,6 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#gp0028" class="md-nav__link">
-    <span class="md-ellipsis">
-
-        GP0028
-
-    </span>
-  </a>
-
-</li>
-
-        <li class="md-nav__item">
   <a href="#gp0029" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -3136,6 +3158,50 @@
     <span class="md-ellipsis">
 
         GP0037
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gp0038" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GP0038
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gp0039" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GP0039
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gp0040" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GP0040
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gp0041" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GP0041
 
     </span>
   </a>
@@ -3477,7 +3543,7 @@ version. This page is auto-generated from the catalogue in
 <tr>
 <td><a href="#gp0025"><code>GP0025</code></a></td>
 <td>Parser</td>
-<td>piped format value has no placeholder</td>
+<td>formatting macro used as a pipe step</td>
 </tr>
 <tr>
 <td><a href="#gp0026"><code>GP0026</code></a></td>
@@ -3487,12 +3553,7 @@ version. This page is auto-generated from the catalogue in
 <tr>
 <td><a href="#gp0027"><code>GP0027</code></a></td>
 <td>Parser</td>
-<td>invalid pipe placeholder</td>
-</tr>
-<tr>
-<td><a href="#gp0028"><code>GP0028</code></a></td>
-<td>Parser</td>
-<td>range used as pipe placeholder</td>
+<td><code>$</code> is not part of the language</td>
 </tr>
 <tr>
 <td><a href="#gp0029"><code>GP0029</code></a></td>
@@ -3538,6 +3599,26 @@ version. This page is auto-generated from the catalogue in
 <td><a href="#gp0037"><code>GP0037</code></a></td>
 <td>Parser</td>
 <td>refutable let without else</td>
+</tr>
+<tr>
+<td><a href="#gp0038"><code>GP0038</code></a></td>
+<td>Parser</td>
+<td>unsupported visibility restriction</td>
+</tr>
+<tr>
+<td><a href="#gp0039"><code>GP0039</code></a></td>
+<td>Parser</td>
+<td>serde turbofish names an uncovered type</td>
+</tr>
+<tr>
+<td><a href="#gp0040"><code>GP0040</code></a></td>
+<td>Parser</td>
+<td>hyphen in a <code>use</code> path</td>
+</tr>
+<tr>
+<td><a href="#gp0041"><code>GP0041</code></a></td>
+<td>Parser</td>
+<td>pipe step with arguments is not a closure</td>
 </tr>
 <tr>
 <td><a href="#gr0001"><code>GR0001</code></a></td>
@@ -3694,17 +3775,14 @@ version. This page is auto-generated from the catalogue in
 <p><strong>Parser</strong> - non-literal format template</p>
 <p>Format macros require a literal template so placeholders can be checked at compile time.</p>
 <h2 id="gp0025"><code>GP0025</code> <a id="gp0025"></a><a class="headerlink" href="#gp0025" title="Permanent link">&para;</a></h2>
-<p><strong>Parser</strong> - piped format value has no placeholder</p>
-<p>A value piped into a format macro needs an explicit positional placeholder.</p>
+<p><strong>Parser</strong> - formatting macro used as a pipe step</p>
+<p>A macro takes its arguments as written, so the piped value has no slot of its own. Write the step as a closure: <code>value |&gt; |v| println!("{}", v)</code>.</p>
 <h2 id="gp0026"><code>GP0026</code> <a id="gp0026"></a><a class="headerlink" href="#gp0026" title="Permanent link">&para;</a></h2>
 <p><strong>Parser</strong> - inclusive range missing upper bound</p>
 <p>The inclusive range operator <code>..=</code> requires an upper bound. Use <code>..</code> for an open upper end.</p>
 <h2 id="gp0027"><code>GP0027</code> <a id="gp0027"></a><a class="headerlink" href="#gp0027" title="Permanent link">&para;</a></h2>
-<p><strong>Parser</strong> - invalid pipe placeholder</p>
-<p>A pipe placeholder must occur exactly once as a direct call argument.</p>
-<h2 id="gp0028"><code>GP0028</code> <a id="gp0028"></a><a class="headerlink" href="#gp0028" title="Permanent link">&para;</a></h2>
-<p><strong>Parser</strong> - range used as pipe placeholder</p>
-<p>The token <code>..</code> starts a range. Use <code>_</code> as the pipe placeholder.</p>
+<p><strong>Parser</strong> - <code>$</code> is not part of the language</p>
+<p><code>$</code> used to spell the slot a <code>|&gt;</code> step filled. A step that needs the value in a particular slot is a closure, as in <code>x |&gt; |v| f(a, v)</code>; a method already chains, as in <code>x.trim()</code>; a callback is a closure or a function named in value position.</p>
 <h2 id="gp0029"><code>GP0029</code> <a id="gp0029"></a><a class="headerlink" href="#gp0029" title="Permanent link">&para;</a></h2>
 <p><strong>Parser</strong> - match arm missing arrow</p>
 <p>Add <code>=&gt;</code> after the match arm pattern and optional guard.</p>
@@ -3732,6 +3810,18 @@ version. This page is auto-generated from the catalogue in
 <h2 id="gp0037"><code>GP0037</code> <a id="gp0037"></a><a class="headerlink" href="#gp0037" title="Permanent link">&para;</a></h2>
 <p><strong>Parser</strong> - refutable let without else</p>
 <p>A <code>let</code> whose pattern can fail to match was written without an <code>else</code> block. Give the failure a diverging path: <code>let Some(x) = opt else { return }</code>.</p>
+<h2 id="gp0038"><code>GP0038</code> <a id="gp0038"></a><a class="headerlink" href="#gp0038" title="Permanent link">&para;</a></h2>
+<p><strong>Parser</strong> - unsupported visibility restriction</p>
+<p>The three visibilities are private (no annotation), <code>pub(package)</code>, and <code>pub</code>.</p>
+<h2 id="gp0039"><code>GP0039</code> <a id="gp0039"></a><a class="headerlink" href="#gp0039" title="Permanent link">&para;</a></h2>
+<p><strong>Parser</strong> - serde turbofish names an uncovered type</p>
+<p>A codec is synthesized per concrete struct whose fields the synthesizer can classify. Exchange a concrete struct, read the document dynamically with <code>json::parse</code>, or hand-write the function.</p>
+<h2 id="gp0040"><code>GP0040</code> <a id="gp0040"></a><a class="headerlink" href="#gp0040" title="Permanent link">&para;</a></h2>
+<p><strong>Parser</strong> - hyphen in a <code>use</code> path</p>
+<p><code>-</code> is subtraction, never part of an identifier. A dependency's module name is its package name with each <code>-</code> replaced by <code>_</code>, so <code>pgsql-gos</code> is imported as <code>use pgsql_gos</code>.</p>
+<h2 id="gp0041"><code>GP0041</code> <a id="gp0041"></a><a class="headerlink" href="#gp0041" title="Permanent link">&para;</a></h2>
+<p><strong>Parser</strong> - pipe step with arguments is not a closure</p>
+<p>A <code>|&gt;</code> step that writes its own arguments leaves the piped value no slot. Write it as a closure whose parameter is that slot: <code>x |&gt; |v| f(a, v)</code>.</p>
 <h2 id="gr0001"><code>GR0001</code> <a id="gr0001"></a><a class="headerlink" href="#gr0001" title="Permanent link">&para;</a></h2>
 <p><strong>Resolve</strong> - unresolved name</p>
 <p>A name used in source could not be resolved to a declaration. Check the spelling, whether a <code>use</code> brings the name into scope, and whether the item is visible at this location.</p>

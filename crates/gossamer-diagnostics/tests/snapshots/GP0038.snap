@@ -3,9 +3,9 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GP0038]: A `|>` right-hand side used `_` where the pipe placeholder belongs. - here
+error[GP0038]: A visibility was written with a restriction Gossamer does not have. - here
 --- framed ---
-error[GP0038]: A `|>` right-hand side used `_` where the pipe placeholder belongs.
+error[GP0038]: A visibility was written with a restriction Gossamer does not have.
   --> snap.gos:2:5
      2 |     let x = 1
        |     ^^^^^

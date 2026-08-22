@@ -84,6 +84,7 @@ pub(crate) fn method_call_expr(receiver: Expr, name: &str, args: Vec<Expr>) -> E
             receiver: Box::new(receiver),
             name: Ident::new(name),
             name_span: dummy_span(),
+            desugared_from: None,
             generics: Vec::new(),
             args,
         },

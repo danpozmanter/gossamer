@@ -1201,7 +1201,7 @@ let s = #{
 
     #[test]
     fn closure_pipes_format_tight() {
-        let source = "fn main() {\n    let f = xs |> filter(|n: i64| n % 2 == 0, $)\n}\n";
+        let source = "fn main() {\n    let f = xs |> |v| filter(|n: i64| n % 2 == 0, v)\n}\n";
         assert_eq!(fmt(source), source);
     }
 

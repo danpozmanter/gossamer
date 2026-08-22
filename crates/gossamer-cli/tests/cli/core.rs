@@ -651,43 +651,43 @@ const LAZY_ITERATOR_TIER_SOURCE: &str = r#"use std::{iter, option}
 
 fn main() {
     let xs = 1..100
-        |> iter::map(|x| {
+        |> |v| iter::map(|x| {
             if x > 3 { panic("map was eager") }
             x
-        }, $)
-        |> iter::take(3, $)
+        }, v)
+        |> |v| iter::take(3, v)
         |> iter::collect
     println!("{}", xs.sum())
 
-    let skipped = (1..8) |> iter::skip(3, $) |> iter::take(2, $) |> iter::sum
+    let skipped = (1..8) |> |v| iter::skip(3, v) |> |v| iter::take(2, v) |> iter::sum
     println!("{skipped}")
 
     let chained = iter::chain((1..3), (5..7)) |> iter::sum
     println!("{chained}")
 
-    let folded = (1..5) |> iter::fold(10i64, |acc: i64, x: i64| acc + x, $)
+    let folded = (1..5) |> |v| iter::fold(10i64, |acc: i64, x: i64| acc + x, v)
     println!("{folded}")
 
     let any_hit = (1..100)
-        |> iter::any(|x| {
+        |> |v| iter::any(|x| {
             if x > 4 { panic("any was eager") }
             x == 3
-        }, $)
+        }, v)
     println!("{any_hit}")
 
     let all_hit = (1..100)
-        |> iter::all(|x| {
+        |> |v| iter::all(|x| {
             if x > 4 { panic("all was eager") }
             x < 3
-        }, $)
+        }, v)
     println!("{all_hit}")
 
     let found = (1..100)
-        |> iter::find(|x| {
+        |> |v| iter::find(|x| {
             if x > 5 { panic("find was eager") }
             x == 4
-        }, $)
-        |> option::unwrap_or(-1, $)
+        }, v)
+        |> |v| option::unwrap_or(-1, v)
     println!("{found}")
 
     let once_sum = iter::once(41) |> iter::sum
@@ -696,10 +696,10 @@ fn main() {
     let product = (2..5) |> iter::product
     println!("{product}")
 
-    let min_value = (4..7) |> iter::min |> option::unwrap_or(-1, $)
+    let min_value = (4..7) |> iter::min |> |v| option::unwrap_or(-1, v)
     println!("{min_value}")
 
-    let max_value = (4..7) |> iter::max |> option::unwrap_or(-1, $)
+    let max_value = (4..7) |> iter::max |> |v| option::unwrap_or(-1, v)
     println!("{max_value}")
 
     let enumerated = (3..6) |> iter::enumerate |> iter::collect
@@ -713,19 +713,19 @@ fn main() {
 
     let borrowed = [1, 2, 3, 4]
     let borrowed_total = borrowed
-        |> iter::map(|x| x * 2, $)
-        |> iter::filter(|x| x > 4, $)
-        |> iter::take(2, $)
+        |> |v| iter::map(|x| x * 2, v)
+        |> |v| iter::filter(|x| x > 4, v)
+        |> |v| iter::take(2, v)
         |> iter::sum
     println!("{borrowed_total}")
 
     let mut replaced: Vec<i64> = Vec::from([1, 2, 3])
-    let pending_replacement = replaced |> iter::map(|x| x, $)
+    let pending_replacement = replaced |> |v| iter::map(|x| x, v)
     replaced[1] = 9
     println!("{}", pending_replacement |> iter::sum)
 
     let open_end = 10..
-        |> iter::take(4, $)
+        |> |v| iter::take(4, v)
         |> iter::collect
     println!("{}", open_end.len())
 }
@@ -738,9 +738,9 @@ const EAGER_COLLECTION_SOURCE: &str = r#"use std::iter
 
 fn main() {
     let range = iter::range(2, 6)
-    let mapped = range |> iter::map(|x| x * 2, $)
-    let filtered = mapped |> iter::filter(|x| x > 5, $)
-    let taken = filtered |> iter::take(2, $)
+    let mapped = range |> |v| iter::map(|x| x * 2, v)
+    let filtered = mapped |> |v| iter::filter(|x| x > 5, v)
+    let taken = filtered |> |v| iter::take(2, v)
     println!("{} {} {} {}", range[0], mapped[1], taken[0], iter::sum(taken))
 }
 "#;
@@ -754,9 +754,9 @@ const LAZY_ITERATOR_ALLOCATION_SOURCE: &str = r#"use std::iter
 
 fn main() {
     let out = (0..100)
-        |> iter::map(|x| x + 1, $)
-        |> iter::filter(|x| x % 2 == 0, $)
-        |> iter::take(3, $)
+        |> |v| iter::map(|x| x + 1, v)
+        |> |v| iter::filter(|x| x % 2 == 0, v)
+        |> |v| iter::take(3, v)
         |> iter::collect
     println!("{}", out.sum())
 }
@@ -766,7 +766,7 @@ const LAZY_ITERATOR_INVALIDATION_SOURCE: &str = r#"use std::iter
 
 fn main() {
     let mut xs: Vec<i64> = Vec::from([1, 2, 3])
-    let pending = xs.iter() |> iter::map(|x| x, $)
+    let pending = xs.iter() |> |v| iter::map(|x| x, v)
     xs.push(4)
     println!("{}", pending |> iter::sum)
 }
@@ -776,10 +776,10 @@ const LAZY_ITERATOR_PANIC_SOURCE: &str = r#"use std::iter
 
 fn main() {
     let _ = (0..8)
-        |> iter::map(|x| {
+        |> |v| iter::map(|x| {
             if x == 3 { panic("lazy adapter panic sentinel") }
             x
-        }, $)
+        }, v)
         |> iter::count
 }
 "#;

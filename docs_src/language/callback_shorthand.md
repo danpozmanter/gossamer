@@ -50,7 +50,6 @@ fn main() {
 }
 ```
 
-`$` is not a callback shorthand - it belongs to [`|>`](pipe.md), where it
-names the slot the piped value fills. A `$`-headed projection in an
-argument reports `GP0043`, and `gos check --fix` rewrites it to the
-closure it abbreviated.
+`$` is not a callback shorthand, and is not part of the language at all:
+`xs.map($.abs)` reports `GP0027`. See [`|>`](pipe.md) for the closure a
+pipe step is written as.

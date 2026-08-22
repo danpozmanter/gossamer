@@ -1,35 +1,62 @@
 # Changelog
 
-## 0.55.0 - Compile-time capability policy, an OS-native process sandbox, \>/$ syntax refinement
+## 0.55.0 - Compile-time capability policy, OS-native process sandbox, syntax refinement
 
 - `|>` is the composition operator for free functions, and says which argument
-  it fills. A step is a bare callable (`x |> f`), or a call that names the
-  piped value's slot with `$` (`x |> f(a, $)`, `x |> f($, a)`); exactly one
-  `$` per step, anywhere along the step's call chain. The old rule threaded
-  into the trailing slot with no `$` written, which silently mis-filled every
-  data-first callee: `"a,b,c" |> strings::split(",")` answered `[,]` rather
-  than `[a, b, c]`, and `#[1,3,5] |> sort::binary_search(3)` answered `None`
-  rather than `Some(1)`, with no diagnostic and nothing for the type checker
-  to catch. An argument-taking step with no `$` now reports `GP0041`.
-- `$` no longer pastes the piped value back on as a method receiver. `x |> $.trim`,
-  `x |> $.0`, `x |> $[i]`, and the identity `x |> $` report `GP0042`: a method
-  already chains, and `x.trim()` is the shorter spelling. A method chain is an
-  ordinary pipe operand, so `"  Hi  ".trim().to_lowercase() |> shout` reads as
-  one expression.
-- `$` is no longer a callback shorthand. `xs.map($.abs)` reports `GP0043`;
-  write `xs.map(math::abs)`, which a std function in value position already
-  covers, or the closure `xs.map(|v| v.abs())`. `$.name` was a nullary method
-  call rather than a field read, so `people.map($.name)` never meant what it
-  looked like.
-- `gos check --fix` rewrites all three retired forms, and a chain converges in
-  one pass. On `GP0041` it appends `$` in the trailing slot, preserving the
-  behaviour of the rule it replaces, and the diagnostic says so - a data-first
-  callee needs the slot moved by hand.
+  it fills. A step is a bare callable (`x |> f`) or a closure whose parameter
+  is the slot the value fills (`x |> |v| f(a, v)`, `x |> |v| f(v, a)`). The old
+  rule threaded into the trailing slot with nothing written, which silently
+  mis-filled every data-first callee: `"a,b,c" |> strings::split(",")` answered
+  `[,]` rather than `[a, b, c]`, and `#[1,3,5] |> sort::binary_search(3)`
+  answered `None` rather than `Some(1)`, with no diagnostic and nothing for the
+  type checker to catch. An argument-taking step that is not a closure now
+  reports `GP0041`, and a formatting macro written as a step reports `GP0025`.
+- `$` is not part of the language. A closure already names the slot, and the
+  placeholder needed three diagnostics to keep its one meaning apart from a
+  callback shorthand and a method receiver; any `$` now reports `GP0027` and
+  names the closure, the method chain, or the function in value position that
+  says the same thing. `gos check --fix` rewrites an argument-taking step
+  into its closure, putting the parameter in the trailing slot, and the
+  diagnostic says so - a data-first callee needs the slot moved by hand.
+- A closure written directly as a `|>` step is the call it stands for. The step
+  lowers to `{ let v = x; body }` rather than a closure the pipe invokes, so a
+  chain of steps stays one chain the fusion and lazy-iterator passes recognise,
+  the step costs no closure allocation, and a `let mut` the body updates is the
+  caller's rather than a copy. A body whose control flow leaves the closure - a
+  `return`, a `?` - keeps the closure it was written against.
+- A closure step ends at the next step. `x |> |v| f(v) |> g` read as
+  `x |> (|v| f(v) |> g)`, folding the rest of the chain into the body; `|>` is
+  left-associative, so it now reads `(x |> |v| f(v)) |> g`.
+- `option::unwrap_or_else(f, opt)` types as the option's payload. It answered a
+  free type variable, so a compiled tier read the value as a string pointer and
+  a `println!` of one segfaulted.
+- A `|>` step spends the lazy iterator piped into it. A closure step passed the
+  iterator through untracked, so a second read of the binding answered an empty
+  cursor instead of reporting `GT0042`.
 - A traversal with no receiver form names the spelling that exists.
   `xs.reduce(f)` suggested `remove`, `xs.partition(f)` suggested `position`,
   and `xs.unzip()` suggested `zip` - each sending the reader to a different
-  operation. The thirteen free-call-only traversals now report
+  operation. The fifteen free-call-only traversals now report
   `iter::<name>(.., <sequence>)` and the pipe form beside it.
+- `sort_by` and `sort_by_key` are free calls on a receiver that holds no
+  ordered buffer. Both typechecked on an `Iterator` and a `Range` and then
+  reordered nothing: `pairs.sort_by_key(|p| Reverse(p.1))` over `m.iter()`
+  left the cursor untouched, so a top-N report printed its first N entries in
+  map order, and `(1..6).sort_by_key(f)` answered the range where the checker
+  said `Vec<i64>`. Each now reports `GT0002` and names
+  `iter::sort_by_key(.., <sequence>)`; `Vec`, an array, and a slice keep the
+  in-place method.
+- A scalar answers only the surface a tier binds. `x.cmp(y)`, `x.eq(y)`,
+  `x.fmt()`, and `x.hash()` typechecked on `i64`, `f64`, `bool`, and `char`
+  and then failed at run time as an unbound name; a scalar orders with `<`,
+  compares with `==`, and renders through `{}`, so each now reports `GT0002`.
+  `hash` reached that acceptance because any std function sharing the bare
+  name counted as declared whatever module it lives in; a `use` that binds
+  the name in this file is what counts now.
+- A free function is not a method. `value.double()` for a
+  `fn double(v: i64)` typechecked and then failed at run time as an unbound
+  name on every tier; it now reports `GT0002` and names the free call
+  `double(value)`.
 - A method reached on a function or closure is unresolved rather than answering
   the function's own name. `wrap.len()` returned `4` and `wrap.to_string()`
   returned `"wrap"`, both passing `gos check`; a callable is a code address and
@@ -114,6 +141,10 @@
   `process_isolation()`, `resource_limits()`, `notes()`, and
   `capabilities_json()`, so a program branches on what the host honors instead
   of assuming one operating system.
+- A Windows `AppContainer` child carries `LOCALAPPDATA`, `TEMP`, and `TMP`.
+  Windows redirects those into the container profile while it creates the
+  process and refuses creation when the supplied environment block names none
+  of them, so `strict` could not start a child at all.
 
 ## 0.54.0 - Handler dispatch, concurrent request service, request-fault logging
 

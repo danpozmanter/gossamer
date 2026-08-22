@@ -238,8 +238,8 @@ errors::Error>`; set a process exit code with `std::process::exit(n)`.
 
 Gossamer has a forward-pipe operator (`|>`) for composing free
 functions, which have no receiver to chain from. `x |> f` is `f(x)`; a
-step that writes arguments names the piped value's slot with `$`, so
-`x |> f(a, $)` is `f(a, x)` and `x |> g($, a)` is `g(x, a)`. Anything
+step that writes arguments is a closure whose parameter is that slot, so
+`x |> |v| f(a, v)` is `f(a, x)` and `x |> |v| g(v, a)` is `g(x, a)`. Anything
 with a receiver already chains, and the method chain is the shorter
 spelling - the two mix freely:
 
@@ -254,7 +254,7 @@ fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
 
 fn main() {
     // 3 -> double -> add 10 -> clamp to [0, 100]
-    let n = 3 |> double |> add(10, $) |> clamp(0, 100, $)
+    let n = 3 |> double |> |v| add(10, v) |> |v| clamp(0, 100, v)
     println!("arithmetic: {}", n)
 
     // A method chain is an ordinary operand, so it can feed a pipe.
@@ -294,7 +294,7 @@ fn add(a: i64, b: i64) -> i64 { a + b }
 
 fn main() {
     let (tx, rx) = channel::<i64>()
-    go fn() { tx.send(40 |> add(2, $)) }()
+    go fn() { tx.send(40 |> |v| add(2, v)) }()
     if let Some(answer) = rx.recv() {
         println!("answer: {}", answer)
     }
@@ -308,7 +308,7 @@ if it panicked:
 fn add(a: i64, b: i64) -> i64 { a + b }
 
 fn main() {
-    let h = spawn(|| 40 |> add(2, $))
+    let h = spawn(|| 40 |> |v| add(2, v))
     match h.join() {
         Ok(v) => println!("answer: {}", v),
         Err(e) => println!("worker failed: {}", e),

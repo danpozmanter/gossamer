@@ -2547,9 +2547,9 @@ are built through their type with <code>new()</code> or <code>from([...])</code>
 <h2 id="pipe-operator">Pipe Operator<a class="headerlink" href="#pipe-operator" title="Permanent link">&para;</a></h2>
 <p>F# pipes into the next function's first argument, which works because
 currying makes <code>List.filter f</code> a genuine one-argument function.
-Gossamer has no currying, so a step that writes arguments names the slot
-the piped value fills with <code>$</code> - anywhere in the argument list, not a
-fixed end.</p>
+Gossamer has no currying, so a step that writes arguments is a closure
+whose parameter is the slot the piped value fills - anywhere in the
+argument list, not a fixed end.</p>
 <div class="language-fsharp highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="o">[</span><span class="mi">1</span><span class="o">;</span><span class="w"> </span><span class="mi">2</span><span class="o">;</span><span class="w"> </span><span class="mi">3</span><span class="o">;</span><span class="w"> </span><span class="mi">4</span><span class="o">]</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="o">|&gt;</span><span class="w"> </span><span class="nn">List</span><span class="p">.</span><span class="n">filter</span><span class="w"> </span><span class="o">(</span><span class="k">fun</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="o">)</span>
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="o">|&gt;</span><span class="w"> </span><span class="nn">List</span><span class="p">.</span><span class="n">sumBy</span><span class="w"> </span><span class="o">(</span><span class="k">fun</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">n</span><span class="o">)</span>
@@ -2557,8 +2557,8 @@ fixed end.</p>
 <div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">iter</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">]</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">iter</span>::<span class="n">filter</span><span class="p">(</span><span class="o">|</span><span class="n">n</span>: <span class="kt">i64</span><span class="o">|</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="cp">$)</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">iter</span>::<span class="n">sum_by</span><span class="p">(</span><span class="o">|</span><span class="n">n</span>: <span class="kt">i64</span><span class="o">|</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">n</span><span class="p">,</span><span class="w"> </span><span class="cp">$)</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">iter</span>::<span class="n">filter</span><span class="p">(</span><span class="o">|</span><span class="n">n</span>: <span class="kt">i64</span><span class="o">|</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">v</span><span class="p">)</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">iter</span>::<span class="n">sum_by</span><span class="p">(</span><span class="o">|</span><span class="n">n</span>: <span class="kt">i64</span><span class="o">|</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">n</span><span class="p">,</span><span class="w"> </span><span class="n">v</span><span class="p">)</span>
 </code></pre></div>
 <p>Naming the slot is what lets one operator serve both stdlib
 conventions: <code>iter::</code>, <code>option::</code>, and <code>result::</code> take their data last,
@@ -2566,7 +2566,7 @@ while <code>strings::</code>, <code>path::</code>, <code>bytes::</code>, and <co
 mirroring the method receiver.</p>
 <div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">strings</span>
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">parts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;a,b,c&quot;</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">strings</span>::<span class="n">split</span><span class="p">(</span><span class="cp">$,</span><span class="w"> </span><span class="s">&quot;,&quot;</span><span class="p">)</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">parts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;a,b,c&quot;</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">strings</span>::<span class="n">split</span><span class="p">(</span><span class="n">v</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;,&quot;</span><span class="p">)</span>
 </code></pre></div>
 <p>The other half of the translation is that Gossamer has methods and F#
 does not. Where F# must pipe, Gossamer usually chains - <code>s.trim()</code>,
@@ -2623,8 +2623,8 @@ makes a public type clearer.</p>
 <div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">option</span>
 <a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>
 <a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">parsed</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">input</span>
-<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">option</span>::<span class="n">and_then</span><span class="p">(</span><span class="n">try_parse</span><span class="p">,</span><span class="w"> </span><span class="cp">$)</span>
-<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">option</span>::<span class="n">unwrap_or</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="cp">$)</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">option</span>::<span class="n">and_then</span><span class="p">(</span><span class="n">try_parse</span><span class="p">,</span><span class="w"> </span><span class="n">v</span><span class="p">)</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">option</span>::<span class="n">unwrap_or</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">v</span><span class="p">)</span>
 </code></pre></div>
 <p>For fallible work, <code>?</code> is usually clearer than a pipeline:</p>
 <div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="k">fn</span> <span class="nf">load</span><span class="p">(</span><span class="n">path</span>: <span class="kp">&amp;</span><span class="nb">String</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="n">Config</span><span class="p">,</span><span class="w"> </span><span class="n">errors</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
@@ -2767,15 +2767,15 @@ they appear.</p>
 </tr>
 <tr>
 <td><code>List.map f xs</code></td>
-<td><code>xs |&gt; iter::map(f, $)</code></td>
+<td><code>xs |&gt; |v| iter::map(f, v)</code></td>
 </tr>
 <tr>
 <td><code>List.filter f xs</code></td>
-<td><code>xs |&gt; iter::filter(f, $)</code></td>
+<td><code>xs |&gt; |v| iter::filter(f, v)</code></td>
 </tr>
 <tr>
 <td><code>List.fold f init xs</code></td>
-<td><code>xs |&gt; iter::fold(init, f, $)</code></td>
+<td><code>xs |&gt; |v| iter::fold(init, f, v)</code></td>
 </tr>
 <tr>
 <td><code>Map.find k m</code></td>

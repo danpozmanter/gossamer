@@ -30,6 +30,10 @@ pub struct Parser<'src> {
     /// Depth of contexts where `|` denotes a pattern alternative and
     /// must not be consumed as bitwise-or by the Pratt loop.
     pub(crate) pattern_pipe_depth: u32,
+    /// Set while the right operand of `|>` is being parsed, so a closure
+    /// written directly as a step ends its body at the next `|>` rather
+    /// than swallowing the rest of the chain.
+    pub(crate) parsing_pipe_step: bool,
     /// Depth of match-arm body parses where a newline may introduce the
     /// next arm's pattern.
     pub(crate) match_arm_body_depth: u32,
@@ -98,6 +102,7 @@ impl<'src> Parser<'src> {
             diagnostics,
             no_struct_literal_depth: 0,
             pattern_pipe_depth: 0,
+            parsing_pipe_step: false,
             match_arm_body_depth: 0,
             empty_brace_block_depth: 0,
             recursion_depth: 0,
@@ -327,6 +332,14 @@ impl<'src> Parser<'src> {
     /// Leaves a scope where `|` denotes a pattern alternative.
     pub(crate) fn leave_pattern_pipe(&mut self) {
         self.pattern_pipe_depth = self.pattern_pipe_depth.saturating_sub(1);
+    }
+
+    /// Runs `f` with the pipe-step flag set, and restores it after.
+    pub(crate) fn with_pipe_step<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let previous = std::mem::replace(&mut self.parsing_pipe_step, true);
+        let out = f(self);
+        self.parsing_pipe_step = previous;
+        out
     }
 
     /// `true` when the Pratt loop must treat bitwise `|` as a pattern separator.

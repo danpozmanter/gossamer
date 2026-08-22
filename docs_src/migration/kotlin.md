@@ -211,8 +211,8 @@ val total = listOf(1, 2, 3, 4)
 use std::iter
 
 let total = #[1, 2, 3, 4]
-    |> iter::filter(|n: i64| n % 2 == 0, $)
-    |> iter::sum_by(|n: i64| n * n, $)
+    |> |v| iter::filter(|n: i64| n % 2 == 0, v)
+    |> |v| iter::sum_by(|n: i64| n * n, v)
 ```
 
 Mutating operations stay method-shaped:

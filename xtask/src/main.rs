@@ -930,8 +930,8 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
     (
         "GP0025",
         "Parser",
-        "piped format value has no placeholder",
-        "A value piped into a format macro needs an explicit positional placeholder.",
+        "formatting macro used as a pipe step",
+        "A macro takes its arguments as written, so the piped value has no slot of its own. Write the step as a closure: `value |> |v| println!(\"{}\", v)`.",
     ),
     (
         "GP0026",
@@ -942,14 +942,8 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
     (
         "GP0027",
         "Parser",
-        "invalid pipe placeholder",
-        "A pipe placeholder must occur exactly once as a direct call argument.",
-    ),
-    (
-        "GP0028",
-        "Parser",
-        "range used as pipe placeholder",
-        "The token `..` starts a range. Use `_` as the pipe placeholder.",
+        "`$` is not part of the language",
+        "`$` used to spell the slot a `|>` step filled. A step that needs the value in a particular slot is a closure, as in `x |> |v| f(a, v)`; a method already chains, as in `x.trim()`; a callback is a closure or a function named in value position.",
     ),
     (
         "GP0029",
@@ -1004,6 +998,30 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
         "Parser",
         "refutable let without else",
         "A `let` whose pattern can fail to match was written without an `else` block. Give the failure a diverging path: `let Some(x) = opt else { return }`.",
+    ),
+    (
+        "GP0038",
+        "Parser",
+        "unsupported visibility restriction",
+        "The three visibilities are private (no annotation), `pub(package)`, and `pub`.",
+    ),
+    (
+        "GP0039",
+        "Parser",
+        "serde turbofish names an uncovered type",
+        "A codec is synthesized per concrete struct whose fields the synthesizer can classify. Exchange a concrete struct, read the document dynamically with `json::parse`, or hand-write the function.",
+    ),
+    (
+        "GP0040",
+        "Parser",
+        "hyphen in a `use` path",
+        "`-` is subtraction, never part of an identifier. A dependency's module name is its package name with each `-` replaced by `_`, so `pgsql-gos` is imported as `use pgsql_gos`.",
+    ),
+    (
+        "GP0041",
+        "Parser",
+        "pipe step with arguments is not a closure",
+        "A `|>` step that writes its own arguments leaves the piped value no slot. Write it as a closure whose parameter is that slot: `x |> |v| f(a, v)`.",
     ),
     (
         "GR0001",

@@ -3,9 +3,9 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GP0027]: A pipe placeholder must occur exactly once as a direct call argument. Move it into the argument list and remove any duplicate placeholder. - here
+error[GP0027]: `$` was written where an expression belongs. It used to spell the - here
 --- framed ---
-error[GP0027]: A pipe placeholder must occur exactly once as a direct call argument. Move it into the argument list and remove any duplicate placeholder.
+error[GP0027]: `$` was written where an expression belongs. It used to spell the
   --> snap.gos:2:5
      2 |     let x = 1
        |     ^^^^^

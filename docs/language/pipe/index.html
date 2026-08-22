@@ -2144,10 +2144,10 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#what-is-not" class="md-nav__link">
+  <a href="#the-retired" class="md-nav__link">
     <span class="md-ellipsis">
 
-        What $ is not
+        The retired $
 
     </span>
   </a>
@@ -2172,7 +2172,7 @@
 
 
 <h1 id="langpipe"><code>lang::pipe</code><a class="headerlink" href="#langpipe" title="Permanent link">&para;</a></h1>
-<p>Forward-pipe operator <code>|&gt;</code>, for composing free functions in a functional style. A step is either a bare callable (<code>x |&gt; f</code>) or a call that names the piped value's slot with <code>$</code> (<code>x |&gt; f(a, $)</code>). Methods chain on their own and are the shorter spelling; a method chain can feed a pipe.</p>
+<p>Forward-pipe operator <code>|&gt;</code>, for composing free functions in a functional style. A step is either a bare callable (<code>x |&gt; f</code>) or a closure whose parameter is the piped value (<code>x |&gt; |v| f(a, v)</code>). Methods chain on their own and are the shorter spelling; a method chain can feed a pipe.</p>
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 <h2 id="what-the-pipe-is-for">What the pipe is for<a class="headerlink" href="#what-the-pipe-is-for" title="Permanent link">&para;</a></h2>
@@ -2186,7 +2186,7 @@ reads right to left. <code>|&gt;</code> turns that back into reading order:</p>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">o</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Order</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">id</span>: <span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">total</span>: <span class="mf">100.0</span><span class="w"> </span><span class="p">}</span>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">o</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">with_tax</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">discount</span><span class="p">(</span><span class="mf">0.1</span><span class="p">,</span><span class="w"> </span><span class="cp">$)</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">label</span><span class="p">)</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">o</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">with_tax</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">discount</span><span class="p">(</span><span class="mf">0.1</span><span class="p">,</span><span class="w"> </span><span class="n">v</span><span class="p">)</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">label</span><span class="p">)</span>
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="p">}</span>
 </code></pre></div>
 <p>Without the pipe that is <code>label(discount(0.1, with_tax(o)))</code>, which the
@@ -2218,16 +2218,22 @@ step, and a pipe step's result can be chained onto.</p>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">double</span><span class="p">)</span>
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="p">}</span>
 </code></pre></div>
-<p>A step that <strong>writes arguments must name the slot</strong> with <code>$</code>. Exactly one
-<code>$</code> per step, and it may sit anywhere along the step's call chain:</p>
+<p>A step that <strong>writes arguments is a closure</strong>, and its parameter is the
+slot. The parameter may sit anywhere the body reaches:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="p">{</span><span class="n">iter</span><span class="p">,</span><span class="w"> </span><span class="n">strings</span><span class="p">}</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;a,b,c&quot;</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">strings</span>::<span class="n">split</span><span class="p">(</span><span class="cp">$,</span><span class="w"> </span><span class="s">&quot;,&quot;</span><span class="p">))</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="cp">#[1, 2, 3, 4]</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">iter</span>::<span class="n">filter</span><span class="p">(</span><span class="o">|</span><span class="n">x</span><span class="o">|</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="cp">$)</span><span class="p">.</span><span class="n">len</span><span class="p">())</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;a,b,c&quot;</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">strings</span>::<span class="n">split</span><span class="p">(</span><span class="n">v</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;,&quot;</span><span class="p">))</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="cp">#[1, 2, 3, 4]</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">iter</span>::<span class="n">filter</span><span class="p">(</span><span class="o">|</span><span class="n">x</span><span class="o">|</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">v</span><span class="p">).</span><span class="n">len</span><span class="p">())</span>
 <a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="p">}</span>
 </code></pre></div>
-<p>A closure step takes the value as the closure's parameter:</p>
+<p>A closure written directly as a step IS the call it stands for: the
+parameter is bound in the caller's frame, so a chain of steps is one
+chain, the step costs nothing a hand-written call would not, and a
+<code>let mut</code> the body updates is the caller's. A body whose control flow
+leaves the closure - a <code>return</code>, a <code>?</code> - keeps the closure it was
+written against.</p>
+<p>The body needs no call at all - any expression over the parameter works:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="p">}</span>
@@ -2245,23 +2251,26 @@ and the reader can see which argument the value fills:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="p">{</span><span class="n">iter</span><span class="p">,</span><span class="w"> </span><span class="n">strings</span><span class="p">}</span>
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
 <a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;a,b,c&quot;</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">strings</span>::<span class="n">split</span><span class="p">(</span><span class="cp">$,</span><span class="w"> </span><span class="s">&quot;,&quot;</span><span class="p">))</span><span class="w">   </span><span class="c1">// data first</span>
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="cp">#[1, 2]</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">iter</span>::<span class="n">map</span><span class="p">(</span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="cp">$)</span><span class="p">)</span><span class="w">  </span><span class="c1">// data last</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;a,b,c&quot;</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">strings</span>::<span class="n">split</span><span class="p">(</span><span class="n">v</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;,&quot;</span><span class="p">))</span><span class="w">   </span><span class="c1">// data first</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="cp">#[1, 2]</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">value</span><span class="o">|</span><span class="w"> </span><span class="n">iter</span>::<span class="n">map</span><span class="p">(</span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="n">value</span><span class="p">))</span><span class="w">  </span><span class="c1">// data last</span>
 <a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="p">}</span>
 </code></pre></div>
-<p>Omitting <code>$</code> on an argument-taking step reports <code>GP0041</code>.</p>
-<h2 id="what-is-not">What <code>$</code> is not<a class="headerlink" href="#what-is-not" title="Permanent link">&para;</a></h2>
-<p><code>$</code> names a pipe slot and nothing else.</p>
+<p>An argument-taking step that is not a closure reports <code>GP0041</code>, and a
+formatting macro written as a step reports <code>GP0025</code> - write
+<code>value |&gt; |v| println!("{}", v)</code>.</p>
+<h2 id="the-retired">The retired <code>$</code><a class="headerlink" href="#the-retired" title="Permanent link">&para;</a></h2>
+<p><code>$</code> spelled the slot in earlier releases. It is no longer part of the
+language, and any <code>$</code> reports <code>GP0027</code>:</p>
 <ul>
-<li>It is not a callback shorthand: <code>xs.map($.abs)</code> reports <code>GP0043</code>. Write
-  <code>xs.map(math::abs)</code> or <code>xs.map(|v| v.abs())</code>.</li>
-<li>It does not paste a receiver back on: <code>x |&gt; $.trim</code> reports <code>GP0042</code>.
-  Write <code>x.trim()</code>.</li>
-<li><code>x |&gt; $</code> reports <code>GP0042</code> as well - the identity step is the value.</li>
+<li>In a step: <code>x |&gt; f(a, $)</code> is written <code>x |&gt; |v| f(a, v)</code>.</li>
+<li>As a receiver: <code>x |&gt; $.trim</code> is written <code>x.trim()</code> - a method already
+  chains, and the chain can feed a pipe.</li>
+<li>As a callback: <code>xs.map($.abs)</code> is written <code>xs.map(math::abs)</code> or
+  <code>xs.map(|v| v.abs())</code>.</li>
 </ul>
-<p><code>gos check --fix</code> rewrites all three. On <code>GP0041</code> it appends <code>$</code> in the
-trailing slot, which preserves the behaviour of the implicit rule it
-replaces, so confirm that is the slot the call needs.</p>
+<p><code>gos check --fix</code> rewrites an argument-taking step into the closure it
+stands for, putting the parameter in the trailing slot, so confirm that
+is the slot the call needs.</p>
 
 
 

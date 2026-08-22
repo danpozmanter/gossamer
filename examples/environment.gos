@@ -23,7 +23,7 @@ for i in 0..args.len() {
 
 println!("\nenvironment (selected):")
 let env_vars = #["PATH", "HOME", "USER", "GOSSAMER_DEBUG"]
-env_vars |> iter::for_each(|name| report_env(&name), $)
+env_vars |> |v| iter::for_each(|name| report_env(&name), v)
 
 match env::current_dir() {
     Ok(dir) => println!("\ncwd: {dir}")

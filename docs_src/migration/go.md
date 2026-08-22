@@ -251,8 +251,8 @@ data argument last:
 use std::iter
 
 let total = #[1, 2, 3, 4, 5]
-    |> iter::filter(|n: i64| n % 2 == 0, $)
-    |> iter::sum_by(|n: i64| n * n, $)
+    |> |v| iter::filter(|n: i64| n % 2 == 0, v)
+    |> |v| iter::sum_by(|n: i64| n * n, v)
 ```
 
 The same pipe-friendly shape exists for `std::option` and

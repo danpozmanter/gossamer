@@ -52,5 +52,5 @@ fn echo(request: http::Request) -> Result<http::Response, http::Error> {
 fn main() -> Result<(), http::Error> {
     println!("listening on 0.0.0.0:8080")
     router::Router::new().get("/", index).get("/health", health).get("/users", list_users).post("/users", create_user).get("/echo", echo)
-        |> http::serve("0.0.0.0:8080", $)
+        |> |v| http::serve("0.0.0.0:8080", v)
 }

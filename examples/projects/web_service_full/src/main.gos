@@ -220,7 +220,7 @@ fn main() -> Result<(), http::Error> {
     go shutdown_watcher()
 
     router::Router::new().get("/health", health).get("/notes", list_notes).post("/notes", create_note).get("/notes.html", notes_html).get("/notes/{id}", show_note).delete("/notes/{id}", delete_note)
-        |> http::serve("0.0.0.0:8080", $)
+        |> |v| http::serve("0.0.0.0:8080", v)
 }
 
 #[cfg(test)]

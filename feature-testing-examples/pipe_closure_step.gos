@@ -1,12 +1,12 @@
 // `|>` composes free functions, which have no receiver to chain from. A step
-// is a bare callable, or a call that names the piped value's slot with `$`.
+// is a bare callable, or a closure whose parameter is the piped value.
 // A pure parse-time desugar, so it runs identically on the VM, Cranelift, and
 // LLVM tiers:
 //
-//   x |> f            => f(x)
-//   x |> f(a, $)      => f(a, x)
-//   x |> f($, a)      => f(x, a)
-//   x |> |v| v + 1    => the closure applied to x
+//   x |> f              => f(x)
+//   x |> |v| f(a, v)    => f(a, x)
+//   x |> |v| f(v, a)    => f(x, a)
+//   x |> |v| v + 1      => the closure applied to x
 //
 // A method already chains, and a chain can feed a pipe.
 
@@ -37,18 +37,19 @@ fn main() {
     // a method chain feeds a pipe; the chain is the shorter spelling
     println!("{}", "  Ab  ".trim().to_lowercase() |> shout)
 
-    // `$` names the slot, so a data-first callee reads like a data-last one
-    println!("{}", 3 |> scale(10, $))
-    match "world" |> strings::slice($, 1, 4) {
+    // the closure's parameter is the slot, so a data-first callee reads
+    // like a data-last one
+    println!("{}", 3 |> |v| scale(10, v))
+    match "world" |> |v| strings::slice(v, 1, 4) {
         Ok(part) => println!("{}", part)
         Err(_) => println!("slice failed")
     }
 
-    // a format macro takes the value through the same explicit slot
-    println!("{}", "world" |> format!("hello, {}", $))
+    // a format macro takes the value through the same closure parameter
+    println!("{}", "world" |> |v| format!("hello, {}", v))
 
     // data-last `iter::` steps name the slot too, and the result chains
-    let evens = #[1, 2, 3, 4, 5, 6] |> iter::filter(|x: i64| x % 2 == 0, $).len()
+    let evens = #[1, 2, 3, 4, 5, 6] |> |v| iter::filter(|x: i64| x % 2 == 0, v).len()
     println!("{}", evens)
 
     // a bare callable takes a struct the same way it takes a scalar
@@ -56,7 +57,7 @@ fn main() {
 }
 
 #[cfg(test)]
-mod pipe_placeholder_tests {
+mod pipe_closure_step_tests {
     use std::iter
     use std::strings
     use std::testing
@@ -73,15 +74,15 @@ mod pipe_placeholder_tests {
     }
 
     #[test]
-    fn placeholder_names_the_trailing_slot() {
-        let _ = testing::check((3 |> super::scale(10, $)) == 30, "x |> f(a, $) is f(a, x)")
+    fn a_closure_names_the_trailing_slot() {
+        let _ = testing::check((3 |> |v| super::scale(10, v)) == 30, "x |> |v| f(a, v) is f(a, x)")
     }
 
     #[test]
-    fn placeholder_names_a_leading_slot() {
-        match "world" |> strings::slice($, 1, 4) {
+    fn a_closure_names_a_leading_slot() {
+        match "world" |> |v| strings::slice(v, 1, 4) {
             Ok(part) => {
-                let _ = testing::check(part == "orl", "x |> f($, a) is f(x, a)")
+                let _ = testing::check(part == "orl", "x |> |v| f(v, a) is f(x, a)")
             }
             Err(_) => {
                 let _ = testing::check(false, "slice should succeed")
@@ -91,13 +92,13 @@ mod pipe_placeholder_tests {
 
     #[test]
     fn format_argument_receives_the_value() {
-        let greeting = "world" |> format!("hello, {}", $)
+        let greeting = "world" |> |v| format!("hello, {}", v)
         let _ = testing::check(greeting == "hello, world", "a macro slot is named too")
     }
 
     #[test]
     fn mixed_with_iter() {
-        let n = #[1, 2, 3, 4] |> iter::filter(|x: i64| x % 2 == 0, $).len()
+        let n = #[1, 2, 3, 4] |> |v| iter::filter(|x: i64| x % 2 == 0, v).len()
         let _ = testing::check(n == 2, "an iter step chains into a method")
     }
 }

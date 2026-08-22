@@ -200,8 +200,8 @@ fn block_comments_survive_inline_and_standalone() {
 
 #[test]
 fn comments_inside_match_arms_and_chains() {
-    let source = "fn label(n: i64) -> String {\n    match n {\n        // negative side\n        x if x < 0 => \"neg\",\n        // everything else\n        _ => \"pos\",\n    }\n}\n\nfn chain(input: [i64]) -> i64 {\n    input\n        // keep evens only\n        |> filter(|n: i64| n % 2 == 0, $)\n        |> count\n}\n";
-    let expected = "fn label(n: i64) -> String {\n    match n {\n        // negative side\n        x if x < 0 => \"neg\"\n        // everything else\n        _ => \"pos\"\n    }\n}\n\nfn chain(input: [i64]) -> i64 {\n    input\n        // keep evens only\n        |> filter(|n: i64| n % 2 == 0, $)\n        |> count\n}\n";
+    let source = "fn label(n: i64) -> String {\n    match n {\n        // negative side\n        x if x < 0 => \"neg\",\n        // everything else\n        _ => \"pos\",\n    }\n}\n\nfn chain(input: [i64]) -> i64 {\n    input\n        // keep evens only\n        |> |v| filter(|n: i64| n % 2 == 0, v)\n        |> count\n}\n";
+    let expected = "fn label(n: i64) -> String {\n    match n {\n        // negative side\n        x if x < 0 => \"neg\"\n        // everything else\n        _ => \"pos\"\n    }\n}\n\nfn chain(input: [i64]) -> i64 {\n    input\n        // keep evens only\n        |> |v| filter(|n: i64| n % 2 == 0, v)\n        |> count\n}\n";
     assert_eq!(fmt(source), expected);
 }
 
@@ -238,7 +238,7 @@ fn struct_literals_keep_keyed_forms() {
 
 #[test]
 fn pipe_chains_keep_authored_breaks_and_indent() {
-    let source = "fn main() {\n    let words = \"  Hello  World  \"\n        |> split_words\n        |> filter(|w: String| w.len() > 0, $)\n        |> count\n    println!(\"words: {words}\")\n}\n";
+    let source = "fn main() {\n    let words = \"  Hello  World  \"\n        |> split_words\n        |> |v| filter(|w: String| w.len() > 0, v)\n        |> count\n    println!(\"words: {words}\")\n}\n";
     assert_eq!(fmt(source), source);
 }
 

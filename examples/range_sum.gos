@@ -9,11 +9,11 @@
 use std::iter
 
 fn sum(xs: &[i64]) -> i64 {
-    xs |> iter::sum_by(|n: i64| n, $)
+    xs |> |v| iter::sum_by(|n: i64| n, v)
 }
 
 fn product(xs: &[i64]) -> i64 {
-    xs |> iter::fold(1, |acc, n| acc * n, $)
+    xs |> |v| iter::fold(1, |acc, n| acc * n, v)
 }
 
 fn maximum(xs: &[i64]) -> Option<i64> {

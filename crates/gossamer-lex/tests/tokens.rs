@@ -294,7 +294,7 @@ fn stray_backtick_is_invalid() {
 /// The full pipe chain from SUMMARY.md tokenises without diagnostics.
 #[test]
 fn summary_pipe_chain_tokenises() {
-    let source = "1..=100 |> iter::filter(|n| n % 2 == 0, $) |> iter::map(|n| n * n, $)";
+    let source = "1..=100 |> |v| iter::filter(|n| n % 2 == 0, v) |> |v| iter::map(|n| n * n, v)";
     let (_, diagnostics) = tokenize(source, test_file());
     assert!(
         diagnostics.is_empty(),

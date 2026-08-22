@@ -220,23 +220,24 @@ println!("scaled = {}", b.area(scale = 10))
     title: "Forward pipe |>",
     prose: `
       <p>The forward-pipe <code>|></code> turns nested calls into
-      left-to-right dataflow. <code>x |> f</code> is <code>f(x)</code>;
-      <code>x |> f(a)</code> threads the value into the <strong>last</strong>
-      argument, so it reads <code>f(a, x)</code>.</p>
-      <p>The <code>$</code> placeholder instead makes the piped value the
-      receiver: <code>x |> $.trim</code> is <code>x.trim()</code>. And
-      ranges are plain values, so a combinator chain like
+      left-to-right dataflow. <code>x |> f</code> is <code>f(x)</code>; a
+      step that writes its own arguments is a closure whose parameter is
+      the slot the value fills, so <code>x |> |v| f(a, v)</code> reads
+      <code>f(a, x)</code>.</p>
+      <p>A method already chains, so <code>x.trim()</code> needs no pipe,
+      and a method chain is an ordinary pipe operand. Ranges are plain
+      values too, so a combinator chain like
       <code>(1..=5).filter(...).sum()</code> needs no pipe at all - pick
       whichever direction reads best.</p>`,
     code: `fn double(x: i64) -> i64 { x * 2 }
 fn add(a: i64, b: i64) -> i64 { a + b }
 
-// \\\`x |> f\\\` is \\\`f(x)\\\`; \\\`x |> f(a)\\\` lands x in the last slot: \\\`f(a, x)\\\`.
-let n = 3 |> double |> add(10)
-println!("3 |> double |> add(10) = {n}")
+// \\\`x |> f\\\` is \\\`f(x)\\\`; a closure step names the slot: \\\`f(a, x)\\\`.
+let n = 3 |> double |> |v| add(10, v)
+println!("3 |> double |> |v| add(10, v) = {n}")
 
-// \\\`$.method\\\` pipes a value through its own methods - \\\`$\\\` is the receiver.
-let shout = "  hi there  " |> $.trim |> $.to_uppercase
+// A method already chains, and the chain can feed a pipe.
+let shout = "  hi there  ".trim().to_uppercase()
 println!("shout = {shout}")
 
 // Ranges are values and combinators are methods - chain them directly.
@@ -449,9 +450,8 @@ fn index_of_sorted(xs: &[i64], needle: i64) -> Option<i64> {
     title: "Strings + format! specs",
     prose: `
       <p>Strings are values, not references you juggle. Concatenate with
-      <code>+</code>, append with <code>+=</code>, and pipe a string through
-      its own methods with <code>$.method</code> -
-      <code>title |> $.trim |> $.to_title</code>.</p>
+      <code>+</code>, append with <code>+=</code>, and reach a string's own
+      methods by chaining - <code>title.trim().to_title()</code>.</p>
       <p>Formatted output follows Rust's <code>{:spec}</code> grammar: width
       and alignment (<code>{:>8}</code>, <code>{:^7}</code>), zero-padding and
       radix (<code>{:08x}</code>), and precision (<code>{:.2}</code>), for
@@ -459,8 +459,8 @@ fn index_of_sorted(xs: &[i64], needle: i64) -> Option<i64> {
     code: `fn main() {
     let title = "  the gossamer tour  "
 
-    // Method chaining through \\\`$.method\\\`; strings are plain values.
-    let clean = title |> $.trim |> $.to_title
+    // Methods chain directly; strings are plain values.
+    let clean = title.trim().to_title()
     println!("[{clean}]")
 
     // \\\`+=\\\` appends; \\\`+\\\` concatenates with no separator.
@@ -1018,11 +1018,11 @@ fn note_json(id: i64) -> Result<String, errors::Error> {
     to_json::<Note>(Note { id: id, title: "written in Gossamer" })
 }
 
-// Routes chain with \`|>\`, one verb method per route.
+// Routes chain by method, one verb per route.
 let routes = router::Router::new()
-    |> $.get("/health", health)
-    |> $.get("/notes/{id}", get_note)
-    |> $.post("/notes", get_note)
+    .get("/health", health)
+    .get("/notes/{id}", get_note)
+    .post("/notes", get_note)
 println!("router ready")
 
 // On a host this is the whole program:
@@ -1036,7 +1036,7 @@ let note = http::Response::json(200, note_json(42)?)
 println!("GET /notes/42 -> {} {}", note.status, note.body)
 
 let created = http::Response::json(201, note_json(43)?)
-    |> $.with_header("location", "/notes/43")
+    .with_header("location", "/notes/43")
 println!("POST /notes   -> {} ({} header)", created.status, created.headers.len())
 
 let missing = http::Response::text(404, "no such note")

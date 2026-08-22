@@ -43,7 +43,7 @@ fn add(a: i64, b: i64) -> i64 { a + b }
 
 fn main() {
     let (tx, rx) = channel::<i64>()
-    go fn() { tx.send(40 |> add(2)) }()
+    go fn() { tx.send(40 |> |v| add(2, v)) }()
     if let Some(answer) = rx.recv() {
         println!("answer: {}", answer)
     }

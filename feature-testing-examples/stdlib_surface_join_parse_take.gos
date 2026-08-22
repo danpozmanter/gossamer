@@ -30,5 +30,5 @@ fn main() {
     println!("{}", take99.join(","))
     println!("{}", step2.join(","))
     println!("{}", step1.join(","))
-    println!("{:?}", (0..10 |> iter::filter(|k| k > 2, $)).take(4) |> iter::collect)
+    println!("{:?}", (0..10 |> |v| iter::filter(|k| k > 2, v)).take(4) |> iter::collect)
 }

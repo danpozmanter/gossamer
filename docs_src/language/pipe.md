@@ -1,6 +1,6 @@
 # `lang::pipe`
 
-Forward-pipe operator `|>`, for composing free functions in a functional style. A step is either a bare callable (`x |> f`) or a call that names the piped value's slot with `$` (`x |> f(a, $)`). Methods chain on their own and are the shorter spelling; a method chain can feed a pipe.
+Forward-pipe operator `|>`, for composing free functions in a functional style. A step is either a bare callable (`x |> f`) or a closure whose parameter is the piped value (`x |> |v| f(a, v)`). Methods chain on their own and are the shorter spelling; a method chain can feed a pipe.
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
@@ -18,7 +18,7 @@ fn label(o: Order) -> String { format!("#{} {}", o.id, o.total) }
 
 fn main() {
     let o = Order { id: 1, total: 100.0 }
-    println!("{}", o |> with_tax |> discount(0.1, $) |> label)
+    println!("{}", o |> with_tax |> |v| discount(0.1, v) |> label)
 }
 ```
 
@@ -63,19 +63,26 @@ fn main() {
 }
 ```
 
-A step that **writes arguments must name the slot** with `$`. Exactly one
-`$` per step, and it may sit anywhere along the step's call chain:
+A step that **writes arguments is a closure**, and its parameter is the
+slot. The parameter may sit anywhere the body reaches:
 
 ```gossamer
 use std::{iter, strings}
 
 fn main() {
-    println!("{:?}", "a,b,c" |> strings::split($, ","))
-    println!("{}", #[1, 2, 3, 4] |> iter::filter(|x| x % 2 == 0, $).len())
+    println!("{:?}", "a,b,c" |> |v| strings::split(v, ","))
+    println!("{}", #[1, 2, 3, 4] |> |v| iter::filter(|x| x % 2 == 0, v).len())
 }
 ```
 
-A closure step takes the value as the closure's parameter:
+A closure written directly as a step IS the call it stands for: the
+parameter is bound in the caller's frame, so a chain of steps is one
+chain, the step costs nothing a hand-written call would not, and a
+`let mut` the body updates is the caller's. A body whose control flow
+leaves the closure - a `return`, a `?` - keeps the closure it was
+written against.
+
+The body needs no call at all - any expression over the parameter works:
 
 ```gossamer
 fn main() {
@@ -100,23 +107,26 @@ and the reader can see which argument the value fills:
 use std::{iter, strings}
 
 fn main() {
-    println!("{:?}", "a,b,c" |> strings::split($, ","))   // data first
-    println!("{:?}", #[1, 2] |> iter::map(|v| v * 2, $))  // data last
+    println!("{:?}", "a,b,c" |> |v| strings::split(v, ","))   // data first
+    println!("{:?}", #[1, 2] |> |value| iter::map(|v| v * 2, value))  // data last
 }
 ```
 
-Omitting `$` on an argument-taking step reports `GP0041`.
+An argument-taking step that is not a closure reports `GP0041`, and a
+formatting macro written as a step reports `GP0025` - write
+`value |> |v| println!("{}", v)`.
 
-## What `$` is not
+## The retired `$`
 
-`$` names a pipe slot and nothing else.
+`$` spelled the slot in earlier releases. It is no longer part of the
+language, and any `$` reports `GP0027`:
 
-- It is not a callback shorthand: `xs.map($.abs)` reports `GP0043`. Write
-  `xs.map(math::abs)` or `xs.map(|v| v.abs())`.
-- It does not paste a receiver back on: `x |> $.trim` reports `GP0042`.
-  Write `x.trim()`.
-- `x |> $` reports `GP0042` as well - the identity step is the value.
+- In a step: `x |> f(a, $)` is written `x |> |v| f(a, v)`.
+- As a receiver: `x |> $.trim` is written `x.trim()` - a method already
+  chains, and the chain can feed a pipe.
+- As a callback: `xs.map($.abs)` is written `xs.map(math::abs)` or
+  `xs.map(|v| v.abs())`.
 
-`gos check --fix` rewrites all three. On `GP0041` it appends `$` in the
-trailing slot, which preserves the behaviour of the implicit rule it
-replaces, so confirm that is the slot the call needs.
+`gos check --fix` rewrites an argument-taking step into the closure it
+stands for, putting the parameter in the trailing slot, so confirm that
+is the slot the call needs.

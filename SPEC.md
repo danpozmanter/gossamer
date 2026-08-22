@@ -85,7 +85,7 @@ The language is designed so that:
   mut` accumulator. `for` loops keep their place for side-effects
   and complex state; transformations should compose. Gossamer
   follows F#'s "data-last" argument-order convention in stdlib free
-  functions so `x |> f(a, b, $)` reads as `f(a, b, x)` with the slot named.
+  functions so `x |> |v| f(a, b, v)` reads as `f(a, b, x)` with the slot named.
 - A single pass over the source file classifies it into tokens.
 - A single recursive-descent parser produces an AST without
   context-dependent parsing tricks beyond bounded lookahead.
@@ -285,7 +285,7 @@ So:
 
 ```
 let s = read_file(path)?
-&s |> strings::lines |> iter::for_each(handle, $)   // two statements
+&s |> strings::lines |> |v| iter::for_each(handle, v)   // two statements
 ```
 
 parses as a let followed by a pipe-expression statement, not as
@@ -1389,47 +1389,47 @@ receiver to chain from. The operator is **left-associative** and has very
 low precedence (just above assignment), so `a |> f |> g` parses as
 `(a |> f) |> g` and means `g(f(a))`.
 
-A step either takes the piped value as its only argument, or names the
-slot the value fills with `$`. No argument order is assumed: a data-first
-callee (`strings::`, `bytes::`, `path::`, `sort::`, `fs::`) and a
-data-last one (`iter::`, `option::`, `result::`) are written alike.
+A step either takes the piped value as its only argument, or is a closure
+whose parameter is the slot the value fills. No argument order is
+assumed: a data-first callee (`strings::`, `bytes::`, `path::`, `sort::`,
+`fs::`) and a data-last one (`iter::`, `option::`, `result::`) are
+written alike.
 
-Desugaring rules (the `$` substitutions are applied during parsing; the
-implicit forms are applied during HIR lowering):
+Lowering rules:
 
 1. `x |> path` where `path` resolves to a callable of arity 1:
    → `path(x)`.
 2. `x |> path()` and `x |> recv.method()`, with no written arguments:
    → `path(x)` and `recv.method(x)`.
-3. `x |> (closure_expr)` where `closure_expr` evaluates to a callable:
-   → `(closure_expr)(x)` (arity must be 1).
-4. `x |> path(a1, ..., $, ..., an)` with exactly one direct `$` argument:
-   → `path(a1, ..., x, ..., an)`. The same holds for
-   `x |> recv.method(a1, ..., $, ..., an)` and for a turbofish call
-   `x |> path::<T1, ..., Tk>(a1, ..., $, ..., an)`.
-5. The `$` may sit anywhere along the step's call chain, so
-   `x |> f(a, $).method()` is `f(a, x).method()`.
+3. `x |> closure_expr` where `closure_expr` evaluates to a callable:
+   → `closure_expr(x)` (arity must be 1). A closure written inline is the
+   ordinary spelling of a step that fills a particular slot:
+   `x |> |v| path(a1, ..., v, ..., an)` is
+   `path(a1, ..., x, ..., an)`, and the same holds for
+   `x |> |v| recv.method(a1, ..., v, ..., an)` and for a turbofish call
+   `x |> |v| path::<T1, ..., Tk>(a1, ..., v, ..., an)`.
+4. The parameter may sit anywhere the closure body reaches, so
+   `x |> |v| f(a, v).method()` is `f(a, x).method()`.
 
-The placeholder must occur exactly **once** across the step's chain, and
-must be an immediate call argument rather than part of a nested
-expression. Two placeholders, or one nested inside another expression,
-report `GP0027`.
+A closure written directly as a step is lowered to the block
+`{ let v = x; body }` rather than a closure the pipe invokes, so the step
+carries no closure allocation and no capture boundary. A body whose control
+flow leaves the closure - a `return`, a `?`, a `break` or `continue`
+targeting an outer loop - keeps the closure it was written against, since
+those target the closure rather than the enclosing function.
 
-A step that writes arguments and contains no `$` reports `GP0041`: the
-slot the value fills would otherwise have to be assumed, and the
-signatures where that assumption is wrong are frequently homogeneous
-enough that type checking cannot detect it.
+A step that writes its own arguments and is not a closure reports
+`GP0041`: the slot the value fills would otherwise have to be assumed,
+and the signatures where that assumption is wrong are frequently
+homogeneous enough that type checking cannot detect it. A formatting
+macro written as a step reports `GP0025` for the same reason.
 
-**Retired forms.** Three spellings that earlier releases accepted are now
-diagnostics, each with a `gos check --fix` rewrite:
-
-- `x |> $.method(..)`, `x |> $.name`, `x |> $.i`, `x |> $[i]`, and the
-  identity `x |> $` report `GP0042`. A method already chains, so
-  `x.method(..)` and `x.name()` say the same thing with less punctuation.
-  A method chain is an ordinary operand and may feed a pipe step.
-- A `$`-headed projection written as a call argument reports `GP0043`. A
-  callback is a closure (`xs.map(|v| v.abs())`) or a std function named in
-  value position (`xs.map(math::abs)`).
+**Retired form.** `$` spelled the slot in earlier releases and is no
+longer part of the language. Any `$` reports `GP0027`: in a step
+(`x |> f(a, $)` is `x |> |v| f(a, v)`), as a receiver (`x |> $.trim` is
+`x.trim()`, since a method already chains and a method chain is an
+ordinary operand that may feed a pipe step), or as a callback argument
+(`xs.map($.abs)` is `xs.map(|v| v.abs())` or `xs.map(math::abs)`).
 
 **Std functions in value position.** A stdlib free function named where
 a value is expected is rewritten into the closure that calls it, using
@@ -1451,10 +1451,10 @@ Examples:
 
 ```
 // The slot is named, so a data-first callee reads like a data-last one.
-text |> strings::slice($, 1, 3)
-name |> format!("hello {}", $) |> println
+text |> |v| strings::slice(v, 1, 3)
+name |> |v| format!("hello {}", v) |> println
 
-// A bare callable needs no placeholder.
+// A bare callable needs no closure.
 3 |> double |> negate
 ```
 
@@ -1463,8 +1463,8 @@ Idiomatic iterator chains:
 ```
 let total =
   1..=100
-  |> iter::filter(|n| n % 2 == 0, $)
-  |> iter::map(|n| n * n, $)
+  |> |v| iter::filter(|n| n % 2 == 0, v)
+  |> |v| iter::map(|n| n * n, v)
   |> iter::sum::<i64>()
 ```
 
@@ -1478,7 +1478,7 @@ let total = iter::sum::<i64>(iter::map(|n| n * n, iter::filter(|n| n % 2 == 0, 1
 piped into (`std::iter`, `std::option`, `std::result`, and most of
 `std::strings`) follow a uniform "data-last" rule: the value being
 transformed is the **last** positional parameter. This is what makes
-`x |> f(a, b, $)` thread cleanly without explicit placeholders. The
+`x |> |v| f(a, b, v)` thread cleanly without explicit placeholders. The
 convention is documented per-module; APIs that diverge from it (for
 historical or readability reasons) are called out at their declaration.
 
@@ -2444,8 +2444,8 @@ Current eager example:
 
 ```
 let squares = [1, 2, 3, 4]
-  |> iter::filter(|n| n % 2 == 0, $)
-  |> iter::map(|n| n * n, $)
+  |> |v| iter::filter(|n| n % 2 == 0, v)
+  |> |v| iter::map(|n| n * n, v)
 let total = squares |> iter::sum
 ```
 
@@ -2878,7 +2878,7 @@ Expr         = LiteralExpr | PathExpr | CallExpr | MethodCall | FieldAccess
 
 PipeExpr     = Expr "|>" PipeRhs
 PipeRhs      = PathExpr                                  // x |> f
-             | PathExpr "(" [ ArgList ] ")"              // x |> f(a, b, $)
+             | PathExpr "(" [ ArgList ] ")"              // x |> |v| f(a, b, v)
              | Expr "." Ident                            // x |> obj.m
              | Expr "." Ident "(" [ ArgList ] ")"        // x |> obj.m(a)
              | "(" Expr ")"                              // x |> (closure)

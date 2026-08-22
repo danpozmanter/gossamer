@@ -197,9 +197,8 @@ Write clear, low-complexity, concise code.
   and `xs.map(base64::encode)` need no `|v|` (a macro is not a function:
   `fmt::format` reports GR0018 and is written `format!(..)`, so pass a
   closure that calls it). Everything else is a written closure:
-  `xs.map(|v| v.abs())`, `people.map(|p| p.name)`. `$` is not a
-  callback shorthand - it belongs to `|>`, where it names the slot the
-  piped value fills, and `xs.map($.abs)` reports GP0043.
+  `xs.map(|v| v.abs())`, `people.map(|p| p.name)`. `$` is not part of
+  the language: `xs.map($.abs)` reports GP0027.
 - **Use metadata already returned by an API.** For entries from
   `fs::read_dir` or `fs::walk_dir`, inspect `entry.is_file`,
   `entry.is_dir`, `entry.is_symlink`, `entry.size`, `entry.path`, and
@@ -313,27 +312,32 @@ and a chain can feed a pipe. Left-associative, very low precedence.
 
 - `x |> f` is `f(x)` - a bare callable takes the value as its only
   argument. `x |> f()` is the same.
-- A step that writes arguments must name the piped value's slot with
-  `$`: `x |> f(a, $)` is `f(a, x)`, and `x |> f($, a)` is `f(x, a)`.
-  Exactly one `$` per step, anywhere along the step's call chain, so
-  `x |> f(a, $).len()` is `f(a, x).len()`. No argument order is
-  assumed, so a data-first callee (`strings::`, `path::`, `bytes::`,
-  `sort::`) reads like a data-last one (`iter::`, `option::`,
-  `result::`). Omitting `$` on an argument-taking step is GP0041.
-- `x |> recv.m(a, $)` pipes into a method on an external receiver.
-- Closure steps take the value as the closure's parameter:
-  `x |> |v| v * 2`.
-- `$` has no other meaning. It is not a callback shorthand
-  (`xs.map($.abs)` is GP0043 - write `xs.map(math::abs)` or
-  `xs.map(|v| v.abs())`), and it does not paste a receiver back on
-  (`x |> $.trim` is GP0042 - write `x.trim()`).
-- `gos check --fix` rewrites all three retired forms. On GP0041 it
-  appends `$` in the trailing slot, which preserves the old implicit
-  behaviour - confirm that is the slot the call needs.
+- A step that writes arguments is a CLOSURE, whose parameter is the
+  slot the piped value fills: `x |> |v| f(a, v)` is `f(a, x)`, and
+  `x |> |v| f(v, a)` is `f(x, a)`. The parameter may sit anywhere the
+  body reaches, so `x |> |v| f(a, v).len()` is `f(a, x).len()`. No
+  argument order is assumed, so a data-first callee (`strings::`,
+  `path::`, `bytes::`, `sort::`) reads like a data-last one (`iter::`,
+  `option::`, `result::`). An argument-taking step that is not a
+  closure is GP0041.
+- A closure written directly as a step IS the call it stands for: the
+  parameter is bound in the caller's frame, so the step costs nothing a
+  hand-written call would not, and a `let mut` the body updates is the
+  caller's. A body whose control flow leaves the closure - a `return`, a
+  `?` - keeps the closure it was written against.
+- `x |> |v| recv.m(a, v)` pipes into a method on an external receiver,
+  and `x |> |v| v * 2` pipes into a plain expression.
+- `$` is not part of the language: any `$` reports GP0027, whether in a
+  step (`x |> f(a, $)` - write `x |> |v| f(a, v)`), as a receiver
+  (`x |> $.trim` - write `x.trim()`), or as a callback (`xs.map($.abs)`
+  - write `xs.map(math::abs)` or `xs.map(|v| v.abs())`).
+- `gos check --fix` rewrites an argument-taking step into the closure
+  it stands for, putting the parameter in the trailing slot - confirm
+  that is the slot the call needs.
 
 ```gossamer
 // free functions: the pipe earns its place
-let n = 3 |> double |> add(10, $) |> clamp(0, 100, $)
+let n = 3 |> double |> |v| add(10, v) |> |v| clamp(0, 100, v)
 
 // methods: chain them, and feed the chain to a pipe
 let shout = "  Hi  ".trim().to_lowercase() |> exclaim
@@ -457,8 +461,8 @@ fn load(path: &String) -> Result<String, errors::Error> {
 `is(err, needle)` / `join([..])`; walk chains with `err.cause()`.
 `{}` on a wrapped error prints the colon-joined chain;
 `.message()` is the top message only. Ok-path piping:
-`fs::read_to_string(f) |> result::map(|s| print!("{s}"), $)
-|> result::unwrap_or_else(|e| eprintln!("{e}"), $)`.
+`fs::read_to_string(f) |> |v| result::map(|s| print!("{s}"), v)
+|> |v| result::unwrap_or_else(|e| eprintln!("{e}"), v)`.
 
 Panics are goroutine-scoped: a spawned goroutine's panic ends only
 that goroutine; a main-goroutine panic is fatal (exit 101). Integer

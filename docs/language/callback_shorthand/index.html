@@ -2176,10 +2176,9 @@ and a tuple projection are each written as the closure they are:</p>
 <a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">people</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="o">|</span><span class="n">p</span><span class="o">|</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="n">name</span><span class="p">))</span>
 <a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="p">}</span>
 </code></pre></div>
-<p><code>$</code> is not a callback shorthand - it belongs to <a href="../pipe/"><code>|&gt;</code></a>, where it
-names the slot the piped value fills. A <code>$</code>-headed projection in an
-argument reports <code>GP0043</code>, and <code>gos check --fix</code> rewrites it to the
-closure it abbreviated.</p>
+<p><code>$</code> is not a callback shorthand, and is not part of the language at all:
+<code>xs.map($.abs)</code> reports <code>GP0027</code>. See <a href="../pipe/"><code>|&gt;</code></a> for the closure a
+pipe step is written as.</p>
 
 
 

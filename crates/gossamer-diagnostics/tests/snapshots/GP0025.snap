@@ -3,9 +3,9 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GP0025]: A value piped into a format macro needs an explicit positional placeholder. Add a positional placeholder and place the pipe placeholder in the corresponding argument position. - here
+error[GP0025]: A formatting macro was written as a `|>` step. A macro takes its - here
 --- framed ---
-error[GP0025]: A value piped into a format macro needs an explicit positional placeholder. Add a positional placeholder and place the pipe placeholder in the corresponding argument position.
+error[GP0025]: A formatting macro was written as a `|>` step. A macro takes its
   --> snap.gos:2:5
      2 |     let x = 1
        |     ^^^^^

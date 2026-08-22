@@ -585,6 +585,11 @@ struct TypeChecker<'a> {
     /// name is a distinct, unconsumed binding. This is a conservative
     /// source-level linearity check for simple named locals.
     consumed_iterators: Vec<HashMap<NodeId, String>>,
+    /// The method spelling the source wrote for the call being checked. A
+    /// parse-time desugar can rename a call - `xs.sort_by_key(f)` is checked
+    /// as the `sort_by` it builds - and a diagnostic that named the rewritten
+    /// method sent the reader looking for a word their file does not contain.
+    written_method: String,
     /// Lexically active named mutable borrows, keyed by referent root. This
     /// is deliberately conservative: it prevents a second named `&mut`
     /// binding while the first remains in scope.
@@ -935,6 +940,7 @@ impl<'a> TypeChecker<'a> {
             recursion_depth: 0,
             recursion_limit_reported: false,
             consumed_iterators: vec![HashMap::new()],
+            written_method: String::new(),
             mutable_borrows: vec![HashMap::new()],
             shared_borrows: vec![HashMap::new()],
             reference_origins: vec![HashMap::new()],
@@ -4452,19 +4458,30 @@ impl<'a> TypeChecker<'a> {
                 receiver,
                 name,
                 name_span,
+                desugared_from,
                 generics,
                 args,
-            } => self.check_method_call(
-                MethodCallSite {
-                    call_id: expr.id,
-                    method: &name.name,
-                    name_span: *name_span,
-                    generics,
-                },
-                receiver,
-                args,
-                expected,
-            ),
+            } => {
+                let written = desugared_from
+                    .as_ref()
+                    .map_or(name.name.as_str(), |i| &i.name);
+                // Scoped to this call: a method call nested in the receiver or
+                // an argument sets its own spelling and restores this one.
+                let outer = std::mem::replace(&mut self.written_method, written.to_string());
+                let ty = self.check_method_call(
+                    MethodCallSite {
+                        call_id: expr.id,
+                        method: &name.name,
+                        name_span: *name_span,
+                        generics,
+                    },
+                    receiver,
+                    args,
+                    expected,
+                );
+                self.written_method = outer;
+                ty
+            }
             ExprKind::FieldAccess { receiver, field } => {
                 let receiver_ty = self.check_expr(receiver);
                 match field {
@@ -8905,10 +8922,11 @@ impl<'a> TypeChecker<'a> {
         self.fresh()
     }
 
-    /// Rejects `x.nowhere()` on a scalar receiver. A scalar carries no
-    /// methods, so the call is the free call `nowhere(x)` - and a name
-    /// nothing in the program or the stdlib declares can only fail at
-    /// run time.
+    /// Rejects `x.nowhere()` on a scalar receiver. A scalar declares no
+    /// methods of its own: the surface it answers is the `math` row set,
+    /// the conversions, and a `use` that binds the name as a free value.
+    /// Anything else has no binding on any tier and can only fail at run
+    /// time, so it is named here instead.
     fn reject_unknown_scalar_method(&mut self, resolved: Ty, method: &str, span: Span) -> bool {
         if !matches!(
             self.tcx.kind(resolved),
@@ -8916,21 +8934,18 @@ impl<'a> TypeChecker<'a> {
         ) {
             return false;
         }
-        let declared = self.user_fn_names.contains(method)
-            || self.user_method_owners.contains_key(method)
+        let declared = self.user_method_owners.contains_key(method)
             || gossamer_resolve::is_prelude_value(method)
-            || crate::stdlib_signatures::STD_FUNCTION_SIGNATURES
-                .iter()
-                .any(|sig| sig.name == method)
-            // The conversions and derived-trait methods every value
-            // answers, which no signature row describes.
+            || self.import_binds_free_name(method)
+            // The conversions every value answers, which no signature row
+            // describes. `cmp`, `eq`, `fmt`, and `hash` are absent on
+            // purpose: a scalar orders with `<`, compares with `==`, renders
+            // through `{}`, and keys a map by value, so no tier binds a
+            // method spelling for them - the same surface `Vec`, `Map`,
+            // `Set`, and a tuple present.
             || matches!(
                 method,
                 "clone"
-                    | "cmp"
-                    | "eq"
-                    | "fmt"
-                    | "hash"
                     | "into"
                     | "to_string"
                     | "try_into"
@@ -8944,6 +8959,20 @@ impl<'a> TypeChecker<'a> {
         let error = self.unresolved_method(ty, method, resolved);
         self.emit(error, span);
         true
+    }
+
+    /// Whether a `use` in this file binds `name` as an unqualified value,
+    /// which is what `x.name()` on a scalar needs: the call is the free call
+    /// `name(x)`, and a std function is reachable only through its module
+    /// path or an item import of its own.
+    fn import_binds_free_name(&self, name: &str) -> bool {
+        self.import_targets
+            .iter()
+            .filter(|((_, bound), _)| bound == name)
+            .any(|(_, full)| {
+                full.first().map(String::as_str) != Some("std")
+                    || gossamer_resolve::is_stdlib_item_path(&full.join("::"))
+            })
     }
 
     /// Types `x.sqrt()`, `(-2).abs()`, `a.pow(b)` and the rest of the
@@ -9151,12 +9180,22 @@ impl<'a> TypeChecker<'a> {
 
     /// Builds the GT0002 diagnostic for `method` on `resolved`, carrying
     /// the receiver's method surface so the reader gets a did-you-mean.
+    /// The spelling to name in a diagnostic about `method`: what the source
+    /// wrote, which differs only where a parse-time desugar renamed the call.
+    fn written_method_name(&self, method: &str) -> String {
+        if self.written_method.is_empty() {
+            return method.to_string();
+        }
+        self.written_method.clone()
+    }
+
     fn unresolved_method(&self, ty: String, method: &str, resolved: Ty) -> TypeError {
         TypeError::UnresolvedMethod {
             ty,
-            name: method.to_string(),
+            name: self.written_method_name(method),
             available: self.known_method_names(resolved),
             field_of_same_name: self.adt_declares_field(resolved, method),
+            free_fn_of_same_name: self.user_fn_names.contains(method),
         }
     }
 
@@ -9206,9 +9245,10 @@ impl<'a> TypeChecker<'a> {
         }
         TypeError::UnresolvedMethod {
             ty,
-            name: method.to_string(),
+            name: self.written_method_name(method),
             available,
             field_of_same_name: self.adt_declares_field(resolved, method),
+            free_fn_of_same_name: self.user_fn_names.contains(method),
         }
     }
 
@@ -11085,9 +11125,10 @@ impl<'a> TypeChecker<'a> {
         self.emit(
             TypeError::UnresolvedMethod {
                 ty,
-                name: method.to_string(),
+                name: self.written_method_name(method),
                 available: Vec::new(),
                 field_of_same_name: false,
+                free_fn_of_same_name: self.user_fn_names.contains(method),
             },
             span,
         );
@@ -11137,9 +11178,10 @@ impl<'a> TypeChecker<'a> {
         self.emit(
             TypeError::UnresolvedMethod {
                 ty: name,
-                name: method.to_string(),
+                name: self.written_method_name(method),
                 available,
                 field_of_same_name: false,
+                free_fn_of_same_name: self.user_fn_names.contains(method),
             },
             span,
         );
@@ -11982,10 +12024,17 @@ impl<'a> TypeChecker<'a> {
                         self.unify(s, message, span);
                         payload
                     }
-                    // Same mixed-type rationale as the Result row.
+                    // Same mixed-type rationale as the Result row: both arms
+                    // answer the payload, so the fallback is pinned to
+                    // produce one. A fallback that diverges contributes no
+                    // value and is left alone.
                     "unwrap_or_else" => {
-                        let _ = self.callable_output(lead_tys[0], &[], span);
-                        self.fresh()
+                        let out = self.callable_output(lead_tys[0], &[], span);
+                        let resolved_out = self.infer.resolve(self.tcx, out);
+                        if !matches!(self.tcx.kind(resolved_out), Some(TyKind::Never)) {
+                            self.unify(payload, out, span);
+                        }
+                        payload
                     }
                     "zip" => {
                         let other = match self.option_payload_ty(lead_tys[0], span) {
@@ -12363,7 +12412,19 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Records the left operand of a `|>` step as a spent iterator, named
+    /// after the call the step makes so the diagnostic points at it.
+    fn mark_piped_iterator_consumed(&mut self, lhs: &Expr, lhs_ty: Ty, rhs: &Expr) {
+        let operation = pipe_step_operation_name(rhs).unwrap_or_else(|| "|>".to_string());
+        self.mark_consumed_iterator_labelled(&operation, lhs, lhs_ty);
+    }
+
     fn mark_consumed_iterator_expr(&mut self, name: &str, expr: &Expr, ty: Ty) {
+        self.mark_consumed_iterator_labelled(&format!("iter::{name}"), expr, ty);
+    }
+
+    /// [`Self::mark_consumed_iterator_expr`] with the operation spelled out.
+    fn mark_consumed_iterator_labelled(&mut self, operation: &str, expr: &Expr, ty: Ty) {
         let resolved = self.infer.resolve(self.tcx, ty);
         if !matches!(
             self.tcx.kind(resolved),
@@ -12381,7 +12442,7 @@ impl<'a> TypeChecker<'a> {
             return;
         };
         if let Some(scope) = self.consumed_iterators.last_mut() {
-            scope.insert(binding, format!("iter::{name}"));
+            scope.insert(binding, operation.to_string());
         }
     }
 
@@ -12919,6 +12980,10 @@ impl<'a> TypeChecker<'a> {
                 if matches!(rhs.kind, ExprKind::Path(_) | ExprKind::Closure { .. }) {
                     self.check_direct_pipe_sig(&sig, lhs, lhs_ty, rhs);
                 }
+                // A step takes the piped value by value, so a lazy iterator
+                // handed to one is spent: whatever the step does with it, the
+                // next read of the binding sees a drained cursor.
+                self.mark_piped_iterator_consumed(lhs, lhs_ty, rhs);
                 return self.infer.resolve(self.tcx, sig.output);
             }
             TyKind::FnDef { def, .. } => {
@@ -18048,6 +18113,11 @@ pub fn is_free_call_only_traversal(name: &str) -> bool {
 /// fails as an unbound name at run time, or as an undefined symbol in a
 /// native build. Every receiver declines them the way `Vec` does; the
 /// free call is how they are written.
+///
+/// `sort_by` and `sort_by_key` sit here for the receivers this list gates -
+/// `Iterator`, `Range`, and `Set` - which hold no ordered buffer a sort could
+/// reorder. `Vec`, an array, and a slice reach them through the slice surface
+/// instead, where they sort the receiver in place.
 const FREE_CALL_ONLY_TRAVERSALS: &[&str] = &[
     "chunk_by",
     "count_by",
@@ -18060,6 +18130,8 @@ const FREE_CALL_ONLY_TRAVERSALS: &[&str] = &[
     "product_by",
     "reduce",
     "scan",
+    "sort_by",
+    "sort_by_key",
     "sum_by",
     "unzip",
 ];
@@ -18261,6 +18333,24 @@ fn callee_display_name(callee: &Expr) -> String {
             .collect::<Vec<_>>()
             .join("::"),
         _ => "this function".to_string(),
+    }
+}
+
+/// The call a `|>` step makes, for the diagnostic that names what spent an
+/// iterator. A closure step is named by the call in its body.
+fn pipe_step_operation_name(rhs: &Expr) -> Option<String> {
+    match &rhs.kind {
+        ExprKind::Path(path) => Some(
+            path.segments
+                .iter()
+                .map(|s| s.name.name.as_str())
+                .collect::<Vec<_>>()
+                .join("::"),
+        ),
+        ExprKind::Call { callee, .. } => Some(callee_display_name(callee)),
+        ExprKind::MethodCall { name, .. } => Some(name.name.clone()),
+        ExprKind::Closure { body, .. } => pipe_step_operation_name(body),
+        _ => None,
     }
 }
 

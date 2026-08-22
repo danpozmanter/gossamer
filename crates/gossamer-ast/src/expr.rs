@@ -58,6 +58,11 @@ pub enum ExprKind {
         /// Source range of the method name, so a diagnostic about the method
         /// points at it rather than at the receiver it hangs off.
         name_span: Span,
+        /// The method the source actually wrote, when a parse-time desugar
+        /// synthesized this call under a different name. A diagnostic names
+        /// this rather than `name`, so it never reports a spelling that
+        /// appears nowhere in the file.
+        desugared_from: Option<Ident>,
         /// Turbofish generic arguments.
         generics: Vec<GenericArg>,
         /// Call arguments.

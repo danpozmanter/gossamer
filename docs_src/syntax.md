@@ -166,8 +166,8 @@ of it. The two mix freely, and a method chain can feed a pipe.
 reads as `g(f(a))` with no parentheses needed.
 
 A step is one of two shapes. A **bare callable** takes the piped value
-as its only argument; a step that **writes arguments** names the slot
-the value fills with `$`:
+as its only argument; a step that **writes arguments** is a **closure**,
+whose parameter is the slot the value fills:
 
 ```gossamer
 fn double(x: i64) -> i64 { x * 2 }
@@ -177,20 +177,16 @@ fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
 }
 
 // Reads left-to-right instead of inside-out.
-let n = 3 |> double |> add(10, $) |> clamp(0, 100, $)
+let n = 3 |> double |> |v| add(10, v) |> |v| clamp(0, 100, v)
 
 // Equivalent nested form:
 let same = clamp(0, 100, add(10, double(3)))
 ```
 
-Exactly one `$` per step, and it may sit anywhere along the step's call
-chain, so `xs |> f(a, $).len()` is `f(a, xs).len()`. A closure step
-takes the value as the closure's parameter: `x |> |v| v * 2`. Piping
-into a method on an external receiver works the same way:
-`x |> recv.m(a, $)`.
-
-`$` is punctuation rather than an identifier, so it never collides with
-a name in scope.
+The parameter may sit anywhere the body reaches, so
+`xs |> |v| f(a, v).len()` is `f(a, xs).len()`. The body needs no call at
+all: `x |> |v| v * 2`. Piping into a method on an external receiver
+works the same way: `x |> |v| recv.m(a, v)`.
 
 ### Why the slot is named
 
@@ -207,15 +203,17 @@ Naming the slot removes the assumption, so both conventions read alike:
 ```gossamer
 use std::{iter, strings}
 
-let parts = "a,b,c" |> strings::split($, ",")     // data first
-let doubled = #[1, 2] |> iter::map(|v| v * 2, $)  // data last
+let parts = "a,b,c" |> |v| strings::split(v, ",")     // data first
+let doubled = #[1, 2] |> |value| iter::map(|v| v * 2, value)  // data last
 ```
 
-An argument-taking step with no `$` reports `GP0041`. Pasting the value
-back on as a method receiver (`x |> $.trim`) reports `GP0042` - write
-`x.trim()`. `gos check --fix` rewrites both; on `GP0041` it appends `$`
-in the trailing slot, which preserves the behaviour of the implicit rule
-it replaces, so confirm that is the slot the call needs.
+An argument-taking step that is not a closure reports `GP0041`, and a
+formatting macro written as a step reports `GP0025`. `$`, which spelled
+the slot in earlier releases, is no longer part of the language and
+reports `GP0027` wherever it appears. `gos check --fix` rewrites an
+argument-taking step into the closure it stands for, putting the
+parameter in the trailing slot, so confirm that is the slot the call
+needs.
 
 ## Callback shorthand
 
@@ -239,10 +237,8 @@ let firsts = #[(1, 2), (3, 4)].map(|t| t.0)
 let people = #[Person { name: "ada" }].map(|p| p.name)
 ```
 
-`$` is not a callback shorthand - it belongs to the pipe, where it names
-the slot the piped value fills. A `$`-headed projection in an argument
-reports `GP0043`, and `gos check --fix` rewrites it to the closure it
-abbreviated.
+`$` is not a callback shorthand, and is not part of the language at all:
+`xs.map($.abs)` reports `GP0027`.
 
 ## Pattern matching
 

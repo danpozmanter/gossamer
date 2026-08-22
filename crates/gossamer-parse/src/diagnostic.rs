@@ -131,42 +131,16 @@ pub enum ParseError {
     /// The right-hand side of `|>` did not match any of the forms in SPEC §4.6.
     #[error("E0601: right-hand side of `|>` must be a callable")]
     PipeRhsInvalid,
-    /// A pipe placeholder was repeated or placed somewhere it cannot select a
-    /// call argument.
-    #[error("E0602: pipe placeholder `$` must occur exactly once in a direct call argument")]
-    PipePlaceholderInvalid,
-    /// A `|>` step takes arguments but does not say which one the piped
-    /// value fills.
-    #[error("a `|>` step that takes arguments must name the piped value's slot with `$`")]
-    PipeStepNeedsPlaceholder {
-        /// The same step with `$` appended as the trailing argument.
+    /// `$` was written where an expression belongs. The pipe placeholder it
+    /// used to spell is retired in favour of a closure step.
+    #[error("`$` is not part of the language")]
+    PipePlaceholderRetired,
+    /// A `|>` step takes arguments, so it cannot also take the piped value.
+    #[error("a `|>` step that takes arguments must be a closure")]
+    PipeStepNeedsClosure {
+        /// The same step written as the closure it stands for.
         replacement: Option<String>,
     },
-    /// A `|>` step pasted the piped value back on as a method receiver
-    /// (`x |> $.trim`), which methods already express by chaining.
-    #[error("`{spelling}` is not a `|>` step: a method already chains")]
-    PipeReceiverProjection {
-        /// Source spelling of the rejected step.
-        spelling: String,
-        /// The method chain that says the same thing, replacing the `|>` and
-        /// the step together.
-        replacement: Option<String>,
-    },
-    /// A call argument used the retired `$`-projection callback shorthand
-    /// (`xs.map($.abs)`).
-    #[error("`{spelling}` is not a callback")]
-    PlaceholderCallbackRetired {
-        /// Source spelling of the rejected argument.
-        spelling: String,
-        /// The closure the shorthand abbreviated.
-        replacement: Option<String>,
-    },
-    /// An open range was used where a pipe placeholder was intended.
-    #[error("E0603: `..` is a range expression, not a pipe placeholder")]
-    PipeDotDotPlaceholder,
-    /// `_` was used where the pipe placeholder `$` belongs.
-    #[error("`_` is not the pipe placeholder; write `$`")]
-    PipeUnderscorePlaceholder,
     /// An assignment appeared in a non-statement expression position.
     #[error("assignment is only valid at statement position")]
     AssignmentNotAllowed,
@@ -258,10 +232,10 @@ pub enum ParseError {
     /// placeholders can be checked during parsing.
     #[error("format argument must be a string literal")]
     FormatStringMustBeLiteral,
-    /// A piped value cannot be appended implicitly to a format macro because
-    /// every value must correspond to an explicit positional placeholder.
-    #[error("piped format value needs an explicit positional placeholder")]
-    PipedFormatArgumentNeedsPlaceholder,
+    /// A formatting macro was written as a `|>` step. A macro takes its
+    /// arguments as written, so the piped value has no slot of its own.
+    #[error("a formatting macro is not a `|>` step")]
+    PipedFormatMacroStep,
     /// A `const` or `static` declaration whose name was followed directly by
     /// `=`. These items carry no inference, so the type annotation is part of
     /// the grammar rather than an option.
@@ -392,23 +366,15 @@ impl ParseDiagnostic {
                 format!("{name}: {ty}"),
             ));
         }
-        // Each retired `$` form rewrites within its own span, so a whole
-        // chain converges in a single `--fix` pass.
-        let rewrite = match &self.error {
-            ParseError::PipeStepNeedsPlaceholder { replacement }
-            | ParseError::PipeReceiverProjection { replacement, .. }
-            | ParseError::PlaceholderCallbackRetired { replacement, .. } => replacement.as_ref(),
-            _ => None,
-        };
-        if let Some(replacement) = rewrite {
-            let message = if replacement.is_empty() {
-                "remove the step".to_string()
-            } else {
-                format!("write `{replacement}`")
-            };
+        // The rewrite covers the step alone, so every step of a chain
+        // converges in a single `--fix` pass.
+        if let ParseError::PipeStepNeedsClosure {
+            replacement: Some(replacement),
+        } = &self.error
+        {
             out = out.with_suggestion(Suggestion::replacement(
                 location,
-                message,
+                format!("write `{replacement}`"),
                 replacement.clone(),
             ));
         }
@@ -590,60 +556,24 @@ impl ParseError {
                         .to_string(),
                 ),
             ),
-            ParseError::PipePlaceholderInvalid => (
+            ParseError::PipePlaceholderRetired => (
                 "GP0027",
-                "pipe placeholder `$` must occur exactly once in a direct call argument"
-                    .to_string(),
-                Some("place one `$` directly in the call argument list".to_string()),
+                "`$` is not part of the language".to_string(),
+                Some(
+                    "a `|>` step that needs the value in a particular slot is a closure, \
+                     as in `x |> |v| f(a, v)`; a method already chains, as in `x.trim()`, \
+                     and a callback is a closure or a function named in value position"
+                        .to_string(),
+                ),
             ),
-            ParseError::PipeStepNeedsPlaceholder { .. } => (
+            ParseError::PipeStepNeedsClosure { .. } => (
                 "GP0041",
-                "a `|>` step that takes arguments must say which one the piped value fills"
-                    .to_string(),
+                "a `|>` step that takes arguments must be a closure".to_string(),
                 Some(
-                    "write `$` in the slot the value belongs in, as in `x |> f(a, $)` \
-                     or `x |> strings::split($, \",\")`. `--fix` appends `$` in the \
-                     trailing slot, which keeps today's behaviour - check that is the \
-                     slot you meant"
-                        .to_string(),
-                ),
-            ),
-            ParseError::PipeReceiverProjection { spelling, .. } if spelling == "$" => (
-                "GP0042",
-                "`x |> $` is the identity, not a `|>` step".to_string(),
-                Some("write the value on its own".to_string()),
-            ),
-            ParseError::PipeReceiverProjection { spelling, .. } => (
-                "GP0042",
-                format!("`{spelling}` is not a `|>` step: a method already chains"),
-                Some(
-                    "call the method directly and pipe what it answers, as in \
-                     `x.trim().to_lowercase() |> shout`"
-                        .to_string(),
-                ),
-            ),
-            ParseError::PlaceholderCallbackRetired { spelling, .. } => (
-                "GP0043",
-                format!("`{spelling}` is not a callback"),
-                Some(
-                    "write the closure, as in `xs.map(|v| v.abs())`, or pass a function \
-                     by name, as in `xs.map(math::abs)`"
-                        .to_string(),
-                ),
-            ),
-            ParseError::PipeDotDotPlaceholder => (
-                "GP0028",
-                "`..` is a range expression, not a pipe placeholder".to_string(),
-                Some(
-                    "use `$`, or omit the placeholder for the default trailing position"
-                        .to_string(),
-                ),
-            ),
-            ParseError::PipeUnderscorePlaceholder => (
-                "GP0038",
-                "`_` is not the pipe placeholder".to_string(),
-                Some(
-                    "write `$` to make the piped value the receiver, as in `x |> $.len()`"
+                    "write the step as a closure whose parameter is the piped value, as in \
+                     `x |> |v| f(a, v)`. `--fix` puts the parameter in the trailing slot, \
+                     which a data-first callee does not want - check that is the slot the \
+                     call needs"
                         .to_string(),
                 ),
             ),
@@ -716,11 +646,11 @@ impl ParseError {
                         .to_string(),
                 ),
             ),
-            ParseError::PipedFormatArgumentNeedsPlaceholder => (
+            ParseError::PipedFormatMacroStep => (
                 "GP0025",
-                "piped format value needs an explicit positional placeholder".to_string(),
+                "a formatting macro is not a `|>` step".to_string(),
                 Some(
-                    "write `value |> println!(\"… {}\", $)` so the piped value fills that placeholder"
+                    "write the step as a closure, as in `value |> |v| println!(\"… {}\", v)`"
                         .to_string(),
                 ),
             ),
