@@ -15,21 +15,22 @@
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-use windows_sys::Win32::Foundation::{ERROR_SUCCESS, LocalFree};
+use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, INVALID_HANDLE_VALUE, LocalFree};
 
 /// A security identifier, as every Win32 entry point below takes it.
 pub(crate) type Sid = *mut std::ffi::c_void;
 use windows_sys::Win32::Security::Authorization::{
-    ConvertStringSidToSidW, EXPLICIT_ACCESS_W, GetEffectiveRightsFromAclW, GetNamedSecurityInfoW,
-    SE_FILE_OBJECT, SET_ACCESS, SetEntriesInAclW, SetNamedSecurityInfoW, TRUSTEE_IS_SID,
-    TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
+    ConvertStringSidToSidW, EXPLICIT_ACCESS_W, GetNamedSecurityInfoW, SE_FILE_OBJECT, SET_ACCESS,
+    SetEntriesInAclW, SetNamedSecurityInfoW, TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
 };
 use windows_sys::Win32::Security::{
-    ACL, DACL_SECURITY_INFORMATION, NO_INHERITANCE, PSECURITY_DESCRIPTOR,
-    SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, DACL_SECURITY_INFORMATION, EqualSid, GetAce,
+    NO_INHERITANCE, PSECURITY_DESCRIPTOR, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+    CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ,
+    FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    WRITE_DAC,
 };
 
 /// Directory holding one record file per live run.
@@ -109,28 +110,53 @@ pub(crate) fn stale_grants() -> Vec<(PathBuf, Vec<PathBuf>)> {
         .collect()
 }
 
-/// Whether the current user owns `path`.
+/// Whether the current user may rewrite the ACL of `path`.
 ///
 /// A sandbox refuses to modify an ACL on an object it does not own:
 /// granting a container SID on somebody else's file is a change the
 /// user did not ask for and may not be able to undo.
+///
+/// The question is asked of the object itself, by opening it for
+/// `WRITE_DAC`: an owner always holds that right, and anyone else holds
+/// it only where the DACL says so, which is exactly the permission the
+/// grant needs. `FILE_FLAG_BACKUP_SEMANTICS` is what lets a directory
+/// be opened at all, and nearly every path a policy grants is one.
 #[must_use]
 pub(crate) fn is_owned_by_current_user(path: &Path) -> bool {
-    // Ownership is checked by writability, which is what the grant
-    // needs anyway: an object the user cannot modify is one whose ACL
-    // the user cannot modify either.
-    std::fs::OpenOptions::new()
-        .read(true)
-        .open(path)
-        .ok()
-        .and_then(|file| file.metadata().ok())
-        .is_some_and(|metadata| !metadata.permissions().readonly() || path.is_dir())
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: `wide` is a NUL-terminated UTF-16 path that outlives the
+    // call, and the handle is closed on every path out.
+    let handle = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            WRITE_DAC,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE || handle.is_null() {
+        return false;
+    }
+    unsafe { CloseHandle(handle) };
+    true
 }
 
 /// `ALL APPLICATION PACKAGES`, the group every app container belongs
 /// to. Windows puts an ACE for it on the system directories, which is
 /// how a store app reads a system DLL without anyone granting it.
 const ALL_APPLICATION_PACKAGES: &str = "S-1-15-2-1";
+
+/// `ACCESS_ALLOWED_ACE_TYPE` and `ACCESS_DENIED_ACE_TYPE`, which the
+/// crate declares the structures for but not the tags.
+const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
+const ACCESS_DENIED_ACE_TYPE: u8 = 1;
 
 /// Whether an app container already reaches `path` with the rights the
 /// grant would add.
@@ -223,22 +249,50 @@ impl Dacl {
         Some(Self { acl, descriptor })
     }
 
-    /// The rights this ACL grants `sid`, or none when the ACL cannot be
-    /// evaluated for it.
+    /// The rights this ACL grants `sid` by name.
+    ///
+    /// The ACEs are walked rather than handed to
+    /// `GetEffectiveRightsFromAcl`, which enumerates a group trustee's
+    /// members - impossible for a well-known group like
+    /// `ALL APPLICATION PACKAGES` - and refuses outright any ACL that
+    /// carries an inherited deny ACE, which a system directory's does.
     fn rights_of(&self, sid: Sid) -> u32 {
-        let trustee = TRUSTEE_W {
-            pMultipleTrustee: std::ptr::null_mut(),
-            MultipleTrusteeOperation: 0,
-            TrusteeForm: TRUSTEE_IS_SID,
-            TrusteeType: TRUSTEE_IS_UNKNOWN,
-            ptstrName: sid.cast(),
-        };
-        let mut rights: u32 = 0;
-        // SAFETY: the ACL is live for the length of this value, and the
-        // trustee names a SID the caller keeps alive across the call.
-        let read =
-            unsafe { GetEffectiveRightsFromAclW(self.acl, &raw const trustee, &raw mut rights) };
-        if read == ERROR_SUCCESS { rights } else { 0 }
+        // SAFETY: the descriptor this ACL belongs to is live for the
+        // length of this value, so the header is readable.
+        let count = u32::from(unsafe { (*self.acl).AceCount });
+        let mut granted: u32 = 0;
+        let mut denied: u32 = 0;
+        for index in 0..count {
+            let mut entry: *mut std::ffi::c_void = std::ptr::null_mut();
+            // SAFETY: `index` is below the header's own ACE count, and
+            // the entry is written only when the call succeeds.
+            if unsafe { GetAce(self.acl, index, &raw mut entry) } == 0 || entry.is_null() {
+                continue;
+            }
+            // SAFETY: every ACE begins with an `ACE_HEADER`, and an
+            // allow or deny ACE continues with a mask and a SID. The
+            // pointer came from `GetAce` on this ACL.
+            #[allow(clippy::cast_ptr_alignment)]
+            let header = unsafe { &*entry.cast::<ACE_HEADER>() };
+            if header.AceType != ACCESS_ALLOWED_ACE_TYPE && header.AceType != ACCESS_DENIED_ACE_TYPE
+            {
+                continue;
+            }
+            // A deny ACE has the same prefix layout as an allow ACE.
+            #[allow(clippy::cast_ptr_alignment)]
+            let ace = unsafe { &*entry.cast::<ACCESS_ALLOWED_ACE>() };
+            let ace_sid: Sid = std::ptr::from_ref(&ace.SidStart).cast_mut().cast();
+            // SAFETY: both SIDs are live; the ACE's belongs to the ACL.
+            if unsafe { EqualSid(ace_sid, sid) } == 0 {
+                continue;
+            }
+            if header.AceType == ACCESS_ALLOWED_ACE_TYPE {
+                granted |= ace.Mask;
+            } else {
+                denied |= ace.Mask;
+            }
+        }
+        granted & !denied
     }
 }
 

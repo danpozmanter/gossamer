@@ -15,16 +15,23 @@
 
 use crate::policy::{Access, CompiledPolicy, Network, Temp};
 
-/// Mach services a compiler toolchain genuinely asks for.
+/// Mach services a process needs to start, plus the ones a compiler
+/// toolchain genuinely asks for.
 ///
-/// Derived from what a real build reaches for rather than guessed:
-/// name resolution, the dynamic-linker cache, and notification
-/// delivery. Anything not listed is denied, which is the point.
+/// `com.apple.secinitd` is the one nothing runs without: every process
+/// asks it whether it belongs in a container while `dyld` is still
+/// initializing libraries, and `libsystem_secinit` aborts when the
+/// answer does not come back. That abort happens before the program's
+/// first instruction, so it prints nothing at all. The rest are name
+/// resolution, logging, and notification delivery; anything not listed
+/// is denied, which is the point.
 const MACH_SERVICES: &[&str] = &[
+    "com.apple.secinitd",
     "com.apple.system.opendirectoryd.libinfo",
     "com.apple.system.opendirectoryd.membership",
     "com.apple.system.notification_center",
     "com.apple.system.logger",
+    "com.apple.logd",
     "com.apple.dyld",
     "com.apple.CoreServices.coreservicesd",
     "com.apple.diagnosticd",
@@ -39,15 +46,29 @@ const SYSTEM_READ_PATHS: &[&str] = &[
     "/System/Library",
     "/Library/Preferences",
     "/private/var/db/dyld",
-    // macOS 13 moved the dyld shared cache into a cryptex, and Seatbelt
-    // matches the path the cache is actually mounted at rather than the
-    // one it is presented under, so a process cannot start without it.
+    // Since macOS 13 part of the system, the dyld shared cache included,
+    // lives in a cryptex, and Seatbelt matches the path a file is
+    // mounted at rather than the one it is presented under.
     "/System/Volumes/Preboot/Cryptexes",
     "/dev/null",
     "/dev/random",
     "/dev/urandom",
     "/dev/zero",
 ];
+
+/// Operations a read grant covers.
+///
+/// Mapping a file as code has been its own operation since macOS 11, so
+/// a profile that allows reads and not this one lets a process open a
+/// dylib and not run it: the loader gives up before the program reaches
+/// its first instruction, and it gives up by aborting rather than by
+/// saying anything.
+const READ_OPERATIONS: &str = "file-read* file-map-executable file-test-existence";
+
+/// Operations a read-write grant covers, and the ones a denial names so
+/// nothing it denies stays reachable through another operation.
+const READ_WRITE_OPERATIONS: &str =
+    "file-read* file-write* file-map-executable file-test-existence";
 
 /// Renders `policy` as a Seatbelt profile.
 #[must_use]
@@ -58,6 +79,7 @@ pub(crate) fn render(policy: &CompiledPolicy) -> String {
     out.push_str(";; allowance below comes from one rule in the compiled policy.\n");
     out.push_str("(deny default)\n");
     out.push_str("(allow process-fork)\n");
+    out.push_str("(allow process-info* (target same-sandbox))\n");
     out.push_str("(allow sysctl-read)\n");
     out.push_str("(allow signal (target same-sandbox))\n");
 
@@ -78,20 +100,43 @@ pub(crate) fn render(policy: &CompiledPolicy) -> String {
         Network::Open => out.push_str("(allow network*)\n"),
     }
 
+    out.push_str("\n;; What every process needs before it reaches its own\n");
+    out.push_str(";; first instruction. A denial here ends the program in the\n");
+    out.push_str(";; loader, which aborts without printing anything.\n");
     // Resolving any path walks its ancestors, and Seatbelt asks for
-    // metadata on each one; a deny-default profile that grants only
-    // subpaths cannot open a file whose parent it never named. Contents
-    // stay denied - this is names, sizes, and timestamps.
-    out.push_str("(allow file-read-metadata)\n");
+    // metadata and an existence test on each one; a deny-default profile
+    // that grants only subpaths cannot open a file whose parent it never
+    // named. Contents stay denied - this is names, sizes, and times.
+    out.push_str("(allow file-read-metadata file-test-existence)\n");
+    // The working directory, which a shell resolves before anything else.
+    out.push_str("(allow file-read* file-test-existence (literal \"/\"))\n");
+    // `libsystem_secinit` asks the Sandbox policy whether this process
+    // belongs in a container, and guarded vnodes are how the loader
+    // opens what it maps.
+    out.push_str("(allow system-mac-syscall (mac-policy-name \"vnguard\"))\n");
+    out.push_str(
+        "(allow system-mac-syscall (require-all (mac-policy-name \"Sandbox\") \
+         (mac-syscall-number 67)))\n",
+    );
+    // libnotify registers against this shared segment as it initializes.
+    out.push_str(
+        "(allow ipc-posix-shm-read* (ipc-posix-name \"apple.shm.notification_center\"))\n",
+    );
 
     out.push_str("\n;; System paths every process needs to start.\n");
     for path in SYSTEM_READ_PATHS {
-        out.push_str(&format!("(allow file-read* (subpath {}))\n", quote(path)));
+        out.push_str(&format!(
+            "(allow {READ_OPERATIONS} (subpath {}))\n",
+            quote(path)
+        ));
     }
 
     // libSystem registers with the DTrace helper as a process starts,
     // and the registration is an ioctl on this node rather than a read.
-    out.push_str("(allow file-read* file-write-data (literal \"/dev/dtracehelper\"))\n");
+    out.push_str(
+        "(allow file-read* file-test-existence file-write-data file-ioctl \
+         (literal \"/dev/dtracehelper\"))\n",
+    );
 
     out.push_str("\n;; Mach services a toolchain asks for; the rest are denied.\n");
     for service in MACH_SERVICES {
@@ -109,17 +154,20 @@ pub(crate) fn render(policy: &CompiledPolicy) -> String {
         let path = rule.path.to_string_lossy();
         match rule.access {
             Access::ReadOnly => {
-                out.push_str(&format!("(allow file-read* (subpath {}))\n", quote(&path)));
+                out.push_str(&format!(
+                    "(allow {READ_OPERATIONS} (subpath {}))\n",
+                    quote(&path)
+                ));
             }
             Access::ReadWrite => {
                 out.push_str(&format!(
-                    "(allow file-read* file-write* (subpath {}))\n",
+                    "(allow {READ_WRITE_OPERATIONS} (subpath {}))\n",
                     quote(&path)
                 ));
             }
             Access::Deny => {
                 out.push_str(&format!(
-                    "(deny file-read* file-write* (subpath {}))\n",
+                    "(deny {READ_WRITE_OPERATIONS} (subpath {}))\n",
                     quote(&path)
                 ));
             }
@@ -128,7 +176,7 @@ pub(crate) fn render(policy: &CompiledPolicy) -> String {
 
     if let Temp::Path(path) = &policy.temp {
         out.push_str(&format!(
-            "(allow file-read* file-write* (subpath {}))\n",
+            "(allow {READ_WRITE_OPERATIONS} (subpath {}))\n",
             quote(&path.to_string_lossy())
         ));
     }
@@ -184,10 +232,15 @@ mod profile_tests {
             "{rendered}"
         );
         assert!(
-            rendered.contains("(allow file-read-metadata)"),
+            rendered.contains("(allow file-read-metadata file-test-existence)"),
             "{rendered}"
         );
+        // Nothing starts without asking whether it belongs in a
+        // container, and nothing answers that but this service.
+        assert!(rendered.contains("com.apple.secinitd"), "{rendered}");
         assert!(rendered.contains("/dev/dtracehelper"), "{rendered}");
+        // Reading a dylib is not permission to run it.
+        assert!(rendered.contains("file-map-executable"), "{rendered}");
     }
 
     #[test]
@@ -202,7 +255,7 @@ mod profile_tests {
         let rendered = render(&compiled());
         assert!(
             rendered.contains(&format!(
-                "(allow file-read* file-write* (subpath {}))",
+                "(allow {READ_WRITE_OPERATIONS} (subpath {}))",
                 quote(&root.to_string_lossy())
             )),
             "{rendered}"

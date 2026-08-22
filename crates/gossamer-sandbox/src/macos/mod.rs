@@ -92,25 +92,28 @@ pub(crate) fn run(
     argv: &[String],
     stdio: Stdio,
 ) -> Result<SandboxOutput, SandboxError> {
-    let mut command = exec::base_command(policy, argv, stdio)?;
-    // Kept alive until the child exits: dropping it removes the
-    // profile file the child was started with.
-    let _applied = if policy.level >= Level::Standard {
+    // The wrapper is decided before the command is built, so the
+    // policy's environment, working directory, and stdio are installed
+    // on the program that actually runs.
+    //
+    // `applied` is kept alive until the child exits: dropping it removes
+    // the profile file the child was started with.
+    let (launched, _applied) = if policy.level >= Level::Standard {
         let applier = seatbelt::available().ok_or_else(|| SandboxError::LevelUnavailable {
             requested: policy.level,
             available: Level::Basic,
             reason: "no Seatbelt mechanism is present on this host".to_string(),
         })?;
         let rendered = profile::render(policy);
-        Some(
-            applier
-                .apply(&mut command, &rendered)
-                .map_err(SandboxError::Spawn)?,
-        )
+        let (wrapped, state) = applier
+            .apply(argv, &rendered)
+            .map_err(SandboxError::Spawn)?;
+        (wrapped, Some(state))
     } else {
-        None
+        (argv.to_vec(), None)
     };
 
+    let mut command = exec::base_command(policy, &launched, stdio)?;
     apply_process_group(&mut command);
     let child = command.spawn().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
@@ -119,7 +122,60 @@ pub(crate) fn run(
             SandboxError::Spawn(format!("{error}"))
         }
     })?;
-    exec::wait_for(policy, child, stdio)
+    let outcome = exec::wait_for(policy, child, stdio);
+    match outcome {
+        Err(SandboxError::Signalled { signal, stderr }) if policy.level >= Level::Standard => {
+            Err(SandboxError::Signalled {
+                signal,
+                stderr: with_denials(stderr),
+            })
+        }
+        other => other,
+    }
+}
+
+/// Adds what Seatbelt recorded to a signalled child's own output.
+///
+/// A denial the loader hits ends the process through `abort` before it
+/// runs a line of its own, so it prints nothing and the reason lives
+/// only in the system log. Asking for it turns a bare signal number
+/// into the operation and path that were refused.
+fn with_denials(stderr: String) -> String {
+    let Some(denials) = recorded_denials() else {
+        return stderr;
+    };
+    if stderr.trim().is_empty() {
+        return format!("the sandbox refused:\n{denials}");
+    }
+    format!("{stderr}\nthe sandbox refused:\n{denials}")
+}
+
+/// The most recent Seatbelt denials this host logged.
+fn recorded_denials() -> Option<String> {
+    let output = std::process::Command::new("/usr/bin/log")
+        .args([
+            "show",
+            "--last",
+            "30s",
+            "--style",
+            "compact",
+            "--predicate",
+            "sender == \"Sandbox\"",
+        ])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut lines: Vec<&str> = text
+        .lines()
+        .filter(|line| line.contains("deny"))
+        .rev()
+        .take(8)
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+    lines.reverse();
+    Some(lines.join("\n"))
 }
 
 /// Puts the child in its own session so the whole tree can be reached

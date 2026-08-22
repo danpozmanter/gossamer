@@ -12,7 +12,6 @@
 //! contained change.
 
 use std::path::PathBuf;
-use std::process::Command;
 
 /// How a profile reaches the child.
 pub(crate) trait Applier {
@@ -22,8 +21,13 @@ pub(crate) trait Applier {
     /// A short name for the capability report and `--explain`.
     fn name(&self) -> &'static str;
 
-    /// Rewrites `command` so the child starts under `profile`.
-    fn apply(&self, command: &mut Command, profile: &str) -> Result<Applied, String>;
+    /// The command line that runs `argv` under `profile`.
+    ///
+    /// A command line rather than a configured `Command`: the policy's
+    /// environment, working directory, and stdio are installed once, on
+    /// whatever program ends up being launched, so nothing a wrapper
+    /// adds can drop them.
+    fn apply(&self, argv: &[String], profile: &str) -> Result<(Vec<String>, Applied), String>;
 }
 
 /// State the caller has to keep alive until the child exits, such as
@@ -57,19 +61,22 @@ impl Applier for SandboxExec {
         "sandbox-exec"
     }
 
-    fn apply(&self, command: &mut Command, profile: &str) -> Result<Applied, String> {
+    fn apply(&self, argv: &[String], profile: &str) -> Result<(Vec<String>, Applied), String> {
         let path = profile_path();
         std::fs::write(&path, profile)
             .map_err(|error| format!("writing the sandbox profile failed: {error}"))?;
-        let program = command.get_program().to_os_string();
-        let arguments: Vec<std::ffi::OsString> =
-            command.get_args().map(std::ffi::OsString::from).collect();
-        let mut wrapped = Command::new(SANDBOX_EXEC);
-        wrapped.arg("-f").arg(&path).arg(program).args(arguments);
-        rewrite(command, wrapped);
-        Ok(Applied {
-            profile_file: Some(path),
-        })
+        let mut wrapped = vec![
+            SANDBOX_EXEC.to_string(),
+            "-f".to_string(),
+            path.to_string_lossy().into_owned(),
+        ];
+        wrapped.extend(argv.iter().cloned());
+        Ok((
+            wrapped,
+            Applied {
+                profile_file: Some(path),
+            },
+        ))
     }
 }
 
@@ -83,35 +90,6 @@ fn profile_path() -> PathBuf {
         "gossamer-sandbox-{}-{serial}.sb",
         std::process::id()
     ))
-}
-
-/// Replaces `command`'s program and arguments with `replacement`'s,
-/// keeping the environment, working directory, and stdio the policy
-/// already installed.
-fn rewrite(command: &mut Command, replacement: Command) {
-    let program = replacement.get_program().to_os_string();
-    let arguments: Vec<std::ffi::OsString> = replacement
-        .get_args()
-        .map(std::ffi::OsString::from)
-        .collect();
-    let mut rebuilt = Command::new(program);
-    rebuilt.args(arguments);
-    // `Command` has no way to replace a program in place, so the
-    // caller's configuration is re-applied onto the new one.
-    for (name, value) in command.get_envs() {
-        match value {
-            Some(value) => {
-                rebuilt.env(name, value);
-            }
-            None => {
-                rebuilt.env_remove(name);
-            }
-        }
-    }
-    if let Some(directory) = command.get_current_dir() {
-        rebuilt.current_dir(directory);
-    }
-    *command = rebuilt;
 }
 
 /// The applier this host has, or `None` when it has none.

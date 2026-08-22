@@ -158,6 +158,18 @@ is to use the dedicated ones.
 | Stack | Stack::new() | Stack::from([1,2,3]) |
 | Deque | Deque::new() | Deque::from([1,2,3]) |
 
+**Sandbox support**
+
+**Experimental.** `std::sandbox` states one policy - paths, network, environment, limits - and
+the host enforces it natively: Landlock, seccomp, and namespaces on Linux, Seatbelt on macOS,
+restricted tokens, job objects, and AppContainer on Windows. A level a host cannot honor fails
+closed rather than quietly becoming something weaker, and `capabilities()` says what it can do.
+
+`gos build --sandbox` compiles the Rust crates named under `[rust-bindings]` inside that policy,
+so Cargo, whatever those crates run at build time, and the linker all work with the network
+denied and writes confined to the project. It covers `check`, `doc`, `repl`, `run`, and `test`
+as well, and is off by default this release.
+
 ## Details
 
 - Language spec: [`SPEC.md`](SPEC.md)

@@ -59,9 +59,10 @@ pub enum SandboxError {
     Signalled {
         /// The signal that ended the child.
         signal: i32,
-        /// What the child printed before it died, when the streams were
-        /// captured. A child the loader or a policy denial kills says
-        /// why on stderr, and a bare signal number does not.
+        /// What is known about why the child died: what it printed when
+        /// the streams were captured, plus whatever record the host
+        /// kept of stopping it. A bare signal number is not a reason,
+        /// and a child stopped in the loader never gets to give one.
         stderr: String,
     },
 

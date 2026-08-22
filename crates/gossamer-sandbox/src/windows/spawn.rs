@@ -27,7 +27,7 @@ use windows_sys::Win32::Foundation::{
     CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, FALSE, HANDLE, INVALID_HANDLE_VALUE, TRUE,
     WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
-use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+use windows_sys::Win32::Security::{SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES};
 use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_GENERIC_WRITE, OPEN_EXISTING};
 use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::Threading::{
@@ -249,8 +249,9 @@ fn stream_pair(stdio: Stdio) -> Result<(Option<OwnedHandle>, HANDLE), String> {
                     std::io::Error::last_os_error()
                 ));
             }
-            // Only the write end is handed to the child; the read end
-            // stays non-inheritable so a grandchild cannot hold it open.
+            // Both ends are inheritable, and only the write end is named
+            // in the handle list, which is the whole point of the list:
+            // the child gets what it is given and nothing else.
             let read = unsafe { OwnedHandle::from_raw_handle(read.cast()) };
             Ok((Some(read), write))
         }
@@ -366,10 +367,12 @@ impl AttributeList {
     ) -> Result<(), String> {
         /// `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES`.
         const ATTRIBUTE_SECURITY_CAPABILITIES: usize = 0x0002_0009;
+        // The size is the structure's own, which is three machine words
+        // rather than four: the count and the reserved word share one.
         self.update(
             ATTRIBUTE_SECURITY_CAPABILITIES,
             capabilities,
-            std::mem::size_of::<usize>() * 4,
+            std::mem::size_of::<SECURITY_CAPABILITIES>(),
         )
     }
 
