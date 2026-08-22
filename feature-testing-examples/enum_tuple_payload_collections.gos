@@ -28,8 +28,8 @@ fn main() {
 
     // The data itself is intact under a match, not only under {:?}.
     match assigned[0] {
-        Some((x, y)) => println!("match: {} {}", x, y),
-        None => println!("match: none"),
+        Some((x, y)) => println!("match: {} {}", x, y)
+        None => println!("match: none")
     }
 
     // Scalar and String payloads through the same indexed-store path.

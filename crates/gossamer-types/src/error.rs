@@ -318,6 +318,10 @@ pub enum TypeError {
         from: String,
         /// Target type.
         to: String,
+        /// `true` when the source is a borrowed fixed-length sequence and
+        /// the target the owned `Vec` of the same element, which copies
+        /// with `to_vec()` rather than through a `From` impl.
+        borrowed_sequence: bool,
     },
     /// Field access (`value.field`) on a type that has no such field.
     /// Splits two failure modes: `opaque` is true when the receiver's
@@ -1441,8 +1445,17 @@ impl TypeDiagnostic {
                     )
                     .with_note(format!("cannot cast `{from}` to `{to}`"));
             }
-            TypeError::NoConversion { from, to } => {
-                if from == to {
+            TypeError::NoConversion {
+                from,
+                to,
+                borrowed_sequence,
+            } => {
+                if *borrowed_sequence {
+                    out = out.with_help(
+                        "copy the sequence with `.to_vec()`; `.into()` takes the array itself"
+                            .to_string(),
+                    );
+                } else if from == to {
                     out = out.with_help(format!(
                         "`.into()` here converts `{to}` to itself and nothing backs it; remove it - the value is already `{to}`"
                     ));

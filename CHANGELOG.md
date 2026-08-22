@@ -13,7 +13,9 @@
 - `.into()` with no `From` impl behind it is now rejected at `gos check`
   (`GT0066`), including a redundant same-type conversion such as `String` into
   `String`. It previously passed the checker and then failed at run time
-  (`GX0002`) or broke the native link.
+  (`GX0002`) or broke the native link. The built-in `[T; N]` into `Vec<T>`
+  conversion is unaffected; the same conversion written on a reference to the
+  array is rejected and pointed at `to_vec()`.
 - `sandbox::Policy` gains `read_only_cwd()`, which downgrades the working
   directory grant from read-write to read-only. Appending a plain `read_only`
   rule for the working directory does not, since the stronger read-write rule

@@ -4172,6 +4172,31 @@ fn the_real_conversions_still_resolve() {
     }
 }
 
+/// `From<[T; N]> for Vec<T>` is built in, so `.into()` on the array itself
+/// carries the conversion. A reference to the array is not the array, and
+/// the audit says so rather than letting the call reach a run-time
+/// unbound `into`.
+#[test]
+fn a_fixed_array_converts_into_a_vec_but_a_reference_to_one_does_not() {
+    let d = diagnostics_for("fn main() { let a = [1, 2, 3]\n let _v: Vec<i64> = a.into() }\n");
+    assert!(d.is_empty(), "array into Vec must type clean: {d:?}");
+
+    let d = diagnostics_for(
+        "fn main() { let a = [1, 2, 3]\n let r = &a\n let _v: Vec<i64> = r.into() }\n",
+    );
+    assert!(
+        d.iter().any(|diag| matches!(
+            &diag.error,
+            TypeError::NoConversion {
+                from,
+                to,
+                borrowed_sequence: true,
+            } if from == "&[i64; 3]" && to == "Vec<i64>"
+        )),
+        "a reference to the array should be pointed at `to_vec()`: {d:?}"
+    );
+}
+
 // ---------------------------------------------------------------
 // Numeric receivers: the `math` surface reached in method position,
 // and the field reads a scalar cannot answer.

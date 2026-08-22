@@ -11396,7 +11396,11 @@ impl<'a> TypeChecker<'a> {
     fn check_deferred_into_conversions(&mut self) {
         let deferred = std::mem::take(&mut self.deferred_into_conversions);
         for (recv, result, span) in deferred {
-            let mut recv = self.deep_resolve(recv);
+            // The built-in array conversion answers for the value itself, so
+            // it reads the receiver as written; a `From` impl is reached
+            // through a reference just as it is through the value.
+            let written = self.deep_resolve(recv);
+            let mut recv = written;
             while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(recv) {
                 recv = self.deep_resolve(*inner);
             }
@@ -11410,6 +11414,11 @@ impl<'a> TypeChecker<'a> {
             }
             // A repr pair converts in both directions.
             if self.is_nominal_repr_pair(recv, result) {
+                continue;
+            }
+            // `From<[T; N]> for Vec<T>` is built in, and lowers to the same
+            // buffer copy `Vec::from(array)` does on every tier.
+            if self.is_array_to_vec(written, result) {
                 continue;
             }
             // An opaque alias converts to itself for free - one runtime
@@ -11429,9 +11438,27 @@ impl<'a> TypeChecker<'a> {
             {
                 continue;
             }
-            let from = self.render_public_ty(recv);
-            self.emit(TypeError::NoConversion { from, to: target }, span);
+            let borrowed_sequence = self.is_array_to_vec(recv, result);
+            let from = self.render_public_ty(if borrowed_sequence { written } else { recv });
+            self.emit(
+                TypeError::NoConversion {
+                    from,
+                    to: target,
+                    borrowed_sequence,
+                },
+                span,
+            );
         }
+    }
+
+    /// Whether `from` is a fixed array and `to` the `Vec` of its element.
+    fn is_array_to_vec(&self, from: Ty, to: Ty) -> bool {
+        let (Some(TyKind::Array { elem, .. }), Some(TyKind::Vec(target))) =
+            (self.tcx.kind(from), self.tcx.kind(to))
+        else {
+            return false;
+        };
+        elem == target
     }
 
     /// Whether one of `a` / `b` is an opaque alias whose representation is
