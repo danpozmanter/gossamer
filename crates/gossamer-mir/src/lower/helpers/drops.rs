@@ -2475,16 +2475,24 @@ pub(crate) fn insert_aggr_copy_drops(body: &mut Body, tcx: &gossamer_types::TyCt
      -> Option<gossamer_types::Ty> {
         let mut ty = peel_ref(base);
         for step in projection {
-            let crate::ir::Projection::Field(idx) = step else {
-                return None;
-            };
-            let next = match tcx.kind_of(ty) {
-                TyKind::Adt { def, .. } => tcx
-                    .struct_field_tys(*def)
-                    .and_then(|tys| tys.get(*idx as usize).copied()),
-                TyKind::Tuple(elems) => elems.get(*idx as usize).copied(),
-                TyKind::Array { elem, len } if (*idx as usize) < len.to_usize() => Some(*elem),
-                _ => None,
+            let next = match step {
+                crate::ir::Projection::Field(idx) => match tcx.kind_of(ty) {
+                    TyKind::Adt { def, .. } => tcx
+                        .struct_field_tys(*def)
+                        .and_then(|tys| tys.get(*idx as usize).copied()),
+                    TyKind::Tuple(elems) => elems.get(*idx as usize).copied(),
+                    TyKind::Array { elem, len } if (*idx as usize) < len.to_usize() => Some(*elem),
+                    _ => None,
+                },
+                crate::ir::Projection::Index(_) => match tcx.kind_of(ty) {
+                    TyKind::Array { elem, .. } | TyKind::Vec(elem) | TyKind::Slice(elem) => {
+                        Some(*elem)
+                    }
+                    _ => None,
+                },
+                crate::ir::Projection::Deref
+                | crate::ir::Projection::Downcast(_)
+                | crate::ir::Projection::Discriminant => None,
             }?;
             ty = peel_ref(next);
         }
@@ -2521,10 +2529,12 @@ pub(crate) fn insert_aggr_copy_drops(body: &mut Body, tcx: &gossamer_types::TyCt
             return true;
         }
         if place.projection.is_empty()
-            || !place
-                .projection
-                .iter()
-                .all(|p| matches!(p, crate::ir::Projection::Field(_)))
+            || !place.projection.iter().all(|p| {
+                matches!(
+                    p,
+                    crate::ir::Projection::Field(_) | crate::ir::Projection::Index(_)
+                )
+            })
         {
             return false;
         }
@@ -2532,13 +2542,19 @@ pub(crate) fn insert_aggr_copy_drops(body: &mut Body, tcx: &gossamer_types::TyCt
         if i >= n_locals {
             return false;
         }
-        if walk_meta(peel_ref(body.locals[i].ty)).is_none() {
+        // The destination has to be the carrier itself. A store into any
+        // other field or element of the same aggregate is an ordinary write.
+        let Some(slot_ty) = projected_field_ty(body.locals[i].ty, &place.projection) else {
+            return false;
+        };
+        if !is_option_slot_ty(slot_ty) {
             return false;
         }
-        // The destination field has to be the carrier itself. A store into
-        // any other field of the same aggregate is an ordinary field write.
-        if !projected_field_ty(body.locals[i].ty, &place.projection).is_some_and(is_option_slot_ty)
-        {
+        // An element of a sequence of carriers takes its own share the way
+        // an aggregate's carrier field does: the sequence owns what it
+        // holds, so the temporary the store copied from is free to release
+        // its own on the next overwrite and at the return sweep.
+        if walk_meta(peel_ref(body.locals[i].ty)).is_none() && !is_guarded_option(slot_ty) {
             return false;
         }
         match rvalue {
@@ -2673,6 +2689,50 @@ pub(crate) fn insert_aggr_copy_drops(body: &mut Body, tcx: &gossamer_types::TyCt
                 gaps[bi][si + 1].push(call_stmt(
                     "gos_rt_option_slot_retain",
                     vec![Operand::Copy(slot)],
+                    span,
+                    &mut next_unit,
+                    &mut extra_locals,
+                ));
+            }
+        }
+        // A container store takes its own share of the carrier's payload:
+        // the element lives as long as the container, while the local the
+        // value came from is still released on its next overwrite and by
+        // the return sweep. `xs[i] = v` also drops what the element held.
+        if let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            args,
+            ..
+        } = &block.terminator
+            && is_consuming_call(name)
+        {
+            for arg in args.iter().skip(1) {
+                let Operand::Copy(p) = arg else { continue };
+                if !p.projection.is_empty() || !option_holder(p.local) {
+                    continue;
+                }
+                if name.starts_with("gos_rt_vec_set")
+                    && let Some(Operand::Copy(recv)) = args.first()
+                    && let Some(Operand::Copy(index)) = args.get(1)
+                    && recv.projection.is_empty()
+                    && index.projection.is_empty()
+                    && p.local != index.local
+                {
+                    let element = Place {
+                        local: recv.local,
+                        projection: vec![crate::ir::Projection::Index(index.local)].into(),
+                    };
+                    gaps[bi][len].push(call_stmt(
+                        "gos_rt_option_slot_release",
+                        vec![Operand::Copy(element)],
+                        span,
+                        &mut next_unit,
+                        &mut extra_locals,
+                    ));
+                }
+                gaps[bi][len].push(call_stmt(
+                    "gos_rt_option_slot_retain",
+                    vec![Operand::Copy(Place::local(p.local))],
                     span,
                     &mut next_unit,
                     &mut extra_locals,

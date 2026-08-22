@@ -1,0 +1,44 @@
+// `{:?}` of an `Option` / `Result` whose tuple payload holds something no
+// flat tag names - a `Vec`, a `Map`, a `Set`, a fixed array, a nested
+// sequence, a struct, or another carrier. Each renders through the
+// descriptor walk, which names every shape and measures the slots it
+// spans, so the element after it reads from the right word.
+// Bit-identical on the VM, Cranelift, and LLVM tiers.
+
+struct Inner {
+    tag: String
+    n: i64
+}
+
+fn main() {
+    let plain: Option<(i64, i64)> = Some((1, 2))
+    let vec_payload: Option<(i64, Vec<i64>)> = Some((1, #[10, 20, 30]))
+    let map_payload: Option<(i64, Map<String, i64>)> = Some((1, { "a": 1, "b": 2 }))
+    let array_payload: Option<(Vec<String>, [i64; 3])> = Some((#["x", "y"], [7, 8, 9]))
+    let nested_payload: Option<(Inner, Vec<Vec<i64>>)> = Some((Inner { tag: "t", n: 5 }, #[#[1, 2], #[3]]))
+    let set_payload: Result<(Set<i64>, i64), String> = Ok((#{ 3, 1, 2 }, 9))
+    let option_payload: Option<(i64, Option<i64>, String)> = Some((1, Some(2), "z"))
+    let err_payload: Result<(i64, Vec<i64>), String> = Err("boom")
+    let none_payload: Option<(i64, Vec<i64>)> = None
+
+    println!("plain: {:?}", plain)
+    println!("vec: {:?}", vec_payload)
+    println!("map: {:?}", map_payload)
+    println!("array: {:?}", array_payload)
+    println!("nested: {:?}", nested_payload)
+    println!("set: {:?}", set_payload)
+    println!("option: {:?}", option_payload)
+    println!("err: {:?}", err_payload)
+    println!("none: {:?}", none_payload)
+
+    // The same shapes reached as elements of a sequence, where the
+    // carrier is stored rather than bound.
+    let mut xs: [Option<(i64, Vec<i64>)>; 3] = [None; 3]
+    xs[0] = Some((1, #[1]))
+    xs[2] = Some((3, #[3, 3, 3]))
+    println!("elements: {:?}", xs)
+
+    let mut ys: Vec<Option<(String, Map<String, i64>)>> = #[None; 2]
+    ys[1] = Some(("k", { "z": 9 }))
+    println!("elements: {:?}", ys)
+}

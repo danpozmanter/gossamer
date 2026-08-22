@@ -1,7 +1,19 @@
 # Changelog
 
-## 0.55.2 - Numeric-literal method surface, conversions with no target
+## 0.55.2 - Carrier element ownership, numeric-literal methods, conversion targets
 
+- An `Option` / `Result` element written through an index - `xs[i] = Some(..)`
+  on a fixed array or a `Vec` - now takes its own share of the payload. The
+  compiled tiers handed the element a raw copy of the carrier and then released
+  the payload when the temporary the store read from was overwritten or swept
+  at return, so every element named a freed block and read whatever the next
+  allocation put there (#216). The bytecode VM was already correct.
+- Native `{:?}` of an `Option` / `Result` whose tuple payload holds a `Vec`,
+  a `Map`, or a `Set` renders that element instead of skipping it, and the
+  same payload holding a fixed array, a nested `Vec`, a `Set`, or another
+  carrier compiles at all - it was refused as an unsupported aggregate print.
+  Both reach the descriptor walk, which names every shape and measures the
+  slots it spans, so the element after it reads from the right word.
 - `12.len()`, `(12).len()`, and `1.2.len()` are rejected at `gos check`
   (`GT0002`), as `12u8.len()` already was. An unsuffixed literal is still an
   inference variable when the receiver's surface is checked, so the report now

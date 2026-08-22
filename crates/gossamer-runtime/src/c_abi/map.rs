@@ -1805,6 +1805,59 @@ pub(crate) unsafe fn render_tagged_word(out: &mut String, word: i64, tag: u8) {
     }
 }
 
+/// How many slots the descriptor at `cursor` occupies where it is stored
+/// inline, leaving the cursor untouched. A handle - a `Vec`, a `Map`, a
+/// `Set`, an error - is one word wherever it is reached from; a fixed array
+/// is its element span repeated, and a nested tuple is its elements'.
+unsafe fn desc_slot_span(tags: DescStream, cursor: usize) -> usize {
+    let mut c = cursor;
+    unsafe { desc_slot_span_walk(tags, &mut c) }
+}
+
+unsafe fn desc_slot_span_walk(tags: DescStream, cursor: &mut usize) -> usize {
+    let tag = tags.byte(*cursor);
+    *cursor += 1;
+    match tag {
+        TUPLE_TAG_NESTED => {
+            let arity = tags.byte(*cursor) as usize;
+            *cursor += 1;
+            let mut total = 0usize;
+            for _ in 0..arity {
+                total += unsafe { desc_slot_span_walk(tags, cursor) };
+            }
+            total
+        }
+        gossamer_abi::DESC_ARRAY => {
+            let count = u16::from_le_bytes([tags.byte(*cursor), tags.byte(*cursor + 1)]) as usize;
+            let span = (u16::from_le_bytes([tags.byte(*cursor + 2), tags.byte(*cursor + 3)])
+                as usize)
+                .max(1);
+            *cursor += 4;
+            unsafe { skip_desc(tags, cursor) };
+            count * span
+        }
+        gossamer_abi::DESC_ADT => {
+            let slots = (tags.byte(*cursor + 2) as usize).max(1);
+            *cursor += 3;
+            slots
+        }
+        gossamer_abi::DESC_OPTION => {
+            unsafe { skip_desc(tags, cursor) };
+            2
+        }
+        gossamer_abi::DESC_RESULT => {
+            unsafe { skip_desc(tags, cursor) };
+            unsafe { skip_desc(tags, cursor) };
+            2
+        }
+        _ => {
+            *cursor -= 1;
+            unsafe { skip_desc(tags, cursor) };
+            1
+        }
+    }
+}
+
 /// Advances `cursor` past one descriptor without rendering it.
 unsafe fn skip_desc(tags: DescStream, cursor: &mut usize) {
     let tag = tags.byte(*cursor);
@@ -2174,6 +2227,17 @@ pub(crate) unsafe fn render_tuple_elements(
                 };
                 out.push_str(&unsafe { crate::c_abi::vec::adt_fmt_string(arg, fmt) });
             }
+            continue;
+        }
+        // A leaf tag names one slot and one of the shapes below. Anything
+        // else is a whole descriptor - a `Vec`, a `Map`, a `Set`, an array,
+        // an `Option` - which the descriptor walk renders and measures, so
+        // both cursors stay on the element that follows.
+        if !matches!(tag, 0..=7) {
+            let element = unsafe { p.add(*slot_cursor) };
+            *tag_cursor -= 1;
+            *slot_cursor += unsafe { desc_slot_span(tags, *tag_cursor) };
+            unsafe { render_desc_value(out, element.cast::<u8>(), tags, tag_cursor) };
             continue;
         }
         let word = unsafe { p.add(*slot_cursor).read_unaligned() };

@@ -1147,9 +1147,14 @@ impl<'a> Lowerer<'a> {
         if let Some(sym) = self.adt_debug_fmt_symbol(ty, method) {
             return Some(DebugPayload::Fmt(sym));
         }
-        // A tuple payload carries its own self-describing tag stream.
-        if let Some(TyKind::Tuple(_)) = self.tcx.kind(self.unwrap_ref(ty)) {
-            return self.tuple_elem_tags(ty).map(DebugPayload::Tuple);
+        // A tuple payload of flat-taggable elements carries its own
+        // self-describing tag stream. One holding a container, an array, or
+        // another carrier has no flat tag for that element and renders
+        // through the descriptor walk below, which reaches every shape.
+        if let Some(TyKind::Tuple(_)) = self.tcx.kind(self.unwrap_ref(ty))
+            && let Some(tags) = self.tuple_elem_tags(ty)
+        {
+            return Some(DebugPayload::Tuple(tags));
         }
         self.value_descriptor(ty, method).map(DebugPayload::Desc)
     }

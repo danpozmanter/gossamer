@@ -216,6 +216,13 @@ const SPECS: &[Spec] = &[
     // type has to come from the call site.
     spec("feature-testing-examples/enum_method_dispatch_and_generics.gos"),
     spec("feature-testing-examples/enum_tuple_payload_collections.gos"),
+    // An indexed carrier store hands the sequence its own share of the
+    // payload, so a later allocation cannot land on a block an element
+    // still names.
+    spec("feature-testing-examples/carrier_element_store_ownership.gos"),
+    // A carrier payload no flat tag names renders through the descriptor
+    // walk, which measures the slots each element spans.
+    spec("feature-testing-examples/carrier_payload_debug_shapes.gos"),
     // Every goroutine blocks at some point here; a pending handoff is
     // progress, so none of it reads as a deadlock.
     spec("feature-testing-examples/channel_progress_not_deadlock.gos"),

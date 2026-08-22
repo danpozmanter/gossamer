@@ -411,12 +411,15 @@ let shout = "  Hi  ".trim().to_lowercase() |> exclaim
   `type Pair<A> = (A, A)` aliases substitute everywhere (cycle =
   GT0024). `type UserId = new i64` is the OPAQUE form: a distinct
   type over the same representation, at no runtime cost. `.into()`
-  converts to and from its own representation only (any other pair
-  needs `impl From`, else GT0066); it inherits equality, ordering,
-  hashing, and formatting - so it keys a `Map`, sorts, and prints -
-  but NOT the representation's methods (GT0002) or operators
-  (GT0003). Give it an `impl` of its own, and it serializes as the
-  representation.
+  converts to and from its own representation only; a fixed array
+  into the `Vec` of its element is the one other built-in pair, and
+  every other needs `impl From`, else GT0066. The target comes from
+  the use site, never the receiver, so an `.into()` / `.try_into()`
+  no annotation, parameter, or return reaches is GT0066 too. An
+  alias inherits equality, ordering, hashing, and formatting - so it
+  keys a `Map`, sorts, and prints - but NOT the representation's
+  methods (GT0002) or operators (GT0003). Give it an `impl` of its
+  own, and it serializes as the representation.
 - **Casts**: `x as T` is whitelist-checked (numeric<->numeric,
   bool/char->int, u8->char). Int->narrow-int masks at width (`300 as
   u8 == 44`); float->int truncates toward zero and saturates at i64
