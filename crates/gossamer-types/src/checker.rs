@@ -6843,6 +6843,14 @@ impl<'a> TypeChecker<'a> {
             let file = self.stdlib_handle_ty(44, "fs::File");
             return Some(self.fallible(file));
         }
+        // And for a compiled pattern, which a bad expression can refuse.
+        if matches!(
+            (module.strip_prefix(&["std"]).unwrap_or(module), last),
+            (["regex"], "compile")
+        ) {
+            let pattern = self.stdlib_handle_ty(26, "regex::Pattern");
+            return Some(self.fallible(pattern));
+        }
         let is_middleware = matches!(
             module,
             ["middleware"] | ["http", "middleware"] | ["std", "http", "middleware"]
@@ -7081,6 +7089,92 @@ impl<'a> TypeChecker<'a> {
     /// receiver would stay an inference variable, `println!("{}", p)`
     /// would pass `gos check` and fail the LLVM build, and a mistyped
     /// builder would reach a bare-name lookup instead of a diagnostic.
+    /// Types a method on a runtime handle, whichever family owns it.
+    ///
+    /// Each family answers `None` for a receiver it does not own, so the
+    /// order here is immaterial and adding a handle family costs one line
+    /// rather than another branch in the method-call checker.
+    fn handle_family_method_ret(
+        &mut self,
+        method: &str,
+        args: &[Expr],
+        arg_tys: &[Ty],
+        resolved: Ty,
+        receiver: &Expr,
+    ) -> Option<Ty> {
+        let span = receiver.span;
+        self.bytes_handle_method_ret(method, args, arg_tys, resolved, span)
+            .or_else(|| self.sandbox_handle_method_ret(method, args, arg_tys, resolved, span))
+            .or_else(|| self.regex_handle_method_ret(method, args, arg_tys, resolved, span))
+            .or_else(|| self.fs_handle_method_ret(method, args, arg_tys, resolved, span))
+    }
+
+    /// Types a `regex::Pattern` method.
+    ///
+    /// Every signature here mirrors the free form the stdlib manifest
+    /// declares, with the pattern as the receiver instead of the first
+    /// argument. Without it the receiver stays an inference variable, so
+    /// `println!("{}", pattern)` passes `gos check` and then renders a
+    /// struct on the VM and a raw pointer natively.
+    fn regex_handle_method_ret(
+        &mut self,
+        method: &str,
+        args: &[Expr],
+        arg_tys: &[Ty],
+        resolved: Ty,
+        span: Span,
+    ) -> Option<Ty> {
+        let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved) else {
+            return None;
+        };
+        let owner = self.tcx.def_name(*def)?.to_string();
+        if owner != "regex::Pattern" {
+            return None;
+        }
+        let i64_ty = self.tcx.int_ty(IntTy::I64);
+        let bool_ty = self.tcx.bool_ty();
+        let string = self.tcx.string_ty();
+        let strings = self.tcx.intern(TyKind::Vec(string));
+        // `find` answers the match's start, end, and text.
+        let span_ty = self.tcx.intern(TyKind::Tuple(vec![i64_ty, i64_ty, string]));
+        let spans = self.tcx.intern(TyKind::Vec(span_ty));
+        // A capture group that did not participate has no text.
+        let maybe_string = self.option_adt_ty(string);
+        let groups = self.tcx.intern(TyKind::Vec(maybe_string));
+        let all_groups = self.tcx.intern(TyKind::Vec(groups));
+        let (params, ret) = match method {
+            "is_match" => (vec![string], bool_ty),
+            "find" => (vec![string], self.option_adt_ty(span_ty)),
+            "find_all" => (vec![string], spans),
+            "captures" => (vec![string], self.option_adt_ty(groups)),
+            "captures_all" => (vec![string], all_groups),
+            "replace" | "replace_all" => (vec![string, string], string),
+            "split" => (vec![string], strings),
+            _ => {
+                let error =
+                    self.unresolved_method_call(owner.clone(), method, resolved, args.len());
+                self.emit(error, span);
+                return Some(self.tcx.error_ty());
+            }
+        };
+        if args.len() != params.len() {
+            self.emit(
+                TypeError::CallArityMismatch {
+                    callee: format!("{owner}::{method}"),
+                    expected: params.len(),
+                    found: args.len(),
+                },
+                span,
+            );
+            return Some(self.tcx.error_ty());
+        }
+        for (param, (arg_ty, arg)) in params.iter().zip(arg_tys.iter().zip(args)) {
+            self.check_expected_integer_literal_range(arg, Expectation::HasType(*param), *arg_ty);
+            self.check_sig_param_arg(*param, *arg_ty, arg);
+        }
+        Some(ret)
+    }
+
     fn sandbox_handle_method_ret(
         &mut self,
         method: &str,
@@ -8937,17 +9031,7 @@ impl<'a> TypeChecker<'a> {
         if let Some(ty) = self.http_client_method_ret(method, resolved) {
             return ty;
         }
-        if let Some(ty) =
-            self.bytes_handle_method_ret(method, args, &arg_tys, resolved, receiver.span)
-        {
-            return ty;
-        }
-        if let Some(ty) =
-            self.sandbox_handle_method_ret(method, args, &arg_tys, resolved, receiver.span)
-        {
-            return ty;
-        }
-        if let Some(ty) = self.fs_handle_method_ret(method, args, &arg_tys, resolved, receiver.span)
+        if let Some(ty) = self.handle_family_method_ret(method, args, &arg_tys, resolved, receiver)
         {
             return ty;
         }
@@ -18867,6 +18951,7 @@ fn is_opaque_handle_def(local: u32) -> bool {
 
 fn stdlib_handle_def_offset(tail: &str) -> Option<u32> {
     Some(match tail {
+        "Pattern" => 26,
         "DirInfo" => 2,
         "Output" => 3,
         "ResponseStream" => 4,

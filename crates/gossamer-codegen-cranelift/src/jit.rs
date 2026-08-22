@@ -448,7 +448,12 @@ fn body_builds_every_iterator_local(body: &Body, tcx: &TyCtxt) -> bool {
 fn is_bare_container_handle(def_local: u32) -> bool {
     // 46 is `sync::Shared`: a pointer the body only ever hands to a
     // `gos_rt_shared_*` call, so a local holding one lowers as that pointer.
-    matches!(u32::MAX - def_local, 7 | 18 | 19 | 28 | 30 | 31 | 32 | 46)
+    // 26 is `regex::Pattern`, which is the same shape: the body only ever
+    // hands it to a `gos_rt_regex_*` call.
+    matches!(
+        u32::MAX - def_local,
+        7 | 18 | 19 | 26 | 28 | 30 | 31 | 32 | 46
+    )
 }
 
 fn body_uses_unlowerable_local_repr(

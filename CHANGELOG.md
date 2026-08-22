@@ -191,6 +191,13 @@
   where `{}` on the same value printed the whole cause chain. `to_string` now
   routes to the same renderer `{}` does, and `DynError` answers the
   `errors::Error` receiver kind so every dispatch that asks recovers it.
+- A `regex::Pattern` is a typed handle at check time. Printing one passed
+  `gos check` and then rendered a struct on the bytecode VM and a raw pointer
+  natively - the same value reading differently on two tiers, with nothing to
+  say so. `println!("{}", pattern)` now reports `GT0062`, and each of
+  `is_match` / `find` / `find_all` / `captures` / `captures_all` / `replace` /
+  `replace_all` / `split` is typed where it is written rather than through a
+  bare-name lookup.
 - A `sandbox::Policy` is a typed handle at check time. Printing one passed
   `gos check` and then failed the LLVM build, and a mistyped builder reached a
   bare-name lookup rather than a diagnostic; now `println!("{}", policy)`
