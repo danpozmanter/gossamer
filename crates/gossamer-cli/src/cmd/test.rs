@@ -931,10 +931,11 @@ fn validate_test_file(file: &Path) -> Result<()> {
     let entry = read_entry_source(file)?;
     let augmented = gossamer_parse::autoderive::augment_source(&entry);
     let augmented = if augmented.contains("comptime") {
-        match crate::comptime_fold::fold_comptime(augmented.clone(), &file.to_string_lossy()) {
-            Ok(folded) => folded,
-            Err(_) => augmented,
-        }
+        // A comptime region that will not evaluate is a static failure, and
+        // the constant it should have produced is what the tests run
+        // against. Falling back to the unfolded source runs them against a
+        // program the compiled tiers refuse to build.
+        crate::comptime_fold::fold_comptime(augmented, &file.to_string_lossy())?
     } else {
         augmented
     };
@@ -991,14 +992,28 @@ fn run_tests_filtered_inner(
         return Vec::new();
     };
     let augmented = gossamer_parse::autoderive::augment_source(&source);
-    // Comptime fold so a `#[test]` compiles the same constant the
-    // run / build tiers do. On a comptime failure, fall back to the
-    // unfolded source - the VM still evaluates the region at runtime,
-    // and `gos check` / `gos build` surface the error authoritatively.
+    // Comptime fold so a `#[test]` compiles the same constant the run /
+    // build tiers do. A failure here is reported as a failing record rather
+    // than skipped: `--parallel` reaches this without the static validator,
+    // and a suite that answers green because its bodies never ran is the
+    // one outcome a test command must never produce.
     let augmented = if augmented.contains("comptime") {
         match crate::comptime_fold::fold_comptime(augmented.clone(), &file.to_string_lossy()) {
             Ok(folded) => folded,
-            Err(_) => augmented,
+            Err(error) => {
+                return vec![TestRecord {
+                    file: file.display().to_string(),
+                    name: "comptime".to_string(),
+                    passed: false,
+                    elapsed_ms: 0,
+                    failure_message: Some(format!(
+                        "compile-time evaluation failed, so no test in this file ran: {error}"
+                    )),
+                    assertions: 0,
+                    timed_out: false,
+                    status: TestStatus::Failed,
+                }];
+            }
         }
     } else {
         augmented

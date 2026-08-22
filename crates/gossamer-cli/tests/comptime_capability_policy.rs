@@ -252,3 +252,62 @@ fn a_manifest_may_tighten_the_posture_and_may_never_loosen_it() {
     std::fs::write(dir.join("src").join("asset.txt"), "embedded\n").expect("write asset");
     denied(&check(&dir, "src/read.gos", None), "fs::read_to_string");
 }
+
+/// A comptime region that will not evaluate must fail `gos test`, not
+/// leave it reporting a green suite.
+///
+/// The constant the region folds to is what the tests run against, so a
+/// program whose fold was refused is not the program under test. Running
+/// the bodies against the unfolded source answered `PASS (0 assertions)`
+/// for a test whose body is `assert(false, ..)` - a suite that is green
+/// because nothing in it ran, which is the one result a test command
+/// must never produce. Both the serial path and `--parallel`, which
+/// reaches execution without the static validator.
+#[test]
+fn a_refused_comptime_region_fails_the_test_run_rather_than_passing_it() {
+    let dir = workspace("test-vacuous");
+    std::fs::create_dir_all(dir.join("src")).expect("create src");
+    write(
+        &dir,
+        "project.toml",
+        "[project]\nid = \"example.com/vacuous\"\nversion = \"0.1.0\"\nentry = \"src/main.gos\"\n",
+    );
+    // The read escapes the source tree, so `confined` refuses the fold.
+    std::fs::write(dir.join("outside.txt"), "content\n").expect("write asset");
+    write(
+        &dir,
+        "src/main.gos",
+        "use std::fs\n\
+         comptime fn embedded() -> String { fs::read_to_string(\"../outside.txt\").unwrap_or(\"x\") }\n\
+         const EMBEDDED: String = embedded()\n\
+         fn main() { println!(\"{}\", EMBEDDED) }\n\
+         #[cfg(test)]\n\
+         mod main_tests { #[test] fn must_fail() { assert(false, \"the body ran\") } }\n",
+    );
+
+    for extra in [vec![], vec!["--parallel".to_string(), "2".to_string()]] {
+        let out = Command::new(gos_binary())
+            .current_dir(&dir)
+            .arg("test")
+            .args(&extra)
+            .output()
+            .expect("run gos test");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !out.status.success(),
+            "a refused comptime region must fail the run ({extra:?}):\n{text}"
+        );
+        assert!(
+            !text.contains("PASS must_fail"),
+            "a test whose body never ran must not be reported as passing ({extra:?}):\n{text}"
+        );
+        assert!(
+            text.contains("GX0010") || text.contains("compile-time evaluation"),
+            "the run must name the refused region ({extra:?}):\n{text}"
+        );
+    }
+}

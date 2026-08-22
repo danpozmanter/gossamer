@@ -185,6 +185,14 @@
   policy mistake must not read as a program that merely failed. The wrapper's
   own output is flushed before the child writes, so the transcript reads in
   order on every tier.
+- `gos test` fails when a `comptime` region will not evaluate, rather than
+  reporting a green suite. The constant the region folds to is what the tests
+  run against, so a refused fold means the program under test is not the one
+  that would be built; the run fell back to the unfolded source and answered
+  `PASS (0 assertions)` for a body of `assert(false, ..)` - a suite green
+  because nothing in it ran. `gos check` and `gos run` already refused the same
+  program. Covers `--parallel`, which reaches execution without the static
+  validator.
 - `errors::Error.to_string()` answers the error. On the compiled tiers the
   handle reached the structural formatter, which read the one word it is as a
   string pointer and rendered whatever bytes followed - a one-character answer
