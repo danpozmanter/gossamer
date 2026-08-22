@@ -464,7 +464,11 @@ pub unsafe extern "C" fn gos_rt_sandbox_policy_temp_path(handle: i64, path: *con
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_sandbox_policy_max_processes(handle: i64, count: i64) -> i64 {
     edit(handle, move |mut policy| {
-        policy.resources.max_processes = positive(count).map(|value| value as u32);
+        // Saturating rather than truncating: a count past `u32` would
+        // wrap to a tiny one, turning the largest bound a caller can
+        // write into the most restrictive one.
+        policy.resources.max_processes =
+            positive(count).map(|value| u32::try_from(value).unwrap_or(u32::MAX));
         policy
     })
 }
@@ -1039,5 +1043,55 @@ mod sandbox_abi_tests {
     #[test]
     fn a_handle_that_names_nothing_answers_zero_rather_than_panicking() {
         assert_eq!(gos_rt_sandbox_policy_network(999_999, 1), 0);
+    }
+
+    #[test]
+    fn an_unknown_network_mode_never_opens_a_closed_network() {
+        let handle = gos_rt_sandbox_policy_new();
+        let open = std::ffi::CString::new("open").expect("cstring");
+        let typo = std::ffi::CString::new("opne").expect("cstring");
+        let opened = unsafe { gos_rt_sandbox_policy_network_mode(handle, open.as_ptr()) };
+        let after = unsafe { gos_rt_sandbox_policy_network_mode(opened, typo.as_ptr()) };
+        assert_eq!(peek(after).expect("live").network, Network::Open);
+
+        let handle = gos_rt_sandbox_policy_new();
+        let next = unsafe { gos_rt_sandbox_policy_network_mode(handle, typo.as_ptr()) };
+        assert_eq!(peek(next).expect("live").network, Network::None);
+    }
+
+    #[test]
+    fn a_limit_at_or_below_zero_clears_the_bound_rather_than_setting_one() {
+        let handle = gos_rt_sandbox_policy_max_memory(gos_rt_sandbox_policy_new(), 4096);
+        assert_eq!(peek(handle).expect("live").resources.max_memory, Some(4096));
+        let cleared = gos_rt_sandbox_policy_max_memory(handle, 0);
+        assert_eq!(peek(cleared).expect("live").resources.max_memory, None);
+    }
+
+    /// A count past `u32` must answer the largest bound the field can
+    /// hold, never a wrapped one: truncation would turn the biggest
+    /// number a caller can write into the most restrictive limit.
+    #[test]
+    fn a_process_count_past_the_field_saturates_instead_of_wrapping() {
+        let handle = gos_rt_sandbox_policy_max_processes(
+            gos_rt_sandbox_policy_new(),
+            i64::from(u32::MAX) + 1,
+        );
+        assert_eq!(
+            peek(handle).expect("live").resources.max_processes,
+            Some(u32::MAX)
+        );
+    }
+
+    /// The verdict a caller matches on has exactly three spellings, and
+    /// only a partial one carries a reason.
+    #[test]
+    fn an_enforcement_verdict_is_one_of_three_arms() {
+        use gossamer_sandbox::Enforcement;
+        assert_eq!(enforcement_kind(&Enforcement::Full), "full");
+        assert_eq!(enforcement_kind(&Enforcement::None), "none");
+        let partial = Enforcement::Partial("no cgroup".to_string());
+        assert_eq!(enforcement_kind(&partial), "partial");
+        assert_eq!(enforcement_reason(&partial), "no cgroup");
+        assert_eq!(enforcement_reason(&Enforcement::Full), "");
     }
 }

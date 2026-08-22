@@ -456,7 +456,10 @@ fn limit(args: &[Value]) -> Option<u64> {
 }
 
 fn builtin_policy_max_processes(args: &[Value]) -> RuntimeResult<Value> {
-    let count = limit(args).map(|value| value as u32);
+    // Saturating rather than truncating: a count past `u32` would wrap
+    // to a tiny one, turning the largest bound a caller can write into
+    // the most restrictive one.
+    let count = limit(args).map(|value| u32::try_from(value).unwrap_or(u32::MAX));
     edited(args, move |mut policy| {
         policy.resources.max_processes = count;
         policy
@@ -908,6 +911,85 @@ mod sandbox_builtin_tests {
         let same =
             builtin_policy_level(&[policy, Value::String("paranoid".into())]).expect("level");
         assert_eq!(load(Some(&same)).expect("live").level, Level::Standard);
+    }
+
+    #[test]
+    fn an_unknown_network_mode_never_opens_a_closed_network() {
+        let opened = builtin_policy_network_mode(&[
+            builtin_policy_new(&[]).expect("new"),
+            Value::String("open".into()),
+        ])
+        .expect("open");
+        let after =
+            builtin_policy_network_mode(&[opened, Value::String("opne".into())]).expect("typo");
+        assert_eq!(load(Some(&after)).expect("live").network, Network::Open);
+
+        let closed = builtin_policy_network_mode(&[
+            builtin_policy_new(&[]).expect("new"),
+            Value::String("opne".into()),
+        ])
+        .expect("typo");
+        assert_eq!(load(Some(&closed)).expect("live").network, Network::None);
+    }
+
+    #[test]
+    fn a_limit_at_or_below_zero_clears_the_bound_rather_than_setting_one() {
+        let bounded =
+            builtin_policy_max_memory(&[builtin_policy_new(&[]).expect("new"), Value::Int(4096)])
+                .expect("bound");
+        assert_eq!(
+            load(Some(&bounded)).expect("live").resources.max_memory,
+            Some(4096)
+        );
+        let cleared = builtin_policy_max_memory(&[bounded, Value::Int(0)]).expect("clear");
+        assert_eq!(
+            load(Some(&cleared)).expect("live").resources.max_memory,
+            None
+        );
+    }
+
+    /// A count past `u32` must answer the largest bound the field can
+    /// hold, never a wrapped one: truncation would turn the biggest
+    /// number a caller can write into the most restrictive limit.
+    #[test]
+    fn a_process_count_past_the_field_saturates_instead_of_wrapping() {
+        let handle = builtin_policy_max_processes(&[
+            builtin_policy_new(&[]).expect("new"),
+            Value::Int(i64::from(u32::MAX) + 1),
+        ])
+        .expect("bound");
+        assert_eq!(
+            load(Some(&handle)).expect("live").resources.max_processes,
+            Some(u32::MAX)
+        );
+    }
+
+    /// The verdict a caller matches on has exactly three spellings, and
+    /// only a partial one carries a reason.
+    #[test]
+    fn an_enforcement_verdict_is_one_of_three_arms() {
+        assert_eq!(enforcement_kind(&Enforcement::Full), "full");
+        assert_eq!(enforcement_kind(&Enforcement::None), "none");
+        let partial = Enforcement::Partial("no cgroup".to_string());
+        assert_eq!(enforcement_kind(&partial), "partial");
+        assert_eq!(enforcement_reason(&partial), "no cgroup");
+        assert_eq!(enforcement_reason(&Enforcement::Full), "");
+    }
+
+    /// A reader answers the compiled policy, so the access a path gets
+    /// is the verdict a run would apply rather than the rule as written.
+    #[test]
+    fn a_reader_answers_the_compiled_policy() {
+        let policy = builtin_policy_read_write(&[
+            builtin_policy_new(&[]).expect("new"),
+            Value::String(".".into()),
+        ])
+        .expect("grant");
+        let verdict =
+            builtin_policy_access(&[policy.clone(), Value::String(".".into())]).expect("access");
+        assert_eq!(as_str(&verdict), Some("read-write"));
+        let outside = builtin_policy_access(&[policy, Value::String("/".into())]).expect("access");
+        assert_eq!(as_str(&outside), Some("deny"));
     }
 
     #[test]
