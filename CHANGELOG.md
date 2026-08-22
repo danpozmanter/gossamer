@@ -191,6 +191,15 @@
   where `{}` on the same value printed the whole cause chain. `to_string` now
   routes to the same renderer `{}` does, and `DynError` answers the
   `errors::Error` receiver kind so every dispatch that asks recovers it.
+- A `sandbox::Policy` or `regex::Pattern` written as a parameter is the handle
+  it names. A parameter carries no construction site, so the annotation is the
+  only thing that can say what the receiver is; without that the methods
+  dispatched by bare name - a spelling the bytecode VM registers and the
+  compiled tiers have no symbol for - and a list a reader answered lost its
+  element type, so `for path in policy.read_write_grants()` printed pointers
+  natively and paths on the VM. Factoring a wrapper's banner into
+  `fn banner(policy: &sandbox::Policy)` is the shape that hit it, and the
+  tier-parity fixture and release smoke test now both cover it.
 - A `regex::Pattern` is a typed handle at check time. Printing one passed
   `gos check` and then rendered a struct on the bytecode VM and a raw pointer
   natively - the same value reading differently on two tiers, with nothing to

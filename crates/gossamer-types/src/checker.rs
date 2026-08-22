@@ -7124,6 +7124,9 @@ impl<'a> TypeChecker<'a> {
         resolved: Ty,
         span: Span,
     ) -> Option<Ty> {
+        // A handle is conventionally written `&regex::Pattern` where it is
+        // a parameter, and the methods take it either way.
+        let resolved = self.peel_refs(resolved);
         let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved) else {
             return None;
         };
@@ -7183,6 +7186,9 @@ impl<'a> TypeChecker<'a> {
         resolved: Ty,
         span: Span,
     ) -> Option<Ty> {
+        // A handle is conventionally written `&sandbox::Policy` where it is
+        // a parameter, and the builders answer the policy either way.
+        let resolved = self.peel_refs(resolved);
         let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved) else {
             return None;
         };
@@ -15944,6 +15950,14 @@ impl<'a> TypeChecker<'a> {
         // through to gos_rt_json_get instead of a Field(idx) projection.
         let tail = path.segments.last().map_or("", |s| s.name.name.as_str());
         let stdlib_def_offset: Option<u32> = match tail {
+            // A written `sandbox::Policy` / `regex::Pattern` annotation is
+            // the same sentinel handle the constructor answers. A parameter
+            // carries no construction site, so without this the receiver
+            // stays an inference variable and its methods dispatch by bare
+            // name - a spelling the bytecode VM registers and the compiled
+            // tiers have no symbol for.
+            "Policy" => Some(13),
+            "Pattern" => Some(26),
             "DirInfo" => Some(2),
             "Output" => Some(3),
             "ResponseStream" => Some(4),
@@ -15980,6 +15994,11 @@ impl<'a> TypeChecker<'a> {
                 "Context" => self.tcx.register_def_name(def, "context::Context"),
                 "U8Vec" => self.tcx.register_def_name(def, tail),
                 "Notifier" => self.tcx.register_def_name(def, tail),
+                // The qualified name the constructor path registers, so a
+                // written annotation and a constructed value name one type
+                // and the method tables recognise both.
+                "Policy" => self.tcx.register_def_name(def, "sandbox::Policy"),
+                "Pattern" => self.tcx.register_def_name(def, "regex::Pattern"),
                 _ => {}
             }
             return self.tcx.intern(TyKind::Adt {
@@ -18952,6 +18971,7 @@ fn is_opaque_handle_def(local: u32) -> bool {
 fn stdlib_handle_def_offset(tail: &str) -> Option<u32> {
     Some(match tail {
         "Pattern" => 26,
+        "Policy" => 13,
         "DirInfo" => 2,
         "Output" => 3,
         "ResponseStream" => 4,

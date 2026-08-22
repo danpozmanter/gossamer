@@ -14,6 +14,21 @@ fn verdict_known(kind: &String) -> bool {
     kind == "full" || kind == "partial" || kind == "none"
 }
 
+// A policy handed to a helper by reference. A wrapper command factors its
+// banner out exactly like this, and a parameter carries no construction
+// site, so the annotation is the only thing that can say what the receiver
+// is - including the element type of a list a reader answers.
+fn describes(policy: &sandbox::Policy) -> bool {
+    let mut named = 0
+    for path in policy.read_write_grants() {
+        if path.len() > 0 { named += 1 }
+    }
+    for line in policy.mechanisms() {
+        if line.len() > 0 { named += 1 }
+    }
+    named >= 1 && policy.level_name().len() > 0 && verdict_known(&policy.network_enforcement_kind())
+}
+
 fn main() {
     // A capability report is a value, not a printout, so a program can
     // branch on what the host honors instead of assuming Linux.
@@ -73,6 +88,7 @@ fn main() {
 
     // What the policy asks for and what this host will honor are two
     // different questions, so they are two different calls.
+    println!("a helper reads it by reference: {}", describes(&full))
     println!("run network verdict: {}", verdict_known(&full.network_enforcement_kind()))
     println!("run limits verdict: {}", verdict_known(&full.resource_enforcement_kind()))
 

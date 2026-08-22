@@ -2055,6 +2055,12 @@ impl<'a> Builder<'a> {
             TyKind::Adt { def, .. } if def.local == VALIDATE_FIELD_ERROR_DEF_LOCAL => {
                 Some("validate::FieldError")
             }
+            // A handle that arrives as a parameter carries no construction
+            // site to recover the kind from, so the sentinel itself has to
+            // answer it - otherwise `fn f(p: &sandbox::Policy)` dispatches by
+            // bare name, which the VM has and the compiled tiers do not.
+            TyKind::Adt { def, .. } if def.local == u32::MAX - 13 => Some("sandbox::Policy"),
+            TyKind::Adt { def, .. } if def.local == u32::MAX - 26 => Some("regex::Pattern"),
             _ => None,
         }
     }

@@ -21,6 +21,17 @@ fn gos_bin() -> PathBuf {
 const PROGRAM: &str = r#"
 use std::sandbox
 
+// A policy handed to a helper by reference: a parameter carries no
+// construction site, so its annotation is the only thing that can say what
+// the receiver is, down to the element type of a list a reader answers.
+fn reads_by_reference(policy: &sandbox::Policy) -> bool {
+    let mut named = 0
+    for path in policy.read_write_grants() {
+        if path.len() > 0 { named += 1 }
+    }
+    named >= 1 && policy.level_name() == "none"
+}
+
 fn main() {
     // The capability report is a value, so a program can branch on what
     // the host honors rather than assuming one operating system.
@@ -90,6 +101,7 @@ fn main() {
         .level(&"none")
 
     println!("bounds: {}", bounded.resource_enforcement_kind().len() > 0)
+    println!("by ref: {}", reads_by_reference(&full))
 
     // An unknown name is refused rather than applied, so a typo can
     // never weaken a policy that was written to be strict.
@@ -123,6 +135,7 @@ const EXPECTED: &str = "level known: true\n\
      unblocked: true\n\
      check: ok\n\
      bounds: true\n\
+     by ref: true\n\
      typo: open\n\
      fetch: client\n\
      codes: 126 127 64 128\n\
