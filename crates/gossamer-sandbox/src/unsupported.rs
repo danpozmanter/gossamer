@@ -21,8 +21,6 @@ pub(crate) fn capabilities() -> SandboxCapabilities {
     )
 }
 
-/// Names the mechanisms a run would install: none.
-#[must_use]
 /// How completely `policy`'s network setting is enforced here: not at
 /// all, because there is no backend.
 #[must_use]
@@ -30,6 +28,8 @@ pub(crate) fn network_enforcement(_policy: &CompiledPolicy) -> crate::level::Enf
     crate::level::Enforcement::None
 }
 
+/// Names the mechanisms a run would install: none.
+#[must_use]
 pub(crate) fn mechanisms(_policy: &CompiledPolicy) -> Vec<String> {
     vec!["no enforcement: this target has no sandbox backend".to_string()]
 }

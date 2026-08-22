@@ -19,16 +19,22 @@ use crate::policy::CompiledPolicy;
 /// attached at creation and `Command` cannot express that, and the
 /// Linux backend's, which carries the run's cgroup.
 pub(crate) trait ChildProcess {
-    /// The child's exit, once it has one.
+    /// The child's exit, once it has one, read without releasing its
+    /// pid: the process group and session a teardown names are that
+    /// pid, and the kernel may hand a released one to a new process.
     fn poll(&mut self) -> std::io::Result<Option<Exit>>;
-    /// Blocks until the child exits.
-    fn wait(&mut self) -> std::io::Result<Exit>;
+    /// Releases the child's entry in the process table, once nothing
+    /// else will name its pid. Blocks until the child has exited.
+    fn reap(&mut self);
     /// Kills the child and every descendant it started, including one
     /// that left the process group.
     fn kill_tree(&mut self);
     /// Delivers `signal` to the child's process group, for forwarding
-    /// an interrupt the supervisor received. A no-op where the host has
-    /// no signals.
+    /// an interrupt the supervisor received.
+    ///
+    /// Unix only: a Windows console interrupt already reaches every
+    /// process in the console group, so there is nothing to forward.
+    #[cfg(unix)]
     fn signal_group(&mut self, signal: i32);
     /// Takes the captured standard output stream, if there is one.
     fn take_stdout(&mut self) -> Option<Box<dyn std::io::Read + Send>>;
@@ -49,17 +55,18 @@ pub(crate) enum Exit {
 
 impl ChildProcess for Child {
     fn poll(&mut self) -> std::io::Result<Option<Exit>> {
-        Ok(self.try_wait()?.map(exit_of))
+        peek(self)
     }
 
-    fn wait(&mut self) -> std::io::Result<Exit> {
-        Ok(exit_of(Child::wait(self)?))
+    fn reap(&mut self) {
+        let _ = Child::wait(self);
     }
 
     fn kill_tree(&mut self) {
         kill_tree(self);
     }
 
+    #[cfg(unix)]
     fn signal_group(&mut self, signal: i32) {
         signal_group(self, signal);
     }
@@ -75,6 +82,51 @@ impl ChildProcess for Child {
             .take()
             .map(|stream| Box::new(stream) as Box<dyn std::io::Read + Send>)
     }
+}
+
+/// The child's exit, if it has one, leaving it in the process table.
+///
+/// `WNOWAIT` reports the status without collecting the child, so the
+/// pid stays this run's for as long as the teardown still needs to name
+/// its process group and session.
+#[cfg(unix)]
+fn peek(child: &mut Child) -> std::io::Result<Option<Exit>> {
+    let mut status = 0;
+    #[allow(
+        unsafe_code,
+        reason = "waitpid has no safe wrapper; the pid is this process's own child \
+                  and the status is a stack local the call writes through"
+    )]
+    let seen = unsafe {
+        libc::waitpid(
+            child.id() as libc::pid_t,
+            &raw mut status,
+            libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if seen == 0 {
+        return Ok(None);
+    }
+    if seen < 0 {
+        // `ECHILD` means the child was already collected, which only the
+        // cached status can answer for.
+        return Ok(child.try_wait()?.map(exit_of));
+    }
+    if libc::WIFSIGNALED(status) {
+        Ok(Some(Exit::Signal(libc::WTERMSIG(status))))
+    } else {
+        Ok(Some(Exit::Code(libc::WEXITSTATUS(status))))
+    }
+}
+
+/// The child's exit, if it has one, leaving it in the process table.
+///
+/// The supervisor holds the child's process handle, so Windows keeps
+/// the pid reserved until that handle is dropped and a status read
+/// cannot make it name anything else.
+#[cfg(not(unix))]
+fn peek(child: &mut Child) -> std::io::Result<Option<Exit>> {
+    Ok(child.try_wait()?.map(exit_of))
 }
 
 /// How a `std::process::ExitStatus` ended.
@@ -162,7 +214,7 @@ pub(crate) fn wait_for<C: ChildProcess>(
     mut child: C,
     stdio: Stdio,
 ) -> Result<SandboxOutput, SandboxError> {
-    let outcome = if stdio == Stdio::Capture {
+    if stdio == Stdio::Capture {
         // Drain on threads: a child that fills one pipe's buffer while
         // the sandbox reads the other blocks forever otherwise.
         let out = child.take_stdout();
@@ -170,20 +222,35 @@ pub(crate) fn wait_for<C: ChildProcess>(
         let out_reader = std::thread::spawn(move || read_all(out));
         let err_reader = std::thread::spawn(move || read_all(err));
         let exit = wait_bounded(policy, &mut child);
+        // A descendant that outlived the child holds the write end of
+        // both pipes, so the teardown comes before the readers are
+        // joined.
+        teardown(policy, &mut child);
         let stdout = out_reader.join().unwrap_or_default();
         let stderr = err_reader.join().unwrap_or_default();
         exit.and_then(|exit| finish(exit, stdout, stderr))
     } else {
-        wait_bounded(policy, &mut child).and_then(|exit| finish(exit, Vec::new(), Vec::new()))
-    };
+        let exit = wait_bounded(policy, &mut child);
+        teardown(policy, &mut child);
+        exit.and_then(|exit| finish(exit, Vec::new(), Vec::new()))
+    }
+}
 
-    // The child is gone; a descendant that left its process group is
-    // not. This is the only place that guarantee is kept on every exit
-    // path, including the interrupted one.
+/// Kills whatever outlived the child, then releases the child's pid.
+///
+/// The order is the point. Every mechanism that reaches a descendant
+/// names the child's pid - its process group, its session, the sweep
+/// through `/proc` - and the kernel is free to hand that pid to an
+/// unrelated process the moment the child is collected. Collecting it
+/// last is what keeps a teardown inside its own run.
+///
+/// This is the only place the descendant guarantee is kept on every
+/// exit path, including the timed-out and interrupted ones.
+fn teardown<C: ChildProcess>(policy: &CompiledPolicy, child: &mut C) {
     if policy.kill_tree_on_exit {
         child.kill_tree();
     }
-    outcome
+    child.reap();
 }
 
 fn read_all(reader: Option<Box<dyn std::io::Read + Send>>) -> Vec<u8> {
@@ -206,6 +273,8 @@ fn wait_bounded<C: ChildProcess>(
 ) -> Result<Exit, SandboxError> {
     let deadline = policy.resources.timeout.map(Deadline::new);
     let waiter = signals::Waiter::new();
+    // Only the Unix waiter has an interrupt to forward.
+    #[cfg(unix)]
     let mut forwarded = false;
     loop {
         match child.poll() {
@@ -220,19 +289,18 @@ fn wait_bounded<C: ChildProcess>(
         if let Some(deadline) = &deadline {
             if deadline.passed() {
                 child.kill_tree();
-                let _ = child.wait();
                 return Err(SandboxError::Timeout(deadline.limit));
             }
         }
 
         match waiter.wait(deadline.as_ref().map(Deadline::remaining)) {
             signals::Wake::ChildChanged | signals::Wake::Deadline => {}
+            #[cfg(unix)]
             signals::Wake::Interrupt(signal) => {
                 if forwarded {
                     // The operator asked twice. The first ask was the
                     // child's chance to stop on its own terms.
                     child.kill_tree();
-                    let _ = child.wait();
                     return Err(SandboxError::Interrupted(signal));
                 }
                 forwarded = true;
@@ -303,10 +371,6 @@ pub(crate) fn signal_group(child: &Child, signal: i32) {
         libc::kill(-(child.id() as libc::pid_t), signal);
     }
 }
-
-/// Sends `signal` to `child`'s process group.
-#[cfg(not(unix))]
-pub(crate) fn signal_group(_child: &Child, _signal: i32) {}
 
 /// Kills `child` and every descendant it started.
 ///
@@ -538,8 +602,6 @@ pub(crate) mod signals {
     pub(crate) enum Wake {
         /// A child of this process changed state.
         ChildChanged,
-        /// An operator's interrupt arrived, with the signal number.
-        Interrupt(i32),
         /// The caller's deadline ran out.
         Deadline,
     }

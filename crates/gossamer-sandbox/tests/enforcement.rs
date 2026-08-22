@@ -20,7 +20,12 @@ fn workspace(tag: &str) -> PathBuf {
 }
 
 /// A policy that grants `root` read-write plus the system directories
-/// a shell needs to start, and nothing else.
+/// and device nodes a shell needs to start, and nothing else.
+///
+/// The device nodes are not decoration: a shell redirects a background
+/// job's standard input from `/dev/null`, so without them a script
+/// cannot put anything in the background and a case about descendants
+/// proves nothing.
 ///
 /// Linux-only, with the cases that use it: the grants below name a
 /// POSIX layout, and what they prove is Landlock's behaviour on it.
@@ -39,6 +44,9 @@ fn shell_policy(root: &PathBuf, level: Level) -> SandboxPolicy {
         if PathBuf::from(system).exists() {
             policy = policy.read_only(system);
         }
+    }
+    for device in gossamer_sandbox::device_paths() {
+        policy = policy.read_write(device);
     }
     policy
 }
@@ -161,8 +169,7 @@ fn a_loader_variable_never_reaches_the_child() {
         shell_policy(&root, Level::Standard).env_allow(["LD_LIBRARY_PATH"]),
     ] {
         let error = Sandbox::new(&policy)
-            .err()
-            .expect("a loader variable must be refused rather than silently dropped");
+            .expect_err("a loader variable must be refused rather than silently dropped");
         assert!(error.to_string().contains("cannot be passed"), "{error}");
     }
 
@@ -211,18 +218,30 @@ fn a_timeout_kills_the_whole_tree_including_a_grandchild() {
         return;
     }
     let root = workspace("timeout-tree");
+    let started = root.join("grandchild-started");
     let marker = root.join("grandchild-alive");
     let policy =
-        shell_policy(&root, Level::Standard).timeout(std::time::Duration::from_millis(300));
+        shell_policy(&root, Level::Standard).timeout(std::time::Duration::from_millis(750));
     let sandbox = Sandbox::new(&policy).expect("build sandbox");
 
-    let script = format!("( sleep 30; echo alive > {} ) & sleep 30", marker.display());
+    let script = format!(
+        "( echo up > {}; sleep 30; echo alive > {} ) & sleep 30",
+        started.display(),
+        marker.display()
+    );
     let argv = vec!["/bin/sh".to_string(), "-c".to_string(), script];
     let error = sandbox
         .run_with(&argv, Stdio::Capture)
         .expect_err("the run must time out");
     assert!(error.to_string().contains("timeout"), "{error}");
 
+    // Without this the case passes on a host where the grandchild never
+    // started, which is a shell the policy under-granted rather than a
+    // teardown that worked.
+    assert!(
+        started.exists(),
+        "the grandchild must have run for its death to mean anything"
+    );
     std::thread::sleep(std::time::Duration::from_millis(200));
     assert!(
         !marker.exists(),

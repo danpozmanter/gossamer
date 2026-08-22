@@ -110,15 +110,15 @@ impl ChildProcess for RawChild {
         Ok(Some(Exit::Code(code)))
     }
 
-    fn wait(&mut self) -> std::io::Result<Exit> {
-        if let Some(code) = self.exited {
-            return Ok(Exit::Code(code));
+    fn reap(&mut self) {
+        // The handle keeps the process object alive until `Drop` closes
+        // it, so the exit code stays readable and the pid cannot name
+        // anything else in the meantime.
+        if self.exited.is_some() {
+            return;
         }
-        if unsafe { WaitForSingleObject(self.process, u32::MAX) } != WAIT_OBJECT_0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        self.poll()?
-            .ok_or_else(|| std::io::Error::other("the child reported no exit code"))
+        unsafe { WaitForSingleObject(self.process, u32::MAX) };
+        let _ = self.poll();
     }
 
     fn kill_tree(&mut self) {

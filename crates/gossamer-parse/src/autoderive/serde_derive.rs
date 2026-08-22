@@ -362,12 +362,6 @@ fn derive_list(attrs: &gossamer_ast::Attrs) -> Vec<String> {
     out
 }
 
-/// Walks `parsed` for `#[derive(...)]`-annotated structs and synthesizes
-/// the requested trait methods as real Gossamer `impl` source. Clone,
-/// PartialEq/Eq, and Default lower through every tier exactly like
-/// hand-written methods; the `==` / `!=` operators route to the
-/// synthesized `eq` in MIR (see the builder's binary-op lowering).
-#[must_use]
 /// Head name of a `Type` that is a single-segment path (`Point` ->
 /// `"Point"`), used to attach an `impl` block to its target type.
 fn type_head_name(ty: &gossamer_ast::Type) -> Option<&str> {

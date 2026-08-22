@@ -714,10 +714,7 @@ mod policy_tests {
             let error = policy
                 .compile()
                 .expect_err("a loader variable must be refused, not silently dropped");
-            assert!(
-                error.to_string().contains("cannot be passed"),
-                "{error}"
-            );
+            assert!(error.to_string().contains("cannot be passed"), "{error}");
         }
     }
 

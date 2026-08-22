@@ -19,6 +19,7 @@ pub(crate) mod seccomp;
 
 use std::os::unix::process::CommandExt;
 use std::process::Command;
+use std::sync::{Mutex, PoisonError};
 
 use crate::error::{SandboxError, SandboxOutput};
 use crate::exec::{self, Stdio};
@@ -188,7 +189,9 @@ pub(crate) fn mechanisms(policy: &CompiledPolicy) -> Vec<String> {
 fn network_mechanism(policy: &CompiledPolicy) -> String {
     let abi = landlock::abi_version();
     match (policy.level, policy.network) {
-        (Level::Strict, Network::None) => "network namespace: no network, every protocol".to_string(),
+        (Level::Strict, Network::None) => {
+            "network namespace: no network, every protocol".to_string()
+        }
         (_, Network::Open) => "no network restriction".to_string(),
         (_, network) if abi.is_some_and(|version| version >= 4) => {
             let landlock = if network == Network::None {
@@ -225,6 +228,23 @@ pub(crate) fn run(
     exec::wait_for(policy, LinuxChild::new(child, group), stdio)
 }
 
+/// The session of every run this process is supervising right now.
+///
+/// [`kill_strays`] reaches an orphan by asking `/proc` which processes
+/// were reparented here, and a concurrent run's own child answers that
+/// question exactly as this run's orphan does. The registry is what
+/// separates them, so a teardown reaches only its own tree.
+static LIVE_SESSIONS: Mutex<Vec<libc::pid_t>> = Mutex::new(Vec::new());
+
+/// Whether `session` is the session of some run other than `mine`.
+fn another_run_owns(session: libc::pid_t, mine: libc::pid_t) -> bool {
+    LIVE_SESSIONS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .iter()
+        .any(|live| *live != mine && *live == session)
+}
+
 /// A running child, with whatever this host can use to reach a
 /// descendant that left the process group.
 struct LinuxChild {
@@ -239,10 +259,23 @@ impl LinuxChild {
         // session id, and every descendant inherits that session unless
         // it starts one of its own.
         let session = child.id() as libc::pid_t;
+        LIVE_SESSIONS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(session);
         Self {
             child,
             session,
             group,
+        }
+    }
+}
+
+impl Drop for LinuxChild {
+    fn drop(&mut self) {
+        let mut live = LIVE_SESSIONS.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(at) = live.iter().position(|live| *live == self.session) {
+            live.swap_remove(at);
         }
     }
 }
@@ -252,8 +285,8 @@ impl exec::ChildProcess for LinuxChild {
         exec::ChildProcess::poll(&mut self.child)
     }
 
-    fn wait(&mut self) -> std::io::Result<exec::Exit> {
-        exec::ChildProcess::wait(&mut self.child)
+    fn reap(&mut self) {
+        exec::ChildProcess::reap(&mut self.child);
     }
 
     fn kill_tree(&mut self) {
@@ -301,6 +334,12 @@ fn become_child_subreaper() {
 /// still in the run's session, and one that started a session of its
 /// own and reparented here.
 ///
+/// Reparenting is how an orphan becomes findable, so a pid whose parent
+/// is this process is a candidate; it belongs to this run only when no
+/// other live run claims its session. Several runs share one supervisor
+/// whenever a caller sandboxes concurrently, and each one's tree stops
+/// at its own session.
+///
 /// The sweep repeats because a process killed while forking can leave a
 /// child behind, and stops as soon as a pass finds nothing.
 fn kill_strays(session: libc::pid_t) {
@@ -317,10 +356,20 @@ fn kill_strays(session: libc::pid_t) {
             if pid == own {
                 continue;
             }
-            let Some((parent, stray_session)) = parent_and_session(pid) else {
+            let Some(stray) = stat_of(pid) else {
                 continue;
             };
-            if stray_session != session && parent != own {
+            let (parent, stray_session) = (stray.parent, stray.session);
+            // A process that has already exited cannot be killed and
+            // cannot start anything, so counting it would keep the
+            // sweep looking for work that is finished. The child this
+            // run waits on is exactly that until it is reaped.
+            if stray.exited {
+                continue;
+            }
+            let ours = stray_session == session;
+            let adopted = parent == own && !another_run_owns(stray_session, session);
+            if !ours && !adopted {
                 continue;
             }
             found = true;
@@ -339,16 +388,29 @@ fn kill_strays(session: libc::pid_t) {
     }
 }
 
-/// The parent pid and session id of `pid`, from `/proc/<pid>/stat`.
+/// What the sweep needs to know about one process.
+struct Stat {
+    parent: libc::pid_t,
+    session: libc::pid_t,
+    /// Whether the process is a zombie: gone, but still holding its
+    /// entry until whoever started it collects the status.
+    exited: bool,
+}
+
+/// Reads `pid`'s parent, session, and liveness from `/proc/<pid>/stat`.
 ///
 /// The command name is parsed by skipping past its closing parenthesis:
 /// it is the only field that can itself contain a space or a
 /// parenthesis, which is why the kernel puts it in brackets.
-fn parent_and_session(pid: libc::pid_t) -> Option<(libc::pid_t, libc::pid_t)> {
+fn stat_of(pid: libc::pid_t) -> Option<Stat> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     let fields: Vec<&str> = stat[stat.rfind(')')? + 1..].split_whitespace().collect();
     // After the command name the fields are state, ppid, pgrp, session.
-    Some((fields.get(1)?.parse().ok()?, fields.get(3)?.parse().ok()?))
+    Some(Stat {
+        parent: fields.get(1)?.parse().ok()?,
+        session: fields.get(3)?.parse().ok()?,
+        exited: *fields.first()? == "Z",
+    })
 }
 
 /// Attaches the pre-exec enforcement for `policy` to `command`.
@@ -383,10 +445,24 @@ fn install_enforcement(
         .flatten();
     let abi = landlock::abi_version();
     let ruleset = abi.map(|abi| landlock::Ruleset::compile(abi, &policy.rules, network));
-    let namespace_plan =
-        (level == Level::Strict).then(|| {
-            namespaces::Plan::new(private_temp.as_deref(), policy.resources.max_temp_size)
-        });
+    // A `connect` to a pathname socket is outside Landlock's access
+    // rights, so a denied socket needs the mount namespace to be
+    // unreachable rather than merely refused.
+    let denied_sockets: Vec<std::path::PathBuf> = policy
+        .denials()
+        .map(|rule| rule.path.clone())
+        .filter(|path| {
+            std::fs::symlink_metadata(path)
+                .is_ok_and(|meta| std::os::unix::fs::FileTypeExt::is_socket(&meta.file_type()))
+        })
+        .collect();
+    let namespace_plan = (level == Level::Strict).then(|| {
+        namespaces::Plan::new(
+            private_temp.as_deref(),
+            policy.resources.max_temp_size,
+            &denied_sockets,
+        )
+    });
     let filter =
         (level == Level::Strict && seccomp::Filter::is_supported()).then(seccomp::Filter::new);
     let file_size_limit = policy.resources.max_file_size;
@@ -529,9 +605,99 @@ fn join_cgroup_now(path: &std::ffi::CStr) -> std::io::Result<()> {
     }
 }
 
+/// Whether this host can enforce every limit in `resources`.
+#[must_use]
+pub(crate) fn resource_enforcement(
+    resources: &crate::policy::Resources,
+    level: Level,
+) -> Enforcement {
+    // A bound on the private temporary filesystem is a mount option,
+    // and the mount exists only where there is a mount namespace.
+    if resources.max_temp_size.is_some() && level < Level::Strict {
+        return Enforcement::Partial(
+            "a private temporary filesystem needs a mount namespace, which is `strict` \
+             only: --max-temp-mb cannot be applied below it"
+                .to_string(),
+        );
+    }
+    if resources == &crate::policy::Resources::default() {
+        return Enforcement::Full;
+    }
+    cgroup::enforcement(resources)
+}
+
 #[cfg(test)]
 mod linux_tests {
     use super::*;
+
+    /// Starts a child in a session of its own, the way a sandboxed run
+    /// does, and answers its pid.
+    fn child_in_its_own_session(script: &str) -> std::process::Child {
+        let mut command = Command::new("/bin/sh");
+        command.arg("-c").arg(script);
+        command.stdout(std::process::Stdio::null());
+        command.stderr(std::process::Stdio::null());
+        #[allow(
+            unsafe_code,
+            reason = "the pre-exec closure calls setsid only, which allocates \
+                      nothing and touches no state the fork shares"
+        )]
+        unsafe {
+            command.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+        command.spawn().expect("spawn a child for the sweep to see")
+    }
+
+    /// Whether `pid` is still a running process.
+    ///
+    /// A killed process answers `kill(pid, 0)` for as long as it is an
+    /// unreaped zombie, so liveness has to come from its state rather
+    /// than from whether it is signallable.
+    fn running(pid: libc::pid_t) -> bool {
+        stat_of(pid).is_some_and(|stat| !stat.exited)
+    }
+
+    /// The sweep reaches an orphan by asking `/proc` who was reparented
+    /// here, which a concurrent run's own child answers identically.
+    /// One run's teardown must not reach another run's tree.
+    #[test]
+    fn a_sweep_leaves_another_live_runs_child_alone() {
+        let mut theirs = child_in_its_own_session("sleep 30");
+        let their_session = theirs.id() as libc::pid_t;
+        LIVE_SESSIONS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(their_session);
+
+        let mut ours = child_in_its_own_session("sleep 30");
+        let our_session = ours.id() as libc::pid_t;
+        kill_strays(our_session);
+
+        let theirs_survived = running(their_session);
+        let ours_reached = !running(our_session);
+
+        let mut live = LIVE_SESSIONS.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(at) = live.iter().position(|live| *live == their_session) {
+            live.swap_remove(at);
+        }
+        drop(live);
+        let _ = theirs.kill();
+        let _ = theirs.wait();
+        let _ = ours.kill();
+        let _ = ours.wait();
+
+        assert!(
+            theirs_survived,
+            "the sweep killed a child belonging to another live run"
+        );
+        assert!(
+            ours_reached,
+            "the sweep must still reach its own run's tree"
+        );
+    }
 
     #[test]
     fn the_capability_report_names_the_landlock_abi_when_there_is_one() {
@@ -570,25 +736,4 @@ mod linux_tests {
             "{lines:?}"
         );
     }
-}
-
-/// Whether this host can enforce every limit in `resources`.
-#[must_use]
-pub(crate) fn resource_enforcement(
-    resources: &crate::policy::Resources,
-    level: Level,
-) -> Enforcement {
-    // A bound on the private temporary filesystem is a mount option,
-    // and the mount exists only where there is a mount namespace.
-    if resources.max_temp_size.is_some() && level < Level::Strict {
-        return Enforcement::Partial(
-            "a private temporary filesystem needs a mount namespace, which is `strict` \
-             only: --max-temp-mb cannot be applied below it"
-                .to_string(),
-        );
-    }
-    if resources == &crate::policy::Resources::default() {
-        return Enforcement::Full;
-    }
-    cgroup::enforcement(resources)
 }

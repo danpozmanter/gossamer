@@ -108,8 +108,6 @@ pub(crate) fn capabilities() -> SandboxCapabilities {
     }
 }
 
-/// Names the mechanisms a run at this policy's level will install.
-#[must_use]
 /// How completely `policy`'s network setting is enforced here.
 ///
 /// An `AppContainer` reaches the network only through the capabilities
@@ -124,6 +122,8 @@ pub(crate) fn network_enforcement(policy: &CompiledPolicy) -> Enforcement {
     }
 }
 
+/// Names the mechanisms a run at this policy's level will install.
+#[must_use]
 pub(crate) fn mechanisms(policy: &CompiledPolicy) -> Vec<String> {
     let mut lines = Vec::new();
     match policy.level {
@@ -312,9 +312,7 @@ pub(crate) fn resource_enforcement(
         );
     }
     if resources.max_file_size.is_some() {
-        return Enforcement::Partial(
-            "a Windows job object has no per-file size limit".to_string(),
-        );
+        return Enforcement::Partial("a Windows job object has no per-file size limit".to_string());
     }
     Enforcement::Full
 }

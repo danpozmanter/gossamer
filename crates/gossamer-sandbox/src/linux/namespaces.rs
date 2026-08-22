@@ -20,8 +20,19 @@ use std::ffi::CString;
 ///
 /// Reported rather than guessed: distributions disable them in three
 /// different ways and each needs its own sysctl named in the failure.
+///
+/// Answered once per process. A capability report is asked for several
+/// times in one run - to refuse an unenforceable limit, to print the
+/// banner, to explain the policy - and the answer costs a `fork`,
+/// which a supervisor should not spend on a host configuration that
+/// cannot change under it.
 #[must_use]
 pub(crate) fn user_namespace_blocker() -> Option<String> {
+    static ANSWER: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    ANSWER.get_or_init(probe_blocker).clone()
+}
+
+fn probe_blocker() -> Option<String> {
     let read = |path: &str| std::fs::read_to_string(path).ok();
     if let Some(value) = read("/proc/sys/kernel/unprivileged_userns_clone") {
         if value.trim() == "0" {
@@ -75,6 +86,8 @@ pub(crate) struct Plan {
     tmpfs_type: CString,
     tmpfs_options: CString,
     private_temp: bool,
+    shadow_source: CString,
+    shadowed: Vec<CString>,
 }
 
 impl Plan {
@@ -85,8 +98,19 @@ impl Plan {
     /// because mounting over `/tmp` would hide a workspace that lives
     /// under it. `temp_bytes` bounds it; with no bound the mount takes
     /// the kernel default, which is half of RAM.
+    ///
+    /// `denied_sockets` are the socket paths the policy refuses. A
+    /// filesystem policy cannot reach them: `connect` on a pathname
+    /// socket is not one of Landlock's access rights, so a denial the
+    /// ruleset carries does not stop the connection. The mount
+    /// namespace is the mechanism that does, by covering each one with
+    /// a node nothing can connect to.
     #[must_use]
-    pub(crate) fn new(private_temp: Option<&std::path::Path>, temp_bytes: Option<u64>) -> Self {
+    pub(crate) fn new(
+        private_temp: Option<&std::path::Path>,
+        temp_bytes: Option<u64>,
+        denied_sockets: &[std::path::PathBuf],
+    ) -> Self {
         let uid = unsafe { libc::geteuid() };
         let gid = unsafe { libc::getegid() };
         let cstring = |text: String| CString::new(text).unwrap_or_default();
@@ -110,6 +134,11 @@ impl Plan {
                 |bytes| format!("mode=1777,size={bytes}"),
             )),
             private_temp: private_temp.is_some(),
+            shadow_source: cstring("/dev/null".to_string()),
+            shadowed: denied_sockets
+                .iter()
+                .map(|path| cstring(path.to_string_lossy().into_owned()))
+                .collect(),
         }
     }
 
@@ -186,6 +215,38 @@ impl Plan {
         {
             return Err(errno());
         }
+        self.shadow_denied_sockets()
+    }
+
+    /// Covers each denied socket with `/dev/null`, so a connection to
+    /// it answers `ENOTSOCK` instead of reaching the daemon behind it.
+    ///
+    /// The bind mount is made after the tree is `MS_PRIVATE`, so it is
+    /// this run's view of the path and never the host's.
+    ///
+    /// A path that is not there is skipped: the policy names every
+    /// well-known daemon socket, and a machine runs a few of them.
+    /// `ENOENT` from the mount is that case and nothing else, because
+    /// the source is `/dev/null`.
+    fn shadow_denied_sockets(&self) -> Result<(), i32> {
+        for target in &self.shadowed {
+            if unsafe {
+                libc::mount(
+                    self.shadow_source.as_ptr(),
+                    target.as_ptr(),
+                    std::ptr::null(),
+                    libc::MS_BIND,
+                    std::ptr::null(),
+                )
+            } != 0
+            {
+                let error = errno();
+                if error == libc::ENOENT {
+                    continue;
+                }
+                return Err(error);
+            }
+        }
         Ok(())
     }
 }
@@ -260,12 +321,38 @@ mod namespace_tests {
 
     #[test]
     fn the_plan_maps_the_calling_user_to_root_inside_the_namespace() {
-        let plan = Plan::new(Some(std::path::Path::new("/tmp/private")), Some(1 << 30));
+        let plan = Plan::new(
+            Some(std::path::Path::new("/tmp/private")),
+            Some(1 << 30),
+            &[],
+        );
         let uid = unsafe { libc::geteuid() };
         assert_eq!(
             plan.uid_map.to_str().expect("uid map is utf-8"),
             format!("0 {uid} 1\n")
         );
         assert_eq!(plan.deny.to_str().expect("deny is utf-8"), "deny");
+    }
+
+    /// A denied socket is covered rather than merely refused, so the
+    /// path list the plan carries has to reach the pre-exec step that
+    /// covers it.
+    #[test]
+    fn a_denied_socket_is_carried_into_the_plan() {
+        let plan = Plan::new(
+            None,
+            None,
+            &[std::path::PathBuf::from("/run/example/daemon.sock")],
+        );
+        assert_eq!(
+            plan.shadowed
+                .first()
+                .and_then(|target| target.to_str().ok()),
+            Some("/run/example/daemon.sock")
+        );
+        assert_eq!(
+            plan.shadow_source.to_str().expect("source is utf-8"),
+            "/dev/null"
+        );
     }
 }

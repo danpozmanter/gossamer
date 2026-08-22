@@ -63,8 +63,6 @@ fn os_description() -> String {
     format!("macOS {}", std::env::consts::ARCH)
 }
 
-/// Names the mechanisms a run at this policy's level will install.
-#[must_use]
 /// How completely `policy`'s network setting is enforced here.
 ///
 /// Seatbelt's `(deny network*)` covers every protocol, so at any level
@@ -78,6 +76,8 @@ pub(crate) fn network_enforcement(policy: &CompiledPolicy) -> Enforcement {
     }
 }
 
+/// Names the mechanisms a run at this policy's level will install.
+#[must_use]
 pub(crate) fn mechanisms(policy: &CompiledPolicy) -> Vec<String> {
     let mut lines = Vec::new();
     match policy.level {
@@ -255,7 +255,8 @@ pub(crate) fn resource_enforcement(
     if resources.max_file_size.is_some() {
         return Enforcement::Partial(
             "macOS installs no `setrlimit` for the child: a file-size limit cannot be \
-             applied here".to_string(),
+             applied here"
+                .to_string(),
         );
     }
     Enforcement::Full

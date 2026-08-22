@@ -212,6 +212,12 @@ impl Drop for Cgroup {
 }
 
 /// Moves this process into its own leaf so `root` holds no processes.
+///
+/// The postcondition is about `root`, not about any single member: the
+/// list is a snapshot of a directory other processes share, and a pid
+/// in it may exit or be moved by a concurrent supervisor before the
+/// write reaches it. `ESRCH` reports exactly that, which is the state
+/// the move was asking for, so it counts as done.
 fn move_supervisor_out_of(root: &Path) -> Result<(), String> {
     let leaf = root.join(SUPERVISOR_LEAF);
     if !leaf.is_dir() {
@@ -221,10 +227,19 @@ fn move_supervisor_out_of(root: &Path) -> Result<(), String> {
     let members =
         std::fs::read_to_string(root.join("cgroup.procs")).unwrap_or_else(|_| String::new());
     for pid in members.lines().filter(|line| !line.trim().is_empty()) {
-        std::fs::write(leaf.join("cgroup.procs"), pid.trim())
-            .map_err(|error| format!("moving {pid} into {}: {error}", leaf.display()))?;
+        place(&leaf, pid.trim())?;
     }
     Ok(())
+}
+
+/// Writes one pid into `leaf`, treating a process that is no longer
+/// there as a move that no longer needs doing.
+fn place(leaf: &Path, pid: &str) -> Result<(), String> {
+    match std::fs::write(leaf.join("cgroup.procs"), pid) {
+        Ok(()) => Ok(()),
+        Err(error) if error.raw_os_error() == Some(libc::ESRCH) => Ok(()),
+        Err(error) => Err(format!("moving {pid} into {}: {error}", leaf.display())),
+    }
 }
 
 /// Turns on the controllers a limit needs for `root`'s children.
@@ -250,8 +265,12 @@ fn enable_controllers(root: &Path) -> Result<(), String> {
 }
 
 fn write_control(directory: &Path, name: &str, value: &str) -> Result<(), String> {
-    std::fs::write(directory.join(name), value)
-        .map_err(|error| format!("writing {} = {value}: {error}", directory.join(name).display()))
+    std::fs::write(directory.join(name), value).map_err(|error| {
+        format!(
+            "writing {} = {value}: {error}",
+            directory.join(name).display()
+        )
+    })
 }
 
 /// A cgroup name no other run in this process shares.
@@ -291,6 +310,28 @@ mod cgroup_tests {
             }
             Enforcement::None => panic!("a memory limit is never silently unreported"),
         }
+    }
+
+    /// The delegated cgroup is shared with every other process in the
+    /// slice, so a pid read from it may be gone by the time the move
+    /// reaches it. That is the state the move wanted, and a run must
+    /// not fail because a neighbour exited first.
+    #[test]
+    fn a_member_that_is_already_gone_is_not_a_failure() {
+        let Some(root) = delegated_cgroup().filter(|root| has_controllers(root)) else {
+            return;
+        };
+        let leaf = root.join(SUPERVISOR_LEAF);
+        if std::fs::create_dir_all(&leaf).is_err() {
+            return;
+        }
+        // `pid_max` is an exclusive bound, so this pid can never name a
+        // live process and the write answers ESRCH.
+        let unassignable = std::fs::read_to_string("/proc/sys/kernel/pid_max").map_or_else(
+            |_| 4_194_304,
+            |text| text.trim().parse().unwrap_or(4_194_304),
+        );
+        assert_eq!(place(&leaf, &unassignable.to_string()), Ok(()));
     }
 
     /// The capability report asks with no limits set, and must still
