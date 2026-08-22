@@ -49,6 +49,46 @@ fn main() {
     // reassemble a dozen grants and get one wrong.
     let preset = sandbox::Policy::build_default(&".").level(&"none")
     println!("preset: {}", preset.explain().len() > 0)
+
+    // The widened surface: the network's three modes, the temp choice,
+    // every resource bound, and the readers a report is built from.
+    // Each one is a separate runtime shim, so a missing dispatch entry
+    // shows up here as a wrong answer rather than in a user's build.
+    let full = sandbox::Policy::new()
+        .read_write(&".")
+        .network_mode(&"client")
+        .temp(&"private")
+        .max_processes(64)
+        .max_memory(536_870_912)
+        .max_cpu_time(30_000)
+        .max_file_size(1_048_576)
+        .level(&"none")
+
+    println!("mode: {}", full.network_name())
+    println!("level: {}", full.level_name())
+    println!("access: {}", full.access(&"."))
+    println!("grants: {}", full.read_write_grants().len() > 0)
+    println!("names: {}", full.environment_names().len() >= 0)
+    println!("mechanisms: {}", full.mechanisms().len() >= 0)
+    println!("policy json: {}", full.to_json().len() > 0)
+    println!("verdicts: {} {}", full.network_enforcement_kind().len() > 0, full.resource_enforcement_kind().len() > 0)
+    println!("unblocked: {}", full.level_blocker() == "")
+    match full.check() {
+        Ok(_) => println!("check: ok")
+        Err(e) => println!("check failed: {}", e)
+    }
+
+    // An unknown name is refused rather than applied, so a typo can
+    // never weaken a policy that was written to be strict.
+    println!("typo: {}", sandbox::Policy::new().network_mode(&"open").network_mode(&"opne").network_name())
+    println!("fetch: {}", sandbox::Policy::new().for_fetch_phase().network_name())
+
+    // The exit-code contract every consumer shares, and the wrapper run
+    // that reports through it.
+    println!("codes: {} {} {} {}", sandbox::exit_policy_error(), sandbox::exit_command_not_found(), sandbox::exit_level_unavailable(), sandbox::exit_signal_base())
+    println!("inherited: {}", sandbox::run_inherit(&policy, &#["true"]))
+    println!("discovery: {} {}", sandbox::home_directory().is_some(), sandbox::rust_toolchain_paths().len() >= 0)
+    println!("stale: {}", sandbox::stale_grant_count() >= 0)
 }
 "#;
 
@@ -58,7 +98,23 @@ const EXPECTED: &str = "level known: true\n\
      json: true\n\
      explain: true\n\
      run: 0 released\n\
-     preset: true\n";
+     preset: true\n\
+     mode: client\n\
+     level: none\n\
+     access: read-write\n\
+     grants: true\n\
+     names: true\n\
+     mechanisms: true\n\
+     policy json: true\n\
+     verdicts: true true\n\
+     unblocked: true\n\
+     check: ok\n\
+     typo: open\n\
+     fetch: client\n\
+     codes: 126 127 64 128\n\
+     inherited: 0\n\
+     discovery: true true\n\
+     stale: true\n";
 
 #[test]
 fn the_sandbox_surface_survives_a_release_build() {

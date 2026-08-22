@@ -1364,7 +1364,9 @@ impl<'a> Builder<'a> {
             (
                 "sandbox::Policy",
                 "read_write" | "read_only" | "deny" | "network" | "env_allow" | "env_set"
-                | "timeout" | "level" | "working_directory",
+                | "timeout" | "level" | "working_directory" | "network_mode" | "for_fetch_phase"
+                | "temp" | "temp_path" | "max_processes" | "max_memory" | "max_cpu_time"
+                | "max_file_size" | "max_temp_size",
             ) => Some("sandbox::Policy"),
             _ => None,
         }

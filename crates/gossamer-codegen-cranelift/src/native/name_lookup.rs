@@ -310,6 +310,71 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_sandbox_resource_limits" => Some("gos_rt_sandbox_resource_limits"),
         "gos_rt_sandbox_capabilities_json" => Some("gos_rt_sandbox_capabilities_json"),
         "gos_rt_sandbox_notes" => Some("gos_rt_sandbox_notes"),
+        "gos_rt_sandbox_policy_network_mode" => Some("gos_rt_sandbox_policy_network_mode"),
+        "gos_rt_sandbox_policy_for_fetch_phase" => Some("gos_rt_sandbox_policy_for_fetch_phase"),
+        "gos_rt_sandbox_policy_temp" => Some("gos_rt_sandbox_policy_temp"),
+        "gos_rt_sandbox_policy_temp_path" => Some("gos_rt_sandbox_policy_temp_path"),
+        "gos_rt_sandbox_policy_max_processes" => Some("gos_rt_sandbox_policy_max_processes"),
+        "gos_rt_sandbox_policy_max_memory" => Some("gos_rt_sandbox_policy_max_memory"),
+        "gos_rt_sandbox_policy_max_cpu_time" => Some("gos_rt_sandbox_policy_max_cpu_time"),
+        "gos_rt_sandbox_policy_max_file_size" => Some("gos_rt_sandbox_policy_max_file_size"),
+        "gos_rt_sandbox_policy_max_temp_size" => Some("gos_rt_sandbox_policy_max_temp_size"),
+        "gos_rt_sandbox_policy_check" => Some("gos_rt_sandbox_policy_check"),
+        "gos_rt_sandbox_policy_mechanisms" => Some("gos_rt_sandbox_policy_mechanisms"),
+        "gos_rt_sandbox_policy_to_json" => Some("gos_rt_sandbox_policy_to_json"),
+        "gos_rt_sandbox_policy_access" => Some("gos_rt_sandbox_policy_access"),
+        "gos_rt_sandbox_policy_read_write_grants" => {
+            Some("gos_rt_sandbox_policy_read_write_grants")
+        }
+        "gos_rt_sandbox_policy_read_only_grants" => Some("gos_rt_sandbox_policy_read_only_grants"),
+        "gos_rt_sandbox_policy_denials" => Some("gos_rt_sandbox_policy_denials"),
+        "gos_rt_sandbox_policy_environment_names" => {
+            Some("gos_rt_sandbox_policy_environment_names")
+        }
+        "gos_rt_sandbox_policy_environment_value" => {
+            Some("gos_rt_sandbox_policy_environment_value")
+        }
+        "gos_rt_sandbox_policy_level_name" => Some("gos_rt_sandbox_policy_level_name"),
+        "gos_rt_sandbox_policy_network_name" => Some("gos_rt_sandbox_policy_network_name"),
+        "gos_rt_sandbox_policy_working_directory_path" => {
+            Some("gos_rt_sandbox_policy_working_directory_path")
+        }
+        "gos_rt_sandbox_policy_level_blocker" => Some("gos_rt_sandbox_policy_level_blocker"),
+        "gos_rt_sandbox_policy_network_enforcement_kind" => {
+            Some("gos_rt_sandbox_policy_network_enforcement_kind")
+        }
+        "gos_rt_sandbox_policy_network_enforcement_reason" => {
+            Some("gos_rt_sandbox_policy_network_enforcement_reason")
+        }
+        "gos_rt_sandbox_policy_resource_enforcement_kind" => {
+            Some("gos_rt_sandbox_policy_resource_enforcement_kind")
+        }
+        "gos_rt_sandbox_policy_resource_enforcement_reason" => {
+            Some("gos_rt_sandbox_policy_resource_enforcement_reason")
+        }
+        "gos_rt_sandbox_os_description" => Some("gos_rt_sandbox_os_description"),
+        "gos_rt_sandbox_filesystem_kind" => Some("gos_rt_sandbox_filesystem_kind"),
+        "gos_rt_sandbox_filesystem_reason" => Some("gos_rt_sandbox_filesystem_reason"),
+        "gos_rt_sandbox_network_kind" => Some("gos_rt_sandbox_network_kind"),
+        "gos_rt_sandbox_network_reason" => Some("gos_rt_sandbox_network_reason"),
+        "gos_rt_sandbox_process_isolation_kind" => Some("gos_rt_sandbox_process_isolation_kind"),
+        "gos_rt_sandbox_process_isolation_reason" => {
+            Some("gos_rt_sandbox_process_isolation_reason")
+        }
+        "gos_rt_sandbox_resource_limits_kind" => Some("gos_rt_sandbox_resource_limits_kind"),
+        "gos_rt_sandbox_resource_limits_reason" => Some("gos_rt_sandbox_resource_limits_reason"),
+        "gos_rt_sandbox_expand" => Some("gos_rt_sandbox_expand"),
+        "gos_rt_sandbox_prefix_of" => Some("gos_rt_sandbox_prefix_of"),
+        "gos_rt_sandbox_resolve_on_path" => Some("gos_rt_sandbox_resolve_on_path"),
+        "gos_rt_sandbox_home_directory" => Some("gos_rt_sandbox_home_directory"),
+        "gos_rt_sandbox_rust_toolchain_paths" => Some("gos_rt_sandbox_rust_toolchain_paths"),
+        "gos_rt_sandbox_stale_grant_count" => Some("gos_rt_sandbox_stale_grant_count"),
+        "gos_rt_sandbox_clean_stale_grants" => Some("gos_rt_sandbox_clean_stale_grants"),
+        "gos_rt_sandbox_exit_policy_error" => Some("gos_rt_sandbox_exit_policy_error"),
+        "gos_rt_sandbox_exit_command_not_found" => Some("gos_rt_sandbox_exit_command_not_found"),
+        "gos_rt_sandbox_exit_level_unavailable" => Some("gos_rt_sandbox_exit_level_unavailable"),
+        "gos_rt_sandbox_exit_signal_base" => Some("gos_rt_sandbox_exit_signal_base"),
+        "gos_rt_sandbox_run_inherit" => Some("gos_rt_sandbox_run_inherit"),
         "gos_rt_uuid_v4" => Some("gos_rt_uuid_v4"),
         "gos_rt_uuid_v7" => Some("gos_rt_uuid_v7"),
         "gos_rt_uuid_is_valid" => Some("gos_rt_uuid_is_valid"),

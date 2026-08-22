@@ -1003,8 +1003,44 @@ impl<'a> Builder<'a> {
             | "gos_rt_sandbox_policy_env_set"
             | "gos_rt_sandbox_policy_timeout"
             | "gos_rt_sandbox_policy_level"
-            | "gos_rt_sandbox_policy_working_directory" => self.sandbox_policy_ty(),
-            "gos_rt_sandbox_policy_explain" => self.tcx.string_ty(),
+            | "gos_rt_sandbox_policy_working_directory"
+            | "gos_rt_sandbox_policy_network_mode"
+            | "gos_rt_sandbox_policy_for_fetch_phase"
+            | "gos_rt_sandbox_policy_temp"
+            | "gos_rt_sandbox_policy_temp_path"
+            | "gos_rt_sandbox_policy_max_processes"
+            | "gos_rt_sandbox_policy_max_memory"
+            | "gos_rt_sandbox_policy_max_cpu_time"
+            | "gos_rt_sandbox_policy_max_file_size"
+            | "gos_rt_sandbox_policy_max_temp_size"
+            => self.sandbox_policy_ty(),
+            "gos_rt_sandbox_policy_explain"
+            | "gos_rt_sandbox_policy_to_json"
+            | "gos_rt_sandbox_policy_access"
+            | "gos_rt_sandbox_policy_environment_value"
+            | "gos_rt_sandbox_policy_level_name"
+            | "gos_rt_sandbox_policy_network_name"
+            | "gos_rt_sandbox_policy_working_directory_path"
+            | "gos_rt_sandbox_policy_level_blocker"
+            | "gos_rt_sandbox_policy_network_enforcement_kind"
+            | "gos_rt_sandbox_policy_network_enforcement_reason"
+            | "gos_rt_sandbox_policy_resource_enforcement_kind"
+            | "gos_rt_sandbox_policy_resource_enforcement_reason"
+            => self.tcx.string_ty(),
+            // A reader that answers a list of paths or names: pinned so a
+            // `for` over it walks strings rather than an unresolved Var.
+            "gos_rt_sandbox_policy_mechanisms"
+            | "gos_rt_sandbox_policy_read_write_grants"
+            | "gos_rt_sandbox_policy_read_only_grants"
+            | "gos_rt_sandbox_policy_denials"
+            | "gos_rt_sandbox_policy_environment_names"
+            => {
+                let string = self.tcx.string_ty();
+                self.tcx.intern(gossamer_types::TyKind::Vec(string))
+            }
+            // `check()` answers `Result<(), errors::Error>`, so `?` and a
+            // `match` on it read the packed carrier correctly.
+            "gos_rt_sandbox_policy_check" => self.result_unit_error_adt_ty(),
             "gos_rt_child_read_stdout" => self.tcx.string_ty(),
             "gos_rt_child_write_stdin" | "gos_rt_child_kill" => self.tcx.bool_ty(),
             // `Child::wait() -> Result<i64, errors::Error>`.
@@ -1095,7 +1131,16 @@ impl<'a> Builder<'a> {
             | "gos_rt_sandbox_policy_env_set"
             | "gos_rt_sandbox_policy_timeout"
             | "gos_rt_sandbox_policy_level"
-            | "gos_rt_sandbox_policy_working_directory" => Some("sandbox::Policy"),
+            | "gos_rt_sandbox_policy_working_directory"
+            | "gos_rt_sandbox_policy_network_mode"
+            | "gos_rt_sandbox_policy_for_fetch_phase"
+            | "gos_rt_sandbox_policy_temp"
+            | "gos_rt_sandbox_policy_temp_path"
+            | "gos_rt_sandbox_policy_max_processes"
+            | "gos_rt_sandbox_policy_max_memory"
+            | "gos_rt_sandbox_policy_max_cpu_time"
+            | "gos_rt_sandbox_policy_max_file_size"
+            | "gos_rt_sandbox_policy_max_temp_size" => Some("sandbox::Policy"),
             _ => None,
         };
         if let Some(rk) = dest_kind {

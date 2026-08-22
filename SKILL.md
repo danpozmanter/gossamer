@@ -690,17 +690,43 @@ Full path spelling is validated (GR0005); discover signatures with
   `database::sql` (drivers via `[rust-bindings]`).
 - Sandbox: `sandbox` - one policy, three OS backends.
   `sandbox::Policy::new()` then `read_write` / `read_only` / `deny` /
-  `network(bool)` / `env_allow` / `env_set` / `timeout(ms)` /
-  `level("standard")` / `working_directory`, each answering the policy
-  as it stands so a method chain reads as one expression;
-  `Policy::build_default(&root)` and `Policy::command_default(&cwd)`
-  are the shipped policies as constructors. `sandbox::run(&policy,
-  &argv) -> Result<Output, errors::Error>` answers the same
-  `{stdout, stderr, code}` `process::run` does. The capability report
-  is a value, not a printout: `max_level()`, `platform()`,
-  `filesystem()`, `network_enforcement()`, `process_isolation()`,
-  `resource_limits()`, `notes()`, `capabilities_json()`. A level a
-  host cannot honor fails closed rather than downgrading.
+  `network(bool)` / `network_mode("none"|"client"|"open")` /
+  `for_fetch_phase()` / `env_allow` / `env_set` /
+  `temp("private"|"inherit")` / `temp_path(p)` / `timeout(ms)` /
+  `max_processes` / `max_memory` / `max_cpu_time` / `max_file_size` /
+  `max_temp_size` / `level("standard")` / `working_directory`, each
+  answering the policy as it stands so a method chain reads as one
+  expression; `Policy::build_default(&root)` and
+  `Policy::command_default(&cwd)` are the shipped policies as
+  constructors. An unknown enum spelling leaves the setting as it was,
+  so a typo never weakens a policy. `sandbox::run(&policy, &argv) ->
+  Result<Output, errors::Error>` answers the same
+  `{stdout, stderr, code}` `process::run` does; `run_inherit(&policy,
+  &argv) -> i64` gives the child the caller's own streams and answers
+  the shared exit-code contract (`exit_policy_error()`,
+  `exit_command_not_found()`, `exit_level_unavailable()`,
+  `exit_signal_base()`).
+  **What a policy asks for and what a host will honor are separate
+  questions.** Read the policy back with `check()` / `explain()` /
+  `mechanisms()` / `to_json()` / `access(path)` / `read_write_grants()`
+  / `read_only_grants()` / `denials()` / `environment_names()` /
+  `environment_value(name)` / `level_name()` / `network_name()` /
+  `working_directory_path()`; ask what will actually hold with
+  `level_blocker()` (empty when nothing blocks it),
+  `network_enforcement_kind()` / `_reason()` and
+  `resource_enforcement_kind()` / `_reason()`. The capability report is
+  a value, not a printout: `max_level()`, `platform()`,
+  `os_description()`, `filesystem()`, `network_enforcement()`,
+  `process_isolation()`, `resource_limits()`, `notes()`,
+  `capabilities_json()`, plus the same verdict as an arm to match on -
+  `filesystem_kind()` / `_reason()`, `network_kind()` / `_reason()`,
+  `process_isolation_kind()` / `_reason()`, `resource_limits_kind()` /
+  `_reason()`, each `"full"`, `"partial"`, or `"none"`. Path discovery
+  for a profile: `expand(text)`, `prefix_of(name)`,
+  `resolve_on_path(name)`, `home_directory()` (each `Option<String>`)
+  and `rust_toolchain_paths()`. Host upkeep: `stale_grant_count()` and
+  `clean_stale_grants()`, which only Windows can have anything to do.
+  A level a host cannot honor fails closed rather than downgrading.
 - Misc: `sort`, `math::{rand, big}`, `crypto::{rand, sha256, sha512,
   hmac, blake3, aead, ed25519, ecdsa, x509, kdf, password
   (Argon2id), subtle}` (`crypto::insecure` = MD5/SHA1 compat only),

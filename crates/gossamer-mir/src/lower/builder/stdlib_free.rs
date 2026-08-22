@@ -4232,6 +4232,7 @@ impl<'a> Builder<'a> {
         _args: &[HirExpr],
     ) -> Option<(&'static str, gossamer_types::Ty)> {
         let string_ty = self.tcx.string_ty();
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
         Some(match joined {
             "sandbox::Policy::new" | "sandbox::new" => {
                 ("gos_rt_sandbox_policy_new", self.sandbox_policy_ty())
@@ -4272,6 +4273,44 @@ impl<'a> Builder<'a> {
             "sandbox::notes" => (
                 "gos_rt_sandbox_notes",
                 self.tcx.intern(gossamer_types::TyKind::Vec(string_ty)),
+            ),
+            "sandbox::os_description" => ("gos_rt_sandbox_os_description", string_ty),
+            "sandbox::filesystem_kind" => ("gos_rt_sandbox_filesystem_kind", string_ty),
+            "sandbox::filesystem_reason" => ("gos_rt_sandbox_filesystem_reason", string_ty),
+            "sandbox::network_kind" => ("gos_rt_sandbox_network_kind", string_ty),
+            "sandbox::network_reason" => ("gos_rt_sandbox_network_reason", string_ty),
+            "sandbox::process_isolation_kind" => {
+                ("gos_rt_sandbox_process_isolation_kind", string_ty)
+            }
+            "sandbox::process_isolation_reason" => {
+                ("gos_rt_sandbox_process_isolation_reason", string_ty)
+            }
+            "sandbox::resource_limits_kind" => ("gos_rt_sandbox_resource_limits_kind", string_ty),
+            "sandbox::resource_limits_reason" => {
+                ("gos_rt_sandbox_resource_limits_reason", string_ty)
+            }
+            "sandbox::stale_grant_count" => ("gos_rt_sandbox_stale_grant_count", i64_ty),
+            "sandbox::exit_policy_error" => ("gos_rt_sandbox_exit_policy_error", i64_ty),
+            "sandbox::exit_command_not_found" => ("gos_rt_sandbox_exit_command_not_found", i64_ty),
+            "sandbox::exit_level_unavailable" => ("gos_rt_sandbox_exit_level_unavailable", i64_ty),
+            "sandbox::exit_signal_base" => ("gos_rt_sandbox_exit_signal_base", i64_ty),
+            "sandbox::run_inherit" => ("gos_rt_sandbox_run_inherit", i64_ty),
+            "sandbox::rust_toolchain_paths" => (
+                "gos_rt_sandbox_rust_toolchain_paths",
+                self.tcx.intern(gossamer_types::TyKind::Vec(string_ty)),
+            ),
+            "sandbox::expand" => ("gos_rt_sandbox_expand", self.option_string_adt_ty()),
+            "sandbox::prefix_of" => ("gos_rt_sandbox_prefix_of", self.option_string_adt_ty()),
+            "sandbox::resolve_on_path" => (
+                "gos_rt_sandbox_resolve_on_path",
+                self.option_string_adt_ty(),
+            ),
+            "sandbox::home_directory" => {
+                ("gos_rt_sandbox_home_directory", self.option_string_adt_ty())
+            }
+            "sandbox::clean_stale_grants" => (
+                "gos_rt_sandbox_clean_stale_grants",
+                self.result_i64_error_adt_ty(),
             ),
             _ => return None,
         })

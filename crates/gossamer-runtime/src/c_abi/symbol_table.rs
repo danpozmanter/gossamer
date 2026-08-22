@@ -6552,6 +6552,194 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_sandbox_max_level as *const u8,
         ),
         (
+            "gos_rt_sandbox_policy_network_mode",
+            crate::c_abi::gos_rt_sandbox_policy_network_mode as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_for_fetch_phase",
+            crate::c_abi::gos_rt_sandbox_policy_for_fetch_phase as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_temp",
+            crate::c_abi::gos_rt_sandbox_policy_temp as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_temp_path",
+            crate::c_abi::gos_rt_sandbox_policy_temp_path as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_max_processes",
+            crate::c_abi::gos_rt_sandbox_policy_max_processes as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_max_memory",
+            crate::c_abi::gos_rt_sandbox_policy_max_memory as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_max_cpu_time",
+            crate::c_abi::gos_rt_sandbox_policy_max_cpu_time as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_max_file_size",
+            crate::c_abi::gos_rt_sandbox_policy_max_file_size as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_max_temp_size",
+            crate::c_abi::gos_rt_sandbox_policy_max_temp_size as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_check",
+            crate::c_abi::gos_rt_sandbox_policy_check as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_mechanisms",
+            crate::c_abi::gos_rt_sandbox_policy_mechanisms as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_to_json",
+            crate::c_abi::gos_rt_sandbox_policy_to_json as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_access",
+            crate::c_abi::gos_rt_sandbox_policy_access as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_read_write_grants",
+            crate::c_abi::gos_rt_sandbox_policy_read_write_grants as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_read_only_grants",
+            crate::c_abi::gos_rt_sandbox_policy_read_only_grants as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_denials",
+            crate::c_abi::gos_rt_sandbox_policy_denials as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_environment_names",
+            crate::c_abi::gos_rt_sandbox_policy_environment_names as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_environment_value",
+            crate::c_abi::gos_rt_sandbox_policy_environment_value as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_level_name",
+            crate::c_abi::gos_rt_sandbox_policy_level_name as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_network_name",
+            crate::c_abi::gos_rt_sandbox_policy_network_name as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_working_directory_path",
+            crate::c_abi::gos_rt_sandbox_policy_working_directory_path as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_level_blocker",
+            crate::c_abi::gos_rt_sandbox_policy_level_blocker as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_network_enforcement_kind",
+            crate::c_abi::gos_rt_sandbox_policy_network_enforcement_kind as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_network_enforcement_reason",
+            crate::c_abi::gos_rt_sandbox_policy_network_enforcement_reason as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_resource_enforcement_kind",
+            crate::c_abi::gos_rt_sandbox_policy_resource_enforcement_kind as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_resource_enforcement_reason",
+            crate::c_abi::gos_rt_sandbox_policy_resource_enforcement_reason as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_os_description",
+            crate::c_abi::gos_rt_sandbox_os_description as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_filesystem_kind",
+            crate::c_abi::gos_rt_sandbox_filesystem_kind as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_filesystem_reason",
+            crate::c_abi::gos_rt_sandbox_filesystem_reason as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_network_kind",
+            crate::c_abi::gos_rt_sandbox_network_kind as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_network_reason",
+            crate::c_abi::gos_rt_sandbox_network_reason as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_process_isolation_kind",
+            crate::c_abi::gos_rt_sandbox_process_isolation_kind as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_process_isolation_reason",
+            crate::c_abi::gos_rt_sandbox_process_isolation_reason as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_resource_limits_kind",
+            crate::c_abi::gos_rt_sandbox_resource_limits_kind as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_resource_limits_reason",
+            crate::c_abi::gos_rt_sandbox_resource_limits_reason as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_expand",
+            crate::c_abi::gos_rt_sandbox_expand as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_prefix_of",
+            crate::c_abi::gos_rt_sandbox_prefix_of as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_resolve_on_path",
+            crate::c_abi::gos_rt_sandbox_resolve_on_path as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_home_directory",
+            crate::c_abi::gos_rt_sandbox_home_directory as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_rust_toolchain_paths",
+            crate::c_abi::gos_rt_sandbox_rust_toolchain_paths as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_stale_grant_count",
+            crate::c_abi::gos_rt_sandbox_stale_grant_count as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_clean_stale_grants",
+            crate::c_abi::gos_rt_sandbox_clean_stale_grants as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_exit_policy_error",
+            crate::c_abi::gos_rt_sandbox_exit_policy_error as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_exit_command_not_found",
+            crate::c_abi::gos_rt_sandbox_exit_command_not_found as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_exit_level_unavailable",
+            crate::c_abi::gos_rt_sandbox_exit_level_unavailable as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_exit_signal_base",
+            crate::c_abi::gos_rt_sandbox_exit_signal_base as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_run_inherit",
+            crate::c_abi::gos_rt_sandbox_run_inherit as *const u8,
+        ),
+        (
             "gos_rt_sandbox_platform",
             crate::c_abi::gos_rt_sandbox_platform as *const u8,
         ),

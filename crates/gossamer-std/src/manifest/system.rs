@@ -175,7 +175,7 @@ pub const SANDBOX: StdModule = StdModule {
         StdItem {
             name: "Policy",
             kind: StdItemKind::Type,
-            doc: "What a command may reach. Built with read_write / read_only / deny / network / env_allow / env_set / temp / timeout / level / working_directory, each answering the policy as it now stands.",
+            doc: "What a command may reach. Built with read_write / read_only / deny / network / network_mode / for_fetch_phase / env_allow / env_set / temp / temp_path / timeout / max_processes / max_memory / max_cpu_time / max_file_size / max_temp_size / level / working_directory, each answering the policy as it now stands. Read back with check / explain / mechanisms / to_json / access / read_write_grants / read_only_grants / denials / environment_names / environment_value / level_name / network_name / working_directory_path / level_blocker, and asked what this host will actually honor with network_enforcement_kind / network_enforcement_reason / resource_enforcement_kind / resource_enforcement_reason.",
         },
         StdItem {
             name: "run",
@@ -221,6 +221,111 @@ pub const SANDBOX: StdModule = StdModule {
             name: "capabilities_json",
             kind: StdItemKind::Function,
             doc: "The whole host capability report as JSON, for a program that wants more than the scalar accessors give it.",
+        },
+        StdItem {
+            name: "os_description",
+            kind: StdItemKind::Function,
+            doc: "The host as the capability report names it: the OS and architecture a note about this machine would cite.",
+        },
+        StdItem {
+            name: "filesystem_kind",
+            kind: StdItemKind::Function,
+            doc: "full, partial, or none - the filesystem verdict as an arm to match on rather than a line to print.",
+        },
+        StdItem {
+            name: "filesystem_reason",
+            kind: StdItemKind::Function,
+            doc: "What a partial filesystem verdict does not cover, or the empty string when the verdict carries no reason.",
+        },
+        StdItem {
+            name: "network_kind",
+            kind: StdItemKind::Function,
+            doc: "full, partial, or none - the host's network verdict as an arm to match on.",
+        },
+        StdItem {
+            name: "network_reason",
+            kind: StdItemKind::Function,
+            doc: "What a partial network verdict does not cover, or the empty string.",
+        },
+        StdItem {
+            name: "process_isolation_kind",
+            kind: StdItemKind::Function,
+            doc: "full, partial, or none - the process-isolation verdict as an arm to match on.",
+        },
+        StdItem {
+            name: "process_isolation_reason",
+            kind: StdItemKind::Function,
+            doc: "What a partial process-isolation verdict does not cover, or the empty string.",
+        },
+        StdItem {
+            name: "resource_limits_kind",
+            kind: StdItemKind::Function,
+            doc: "full, partial, or none - the resource-limit verdict as an arm to match on.",
+        },
+        StdItem {
+            name: "resource_limits_reason",
+            kind: StdItemKind::Function,
+            doc: "What a partial resource-limit verdict does not cover, or the empty string.",
+        },
+        StdItem {
+            name: "expand",
+            kind: StdItemKind::Function,
+            doc: "expand(text) -> Option<String>. A written path with ~ and environment references resolved, so a profile can name a path the way an operator writes it.",
+        },
+        StdItem {
+            name: "prefix_of",
+            kind: StdItemKind::Function,
+            doc: "prefix_of(name) -> Option<String>. The install prefix of a tool on PATH, for granting a toolchain without hard-coding where it lives.",
+        },
+        StdItem {
+            name: "resolve_on_path",
+            kind: StdItemKind::Function,
+            doc: "resolve_on_path(name) -> Option<String>. Where PATH resolves a command name.",
+        },
+        StdItem {
+            name: "home_directory",
+            kind: StdItemKind::Function,
+            doc: "home_directory() -> Option<String>. The caller's home, as the presets resolve it.",
+        },
+        StdItem {
+            name: "rust_toolchain_paths",
+            kind: StdItemKind::Function,
+            doc: "Every path a Rust toolchain needs read access to, for a policy that has to run cargo.",
+        },
+        StdItem {
+            name: "stale_grant_count",
+            kind: StdItemKind::Function,
+            doc: "How many interrupted runs left an ACL grant behind. Always zero where granting a path is not how the backend reaches it.",
+        },
+        StdItem {
+            name: "clean_stale_grants",
+            kind: StdItemKind::Function,
+            doc: "clean_stale_grants() -> Result<i64, errors::Error>. Revokes those grants and answers how many were revoked.",
+        },
+        StdItem {
+            name: "exit_policy_error",
+            kind: StdItemKind::Function,
+            doc: "The exit code for a policy that would not compile, a sandbox that could not start, or a tree killed for exceeding its timeout.",
+        },
+        StdItem {
+            name: "exit_command_not_found",
+            kind: StdItemKind::Function,
+            doc: "The exit code for a command that was not found inside the sandbox.",
+        },
+        StdItem {
+            name: "exit_level_unavailable",
+            kind: StdItemKind::Function,
+            doc: "The exit code for a level this host cannot honor.",
+        },
+        StdItem {
+            name: "exit_signal_base",
+            kind: StdItemKind::Function,
+            doc: "The number added to a signal when a child dies on one, so a wrapper reports what a shell would.",
+        },
+        StdItem {
+            name: "run_inherit",
+            kind: StdItemKind::Function,
+            doc: "run_inherit(policy, argv) -> i64. Runs argv with the caller's own streams and answers the exit code the contract gives, which is the shape a wrapper command wants.",
         },
     ],
 };

@@ -115,7 +115,23 @@
   not resolve is a policy error rather than a silently dropped rule.
 - The well-known daemon sockets and the loader environment variables
   (`LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`, and their kin) are
-  denied under every policy and cannot be granted back.
+  denied under every policy and cannot be granted back. A pathname socket is
+  reached by `connect`, which is not one of Landlock's access rights, so at
+  `strict` on Linux the mount namespace covers each denied socket with a node
+  nothing can connect to; below `strict` the denial governs the filesystem and
+  no mechanism stops the connection itself.
+- A `strict` Linux child cannot enter a user namespace of its own. The seccomp
+  filter refuses `unshare` and `clone` carrying `CLONE_NEWUSER`, so the child
+  cannot acquire capabilities in a nested namespace.
+- One process supervising several sandboxed runs at once tears down only its
+  own tree. The teardown sweep finds a descendant by asking `/proc` which
+  processes were reparented to the supervisor, which a concurrent run's own
+  child answers identically; each live run's session is registered, so a
+  teardown reaches its own tree and stops there.
+- A sandboxed run's teardown names the child's pid - its process group, its
+  session, the sweep through `/proc` - so the child is now released only after
+  the last kill has run, and a status read leaves it in the process table until
+  then. A released pid can name a different process.
 - A grant never lifts a denial. A read-only grant on a path the policy denies
   is refused as a policy error rather than silently honored, and a denial
   inside a grant is enforced on Linux by granting the directory's other
@@ -141,6 +157,39 @@
   `process_isolation()`, `resource_limits()`, `notes()`, and
   `capabilities_json()`, so a program branches on what the host honors instead
   of assuming one operating system.
+- `std::sandbox` reaches every policy the Rust crate can express. The network
+  has its three modes rather than two through `network_mode("none" | "client" |
+  "open")` and `for_fetch_phase()`; the temporary directory is chosen with
+  `temp("private" | "inherit")` and `temp_path(p)`; and every resource bound
+  the policy model carries is settable - `max_processes`, `max_memory`,
+  `max_cpu_time`, `max_file_size`, `max_temp_size`. An unknown enum spelling
+  leaves the setting as it was, so a typo cannot open a network a policy meant
+  to close.
+- A `std::sandbox` policy answers what it says and what the host will honor as
+  two separate questions. `check()`, `mechanisms()`, `to_json()`,
+  `access(path)`, `read_write_grants()`, `read_only_grants()`, `denials()`,
+  `environment_names()`, `environment_value(name)`, `level_name()`,
+  `network_name()`, and `working_directory_path()` read the policy back;
+  `level_blocker()`, `network_enforcement_kind()` / `_reason()`, and
+  `resource_enforcement_kind()` / `_reason()` say what will actually hold, so a
+  report cannot present a request as a guarantee.
+- The `std::sandbox` capability report answers each verdict as an arm to match
+  on rather than a sentence to parse: `filesystem_kind()` / `_reason()`,
+  `network_kind()` / `_reason()`, `process_isolation_kind()` / `_reason()`, and
+  `resource_limits_kind()` / `_reason()` are each `"full"`, `"partial"`, or
+  `"none"`, alongside `os_description()`.
+- `sandbox::run_inherit(&policy, &argv)` runs a child on the caller's own
+  streams and answers the shared exit-code contract, which
+  `exit_policy_error()`, `exit_command_not_found()`, `exit_level_unavailable()`,
+  and `exit_signal_base()` name - the shape a wrapper command needs, where a
+  policy mistake must not read as a program that merely failed. The wrapper's
+  own output is flushed before the child writes, so the transcript reads in
+  order on every tier.
+- `std::sandbox` discovers the paths a profile names: `expand(text)`,
+  `prefix_of(name)`, `resolve_on_path(name)`, and `home_directory()` each
+  answer an `Option<String>`, and `rust_toolchain_paths()` lists what a policy
+  running cargo has to grant. `stale_grant_count()` and `clean_stale_grants()`
+  cover the ACL grants an interrupted Windows run leaves behind.
 - A Windows `AppContainer` child carries `LOCALAPPDATA`, `TEMP`, and `TMP`.
   Windows redirects those into the container profile while it creates the
   process and refuses creation when the supplied environment block names none

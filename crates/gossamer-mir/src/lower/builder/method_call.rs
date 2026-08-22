@@ -3596,6 +3596,60 @@ impl<'a> Builder<'a> {
                 Some("gos_rt_sandbox_policy_working_directory")
             }
             (Some("sandbox::Policy"), "explain") => Some("gos_rt_sandbox_policy_explain"),
+            (Some("sandbox::Policy"), "network_mode") => Some("gos_rt_sandbox_policy_network_mode"),
+            (Some("sandbox::Policy"), "for_fetch_phase") => {
+                Some("gos_rt_sandbox_policy_for_fetch_phase")
+            }
+            (Some("sandbox::Policy"), "temp") => Some("gos_rt_sandbox_policy_temp"),
+            (Some("sandbox::Policy"), "temp_path") => Some("gos_rt_sandbox_policy_temp_path"),
+            (Some("sandbox::Policy"), "max_processes") => {
+                Some("gos_rt_sandbox_policy_max_processes")
+            }
+            (Some("sandbox::Policy"), "max_memory") => Some("gos_rt_sandbox_policy_max_memory"),
+            (Some("sandbox::Policy"), "max_cpu_time") => Some("gos_rt_sandbox_policy_max_cpu_time"),
+            (Some("sandbox::Policy"), "max_file_size") => {
+                Some("gos_rt_sandbox_policy_max_file_size")
+            }
+            (Some("sandbox::Policy"), "max_temp_size") => {
+                Some("gos_rt_sandbox_policy_max_temp_size")
+            }
+            (Some("sandbox::Policy"), "to_json") => Some("gos_rt_sandbox_policy_to_json"),
+            (Some("sandbox::Policy"), "access") => Some("gos_rt_sandbox_policy_access"),
+            (Some("sandbox::Policy"), "environment_value") => {
+                Some("gos_rt_sandbox_policy_environment_value")
+            }
+            (Some("sandbox::Policy"), "level_name") => Some("gos_rt_sandbox_policy_level_name"),
+            (Some("sandbox::Policy"), "network_name") => Some("gos_rt_sandbox_policy_network_name"),
+            (Some("sandbox::Policy"), "working_directory_path") => {
+                Some("gos_rt_sandbox_policy_working_directory_path")
+            }
+            (Some("sandbox::Policy"), "level_blocker") => {
+                Some("gos_rt_sandbox_policy_level_blocker")
+            }
+            (Some("sandbox::Policy"), "network_enforcement_kind") => {
+                Some("gos_rt_sandbox_policy_network_enforcement_kind")
+            }
+            (Some("sandbox::Policy"), "network_enforcement_reason") => {
+                Some("gos_rt_sandbox_policy_network_enforcement_reason")
+            }
+            (Some("sandbox::Policy"), "resource_enforcement_kind") => {
+                Some("gos_rt_sandbox_policy_resource_enforcement_kind")
+            }
+            (Some("sandbox::Policy"), "resource_enforcement_reason") => {
+                Some("gos_rt_sandbox_policy_resource_enforcement_reason")
+            }
+            (Some("sandbox::Policy"), "mechanisms") => Some("gos_rt_sandbox_policy_mechanisms"),
+            (Some("sandbox::Policy"), "read_write_grants") => {
+                Some("gos_rt_sandbox_policy_read_write_grants")
+            }
+            (Some("sandbox::Policy"), "read_only_grants") => {
+                Some("gos_rt_sandbox_policy_read_only_grants")
+            }
+            (Some("sandbox::Policy"), "denials") => Some("gos_rt_sandbox_policy_denials"),
+            (Some("sandbox::Policy"), "environment_names") => {
+                Some("gos_rt_sandbox_policy_environment_names")
+            }
+            (Some("sandbox::Policy"), "check") => Some("gos_rt_sandbox_policy_check"),
             (Some("process::Child"), "write_stdin") => Some("gos_rt_child_write_stdin"),
             (Some("process::Child"), "close_stdin") => Some("gos_rt_child_close_stdin"),
             (Some("process::Child"), "read_line") => Some("gos_rt_child_read_line"),
@@ -4055,8 +4109,41 @@ impl<'a> Builder<'a> {
             | "gos_rt_sandbox_policy_env_set"
             | "gos_rt_sandbox_policy_timeout"
             | "gos_rt_sandbox_policy_level"
-            | "gos_rt_sandbox_policy_working_directory" => self.sandbox_policy_ty(),
-            "gos_rt_sandbox_policy_explain" => self.tcx.string_ty(),
+            | "gos_rt_sandbox_policy_working_directory"
+            | "gos_rt_sandbox_policy_network_mode"
+            | "gos_rt_sandbox_policy_for_fetch_phase"
+            | "gos_rt_sandbox_policy_temp"
+            | "gos_rt_sandbox_policy_temp_path"
+            | "gos_rt_sandbox_policy_max_processes"
+            | "gos_rt_sandbox_policy_max_memory"
+            | "gos_rt_sandbox_policy_max_cpu_time"
+            | "gos_rt_sandbox_policy_max_file_size"
+            | "gos_rt_sandbox_policy_max_temp_size" => self.sandbox_policy_ty(),
+            "gos_rt_sandbox_policy_explain"
+            | "gos_rt_sandbox_policy_to_json"
+            | "gos_rt_sandbox_policy_access"
+            | "gos_rt_sandbox_policy_environment_value"
+            | "gos_rt_sandbox_policy_level_name"
+            | "gos_rt_sandbox_policy_network_name"
+            | "gos_rt_sandbox_policy_working_directory_path"
+            | "gos_rt_sandbox_policy_level_blocker"
+            | "gos_rt_sandbox_policy_network_enforcement_kind"
+            | "gos_rt_sandbox_policy_network_enforcement_reason"
+            | "gos_rt_sandbox_policy_resource_enforcement_kind"
+            | "gos_rt_sandbox_policy_resource_enforcement_reason" => self.tcx.string_ty(),
+            // A reader that answers a list of paths or names: pinned so a
+            // `for` over it walks strings rather than an unresolved Var.
+            "gos_rt_sandbox_policy_mechanisms"
+            | "gos_rt_sandbox_policy_read_write_grants"
+            | "gos_rt_sandbox_policy_read_only_grants"
+            | "gos_rt_sandbox_policy_denials"
+            | "gos_rt_sandbox_policy_environment_names" => {
+                let string = self.tcx.string_ty();
+                self.tcx.intern(gossamer_types::TyKind::Vec(string))
+            }
+            // `check()` answers `Result<(), errors::Error>`, so `?` and a
+            // `match` on it read the packed carrier correctly.
+            "gos_rt_sandbox_policy_check" => self.result_unit_error_adt_ty(),
             "gos_rt_child_read_stdout" => self.tcx.string_ty(),
             "gos_rt_option_unwrap"
             | "gos_rt_result_unwrap"
@@ -4365,7 +4452,16 @@ impl<'a> Builder<'a> {
             | "gos_rt_sandbox_policy_env_set"
             | "gos_rt_sandbox_policy_timeout"
             | "gos_rt_sandbox_policy_level"
-            | "gos_rt_sandbox_policy_working_directory" => Some("sandbox::Policy"),
+            | "gos_rt_sandbox_policy_working_directory"
+            | "gos_rt_sandbox_policy_network_mode"
+            | "gos_rt_sandbox_policy_for_fetch_phase"
+            | "gos_rt_sandbox_policy_temp"
+            | "gos_rt_sandbox_policy_temp_path"
+            | "gos_rt_sandbox_policy_max_processes"
+            | "gos_rt_sandbox_policy_max_memory"
+            | "gos_rt_sandbox_policy_max_cpu_time"
+            | "gos_rt_sandbox_policy_max_file_size"
+            | "gos_rt_sandbox_policy_max_temp_size" => Some("sandbox::Policy"),
             // Every `Server` setter answers the server, so a `|>` chain of
             // them keeps dispatching on `http::Server`.
             "gos_rt_http_server_read_header_timeout_ms"
@@ -4801,6 +4897,60 @@ impl<'a> Builder<'a> {
                 Some("gos_rt_sandbox_policy_working_directory")
             }
             (Some("sandbox::Policy"), "explain") => Some("gos_rt_sandbox_policy_explain"),
+            (Some("sandbox::Policy"), "network_mode") => Some("gos_rt_sandbox_policy_network_mode"),
+            (Some("sandbox::Policy"), "for_fetch_phase") => {
+                Some("gos_rt_sandbox_policy_for_fetch_phase")
+            }
+            (Some("sandbox::Policy"), "temp") => Some("gos_rt_sandbox_policy_temp"),
+            (Some("sandbox::Policy"), "temp_path") => Some("gos_rt_sandbox_policy_temp_path"),
+            (Some("sandbox::Policy"), "max_processes") => {
+                Some("gos_rt_sandbox_policy_max_processes")
+            }
+            (Some("sandbox::Policy"), "max_memory") => Some("gos_rt_sandbox_policy_max_memory"),
+            (Some("sandbox::Policy"), "max_cpu_time") => Some("gos_rt_sandbox_policy_max_cpu_time"),
+            (Some("sandbox::Policy"), "max_file_size") => {
+                Some("gos_rt_sandbox_policy_max_file_size")
+            }
+            (Some("sandbox::Policy"), "max_temp_size") => {
+                Some("gos_rt_sandbox_policy_max_temp_size")
+            }
+            (Some("sandbox::Policy"), "check") => Some("gos_rt_sandbox_policy_check"),
+            (Some("sandbox::Policy"), "mechanisms") => Some("gos_rt_sandbox_policy_mechanisms"),
+            (Some("sandbox::Policy"), "to_json") => Some("gos_rt_sandbox_policy_to_json"),
+            (Some("sandbox::Policy"), "access") => Some("gos_rt_sandbox_policy_access"),
+            (Some("sandbox::Policy"), "read_write_grants") => {
+                Some("gos_rt_sandbox_policy_read_write_grants")
+            }
+            (Some("sandbox::Policy"), "read_only_grants") => {
+                Some("gos_rt_sandbox_policy_read_only_grants")
+            }
+            (Some("sandbox::Policy"), "denials") => Some("gos_rt_sandbox_policy_denials"),
+            (Some("sandbox::Policy"), "environment_names") => {
+                Some("gos_rt_sandbox_policy_environment_names")
+            }
+            (Some("sandbox::Policy"), "environment_value") => {
+                Some("gos_rt_sandbox_policy_environment_value")
+            }
+            (Some("sandbox::Policy"), "level_name") => Some("gos_rt_sandbox_policy_level_name"),
+            (Some("sandbox::Policy"), "network_name") => Some("gos_rt_sandbox_policy_network_name"),
+            (Some("sandbox::Policy"), "working_directory_path") => {
+                Some("gos_rt_sandbox_policy_working_directory_path")
+            }
+            (Some("sandbox::Policy"), "level_blocker") => {
+                Some("gos_rt_sandbox_policy_level_blocker")
+            }
+            (Some("sandbox::Policy"), "network_enforcement_kind") => {
+                Some("gos_rt_sandbox_policy_network_enforcement_kind")
+            }
+            (Some("sandbox::Policy"), "network_enforcement_reason") => {
+                Some("gos_rt_sandbox_policy_network_enforcement_reason")
+            }
+            (Some("sandbox::Policy"), "resource_enforcement_kind") => {
+                Some("gos_rt_sandbox_policy_resource_enforcement_kind")
+            }
+            (Some("sandbox::Policy"), "resource_enforcement_reason") => {
+                Some("gos_rt_sandbox_policy_resource_enforcement_reason")
+            }
             (Some("process::Child"), "write_stdin") => Some("gos_rt_child_write_stdin"),
             (Some("process::Child"), "close_stdin") => Some("gos_rt_child_close_stdin"),
             (Some("process::Child"), "read_line") => Some("gos_rt_child_read_line"),

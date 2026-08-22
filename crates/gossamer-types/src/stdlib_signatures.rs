@@ -2544,6 +2544,111 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         signature: "fn capabilities_json() -> String",
     },
     StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "os_description",
+        signature: "fn os_description() -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "filesystem_kind",
+        signature: "fn filesystem_kind() -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "filesystem_reason",
+        signature: "fn filesystem_reason() -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "network_kind",
+        signature: "fn network_kind() -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "network_reason",
+        signature: "fn network_reason() -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "process_isolation_kind",
+        signature: "fn process_isolation_kind() -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "process_isolation_reason",
+        signature: "fn process_isolation_reason() -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "resource_limits_kind",
+        signature: "fn resource_limits_kind() -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "resource_limits_reason",
+        signature: "fn resource_limits_reason() -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "expand",
+        signature: "fn expand(text: String) -> Option<String>",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "prefix_of",
+        signature: "fn prefix_of(name: String) -> Option<String>",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "resolve_on_path",
+        signature: "fn resolve_on_path(name: String) -> Option<String>",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "home_directory",
+        signature: "fn home_directory() -> Option<String>",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "rust_toolchain_paths",
+        signature: "fn rust_toolchain_paths() -> Vec<String>",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "stale_grant_count",
+        signature: "fn stale_grant_count() -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "clean_stale_grants",
+        signature: "fn clean_stale_grants() -> Result<i64, errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "exit_policy_error",
+        signature: "fn exit_policy_error() -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "exit_command_not_found",
+        signature: "fn exit_command_not_found() -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "exit_level_unavailable",
+        signature: "fn exit_level_unavailable() -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "exit_signal_base",
+        signature: "fn exit_signal_base() -> i64",
+    },
+    StdFunctionSignature {
+        module_path: "std::sandbox",
+        name: "run_inherit",
+        signature: "fn run_inherit(policy: sandbox::Policy, argv: Vec<String>) -> i64",
+    },
+    StdFunctionSignature {
         module_path: "std::os::signal",
         name: "on",
         signature: "fn on(signum: i64) -> os::signal::Notifier",
