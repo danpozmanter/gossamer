@@ -185,6 +185,17 @@
   policy mistake must not read as a program that merely failed. The wrapper's
   own output is flushed before the child writes, so the transcript reads in
   order on every tier.
+- `errors::Error.to_string()` answers the error. On the compiled tiers the
+  handle reached the structural formatter, which read the one word it is as a
+  string pointer and rendered whatever bytes followed - a one-character answer
+  where `{}` on the same value printed the whole cause chain. `to_string` now
+  routes to the same renderer `{}` does, and `DynError` answers the
+  `errors::Error` receiver kind so every dispatch that asks recovers it.
+- A `sandbox::Policy` builder leaves the policy it was read from live. The
+  compiled tiers consumed the handle, so `let a = p.read_write(x)` left `p`
+  naming nothing and a second builder off the same `p` answered an empty
+  policy, while the bytecode VM answered both. A policy is a value; the two
+  tiers now agree that it stays one.
 - `std::sandbox` discovers the paths a profile names: `expand(text)`,
   `prefix_of(name)`, `resolve_on_path(name)`, and `home_directory()` each
   answer an `Option<String>`, and `rust_toolchain_paths()` lists what a policy

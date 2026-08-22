@@ -519,6 +519,7 @@ impl<'a> Builder<'a> {
             && args.is_empty()
             && self.display_to_string_receiver(receiver_ty)
             && !self.has_user_rendering_method(receiver_ty, "to_string")
+            && !self.renders_through_own_shim(receiver, &receiver_kind_flat, receiver_ty)
         {
             return self.lower_display_to_string(receiver, span);
         }
@@ -3199,6 +3200,9 @@ impl<'a> Builder<'a> {
             (Some("bufio::Scanner"), "scan") => Some("gos_rt_bufio_scanner_scan"),
             (Some("bufio::Scanner"), "text") => Some("gos_rt_bufio_scanner_text"),
             (Some("errors::Error"), "message") => Some("gos_rt_error_message"),
+            // `{}` on an error renders the colon-joined chain, and
+            // `to_string` is the same contract by another spelling.
+            (Some("errors::Error"), "to_string") => Some("gos_rt_error_display"),
             (Some("errors::Error"), "cause") => Some("gos_rt_error_cause"),
             (Some("errors::Error"), "is") => Some("gos_rt_error_is"),
             (Some("errors::Error"), "chain") => Some("gos_rt_error_chain"),
@@ -3996,7 +4000,8 @@ impl<'a> Builder<'a> {
         ty: Ty,
     ) -> Ty {
         match rt {
-            "gos_rt_error_message"
+            "gos_rt_error_display"
+            | "gos_rt_error_message"
             | "gos_rt_bufio_scanner_text"
             | "gos_rt_http_response_body"
             | "gos_rt_http_request_path"
@@ -4684,6 +4689,9 @@ impl<'a> Builder<'a> {
             (Some("bufio::Scanner"), "scan") => Some("gos_rt_bufio_scanner_scan"),
             (Some("bufio::Scanner"), "text") => Some("gos_rt_bufio_scanner_text"),
             (Some("errors::Error"), "message") => Some("gos_rt_error_message"),
+            // `{}` on an error renders the colon-joined chain, and
+            // `to_string` is the same contract by another spelling.
+            (Some("errors::Error"), "to_string") => Some("gos_rt_error_display"),
             (Some("errors::Error"), "cause") => Some("gos_rt_error_cause"),
             (Some("errors::Error"), "is") => Some("gos_rt_error_is"),
             (Some("errors::Error"), "chain") => Some("gos_rt_error_chain"),
@@ -6206,6 +6214,30 @@ impl<'a> Builder<'a> {
     pub(crate) fn has_user_rendering_method(&mut self, receiver_ty: Ty, method: &str) -> bool {
         self.adt_dispatch_name(receiver_ty)
             .is_some_and(|name| self.impl_methods.contains_key(&format!("{name}::{method}")))
+    }
+
+    /// Whether the receiver renders through a runtime shim of its own
+    /// rather than through the structural formatter.
+    ///
+    /// A runtime handle is one word, so the structural path would hand
+    /// that word to the string formatter and render whatever bytes it
+    /// points at. `errors::Error` is the case that matters: `{}` already
+    /// routes to `gos_rt_error_display` for the colon-joined chain, and
+    /// `to_string` has to answer the same text.
+    fn renders_through_own_shim(
+        &self,
+        receiver: &HirExpr,
+        receiver_kind_flat: &TyKind,
+        receiver_ty: Ty,
+    ) -> bool {
+        let kind = self
+            .receiver_local_from_path(receiver)
+            .and_then(|l| self.local_runtime_kind.get(&l).copied())
+            .or_else(|| self.expr_runtime_kind(receiver))
+            .or_else(|| Self::stdlib_runtime_kind_from_kind(receiver_kind_flat))
+            .or_else(|| self.runtime_kind_from_ty(receiver_ty))
+            .or_else(|| self.runtime_kind_from_ty(receiver.ty));
+        kind == Some("errors::Error")
     }
 
     fn display_to_string_receiver(&mut self, receiver_ty: Ty) -> bool {

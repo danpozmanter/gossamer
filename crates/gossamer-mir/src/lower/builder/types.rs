@@ -1268,6 +1268,12 @@ impl<'a> Builder<'a> {
         while let TyKind::Ref { inner, .. } = self.tcx.kind_of(cur) {
             cur = *inner;
         }
+        // `DynError` is the type of an `errors::Error`, so it answers that
+        // kind directly rather than through the rendered name below: the
+        // rendered tail is `Error`, which a user type may also be called.
+        if matches!(self.tcx.kind_of(cur), TyKind::DynError) {
+            return Some("errors::Error");
+        }
         let rendered = gossamer_types::printer::render_ty(self.tcx, cur);
         let bare = rendered.rsplit("::").next().unwrap_or(&rendered);
         let name = bare.split('<').next().unwrap_or(bare).trim();

@@ -39,14 +39,6 @@ fn insert(policy: SandboxPolicy) -> i64 {
     handle
 }
 
-fn take(handle: i64) -> Option<SandboxPolicy> {
-    registry()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .1
-        .remove(&handle)
-}
-
 fn peek(handle: i64) -> Option<SandboxPolicy> {
     registry()
         .lock()
@@ -59,11 +51,16 @@ fn peek(handle: i64) -> Option<SandboxPolicy> {
 /// Applies `edit` to the policy `handle` names and answers a fresh
 /// handle.
 ///
-/// The old handle is consumed: a builder chain produces one live
-/// policy, and keeping every intermediate would grow the registry for
-/// the length of the program.
+/// The old handle stays live. A policy is a value, so a binding it was
+/// read from is still that policy afterwards: `let a = p.read_write(x)`
+/// followed by `let b = p.read_only(x)` has to answer two policies
+/// built from the same `p`, and `p` itself has to remain readable. That
+/// leaves each intermediate in the registry for the length of the
+/// program, which a handful of small policies can afford; consuming the
+/// handle would save that at the price of a binding that silently
+/// stops naming anything.
 fn edit(handle: i64, edit: impl FnOnce(SandboxPolicy) -> SandboxPolicy) -> i64 {
-    match take(handle) {
+    match peek(handle) {
         Some(policy) => insert(edit(policy)),
         None => 0,
     }
@@ -565,12 +562,15 @@ pub extern "C" fn gos_rt_sandbox_policy_mechanisms(handle: i64) -> *mut GosVec {
 }
 
 /// `policy.to_json()` - the compiled policy, for a report or a test.
+///
+/// A policy that will not compile has no compiled form to serialize, so
+/// this answers the empty string rather than the reason as bare text:
+/// the call promises JSON, and a caller that parses the answer must not
+/// have to guess whether it got any. `check` is what carries the reason.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_sandbox_policy_to_json(handle: i64) -> *mut c_char {
-    match compiled(handle) {
-        Ok(policy) => alloc_cstring(policy.to_json().as_bytes()),
-        Err(reason) => alloc_cstring(reason.as_bytes()),
-    }
+    let text = compiled(handle).map_or_else(|_| String::new(), |policy| policy.to_json());
+    alloc_cstring(text.as_bytes())
 }
 
 /// `policy.access(path)` - `read-write`, `read-only`, or `deny`, the
@@ -1015,14 +1015,23 @@ pub unsafe extern "C" fn gos_rt_sandbox_run_inherit(handle: i64, argv: *mut GosV
 mod sandbox_abi_tests {
     use super::*;
 
+    /// A policy is a value: the binding a builder was read from still
+    /// names that policy afterwards, so two builders can branch from one
+    /// `p` and `p` itself stays readable. The bytecode VM answers the
+    /// same way, and a handle consumed here would diverge from it.
     #[test]
-    fn a_builder_chain_consumes_each_handle_and_answers_a_live_one() {
+    fn a_builder_leaves_the_policy_it_was_read_from_live() {
         let first = gos_rt_sandbox_policy_new();
         assert!(first > 0);
         let second = gos_rt_sandbox_policy_network(first, 1);
         assert!(second > 0);
         assert_ne!(first, second);
-        assert!(peek(first).is_none(), "the consumed handle is reclaimed");
+        assert_eq!(
+            peek(first)
+                .expect("the original handle is still live")
+                .network,
+            Network::None
+        );
         assert_eq!(
             peek(second).expect("the new handle is live").network,
             Network::Open

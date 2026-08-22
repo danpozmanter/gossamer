@@ -58,10 +58,7 @@ fn main() {
         .read_write(&".")
         .network_mode(&"client")
         .temp(&"private")
-        .max_processes(64)
-        .max_memory(536_870_912)
-        .max_cpu_time(30_000)
-        .max_file_size(1_048_576)
+        .timeout(30_000)
         .level(&"none")
 
     println!("mode: {}", full.network_name())
@@ -77,6 +74,22 @@ fn main() {
         Ok(_) => println!("check: ok")
         Err(e) => println!("check failed: {}", e)
     }
+
+    // The resource bounds live on their own policy: a host without the
+    // mechanism for one refuses the whole run, so a policy carrying a
+    // bound is only buildable where that mechanism exists. What is
+    // asserted here is that the bounds reach the shims and the verdict
+    // comes back, not what this particular machine can honor.
+    let bounded = sandbox::Policy::new()
+        .read_write(&".")
+        .max_processes(64)
+        .max_memory(536_870_912)
+        .max_cpu_time(30_000)
+        .max_file_size(1_048_576)
+        .max_temp_size(67_108_864)
+        .level(&"none")
+
+    println!("bounds: {}", bounded.resource_enforcement_kind().len() > 0)
 
     // An unknown name is refused rather than applied, so a typo can
     // never weaken a policy that was written to be strict.
@@ -109,6 +122,7 @@ const EXPECTED: &str = "level known: true\n\
      verdicts: true true\n\
      unblocked: true\n\
      check: ok\n\
+     bounds: true\n\
      typo: open\n\
      fetch: client\n\
      codes: 126 127 64 128\n\

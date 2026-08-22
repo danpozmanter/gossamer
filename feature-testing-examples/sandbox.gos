@@ -55,9 +55,10 @@ fn main() {
     let verdict = impossible.explain()
     println!("strict is decided: {}", verdict.len() > 0)
 
-    // The whole builder surface: the network's three modes, the temp
-    // choice, and every resource bound the policy can ask for.
-    let full = sandbox::Policy::new().read_write(&".").network_mode(&"client").temp(&"private").max_processes(64).max_memory(536_870_912).max_cpu_time(30_000).level(&"none")
+    // The whole builder surface bar the resource bounds, which are
+    // asked about separately below: a policy carrying one is only
+    // buildable where the host has the mechanism for it.
+    let full = sandbox::Policy::new().read_write(&".").network_mode(&"client").temp(&"private").timeout(30_000).level(&"none")
 
     println!("network mode: {}", full.network_name())
     println!("level asked for: {}", full.level_name())
@@ -74,15 +75,17 @@ fn main() {
     // different questions, so they are two different calls.
     println!("run network verdict: {}", verdict_known(&full.network_enforcement_kind()))
     println!("run limits verdict: {}", verdict_known(&full.resource_enforcement_kind()))
-    println!("limits reason is text: {}", full.resource_enforcement_reason().len() >= 0)
 
-    // A bound the host has no mechanism for is reported as unenforced
-    // rather than accepted, which is why what a policy asks for and
-    // what a host will honor are two separate questions. The private
-    // temporary filesystem is the clearest case: it needs a mount
-    // namespace, which not every level or platform has.
-    let bounded = sandbox::Policy::new().read_write(&".").max_temp_size(67_108_864).level(&"none")
-    println!("a temp bound is decided: {}", verdict_known(&bounded.resource_enforcement_kind()))
+    // Every resource bound the policy model carries. A bound the host
+    // has no mechanism for is reported as unenforced rather than
+    // accepted, and a run that asks for one is refused outright - which
+    // is why what a policy asks for and what a host will honor are two
+    // separate questions, and why nothing here asserts the verdict
+    // itself. A process count and a memory cap need a delegated cgroup;
+    // a private temporary filesystem needs a mount namespace.
+    let bounded = sandbox::Policy::new().read_write(&".").max_processes(64).max_memory(536_870_912).max_cpu_time(30_000).max_file_size(1_048_576).max_temp_size(67_108_864).level(&"none")
+    println!("bounds are decided: {}", verdict_known(&bounded.resource_enforcement_kind()))
+    println!("bounds reason is text: {}", bounded.resource_enforcement_reason().len() >= 0)
 
     // `none` is honorable everywhere, so nothing blocks it and the
     // check passes on every host the fixture runs on.

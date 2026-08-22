@@ -540,11 +540,12 @@ fn builtin_policy_mechanisms(args: &[Value]) -> RuntimeResult<Value> {
     string_list(sandbox_of(args).map_or_else(Vec::new, |sandbox| sandbox.mechanisms()))
 }
 
+/// A policy that will not compile has no compiled form to serialize, so
+/// this answers the empty string rather than the reason as bare text:
+/// the call promises JSON, and a caller that parses the answer must not
+/// have to guess whether it got any. `check` is what carries the reason.
 fn builtin_policy_to_json(args: &[Value]) -> RuntimeResult<Value> {
-    text_value(compiled(args).map_or_else(
-        || "sandbox: the receiver is not a policy".to_string(),
-        |policy| policy.to_json(),
-    ))
+    text_value(compiled(args).map_or_else(String::new, |policy| policy.to_json()))
 }
 
 /// The spelling of `access` a Gossamer caller matches on.
