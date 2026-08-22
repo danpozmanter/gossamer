@@ -83,9 +83,10 @@ impl Plan {
     /// `private_temp` names the directory a private `tmpfs` is mounted
     /// on. It is the policy's own temp directory rather than `/tmp`,
     /// because mounting over `/tmp` would hide a workspace that lives
-    /// under it.
+    /// under it. `temp_bytes` bounds it; with no bound the mount takes
+    /// the kernel default, which is half of RAM.
     #[must_use]
-    pub(crate) fn new(private_temp: Option<&std::path::Path>) -> Self {
+    pub(crate) fn new(private_temp: Option<&std::path::Path>, temp_bytes: Option<u64>) -> Self {
         let uid = unsafe { libc::geteuid() };
         let gid = unsafe { libc::getegid() };
         let cstring = |text: String| CString::new(text).unwrap_or_default();
@@ -101,7 +102,13 @@ impl Plan {
                 private_temp.map_or_else(String::new, |path| path.to_string_lossy().into_owned()),
             ),
             tmpfs_type: cstring("tmpfs".to_string()),
-            tmpfs_options: cstring("mode=1777,size=1g".to_string()),
+            // Sized from the policy rather than from a constant: a
+            // build whose temporary files outgrow a number nobody chose
+            // fails with an `ENOSPC` that names nothing.
+            tmpfs_options: cstring(temp_bytes.map_or_else(
+                || "mode=1777".to_string(),
+                |bytes| format!("mode=1777,size={bytes}"),
+            )),
             private_temp: private_temp.is_some(),
         }
     }
@@ -253,7 +260,7 @@ mod namespace_tests {
 
     #[test]
     fn the_plan_maps_the_calling_user_to_root_inside_the_namespace() {
-        let plan = Plan::new(Some(std::path::Path::new("/tmp/private")));
+        let plan = Plan::new(Some(std::path::Path::new("/tmp/private")), Some(1 << 30));
         let uid = unsafe { libc::geteuid() };
         assert_eq!(
             plan.uid_map.to_str().expect("uid map is utf-8"),

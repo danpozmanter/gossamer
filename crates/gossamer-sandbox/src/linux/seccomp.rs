@@ -66,6 +66,13 @@ fn denied_syscalls() -> Vec<(libc::c_long, u32)> {
         // Debugging another process is how a sandboxed build reads a
         // sibling's memory, including one holding credentials.
         (libc::SYS_ptrace, kill),
+        // The same read and write without `ptrace`. Listing one and
+        // not the others would leave the reason for the first unmet.
+        (libc::SYS_process_vm_readv, kill),
+        (libc::SYS_process_vm_writev, kill),
+        // Opening a file from an opaque handle bypasses path lookup, so
+        // no path policy on any backend can see it.
+        (libc::SYS_open_by_handle_at, kill),
         // Loading a kernel module is a direct escape.
         (libc::SYS_init_module, kill),
         (libc::SYS_finit_module, kill),
@@ -256,5 +263,27 @@ mod seccomp_tests {
         };
         assert_eq!(verdict(libc::SYS_ptrace), Some(SECCOMP_RET_KILL_PROCESS));
         assert_eq!(verdict(libc::SYS_setns), Some(SECCOMP_RET_KILL_PROCESS));
+    }
+
+    /// `ptrace` is on the list because it reads another process's
+    /// memory. Anything else that does the same has to be there too, or
+    /// the entry is a name rather than a rule.
+    #[test]
+    fn every_way_to_read_another_processs_memory_is_refused() {
+        let denied = denied_syscalls();
+        for number in [
+            libc::SYS_ptrace,
+            libc::SYS_process_vm_readv,
+            libc::SYS_process_vm_writev,
+        ] {
+            assert_eq!(
+                denied
+                    .iter()
+                    .find(|(listed, _)| *listed == number)
+                    .map(|(_, verdict)| *verdict),
+                Some(SECCOMP_RET_KILL_PROCESS),
+                "syscall {number} reads another process and is not refused"
+            );
+        }
     }
 }

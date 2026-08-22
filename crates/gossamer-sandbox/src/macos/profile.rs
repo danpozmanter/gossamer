@@ -83,9 +83,12 @@ pub(crate) fn render(policy: &CompiledPolicy) -> String {
     out.push_str("(allow sysctl-read)\n");
     out.push_str("(allow signal (target same-sandbox))\n");
 
-    if policy.allow_exec {
-        out.push_str("(allow process-exec*)\n");
-    }
+    // Exec is allowed unconditionally: a build is a tree of processes,
+    // and the policy that matters is which binaries are reachable,
+    // which the filesystem rules already answer. Denying exec here
+    // would be the only rule in the model with no counterpart on Linux
+    // or Windows.
+    out.push_str("(allow process-exec*)\n");
 
     match policy.network {
         // Complete, every protocol - which is more than Landlock's

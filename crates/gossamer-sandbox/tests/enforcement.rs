@@ -152,21 +152,30 @@ fn a_loader_variable_never_reaches_the_child() {
         return;
     }
     let root = workspace("loader-variable");
-    let policy = shell_policy(&root, Level::Standard)
-        .env_allow(["LD_PRELOAD"])
-        .env_set("LD_PRELOAD", "/tmp/evil.so");
-    let sandbox = Sandbox::new(&policy).expect("build sandbox");
+
+    // Asking is refused with the reason, not accepted and dropped. A
+    // caller who wrote the flag learns the policy will not carry it.
+    for policy in [
+        shell_policy(&root, Level::Standard).env_allow(["LD_PRELOAD"]),
+        shell_policy(&root, Level::Standard).env_set("LD_PRELOAD", "/tmp/evil.so"),
+        shell_policy(&root, Level::Standard).env_allow(["LD_LIBRARY_PATH"]),
+    ] {
+        let error = Sandbox::new(&policy)
+            .err()
+            .expect("a loader variable must be refused rather than silently dropped");
+        assert!(error.to_string().contains("cannot be passed"), "{error}");
+    }
+
+    // And the child gets none of them from the caller's environment,
+    // because the environment is replaced rather than extended.
+    let sandbox = Sandbox::new(&shell_policy(&root, Level::Standard)).expect("build sandbox");
     let argv = vec![
         "/bin/sh".to_string(),
         "-c".to_string(),
-        "echo ${LD_PRELOAD:-absent}".to_string(),
+        "echo ${LD_PRELOAD:-absent} ${LD_LIBRARY_PATH:-absent}".to_string(),
     ];
     let output = sandbox.run_with(&argv, Stdio::Capture).expect("run");
-    assert_eq!(
-        output.stdout_text().trim(),
-        "absent",
-        "a policy cannot grant its way past the loader denylist"
-    );
+    assert_eq!(output.stdout_text().trim(), "absent absent");
 }
 
 #[cfg(target_os = "linux")]

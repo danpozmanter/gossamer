@@ -273,6 +273,12 @@ impl SandboxPolicy {
 /// without the first `--reproducible` breaks under the sandbox, and
 /// without the second the sandbox grants one cache root while the
 /// build writes to another.
+///
+/// `LD_LIBRARY_PATH` is absent because
+/// [`crate::NEVER_PASSED_ENVIRONMENT`] refuses it: a build that needs a
+/// library directory names it through `LDFLAGS` or `PKG_CONFIG_PATH`,
+/// which the loader does not read. A policy listing it here would be
+/// refused at compile rather than half-honored.
 #[must_use]
 pub fn build_environment() -> Vec<String> {
     let mut names = base_environment();
@@ -296,7 +302,6 @@ pub fn build_environment() -> Vec<String> {
             "CFLAGS",
             "CXXFLAGS",
             "LDFLAGS",
-            "LD_LIBRARY_PATH",
             "PKG_CONFIG_PATH",
             "MACOSX_DEPLOYMENT_TARGET",
             "SDKROOT",
@@ -371,6 +376,23 @@ mod preset_tests {
         assert!(!build_environment().contains(&"CARGO_REGISTRY_TOKEN".to_string()));
         assert!(!build_environment().contains(&"GITHUB_TOKEN".to_string()));
         assert!(!build_environment().contains(&"SSH_AUTH_SOCK".to_string()));
+    }
+
+    /// A preset naming a refused variable would make every policy built
+    /// from it fail to compile, so the two lists are checked against
+    /// each other here rather than discovered by a user.
+    #[test]
+    fn no_preset_names_a_variable_the_compiler_refuses() {
+        for name in base_environment().iter().chain(build_environment().iter()) {
+            assert!(
+                !crate::policy::is_never_passed(name),
+                "{name} is in a preset and in NEVER_PASSED_ENVIRONMENT"
+            );
+        }
+        let cwd = std::env::temp_dir().canonicalize().expect("canonicalize");
+        SandboxPolicy::command_default(&cwd)
+            .compile()
+            .expect("the command default must compile");
     }
 
     #[test]

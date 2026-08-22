@@ -110,6 +110,20 @@ pub(crate) fn capabilities() -> SandboxCapabilities {
 
 /// Names the mechanisms a run at this policy's level will install.
 #[must_use]
+/// How completely `policy`'s network setting is enforced here.
+///
+/// An `AppContainer` reaches the network only through the capabilities
+/// its SID carries, so withholding `INTERNET_CLIENT` is a complete
+/// denial - and it exists only at `strict`, where the container does.
+#[must_use]
+pub(crate) fn network_enforcement(policy: &CompiledPolicy) -> Enforcement {
+    if policy.level >= crate::level::Level::Strict {
+        Enforcement::Full
+    } else {
+        Enforcement::None
+    }
+}
+
 pub(crate) fn mechanisms(policy: &CompiledPolicy) -> Vec<String> {
     let mut lines = Vec::new();
     match policy.level {
@@ -279,4 +293,28 @@ mod windows_tests {
             "{lines:?}"
         );
     }
+}
+
+/// Whether this host can enforce every limit in `resources`.
+///
+/// The job object carries memory, process-count, and CPU limits. There
+/// is no per-file size limit, so one is refused.
+#[must_use]
+pub(crate) fn resource_enforcement(
+    resources: &crate::policy::Resources,
+    _level: Level,
+) -> Enforcement {
+    if resources.max_temp_size.is_some() {
+        return Enforcement::Partial(
+            "Windows has no private mount for the temporary directory: --max-temp-mb \
+             cannot be applied here"
+                .to_string(),
+        );
+    }
+    if resources.max_file_size.is_some() {
+        return Enforcement::Partial(
+            "a Windows job object has no per-file size limit".to_string(),
+        );
+    }
+    Enforcement::Full
 }

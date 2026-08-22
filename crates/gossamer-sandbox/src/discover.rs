@@ -5,12 +5,15 @@
 //! which is most of them: `node` lives under `~/.nvm`, `pnpm` under
 //! `~/.local/share/pnpm`, `rustc` under `~/.rustup` - all inside a
 //! `HOME` the default policy denies. So a grant is discovered by
-//! resolving the command through `PATH`, following the link to the
-//! real binary, and granting its install prefix; and where a tool will
-//! answer for itself, by asking it.
+//! resolving the command through `PATH`, following the link to the real
+//! binary, and granting its install prefix.
+//!
+//! Nothing here runs the tool. A build system answers questions about
+//! itself with the project's own configuration applied, so asking it
+//! would let a repository choose what the sandbox grants, from outside
+//! the sandbox and before the policy exists.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// The real binary `name` resolves to on `PATH`, with symlinks
 /// followed.
@@ -62,47 +65,50 @@ pub fn prefix_of(name: &str) -> Option<PathBuf> {
     resolve_on_path(name).map(|binary| install_prefix(&binary))
 }
 
-/// Runs `program args...` and returns its trimmed standard output.
+/// The Rust toolchain directories a build reads.
 ///
-/// Used for the queries a tool answers about itself, which is always
-/// better than inferring: `rustc --print sysroot`, `go env GOMODCACHE`,
-/// `npm config get cache`.
+/// Discovered from the environment rather than by asking `rustc`. A
+/// tool answers about itself with the project's own configuration
+/// applied - `rust-toolchain.toml` picks the toolchain, and a rustup
+/// shim will fetch and run one to answer - so running it in a directory
+/// whose contents the sandbox exists to contain is the wrong side of
+/// the boundary. Every one of these paths is a fixed location under
+/// `RUSTUP_HOME`, and granting the toolchains directory covers whatever
+/// sysroot the project selects without executing anything to find out.
 #[must_use]
-pub fn query(program: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new(program).args(args).output().ok()?;
-    if !output.status.success() {
-        return None;
+pub fn rust_toolchain_paths() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    let mut add = |root: PathBuf| {
+        roots.push(root.join("toolchains"));
+        roots.push(root.join("settings.toml"));
+    };
+    if let Some(rustup_home) = std::env::var_os("RUSTUP_HOME") {
+        add(PathBuf::from(rustup_home));
     }
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!text.is_empty() && text != "undefined" && text != "null").then_some(text)
-}
-
-/// Each line of a multi-line query answer, for `go env A B C`.
-#[must_use]
-pub fn query_lines(program: &str, args: &[&str]) -> Vec<String> {
-    query(program, args).map_or_else(Vec::new, |text| {
-        text.lines()
-            .map(|line| line.trim().trim_matches('"').to_string())
-            .filter(|line| !line.is_empty())
-            .collect()
-    })
+    if let Some(home) = crate::home_directory() {
+        add(home.join(".rustup"));
+    }
+    roots.retain(|path| path.exists());
+    roots
 }
 
 /// Expands a leading `~` and any `$VAR` in `text` against the
 /// environment.
 ///
-/// Profiles are written with `~/.cargo/registry`, not with one
-/// machine's absolute paths, so this is where a profile becomes a host
-/// path.
+/// Profiles are written with `~/.cargo/registry` and
+/// `$GOMODCACHE`, not with one machine's absolute paths, so this is
+/// where a profile becomes a host path.
+///
+/// `None` when the text names a variable this machine does not set:
+/// splicing an empty string would turn `$GOPATH/pkg/mod` into
+/// `/pkg/mod`, and a grant is not a thing to guess at.
 #[must_use]
-pub fn expand(text: &str) -> PathBuf {
+pub fn expand(text: &str) -> Option<PathBuf> {
     let mut expanded = String::with_capacity(text.len());
     let mut rest = text;
     if let Some(tail) = rest.strip_prefix("~/") {
-        if let Some(home) = crate::home_directory() {
-            expanded.push_str(&home.to_string_lossy());
-            expanded.push('/');
-        }
+        expanded.push_str(&crate::home_directory()?.to_string_lossy());
+        expanded.push('/');
         rest = tail;
     }
     let mut chars = rest.chars().peekable();
@@ -120,11 +126,9 @@ pub fn expand(text: &str) -> PathBuf {
                 break;
             }
         }
-        if let Ok(value) = std::env::var(&name) {
-            expanded.push_str(&value);
-        }
+        expanded.push_str(std::env::var(&name).ok()?.as_str());
     }
-    PathBuf::from(expanded)
+    Some(PathBuf::from(expanded))
 }
 
 #[cfg(test)]
@@ -152,15 +156,24 @@ mod discover_tests {
         let Some(home) = crate::home_directory() else {
             return;
         };
-        assert_eq!(expand("~/.cargo/registry"), home.join(".cargo/registry"));
+        assert_eq!(
+            expand("~/.cargo/registry"),
+            Some(home.join(".cargo/registry"))
+        );
     }
 
     #[test]
     fn an_environment_variable_expands_in_place() {
-        // SAFETY-free: reads only, using a variable the process
-        // certainly has.
         let path = std::env::var("PATH").expect("PATH is set");
-        assert_eq!(expand("$PATH"), PathBuf::from(path));
+        assert_eq!(expand("$PATH"), Some(PathBuf::from(path)));
+    }
+
+    /// An unset variable makes the whole entry name nothing, rather
+    /// than splicing an empty string and granting a path one directory
+    /// from the root.
+    #[test]
+    fn an_entry_naming_an_unset_variable_expands_to_nothing() {
+        assert_eq!(expand("$GOS_NO_SUCH_VARIABLE_9d3f/pkg/mod"), None);
     }
 
     #[test]

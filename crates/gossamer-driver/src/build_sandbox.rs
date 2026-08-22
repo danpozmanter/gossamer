@@ -118,10 +118,7 @@ impl BuildRoots {
             caches.push(root.join("git"));
         }
 
-        let mut toolchain = Vec::new();
-        if let Some(sysroot) = gossamer_sandbox::discover::query("rustc", &["--print", "sysroot"]) {
-            toolchain.push(PathBuf::from(sysroot));
-        }
+        let mut toolchain = gossamer_sandbox::discover::rust_toolchain_paths();
         for command in [
             "cargo", "rustc", "cc", "gcc", "clang", "ld", "lld", "strip", "ar",
         ] {

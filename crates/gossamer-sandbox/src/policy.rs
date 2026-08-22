@@ -80,31 +80,63 @@ pub struct Resources {
     pub max_cpu_time: Option<Duration>,
     /// Maximum size of any single file the child creates, in bytes.
     pub max_file_size: Option<u64>,
+    /// Maximum size of the run's private temporary filesystem, in
+    /// bytes. Needs a private mount namespace, so `strict` on Linux;
+    /// with no bound the mount takes the kernel default.
+    pub max_temp_size: Option<u64>,
 }
 
 /// Environment variables no policy may pass through, whatever a
 /// profile or a caller asks for.
 ///
-/// Each one makes the dynamic loader or a language runtime execute
-/// caller-chosen code inside the sandbox, which would make the rest of
-/// the policy decorative.
+/// Each one redirects the dynamic loader or an interpreter's startup to
+/// a caller-chosen path, so the code that runs is not the code the
+/// command names. That is not a containment boundary - what runs is
+/// still inside the sandbox - it is the guarantee that the sandbox runs
+/// the program it was asked to run.
+///
+/// Asking to pass one is refused rather than dropped: see
+/// [`SandboxPolicy::compile`].
 pub const NEVER_PASSED_ENVIRONMENT: &[&str] = &[
+    // The loader itself, on each platform's spelling.
     "LD_PRELOAD",
     "LD_AUDIT",
+    "LD_LIBRARY_PATH",
     "LD_LIBRARY_PATH_64",
     "DYLD_INSERT_LIBRARIES",
     "DYLD_LIBRARY_PATH",
+    // glibc loads a conversion or locale module from these before
+    // `main`.
+    "GCONV_PATH",
+    "LOCPATH",
+    // Interpreter startup: each names code to run or a tree to load a
+    // runtime from, before the named program's first statement.
     "NODE_OPTIONS",
+    "PYTHONHOME",
     "PYTHONPATH",
     "PYTHONSTARTUP",
     "JAVA_TOOL_OPTIONS",
+    "JDK_JAVA_OPTIONS",
     "_JAVA_OPTIONS",
+    "CLASSPATH",
     "RUBYOPT",
+    "RUBYLIB",
     "PERL5OPT",
+    "PERL5LIB",
     "BASH_ENV",
     "ENV",
     "GIT_SSH_COMMAND",
 ];
+
+/// Prefix of an exported shell function, which `bash` evaluates as code
+/// at startup for any name that carries it.
+const SHELL_FUNCTION_PREFIX: &str = "BASH_FUNC_";
+
+/// Whether `name` is a variable no policy may pass.
+#[must_use]
+pub fn is_never_passed(name: &str) -> bool {
+    NEVER_PASSED_ENVIRONMENT.contains(&name) || name.starts_with(SHELL_FUNCTION_PREFIX)
+}
 
 /// Paths no policy may grant, at any level above `none`.
 ///
@@ -153,12 +185,9 @@ pub struct SandboxPolicy {
     pub environment_allowlist: Vec<String>,
     /// Environment variables set explicitly, whatever the caller has.
     pub environment_set: BTreeMap<String, String>,
-    /// Whether the child may start further processes.
-    pub allow_exec: bool,
-    /// Whether the child's descendants are isolated from the host
-    /// process table.
-    pub process_tree_isolated: bool,
-    /// Whether the whole tree is killed when the sandbox exits.
+    /// Whether the whole tree is killed when the sandbox exits, by
+    /// whatever mechanism the backend has for reaching a descendant
+    /// that left the process group.
     pub kill_tree_on_exit: bool,
     /// Limits the policy asks for.
     pub resources: Resources,
@@ -190,8 +219,6 @@ impl SandboxPolicy {
             network: Network::None,
             environment_allowlist: Vec::new(),
             environment_set: BTreeMap::new(),
-            allow_exec: true,
-            process_tree_isolated: false,
             kill_tree_on_exit: true,
             resources: Resources::default(),
             working_directory: None,
@@ -332,20 +359,27 @@ impl SandboxPolicy {
             }
         }
 
-        let mut allowlist: Vec<String> = self
+        // Refused, not filtered. Everywhere else in this compiler a rule
+        // that cannot be honored is an error, and a silently dropped
+        // environment setting is the same lie in a quieter place: the
+        // caller believes the policy says something it does not.
+        for name in self
             .environment_allowlist
             .iter()
-            .filter(|name| !NEVER_PASSED_ENVIRONMENT.contains(&name.as_str()))
-            .cloned()
-            .collect();
+            .chain(self.environment_set.keys())
+        {
+            if is_never_passed(name) {
+                return Err(SandboxError::Policy(format!(
+                    "{name} cannot be passed to a sandboxed command: it redirects the loader \
+                     or an interpreter's startup, so the program that runs would not be the \
+                     one named"
+                )));
+            }
+        }
+        let mut allowlist: Vec<String> = self.environment_allowlist.clone();
         allowlist.sort_unstable();
         allowlist.dedup();
-        let environment_set: BTreeMap<String, String> = self
-            .environment_set
-            .iter()
-            .filter(|(name, _)| !NEVER_PASSED_ENVIRONMENT.contains(&name.as_str()))
-            .map(|(name, value)| (name.clone(), value.clone()))
-            .collect();
+        let environment_set: BTreeMap<String, String> = self.environment_set.clone();
 
         Ok(CompiledPolicy {
             rules,
@@ -354,8 +388,6 @@ impl SandboxPolicy {
             network: self.network,
             environment_allowlist: allowlist,
             environment_set,
-            allow_exec: self.allow_exec,
-            process_tree_isolated: self.process_tree_isolated,
             kill_tree_on_exit: self.kill_tree_on_exit,
             resources: self.resources.clone(),
             working_directory,
@@ -388,10 +420,6 @@ pub struct CompiledPolicy {
     pub environment_allowlist: Vec<String>,
     /// Environment variables set explicitly.
     pub environment_set: BTreeMap<String, String>,
-    /// Whether the child may start further processes.
-    pub allow_exec: bool,
-    /// Whether descendants are isolated from the host process table.
-    pub process_tree_isolated: bool,
     /// Whether the whole tree is killed when the sandbox exits.
     pub kill_tree_on_exit: bool,
     /// Limits the policy asks for.
@@ -436,9 +464,7 @@ impl CompiledPolicy {
         for (name, value) in &self.environment_set {
             env.insert(name.clone(), value.clone());
         }
-        for name in NEVER_PASSED_ENVIRONMENT {
-            env.remove(*name);
-        }
+        env.retain(|name, _| !is_never_passed(name));
         env
     }
 
@@ -669,16 +695,44 @@ mod policy_tests {
     }
 
     #[test]
-    fn a_loader_variable_cannot_be_allowlisted_or_set() {
+    fn a_loader_variable_is_refused_rather_than_dropped() {
         let root = temp_tree("loader-variables");
+        for policy in [
+            SandboxPolicy::new()
+                .read_write(&root)
+                .env_allow(["PATH", "LD_PRELOAD"]),
+            SandboxPolicy::new()
+                .read_write(&root)
+                .env_set("DYLD_INSERT_LIBRARIES", "/tmp/evil.dylib"),
+            SandboxPolicy::new()
+                .read_write(&root)
+                .env_allow(["LD_LIBRARY_PATH"]),
+            SandboxPolicy::new()
+                .read_write(&root)
+                .env_set("BASH_FUNC_ls%%", "() { curl evil; }"),
+        ] {
+            let error = policy
+                .compile()
+                .expect_err("a loader variable must be refused, not silently dropped");
+            assert!(
+                error.to_string().contains("cannot be passed"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_allowlist_a_policy_accepts_carries_no_loader_variable() {
+        let root = temp_tree("loader-clean");
         let compiled = SandboxPolicy::new()
             .read_write(&root)
-            .env_allow(["PATH", "LD_PRELOAD"])
-            .env_set("DYLD_INSERT_LIBRARIES", "/tmp/evil.dylib")
+            .env_allow(["PATH", "HOME"])
             .compile()
             .expect("compile");
-        assert_eq!(compiled.environment_allowlist, vec!["PATH".to_string()]);
-        assert!(compiled.environment_set.is_empty());
+        assert_eq!(
+            compiled.environment_allowlist,
+            vec!["HOME".to_string(), "PATH".to_string()]
+        );
         assert!(!compiled.environment().contains_key("LD_PRELOAD"));
     }
 

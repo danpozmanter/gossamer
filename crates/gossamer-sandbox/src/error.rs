@@ -11,10 +11,14 @@ use crate::level::Level;
 
 /// Exit code for a policy that could not be compiled, a sandbox that
 /// could not start, or a run whose tree was killed for exceeding its
-/// timeout. Each is a failure of the sandbox rather than of the child,
-/// so none of them impersonates a child's own code.
+/// timeout.
+///
+/// A sandbox failure and a child that happens to exit 126 are told
+/// apart by which of them ran, not by the number: nothing was executed
+/// when this code is produced, and the reason is on standard error.
 pub const EXIT_POLICY_ERROR: i32 = 126;
-/// Exit code for a command that was not found inside the sandbox.
+/// Exit code for a command that was not found inside the sandbox. The
+/// shell convention, and produced only when no child ran.
 pub const EXIT_COMMAND_NOT_FOUND: i32 = 127;
 /// Exit code for a level the host cannot honor.
 pub const EXIT_LEVEL_UNAVAILABLE: i32 = 64;
@@ -69,6 +73,11 @@ pub enum SandboxError {
     /// The child outlived the policy's timeout and its tree was killed.
     #[error("child exceeded the {} ms timeout and its process tree was killed", .0.as_millis())]
     Timeout(Duration),
+
+    /// The operator interrupted the supervisor twice, so the tree was
+    /// killed rather than given a further chance to stop on its own.
+    #[error("interrupted by signal {0}; the process tree was killed")]
+    Interrupted(i32),
 }
 
 impl SandboxError {
@@ -86,7 +95,12 @@ impl SandboxError {
             // the caller's side: nothing ran, so the child's own codes
             // are not in play.
             Self::Spawn(_) | Self::Timeout(_) => EXIT_POLICY_ERROR,
-            Self::Signalled { signal, .. } => EXIT_SIGNAL_BASE + *signal,
+            // The shell convention for a run the operator stopped: an
+            // interrupted `rwr` reports 130 exactly as an interrupted
+            // command does.
+            Self::Signalled { signal, .. } | Self::Interrupted(signal) => {
+                EXIT_SIGNAL_BASE + *signal
+            }
         }
     }
 }
@@ -130,14 +144,16 @@ impl SandboxOutput {
 
 /// The exit code a consumer should exit with, given a run's outcome.
 ///
-/// A child's own code passes through unchanged in `0..=125`; anything
-/// above that range is a code the contract reserves, so it is reported
-/// as a policy error rather than impersonating a sandbox failure.
+/// A child's own code passes through verbatim, including 126 and 127.
+/// A wrapper's job is to report what the command did, and 127 is the
+/// most common meaningful code in build scripting; rewriting it would
+/// make `command not found` from a build script indistinguishable from
+/// a sandbox that refused to start. The two cases are separated by
+/// whether a child ran at all, which the `Err` arm answers.
 #[must_use]
 pub fn exit_code_for(outcome: &Result<SandboxOutput, SandboxError>) -> i32 {
     match outcome {
-        Ok(output) if (0..=125).contains(&output.code) => output.code,
-        Ok(_) => EXIT_POLICY_ERROR,
+        Ok(output) => output.code,
         Err(error) => error.exit_code(),
     }
 }
@@ -192,7 +208,7 @@ mod error_tests {
     }
 
     #[test]
-    fn a_childs_own_code_passes_through_but_a_reserved_one_does_not() {
+    fn a_childs_own_code_passes_through_verbatim() {
         let ok = |code| {
             Ok(SandboxOutput {
                 code,
@@ -202,6 +218,10 @@ mod error_tests {
         };
         assert_eq!(exit_code_for(&ok(0)), 0);
         assert_eq!(exit_code_for(&ok(125)), 125);
-        assert_eq!(exit_code_for(&ok(126)), EXIT_POLICY_ERROR);
+        // A child's own code is reported as the child's own code. 127
+        // from a build script means `command not found` and must reach
+        // the caller as 127.
+        assert_eq!(exit_code_for(&ok(126)), 126);
+        assert_eq!(exit_code_for(&ok(127)), 127);
     }
 }

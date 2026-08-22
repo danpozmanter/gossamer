@@ -57,17 +57,8 @@ pub(crate) fn capabilities() -> SandboxCapabilities {
             notes.push(format!(
                 "unprivileged user namespaces unavailable: {reason}"
             ));
-            let network = if abi.is_some_and(|version| version >= 4) {
-                Enforcement::Partial(
-                    "no network namespace: Landlock restricts TCP only, so UDP and unix \
-                     sockets stay reachable"
-                        .to_string(),
-                )
-            } else {
-                Enforcement::None
-            };
             (
-                network,
+                landlock_only_network(abi),
                 Enforcement::None,
                 if abi.is_some() {
                     Level::Standard
@@ -77,6 +68,17 @@ pub(crate) fn capabilities() -> SandboxCapabilities {
             )
         }
     };
+    // The report answers for the best level this host can reach, and a
+    // run at the default level does not get it. Saying so here is the
+    // difference between a report about the host and a report about
+    // what a command will actually be run under.
+    if max_level == Level::Strict {
+        notes.push(format!(
+            "network denial is the network namespace, which is `strict` only: at \
+             `standard` this host gives {}",
+            landlock_only_network(abi)
+        ));
+    }
     if seccomp::Filter::is_supported() {
         notes.push(format!(
             "seccomp refuses {} syscalls",
@@ -90,15 +92,55 @@ pub(crate) fn capabilities() -> SandboxCapabilities {
         );
     }
 
+    let resource_limits = cgroup::enforcement(&crate::policy::Resources::default());
+    if cgroup::available() {
+        notes.push(
+            "cgroup v2 delegated: memory and process-count limits are enforced, and the \
+             whole tree is killed together"
+                .to_string(),
+        );
+    }
+
     SandboxCapabilities {
         platform: Platform::Linux,
         os_description: os_description(),
         filesystem,
         network,
         process_isolation,
-        resource_limits: cgroup::enforcement(&crate::policy::Resources::default()),
+        resource_limits,
         max_level,
         notes,
+    }
+}
+
+/// What network denial means with no network namespace: the Landlock
+/// TCP layer, or nothing at all below the ABI that has it.
+fn landlock_only_network(abi: Option<u32>) -> Enforcement {
+    if abi.is_some_and(|version| version >= 4) {
+        Enforcement::Partial(
+            "Landlock TCP only: UDP, unix, and raw sockets stay reachable".to_string(),
+        )
+    } else {
+        Enforcement::None
+    }
+}
+
+/// How completely `policy`'s network setting is enforced on this host.
+///
+/// The policy says what was asked for; this says what the kernel will
+/// hold to. A banner that renders the first and calls it the second is
+/// how an operator ends up believing a denial that is not installed.
+#[must_use]
+pub(crate) fn network_enforcement(policy: &CompiledPolicy) -> Enforcement {
+    if policy.network == Network::Open {
+        return Enforcement::Full;
+    }
+    match policy.level {
+        Level::None | Level::Basic => Enforcement::None,
+        // The network namespace covers every protocol; below it there
+        // is only the Landlock TCP layer.
+        Level::Strict if policy.network == Network::None => Enforcement::Full,
+        Level::Standard | Level::Strict => landlock_only_network(landlock::abi_version()),
     }
 }
 
@@ -126,13 +168,9 @@ pub(crate) fn mechanisms(policy: &CompiledPolicy) -> Vec<String> {
             if policy.level == Level::Strict {
                 lines.push("user, mount, IPC, UTS, and PID namespaces".to_string());
                 lines.push("private /proc, reaper at PID 1".to_string());
-                match policy.network {
-                    Network::None => lines.push("network namespace".to_string()),
-                    Network::Client => {
-                        lines.push("Landlock TCP bind denied, connect allowed".to_string());
-                    }
-                    Network::Open => {}
-                }
+            }
+            lines.push(network_mechanism(policy));
+            if policy.level == Level::Strict {
                 lines.push(format!(
                     "seccomp filter refusing {} syscalls",
                     seccomp::Filter::denied_count()
@@ -140,7 +178,28 @@ pub(crate) fn mechanisms(policy: &CompiledPolicy) -> Vec<String> {
             }
         }
     }
+    if cgroup::available() {
+        lines.push("cgroup v2 for the process tree, and its limits".to_string());
+    }
     lines
+}
+
+/// The one line naming what holds the policy's network setting here.
+fn network_mechanism(policy: &CompiledPolicy) -> String {
+    let abi = landlock::abi_version();
+    match (policy.level, policy.network) {
+        (Level::Strict, Network::None) => "network namespace: no network, every protocol".to_string(),
+        (_, Network::Open) => "no network restriction".to_string(),
+        (_, network) if abi.is_some_and(|version| version >= 4) => {
+            let landlock = if network == Network::None {
+                "Landlock TCP bind and connect denied"
+            } else {
+                "Landlock TCP bind denied, connect allowed"
+            };
+            format!("{landlock} - UDP, unix, and raw sockets are NOT restricted here")
+        }
+        _ => "no network restriction: this kernel's Landlock has no network layer".to_string(),
+    }
 }
 
 /// Runs `argv` under `policy`.
@@ -149,8 +208,13 @@ pub(crate) fn run(
     argv: &[String],
     stdio: Stdio,
 ) -> Result<SandboxOutput, SandboxError> {
+    // Created before the command so the child can place itself in it
+    // between fork and exec, leaving no window in which a descendant
+    // exists outside the cgroup.
+    let group = cgroup::Cgroup::create(&policy.resources).map_err(SandboxError::Spawn)?;
+    become_child_subreaper();
     let mut command = exec::base_command(policy, argv, stdio)?;
-    install_enforcement(&mut command, policy);
+    install_enforcement(&mut command, policy, group.as_ref());
     let child = command.spawn().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             SandboxError::CommandNotFound(argv[0].clone())
@@ -158,7 +222,133 @@ pub(crate) fn run(
             SandboxError::Spawn(format!("{error}"))
         }
     })?;
-    exec::wait_for(policy, child, stdio)
+    exec::wait_for(policy, LinuxChild::new(child, group), stdio)
+}
+
+/// A running child, with whatever this host can use to reach a
+/// descendant that left the process group.
+struct LinuxChild {
+    child: std::process::Child,
+    session: libc::pid_t,
+    group: Option<cgroup::Cgroup>,
+}
+
+impl LinuxChild {
+    fn new(child: std::process::Child, group: Option<cgroup::Cgroup>) -> Self {
+        // The child calls `setsid` before exec, so its own pid is its
+        // session id, and every descendant inherits that session unless
+        // it starts one of its own.
+        let session = child.id() as libc::pid_t;
+        Self {
+            child,
+            session,
+            group,
+        }
+    }
+}
+
+impl exec::ChildProcess for LinuxChild {
+    fn poll(&mut self) -> std::io::Result<Option<exec::Exit>> {
+        exec::ChildProcess::poll(&mut self.child)
+    }
+
+    fn wait(&mut self) -> std::io::Result<exec::Exit> {
+        exec::ChildProcess::wait(&mut self.child)
+    }
+
+    fn kill_tree(&mut self) {
+        // The cgroup reaches every descendant whatever session it
+        // moved to, so it is the answer when the host has one.
+        if let Some(group) = &self.group {
+            group.kill();
+            let _ = self.child.kill();
+            return;
+        }
+        exec::kill_tree(&mut self.child);
+        kill_strays(self.session);
+    }
+
+    fn signal_group(&mut self, signal: i32) {
+        exec::signal_group(&self.child, signal);
+    }
+
+    fn take_stdout(&mut self) -> Option<Box<dyn std::io::Read + Send>> {
+        exec::ChildProcess::take_stdout(&mut self.child)
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn std::io::Read + Send>> {
+        exec::ChildProcess::take_stderr(&mut self.child)
+    }
+}
+
+/// Makes orphaned descendants reparent here instead of to `init`.
+///
+/// Without a cgroup this is the only way a descendant that called
+/// `setsid` and double-forked stays findable: it becomes a child of
+/// this process, so [`kill_strays`] can see it in `/proc`.
+fn become_child_subreaper() {
+    #[allow(
+        unsafe_code,
+        reason = "prctl has no safe wrapper; the call takes no pointer and \
+                  affects only this process"
+    )]
+    unsafe {
+        libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0);
+    }
+}
+
+/// Kills what the process-group signal could not reach: a descendant
+/// still in the run's session, and one that started a session of its
+/// own and reparented here.
+///
+/// The sweep repeats because a process killed while forking can leave a
+/// child behind, and stops as soon as a pass finds nothing.
+fn kill_strays(session: libc::pid_t) {
+    let own = std::process::id() as libc::pid_t;
+    for _ in 0..8 {
+        let mut found = false;
+        let Ok(entries) = std::fs::read_dir("/proc") else {
+            return;
+        };
+        for entry in entries.filter_map(Result::ok) {
+            let Ok(pid) = entry.file_name().to_string_lossy().parse::<libc::pid_t>() else {
+                continue;
+            };
+            if pid == own {
+                continue;
+            }
+            let Some((parent, stray_session)) = parent_and_session(pid) else {
+                continue;
+            };
+            if stray_session != session && parent != own {
+                continue;
+            }
+            found = true;
+            #[allow(
+                unsafe_code,
+                reason = "kill has no safe wrapper; the pid names a process in this \
+                          run's session or a descendant reparented to this process"
+            )]
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+        }
+        if !found {
+            return;
+        }
+    }
+}
+
+/// The parent pid and session id of `pid`, from `/proc/<pid>/stat`.
+///
+/// The command name is parsed by skipping past its closing parenthesis:
+/// it is the only field that can itself contain a space or a
+/// parenthesis, which is why the kernel puts it in brackets.
+fn parent_and_session(pid: libc::pid_t) -> Option<(libc::pid_t, libc::pid_t)> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let fields: Vec<&str> = stat[stat.rfind(')')? + 1..].split_whitespace().collect();
+    // After the command name the fields are state, ppid, pgrp, session.
+    Some((fields.get(1)?.parse().ok()?, fields.get(3)?.parse().ok()?))
 }
 
 /// Attaches the pre-exec enforcement for `policy` to `command`.
@@ -167,8 +357,22 @@ pub(crate) fn run(
 /// fork: between `fork` and `exec` only async-signal-safe calls are
 /// permitted, so the closure allocates nothing and touches only what
 /// this function captured.
-fn install_enforcement(command: &mut Command, policy: &CompiledPolicy) {
+fn install_enforcement(
+    command: &mut Command,
+    policy: &CompiledPolicy,
+    group: Option<&cgroup::Cgroup>,
+) {
+    let join_cgroup = group.map(|group| group.join_path().clone());
     if policy.level == Level::None {
+        // The cgroup is not enforcement, it is bookkeeping: at every
+        // level it is how the supervisor reaches the tree afterwards,
+        // and how a memory or process-count limit is applied at all.
+        if let Some(path) = join_cgroup {
+            #[allow(unsafe_code, reason = "documented on the closure below")]
+            unsafe {
+                command.pre_exec(move || join_cgroup_now(&path));
+            }
+        }
         return;
     }
     let level = policy.level;
@@ -180,7 +384,9 @@ fn install_enforcement(command: &mut Command, policy: &CompiledPolicy) {
     let abi = landlock::abi_version();
     let ruleset = abi.map(|abi| landlock::Ruleset::compile(abi, &policy.rules, network));
     let namespace_plan =
-        (level == Level::Strict).then(|| namespaces::Plan::new(private_temp.as_deref()));
+        (level == Level::Strict).then(|| {
+            namespaces::Plan::new(private_temp.as_deref(), policy.resources.max_temp_size)
+        });
     let filter =
         (level == Level::Strict && seccomp::Filter::is_supported()).then(seccomp::Filter::new);
     let file_size_limit = policy.resources.max_file_size;
@@ -188,7 +394,6 @@ fn install_enforcement(command: &mut Command, policy: &CompiledPolicy) {
         .resources
         .max_cpu_time
         .map(|limit| limit.as_secs().max(1));
-    let process_limit = policy.resources.max_processes;
 
     // SAFETY: the closure runs between `fork` and `exec` in a
     // single-threaded child. It calls only `prctl`, `setsid`,
@@ -198,12 +403,18 @@ fn install_enforcement(command: &mut Command, policy: &CompiledPolicy) {
     #[allow(unsafe_code, reason = "documented above")]
     unsafe {
         command.pre_exec(move || {
+            // Before anything else: a process cannot leave the cgroup
+            // it was placed in, so placing the child here means every
+            // descendant it goes on to fork is inside it too.
+            if let Some(path) = &join_cgroup {
+                join_cgroup_now(path)?;
+            }
             // Its own session and process group, so the supervisor can
             // reach the whole tree with one signal and the child
             // cannot steal the terminal.
             libc::setsid();
             mark_inherited_descriptors_close_on_exec();
-            set_rlimits(file_size_limit, cpu_limit, process_limit);
+            set_rlimits(file_size_limit, cpu_limit);
             // Mandatory before an unprivileged Landlock ruleset or
             // seccomp filter, and inherited across exec, which is what
             // makes descendant inheritance work.
@@ -276,14 +487,14 @@ fn mark_inherited_descriptors_close_on_exec() {
     }
 }
 
-/// Applies the limits `setrlimit` can express. Memory and process
-/// counts that need a cgroup are reported unenforced rather than set
-/// here, because an unprivileged process cannot make them stick.
-fn set_rlimits(
-    max_file_size: Option<u64>,
-    max_cpu_seconds: Option<u64>,
-    max_processes: Option<u32>,
-) {
+/// Applies the limits `setrlimit` can express.
+///
+/// Memory and process counts are not among them. `RLIMIT_AS` bounds
+/// address space rather than resident memory, and `RLIMIT_NPROC` counts
+/// every process the real user already has rather than the ones this
+/// run started, so neither means what the policy says. Both ride the
+/// cgroup instead, and are refused where there is none.
+fn set_rlimits(max_file_size: Option<u64>, max_cpu_seconds: Option<u64>) {
     let apply = |resource, value: u64| {
         let limit = libc::rlimit {
             rlim_cur: value as libc::rlim_t,
@@ -297,8 +508,24 @@ fn set_rlimits(
     if let Some(seconds) = max_cpu_seconds {
         apply(libc::RLIMIT_CPU, seconds);
     }
-    if let Some(count) = max_processes {
-        apply(libc::RLIMIT_NPROC, u64::from(count));
+}
+
+/// Writes `0` into the run's `cgroup.procs`, placing the calling
+/// process in the cgroup.
+///
+/// Async-signal-safe: `open`, `write`, and `close` over a path this
+/// process turned into a C string before the fork.
+fn join_cgroup_now(path: &std::ffi::CStr) -> std::io::Result<()> {
+    let fd = unsafe { libc::open(path.as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let written = unsafe { libc::write(fd, c"0\n".as_ptr().cast(), 2) };
+    unsafe { libc::close(fd) };
+    if written == 2 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
     }
 }
 
@@ -343,4 +570,25 @@ mod linux_tests {
             "{lines:?}"
         );
     }
+}
+
+/// Whether this host can enforce every limit in `resources`.
+#[must_use]
+pub(crate) fn resource_enforcement(
+    resources: &crate::policy::Resources,
+    level: Level,
+) -> Enforcement {
+    // A bound on the private temporary filesystem is a mount option,
+    // and the mount exists only where there is a mount namespace.
+    if resources.max_temp_size.is_some() && level < Level::Strict {
+        return Enforcement::Partial(
+            "a private temporary filesystem needs a mount namespace, which is `strict` \
+             only: --max-temp-mb cannot be applied below it"
+                .to_string(),
+        );
+    }
+    if resources == &crate::policy::Resources::default() {
+        return Enforcement::Full;
+    }
+    cgroup::enforcement(resources)
 }

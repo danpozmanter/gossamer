@@ -23,6 +23,13 @@ pub(crate) fn capabilities() -> SandboxCapabilities {
 
 /// Names the mechanisms a run would install: none.
 #[must_use]
+/// How completely `policy`'s network setting is enforced here: not at
+/// all, because there is no backend.
+#[must_use]
+pub(crate) fn network_enforcement(_policy: &CompiledPolicy) -> crate::level::Enforcement {
+    crate::level::Enforcement::None
+}
+
 pub(crate) fn mechanisms(_policy: &CompiledPolicy) -> Vec<String> {
     vec!["no enforcement: this target has no sandbox backend".to_string()]
 }
@@ -50,4 +57,22 @@ pub(crate) fn run(
         }
     })?;
     crate::exec::wait_for(policy, child, stdio)
+}
+
+/// Whether this host can enforce every limit in `resources`: only a
+/// timeout, which is the supervisor's own clock.
+#[must_use]
+pub(crate) fn resource_enforcement(
+    resources: &crate::policy::Resources,
+    _level: crate::level::Level,
+) -> crate::level::Enforcement {
+    let only_timeout = crate::policy::Resources {
+        timeout: resources.timeout,
+        ..crate::policy::Resources::default()
+    };
+    if resources == &only_timeout {
+        crate::level::Enforcement::Full
+    } else {
+        crate::level::Enforcement::None
+    }
 }

@@ -123,10 +123,7 @@ fn cache_roots() -> Vec<std::path::PathBuf> {
 }
 
 fn toolchain_roots() -> Vec<std::path::PathBuf> {
-    gossamer_sandbox::discover::query("rustc", &["--print", "sysroot"])
-        .map(std::path::PathBuf::from)
-        .into_iter()
-        .collect()
+    gossamer_sandbox::discover::rust_toolchain_paths()
 }
 
 fn builtin_policy_read_write(args: &[Value]) -> RuntimeResult<Value> {

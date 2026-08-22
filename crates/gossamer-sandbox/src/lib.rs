@@ -56,7 +56,7 @@ pub use exec::Stdio;
 pub use level::{Enforcement, Level, Platform, SandboxCapabilities};
 pub use policy::{
     Access, CompiledPolicy, NEVER_PASSED_ENVIRONMENT, Network, PathRule, Resources, SandboxPolicy,
-    Temp, never_granted_paths,
+    Temp, is_never_passed, never_granted_paths,
 };
 pub use presets::{
     base_environment, build_environment, credential_paths, device_paths, home_directory,
@@ -79,7 +79,13 @@ use windows as backend;
 /// blocks them.
 #[must_use]
 pub fn capabilities() -> SandboxCapabilities {
-    backend::capabilities()
+    // Cached because the probe forks to observe whether a user
+    // namespace is permitted, and a banner, a limit check, and an
+    // `--explain` all ask within one run. What it describes - the
+    // kernel and this process's delegation - does not change under a
+    // running program.
+    static REPORT: std::sync::OnceLock<SandboxCapabilities> = std::sync::OnceLock::new();
+    REPORT.get_or_init(backend::capabilities).clone()
 }
 
 /// A compiled policy, checked against what this host can honor.
@@ -119,6 +125,23 @@ impl Sandbox {
                 reason: blocking_reason(&host),
             });
         }
+        // A limit this host cannot apply is refused with the reason,
+        // never accepted and left unset: a policy that claims a bound
+        // nothing enforces is the one failure this crate exists to
+        // avoid making.
+        match resource_enforcement(&policy.resources, policy.level) {
+            Enforcement::Full => {}
+            Enforcement::Partial(reason) => {
+                return Err(SandboxError::Policy(format!(
+                    "this host cannot enforce a limit this policy asks for: {reason}"
+                )));
+            }
+            Enforcement::None => {
+                return Err(SandboxError::Policy(
+                    "this host enforces no resource limits at all".to_string(),
+                ));
+            }
+        }
         let (policy, private_temp) = materialize_temp(policy)?;
         Ok(Self {
             policy: policy.compile()?,
@@ -139,6 +162,17 @@ impl Sandbox {
         backend::mechanisms(&self.policy)
     }
 
+    /// How completely this run's network setting is enforced.
+    ///
+    /// Separate from [`CompiledPolicy::network`], which is what was
+    /// asked for. A consumer that reports the request as the guarantee
+    /// tells the operator a denial is in force that the kernel never
+    /// installed, so the two are distinct calls on purpose.
+    #[must_use]
+    pub fn network_enforcement(&self) -> Enforcement {
+        backend::network_enforcement(&self.policy)
+    }
+
     /// Runs `argv` with the caller's streams inherited.
     pub fn run(&self, argv: &[String]) -> Result<SandboxOutput, SandboxError> {
         backend::run(&self.policy, argv, Stdio::Inherit)
@@ -153,6 +187,15 @@ impl Sandbox {
     pub fn run_with(&self, argv: &[String], stdio: Stdio) -> Result<SandboxOutput, SandboxError> {
         backend::run(&self.policy, argv, stdio)
     }
+}
+
+/// Whether this host can enforce every limit in `resources`.
+///
+/// A consumer asks before compiling a policy so it can refuse the flag
+/// with the reason rather than accept a bound nothing applies.
+#[must_use]
+pub fn resource_enforcement(resources: &Resources, level: Level) -> Enforcement {
+    backend::resource_enforcement(resources, level)
 }
 
 /// Turns the policy's temp choice into a real directory the child can

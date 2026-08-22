@@ -113,11 +113,7 @@ fn default_cache_roots() -> Vec<std::path::PathBuf> {
 }
 
 fn default_toolchain_roots() -> Vec<std::path::PathBuf> {
-    let mut roots = Vec::new();
-    if let Some(sysroot) = gossamer_sandbox::discover::query("rustc", &["--print", "sysroot"]) {
-        roots.push(std::path::PathBuf::from(sysroot));
-    }
-    roots
+    gossamer_sandbox::discover::rust_toolchain_paths()
 }
 
 /// `policy.read_write(path)`.

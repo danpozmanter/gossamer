@@ -65,6 +65,19 @@ fn os_description() -> String {
 
 /// Names the mechanisms a run at this policy's level will install.
 #[must_use]
+/// How completely `policy`'s network setting is enforced here.
+///
+/// Seatbelt's `(deny network*)` covers every protocol, so at any level
+/// that installs a profile the policy's setting is what holds.
+#[must_use]
+pub(crate) fn network_enforcement(policy: &CompiledPolicy) -> Enforcement {
+    if policy.level >= crate::level::Level::Standard {
+        Enforcement::Full
+    } else {
+        Enforcement::None
+    }
+}
+
 pub(crate) fn mechanisms(policy: &CompiledPolicy) -> Vec<String> {
     let mut lines = Vec::new();
     match policy.level {
@@ -214,4 +227,36 @@ mod macos_tests {
             report.notes
         );
     }
+}
+
+/// Whether this host can enforce every limit in `resources`.
+///
+/// macOS has no cgroup equivalent, so a memory or process-count limit
+/// is refused rather than accepted and left unapplied.
+#[must_use]
+pub(crate) fn resource_enforcement(
+    resources: &crate::policy::Resources,
+    _level: Level,
+) -> Enforcement {
+    if resources.max_temp_size.is_some() {
+        return Enforcement::Partial(
+            "macOS has no private mount for the temporary directory: --max-temp-mb cannot \
+             be applied here"
+                .to_string(),
+        );
+    }
+    if resources.max_memory.is_some() || resources.max_processes.is_some() {
+        return Enforcement::Partial(
+            "macOS has no cgroup equivalent: memory and process-count limits cannot be \
+             applied here, only a timeout and a file-size limit"
+                .to_string(),
+        );
+    }
+    if resources.max_file_size.is_some() {
+        return Enforcement::Partial(
+            "macOS installs no `setrlimit` for the child: a file-size limit cannot be \
+             applied here".to_string(),
+        );
+    }
+    Enforcement::Full
 }

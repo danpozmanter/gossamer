@@ -1,7 +1,10 @@
-//! Process lifecycle: spawn, wait, time out, and tear the tree down.
+//! Process lifecycle: spawn, wait, forward signals, time out, and tear
+//! the tree down.
 //!
 //! The parts that are the same on every OS live here; a backend
-//! contributes only the enforcement it applies between spawn and exec.
+//! contributes only the enforcement it applies between spawn and exec,
+//! and whatever mechanism it has for reaching a descendant that left
+//! the process group.
 
 use std::process::{Child, Command, Stdio as ProcessStdio};
 use std::time::Duration;
@@ -13,14 +16,20 @@ use crate::policy::CompiledPolicy;
 ///
 /// `std::process::Child` implements it; so does the Windows backend's
 /// own child, which exists because a restricted token has to be
-/// attached at creation and `Command` cannot express that.
+/// attached at creation and `Command` cannot express that, and the
+/// Linux backend's, which carries the run's cgroup.
 pub(crate) trait ChildProcess {
     /// The child's exit, once it has one.
     fn poll(&mut self) -> std::io::Result<Option<Exit>>;
     /// Blocks until the child exits.
     fn wait(&mut self) -> std::io::Result<Exit>;
-    /// Kills the child and every descendant it started.
+    /// Kills the child and every descendant it started, including one
+    /// that left the process group.
     fn kill_tree(&mut self);
+    /// Delivers `signal` to the child's process group, for forwarding
+    /// an interrupt the supervisor received. A no-op where the host has
+    /// no signals.
+    fn signal_group(&mut self, signal: i32);
     /// Takes the captured standard output stream, if there is one.
     fn take_stdout(&mut self) -> Option<Box<dyn std::io::Read + Send>>;
     /// Takes the captured standard error stream, if there is one.
@@ -49,6 +58,10 @@ impl ChildProcess for Child {
 
     fn kill_tree(&mut self) {
         kill_tree(self);
+    }
+
+    fn signal_group(&mut self, signal: i32) {
+        signal_group(self, signal);
     }
 
     fn take_stdout(&mut self) -> Option<Box<dyn std::io::Read + Send>> {
@@ -82,9 +95,12 @@ pub enum Stdio {
     /// The caller's own streams, so the child writes straight through.
     #[default]
     Inherit,
-    /// Pipes the sandbox drains and hands back in [`SandboxOutput`].
+    /// Standard output and error are pipes the sandbox drains and hands
+    /// back in [`SandboxOutput`]. Standard input is still the caller's:
+    /// capturing what a command says does not mean silencing what it
+    /// is told.
     Capture,
-    /// Discarded.
+    /// Discarded, standard input included.
     Null,
 }
 
@@ -93,6 +109,18 @@ impl Stdio {
         match self {
             Self::Inherit => ProcessStdio::inherit(),
             Self::Capture => ProcessStdio::piped(),
+            Self::Null => ProcessStdio::null(),
+        }
+    }
+
+    /// Where the child's standard input comes from.
+    ///
+    /// Inherited unless the caller asked for `Null`. A sandbox that
+    /// silently substituted an empty stdin would break every piped
+    /// invocation for a property no policy asked for.
+    fn to_stdin_stdio(self) -> ProcessStdio {
+        match self {
+            Self::Inherit | Self::Capture => ProcessStdio::inherit(),
             Self::Null => ProcessStdio::null(),
         }
     }
@@ -120,33 +148,42 @@ pub(crate) fn base_command(
     if let Some(directory) = &policy.working_directory {
         command.current_dir(directory);
     }
-    command.stdin(ProcessStdio::null());
+    command.stdin(stdio.to_stdin_stdio());
     command.stdout(stdio.to_process_stdio());
     command.stderr(stdio.to_process_stdio());
     Ok(command)
 }
 
-/// Waits for `child`, bounded by the policy's timeout, and tears the
-/// whole tree down when it runs out or when the policy says to.
+/// Waits for `child`, bounded by the policy's timeout, forwarding an
+/// interrupt the supervisor receives, and tearing the whole tree down
+/// when the policy says to.
 pub(crate) fn wait_for<C: ChildProcess>(
     policy: &CompiledPolicy,
     mut child: C,
     stdio: Stdio,
 ) -> Result<SandboxOutput, SandboxError> {
-    if stdio == Stdio::Capture {
+    let outcome = if stdio == Stdio::Capture {
         // Drain on threads: a child that fills one pipe's buffer while
         // the sandbox reads the other blocks forever otherwise.
         let out = child.take_stdout();
         let err = child.take_stderr();
         let out_reader = std::thread::spawn(move || read_all(out));
         let err_reader = std::thread::spawn(move || read_all(err));
-        let exit = wait_bounded(policy, &mut child)?;
+        let exit = wait_bounded(policy, &mut child);
         let stdout = out_reader.join().unwrap_or_default();
         let stderr = err_reader.join().unwrap_or_default();
-        return finish(exit, stdout, stderr);
+        exit.and_then(|exit| finish(exit, stdout, stderr))
+    } else {
+        wait_bounded(policy, &mut child).and_then(|exit| finish(exit, Vec::new(), Vec::new()))
+    };
+
+    // The child is gone; a descendant that left its process group is
+    // not. This is the only place that guarantee is kept on every exit
+    // path, including the interrupted one.
+    if policy.kill_tree_on_exit {
+        child.kill_tree();
     }
-    let exit = wait_bounded(policy, &mut child)?;
-    finish(exit, Vec::new(), Vec::new())
+    outcome
 }
 
 fn read_all(reader: Option<Box<dyn std::io::Read + Send>>) -> Vec<u8> {
@@ -157,16 +194,19 @@ fn read_all(reader: Option<Box<dyn std::io::Read + Send>>) -> Vec<u8> {
     buffer
 }
 
+/// Waits for the child until it exits, the deadline passes, or the
+/// supervisor is interrupted.
+///
+/// The wait is event-driven: [`signals::Waiter`] blocks until a signal
+/// arrives, which includes `SIGCHLD` when the child exits, so a run
+/// with no timeout costs no wakeups at all.
 fn wait_bounded<C: ChildProcess>(
     policy: &CompiledPolicy,
     child: &mut C,
 ) -> Result<Exit, SandboxError> {
-    let Some(limit) = policy.resources.timeout else {
-        return child.wait().map_err(|error| {
-            SandboxError::Spawn(format!("waiting for the child failed: {error}"))
-        });
-    };
-    let deadline = std::time::Instant::now() + limit;
+    let deadline = policy.resources.timeout.map(Deadline::new);
+    let waiter = signals::Waiter::new();
+    let mut forwarded = false;
     loop {
         match child.poll() {
             Ok(Some(exit)) => return Ok(exit),
@@ -177,15 +217,54 @@ fn wait_bounded<C: ChildProcess>(
                 )));
             }
         }
-        if std::time::Instant::now() >= deadline {
-            child.kill_tree();
-            let _ = child.wait();
-            return Err(SandboxError::Timeout(limit));
+        if let Some(deadline) = &deadline {
+            if deadline.passed() {
+                child.kill_tree();
+                let _ = child.wait();
+                return Err(SandboxError::Timeout(deadline.limit));
+            }
         }
-        // The wait is bounded by the caller's own timeout, so the
-        // granularity only decides how long past the deadline the tree
-        // survives.
-        std::thread::sleep(Duration::from_millis(10));
+
+        match waiter.wait(deadline.as_ref().map(Deadline::remaining)) {
+            signals::Wake::ChildChanged | signals::Wake::Deadline => {}
+            signals::Wake::Interrupt(signal) => {
+                if forwarded {
+                    // The operator asked twice. The first ask was the
+                    // child's chance to stop on its own terms.
+                    child.kill_tree();
+                    let _ = child.wait();
+                    return Err(SandboxError::Interrupted(signal));
+                }
+                forwarded = true;
+                // The child leads its own session, so a terminal signal
+                // never reached it; the supervisor is the only path it
+                // has to the interrupt the operator meant for it.
+                child.signal_group(signal);
+            }
+        }
+    }
+}
+
+/// A wall-clock bound and the instant it runs out.
+struct Deadline {
+    limit: Duration,
+    at: std::time::Instant,
+}
+
+impl Deadline {
+    fn new(limit: Duration) -> Self {
+        Self {
+            limit,
+            at: std::time::Instant::now() + limit,
+        }
+    }
+
+    fn passed(&self) -> bool {
+        std::time::Instant::now() >= self.at
+    }
+
+    fn remaining(&self) -> Duration {
+        self.at.saturating_duration_since(std::time::Instant::now())
     }
 }
 
@@ -211,12 +290,33 @@ fn finish(exit: Exit, stdout: Vec<u8>, stderr: Vec<u8>) -> Result<SandboxOutput,
     }
 }
 
+/// Sends `signal` to `child`'s process group.
+#[cfg(unix)]
+pub(crate) fn signal_group(child: &Child, signal: i32) {
+    // The child leads its own process group (see the Unix backend's
+    // pre-exec `setsid`), so the negated pid names the group.
+    #[allow(
+        unsafe_code,
+        reason = "killpg has no safe wrapper; the argument is a pid this process owns"
+    )]
+    unsafe {
+        libc::kill(-(child.id() as libc::pid_t), signal);
+    }
+}
+
+/// Sends `signal` to `child`'s process group.
+#[cfg(not(unix))]
+pub(crate) fn signal_group(_child: &Child, _signal: i32) {}
+
 /// Kills `child` and every descendant it started.
+///
+/// The process-group signal reaches everything that stayed in the
+/// group. Reaching a descendant that called `setsid` needs a mechanism
+/// the group does not have, which is what the Linux backend's cgroup
+/// and reparent sweep supply; this is the last-resort form for a host
+/// with neither.
 #[cfg(unix)]
 pub(crate) fn kill_tree(child: &mut Child) {
-    // The child leads its own process group (see the Unix backend's
-    // pre-exec `setsid`), so one signal to the negated group id reaches
-    // every descendant that has not left the group.
     #[allow(
         unsafe_code,
         reason = "killpg has no safe wrapper; the argument is a pid this process owns"
@@ -241,4 +341,233 @@ pub(crate) fn kill_tree(child: &mut Child) {
 #[cfg(not(any(unix, windows)))]
 pub(crate) fn kill_tree(child: &mut Child) {
     let _ = child.kill();
+}
+
+/// Blocking until something the supervisor cares about happens.
+///
+/// A supervisor has three things to wait for at once: the child
+/// exiting, an operator's interrupt, and a deadline. On Unix all three
+/// are signals or a timeout on a signal wait, so the whole wait is one
+/// blocking call rather than a loop that wakes up to ask.
+#[cfg(unix)]
+pub(crate) mod signals {
+    #![allow(
+        unsafe_code,
+        reason = "a signal disposition, a pipe, and a poll have no safe \
+                  wrappers; the handler touches only atomics and `write`, \
+                  which is the async-signal-safety contract"
+    )]
+
+    use std::sync::Once;
+    use std::sync::atomic::{AtomicI32, Ordering};
+    use std::time::Duration;
+
+    /// Why a wait ended.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum Wake {
+        /// A child of this process changed state.
+        ChildChanged,
+        /// An operator's interrupt arrived, with the signal number.
+        Interrupt(i32),
+        /// The caller's deadline ran out.
+        Deadline,
+    }
+
+    /// Signals a supervisor forwards rather than dies on.
+    const FORWARDED: [i32; 4] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGQUIT];
+
+    /// Wake-up pipes, one write end per live [`Waiter`].
+    ///
+    /// A fixed array rather than a list because the handler runs in a
+    /// signal context, where allocation and locking are both out. Eight
+    /// concurrent supervisors in one process is far past any real use;
+    /// a ninth simply waits on its deadline.
+    const WAITERS: usize = 8;
+    #[allow(
+        clippy::declare_interior_mutable_const,
+        reason = "the const is an array initializer, and each element is a distinct atomic"
+    )]
+    const NO_WAITER: AtomicI32 = AtomicI32::new(-1);
+    static WAKEUPS: [AtomicI32; WAITERS] = [NO_WAITER; WAITERS];
+    /// The signal most recently seen by the handler, for the waiter to
+    /// read once it is awake.
+    static LAST_SIGNAL: AtomicI32 = AtomicI32::new(0);
+
+    /// One byte to every registered waiter. Async-signal-safe: an
+    /// atomic load, an atomic store, and `write`.
+    extern "C" fn handler(signal: i32) {
+        if signal != libc::SIGCHLD {
+            LAST_SIGNAL.store(signal, Ordering::SeqCst);
+        }
+        for slot in &WAKEUPS {
+            let fd = slot.load(Ordering::SeqCst);
+            if fd >= 0 {
+                let byte = u8::try_from(signal.clamp(0, 255)).unwrap_or(0);
+                unsafe {
+                    libc::write(fd, std::ptr::from_ref(&byte).cast(), 1);
+                }
+            }
+        }
+    }
+
+    /// Installs the dispositions once per process.
+    ///
+    /// `SIGCHLD` is caught rather than left default so a child exiting
+    /// is an event the wait can block on; the forwarded signals are
+    /// caught so an interrupt reaches the child instead of ending the
+    /// supervisor and orphaning it.
+    fn install() {
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            for signal in FORWARDED.iter().copied().chain([libc::SIGCHLD]) {
+                let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+                action.sa_sigaction = handler as *const () as usize;
+                action.sa_flags = libc::SA_RESTART;
+                unsafe {
+                    libc::sigemptyset(&raw mut action.sa_mask);
+                    libc::sigaction(signal, &raw const action, std::ptr::null_mut());
+                }
+            }
+        });
+    }
+
+    /// A registered wake-up pipe, blocking until the supervisor has
+    /// something to do.
+    pub(crate) struct Waiter {
+        read: libc::c_int,
+        write: libc::c_int,
+        slot: Option<usize>,
+    }
+
+    impl Waiter {
+        /// Registers a wake-up pipe and installs the dispositions.
+        pub(crate) fn new() -> Self {
+            install();
+            let mut fds = [-1; 2];
+            let created = unsafe { libc::pipe(fds.as_mut_ptr()) } == 0;
+            if !created {
+                return Self {
+                    read: -1,
+                    write: -1,
+                    slot: None,
+                };
+            }
+            for fd in fds {
+                unsafe {
+                    libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+                    let flags = libc::fcntl(fd, libc::F_GETFL);
+                    libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+                }
+            }
+            let slot = WAKEUPS.iter().position(|slot| {
+                slot.compare_exchange(-1, fds[1], Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+            });
+            Self {
+                read: fds[0],
+                write: fds[1],
+                slot,
+            }
+        }
+
+        /// Blocks until a signal arrives or `timeout` runs out.
+        pub(crate) fn wait(&self, timeout: Option<Duration>) -> Wake {
+            if self.read < 0 {
+                // No pipe: the wait still has to make progress, and the
+                // caller re-checks the child on every return.
+                std::thread::sleep(timeout.unwrap_or(Duration::from_millis(50)));
+                return Wake::Deadline;
+            }
+            let mut poller = libc::pollfd {
+                fd: self.read,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let milliseconds = timeout.map_or(-1, |limit| {
+                i32::try_from(limit.as_millis()).unwrap_or(i32::MAX)
+            });
+            let ready = unsafe { libc::poll(&raw mut poller, 1, milliseconds) };
+            if ready <= 0 {
+                // Zero is the deadline. A negative is `EINTR`, which
+                // means a signal arrived while the handler was running;
+                // treating it as a wake-up is correct, because the
+                // caller re-checks both the child and the deadline.
+                return if ready == 0 {
+                    Wake::Deadline
+                } else {
+                    Wake::ChildChanged
+                };
+            }
+            let mut drain = [0_u8; 64];
+            while unsafe { libc::read(self.read, drain.as_mut_ptr().cast(), drain.len()) } > 0 {}
+            let signal = LAST_SIGNAL.swap(0, Ordering::SeqCst);
+            if FORWARDED.contains(&signal) {
+                Wake::Interrupt(signal)
+            } else {
+                Wake::ChildChanged
+            }
+        }
+    }
+
+    impl Drop for Waiter {
+        fn drop(&mut self) {
+            if let Some(slot) = self.slot {
+                WAKEUPS[slot].store(-1, Ordering::SeqCst);
+            }
+            if self.read >= 0 {
+                unsafe {
+                    libc::close(self.read);
+                    libc::close(self.write);
+                }
+            }
+        }
+    }
+}
+
+/// Blocking until something the supervisor cares about happens.
+///
+/// Windows has no signal a child can be sent, and a console interrupt
+/// already reaches the whole console group, so the supervisor's only
+/// job here is the deadline.
+#[cfg(not(unix))]
+pub(crate) mod signals {
+    use std::time::Duration;
+
+    /// Why a wait ended.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum Wake {
+        /// A child of this process changed state.
+        ChildChanged,
+        /// An operator's interrupt arrived, with the signal number.
+        Interrupt(i32),
+        /// The caller's deadline ran out.
+        Deadline,
+    }
+
+    /// A deadline-only waiter.
+    pub(crate) struct Waiter;
+
+    impl Waiter {
+        pub(crate) fn new() -> Self {
+            Self
+        }
+
+        /// Waits out `timeout`, or a slice of it. A console interrupt
+        /// on Windows already reaches every process in the console
+        /// group, so there is no signal for the supervisor to forward
+        /// and nothing else to block on.
+        pub(crate) fn wait(&self, timeout: Option<Duration>) -> Wake {
+            let slice = Duration::from_millis(20);
+            match timeout {
+                Some(remaining) if remaining <= slice => {
+                    std::thread::sleep(remaining);
+                    Wake::Deadline
+                }
+                _ => {
+                    std::thread::sleep(slice);
+                    Wake::ChildChanged
+                }
+            }
+        }
+    }
 }

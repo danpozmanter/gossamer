@@ -20,8 +20,9 @@ use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, INVALID_HANDLE_
 /// A security identifier, as every Win32 entry point below takes it.
 pub(crate) type Sid = *mut std::ffi::c_void;
 use windows_sys::Win32::Security::Authorization::{
-    ConvertStringSidToSidW, EXPLICIT_ACCESS_W, GetNamedSecurityInfoW, SE_FILE_OBJECT, SET_ACCESS,
-    SetEntriesInAclW, SetNamedSecurityInfoW, TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
+    ConvertStringSidToSidW, EXPLICIT_ACCESS_W, GetNamedSecurityInfoW, REVOKE_ACCESS,
+    SE_FILE_OBJECT, SET_ACCESS, SetEntriesInAclW, SetNamedSecurityInfoW, TRUSTEE_IS_SID,
+    TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
 };
 use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, DACL_SECURITY_INFORMATION, EqualSid, GetAce,
@@ -212,6 +213,9 @@ impl Drop for OwnedSid {
 
 /// An object's DACL, borrowed from the security descriptor that owns
 /// it, so the descriptor is freed once rather than per query.
+///
+/// `acl` is null for an object with no DACL at all, which Windows reads
+/// as "everyone has every right".
 struct Dacl {
     acl: *mut ACL,
     descriptor: PSECURITY_DESCRIPTOR,
@@ -240,7 +244,7 @@ impl Dacl {
                 &raw mut descriptor,
             )
         };
-        if read != ERROR_SUCCESS || acl.is_null() {
+        if read != ERROR_SUCCESS {
             if !descriptor.is_null() {
                 unsafe { LocalFree(descriptor.cast()) };
             }
@@ -257,6 +261,9 @@ impl Dacl {
     /// `ALL APPLICATION PACKAGES` - and refuses outright any ACL that
     /// carries an inherited deny ACE, which a system directory's does.
     fn rights_of(&self, sid: Sid) -> u32 {
+        if self.acl.is_null() {
+            return u32::MAX;
+        }
         // SAFETY: the descriptor this ACL belongs to is live for the
         // length of this value, so the header is readable.
         let count = u32::from(unsafe { (*self.acl).AceCount });
@@ -312,11 +319,20 @@ pub(crate) fn grant(path: &Path, sid: Sid, writable: bool) -> Result<(), String>
     modify(path, sid, writable, true)
 }
 
-/// Removes the ACE `grant` added.
+/// Removes the ACE `grant` added and nothing else.
 pub(crate) fn revoke(path: &Path, sid: Sid) -> Result<(), String> {
     modify(path, sid, false, false)
 }
 
+/// Edits the DACL of `path` as it stands: adds one entry for `sid`, or
+/// removes the entries for `sid`.
+///
+/// Both directions hand `SetEntriesInAcl` the existing ACL, so every
+/// entry that is not the sandbox's - the owner's own access above all -
+/// is written back exactly as it was read. A revoke is never a
+/// replacement: an ACL rebuilt from nothing is an empty DACL, which
+/// denies everyone, and a directory's children then inherit that
+/// nothing.
 fn modify(path: &Path, sid: Sid, writable: bool, adding: bool) -> Result<(), String> {
     let wide: Vec<u16> = path
         .as_os_str()
@@ -343,6 +359,14 @@ fn modify(path: &Path, sid: Sid, writable: bool, adding: bool) -> Result<(), Str
             path.display()
         ));
     }
+    // No DACL at all grants everyone every right, so the container
+    // already reaches the object and there is no entry of ours to
+    // remove. Writing it back as a list would turn "everyone" into
+    // whatever the list says.
+    if existing.is_null() {
+        unsafe { LocalFree(descriptor.cast()) };
+        return Ok(());
+    }
 
     let mut access = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
     if writable {
@@ -350,7 +374,7 @@ fn modify(path: &Path, sid: Sid, writable: bool, adding: bool) -> Result<(), Str
     }
     let entry = EXPLICIT_ACCESS_W {
         grfAccessPermissions: access,
-        grfAccessMode: SET_ACCESS,
+        grfAccessMode: if adding { SET_ACCESS } else { REVOKE_ACCESS },
         grfInheritance: if path.is_dir() {
             SUB_CONTAINERS_AND_OBJECTS_INHERIT
         } else {
@@ -365,21 +389,10 @@ fn modify(path: &Path, sid: Sid, writable: bool, adding: bool) -> Result<(), Str
         },
     };
     let mut updated: *mut ACL = std::ptr::null_mut();
-    // Removing is expressed as writing back the ACL without the entry,
-    // which `SetEntriesInAcl` does when handed zero entries.
-    let entries: &[EXPLICIT_ACCESS_W] = if adding {
-        std::slice::from_ref(&entry)
-    } else {
-        &[]
-    };
-    let built = unsafe {
-        SetEntriesInAclW(
-            u32::try_from(entries.len()).unwrap_or(0),
-            entries.as_ptr(),
-            if adding { existing } else { std::ptr::null() },
-            &raw mut updated,
-        )
-    };
+    // SAFETY: `entry` and the SID it names outlive the call, `existing`
+    // is owned by `descriptor` which is freed below, and `updated` is
+    // written only on success.
+    let built = unsafe { SetEntriesInAclW(1, &raw const entry, existing, &raw mut updated) };
     if built != ERROR_SUCCESS {
         unsafe { LocalFree(descriptor.cast()) };
         return Err(format!(
@@ -414,6 +427,48 @@ fn modify(path: &Path, sid: Sid, writable: bool, adding: bool) -> Result<(), Str
 #[cfg(test)]
 mod acl_tests {
     use super::*;
+
+    fn rights_of(path: &Path, sid: Sid) -> u32 {
+        Dacl::read(path).map_or(0, |dacl| dacl.rights_of(sid))
+    }
+
+    /// The revoke is the inverse of the grant and nothing more: the
+    /// sandbox's entry goes, and every entry the object had before -
+    /// its owner's own access above all - is still there, on the
+    /// directory and on what the directory's grant was inherited by.
+    #[test]
+    fn a_revoke_removes_only_the_entry_the_grant_added() {
+        let root = std::env::temp_dir().join("gos-sandbox-acl-revoke");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create root");
+        let child = root.join("child.txt");
+        std::fs::write(&child, "before").expect("write child");
+        // A package-shaped SID no profile owns: the ACL edit is the
+        // same whoever the trustee is.
+        let sid = OwnedSid::from_text("S-1-15-2-1111-2222-3333-4444-5555-6666-7777-8888")
+            .expect("a well-formed SID converts");
+        let needed = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
+        assert_eq!(rights_of(&root, sid.raw()) & needed, 0);
+
+        grant(&root, sid.raw(), false).expect("grant");
+        assert_eq!(rights_of(&root, sid.raw()) & needed, needed);
+        assert_eq!(
+            rights_of(&child, sid.raw()) & needed,
+            needed,
+            "a directory grant reaches the files beneath it"
+        );
+
+        revoke(&root, sid.raw()).expect("revoke");
+        assert_eq!(rights_of(&root, sid.raw()) & needed, 0);
+        assert_eq!(rights_of(&child, sid.raw()) & needed, 0);
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&child)
+            .expect("the file is still writable by its owner once the grant is gone");
+        std::fs::write(root.join("after.txt"), "after")
+            .expect("the directory still takes a new file once the grant is gone");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn a_record_is_written_before_the_grant_it_describes() {
