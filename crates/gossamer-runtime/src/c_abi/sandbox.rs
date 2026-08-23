@@ -751,6 +751,7 @@ pub unsafe extern "C" fn gos_rt_sandbox_run_inherit(handle: i64, argv: *mut GosV
 #[cfg(test)]
 mod sandbox_abi_tests {
     use super::*;
+    use crate::c_abi::string::test_gos_str;
 
     /// A policy is a value: the binding a builder was read from still
     /// names that policy afterwards, so two builders can branch from one
@@ -760,8 +761,8 @@ mod sandbox_abi_tests {
     fn a_builder_leaves_the_policy_it_was_read_from_live() {
         let first = gos_rt_sandbox_policy_new();
         assert!(first > 0);
-        let open = std::ffi::CString::new("open").expect("cstring");
-        let second = unsafe { gos_rt_sandbox_policy_network_mode(first, open.as_ptr()) };
+        let open = test_gos_str("open");
+        let second = unsafe { gos_rt_sandbox_policy_network_mode(first, open) };
         assert!(second > 0);
         assert_ne!(first, second);
         assert_eq!(
@@ -779,8 +780,8 @@ mod sandbox_abi_tests {
     #[test]
     fn an_unknown_level_name_never_weakens_the_policy() {
         let handle = gos_rt_sandbox_policy_new();
-        let name = std::ffi::CString::new("paranoid").expect("cstring");
-        let next = unsafe { gos_rt_sandbox_policy_level(handle, name.as_ptr()) };
+        let name = test_gos_str("paranoid");
+        let next = unsafe { gos_rt_sandbox_policy_level(handle, name) };
         assert_eq!(
             peek(next).expect("live").level,
             gossamer_sandbox::Level::Standard
@@ -789,9 +790,9 @@ mod sandbox_abi_tests {
 
     #[test]
     fn a_handle_that_names_nothing_answers_zero_rather_than_panicking() {
-        let mode = std::ffi::CString::new("open").expect("cstring");
+        let mode = test_gos_str("open");
         assert_eq!(
-            unsafe { gos_rt_sandbox_policy_network_mode(999_999, mode.as_ptr()) },
+            unsafe { gos_rt_sandbox_policy_network_mode(999_999, mode) },
             0
         );
     }
@@ -799,14 +800,14 @@ mod sandbox_abi_tests {
     #[test]
     fn an_unknown_network_mode_never_opens_a_closed_network() {
         let handle = gos_rt_sandbox_policy_new();
-        let open = std::ffi::CString::new("open").expect("cstring");
-        let typo = std::ffi::CString::new("opne").expect("cstring");
-        let opened = unsafe { gos_rt_sandbox_policy_network_mode(handle, open.as_ptr()) };
-        let after = unsafe { gos_rt_sandbox_policy_network_mode(opened, typo.as_ptr()) };
+        let open = test_gos_str("open");
+        let typo = test_gos_str("opne");
+        let opened = unsafe { gos_rt_sandbox_policy_network_mode(handle, open) };
+        let after = unsafe { gos_rt_sandbox_policy_network_mode(opened, typo) };
         assert_eq!(peek(after).expect("live").network, Network::Open);
 
         let handle = gos_rt_sandbox_policy_new();
-        let next = unsafe { gos_rt_sandbox_policy_network_mode(handle, typo.as_ptr()) };
+        let next = unsafe { gos_rt_sandbox_policy_network_mode(handle, typo) };
         assert_eq!(peek(next).expect("live").network, Network::None);
     }
 

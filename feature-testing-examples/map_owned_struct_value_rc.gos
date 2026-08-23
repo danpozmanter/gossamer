@@ -1,21 +1,22 @@
-// A struct with heap fields stored in a map, read back, and taken out again
-// after the binding that put it there is gone.
+// A struct with heap fields stored in a map, read back after the binding that
+// put it there is gone.
 //
-// The entry needs a reference of its own: reading a value hands out a share
-// and overwriting one gives a share up, so an insert that took none left the
-// map holding a value nobody had counted. It kept working until the caller's
-// own binding died, and then the entry pointed at freed memory - which a
-// later read only notices once some other allocation has taken the block.
-// The loop below both fills and re-reads, so a missing share shows up as a
-// changed field rather than as a crash nobody can place.
+// The compiled tiers count a struct's `String` and `Vec` fields per binding
+// rather than through the aggregate, and a hash container keeps the word it
+// is handed rather than copying the slots - so an insert that took no share
+// of those fields left the entry holding storage that died with the binding
+// which inserted it. Reading straight afterwards proves nothing, because the
+// freed block is intact until something claims it; this fills, allocates over
+// the gap, and only then reads every entry back.
+//
+// `store` is where the share is minted: its `held` and the clone it inserts
+// both end at the call's return, and the entry has to outlive them.
 
 struct Held {
     name: String
     parts: Vec<i64>
 }
 
-// The value goes in inside this function, so the local that carried it is
-// gone by the time the caller reads the entry back.
 fn store(into: &mut Map<String, Held>, n: i64) {
     let held = Held { name: format!("held-{}", n), parts: #[n, n + 1, n + 2] }
     let _ = into.insert(format!("k-{}", n), held.clone())
@@ -42,7 +43,7 @@ fn main() {
                 if found.name != format!("held-{}", n) {
                     wrong_name += 1
                 }
-                if found.parts.len() != 3 || found.parts[0] != n {
+                if found.parts.len() != 3 || found.parts[0] != n || found.parts[2] != n + 2 {
                     wrong_parts += 1
                 }
             }
@@ -52,7 +53,7 @@ fn main() {
     println!("entries whose name changed:  {}", wrong_name)
     println!("entries whose parts changed: {}", wrong_parts)
     println!("entries that went missing:   {}", missing)
-    println!("filler intact: {}", filler.len())
+    println!("kept: {} filler: {}", kept.len(), filler.len())
 
     // Taking one out hands its share over, and the value still reads.
     match Map::pop(&mut kept, "k-7") {

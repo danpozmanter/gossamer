@@ -108,13 +108,18 @@ pub unsafe extern "C" fn gos_rt_ws_accept(req: *const GosHttpRequest) -> i128 {
 
         // Token: reuse the wired accept-key derivation (base64(sha1(key
         // + GUID))) so this shim and `gos_rt_ws_accept_key` never drift.
-        let key_c = std::ffi::CString::new(key.as_str())
-            .unwrap_or_else(|_| std::ffi::CString::new("").expect("static is NUL-free"));
-        let token_ptr = unsafe { gos_rt_ws_accept_key(key_c.as_ptr()) };
+        // Its `client_key` parameter is a Gossamer `String`, read through the
+        // length header that sits before the body, and the token it answers is
+        // an owned runtime string this frame gives back.
+        let key_c = alloc_cstring(key.as_bytes());
+        let token_ptr = unsafe { gos_rt_ws_accept_key(key_c) };
+        unsafe { crate::c_abi::string::gos_rt_str_free(key_c) };
         let token = if token_ptr.is_null() {
             String::new()
         } else {
-            unsafe { crate::c_abi::gos_str_arg_string(token_ptr) }
+            let text = unsafe { crate::c_abi::gos_str_arg_string(token_ptr) };
+            unsafe { crate::c_abi::string::gos_rt_str_free(token_ptr) };
+            text
         };
 
         let headers: Vec<(String, String)> = vec![

@@ -983,8 +983,12 @@ pub unsafe extern "C" fn gos_rt_proxy_forward(
             unsafe { (&*req).url.clone() }
         };
         let full = format!("{}{request_path}", p.upstream.trim_end_matches('/'));
-        let url_c = std::ffi::CString::new(full).unwrap_or_default();
-        unsafe { gos_rt_http_get(url_c.as_ptr(), std::ptr::null_mut()) }
+        // The `url` parameter is a Gossamer `String`, read through the length
+        // header that sits before the body, so the argument is built as one.
+        let url = alloc_cstring(full.as_bytes());
+        let forwarded = unsafe { gos_rt_http_get(url, std::ptr::null_mut()) };
+        unsafe { crate::c_abi::string::gos_rt_str_free(url) };
+        forwarded
     })
 }
 

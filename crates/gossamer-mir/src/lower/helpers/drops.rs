@@ -903,9 +903,13 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     terminator_retains.push((block_idx, l));
                     continue;
                 }
-                // A struct or tuple argument: the container keeps the word,
-                // and the caller's binding releases the fields where it ends,
-                // so the stored entry needs a share of each of them.
+                // A struct or tuple argument, for a container that keeps the
+                // aggregate's own word rather than copying its slots: the
+                // caller's binding releases the fields where it ends, so the
+                // stored entry needs a share of each of them.
+                if !stores_aggregate_by_pointer(name) {
+                    continue;
+                }
                 if let Operand::Copy(p) = arg
                     && p.projection.is_empty()
                     && (p.local.0 as usize) < body.locals.len()
@@ -2253,6 +2257,23 @@ pub(crate) fn is_element_push(name: &str) -> bool {
     name.starts_with("gos_rt_vec_push")
         || name.starts_with("gos_rt_deque_push")
         || (name.starts_with("gos_rt_bheap_") && name.contains("_push"))
+}
+
+/// Consuming calls whose container keeps the ARGUMENT'S OWN aggregate word,
+/// so a struct argument's heap fields need a share for the stored entry.
+///
+/// A hash container stores the word it is handed. A sequence container copies
+/// the element's slots into its own storage and retains their heap children
+/// itself, so a share minted here would never be given back - the entry reads
+/// correctly either way, and the extra count leaks. Membership is therefore
+/// evidence-driven: a container belongs here only where dropping the share
+/// leaves a stored entry reading freed memory.
+fn stores_aggregate_by_pointer(name: &str) -> bool {
+    name.starts_with("gos_rt_map_insert")
+        || name.starts_with("gos_rt_map_or_insert")
+        || name.starts_with("gos_rt_omap_insert")
+        || name.starts_with("gos_rt_set_insert")
+        || name.starts_with("gos_rt_chan_send")
 }
 
 fn is_consuming_call(name: &str) -> bool {

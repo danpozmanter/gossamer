@@ -913,7 +913,14 @@ fn handle_http_conn_limited<C: HttpIo>(
             // SAFETY: `fn_addr` came from `gos_fn_addr("T::serve")`
             // at the user's `http::serve(addr, app)` call site;
             // env_addr is the `&app` pointer passed alongside.
-            let handler: HandlerFn = unsafe { std::mem::transmute(fn_addr) };
+            // The address is recovered through the exposed-provenance API the
+            // rest of the C-ABI uses, so the pointer it produces carries the
+            // provenance the ptr-to-int cast at the call site exposed.
+            let handler: HandlerFn = unsafe {
+                std::mem::transmute::<*const (), HandlerFn>(std::ptr::with_exposed_provenance(
+                    fn_addr,
+                ))
+            };
             let env_ptr = env_addr as *mut u8;
             let req_ptr: *mut GosHttpRequest = &raw mut scratch.request;
             // A peer that goes away while the handler runs cancels the
@@ -2768,27 +2775,50 @@ mod tests {
         );
     }
 
-    /// Runs the HTTP framing core for one accepted connection and returns
-    /// everything the client read until the server closed. Non-blocking
+    /// One connection's bytes held in memory: the client's request bytes
+    /// are read out in `read`-sized pieces and then EOF, and everything the
+    /// server writes back accumulates in `written`. The framing core is
+    /// written against [`HttpIo`], so a request/response exchange needs a
+    /// transport, not a socket - a `peer_socket` of `None` is exactly the
+    /// "no peer to peek at" case the trait documents.
+    struct MemoryConn {
+        inbound: Vec<u8>,
+        read_cursor: usize,
+        written: Vec<u8>,
+    }
+
+    impl MemoryConn {
+        fn new(client_bytes: &[u8]) -> Self {
+            Self {
+                inbound: client_bytes.to_vec(),
+                read_cursor: 0,
+                written: Vec::new(),
+            }
+        }
+    }
+
+    impl HttpIo for MemoryConn {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let remaining = &self.inbound[self.read_cursor..];
+            let n = remaining.len().min(buf.len());
+            buf[..n].copy_from_slice(&remaining[..n]);
+            self.read_cursor += n;
+            Ok(n)
+        }
+        fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+            self.written.extend_from_slice(buf);
+            Ok(())
+        }
+    }
+
+    /// Runs the HTTP framing core over one connection's worth of client
+    /// bytes and returns everything the server wrote back. Non-blocking
     /// transport behaviour is covered by its dedicated netpoll tests.
     fn roundtrip_raw_bytes(client_bytes: &[u8], fn_addr: usize) -> Vec<u8> {
-        use std::io::{Read, Write};
-
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let server = std::thread::spawn(move || {
-            let (stream, _) = listener.accept().unwrap();
-            let _faults = crate::c_abi::panic::IsolatedFaults::enter();
-            let mut conn = BlockingTcpConn(stream);
-            handle_http_conn(&mut conn, 0, fn_addr);
-        });
-        let mut sock = std::net::TcpStream::connect(addr).unwrap();
-        sock.write_all(client_bytes).unwrap();
-        let _ = sock.shutdown(std::net::Shutdown::Write);
-        let mut raw = Vec::new();
-        let _ = sock.read_to_end(&mut raw);
-        server.join().unwrap();
-        raw
+        let _faults = crate::c_abi::panic::IsolatedFaults::enter();
+        let mut conn = MemoryConn::new(client_bytes);
+        handle_http_conn(&mut conn, 0, fn_addr);
+        conn.written
     }
 
     fn echo_fn_addr() -> usize {
@@ -2871,7 +2901,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn chunked_request_dechunks_for_handler_and_preserves_pipelined_boundary() {
         let mut wire: Vec<u8> =
             b"POST /up HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
@@ -2900,7 +2929,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn chunked_with_content_length_rejected_400_on_wire() {
         let wire = b"POST /up HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nContent-Length: 4\r\n\r\n4\r\nWiki\r\n0\r\n\r\n";
         let raw = roundtrip_raw_bytes(wire, echo_fn_addr());
@@ -2913,7 +2941,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn content_length_over_cap_rejected_413_on_wire() {
         let wire = format!(
             "POST /up HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n",
@@ -2928,7 +2955,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn declared_chunk_over_cap_rejected_413_mid_stream() {
         // The hostile size line alone triggers the reject - the
         // server must not wait for (or buffer) the declared body.
@@ -3026,6 +3052,7 @@ mod tests {
     /// connection: the wake is what carries it, so it must arrive on every
     /// platform the server runs on.
     #[test]
+    #[cfg_attr(miri, ignore)] // a real accept()/connect() pair: Miri has no socket syscalls
     fn the_wake_releases_a_thread_parked_in_accept() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let addr = listener.local_addr().expect("local addr");
@@ -3047,6 +3074,7 @@ mod tests {
     /// The server's own accept loop ends on the same pair - its shutdown
     /// flag plus the wake that delivers it - and stops holding the port.
     #[test]
+    #[cfg_attr(miri, ignore)] // a real accept()/connect() pair: Miri has no socket syscalls
     fn the_accept_loop_ends_on_a_flagged_wake() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let addr = listener.local_addr().expect("local addr");

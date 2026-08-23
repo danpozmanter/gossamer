@@ -112,6 +112,13 @@
   readable, credentials denied, and the network closed. It is the one tool
   that runs code a model wrote, and it ran with the server's own reach. A
   host with no sandbox backend runs it as before rather than refusing.
+- A WebSocket handshake and `Proxy::forward` build their string arguments as
+  Gossamer strings. Both handed a host `CString` to a shim that reads the
+  length header sitting before the body, so the length came from whatever
+  preceded that allocation: the `Sec-WebSocket-Accept` token was derived over
+  the wrong bytes whenever the address happened to carry a body's shape, and
+  the read could land outside the allocation entirely. The handshake also
+  releases the token it derives rather than leaking one per connection.
 
 ## 0.55.2 - Carrier element ownership, numeric-literal methods, conversion targets
 
