@@ -516,7 +516,7 @@ pub unsafe extern "C" fn gos_rt_http_request_send(req: *mut GosHttpRequest) -> i
         // Reuse the originating client's agent (cookie jar / proxy /
         // policy) when this request came from `client.<verb>(url)`;
         // a standalone request uses a default-policy agent.
-        let agent = agent.unwrap_or_else(|| build_agent(&ClientConfig::DEFAULT));
+        let agent = agent.unwrap_or_else(default_agent);
         http_request_buffered("Request::send", &method, &url, body, &headers, &agent)
     })
 }
@@ -1275,10 +1275,11 @@ fn validate_http_method(method: &str) -> Option<String> {
 /// `gossamer_std::http::Client::new()` defaults (global timeout, 10
 /// redirects, `gossamer/{version}` UA, non-2xx are Ok responses -
 /// matching the interp tier's `http_status_as_error(false)`), plus the
-/// configured proxy. Cookie persistence comes from REUSING an agent:
-/// the jar is shared across an agent's clones, so a `cookie_jar`
-/// client stores its built agent and reuses it, while a non-jar client
-/// builds a fresh agent per request (no Set-Cookie carryover).
+/// configured proxy. An agent owns a connection pool and a cookie jar,
+/// both shared across its clones, so one is built per client (and once
+/// for the free functions) and reused for every request that client
+/// makes; a client without a cookie jar empties the jar before each
+/// request instead of building another engine.
 fn build_agent(config: &ClientConfig) -> ureq::Agent {
     // Redirect semantics (ureq 3, will_error left at its default):
     // `max_redirects(0)` never follows and returns 3xx raw; exceeding
@@ -1300,21 +1301,44 @@ fn build_agent(config: &ClientConfig) -> ureq::Agent {
     cfg.build().new_agent()
 }
 
-/// The agent a client request runs on: the stored persistent agent
-/// when the cookie jar is enabled (so `Set-Cookie` survives across
-/// requests on this client), a fresh per-request agent otherwise. A
-/// null client gets the default-policy agent.
+/// The engine every free-function request runs on.
+///
+/// One agent for the process is one connection pool: a second request
+/// to a host it already reached rides the connection the first opened
+/// instead of paying another TCP (and TLS) handshake, which is what the
+/// interp tier's native client does and what an idle keep-alive
+/// connection is for. Opening a fresh connection per request also
+/// consumes an ephemeral port per request, and a host that cannot
+/// assign one refuses the connect outright.
+///
+/// The free functions carry no cookie jar, so the jar is emptied before
+/// the request is built: nothing a previous response stored is ever
+/// sent.
+fn default_agent() -> ureq::Agent {
+    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+    let agent = AGENT
+        .get_or_init(|| build_agent(&ClientConfig::DEFAULT))
+        .clone();
+    agent.cookie_jar_lock().clear();
+    agent
+}
+
+/// The agent a client request runs on: the client's own persistent
+/// engine, so its connection pool, proxy, redirect and timeout policy
+/// apply. A client without a cookie jar starts each request from an
+/// empty one, which keeps `Set-Cookie` from carrying across requests
+/// while still reusing the connection. A null client gets the
+/// default-policy agent.
 fn client_agent(client: *const GosHttpClient) -> ureq::Agent {
     if client.is_null() {
-        build_agent(&ClientConfig::DEFAULT)
-    } else {
-        let c = unsafe { &*client };
-        if c.config.cookie_jar {
-            c.agent.clone()
-        } else {
-            build_agent(&c.config)
-        }
+        return default_agent();
     }
+    let c = unsafe { &*client };
+    let agent = c.agent.clone();
+    if !c.config.cookie_jar {
+        agent.cookie_jar_lock().clear();
+    }
+    agent
 }
 
 /// Upper bound on a buffered response body (post-inflate) for the
@@ -1520,7 +1544,7 @@ pub unsafe extern "C" fn gos_rt_http_request(
             &url_str,
             body_bytes,
             &header_pairs,
-            &build_agent(&ClientConfig::DEFAULT),
+            &default_agent(),
         )
     })
 }
@@ -1555,7 +1579,7 @@ pub unsafe extern "C" fn gos_rt_http_request_bytes(
             &url_str,
             body_bytes,
             &header_pairs,
-            &build_agent(&ClientConfig::DEFAULT),
+            &default_agent(),
         )
     })
 }
@@ -1654,7 +1678,7 @@ pub extern "C" fn gos_rt_http_get(url: *const c_char, headers: *mut GosVec) -> i
             &url_str,
             Vec::new(),
             &header_pairs,
-            &build_agent(&ClientConfig::DEFAULT),
+            &default_agent(),
         )
     })
 }
@@ -1674,7 +1698,7 @@ fn http_verb_no_body(method: &str, label: &str, url: *const c_char, headers: *mu
         &url_str,
         Vec::new(),
         &header_pairs,
-        &build_agent(&ClientConfig::DEFAULT),
+        &default_agent(),
     )
 }
 
@@ -1709,7 +1733,7 @@ fn http_verb_body(
         &url_str,
         body_bytes,
         &header_pairs,
-        &build_agent(&ClientConfig::DEFAULT),
+        &default_agent(),
     )
 }
 
@@ -1780,7 +1804,7 @@ pub unsafe extern "C" fn gos_rt_http_delete(
             &url_str,
             body_bytes,
             &header_pairs,
-            &build_agent(&ClientConfig::DEFAULT),
+            &default_agent(),
         )
     })
 }
@@ -1843,7 +1867,7 @@ pub extern "C" fn gos_rt_nc_post(
             &url_str,
             body_bytes,
             &header_pairs,
-            &build_agent(&ClientConfig::DEFAULT),
+            &default_agent(),
         )
     })
 }
@@ -1873,7 +1897,7 @@ pub extern "C" fn gos_rt_nc_put(
             &url_str,
             body_bytes,
             &header_pairs,
-            &build_agent(&ClientConfig::DEFAULT),
+            &default_agent(),
         )
     })
 }
@@ -1904,7 +1928,7 @@ pub extern "C" fn gos_rt_proxy_forward_url(
         } else {
             unsafe { crate::c_abi::gos_str_arg_bytes(body) }.to_vec()
         };
-        let agent = build_agent(&ClientConfig::DEFAULT);
+        let agent = default_agent();
         match method_str.to_ascii_uppercase().as_str() {
             "POST" => http_request_buffered(
                 "proxy::forward",
@@ -2466,6 +2490,66 @@ mod tests {
         };
         unsafe { crate::c_abi::map::gos_rt_vec_free(v) };
         Some(out)
+    }
+
+    /// A second request to a host the client already reached rides the
+    /// connection the first one opened. Opening a fresh one per request
+    /// pays another handshake and another ephemeral port, and a host with
+    /// none to assign refuses the connect outright.
+    #[test]
+    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
+    fn a_second_request_to_the_same_host_rides_the_first_connection() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let connections = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&connections);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { return };
+                counter.fetch_add(1, Ordering::SeqCst);
+                std::thread::spawn(move || {
+                    let mut writer = stream.try_clone().expect("clone the accepted stream");
+                    let mut reader = BufReader::new(stream);
+                    let mut line = String::new();
+                    // Every request head ends at a blank line and carries
+                    // no body, so one answer per blank line serves the
+                    // whole connection.
+                    loop {
+                        line.clear();
+                        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                            return;
+                        }
+                        if line == "\r\n"
+                            && writer
+                                .write_all(
+                                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok",
+                                )
+                                .is_err()
+                        {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+
+        let url = format!("http://{addr}/x");
+        for _ in 0..2 {
+            let response =
+                run_buffered_request("test", "GET", &url, Vec::new(), &[], &default_agent())
+                    .expect("buffered response");
+            assert_eq!(response.status, 200);
+            assert_eq!(response.body, b"ok");
+        }
+        assert_eq!(
+            connections.load(Ordering::SeqCst),
+            1,
+            "the second request opened another connection"
+        );
     }
 
     #[test]

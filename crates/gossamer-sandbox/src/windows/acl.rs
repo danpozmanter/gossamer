@@ -87,6 +87,12 @@ impl GrantRecord {
         &self.granted
     }
 
+    /// The file this record is written to.
+    #[cfg(test)]
+    pub(crate) fn file(&self) -> &Path {
+        &self.path
+    }
+
     /// Removes the record once every grant it names has been revoked.
     pub(crate) fn close(&self) {
         let _ = std::fs::remove_file(&self.path);
@@ -538,15 +544,22 @@ mod acl_tests {
 
     #[test]
     fn a_record_is_written_before_the_grant_it_describes() {
-        let record_root = record_directory();
         let mut record = GrantRecord::open("gos-sandbox-acl-test");
+        let file = record.file().to_path_buf();
+        assert_eq!(file.parent(), Some(record_directory().as_path()));
+        // The name carries the writing run's pid, which is what lets a
+        // sweep tell a live run's record from one left behind.
+        let name = file
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .expect("a record file has a name");
+        assert!(name.contains(&std::process::id().to_string()));
         let target = std::env::temp_dir();
         record.add(&target);
-        let written = std::fs::read_to_string(record_root.join("gos-sandbox-acl-test.grants"))
-            .expect("record written");
+        let written = std::fs::read_to_string(&file).expect("record written");
         assert!(written.contains(&target.to_string_lossy().to_string()));
         assert_eq!(record.paths().len(), 1);
         record.close();
-        assert!(!record_root.join("gos-sandbox-acl-test.grants").exists());
+        assert!(!file.exists());
     }
 }

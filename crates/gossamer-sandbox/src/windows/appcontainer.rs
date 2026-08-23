@@ -82,124 +82,10 @@ impl Container {
     /// Creates the container profile and grants every path the policy
     /// allows.
     pub(crate) fn create(policy: &CompiledPolicy) -> Result<Self, String> {
-        let name = wide(CONTAINER_NAME);
-        let display = wide(CONTAINER_NAME);
-        let description = wide("Gossamer sandboxed build");
-        // The out parameter is required: a null one is `E_INVALIDARG`,
-        // not a way to say the SID is unwanted. The profile's SID is
-        // freed here and derived below instead, so both this call and
-        // the already-exists path reach the same SID.
-        let mut profile_sid: Sid = std::ptr::null_mut();
-        let created: HResult = unsafe {
-            CreateAppContainerProfile(
-                name.as_ptr(),
-                display.as_ptr(),
-                description.as_ptr(),
-                std::ptr::null(),
-                0,
-                &raw mut profile_sid,
-            )
-        };
-        if !profile_sid.is_null() {
-            unsafe { LocalFree(profile_sid.cast()) };
-        }
-        // A profile that already exists is the normal case: the name is
-        // deliberately stable.
-        let already = created == hresult_from_win32(ERROR_ALREADY_EXISTS);
-        if created < 0 && !already {
-            return Err(format!("CreateAppContainerProfile failed: {created:#x}"));
-        }
-
-        let mut sid: Sid = std::ptr::null_mut();
-        let derived: HResult =
-            unsafe { DeriveAppContainerSidFromAppContainerName(name.as_ptr(), &raw mut sid) };
-        if derived < 0 || sid.is_null() {
-            return Err(format!(
-                "DeriveAppContainerSidFromAppContainerName failed: {derived:#x}"
-            ));
-        }
-
+        let sid = container_sid()?;
         let mut record = acl::GrantRecord::open(CONTAINER_NAME);
-        let mut granted = Vec::new();
-        // A denial outside every grant needs no entry: an app container
-        // reaches nothing it was not granted. One inside a granted tree
-        // does, because the grant on the parent reaches it by
-        // inheritance.
-        for rule in policy.rules.iter().filter(|rule| {
-            rule.access == Access::Deny
-                && policy.rules.iter().any(|other| {
-                    other.access != Access::Deny
-                        && other.path != rule.path
-                        && rule.path.starts_with(&other.path)
-                })
-        }) {
-            if !acl::is_owned_by_current_user(&rule.path) {
-                continue;
-            }
-            record.add(&rule.path);
-            acl::deny(&rule.path, sid)?;
-            granted.push(rule.path.clone());
-        }
-        for rule in policy
-            .rules
-            .iter()
-            .filter(|rule| rule.access != Access::Deny)
-        {
-            let writable = rule.access == Access::ReadWrite;
-            // The system directories are reachable by every app
-            // container already, so the grant is a no-op there and the
-            // ACL is left alone.
-            if acl::already_reachable(&rule.path, sid, writable) {
-                continue;
-            }
-            if !acl::is_owned_by_current_user(&rule.path) {
-                return Err(format!(
-                    "refusing to modify the ACL of {}, which this user does not own",
-                    rule.path.display()
-                ));
-            }
-            // Recorded before the grant, so a crash between the two
-            // leaves a revoke that finds nothing rather than a grant
-            // nothing knows about.
-            record.add(&rule.path);
-            acl::grant(&rule.path, sid, writable)?;
-            granted.push(rule.path.clone());
-        }
-
-        // An AppContainer reaches the network only through a capability
-        // SID, so the network policy is this list and nothing else.
-        // Client is INTERNET_CLIENT; Open adds the server side.
-        let mut capability_sids: Vec<SID_AND_ATTRIBUTES> = Vec::new();
-        let mut owned_sids: Vec<*mut std::ffi::c_void> = Vec::new();
-        let wanted: &[&str] = match policy.network {
-            Network::None => &[],
-            Network::Client => &[CAPABILITY_INTERNET_CLIENT],
-            Network::Open => &[
-                CAPABILITY_INTERNET_CLIENT,
-                CAPABILITY_INTERNET_CLIENT_SERVER,
-                CAPABILITY_PRIVATE_NETWORK_CLIENT_SERVER,
-            ],
-        };
-        for text in wanted {
-            let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-            let mut raw: *mut std::ffi::c_void = std::ptr::null_mut();
-            // SAFETY: `wide` is a NUL-terminated UTF-16 buffer that
-            // outlives the call, and `raw` is written only on success.
-            if unsafe { ConvertStringSidToSidW(wide.as_ptr(), &raw mut raw) } == 0 {
-                for sid in &owned_sids {
-                    unsafe { LocalFree(*sid) };
-                }
-                return Err(format!(
-                    "converting capability SID {text}: {}",
-                    std::io::Error::last_os_error()
-                ));
-            }
-            owned_sids.push(raw);
-            capability_sids.push(SID_AND_ATTRIBUTES {
-                Sid: raw.cast(),
-                Attributes: GROUP_ENABLED,
-            });
-        }
+        let granted = apply_policy_acls(policy, sid, &mut record)?;
+        let (mut capability_sids, owned_sids) = capability_sids(policy.network)?;
         let capabilities = Box::new(SECURITY_CAPABILITIES {
             AppContainerSid: sid.cast(),
             Capabilities: if capability_sids.is_empty() {
@@ -227,6 +113,146 @@ impl Container {
             .cast::<std::ffi::c_void>()
             .cast_mut()
     }
+}
+
+/// The container profile's SID, creating the profile when this is the
+/// first run to use the name.
+fn container_sid() -> Result<Sid, String> {
+    let name = wide(CONTAINER_NAME);
+    let display = wide(CONTAINER_NAME);
+    let description = wide("Gossamer sandboxed build");
+    // The out parameter is required: a null one is `E_INVALIDARG`,
+    // not a way to say the SID is unwanted. The profile's SID is
+    // freed here and derived below instead, so both this call and
+    // the already-exists path reach the same SID.
+    let mut profile_sid: Sid = std::ptr::null_mut();
+    let created: HResult = unsafe {
+        CreateAppContainerProfile(
+            name.as_ptr(),
+            display.as_ptr(),
+            description.as_ptr(),
+            std::ptr::null(),
+            0,
+            &raw mut profile_sid,
+        )
+    };
+    if !profile_sid.is_null() {
+        unsafe { LocalFree(profile_sid.cast()) };
+    }
+    // A profile that already exists is the normal case: the name is
+    // deliberately stable.
+    let already = created == hresult_from_win32(ERROR_ALREADY_EXISTS);
+    if created < 0 && !already {
+        return Err(format!("CreateAppContainerProfile failed: {created:#x}"));
+    }
+
+    let mut sid: Sid = std::ptr::null_mut();
+    let derived: HResult =
+        unsafe { DeriveAppContainerSidFromAppContainerName(name.as_ptr(), &raw mut sid) };
+    if derived < 0 || sid.is_null() {
+        return Err(format!(
+            "DeriveAppContainerSidFromAppContainerName failed: {derived:#x}"
+        ));
+    }
+    Ok(sid)
+}
+
+/// Edits the host ACLs the policy calls for and answers the paths the
+/// container's `Drop` has to revoke, recorded before each edit.
+fn apply_policy_acls(
+    policy: &CompiledPolicy,
+    sid: Sid,
+    record: &mut acl::GrantRecord,
+) -> Result<Vec<std::path::PathBuf>, String> {
+    let mut granted = Vec::new();
+    // A denial outside every grant needs no entry: an app container
+    // reaches nothing it was not granted. One inside a granted tree
+    // does, because the grant on the parent reaches it by
+    // inheritance.
+    for rule in policy.rules.iter().filter(|rule| {
+        rule.access == Access::Deny
+            && policy.rules.iter().any(|other| {
+                other.access != Access::Deny
+                    && other.path != rule.path
+                    && rule.path.starts_with(&other.path)
+            })
+    }) {
+        if !acl::is_owned_by_current_user(&rule.path) {
+            continue;
+        }
+        record.add(&rule.path);
+        acl::deny(&rule.path, sid)?;
+        granted.push(rule.path.clone());
+    }
+    for rule in policy
+        .rules
+        .iter()
+        .filter(|rule| rule.access != Access::Deny)
+    {
+        let writable = rule.access == Access::ReadWrite;
+        // The system directories are reachable by every app
+        // container already, so the grant is a no-op there and the
+        // ACL is left alone.
+        if acl::already_reachable(&rule.path, sid, writable) {
+            continue;
+        }
+        if !acl::is_owned_by_current_user(&rule.path) {
+            return Err(format!(
+                "refusing to modify the ACL of {}, which this user does not own",
+                rule.path.display()
+            ));
+        }
+        // Recorded before the grant, so a crash between the two
+        // leaves a revoke that finds nothing rather than a grant
+        // nothing knows about.
+        record.add(&rule.path);
+        acl::grant(&rule.path, sid, writable)?;
+        granted.push(rule.path.clone());
+    }
+    Ok(granted)
+}
+
+/// The capability SIDs the network policy calls for, paired with the
+/// `LocalFree` targets that keep them alive.
+///
+/// An app container reaches the network only through a capability SID,
+/// so this list is the whole of the network policy. Client is
+/// `INTERNET_CLIENT`; Open adds the server side.
+fn capability_sids(
+    network: Network,
+) -> Result<(Vec<SID_AND_ATTRIBUTES>, Vec<*mut std::ffi::c_void>), String> {
+    let mut capability_sids: Vec<SID_AND_ATTRIBUTES> = Vec::new();
+    let mut owned_sids: Vec<*mut std::ffi::c_void> = Vec::new();
+    let wanted: &[&str] = match network {
+        Network::None => &[],
+        Network::Client => &[CAPABILITY_INTERNET_CLIENT],
+        Network::Open => &[
+            CAPABILITY_INTERNET_CLIENT,
+            CAPABILITY_INTERNET_CLIENT_SERVER,
+            CAPABILITY_PRIVATE_NETWORK_CLIENT_SERVER,
+        ],
+    };
+    for text in wanted {
+        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut raw: *mut std::ffi::c_void = std::ptr::null_mut();
+        // SAFETY: `wide` is a NUL-terminated UTF-16 buffer that
+        // outlives the call, and `raw` is written only on success.
+        if unsafe { ConvertStringSidToSidW(wide.as_ptr(), &raw mut raw) } == 0 {
+            for sid in &owned_sids {
+                unsafe { LocalFree(*sid) };
+            }
+            return Err(format!(
+                "converting capability SID {text}: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        owned_sids.push(raw);
+        capability_sids.push(SID_AND_ATTRIBUTES {
+            Sid: raw.cast(),
+            Attributes: GROUP_ENABLED,
+        });
+    }
+    Ok((capability_sids, owned_sids))
 }
 
 impl Drop for Container {

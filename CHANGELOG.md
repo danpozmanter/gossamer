@@ -119,6 +119,12 @@
   the wrong bytes whenever the address happened to carry a body's shape, and
   the read could land outside the allocation entirely. The handshake also
   releases the token it derives rather than leaking one per connection.
+- An HTTP request reuses the connection the previous one to that host opened.
+  The compiled tiers built a fresh engine per request, so every `http::get` and
+  every request on a client without a cookie jar paid another TCP - and for
+  `https`, another TLS - handshake, and consumed another ephemeral port. Both
+  now run on the pool their client already holds, which is what the bytecode
+  VM's client always did.
 
 ## 0.55.2 - Carrier element ownership, numeric-literal methods, conversion targets
 

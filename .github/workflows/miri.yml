@@ -76,6 +76,14 @@ jobs:
           MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-permissive-provenance -Zmiri-ignore-leaks
           RUST_BACKTRACE: "full"
         run: |
+          # Every crate in the shard runs even when an earlier one fails, so
+          # one failure never hides the rest of the shard's signal.
+          failed=""
           for crate in ${{ matrix.crates }}; do
-            cargo miri test -p "$crate" --lib --no-fail-fast -- --nocapture --test-threads=1
+            cargo miri test -p "$crate" --lib --no-fail-fast -- --nocapture --test-threads=1 \
+              || failed="$failed $crate"
           done
+          if [ -n "$failed" ]; then
+            echo "miri failed for:$failed"
+            exit 1
+          fi
