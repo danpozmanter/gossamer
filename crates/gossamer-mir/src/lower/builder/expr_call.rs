@@ -978,7 +978,25 @@ impl<'a> Builder<'a> {
         let callee_param_tys: Option<Vec<Ty>> = match &callee.kind {
             HirExprKind::Path { def: Some(def), .. } => self.fn_inputs.get(def).cloned(),
             _ => None,
-        };
+        }
+        // A callee that is not a resolved name - a closure, an `Fn`
+        // parameter, a local holding a function value - states its
+        // parameters in its own type. Without them every per-argument
+        // coercion below is skipped, and a `&[T; N]` argument reaches a
+        // `&[T]` parameter as a flat buffer the callee then reads as a
+        // `GosVec` header.
+        .or_else(|| match self.tcx.kind_of(callee.ty) {
+            gossamer_types::TyKind::FnPtr(sig) | gossamer_types::TyKind::FnTrait(sig) => {
+                Some(sig.inputs.clone())
+            }
+            gossamer_types::TyKind::Ref { inner, .. } => match self.tcx.kind_of(*inner) {
+                gossamer_types::TyKind::FnPtr(sig) | gossamer_types::TyKind::FnTrait(sig) => {
+                    Some(sig.inputs.clone())
+                }
+                _ => None,
+            },
+            _ => None,
+        });
         // `__concat` / `__debug` carry every `println!` / `format!` argument,
         // and the bare print builtins take their values directly. A struct
         // argument with a derived `Type::fmt` is rendered to a String first so

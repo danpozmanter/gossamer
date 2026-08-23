@@ -55,8 +55,8 @@ pub use error::{
 pub use exec::Stdio;
 pub use level::{Enforcement, Level, Platform, SandboxCapabilities};
 pub use policy::{
-    Access, CompiledPolicy, NEVER_PASSED_ENVIRONMENT, Network, PathRule, Resources, SandboxPolicy,
-    Temp, is_never_passed, never_granted_paths,
+    Access, CompiledPolicy, NEVER_PASSED_ENVIRONMENT, Network, PathRule, SandboxPolicy, Temp,
+    is_never_passed, never_granted_paths,
 };
 pub use presets::{
     base_environment, build_environment, credential_paths, device_paths, home_directory,
@@ -125,23 +125,6 @@ impl Sandbox {
                 reason: blocking_reason(&host),
             });
         }
-        // A limit this host cannot apply is refused with the reason,
-        // never accepted and left unset: a policy that claims a bound
-        // nothing enforces is the one failure this crate exists to
-        // avoid making.
-        match resource_enforcement(&policy.resources, policy.level) {
-            Enforcement::Full => {}
-            Enforcement::Partial(reason) => {
-                return Err(SandboxError::Policy(format!(
-                    "this host cannot enforce a limit this policy asks for: {reason}"
-                )));
-            }
-            Enforcement::None => {
-                return Err(SandboxError::Policy(
-                    "this host enforces no resource limits at all".to_string(),
-                ));
-            }
-        }
         let (policy, private_temp) = materialize_temp(policy)?;
         Ok(Self {
             policy: policy.compile()?,
@@ -175,27 +158,33 @@ impl Sandbox {
 
     /// Runs `argv` with the caller's streams inherited.
     pub fn run(&self, argv: &[String]) -> Result<SandboxOutput, SandboxError> {
-        backend::run(&self.policy, argv, Stdio::Inherit)
+        backend::run(&self.policy, argv, Stdio::Inherit, None)
     }
 
     /// Runs `argv` and captures its output.
     pub fn run_captured(&self, argv: &[String]) -> Result<SandboxOutput, SandboxError> {
-        backend::run(&self.policy, argv, Stdio::Capture)
+        backend::run(&self.policy, argv, Stdio::Capture, None)
     }
 
     /// Runs `argv` with the streams `stdio` chooses.
     pub fn run_with(&self, argv: &[String], stdio: Stdio) -> Result<SandboxOutput, SandboxError> {
-        backend::run(&self.policy, argv, stdio)
+        backend::run(&self.policy, argv, stdio, None)
     }
-}
 
-/// Whether this host can enforce every limit in `resources`.
-///
-/// A consumer asks before compiling a policy so it can refuse the flag
-/// with the reason rather than accept a bound nothing applies.
-#[must_use]
-pub fn resource_enforcement(resources: &Resources, level: Level) -> Enforcement {
-    backend::resource_enforcement(resources, level)
+    /// Runs `argv` and kills its tree if it outlives `bound`.
+    ///
+    /// The bound is the caller's own clock rather than part of the
+    /// policy: a supervisor that owes its own caller an answer within a
+    /// deadline needs one, and a policy says what a command may reach,
+    /// never how long it may take.
+    pub fn run_bounded(
+        &self,
+        argv: &[String],
+        stdio: Stdio,
+        bound: std::time::Duration,
+    ) -> Result<SandboxOutput, SandboxError> {
+        backend::run(&self.policy, argv, stdio, Some(bound))
+    }
 }
 
 /// Turns the policy's temp choice into a real directory the child can

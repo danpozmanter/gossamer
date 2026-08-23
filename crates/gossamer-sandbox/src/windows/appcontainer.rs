@@ -121,6 +121,25 @@ impl Container {
 
         let mut record = acl::GrantRecord::open(CONTAINER_NAME);
         let mut granted = Vec::new();
+        // A denial outside every grant needs no entry: an app container
+        // reaches nothing it was not granted. One inside a granted tree
+        // does, because the grant on the parent reaches it by
+        // inheritance.
+        for rule in policy.rules.iter().filter(|rule| {
+            rule.access == Access::Deny
+                && policy.rules.iter().any(|other| {
+                    other.access != Access::Deny
+                        && other.path != rule.path
+                        && rule.path.starts_with(&other.path)
+                })
+        }) {
+            if !acl::is_owned_by_current_user(&rule.path) {
+                continue;
+            }
+            record.add(&rule.path);
+            acl::deny(&rule.path, sid)?;
+            granted.push(rule.path.clone());
+        }
         for rule in policy
             .rules
             .iter()

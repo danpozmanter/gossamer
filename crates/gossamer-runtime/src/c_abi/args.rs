@@ -342,6 +342,22 @@ pub unsafe extern "C" fn gos_rt_env_temp_dir() -> *const c_char {
     })
 }
 
+/// `env::vars() -> Map<String, String>`. Every variable this process
+/// has, as a fresh map; a later `set_var` does not change a map
+/// already handed out.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_env_vars() -> *mut GosMap {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe { crate::c_abi::map::gos_rt_map_new(8, 8) };
+        for (name, value) in std::env::vars() {
+            let key = alloc_cstring(name.as_bytes());
+            let val = alloc_cstring(value.as_bytes());
+            unsafe { crate::c_abi::map::gos_rt_map_insert_str_str(out, key, val) };
+        }
+        out
+    })
+}
+
 /// `env::home_dir() -> Option<String>`. Returns `Some(path)` when
 /// the user has a home directory; `None` otherwise. The Result
 /// payload's disc-0/disc-1 convention mirrors `gos_rt_os_env` so

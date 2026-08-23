@@ -93,11 +93,10 @@ pub(crate) fn capabilities() -> SandboxCapabilities {
         );
     }
 
-    let resource_limits = cgroup::enforcement(&crate::policy::Resources::default());
     if cgroup::available() {
         notes.push(
-            "cgroup v2 delegated: memory and process-count limits are enforced, and the \
-             whole tree is killed together"
+            "cgroup v2 delegated: the whole tree is killed together, including a \
+             descendant that left its process group"
                 .to_string(),
         );
     }
@@ -108,7 +107,6 @@ pub(crate) fn capabilities() -> SandboxCapabilities {
         filesystem,
         network,
         process_isolation,
-        resource_limits,
         max_level,
         notes,
     }
@@ -180,7 +178,7 @@ pub(crate) fn mechanisms(policy: &CompiledPolicy) -> Vec<String> {
         }
     }
     if cgroup::available() {
-        lines.push("cgroup v2 for the process tree, and its limits".to_string());
+        lines.push("cgroup v2 holding the process tree".to_string());
     }
     lines
 }
@@ -210,11 +208,12 @@ pub(crate) fn run(
     policy: &CompiledPolicy,
     argv: &[String],
     stdio: Stdio,
+    bound: Option<std::time::Duration>,
 ) -> Result<SandboxOutput, SandboxError> {
     // Created before the command so the child can place itself in it
     // between fork and exec, leaving no window in which a descendant
     // exists outside the cgroup.
-    let group = cgroup::Cgroup::create(&policy.resources).map_err(SandboxError::Spawn)?;
+    let group = cgroup::Cgroup::create().map_err(SandboxError::Spawn)?;
     become_child_subreaper();
     let mut command = exec::base_command(policy, argv, stdio)?;
     install_enforcement(&mut command, policy, group.as_ref());
@@ -225,7 +224,7 @@ pub(crate) fn run(
             SandboxError::Spawn(format!("{error}"))
         }
     })?;
-    exec::wait_for(policy, LinuxChild::new(child, group), stdio)
+    exec::wait_for(policy, LinuxChild::new(child, group), stdio, bound)
 }
 
 /// The session of every run this process is supervising right now.
@@ -456,20 +455,10 @@ fn install_enforcement(
                 .is_ok_and(|meta| std::os::unix::fs::FileTypeExt::is_socket(&meta.file_type()))
         })
         .collect();
-    let namespace_plan = (level == Level::Strict).then(|| {
-        namespaces::Plan::new(
-            private_temp.as_deref(),
-            policy.resources.max_temp_size,
-            &denied_sockets,
-        )
-    });
+    let namespace_plan = (level == Level::Strict)
+        .then(|| namespaces::Plan::new(private_temp.as_deref(), &denied_sockets));
     let filter =
         (level == Level::Strict && seccomp::Filter::is_supported()).then(seccomp::Filter::new);
-    let file_size_limit = policy.resources.max_file_size;
-    let cpu_limit = policy
-        .resources
-        .max_cpu_time
-        .map(|limit| limit.as_secs().max(1));
 
     // SAFETY: the closure runs between `fork` and `exec` in a
     // single-threaded child. It calls only `prctl`, `setsid`,
@@ -490,7 +479,6 @@ fn install_enforcement(
             // cannot steal the terminal.
             libc::setsid();
             mark_inherited_descriptors_close_on_exec();
-            set_rlimits(file_size_limit, cpu_limit);
             // Mandatory before an unprivileged Landlock ruleset or
             // seccomp filter, and inherited across exec, which is what
             // makes descendant inheritance work.
@@ -563,29 +551,6 @@ fn mark_inherited_descriptors_close_on_exec() {
     }
 }
 
-/// Applies the limits `setrlimit` can express.
-///
-/// Memory and process counts are not among them. `RLIMIT_AS` bounds
-/// address space rather than resident memory, and `RLIMIT_NPROC` counts
-/// every process the real user already has rather than the ones this
-/// run started, so neither means what the policy says. Both ride the
-/// cgroup instead, and are refused where there is none.
-fn set_rlimits(max_file_size: Option<u64>, max_cpu_seconds: Option<u64>) {
-    let apply = |resource, value: u64| {
-        let limit = libc::rlimit {
-            rlim_cur: value as libc::rlim_t,
-            rlim_max: value as libc::rlim_t,
-        };
-        unsafe { libc::setrlimit(resource, &raw const limit) };
-    };
-    if let Some(bytes) = max_file_size {
-        apply(libc::RLIMIT_FSIZE, bytes);
-    }
-    if let Some(seconds) = max_cpu_seconds {
-        apply(libc::RLIMIT_CPU, seconds);
-    }
-}
-
 /// Writes `0` into the run's `cgroup.procs`, placing the calling
 /// process in the cgroup.
 ///
@@ -603,27 +568,6 @@ fn join_cgroup_now(path: &std::ffi::CStr) -> std::io::Result<()> {
     } else {
         Err(std::io::Error::last_os_error())
     }
-}
-
-/// Whether this host can enforce every limit in `resources`.
-#[must_use]
-pub(crate) fn resource_enforcement(
-    resources: &crate::policy::Resources,
-    level: Level,
-) -> Enforcement {
-    // A bound on the private temporary filesystem is a mount option,
-    // and the mount exists only where there is a mount namespace.
-    if resources.max_temp_size.is_some() && level < Level::Strict {
-        return Enforcement::Partial(
-            "a private temporary filesystem needs a mount namespace, which is `strict` \
-             only: --max-temp-mb cannot be applied below it"
-                .to_string(),
-        );
-    }
-    if resources == &crate::policy::Resources::default() {
-        return Enforcement::Full;
-    }
-    cgroup::enforcement(resources)
 }
 
 #[cfg(test)]

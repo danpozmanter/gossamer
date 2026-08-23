@@ -289,12 +289,6 @@ const LEGACY_HANDLE_CTORS: &[LegacyHandleCtor] = &[
     (&["sandbox", "Policy"], "new", 13, "sandbox::Policy"),
     (
         &["sandbox", "Policy"],
-        "build_default",
-        13,
-        "sandbox::Policy",
-    ),
-    (
-        &["sandbox", "Policy"],
         "command_default",
         13,
         "sandbox::Policy",
@@ -7209,32 +7203,24 @@ impl<'a> TypeChecker<'a> {
         if owner != "sandbox::Policy" {
             return None;
         }
-        let i64_ty = self.tcx.int_ty(IntTy::I64);
-        let bool_ty = self.tcx.bool_ty();
         let string = self.tcx.string_ty();
         let strings = self.tcx.intern(TyKind::Vec(string));
         let unit = self.tcx.unit();
         let policy = resolved;
         let (params, ret) = match method {
             // Builders: each answers the policy as it now stands.
-            "read_write" | "read_only" | "deny" | "working_directory" | "temp" | "temp_path"
-            | "network_mode" | "level" | "env_allow" => (vec![string], policy),
+            "read_write" | "read_only" | "deny" | "working_directory" | "temp" | "network_mode"
+            | "level" | "env_allow" => (vec![string], policy),
             "env_set" => (vec![string, string], policy),
-            "network" => (vec![bool_ty], policy),
-            "timeout" | "max_processes" | "max_memory" | "max_cpu_time" | "max_file_size"
-            | "max_temp_size" => (vec![i64_ty], policy),
             "for_fetch_phase" | "read_only_cwd" => (vec![], policy),
             // Readers.
-            "explain"
-            | "to_json"
+            "to_json"
             | "level_name"
             | "network_name"
             | "working_directory_path"
             | "level_blocker"
             | "network_enforcement_kind"
-            | "network_enforcement_reason"
-            | "resource_enforcement_kind"
-            | "resource_enforcement_reason" => (vec![], string),
+            | "network_enforcement_reason" => (vec![], string),
             "access" | "environment_value" => (vec![string], string),
             "mechanisms" | "read_write_grants" | "read_only_grants" | "denials"
             | "environment_names" => (vec![], strings),
@@ -8107,6 +8093,21 @@ impl<'a> TypeChecker<'a> {
         if let Some(inner) = strip_catalog_wrapper(src, "Option") {
             let elem = self.stdlib_signature_ty(inner)?;
             return Some(self.option_adt_ty(elem));
+        }
+        for (spelling, ordered) in [("Map", false), ("BTreeMap", true)] {
+            if let Some(inner) = strip_catalog_wrapper(src, spelling) {
+                let parts = crate::stdlib_signatures::split_top_level(inner, ',');
+                let [key_src, value_src] = parts.as_slice() else {
+                    return None;
+                };
+                let key = self.stdlib_signature_ty(key_src)?;
+                let value = self.stdlib_signature_ty(value_src)?;
+                return Some(self.tcx.intern(TyKind::HashMap {
+                    key,
+                    value,
+                    ordered,
+                }));
+            }
         }
         if let Some(inner) = strip_catalog_wrapper(src, "Result") {
             let parts = crate::stdlib_signatures::split_top_level(inner, ',');

@@ -666,6 +666,142 @@ pub const HANDLE_SIGNATURES: &[(&str, &str, &str)] = &[
         "fn split(self: regex::Pattern, text: String) -> Vec<String>",
     ),
     (
+        "Policy",
+        "access",
+        "fn access(self: sandbox::Policy, path: String) -> String",
+    ),
+    (
+        "Policy",
+        "check",
+        "fn check(self: sandbox::Policy) -> Result<(), errors::Error>",
+    ),
+    (
+        "Policy",
+        "command_default",
+        "fn command_default(cwd: String) -> sandbox::Policy",
+    ),
+    (
+        "Policy",
+        "denials",
+        "fn denials(self: sandbox::Policy) -> Vec<String>",
+    ),
+    (
+        "Policy",
+        "deny",
+        "fn deny(self: sandbox::Policy, path: String) -> sandbox::Policy",
+    ),
+    (
+        "Policy",
+        "env_allow",
+        "fn env_allow(self: sandbox::Policy, name: String) -> sandbox::Policy",
+    ),
+    (
+        "Policy",
+        "env_set",
+        "fn env_set(self: sandbox::Policy, name: String, value: String) -> sandbox::Policy",
+    ),
+    (
+        "Policy",
+        "environment_names",
+        "fn environment_names(self: sandbox::Policy) -> Vec<String>",
+    ),
+    (
+        "Policy",
+        "environment_value",
+        "fn environment_value(self: sandbox::Policy, name: String) -> String",
+    ),
+    (
+        "Policy",
+        "for_fetch_phase",
+        "fn for_fetch_phase(self: sandbox::Policy) -> sandbox::Policy",
+    ),
+    (
+        "Policy",
+        "level",
+        "fn level(self: sandbox::Policy, name: String) -> sandbox::Policy",
+    ),
+    (
+        "Policy",
+        "level_blocker",
+        "fn level_blocker(self: sandbox::Policy) -> String",
+    ),
+    (
+        "Policy",
+        "level_name",
+        "fn level_name(self: sandbox::Policy) -> String",
+    ),
+    (
+        "Policy",
+        "mechanisms",
+        "fn mechanisms(self: sandbox::Policy) -> Vec<String>",
+    ),
+    (
+        "Policy",
+        "network_enforcement_kind",
+        "fn network_enforcement_kind(self: sandbox::Policy) -> String",
+    ),
+    (
+        "Policy",
+        "network_enforcement_reason",
+        "fn network_enforcement_reason(self: sandbox::Policy) -> String",
+    ),
+    (
+        "Policy",
+        "network_mode",
+        "fn network_mode(self: sandbox::Policy, mode: String) -> sandbox::Policy",
+    ),
+    (
+        "Policy",
+        "network_name",
+        "fn network_name(self: sandbox::Policy) -> String",
+    ),
+    ("Policy", "new", "fn new() -> sandbox::Policy"),
+    (
+        "Policy",
+        "read_only",
+        "fn read_only(self: sandbox::Policy, path: String) -> sandbox::Policy",
+    ),
+    (
+        "Policy",
+        "read_only_cwd",
+        "fn read_only_cwd(self: sandbox::Policy) -> sandbox::Policy",
+    ),
+    (
+        "Policy",
+        "read_only_grants",
+        "fn read_only_grants(self: sandbox::Policy) -> Vec<String>",
+    ),
+    (
+        "Policy",
+        "read_write",
+        "fn read_write(self: sandbox::Policy, path: String) -> sandbox::Policy",
+    ),
+    (
+        "Policy",
+        "read_write_grants",
+        "fn read_write_grants(self: sandbox::Policy) -> Vec<String>",
+    ),
+    (
+        "Policy",
+        "temp",
+        "fn temp(self: sandbox::Policy, mode: String) -> sandbox::Policy",
+    ),
+    (
+        "Policy",
+        "to_json",
+        "fn to_json(self: sandbox::Policy) -> String",
+    ),
+    (
+        "Policy",
+        "working_directory",
+        "fn working_directory(self: sandbox::Policy, path: String) -> sandbox::Policy",
+    ),
+    (
+        "Policy",
+        "working_directory_path",
+        "fn working_directory_path(self: sandbox::Policy) -> String",
+    ),
+    (
         "RateLimit",
         "per_ip",
         "fn per_ip(burst: i64, per_second: i64) -> String",

@@ -40,6 +40,7 @@ pub(crate) fn run(
     policy: &CompiledPolicy,
     argv: &[String],
     stdio: Stdio,
+    bound: Option<std::time::Duration>,
 ) -> Result<SandboxOutput, SandboxError> {
     if policy.level != Level::None {
         return Err(SandboxError::LevelUnavailable {
@@ -56,23 +57,5 @@ pub(crate) fn run(
             SandboxError::Spawn(format!("{error}"))
         }
     })?;
-    crate::exec::wait_for(policy, child, stdio)
-}
-
-/// Whether this host can enforce every limit in `resources`: only a
-/// timeout, which is the supervisor's own clock.
-#[must_use]
-pub(crate) fn resource_enforcement(
-    resources: &crate::policy::Resources,
-    _level: crate::level::Level,
-) -> crate::level::Enforcement {
-    let only_timeout = crate::policy::Resources {
-        timeout: resources.timeout,
-        ..crate::policy::Resources::default()
-    };
-    if resources == &only_timeout {
-        crate::level::Enforcement::Full
-    } else {
-        crate::level::Enforcement::None
-    }
+    crate::exec::wait_for(policy, child, stdio, bound)
 }

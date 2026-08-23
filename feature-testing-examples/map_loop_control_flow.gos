@@ -1,0 +1,65 @@
+// `break` and `continue` inside a loop over a map's pairs.
+//
+// The map-pairs loop is lowered to its own counter walk over a key
+// snapshot rather than the generic sequence loop, so it has to register
+// the same break and continue targets the generic one does: `continue`
+// reaches the counter bump, `break` leaves the loop, and a label reaches
+// the loop it names.
+//
+// A BTreeMap is used wherever an order is asserted, so the transcript is
+// the same on every tier without sorting each result.
+
+use std::collections::BTreeMap
+
+fn main() {
+    let mut scores: BTreeMap<String, i64> = BTreeMap::new()
+    scores.insert("alpha", 1)
+    scores.insert("beta", 2)
+    scores.insert("gamma", 3)
+    scores.insert("delta", 4)
+
+    let mut kept = #[]
+    let mut skipped = #[]
+    for (name, value) in scores.iter() {
+        if value % 2 == 0 {
+            skipped.push(name)
+            continue
+        }
+        kept.push(format!("{}={}", name, value))
+    }
+    println!("kept={}", kept.join(","))
+    println!("skipped={}", skipped.join(","))
+
+    let mut seen = #[]
+    for (name, _) in scores.iter() {
+        if name == "delta" {
+            break
+        }
+        seen.push(name)
+    }
+    println!("before-break={}", seen.join(","))
+
+    // A label reaches the loop it names from inside the inner one.
+    let mut pairs = #[]
+    'outer: for (left, _) in scores.iter() {
+        for (right, _) in scores.iter() {
+            if right == "gamma" {
+                continue 'outer
+            }
+            if left == "gamma" {
+                break 'outer
+            }
+            pairs.push(format!("{}/{}", left, right))
+        }
+    }
+    println!("pairs={}", pairs.join(","))
+
+    let mut total = 0
+    for (_, value) in scores.iter() {
+        if value > 3 {
+            continue
+        }
+        total += value
+    }
+    println!("total={}", total)
+}

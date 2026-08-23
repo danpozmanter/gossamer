@@ -164,10 +164,26 @@ const SPECS: &[Spec] = &[
         ..spec("examples/cli_args.gos")
     },
     spec("feature-testing-examples/triple_quoted_strings.gos"),
+    // `env::vars()` crosses the C-ABI as a Map<String, String>. The
+    // fixture reads back only names it set itself, so the transcript is
+    // host-independent whatever else the environment carries.
+    spec("feature-testing-examples/env_vars.gos"),
+    // `break` / `continue` inside a loop over a map's pairs. The
+    // map-pairs loop is lowered to its own counter walk, so it registers
+    // the same break and continue targets the generic sequence loop does.
+    spec("feature-testing-examples/map_loop_control_flow.gos"),
+    // Assigning a whole element into a Vec of tuples or structs: the
+    // element is a block of slots, not one word, and its reference-counted
+    // children are handed over with the copy.
+    spec("feature-testing-examples/vec_tuple_element_assign.gos"),
     // `std::sandbox`: the policy builder, the capability report, and a
     // run under a level-`none` policy, which is what makes the fixture
     // host-independent - every tier answers the same lines whatever the
     // host can enforce.
+    // A closure called through its value coerces its arguments the way
+    // a named callee does: a fixed array reaching a `&[T]` parameter
+    // becomes a borrowing view rather than a flat buffer (#219).
+    spec("feature-testing-examples/closure_slice_param.gos"),
     spec("feature-testing-examples/sandbox.gos"),
     // Callback shorthands: a std free function named in value position
     // and a `$`-headed projection both stand for the closure that calls
@@ -1064,6 +1080,8 @@ const SPECS: &[Spec] = &[
         ..spec("feature-testing-examples/process_spawn_pipe.gos")
     },
     spec("feature-testing-examples/rc_release_drops.gos"),
+    spec("feature-testing-examples/map_insert_borrowed_key_rc.gos"),
+    spec("feature-testing-examples/map_owned_struct_value_rc.gos"),
     spec("feature-testing-examples/mut_string_return.gos"),
     spec("feature-testing-examples/string_accumulator_return.gos"),
     spec("feature-testing-examples/weak_refs.gos"),

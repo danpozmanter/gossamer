@@ -211,29 +211,62 @@ fn a_denial_inside_a_grant_is_enforced_even_though_landlock_has_no_deny_rule() {
     );
 }
 
-#[cfg(target_os = "linux")]
+/// A caller that bounds its own run gets the bound, at whatever level
+/// the host honors.
+///
+/// `strict` is the case that has to be named: the namespace reaper
+/// never execs, so a descriptor it holds is held for the length of the
+/// payload. Holding the pipe `Command::spawn` reads would keep the
+/// supervisor inside the spawn until the payload finished - no wait
+/// loop, so no bound, no forwarded interrupt, and no captured output
+/// until the end.
 #[test]
-fn a_timeout_kills_the_whole_tree_including_a_grandchild() {
+fn a_bound_ends_a_run_that_outlives_it() {
     if skip_unless_enforcing() {
         return;
     }
-    let root = workspace("timeout-tree");
-    let started = root.join("grandchild-started");
-    let marker = root.join("grandchild-alive");
-    let policy =
-        shell_policy(&root, Level::Standard).timeout(std::time::Duration::from_millis(750));
+    let root = workspace("bounded-run");
+    let policy = shell_policy(&root, gossamer_sandbox::capabilities().max_level);
     let sandbox = Sandbox::new(&policy).expect("build sandbox");
 
+    let argv = vec![
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        "while :; do :; done".to_string(),
+    ];
+    let started = std::time::Instant::now();
+    let error = sandbox
+        .run_bounded(&argv, Stdio::Capture, std::time::Duration::from_millis(500))
+        .expect_err("the run must end at its bound");
+    assert!(error.to_string().contains("bounded to"), "{error}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "the bound has to end the run, not wait for the payload"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_detached_grandchild_dies_with_the_tree() {
+    if skip_unless_enforcing() {
+        return;
+    }
+    let root = workspace("teardown-tree");
+    let started = root.join("grandchild-started");
+    let marker = root.join("grandchild-alive");
+    let sandbox = Sandbox::new(&shell_policy(&root, Level::Standard)).expect("build sandbox");
+
+    // The child exits at once and leaves a grandchild behind in a
+    // session of its own, which is the process the teardown has to
+    // reach on the ordinary exit path.
     let script = format!(
-        "( echo up > {}; sleep 30; echo alive > {} ) & sleep 30",
+        "( echo up > {}; sleep 30; echo alive > {} ) & exit 0",
         started.display(),
         marker.display()
     );
     let argv = vec!["/bin/sh".to_string(), "-c".to_string(), script];
-    let error = sandbox
-        .run_with(&argv, Stdio::Capture)
-        .expect_err("the run must time out");
-    assert!(error.to_string().contains("timeout"), "{error}");
+    let output = sandbox.run_with(&argv, Stdio::Capture).expect("run");
+    assert_eq!(output.code, 0, "the child itself exits cleanly");
 
     // Without this the case passes on a host where the grandchild never
     // started, which is a shell the policy under-granted rather than a

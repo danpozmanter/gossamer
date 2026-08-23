@@ -743,35 +743,15 @@ pub unsafe extern "C" fn gos_rt_str_free_typed(s: *mut c_char) {
     unsafe { str_free_impl(s, true) };
 }
 
+/// Gives up the one reference a consuming call was handed.
+///
+/// A container that copies a string key out of its argument owns exactly one
+/// reference to it: a caller passing a temporary hands over the only one it
+/// had, and a caller passing `k.clone()` retains one at the call site for
+/// this. Either way the reference to drop is one, so this is a plain
+/// release: the count carries the rest, and any other live holder keeps the
+/// value alive.
 unsafe fn consume_moved_string_impl(s: *mut c_char, typed: bool) {
-    if s.is_null() {
-        return;
-    }
-    let is_managed = if typed {
-        unsafe { typed_managed_string_owner(s) }.is_some()
-    } else {
-        is_managed_string(s)
-    };
-    if !is_managed {
-        return;
-    }
-    let hdr = unsafe { s.cast::<u8>().sub(13) };
-    let rc = u32::from_le_bytes(unsafe { [*hdr, *hdr.add(1), *hdr.add(2), *hdr.add(3)] });
-    if rc & STR_SHARED != 0 {
-        let cell = unsafe { AtomicU32::from_ptr(hdr.cast::<u32>()) };
-        let mut current = rc;
-        loop {
-            let live = current & !STR_SHARED;
-            let next = STR_SHARED | live.saturating_sub(2).max(1);
-            match cell.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
-                Ok(_) => break,
-                Err(actual) => current = actual,
-            }
-        }
-    } else {
-        let next = rc.saturating_sub(2).max(1);
-        unsafe { std::ptr::copy_nonoverlapping(next.to_le_bytes().as_ptr(), hdr, 4) };
-    }
     unsafe { str_free_impl(s, typed) };
 }
 

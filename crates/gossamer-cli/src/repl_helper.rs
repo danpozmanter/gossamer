@@ -30,7 +30,8 @@ const DIM: &str = "\x1b[2m";
 /// REPL helper that highlights Gossamer source as the user types.
 #[derive(Default)]
 pub(crate) struct GosReplHelper {
-    binding_method_owners: HashMap<String, String>,
+    binding_surfaces: HashMap<String, crate::repl::BindingSurface>,
+    declarations: Vec<String>,
     session_type_names: HashSet<String>,
 }
 
@@ -41,11 +42,12 @@ impl GosReplHelper {
         Self::default()
     }
 
-    /// Replaces the set of type names the session declares, so the
-    /// highlighter paints a type where the editor's semantic tokens would
-    /// and leaves every other identifier alone.
-    pub(crate) fn set_session_type_names(&mut self, names: HashSet<String>) {
-        self.session_type_names = names;
+    /// Replaces the session's declarations, which fix both the names the
+    /// highlighter paints as types and the members a binding of one of
+    /// those types completes.
+    pub(crate) fn set_declarations(&mut self, declarations: &[String]) {
+        self.session_type_names = crate::repl::session_type_names(declarations);
+        self.declarations = declarations.to_vec();
     }
 
     /// Whether `name` names a type here: one the session declared, or one
@@ -54,24 +56,28 @@ impl GosReplHelper {
         self.session_type_names.contains(name) || is_known_type_name(name)
     }
 
-    /// Records the core method receiver owner for a persistent binding.
-    pub(crate) fn set_binding_method_owner(&mut self, name: &str, owner: Option<&str>) {
-        if let Some(owner) = owner {
-            self.binding_method_owners
-                .insert(name.to_string(), owner.to_string());
+    /// Records what a persistent binding's name reaches through a dot.
+    pub(crate) fn set_binding_surface(
+        &mut self,
+        name: &str,
+        surface: Option<crate::repl::BindingSurface>,
+    ) {
+        if let Some(surface) = surface {
+            self.binding_surfaces.insert(name.to_string(), surface);
         } else {
-            self.binding_method_owners.remove(name);
+            self.binding_surfaces.remove(name);
         }
     }
 
     /// Removes completion metadata for a binding ended by `%drop`.
     pub(crate) fn forget_binding(&mut self, name: &str) {
-        self.binding_method_owners.remove(name);
+        self.binding_surfaces.remove(name);
     }
 
     /// Clears all completion metadata with the rest of the REPL session.
     pub(crate) fn reset_session(&mut self) {
-        self.binding_method_owners.clear();
+        self.binding_surfaces.clear();
+        self.declarations.clear();
         self.session_type_names.clear();
     }
 }
@@ -213,7 +219,12 @@ impl Completer for GosReplHelper {
         pos: usize,
         _ctx: &rustyline::Context<'_>,
     ) -> rustyline::Result<(usize, Vec<String>)> {
-        Ok(complete_at(line, pos, &self.binding_method_owners))
+        Ok(complete_at(
+            line,
+            pos,
+            &self.binding_surfaces,
+            &self.declarations,
+        ))
     }
 }
 
@@ -222,24 +233,24 @@ impl Completer for GosReplHelper {
 fn complete_at(
     line: &str,
     pos: usize,
-    binding_method_owners: &HashMap<String, String>,
+    binding_surfaces: &HashMap<String, crate::repl::BindingSurface>,
+    declarations: &[String],
 ) -> (usize, Vec<String>) {
     let start = word_start(line, pos);
     let word = &line[start..pos];
     // A cursor sitting straight after the dot has no word yet, and that is
-    // exactly when the whole method surface is worth offering. Only the
+    // exactly when the whole member surface is worth offering. Only the
     // keyword and module completions below need something to match against.
     if start > 0
         && line.as_bytes()[start - 1] == b'.'
         && let Some(receiver_start) = receiver_start(line, start - 1)
-        && let Some(owner) = binding_method_owners.get(&line[receiver_start..start - 1])
+        && let Some(surface) = binding_surfaces.get(&line[receiver_start..start - 1])
     {
         return (
             start,
-            crate::repl::core_method_names(owner)
+            crate::repl::binding_member_names(surface, declarations)
                 .into_iter()
-                .filter(|method| method.starts_with(word))
-                .map(str::to_string)
+                .filter(|member| member.starts_with(word))
                 .collect(),
         );
     }
@@ -247,6 +258,16 @@ fn complete_at(
         return (start, Vec::new());
     }
     let mut out: Vec<String> = Vec::new();
+    // A qualified word may name a type rather than a module, and a type's
+    // own surface is what `%info` reports for it.
+    if let Some((owner, member)) = word.rsplit_once("::") {
+        out.extend(
+            crate::repl::qualified_member_names(owner, declarations)
+                .into_iter()
+                .filter(|name| name.starts_with(member))
+                .map(|name| format!("{owner}::{name}")),
+        );
+    }
     if !word.contains(':') {
         out.extend(
             KEYWORDS
@@ -273,18 +294,21 @@ fn complete_at(
     (start, out)
 }
 
+/// Byte offset where the identifier ending at `dot` begins, or `None` when
+/// the dot follows something that is not a name. Identifiers are Unicode
+/// (UAX #31), so the scan walks characters rather than ASCII bytes.
 fn receiver_start(line: &str, dot: usize) -> Option<usize> {
-    let bytes = line.as_bytes();
-    let mut start = dot;
-    while start > 0 {
-        let byte = bytes[start - 1];
-        if byte.is_ascii_alphanumeric() || byte == b'_' {
-            start -= 1;
-        } else {
-            break;
-        }
-    }
+    let start = identifier_start(&line[..dot]);
     (start < dot).then_some(start)
+}
+
+/// Byte offset where the identifier ending `text` begins.
+fn identifier_start(text: &str) -> usize {
+    text.char_indices()
+        .rev()
+        .take_while(|(_, ch)| ch.is_alphanumeric() || *ch == '_')
+        .last()
+        .map_or(text.len(), |(offset, _)| offset)
 }
 
 /// The module path forms a user might type to reach a module: the canonical
@@ -306,21 +330,15 @@ fn module_prefixes(path: &'static str) -> Vec<&'static str> {
 }
 
 /// Byte offset of the start of the identifier-or-path word ending at `pos`.
-/// Walks back over identifier bytes and `:` path separators so a
-/// partially-typed `strings::sp` completes as a single unit. Only ASCII
-/// identifier bytes are consumed, so `start` lands on a char boundary.
+/// Walks back over identifier characters and `:` path separators so a
+/// partially-typed `strings::sp` completes as a single unit.
 fn word_start(line: &str, pos: usize) -> usize {
-    let bytes = line.as_bytes();
-    let mut start = pos;
-    while start > 0 {
-        let c = bytes[start - 1];
-        if c.is_ascii_alphanumeric() || c == b'_' || c == b':' {
-            start -= 1;
-        } else {
-            break;
-        }
-    }
-    start
+    line[..pos]
+        .char_indices()
+        .rev()
+        .take_while(|(_, ch)| ch.is_alphanumeric() || *ch == '_' || *ch == ':')
+        .last()
+        .map_or(pos, |(offset, _)| offset)
 }
 
 impl Hinter for GosReplHelper {
@@ -469,8 +487,16 @@ impl Highlighter for GosReplHelper {
 #[cfg(test)]
 mod repl_helper_tests {
     use super::{GosReplHelper, MAGENTA, complete_at, continuation_indent, incomplete_reason};
+    use crate::repl::BindingSurface;
     use rustyline::highlight::Highlighter;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
+
+    fn surfaces(entries: &[(&str, &str)]) -> HashMap<String, BindingSurface> {
+        entries
+            .iter()
+            .map(|(name, owner)| ((*name).to_string(), BindingSurface::owned_by(owner)))
+            .collect()
+    }
 
     /// The editor paints a type where one resolves, so the REPL does too: a
     /// capitalised word nothing declares is an ordinary identifier, and
@@ -478,7 +504,7 @@ mod repl_helper_tests {
     #[test]
     fn only_a_name_that_resolves_to_a_type_is_painted_as_one() {
         let mut helper = GosReplHelper::new();
-        helper.set_session_type_names(HashSet::from(["Point".to_string()]));
+        helper.set_declarations(&["struct Point { x: i64 }".to_string()]);
 
         let painted = helper.highlight("Point", 0);
         assert!(
@@ -506,14 +532,13 @@ mod repl_helper_tests {
         );
     }
 
-    /// A cursor sitting straight after the dot is the moment the whole method
-    /// surface is worth offering, so an empty prefix lists every method the
+    /// A cursor sitting straight after the dot is the moment the whole member
+    /// surface is worth offering, so an empty prefix lists every member the
     /// receiver has rather than nothing.
     #[test]
     fn a_bare_dot_offers_the_receivers_methods() {
-        let mut owners = HashMap::new();
-        owners.insert("x".to_string(), "String".to_string());
-        let (start, candidates) = complete_at("x.", 2, &owners);
+        let owners = surfaces(&[("x", "String")]);
+        let (start, candidates) = complete_at("x.", 2, &owners, &[]);
         assert_eq!(start, 2, "the replacement begins after the dot");
         assert!(
             !candidates.is_empty(),
@@ -524,7 +549,7 @@ mod repl_helper_tests {
             "String methods are offered: {candidates:?}"
         );
         // A prefix after the dot still narrows the same surface.
-        let (narrow_start, narrowed) = complete_at("x.le", 4, &owners);
+        let (narrow_start, narrowed) = complete_at("x.le", 4, &owners, &[]);
         assert_eq!(narrow_start, 2);
         assert!(narrowed.iter().any(|m| m == "len"), "{narrowed:?}");
         assert!(
@@ -532,26 +557,129 @@ mod repl_helper_tests {
             "a prefix narrows the candidate list"
         );
         // An unknown receiver still completes nothing rather than guessing.
-        let (_, unknown) = complete_at("zzz.", 4, &owners);
+        let (_, unknown) = complete_at("zzz.", 4, &owners, &[]);
         assert!(unknown.is_empty(), "{unknown:?}");
+    }
+
+    /// Every receiver `%explain` reports a method surface for completes it.
+    /// A fixed array is the case that reads like a `Vec` and is a type of
+    /// its own, so it is the one worth naming here.
+    #[test]
+    fn every_owner_with_a_method_surface_completes() {
+        for owner in [
+            "Array",
+            "Slice",
+            "Vec",
+            "String",
+            "Map",
+            "Set",
+            "Deque",
+            "Queue",
+            "Stack",
+            "MinHeap",
+            "MaxHeap",
+            "Iterator",
+            "Option",
+            "Result",
+            "Tuple",
+            "sandbox::Policy",
+        ] {
+            let owners = surfaces(&[("x", owner)]);
+            let (_, candidates) = complete_at("x.", 2, &owners, &[]);
+            assert!(!candidates.is_empty(), "{owner} offers no completions");
+        }
+        let array = surfaces(&[("a", "Array")]);
+        let (_, candidates) = complete_at("a.", 2, &array, &[]);
+        for expected in ["len", "iter", "to_vec", "map"] {
+            assert!(
+                candidates.iter().any(|m| m == expected),
+                "a fixed array completes {expected}: {candidates:?}"
+            );
+        }
+        assert!(
+            !candidates.iter().any(|m| m == "push"),
+            "a fixed array does not resize: {candidates:?}"
+        );
+    }
+
+    /// A binding of a session-declared type reaches its fields and the
+    /// methods its `impl` blocks give it, which is what `%explain` reports
+    /// for one.
+    #[test]
+    fn a_session_type_completes_its_fields_and_methods() {
+        let declarations = vec![
+            "struct Point { x: i64, y: i64 }".to_string(),
+            "impl Point { fn norm(&self) -> i64 { self.x } fn origin() -> Point { Point { x: 0, y: 0 } } }"
+                .to_string(),
+        ];
+        let owners = surfaces(&[("p", "Point")]);
+        let (start, candidates) = complete_at("p.", 2, &owners, &declarations);
+        assert_eq!(start, 2);
+        assert_eq!(candidates, vec!["norm", "x", "y"], "{candidates:?}");
+    }
+
+    /// A tuple is read by position, so its positions complete alongside the
+    /// methods every tuple has.
+    #[test]
+    fn a_tuple_completes_its_positions() {
+        let mut surface = BindingSurface::owned_by("Tuple");
+        surface.set_tuple_arity(2);
+        let owners = HashMap::from([("t".to_string(), surface)]);
+        let (_, candidates) = complete_at("t.", 2, &owners, &[]);
+        assert!(candidates.iter().any(|m| m == "0"), "{candidates:?}");
+        assert!(candidates.iter().any(|m| m == "1"), "{candidates:?}");
+        assert!(candidates.iter().any(|m| m == "len"), "{candidates:?}");
+    }
+
+    /// Identifiers are Unicode, so the word the cursor sits in is found by
+    /// walking characters rather than ASCII bytes.
+    #[test]
+    fn a_unicode_binding_name_completes_its_members() {
+        let owners = surfaces(&[("café", "String")]);
+        let (start, candidates) = complete_at("café.le", "café.le".len(), &owners, &[]);
+        assert_eq!(start, "café.".len());
+        assert!(candidates.iter().any(|m| m == "len"), "{candidates:?}");
+    }
+
+    /// A type's own name reaches its surface too: `%info` reports a
+    /// constructor under the type that declares it, so the qualified
+    /// spelling completes it.
+    #[test]
+    fn a_type_name_completes_its_own_surface() {
+        let (start, candidates) = complete_at("Vec::in", 7, &HashMap::new(), &[]);
+        assert_eq!(start, 0);
+        assert!(
+            candidates.iter().any(|c| c == "Vec::insert"),
+            "{candidates:?}"
+        );
+
+        let declarations = vec![
+            "struct Point { x: i64 }".to_string(),
+            "impl Point { fn origin() -> Point { Point { x: 0 } } }".to_string(),
+        ];
+        let (_, candidates) = complete_at("Point::or", 9, &HashMap::new(), &declarations);
+        assert!(
+            candidates.iter().any(|c| c == "Point::origin"),
+            "{candidates:?}"
+        );
     }
 
     #[test]
     fn keyword_prefix_completes() {
-        let (start, cands) = complete_at("le", 2, &HashMap::new());
+        let (start, cands) = complete_at("le", 2, &HashMap::new(), &[]);
         assert_eq!(start, 0);
         assert!(cands.iter().any(|c| c == "let"));
     }
 
     #[test]
     fn empty_word_yields_nothing() {
-        let (_, cands) = complete_at("let x = ", 8, &HashMap::new());
+        let (_, cands) = complete_at("let x = ", 8, &HashMap::new(), &[]);
         assert!(cands.is_empty());
     }
 
     #[test]
     fn qualified_path_completes_member() {
-        let (start, cands) = complete_at("println!(strings::jo", 20, &HashMap::new());
+        let (start, cands) = complete_at("println!(strings::jo", 20, &HashMap::new(), &[]);
         assert_eq!(start, 9);
         assert!(
             cands.iter().any(|c| c == "strings::join"),
@@ -563,29 +691,29 @@ mod repl_helper_tests {
 
     #[test]
     fn completion_offset_is_word_start_not_line_start() {
-        let (start, _) = complete_at("    fo", 6, &HashMap::new());
+        let (start, _) = complete_at("    fo", 6, &HashMap::new(), &[]);
         assert_eq!(start, 4);
     }
 
     #[test]
     fn set_binding_completes_methods_after_dot() {
         let mut helper = GosReplHelper::new();
-        helper.set_binding_method_owner("set", Some("Set"));
+        helper.set_binding_surface("set", Some(BindingSurface::owned_by("Set")));
 
-        let (start, cands) = complete_at("set.ins", 7, &helper.binding_method_owners);
+        let (start, cands) = complete_at("set.ins", 7, &helper.binding_surfaces, &[]);
         assert_eq!(start, 4);
         assert_eq!(cands, vec!["insert"]);
 
-        let (_, cands) = complete_at("set.insecure", 12, &helper.binding_method_owners);
+        let (_, cands) = complete_at("set.insecure", 12, &helper.binding_surfaces, &[]);
         assert!(cands.is_empty());
     }
 
     #[test]
     fn stack_binding_completes_methods_after_dot() {
         let mut helper = GosReplHelper::new();
-        helper.set_binding_method_owner("x", Some("Stack"));
+        helper.set_binding_surface("x", Some(BindingSurface::owned_by("Stack")));
 
-        let (start, cands) = complete_at("x.l", 3, &helper.binding_method_owners);
+        let (start, cands) = complete_at("x.l", 3, &helper.binding_surfaces, &[]);
         assert_eq!(start, 2);
         assert_eq!(cands, vec!["len"]);
     }

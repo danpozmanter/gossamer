@@ -1200,12 +1200,19 @@ unsafe fn map_insert_str_i64_impl(m: *mut GosMap, key: *const c_char, val: i64, 
         // `HashMap<String, Vec<i64>>`): release the map's share of the
         // old word, mirroring the i64/i64 insert path. Gated on the
         // blob-values flag so scalar-valued maps stay untouched.
-        let release_old = if map_has_owned_values(map) && prev != Some(val) {
+        let owns_values = map_has_owned_values(map);
+        let release_old = if owns_values && prev != Some(val) {
             prev
         } else {
             None
         };
         drop(storage);
+        // The entry keeps this word, and the `get` path hands out a share of
+        // it beside the map's own, so the entry needs one: without it the
+        // first read to be dropped takes the stored object with it.
+        if owns_values && prev != Some(val) {
+            unsafe { retain_owned_value(map, val) };
+        }
         if let Some(old) = release_old {
             unsafe { release_owned_value(map, old) };
         }

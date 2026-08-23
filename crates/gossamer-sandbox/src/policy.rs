@@ -9,7 +9,6 @@
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +23,8 @@ pub enum Access {
     ReadOnly,
     /// Reachable for reading and writing.
     ReadWrite,
-    /// Not reachable at all. Beats every grant at equal specificity.
+    /// Not reachable at all. A grant of the same path outranks it; a
+    /// denial outranks a grant only where it is the more specific rule.
     Deny,
 }
 
@@ -64,26 +64,6 @@ pub enum Network {
     Client,
     /// The network as the caller has it.
     Open,
-}
-
-/// Limits a policy asks for. A backend that cannot enforce one reports
-/// `resource_limits` as unenforced rather than pretending.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct Resources {
-    /// Wall-clock bound on the whole process tree.
-    pub timeout: Option<Duration>,
-    /// Maximum number of live processes in the tree.
-    pub max_processes: Option<u32>,
-    /// Maximum resident memory across the tree, in bytes.
-    pub max_memory: Option<u64>,
-    /// Maximum accumulated CPU time across the tree.
-    pub max_cpu_time: Option<Duration>,
-    /// Maximum size of any single file the child creates, in bytes.
-    pub max_file_size: Option<u64>,
-    /// Maximum size of the run's private temporary filesystem, in
-    /// bytes. Needs a private mount namespace, so `strict` on Linux;
-    /// with no bound the mount takes the kernel default.
-    pub max_temp_size: Option<u64>,
 }
 
 /// Environment variables no policy may pass through, whatever a
@@ -189,8 +169,6 @@ pub struct SandboxPolicy {
     /// whatever mechanism the backend has for reaching a descendant
     /// that left the process group.
     pub kill_tree_on_exit: bool,
-    /// Limits the policy asks for.
-    pub resources: Resources,
     /// Working directory the child starts in.
     pub working_directory: Option<PathBuf>,
     /// Level the policy asks for.
@@ -220,7 +198,6 @@ impl SandboxPolicy {
             environment_allowlist: Vec::new(),
             environment_set: BTreeMap::new(),
             kill_tree_on_exit: true,
-            resources: Resources::default(),
             working_directory: None,
             level: Level::Standard,
             temp_directory: None,
@@ -277,13 +254,6 @@ impl SandboxPolicy {
         self
     }
 
-    /// Bounds the whole process tree in wall-clock time.
-    #[must_use]
-    pub fn timeout(mut self, timeout: Duration) -> Self {
-        self.resources.timeout = Some(timeout);
-        self
-    }
-
     /// Asks for `level`.
     #[must_use]
     pub fn level(mut self, level: Level) -> Self {
@@ -306,6 +276,10 @@ impl SandboxPolicy {
     /// how a policy ends up looking stricter than it is, and silently
     /// ignoring a denial is worse.
     pub fn compile(&self) -> Result<CompiledPolicy, SandboxError> {
+        // Against the written path rather than a resolved one: whether
+        // the daemon socket happens to exist on this host today does
+        // not change whether a policy may name it.
+        refuse_grants_under_the_floor(&self.read_only_paths, &self.read_write_paths)?;
         let mut rules: Vec<PathRule> = Vec::new();
         for (paths, access) in [
             (&self.read_only_paths, Access::ReadOnly),
@@ -338,7 +312,6 @@ impl SandboxPolicy {
                 access: Access::Deny,
             });
         }
-        refuse_grants_under_a_denial(&rules)?;
         sort_rules(&mut rules);
 
         let working_directory = match &self.working_directory {
@@ -389,7 +362,6 @@ impl SandboxPolicy {
             environment_allowlist: allowlist,
             environment_set,
             kill_tree_on_exit: self.kill_tree_on_exit,
-            resources: self.resources.clone(),
             working_directory,
             level: self.level,
         })
@@ -422,8 +394,6 @@ pub struct CompiledPolicy {
     pub environment_set: BTreeMap<String, String>,
     /// Whether the whole tree is killed when the sandbox exits.
     pub kill_tree_on_exit: bool,
-    /// Limits the policy asks for.
-    pub resources: Resources,
     /// Working directory the child starts in.
     pub working_directory: Option<PathBuf>,
     /// Level the policy asks for.
@@ -476,35 +446,44 @@ impl CompiledPolicy {
     }
 }
 
-/// Refuses a grant that names a denied path or anything beneath one.
+/// Refuses a grant that names one of the paths no policy may reach.
 ///
-/// A grant adds access; it never lifts a denial. Honoring
-/// `--ro ~/.ssh` because it is more specific than the denial would make
-/// every credential denial advisory, and honoring it silently would be
-/// worse than refusing it: the caller would believe the policy said
-/// something it did not.
-fn refuse_grants_under_a_denial(rules: &[PathRule]) -> Result<(), SandboxError> {
-    let denials: Vec<&PathRule> = rules
+/// An explicit allow outranks the policy's own denials - that is what
+/// makes a denial a default rather than a verdict - but the floor in
+/// [`never_granted_paths`] is not a denial the caller wrote. Each of
+/// those is a socket whose far end runs outside the sandbox, so a grant
+/// that named one would hand the work to an unconfined process. Asking
+/// is refused rather than dropped: a caller that names one believes the
+/// policy says something it does not.
+fn refuse_grants_under_the_floor(
+    read_only: &[PathBuf],
+    read_write: &[PathBuf],
+) -> Result<(), SandboxError> {
+    let floor: Vec<PathBuf> = never_granted_paths()
         .iter()
-        .filter(|rule| rule.access == Access::Deny)
+        .map(|path| absolute(path))
         .collect();
-    for grant in rules.iter().filter(|rule| rule.access != Access::Deny) {
-        if let Some(denial) = denials
-            .iter()
-            .find(|denial| grant.path.starts_with(&denial.path))
-        {
+    for granted in read_only
+        .iter()
+        .chain(read_write)
+        .map(|path| absolute(path))
+    {
+        if let Some(denied) = floor.iter().find(|denied| granted.starts_with(denied)) {
             return Err(SandboxError::Policy(format!(
-                "{} cannot be granted: the policy denies {}, and a grant never lifts a denial",
-                grant.path.display(),
-                denial.path.display()
+                "{} cannot be granted: {} is reachable only outside a sandbox, so no policy grants it",
+                granted.display(),
+                denied.display()
             )));
         }
     }
     Ok(())
 }
 
-/// Orders rules most-specific first, with `deny` ahead of a grant at
-/// the same specificity.
+/// Orders rules most-specific first, and at one path puts the widest
+/// grant ahead of a narrower one and both ahead of a denial: an
+/// explicit allow outranks a deny of the same path, while a denial of
+/// something beneath a grant still wins by being the more specific
+/// rule.
 fn sort_rules(rules: &mut Vec<PathRule>) {
     rules.sort_by(|left, right| {
         right
@@ -512,10 +491,19 @@ fn sort_rules(rules: &mut Vec<PathRule>) {
             .components()
             .count()
             .cmp(&left.path.components().count())
-            .then_with(|| right.access.cmp(&left.access))
+            .then_with(|| precedence(left.access).cmp(&precedence(right.access)))
             .then_with(|| left.path.cmp(&right.path))
     });
     rules.dedup_by(|left, right| left.path == right.path && left.access == right.access);
+}
+
+/// Rank of an access at one path, lowest first.
+const fn precedence(access: Access) -> u8 {
+    match access {
+        Access::ReadWrite => 0,
+        Access::ReadOnly => 1,
+        Access::Deny => 2,
+    }
 }
 
 /// First-match access lookup over rules ordered by [`sort_rules`].
@@ -588,31 +576,61 @@ mod policy_tests {
     }
 
     #[test]
-    fn a_grant_on_a_denied_path_is_refused_rather_than_honored() {
-        let root = temp_tree("deny-beats-grant");
-        let error = SandboxPolicy::new()
+    fn an_explicit_grant_outranks_a_denial_of_the_same_path() {
+        let root = temp_tree("allow-beats-deny");
+        let compiled = SandboxPolicy::new()
             .read_write(&root)
             .deny(&root)
             .compile()
-            .expect_err("a grant must never lift a denial");
-        assert!(matches!(error, SandboxError::Policy(_)), "{error}");
-        assert!(
-            error.to_string().contains("never lifts a denial"),
-            "{error}"
+            .expect("an explicit allow is honored over a deny of the same path");
+        assert_eq!(compiled.access(&root), Access::ReadWrite);
+    }
+
+    #[test]
+    fn a_grant_beneath_a_denial_reaches_only_what_it_names() {
+        let root = temp_tree("grant-under-denial");
+        let inner = root.join("inner");
+        let compiled = SandboxPolicy::new()
+            .deny(&root)
+            .read_only(&inner)
+            .compile()
+            .expect("a grant beneath a denial is honored");
+        assert_eq!(compiled.access(&inner), Access::ReadOnly);
+        assert_eq!(
+            compiled.access(&root),
+            Access::Deny,
+            "the denial still covers everything the grant does not name"
         );
     }
 
     #[test]
-    fn a_grant_beneath_a_denied_path_is_refused_too() {
-        let root = temp_tree("grant-under-denial");
+    fn a_denial_beneath_a_grant_still_wins_by_being_more_specific() {
+        let root = temp_tree("denial-under-grant");
         let inner = root.join("inner");
-        let error = SandboxPolicy::new()
-            .deny(&root)
-            .read_only(&inner)
+        let compiled = SandboxPolicy::new()
+            .read_write(&root)
+            .deny(&inner)
             .compile()
-            .expect_err("a more specific grant must not out-rank a denial");
+            .expect("compile");
+        assert_eq!(compiled.access(&root), Access::ReadWrite);
+        assert_eq!(compiled.access(&inner), Access::Deny);
+    }
+
+    #[test]
+    fn no_policy_grants_a_path_that_is_only_reachable_outside_a_sandbox() {
+        // The floor is not a denial the caller wrote, so an explicit
+        // allow does not lift it.
+        // The floor is checked against the written path, so the test
+        // holds on a host where no container daemon is installed.
+        let Some(socket) = never_granted_paths().into_iter().next() else {
+            return;
+        };
+        let error = SandboxPolicy::new()
+            .read_write(&socket)
+            .compile()
+            .expect_err("the floor refuses a grant that names it");
         assert!(
-            error.to_string().contains("never lifts a denial"),
+            error.to_string().contains("only outside a sandbox"),
             "{error}"
         );
     }

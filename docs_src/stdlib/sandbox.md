@@ -12,6 +12,8 @@ The [policy model and the three backends](https://github.com/danpozmanter/gossam
 
 A level the host cannot honor fails closed and names the blocking primitive; it is never quietly downgraded. An unknown enum spelling - a level, a network mode, a temp mode - leaves the setting as it was, so a typo can never weaken a policy.
 
+A policy says what a command may reach. It carries no timeout, no memory cap, and no process count: bounding what a run uses is the caller's own business, and a limit two of the three backends could only partly apply would be a guarantee in name only.
+
 ### Building a policy
 
 Every builder answers the policy as it now stands, so a chain reads as one expression.
@@ -20,16 +22,13 @@ Every builder answers the policy as it now stands, so a chain reads as one expre
 |---|---|---|
 | `Policy` | `type Policy` | What a command may reach. An opaque handle, as `fs::File` is. |
 | `Policy::new` | `fn new() -> sandbox::Policy` | Nothing reachable, no network, a private temp, level `standard`. |
-| `Policy::build_default` | `fn build_default(root: String) -> sandbox::Policy` | The policy `gos build --sandbox` compiles under. |
 | `Policy::command_default` | `fn command_default(cwd: String) -> sandbox::Policy` | The working directory read-write, the network denied, credentials denied. |
-| `read_write` / `read_only` / `deny` | `fn read_write(path: String) -> sandbox::Policy` | Grants or refuses a path and everything beneath it. A denial beats a grant at equal specificity. |
-| `network` | `fn network(allow: bool) -> sandbox::Policy` | The two-way form: open or denied. |
+| `read_write` / `read_only` / `deny` | `fn read_write(path: String) -> sandbox::Policy` | Grants or refuses a path and everything beneath it. An explicit allow outranks a deny of the same path; a deny beneath a grant wins by being the more specific rule. |
+| `read_only_cwd` | `fn read_only_cwd() -> sandbox::Policy` | Downgrades the working directory to read-only. |
 | `network_mode` | `fn network_mode(name: String) -> sandbox::Policy` | `none`, `client` (outbound only), or `open`. |
 | `for_fetch_phase` | `fn for_fetch_phase() -> sandbox::Policy` | Outbound-only plus the resolver files a name lookup needs. |
 | `env_allow` / `env_set` | `fn env_allow(name: String) -> sandbox::Policy` | The environment is an allowlist, not an addition. Loader variables are refused outright. |
-| `temp` / `temp_path` | `fn temp(mode: String) -> sandbox::Policy` | `private` (default, removed on exit) or `inherit`; `temp_path` names one. |
-| `timeout` | `fn timeout(ms: i64) -> sandbox::Policy` | Wall-clock bound on the whole process tree. |
-| `max_processes` / `max_memory` / `max_cpu_time` / `max_file_size` / `max_temp_size` | `fn max_memory(bytes: i64) -> sandbox::Policy` | Resource bounds. A value at or below zero clears the bound. |
+| `temp` | `fn temp(mode: String) -> sandbox::Policy` | `private` (default, removed on exit) or `inherit`. |
 | `level` | `fn level(name: String) -> sandbox::Policy` | `none`, `basic`, `standard`, or `strict`. |
 | `working_directory` | `fn working_directory(path: String) -> sandbox::Policy` | Where the child starts. |
 
@@ -46,7 +45,6 @@ Every builder answers the policy as it now stands, so a chain reads as one expre
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
 | `check` | `fn check() -> Result<(), errors::Error>` | What a run would refuse before anything is spawned. |
-| `explain` | `fn explain() -> String` | The compiled policy and the mechanisms a run would install, as text. |
 | `mechanisms` | `fn mechanisms() -> Vec<String>` | The enforcement a run installs, in the order it is applied. |
 | `to_json` | `fn to_json() -> String` | The compiled policy as JSON. |
 | `access` | `fn access(path: String) -> String` | `read-write`, `read-only`, or `deny` for that exact path. |
@@ -62,20 +60,19 @@ A policy's request and a host's guarantee are different questions, so they are d
 |---|---|---|
 | `level_blocker` | `fn level_blocker() -> String` | What stops this host honoring the level, or the empty string. |
 | `network_enforcement_kind` / `_reason` | `fn network_enforcement_kind() -> String` | How completely this run's network setting is enforced. |
-| `resource_enforcement_kind` / `_reason` | `fn resource_enforcement_kind() -> String` | Whether every limit the policy names will be applied. |
 | `max_level` / `platform` / `os_description` | `fn max_level() -> String` | The highest level this host can honor, which backend answers, and the machine. |
-| `filesystem` / `network_enforcement` / `process_isolation` / `resource_limits` | `fn filesystem() -> String` | Each dimension as a sentence: `full`, `partial (reason)`, or `none`. |
-| `filesystem_kind` / `network_kind` / `process_isolation_kind` / `resource_limits_kind` | `fn filesystem_kind() -> String` | The same verdict as an arm to match on: `full`, `partial`, or `none`. |
-| `filesystem_reason` / `network_reason` / `process_isolation_reason` / `resource_limits_reason` | `fn filesystem_reason() -> String` | What a partial verdict does not cover, or the empty string. |
+| `filesystem_kind` / `network_kind` / `process_isolation_kind` | `fn filesystem_kind() -> String` | Each dimension as an arm to match on: `full`, `partial`, or `none`. |
+| `filesystem_reason` / `network_reason` / `process_isolation_reason` | `fn filesystem_reason() -> String` | What a partial verdict does not cover, or the empty string. |
 | `notes` | `fn notes() -> Vec<String>` | Everything the scalar accessors cannot say: the Landlock ABI, the sysctl that blocks `strict`, whether loopback works inside an `AppContainer`. |
 | `capabilities_json` | `fn capabilities_json() -> String` | The whole report, for a program that wants more than the accessors give it. |
 
-### Discovery and host upkeep
+### Discovery
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
 | `expand` | `fn expand(text: String) -> Option<String>` | A written path with `~` and environment references resolved. |
 | `prefix_of` / `resolve_on_path` | `fn prefix_of(name: String) -> Option<String>` | The install prefix of a tool on `PATH`, and where `PATH` resolves a name. |
 | `home_directory` | `fn home_directory() -> Option<String>` | The caller's home, as the presets resolve it. |
-| `rust_toolchain_paths` | `fn rust_toolchain_paths() -> Vec<String>` | Every path a policy that has to run cargo must grant. |
-| `stale_grant_count` / `clean_stale_grants` | `fn clean_stale_grants() -> Result<i64, errors::Error>` | The ACL grants an interrupted Windows run leaves behind. Zero everywhere else: no other backend reaches a path by editing its permissions. |
+| `env_never_passed` | `fn env_never_passed(name: String) -> bool` | Whether a policy refuses to pass a name, because it redirects the loader or an interpreter's startup. |
+
+A grant an interrupted Windows run leaves on a host ACL is revoked by the next run before it grants anything of its own, so there is no cleanup command to remember.

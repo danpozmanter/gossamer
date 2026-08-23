@@ -23,10 +23,6 @@ pub(crate) fn install_sandbox(globals: &mut Vec<(&'static str, Value)>) {
         ("run", builtin_sandbox_run as BuiltinFnPub),
         ("max_level", builtin_sandbox_max_level),
         ("platform", builtin_sandbox_platform),
-        ("filesystem", builtin_sandbox_filesystem),
-        ("network_enforcement", builtin_sandbox_network_enforcement),
-        ("process_isolation", builtin_sandbox_process_isolation),
-        ("resource_limits", builtin_sandbox_resource_limits),
         ("notes", builtin_sandbox_notes),
         ("capabilities_json", builtin_sandbox_capabilities_json),
         ("os_description", builtin_sandbox_os_description),
@@ -42,18 +38,11 @@ pub(crate) fn install_sandbox(globals: &mut Vec<(&'static str, Value)>) {
             "process_isolation_reason",
             builtin_sandbox_process_isolation_reason,
         ),
-        ("resource_limits_kind", builtin_sandbox_resource_limits_kind),
-        (
-            "resource_limits_reason",
-            builtin_sandbox_resource_limits_reason,
-        ),
+        ("env_never_passed", builtin_sandbox_env_never_passed),
         ("expand", builtin_sandbox_expand),
         ("prefix_of", builtin_sandbox_prefix_of),
         ("resolve_on_path", builtin_sandbox_resolve_on_path),
         ("home_directory", builtin_sandbox_home_directory),
-        ("rust_toolchain_paths", builtin_sandbox_rust_toolchain_paths),
-        ("stale_grant_count", builtin_sandbox_stale_grant_count),
-        ("clean_stale_grants", builtin_sandbox_clean_stale_grants),
         ("exit_policy_error", builtin_sandbox_exit_policy_error),
         (
             "exit_command_not_found",
@@ -76,31 +65,21 @@ pub(crate) fn install_sandbox(globals: &mut Vec<(&'static str, Value)>) {
     // dispatch falls back to.
     let methods: &[(&str, BuiltinFnPub)] = &[
         ("Policy::new", builtin_policy_new),
-        ("Policy::build_default", builtin_policy_build_default),
         ("Policy::command_default", builtin_policy_command_default),
         ("Policy::read_write", builtin_policy_read_write),
         ("Policy::read_only", builtin_policy_read_only),
         ("Policy::deny", builtin_policy_deny),
-        ("Policy::network", builtin_policy_network),
         ("Policy::env_allow", builtin_policy_env_allow),
         ("Policy::env_set", builtin_policy_env_set),
-        ("Policy::timeout", builtin_policy_timeout),
         ("Policy::level", builtin_policy_level),
         (
             "Policy::working_directory",
             builtin_policy_working_directory,
         ),
-        ("Policy::explain", builtin_policy_explain),
         ("Policy::network_mode", builtin_policy_network_mode),
         ("Policy::for_fetch_phase", builtin_policy_for_fetch_phase),
         ("Policy::read_only_cwd", builtin_policy_read_only_cwd),
         ("Policy::temp", builtin_policy_temp),
-        ("Policy::temp_path", builtin_policy_temp_path),
-        ("Policy::max_processes", builtin_policy_max_processes),
-        ("Policy::max_memory", builtin_policy_max_memory),
-        ("Policy::max_cpu_time", builtin_policy_max_cpu_time),
-        ("Policy::max_file_size", builtin_policy_max_file_size),
-        ("Policy::max_temp_size", builtin_policy_max_temp_size),
         ("Policy::check", builtin_policy_check),
         ("Policy::mechanisms", builtin_policy_mechanisms),
         ("Policy::to_json", builtin_policy_to_json),
@@ -133,14 +112,6 @@ pub(crate) fn install_sandbox(globals: &mut Vec<(&'static str, Value)>) {
         (
             "Policy::network_enforcement_reason",
             builtin_policy_network_enforcement_reason,
-        ),
-        (
-            "Policy::resource_enforcement_kind",
-            builtin_policy_resource_enforcement_kind,
-        ),
-        (
-            "Policy::resource_enforcement_reason",
-            builtin_policy_resource_enforcement_reason,
         ),
     ];
     for (short, call) in methods {
@@ -187,15 +158,6 @@ fn builtin_policy_new(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(store(SandboxPolicy::new()))
 }
 
-fn builtin_policy_build_default(args: &[Value]) -> RuntimeResult<Value> {
-    let root = std::path::PathBuf::from(args.first().and_then(as_str).unwrap_or("."));
-    let caches = cache_roots();
-    let toolchain = toolchain_roots();
-    Ok(store(SandboxPolicy::build_default(
-        &root, &caches, &toolchain,
-    )))
-}
-
 fn builtin_policy_command_default(args: &[Value]) -> RuntimeResult<Value> {
     let cwd = std::path::PathBuf::from(args.first().and_then(as_str).unwrap_or("."));
     Ok(store(SandboxPolicy::command_default(&cwd)))
@@ -230,13 +192,6 @@ fn builtin_policy_deny(args: &[Value]) -> RuntimeResult<Value> {
     edited(args, |policy| policy.deny(path))
 }
 
-fn builtin_policy_network(args: &[Value]) -> RuntimeResult<Value> {
-    let allow = matches!(args.get(1), Some(Value::Bool(true)));
-    edited(args, |policy| {
-        policy.network(if allow { Network::Open } else { Network::None })
-    })
-}
-
 fn builtin_policy_env_allow(args: &[Value]) -> RuntimeResult<Value> {
     let name = args.get(1).and_then(as_str).unwrap_or("").to_string();
     edited(args, |policy| policy.env_allow([name]))
@@ -246,13 +201,6 @@ fn builtin_policy_env_set(args: &[Value]) -> RuntimeResult<Value> {
     let name = args.get(1).and_then(as_str).unwrap_or("").to_string();
     let value = args.get(2).and_then(as_str).unwrap_or("").to_string();
     edited(args, |policy| policy.env_set(name, value))
-}
-
-fn builtin_policy_timeout(args: &[Value]) -> RuntimeResult<Value> {
-    let milliseconds = args.get(1).and_then(value_to_int).unwrap_or(0).max(0);
-    edited(args, |policy| {
-        policy.timeout(std::time::Duration::from_millis(milliseconds as u64))
-    })
 }
 
 fn builtin_policy_level(args: &[Value]) -> RuntimeResult<Value> {
@@ -268,39 +216,6 @@ fn builtin_policy_level(args: &[Value]) -> RuntimeResult<Value> {
 fn builtin_policy_working_directory(args: &[Value]) -> RuntimeResult<Value> {
     let path = args.get(1).and_then(as_str).unwrap_or("").to_string();
     edited(args, |policy| policy.working_directory(path))
-}
-
-fn builtin_policy_explain(args: &[Value]) -> RuntimeResult<Value> {
-    let Some(policy) = load(args.first()) else {
-        return Ok(Value::String(
-            "sandbox: the receiver is not a policy".into(),
-        ));
-    };
-    let text = match gossamer_sandbox::Sandbox::new(&policy) {
-        Ok(sandbox) => {
-            let compiled = sandbox.policy();
-            let mut out = format!("level {}\n", compiled.level);
-            for line in sandbox.mechanisms() {
-                out.push_str(&format!("mechanism {line}\n"));
-            }
-            for rule in compiled.grants() {
-                out.push_str(&format!(
-                    "{} {}\n",
-                    match rule.access {
-                        gossamer_sandbox::Access::ReadWrite => "read-write",
-                        _ => "read-only",
-                    },
-                    rule.path.display()
-                ));
-            }
-            for rule in compiled.denials() {
-                out.push_str(&format!("denied {}\n", rule.path.display()));
-            }
-            out
-        }
-        Err(error) => error.to_string(),
-    };
-    Ok(Value::String(text.into()))
 }
 
 fn builtin_sandbox_run(args: &[Value]) -> RuntimeResult<Value> {
@@ -348,39 +263,6 @@ fn builtin_sandbox_max_level(_args: &[Value]) -> RuntimeResult<Value> {
 fn builtin_sandbox_platform(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(
         gossamer_sandbox::capabilities().platform.to_string().into(),
-    ))
-}
-
-fn builtin_sandbox_filesystem(_args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::String(
-        gossamer_sandbox::capabilities()
-            .filesystem
-            .to_string()
-            .into(),
-    ))
-}
-
-fn builtin_sandbox_network_enforcement(_args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::String(
-        gossamer_sandbox::capabilities().network.to_string().into(),
-    ))
-}
-
-fn builtin_sandbox_process_isolation(_args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::String(
-        gossamer_sandbox::capabilities()
-            .process_isolation
-            .to_string()
-            .into(),
-    ))
-}
-
-fn builtin_sandbox_resource_limits(_args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::String(
-        gossamer_sandbox::capabilities()
-            .resource_limits
-            .to_string()
-            .into(),
     ))
 }
 
@@ -445,11 +327,6 @@ fn builtin_policy_temp(args: &[Value]) -> RuntimeResult<Value> {
     })
 }
 
-fn builtin_policy_temp_path(args: &[Value]) -> RuntimeResult<Value> {
-    let path = std::path::PathBuf::from(args.get(1).and_then(as_str).unwrap_or(""));
-    edited(args, |policy| policy.temp(Temp::Path(path)))
-}
-
 /// The limit `args[1]` asks for, or `None` when it asks for none.
 ///
 /// Zero and below clear the limit rather than setting one nothing can
@@ -458,49 +335,6 @@ fn builtin_policy_temp_path(args: &[Value]) -> RuntimeResult<Value> {
 fn limit(args: &[Value]) -> Option<u64> {
     let value = args.get(1).and_then(value_to_int).unwrap_or(0);
     if value > 0 { Some(value as u64) } else { None }
-}
-
-fn builtin_policy_max_processes(args: &[Value]) -> RuntimeResult<Value> {
-    // Saturating rather than truncating: a count past `u32` would wrap
-    // to a tiny one, turning the largest bound a caller can write into
-    // the most restrictive one.
-    let count = limit(args).map(|value| u32::try_from(value).unwrap_or(u32::MAX));
-    edited(args, move |mut policy| {
-        policy.resources.max_processes = count;
-        policy
-    })
-}
-
-fn builtin_policy_max_memory(args: &[Value]) -> RuntimeResult<Value> {
-    let bytes = limit(args);
-    edited(args, move |mut policy| {
-        policy.resources.max_memory = bytes;
-        policy
-    })
-}
-
-fn builtin_policy_max_file_size(args: &[Value]) -> RuntimeResult<Value> {
-    let bytes = limit(args);
-    edited(args, move |mut policy| {
-        policy.resources.max_file_size = bytes;
-        policy
-    })
-}
-
-fn builtin_policy_max_temp_size(args: &[Value]) -> RuntimeResult<Value> {
-    let bytes = limit(args);
-    edited(args, move |mut policy| {
-        policy.resources.max_temp_size = bytes;
-        policy
-    })
-}
-
-fn builtin_policy_max_cpu_time(args: &[Value]) -> RuntimeResult<Value> {
-    let span = limit(args).map(std::time::Duration::from_millis);
-    edited(args, move |mut policy| {
-        policy.resources.max_cpu_time = span;
-        policy
-    })
 }
 
 // ---------------------------------------------------------------------
@@ -687,20 +521,6 @@ fn builtin_policy_network_enforcement_reason(args: &[Value]) -> RuntimeResult<Va
     text_value(enforcement_reason(&policy_network_enforcement(args)))
 }
 
-fn policy_resource_enforcement(args: &[Value]) -> Enforcement {
-    load(args.first()).map_or(Enforcement::None, |policy| {
-        gossamer_sandbox::resource_enforcement(&policy.resources, policy.level)
-    })
-}
-
-fn builtin_policy_resource_enforcement_kind(args: &[Value]) -> RuntimeResult<Value> {
-    text_value(enforcement_kind(&policy_resource_enforcement(args)))
-}
-
-fn builtin_policy_resource_enforcement_reason(args: &[Value]) -> RuntimeResult<Value> {
-    text_value(enforcement_reason(&policy_resource_enforcement(args)))
-}
-
 // ---------------------------------------------------------------------
 // The host report, beyond the scalars the first cut exposed.
 // ---------------------------------------------------------------------
@@ -743,18 +563,6 @@ fn builtin_sandbox_process_isolation_reason(_args: &[Value]) -> RuntimeResult<Va
     ))
 }
 
-fn builtin_sandbox_resource_limits_kind(_args: &[Value]) -> RuntimeResult<Value> {
-    text_value(enforcement_kind(
-        &gossamer_sandbox::capabilities().resource_limits,
-    ))
-}
-
-fn builtin_sandbox_resource_limits_reason(_args: &[Value]) -> RuntimeResult<Value> {
-    text_value(enforcement_reason(
-        &gossamer_sandbox::capabilities().resource_limits,
-    ))
-}
-
 // ---------------------------------------------------------------------
 // Discovery, so a profile can name a path the way an operator writes it.
 // ---------------------------------------------------------------------
@@ -764,6 +572,12 @@ fn optional_path(path: Option<std::path::PathBuf>) -> RuntimeResult<Value> {
         Some(path) => some_variant(Value::String(path.display().to_string().into())),
         None => none_variant(),
     })
+}
+
+fn builtin_sandbox_env_never_passed(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Bool(gossamer_sandbox::is_never_passed(
+        args.first().and_then(as_str).unwrap_or(""),
+    )))
 }
 
 fn builtin_sandbox_expand(args: &[Value]) -> RuntimeResult<Value> {
@@ -788,57 +602,9 @@ fn builtin_sandbox_home_directory(_args: &[Value]) -> RuntimeResult<Value> {
     optional_path(gossamer_sandbox::home_directory())
 }
 
-fn builtin_sandbox_rust_toolchain_paths(_args: &[Value]) -> RuntimeResult<Value> {
-    string_list(
-        toolchain_roots()
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect(),
-    )
-}
-
 // ---------------------------------------------------------------------
-// Host maintenance and the exit-code contract.
+// The exit-code contract.
 // ---------------------------------------------------------------------
-
-/// Windows grants a path to the container by writing its ACL, so an
-/// interrupted run can leave one behind. No other backend edits a
-/// path's permissions, so no other backend has anything to clean.
-#[cfg(windows)]
-fn stale_grants() -> usize {
-    gossamer_sandbox::windows::stale_grant_count()
-}
-
-#[cfg(not(windows))]
-const fn stale_grants() -> usize {
-    0
-}
-
-#[cfg(windows)]
-fn clean_grants() -> Result<usize, String> {
-    gossamer_sandbox::windows::clean_stale_grants()
-}
-
-#[cfg(not(windows))]
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "the Windows twin edits ACLs and genuinely fails; both arms of a \
-              cfg pair have to answer the same type"
-)]
-const fn clean_grants() -> Result<usize, String> {
-    Ok(0)
-}
-
-fn builtin_sandbox_stale_grant_count(_args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(stale_grants() as i64))
-}
-
-fn builtin_sandbox_clean_stale_grants(_args: &[Value]) -> RuntimeResult<Value> {
-    Ok(match clean_grants() {
-        Ok(count) => ok_variant(Value::Int(count as i64)),
-        Err(reason) => err_variant(reason),
-    })
-}
 
 fn builtin_sandbox_exit_policy_error(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Int(i64::from(gossamer_sandbox::EXIT_POLICY_ERROR)))
@@ -906,7 +672,8 @@ mod sandbox_builtin_tests {
     #[test]
     fn a_builder_chain_answers_a_live_policy_each_step() {
         let policy = builtin_policy_new(&[]).expect("new");
-        let with_network = builtin_policy_network(&[policy, Value::Bool(true)]).expect("network");
+        let with_network =
+            builtin_policy_network_mode(&[policy, Value::String("open".into())]).expect("network");
         let loaded = load(Some(&with_network)).expect("live policy");
         assert_eq!(loaded.network, Network::Open);
     }
@@ -936,38 +703,6 @@ mod sandbox_builtin_tests {
         ])
         .expect("typo");
         assert_eq!(load(Some(&closed)).expect("live").network, Network::None);
-    }
-
-    #[test]
-    fn a_limit_at_or_below_zero_clears_the_bound_rather_than_setting_one() {
-        let bounded =
-            builtin_policy_max_memory(&[builtin_policy_new(&[]).expect("new"), Value::Int(4096)])
-                .expect("bound");
-        assert_eq!(
-            load(Some(&bounded)).expect("live").resources.max_memory,
-            Some(4096)
-        );
-        let cleared = builtin_policy_max_memory(&[bounded, Value::Int(0)]).expect("clear");
-        assert_eq!(
-            load(Some(&cleared)).expect("live").resources.max_memory,
-            None
-        );
-    }
-
-    /// A count past `u32` must answer the largest bound the field can
-    /// hold, never a wrapped one: truncation would turn the biggest
-    /// number a caller can write into the most restrictive limit.
-    #[test]
-    fn a_process_count_past_the_field_saturates_instead_of_wrapping() {
-        let handle = builtin_policy_max_processes(&[
-            builtin_policy_new(&[]).expect("new"),
-            Value::Int(i64::from(u32::MAX) + 1),
-        ])
-        .expect("bound");
-        assert_eq!(
-            load(Some(&handle)).expect("live").resources.max_processes,
-            Some(u32::MAX)
-        );
     }
 
     /// The verdict a caller matches on has exactly three spellings, and

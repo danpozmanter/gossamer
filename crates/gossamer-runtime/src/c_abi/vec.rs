@@ -845,6 +845,71 @@ pub unsafe extern "C" fn gos_rt_vec_borrow_packed_arr(
     })
 }
 
+/// Release the owned children of the element slot at `slot` of the
+/// `AGGR_OWNED` vec `v` (the slot is about to be overwritten).
+pub(crate) unsafe fn vec_release_slot_children(v: *const GosVec, slot: *const u8) {
+    let Some(children) = vec_slot_children(unsafe { &*v }) else {
+        return;
+    };
+    unsafe {
+        visit_slot_children(slot, children, |child, kind| match kind {
+            vec_elem_kind::STRING => crate::c_abi::string::gos_rt_str_free(child.cast()),
+            vec_elem_kind::VEC => crate::c_abi::map::gos_rt_vec_free(child.cast()),
+            vec_elem_kind::RC_NODE => crate::c_abi::rc::gos_rt_rc_release(child),
+            _ => {}
+        });
+    }
+}
+
+/// Writes a slot-block element - a tuple, struct, or fixed array - to a
+/// `Vec` at `idx`.
+///
+/// The word-sized setter stores one machine word, which for a multi-slot
+/// element writes the first field and leaves the rest of the slot as it
+/// was. This copies the whole slot, and hands over the element's
+/// reference-counted children with it: the outgoing element's shares are
+/// released and the incoming slot's are retained, so the vec holds
+/// exactly one share of each child it now carries.
+///
+/// Invalid indexing is a bounds panic, exactly as the scalar setter and
+/// an indexed read are; it is never silently ignored.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_set_slots(v: *mut GosVec, idx: i64, slots: *const u8) {
+    ffi_entry!((), {
+        if v.is_null() {
+            crate::c_abi::panic::panic_oob_text("vec index", idx, 0);
+        }
+        let vec = unsafe { &mut *v };
+        if idx < 0 || idx >= vec.len {
+            crate::c_abi::panic::panic_oob_text("vec index", idx, vec.len);
+        }
+        let stride = vec.elem_bytes as usize;
+        if slots.is_null() || vec.ptr.is_null() || stride == 0 {
+            return;
+        }
+        let kind = vec.elem_kind;
+        let meta = vec_elem_meta(vec);
+        let destination = unsafe { vec.ptr.as_ptr().add(idx as usize * stride) };
+        unsafe {
+            match kind {
+                vec_elem_kind::AGGR_OWNED => vec_release_slot_children(vec, destination),
+                vec_elem_kind::AGGR_GUARDED if !meta.is_null() => {
+                    crate::c_abi::rc::gos_rt_aggr_release_children(destination, meta);
+                }
+                _ => {}
+            }
+            std::ptr::copy_nonoverlapping(slots, destination, stride);
+            match kind {
+                vec_elem_kind::AGGR_OWNED => vec_retain_slot_children(vec, destination),
+                vec_elem_kind::AGGR_GUARDED if !meta.is_null() => {
+                    crate::c_abi::rc::gos_rt_aggr_retain_children(destination, meta);
+                }
+                _ => {}
+            }
+        }
+    });
+}
+
 /// Release the owned children of every element of an `AGGR_OWNED`
 /// vec. Called by `gos_rt_vec_free` before the buffer is reclaimed,
 /// closing the early-`break` leak: slots the consumer never walked

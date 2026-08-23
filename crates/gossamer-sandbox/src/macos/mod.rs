@@ -51,9 +51,6 @@ pub(crate) fn capabilities() -> SandboxCapabilities {
         network,
         // Seatbelt has no process-table isolation at all.
         process_isolation: Enforcement::None,
-        resource_limits: Enforcement::Partial(
-            "rlimits and a process-group kill only: macOS has no cgroup equivalent".to_string(),
-        ),
         max_level,
         notes,
     }
@@ -104,6 +101,7 @@ pub(crate) fn run(
     policy: &CompiledPolicy,
     argv: &[String],
     stdio: Stdio,
+    bound: Option<std::time::Duration>,
 ) -> Result<SandboxOutput, SandboxError> {
     // The wrapper is decided before the command is built, so the
     // policy's environment, working directory, and stdio are installed
@@ -135,7 +133,7 @@ pub(crate) fn run(
             SandboxError::Spawn(format!("{error}"))
         }
     })?;
-    let outcome = exec::wait_for(policy, child, stdio);
+    let outcome = exec::wait_for(policy, child, stdio, bound);
     match outcome {
         Err(SandboxError::Signalled { signal, stderr }) if policy.level >= Level::Standard => {
             Err(SandboxError::Signalled {
@@ -227,37 +225,4 @@ mod macos_tests {
             report.notes
         );
     }
-}
-
-/// Whether this host can enforce every limit in `resources`.
-///
-/// macOS has no cgroup equivalent, so a memory or process-count limit
-/// is refused rather than accepted and left unapplied.
-#[must_use]
-pub(crate) fn resource_enforcement(
-    resources: &crate::policy::Resources,
-    _level: Level,
-) -> Enforcement {
-    if resources.max_temp_size.is_some() {
-        return Enforcement::Partial(
-            "macOS has no private mount for the temporary directory: --max-temp-mb cannot \
-             be applied here"
-                .to_string(),
-        );
-    }
-    if resources.max_memory.is_some() || resources.max_processes.is_some() {
-        return Enforcement::Partial(
-            "macOS has no cgroup equivalent: memory and process-count limits cannot be \
-             applied here, only a timeout and a file-size limit"
-                .to_string(),
-        );
-    }
-    if resources.max_file_size.is_some() {
-        return Enforcement::Partial(
-            "macOS installs no `setrlimit` for the child: a file-size limit cannot be \
-             applied here"
-                .to_string(),
-        );
-    }
-    Enforcement::Full
 }

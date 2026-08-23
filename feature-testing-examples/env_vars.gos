@@ -1,0 +1,44 @@
+// `env::vars()` answers every variable this process has, as a
+// Map<String, String>.
+//
+// The fixture sets its own names and reads back only those, so the
+// transcript is the same on every host whatever else the environment
+// happens to carry.
+
+use std::env
+
+fn main() {
+    env::set_var("GOS_PARITY_ALPHA", "one")
+    env::set_var("GOS_PARITY_BETA", "two")
+
+    let all = env::vars()
+    println!("alpha={}", all.get("GOS_PARITY_ALPHA").unwrap_or("MISSING"))
+    println!("beta={}", all.get("GOS_PARITY_BETA").unwrap_or("MISSING"))
+    println!("absent={}", all.get("GOS_PARITY_NEVER_SET").unwrap_or("none"))
+
+    let mut names = #[]
+    for (name, value) in all.iter() {
+        if name.starts_with("GOS_PARITY_") {
+            names.push(format!("{}={}", name, value))
+        }
+    }
+    names.sort()
+    println!("mine={}", names.join(","))
+
+    // The map as a temporary receiver: the loop reads keys out of a value
+    // no binding holds, so the map has to outlive the iteration it lent
+    // them to.
+    let mut temporary = #[]
+    for (name, value) in env::vars().iter() {
+        if name.starts_with("GOS_PARITY_") {
+            temporary.push(format!("{}={}", name, value))
+        }
+    }
+    temporary.sort()
+    println!("temporary={}", temporary.join(","))
+
+    // The map is a snapshot: a later set_var does not reach back into it.
+    env::set_var("GOS_PARITY_GAMMA", "three")
+    println!("snapshot={}", all.get("GOS_PARITY_GAMMA").unwrap_or("none"))
+    println!("fresh={}", env::vars().get("GOS_PARITY_GAMMA").unwrap_or("MISSING"))
+}

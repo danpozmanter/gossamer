@@ -20,7 +20,7 @@ use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, INVALID_HANDLE_
 /// A security identifier, as every Win32 entry point below takes it.
 pub(crate) type Sid = *mut std::ffi::c_void;
 use windows_sys::Win32::Security::Authorization::{
-    ConvertStringSidToSidW, EXPLICIT_ACCESS_W, GetNamedSecurityInfoW, REVOKE_ACCESS,
+    ConvertStringSidToSidW, DENY_ACCESS, EXPLICIT_ACCESS_W, GetNamedSecurityInfoW, REVOKE_ACCESS,
     SE_FILE_OBJECT, SET_ACCESS, SetEntriesInAclW, SetNamedSecurityInfoW, TRUSTEE_IS_SID,
     TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
 };
@@ -33,6 +33,9 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
     WRITE_DAC,
 };
+use windows_sys::Win32::System::Threading::{
+    GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+};
 
 /// Directory holding one record file per live run.
 #[must_use]
@@ -42,7 +45,7 @@ pub(crate) fn record_directory() -> PathBuf {
 }
 
 /// A run's grant record: the paths whose ACLs were modified, so a
-/// crash leaves something `doctor --clean` can act on.
+/// crash leaves something the next run can revoke.
 pub(crate) struct GrantRecord {
     path: PathBuf,
     granted: Vec<PathBuf>,
@@ -50,11 +53,15 @@ pub(crate) struct GrantRecord {
 
 impl GrantRecord {
     /// Opens a record for the container named `container`.
+    ///
+    /// The name carries this process's id, so two runs never share a
+    /// record and a sweep can tell a record whose run is still going
+    /// from one an interrupted run left behind.
     pub(crate) fn open(container: &str) -> Self {
         let directory = record_directory();
         let _ = std::fs::create_dir_all(&directory);
         Self {
-            path: directory.join(format!("{container}.grants")),
+            path: directory.join(format!("{container}.{}.grants", std::process::id())),
             granted: Vec::new(),
         }
     }
@@ -86,15 +93,11 @@ impl GrantRecord {
     }
 }
 
-/// How many records an interrupted run left behind.
-#[must_use]
-pub(crate) fn stale_grant_count() -> usize {
-    std::fs::read_dir(record_directory())
-        .map_or(0, |entries| entries.filter_map(Result::ok).count())
-}
-
-/// Every path a stale record names, so `doctor --clean` can revoke
-/// them.
+/// Every path a record left by a run that is no longer running names.
+///
+/// A record whose process is still alive belongs to a concurrent run,
+/// and revoking its grants would pull the ground out from under a
+/// sandbox that is still using them.
 #[must_use]
 pub(crate) fn stale_grants() -> Vec<(PathBuf, Vec<PathBuf>)> {
     let Ok(entries) = std::fs::read_dir(record_directory()) else {
@@ -102,6 +105,7 @@ pub(crate) fn stale_grants() -> Vec<(PathBuf, Vec<PathBuf>)> {
     };
     entries
         .filter_map(Result::ok)
+        .filter(|entry| !owner_is_running(&entry.path()))
         .filter_map(|entry| {
             let path = entry.path();
             let body = std::fs::read_to_string(&path).ok()?;
@@ -110,6 +114,41 @@ pub(crate) fn stale_grants() -> Vec<(PathBuf, Vec<PathBuf>)> {
         })
         .collect()
 }
+
+/// Whether the run that wrote `record` is still running.
+///
+/// The record's name carries the writing process's id. A pid the
+/// system no longer knows is a run that ended; a pid it does know is
+/// treated as live, which at worst leaves a stale record for the next
+/// sweep rather than revoking a live run's grants.
+fn owner_is_running(record: &Path) -> bool {
+    let Some(pid) = record
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .and_then(|stem| stem.rsplit('.').next())
+        .and_then(|digits| digits.parse::<u32>().ok())
+    else {
+        // A record from an older naming scheme names no process, so
+        // nothing claims it.
+        return false;
+    };
+    if pid == std::process::id() {
+        return true;
+    }
+    // SAFETY: `OpenProcess` takes no pointer; the handle is closed
+    // below on every path that opened one.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        return false;
+    }
+    let mut code: u32 = 0;
+    let read = unsafe { GetExitCodeProcess(handle, &raw mut code) };
+    unsafe { CloseHandle(handle) };
+    read != 0 && code == STILL_ACTIVE_CODE
+}
+
+/// `STILL_ACTIVE`, the exit code a running process reports.
+const STILL_ACTIVE_CODE: u32 = 259;
 
 /// Whether the current user may rewrite the ACL of `path`.
 ///
@@ -316,12 +355,35 @@ impl Drop for Dacl {
 /// caller records the path first, so an interrupted run leaves a
 /// revoke that `doctor --clean` can perform.
 pub(crate) fn grant(path: &Path, sid: Sid, writable: bool) -> Result<(), String> {
-    modify(path, sid, writable, true)
+    modify(path, sid, writable, Mode::Allow)
 }
 
-/// Removes the ACE `grant` added and nothing else.
+/// Refuses `sid` every right on `path` and everything beneath it.
+///
+/// A grant of a parent directory reaches its children by inheritance,
+/// so a denial inside a granted tree needs an entry of its own. Windows
+/// evaluates a deny ACE ahead of an inherited allow, which is the same
+/// verdict the other backends reach by granting the denial's siblings
+/// instead.
+pub(crate) fn deny(path: &Path, sid: Sid) -> Result<(), String> {
+    modify(path, sid, false, Mode::Deny)
+}
+
+/// Removes every ACE `grant` or `deny` added for `sid`, and nothing
+/// else.
 pub(crate) fn revoke(path: &Path, sid: Sid) -> Result<(), String> {
-    modify(path, sid, false, false)
+    modify(path, sid, false, Mode::Revoke)
+}
+
+/// Which entry [`modify`] writes for the trustee.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Add an allow entry.
+    Allow,
+    /// Add a deny entry, which Windows evaluates first.
+    Deny,
+    /// Remove every entry the trustee has, of either kind.
+    Revoke,
 }
 
 /// Edits the DACL of `path` as it stands: adds one entry for `sid`, or
@@ -333,7 +395,7 @@ pub(crate) fn revoke(path: &Path, sid: Sid) -> Result<(), String> {
 /// replacement: an ACL rebuilt from nothing is an empty DACL, which
 /// denies everyone, and a directory's children then inherit that
 /// nothing.
-fn modify(path: &Path, sid: Sid, writable: bool, adding: bool) -> Result<(), String> {
+fn modify(path: &Path, sid: Sid, writable: bool, mode: Mode) -> Result<(), String> {
     let wide: Vec<u16> = path
         .as_os_str()
         .encode_wide()
@@ -369,12 +431,16 @@ fn modify(path: &Path, sid: Sid, writable: bool, adding: bool) -> Result<(), Str
     }
 
     let mut access = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
-    if writable {
+    if writable || mode == Mode::Deny {
         access |= FILE_GENERIC_WRITE;
     }
     let entry = EXPLICIT_ACCESS_W {
         grfAccessPermissions: access,
-        grfAccessMode: if adding { SET_ACCESS } else { REVOKE_ACCESS },
+        grfAccessMode: match mode {
+            Mode::Allow => SET_ACCESS,
+            Mode::Deny => DENY_ACCESS,
+            Mode::Revoke => REVOKE_ACCESS,
+        },
         grfInheritance: if path.is_dir() {
             SUB_CONTAINERS_AND_OBJECTS_INHERIT
         } else {

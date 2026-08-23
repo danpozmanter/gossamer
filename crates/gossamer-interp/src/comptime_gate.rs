@@ -305,6 +305,7 @@ const NAME_CAPABILITIES: &[(&str, Capability)] = &[
     ("env::args", Capability::Read),
     ("env::current_dir", Capability::Read),
     ("env::home_dir", Capability::Read),
+    ("env::vars", Capability::Read),
     ("env::program_name", Capability::Read),
     ("env::temp_dir", Capability::Read),
     ("env::var", Capability::Read),

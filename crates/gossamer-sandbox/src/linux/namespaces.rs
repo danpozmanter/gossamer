@@ -15,6 +15,13 @@
 
 use std::ffi::CString;
 
+/// The width this target's `ioctl` takes its request argument at.
+#[cfg(target_env = "musl")]
+type Ioctl = std::os::raw::c_int;
+/// The width this target's `ioctl` takes its request argument at.
+#[cfg(not(target_env = "musl"))]
+type Ioctl = std::os::raw::c_ulong;
+
 /// Whether unprivileged user namespaces are usable, and what blocks
 /// them when they are not.
 ///
@@ -108,7 +115,6 @@ impl Plan {
     #[must_use]
     pub(crate) fn new(
         private_temp: Option<&std::path::Path>,
-        temp_bytes: Option<u64>,
         denied_sockets: &[std::path::PathBuf],
     ) -> Self {
         let uid = unsafe { libc::geteuid() };
@@ -126,13 +132,10 @@ impl Plan {
                 private_temp.map_or_else(String::new, |path| path.to_string_lossy().into_owned()),
             ),
             tmpfs_type: cstring("tmpfs".to_string()),
-            // Sized from the policy rather than from a constant: a
-            // build whose temporary files outgrow a number nobody chose
-            // fails with an `ENOSPC` that names nothing.
-            tmpfs_options: cstring(temp_bytes.map_or_else(
-                || "mode=1777".to_string(),
-                |bytes| format!("mode=1777,size={bytes}"),
-            )),
+            // The mount takes the kernel default size, which is half
+            // of RAM: a private temp is a namespace of its own, not a
+            // quota on the run.
+            tmpfs_options: cstring("mode=1777".to_string()),
             private_temp: private_temp.is_some(),
             shadow_source: cstring("/dev/null".to_string()),
             shadowed: denied_sockets
@@ -160,12 +163,56 @@ impl Plan {
         if unsafe { libc::unshare(flags) } != 0 {
             return Err(errno());
         }
+        if deny_network {
+            Self::bring_up_loopback();
+        }
         // `setgroups` must be denied before the gid map is written, or
         // the kernel refuses the map for an unprivileged process.
         write_file(c"/proc/self/setgroups", &self.deny)?;
         write_file(c"/proc/self/uid_map", &self.uid_map)?;
         write_file(c"/proc/self/gid_map", &self.gid_map)?;
         Ok(())
+    }
+
+    /// Brings the loopback interface up inside the freshly-unshared network
+    /// namespace.
+    ///
+    /// A namespace with no interface at all has no address of any kind, and a
+    /// build tool that asks the machine for one fails before it starts -
+    /// Gradle refuses with "could not determine a usable local IP", and every
+    /// JVM or Node tool that binds a local port behaves the same way.
+    ///
+    /// This reaches nothing outside the sandbox. The namespace is the child's
+    /// own, so the only listener on this loopback is another process in the
+    /// same sandbox; the host's own loopback services are in a different
+    /// namespace and stay unreachable, exactly as they were.
+    ///
+    /// A failure is not reported: the loopback is a convenience for the tools
+    /// that need an address, and a namespace without one is still the policy
+    /// the caller asked for.
+    fn bring_up_loopback() {
+        // The request argument is `c_ulong` against glibc and `c_int` against
+        // musl, so the constants are named at the width this target's `ioctl`
+        // declares rather than at either one of them.
+        const SIOCGIFFLAGS: Ioctl = libc::SIOCGIFFLAGS as Ioctl;
+        const SIOCSIFFLAGS: Ioctl = libc::SIOCSIFFLAGS as Ioctl;
+        let socket =
+            unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0) };
+        if socket < 0 {
+            return;
+        }
+        let mut request: libc::ifreq = unsafe { std::mem::zeroed() };
+        // The zeroed struct already carries the terminator after the name.
+        request.ifr_name[0] = b'l' as std::os::raw::c_char;
+        request.ifr_name[1] = b'o' as std::os::raw::c_char;
+        if unsafe { libc::ioctl(socket, SIOCGIFFLAGS, &raw mut request) } == 0 {
+            unsafe {
+                request.ifr_ifru.ifru_flags |=
+                    (libc::IFF_UP | libc::IFF_RUNNING) as std::os::raw::c_short;
+            }
+            unsafe { libc::ioctl(socket, SIOCSIFFLAGS, &raw const request) };
+        }
+        unsafe { libc::close(socket) };
     }
 
     /// Gives the child its own `/proc` and, when asked, its own
@@ -269,7 +316,40 @@ pub(crate) fn fork_reaper() -> Result<(), i32> {
     if child == 0 {
         return Ok(());
     }
+    // The reaper never execs, so every descriptor it inherited stays
+    // open for as long as the payload runs however it was marked
+    // close-on-exec. Two of those matter to the supervisor outside the
+    // namespace: the pipe `Command::spawn` reads to learn that the exec
+    // happened, and the capture pipes. Holding them would keep the
+    // supervisor inside `spawn` until the payload finished - no wait
+    // loop, so no deadline, no forwarded interrupt, and no output until
+    // the end.
+    close_inherited_descriptors();
     reap_until(child)
+}
+
+/// Closes every descriptor above the standard streams.
+///
+/// Async-signal-safe: `close_range` where the kernel has it, and a
+/// bounded `close` loop where it does not.
+fn close_inherited_descriptors() {
+    const SYS_CLOSE_RANGE: libc::c_long = 436;
+    let closed = unsafe { libc::syscall(SYS_CLOSE_RANGE, 3u32, u32::MAX, 0u32) };
+    if closed == 0 {
+        return;
+    }
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    let ceiling = if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut limit) } == 0 {
+        limit.rlim_cur.min(4096) as libc::c_int
+    } else {
+        1024
+    };
+    for fd in 3..ceiling {
+        unsafe { libc::close(fd) };
+    }
 }
 
 /// PID 1's whole contract: forward the signals a supervisor sends,
@@ -321,11 +401,7 @@ mod namespace_tests {
 
     #[test]
     fn the_plan_maps_the_calling_user_to_root_inside_the_namespace() {
-        let plan = Plan::new(
-            Some(std::path::Path::new("/tmp/private")),
-            Some(1 << 30),
-            &[],
-        );
+        let plan = Plan::new(Some(std::path::Path::new("/tmp/private")), &[]);
         let uid = unsafe { libc::geteuid() };
         assert_eq!(
             plan.uid_map.to_str().expect("uid map is utf-8"),
@@ -340,7 +416,6 @@ mod namespace_tests {
     #[test]
     fn a_denied_socket_is_carried_into_the_plan() {
         let plan = Plan::new(
-            None,
             None,
             &[std::path::PathBuf::from("/run/example/daemon.sock")],
         );

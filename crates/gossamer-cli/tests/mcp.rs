@@ -37,6 +37,12 @@ impl McpClient {
         client
     }
 
+    /// The server process's id, which every inline source file it writes
+    /// carries in its name.
+    fn server_pid(&self) -> u32 {
+        self.child.id()
+    }
+
     fn request(&mut self, method: &str, params: &str) -> Value {
         self.next_id += 1;
         writeln!(
@@ -148,6 +154,51 @@ fn check_execute_and_timeout_work_end_to_end() {
 /// An agent iterating on a snippet should not have to write a file first.
 /// `source` covers the tools that take a target, and the temporary file the
 /// server writes must not survive the call.
+/// `execute` runs a program the model wrote, so it runs under a policy
+/// rather than with the server's own reach: a credential read and a
+/// write outside the working directory are refused, while the program
+/// itself still runs and still writes where it was started.
+///
+/// A host with no sandbox backend enforces nothing, and the case says
+/// so instead of asserting an enforcement that cannot happen there.
+#[test]
+fn an_executed_program_runs_under_a_policy() {
+    let mut client = McpClient::start();
+    let enforcing = client.call_tool(
+        "execute",
+        "{\"source\":\"use std::sandbox\\nfn main() { println!(\\\"{}\\\", sandbox::max_level()) }\\n\"}",
+    );
+    if enforcing.contains("none") {
+        return;
+    }
+
+    let outside = std::env::temp_dir().join("gos-mcp-policy-escape.txt");
+    let _ = std::fs::remove_file(&outside);
+    let source = format!(
+        "{{\"source\":\"use std::fs\\nfn main() {{ match fs::write(&\\\"{}\\\", &\\\"escaped\\\".as_bytes()) {{ Ok(_) => println!(\\\"WROTE\\\"), Err(e) => println!(\\\"denied\\\") }} }}\\n\"}}",
+        json_path(&outside)
+    );
+    let text = client.call_tool("execute", &source);
+    assert!(
+        !text.contains("WROTE"),
+        "a write outside the working directory was allowed: {text}"
+    );
+    assert!(
+        !outside.exists(),
+        "the program wrote outside the policy: {}",
+        outside.display()
+    );
+
+    let text = client.call_tool(
+        "execute",
+        "{\"source\":\"fn main() { println!(\\\"still runs {}\\\", 6 * 7) }\\n\"}",
+    );
+    assert!(
+        text.contains("still runs 42"),
+        "an ordinary program must still run: {text}"
+    );
+}
+
 #[test]
 fn inline_source_drives_check_execute_and_lint() {
     let mut client = McpClient::start();
@@ -182,12 +233,16 @@ fn inline_source_drives_check_execute_and_lint() {
     );
     assert!(text.contains("unused_variable"), "lint output was: {text}");
 
+    // The name carries the server's pid, and the temp directory is
+    // shared with every other case running beside this one: a sweep for
+    // `gos-mcp-*` would fail on a neighbour's file that is still in use.
+    let mine = format!("gos-mcp-{}-", client.server_pid());
     let leaked: Vec<String> = std::fs::read_dir(std::env::temp_dir())
         .expect("read temp dir")
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .filter(|name| {
-            name.starts_with("gos-mcp-")
+            name.starts_with(&mine)
                 && std::path::Path::new(name)
                     .extension()
                     .is_some_and(|e| e == "gos")

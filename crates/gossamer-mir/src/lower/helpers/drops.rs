@@ -434,6 +434,11 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // Retains to emit at the end of a block (just before a consuming
     // terminator call), `(block, local)`.
     let mut terminator_retains: Vec<(usize, Local)> = Vec::new();
+    // The same, for a by-value aggregate argument: a struct's heap fields are
+    // counted per binding rather than through the aggregate, and the
+    // aggregate the container stores names no children of its own, so the
+    // container's share is one retain per RC field.
+    let mut terminator_field_retains: Vec<(usize, Local, Vec<u32>, FieldRcKind)> = Vec::new();
     // By-value enum locals loaded from a container slot the CONTAINER
     // still owns (`row[i]` via `gos_rt_vec_get_i128`, `xs.first()`,
     // `xs.last()`): their payload word is an interior borrow of the
@@ -896,6 +901,20 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 }
                 if let Some(l) = rc_operand(arg).or_else(|| vec_operand(arg)) {
                     terminator_retains.push((block_idx, l));
+                    continue;
+                }
+                // A struct or tuple argument: the container keeps the word,
+                // and the caller's binding releases the fields where it ends,
+                // so the stored entry needs a share of each of them.
+                if let Operand::Copy(p) = arg
+                    && p.projection.is_empty()
+                    && (p.local.0 as usize) < body.locals.len()
+                {
+                    for (path, kind) in
+                        aggregate_rc_field_paths(tcx, body.locals[p.local.0 as usize].ty)
+                    {
+                        terminator_field_retains.push((block_idx, p.local, path, kind));
+                    }
                 }
             }
         }
@@ -1891,6 +1910,10 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     for (bi, local) in &terminator_retains {
         let len = body.blocks[*bi].stmts.len();
         gaps[*bi][len].push((true, *local));
+    }
+    for (bi, local, path, kind) in &terminator_field_retains {
+        let len = body.blocks[*bi].stmts.len();
+        field_gaps[*bi][len].push((true, *local, path.clone(), *kind));
     }
 
     // Field-level retain/release for by-value aggregate locals: release the

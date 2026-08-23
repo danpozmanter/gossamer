@@ -104,6 +104,11 @@ It starts with `gos <version> REPL [<architecture>-<os>]`. The REPL supports:
   `%drop` also accepts a declared name, removing the declaration that introduced
   it along with the declarations that name it, so `%drop f` frees `f` to be
   declared again. `%reset` (`%r`) clears bindings and declarations.
+- Tab completes the word at the cursor: a keyword, a `module::item` path,
+  every member a binding reaches after `.` - the methods its type and
+  mutability can call, a session-declared type's fields, a tuple's positions -
+  and a type's own methods and associated functions after `::`. What
+  `%explain` lists for a binding is what completion offers for it.
 - Up/down cycles history. Enter continues until braces close. Ctrl-D or
   `%quit` (`%q`) exits.
 

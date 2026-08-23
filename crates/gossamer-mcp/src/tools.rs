@@ -423,11 +423,20 @@ pub(crate) fn call(
             Err(e) => Err(e),
             Ok((None, _)) => Err("`file` or `source` is required".to_string()),
             Ok((Some(file), _guard)) => {
+                let source = std::path::PathBuf::from(&file);
                 let mut command = vec!["run".to_string(), file];
                 if let Some(extra) = json::as_array(field(args, "args")) {
                     command.extend(extra.iter().filter_map(json::as_str).map(String::from));
                 }
-                exec_tool(config, command, args)
+                // The one tool that runs a program the model wrote, so
+                // the one tool that states what the program may reach.
+                exec::run_gos_sandboxed(
+                    &config.gos_exe,
+                    &command,
+                    timeout_from(args),
+                    Some(&source),
+                )
+                .map(|outcome| exec_result(&outcome))
             }
         },
         "build" => {

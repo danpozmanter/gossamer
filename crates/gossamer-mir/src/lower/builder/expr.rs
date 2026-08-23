@@ -1937,7 +1937,14 @@ impl<'a> Builder<'a> {
                 // by-value carrier: the i64 store keeps only the discriminant
                 // and drops the payload, so a two-word carrier writes both
                 // words through the i128 store.
-                let setter = if crate::lower::carrier_ref::is_two_word_carrier(self.tcx, elem_ty) {
+                // A tuple / struct / fixed-array element occupies a block
+                // of slots, so a word-sized store writes its first field
+                // and leaves the rest of the element as it was. Such an
+                // element reaches the runtime as the address of its slot
+                // block, the way `gos_rt_vec_push` takes one.
+                let setter = if self.is_inline_slot_block(elem_ty) {
+                    "gos_rt_vec_set_slots"
+                } else if crate::lower::carrier_ref::is_two_word_carrier(self.tcx, elem_ty) {
                     "gos_rt_vec_set_i128"
                 } else {
                     "gos_rt_vec_set_i64"

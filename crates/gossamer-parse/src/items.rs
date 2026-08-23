@@ -188,14 +188,31 @@ impl Parser<'_> {
                 body: ModBody::External,
             });
         }
-        self.record(
-            ParseError::unexpected(
-                "one of `fn`, `struct`, `enum`, `trait`, `impl`, `const`, `static`, `type`, \
-                 `use`, or `mod`",
-                self.peek_text(),
-            ),
-            self.peek_span(),
-        );
+        // A file's imports precede its items, so a `use` here is a
+        // placement error rather than an unrecognised construct: naming
+        // `use` among the accepted continuations would contradict the
+        // rejection.
+        if self.at_keyword(Keyword::Use) {
+            let span = self.peek_span();
+            self.record(
+                ParseError::unexpected_help(
+                    "an item",
+                    self.peek_text(),
+                    "a file's `use` declarations come before its first item; move this import \
+                     above them",
+                ),
+                span,
+            );
+        } else {
+            self.record(
+                ParseError::unexpected(
+                    "one of `fn`, `struct`, `enum`, `trait`, `impl`, `const`, `static`, `type`, \
+                     `use`, or `mod`",
+                    self.peek_text(),
+                ),
+                self.peek_span(),
+            );
+        }
         // Force progress past the bad token before re-syncing - otherwise
         // a token that is *itself* an item-start keyword (e.g. a stray
         // `use` after the first item) traps `recover_to_item_start` in a

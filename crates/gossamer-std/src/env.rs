@@ -65,3 +65,12 @@ pub fn home_dir() -> Option<String> {
 pub fn temp_dir() -> String {
     std::env::temp_dir().to_string_lossy().into_owned()
 }
+
+/// Every environment variable this process has, by name.
+///
+/// The pairs are a snapshot: a later `set_var` does not change a map
+/// already handed out.
+#[must_use]
+pub fn vars() -> Vec<(String, String)> {
+    std::env::vars().collect()
+}

@@ -15,13 +15,10 @@
 
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
 use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
-    JOB_OBJECT_LIMIT_JOB_MEMORY, JOB_OBJECT_LIMIT_JOB_TIME, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOBOBJECT_BASIC_LIMIT_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     JobObjectExtendedLimitInformation, SetInformationJobObject,
 };
-
-use crate::policy::Resources;
 
 /// A job object that kills everything in it when dropped.
 pub(crate) struct Job(HANDLE);
@@ -35,12 +32,13 @@ pub(crate) struct Job(HANDLE);
 unsafe impl Send for Job {}
 
 impl Job {
-    /// Creates an anonymous job with the policy's limits applied.
+    /// Creates an anonymous job that ends every process in it when the
+    /// handle closes.
     ///
     /// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` is what makes the tree
     /// teardown reliable: a descendant that outlives its parent is
     /// still in the job, so closing the handle ends it.
-    pub(crate) fn create(resources: &Resources) -> Result<Self, String> {
+    pub(crate) fn create() -> Result<Self, String> {
         let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
         if handle.is_null() {
             return Err(format!(
@@ -49,38 +47,19 @@ impl Job {
             ));
         }
         let job = Self(handle);
-        job.apply_limits(resources)?;
+        job.kill_on_close()?;
         Ok(job)
     }
 
-    fn apply_limits(&self, resources: &Resources) -> Result<(), String> {
-        let mut flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        let mut basic = JOBOBJECT_BASIC_LIMIT_INFORMATION {
-            LimitFlags: 0,
+    fn kill_on_close(&self) -> Result<(), String> {
+        let basic = JOBOBJECT_BASIC_LIMIT_INFORMATION {
+            LimitFlags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
             ..unsafe { std::mem::zeroed() }
         };
-        if let Some(count) = resources.max_processes {
-            flags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
-            basic.ActiveProcessLimit = count;
-        }
-        let mut extended = JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+        let extended = JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
             BasicLimitInformation: basic,
             ..unsafe { std::mem::zeroed() }
         };
-        if let Some(bytes) = resources.max_memory {
-            flags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
-            extended.JobMemoryLimit = usize::try_from(bytes).unwrap_or(usize::MAX);
-        }
-        if let Some(limit) = resources.max_cpu_time {
-            // `PerJobUserTimeLimit` counts user-mode time across every
-            // process in the job, in 100-nanosecond units, and ends the
-            // job when the total is reached.
-            flags |= JOB_OBJECT_LIMIT_JOB_TIME;
-            let units = limit.as_nanos() / 100;
-            extended.BasicLimitInformation.PerJobUserTimeLimit =
-                i64::try_from(units).unwrap_or(i64::MAX);
-        }
-        extended.BasicLimitInformation.LimitFlags = flags;
         let applied = unsafe {
             SetInformationJobObject(
                 self.0,

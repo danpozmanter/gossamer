@@ -4239,6 +4239,25 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-env-vars",
+      "name": "std::env::vars",
+      "kind": "function",
+      "signature": "fn vars() -> Map<String, String>",
+      "description": "vars() -> Map<String, String>. Every environment variable this process has, as a snapshot.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdenv",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-errors-Error",
       "name": "std::errors::Error",
       "kind": "type",
@@ -14370,7 +14389,7 @@
       "name": "std::sandbox::Policy",
       "kind": "type",
       "signature": null,
-      "description": "What a command may reach. Built with read_write / read_only / deny / network / network_mode / for_fetch_phase / read_only_cwd / env_allow / env_set / temp / temp_path / timeout / max_processes / max_memory / max_cpu_time / max_file_size / max_temp_size / level / working_directory, each answering the policy as it now stands. Read back with check / explain / mechanisms / to_json / access / read_write_grants / read_only_grants / denials / environment_names / environment_value / level_name / network_name / working_directory_path / level_blocker, and asked what this host will actually honor with network_enforcement_kind / network_enforcement_reason / resource_enforcement_kind / resource_enforcement_reason.",
+      "description": "What a command may reach. Built with read_write / read_only / deny / read_only_cwd / network_mode / for_fetch_phase / env_allow / env_set / temp / level / working_directory, each answering the policy as it now stands; an explicit allow outranks a deny of the same path, and a deny beneath a grant wins by being the more specific rule. A policy says what a command may reach, never how long it may take. Read back with check / mechanisms / to_json / access / read_write_grants / read_only_grants / denials / environment_names / environment_value / level_name / network_name / working_directory_path / level_blocker, and asked what this host will actually honor with network_enforcement_kind / network_enforcement_reason.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -14404,11 +14423,11 @@
       "reference_status": "catalog_only"
     },
     {
-      "id": "std-sandbox-clean-stale-grants",
-      "name": "std::sandbox::clean_stale_grants",
+      "id": "std-sandbox-env-never-passed",
+      "name": "std::sandbox::env_never_passed",
       "kind": "function",
-      "signature": "fn clean_stale_grants() -> Result<i64, errors::Error>",
-      "description": "clean_stale_grants() -> Result<i64, errors::Error>. Revokes those grants and answers how many were revoked.",
+      "signature": "fn env_never_passed(name: String) -> bool",
+      "description": "env_never_passed(name) -> bool. Whether a policy refuses to pass name to a sandboxed command, because it redirects the loader or an interpreter's startup. The floor under any environment allowlist.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -14518,25 +14537,6 @@
       "reference_status": "catalog_only"
     },
     {
-      "id": "std-sandbox-filesystem",
-      "name": "std::sandbox::filesystem",
-      "kind": "function",
-      "signature": "fn filesystem() -> String",
-      "description": "How completely a filesystem policy is enforced here: full, partial (reason), or none.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
       "id": "std-sandbox-filesystem-kind",
       "name": "std::sandbox::filesystem_kind",
       "kind": "function",
@@ -14599,25 +14599,6 @@
       "kind": "function",
       "signature": "fn max_level() -> String",
       "description": "The highest level this host can honor: none, basic, standard, or strict. A level above it fails closed rather than downgrading.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-network-enforcement",
-      "name": "std::sandbox::network_enforcement",
-      "kind": "function",
-      "signature": "fn network_enforcement() -> String",
-      "description": "How completely network denial is enforced here.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -14746,25 +14727,6 @@
       "reference_status": "catalog_only"
     },
     {
-      "id": "std-sandbox-process-isolation",
-      "name": "std::sandbox::process_isolation",
-      "kind": "function",
-      "signature": "fn process_isolation() -> String",
-      "description": "How completely the process table is isolated here.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
       "id": "std-sandbox-process-isolation-kind",
       "name": "std::sandbox::process_isolation_kind",
       "kind": "function",
@@ -14822,63 +14784,6 @@
       "reference_status": "catalog_only"
     },
     {
-      "id": "std-sandbox-resource-limits",
-      "name": "std::sandbox::resource_limits",
-      "kind": "function",
-      "signature": "fn resource_limits() -> String",
-      "description": "How completely resource limits are enforced here.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-resource-limits-kind",
-      "name": "std::sandbox::resource_limits_kind",
-      "kind": "function",
-      "signature": "fn resource_limits_kind() -> String",
-      "description": "full, partial, or none - the resource-limit verdict as an arm to match on.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-resource-limits-reason",
-      "name": "std::sandbox::resource_limits_reason",
-      "kind": "function",
-      "signature": "fn resource_limits_reason() -> String",
-      "description": "What a partial resource-limit verdict does not cover, or the empty string.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
       "id": "std-sandbox-run",
       "name": "std::sandbox::run",
       "kind": "function",
@@ -14903,44 +14808,6 @@
       "kind": "function",
       "signature": "fn run_inherit(policy: sandbox::Policy, argv: Vec<String>) -> i64",
       "description": "run_inherit(policy, argv) -> i64. Runs argv with the caller's own streams and answers the exit code the contract gives, which is the shape a wrapper command wants.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-rust-toolchain-paths",
-      "name": "std::sandbox::rust_toolchain_paths",
-      "kind": "function",
-      "signature": "fn rust_toolchain_paths() -> Vec<String>",
-      "description": "Every path a Rust toolchain needs read access to, for a policy that has to run cargo.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-stale-grant-count",
-      "name": "std::sandbox::stale_grant_count",
-      "kind": "function",
-      "signature": "fn stale_grant_count() -> i64",
-      "description": "How many interrupted runs left an ACL grant behind. Always zero where granting a path is not how the backend reaches it.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",

@@ -206,13 +206,17 @@ pub(crate) fn base_command(
     Ok(command)
 }
 
-/// Waits for `child`, bounded by the policy's timeout, forwarding an
-/// interrupt the supervisor receives, and tearing the whole tree down
-/// when the policy says to.
+/// Waits for `child`, forwarding an interrupt the supervisor receives,
+/// and tearing the whole tree down when the policy says to.
+///
+/// `bound` is the caller's own clock rather than anything the policy
+/// carries: a wrapper that must answer its own caller within a deadline
+/// asks for one here, and a run with no deadline costs no wakeups.
 pub(crate) fn wait_for<C: ChildProcess>(
     policy: &CompiledPolicy,
     mut child: C,
     stdio: Stdio,
+    bound: Option<Duration>,
 ) -> Result<SandboxOutput, SandboxError> {
     if stdio == Stdio::Capture {
         // Drain on threads: a child that fills one pipe's buffer while
@@ -221,7 +225,7 @@ pub(crate) fn wait_for<C: ChildProcess>(
         let err = child.take_stderr();
         let out_reader = std::thread::spawn(move || read_all(out));
         let err_reader = std::thread::spawn(move || read_all(err));
-        let exit = wait_bounded(policy, &mut child);
+        let exit = wait_for_exit(&mut child, bound);
         // A descendant that outlived the child holds the write end of
         // both pipes, so the teardown comes before the readers are
         // joined.
@@ -230,7 +234,7 @@ pub(crate) fn wait_for<C: ChildProcess>(
         let stderr = err_reader.join().unwrap_or_default();
         exit.and_then(|exit| finish(exit, stdout, stderr))
     } else {
-        let exit = wait_bounded(policy, &mut child);
+        let exit = wait_for_exit(&mut child, bound);
         teardown(policy, &mut child);
         exit.and_then(|exit| finish(exit, Vec::new(), Vec::new()))
     }
@@ -261,17 +265,17 @@ fn read_all(reader: Option<Box<dyn std::io::Read + Send>>) -> Vec<u8> {
     buffer
 }
 
-/// Waits for the child until it exits, the deadline passes, or the
+/// Waits for the child until it exits, its bound runs out, or the
 /// supervisor is interrupted.
 ///
 /// The wait is event-driven: [`signals::Waiter`] blocks until a signal
-/// arrives, which includes `SIGCHLD` when the child exits, so a run
-/// with no timeout costs no wakeups at all.
-fn wait_bounded<C: ChildProcess>(
-    policy: &CompiledPolicy,
+/// arrives, which includes `SIGCHLD` when the child exits, so a waiting
+/// run costs no wakeups at all.
+fn wait_for_exit<C: ChildProcess>(
     child: &mut C,
+    bound: Option<Duration>,
 ) -> Result<Exit, SandboxError> {
-    let deadline = policy.resources.timeout.map(Deadline::new);
+    let deadline = bound.map(Deadline::new);
     let waiter = signals::Waiter::new();
     // Only the Unix waiter has an interrupt to forward.
     #[cfg(unix)]
@@ -286,11 +290,11 @@ fn wait_bounded<C: ChildProcess>(
                 )));
             }
         }
-        if let Some(deadline) = &deadline {
-            if deadline.passed() {
-                child.kill_tree();
-                return Err(SandboxError::Timeout(deadline.limit));
-            }
+        if let Some(deadline) = &deadline
+            && deadline.passed()
+        {
+            child.kill_tree();
+            return Err(SandboxError::Timeout(deadline.limit));
         }
 
         match waiter.wait(deadline.as_ref().map(Deadline::remaining)) {
@@ -313,7 +317,7 @@ fn wait_bounded<C: ChildProcess>(
     }
 }
 
-/// A wall-clock bound and the instant it runs out.
+/// A wall-clock bound a caller asked for, and the instant it runs out.
 struct Deadline {
     limit: Duration,
     at: std::time::Instant,

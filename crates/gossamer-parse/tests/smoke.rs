@@ -999,3 +999,25 @@ fn a_triple_quoted_literal_works_as_a_match_pattern() {
     let (_sf, diags) = parse_source_file(source, file);
     assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
 }
+
+/// A file's imports precede its items, so a later `use` is a placement
+/// error. Naming `use` among the accepted continuations would contradict
+/// the rejection, so the report says where the import belongs.
+#[test]
+fn an_import_after_an_item_reports_where_it_belongs() {
+    let source = "struct Point { x: i64 }\n\nuse std::env\n";
+    let mut map = SourceMap::new();
+    let file = map.add_file("late-use.gos", source.to_string());
+    let (_, diags) = parse_source_file(source, file);
+    let rendered: Vec<String> = diags.iter().map(ToString::to_string).collect();
+    assert!(
+        rendered
+            .iter()
+            .any(|text| text.contains("expected an item")),
+        "expected a placement report, got: {rendered:?}"
+    );
+    assert!(
+        !rendered.iter().any(|text| text.contains("`use`, or `mod`")),
+        "the rejected keyword must not be listed as accepted: {rendered:?}"
+    );
+}

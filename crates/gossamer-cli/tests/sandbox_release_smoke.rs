@@ -44,32 +44,30 @@ fn main() {
 
     let policy = sandbox::Policy::new()
         .read_write(&".")
-        .network(false)
+        .network_mode(&"none")
         .env_allow(&"PATH")
-        .timeout(30_000)
         .level(&"none")
 
-    println!("explain: {}", policy.explain().contains(&"level none"))
+    println!("named: {}", policy.level_name() == "none")
 
     match sandbox::run(&policy, &#["echo", "released"]) {
         Ok(out) => println!("run: {} {}", out.code, out.stdout.trim())
         Err(e) => println!("run failed: {}", e)
     }
 
-    // A preset carries the whole build policy, so a program does not
+    // A preset carries a whole command policy, so a program does not
     // reassemble a dozen grants and get one wrong.
-    let preset = sandbox::Policy::build_default(&".").level(&"none")
-    println!("preset: {}", preset.explain().len() > 0)
+    let preset = sandbox::Policy::command_default(&".").level(&"none")
+    println!("preset: {}", preset.read_write_grants().len() > 0)
 
     // The widened surface: the network's three modes, the temp choice,
-    // every resource bound, and the readers a report is built from.
-    // Each one is a separate runtime shim, so a missing dispatch entry
-    // shows up here as a wrong answer rather than in a user's build.
+    // and the readers a report is built from. Each one is a separate
+    // runtime shim, so a missing dispatch entry shows up here as a
+    // wrong answer rather than in a user's build.
     let full = sandbox::Policy::new()
         .read_write(&".")
         .network_mode(&"client")
         .temp(&"private")
-        .timeout(30_000)
         .level(&"none")
 
     println!("mode: {}", full.network_name())
@@ -79,28 +77,17 @@ fn main() {
     println!("names: {}", full.environment_names().len() >= 0)
     println!("mechanisms: {}", full.mechanisms().len() >= 0)
     println!("policy json: {}", full.to_json().len() > 0)
-    println!("verdicts: {} {}", full.network_enforcement_kind().len() > 0, full.resource_enforcement_kind().len() > 0)
+    println!("verdicts: {}", full.network_enforcement_kind().len() > 0)
     println!("unblocked: {}", full.level_blocker() == "")
     match full.check() {
         Ok(_) => println!("check: ok")
         Err(e) => println!("check failed: {}", e)
     }
 
-    // The resource bounds live on their own policy: a host without the
-    // mechanism for one refuses the whole run, so a policy carrying a
-    // bound is only buildable where that mechanism exists. What is
-    // asserted here is that the bounds reach the shims and the verdict
-    // comes back, not what this particular machine can honor.
-    let bounded = sandbox::Policy::new()
-        .read_write(&".")
-        .max_processes(64)
-        .max_memory(536_870_912)
-        .max_cpu_time(30_000)
-        .max_file_size(1_048_576)
-        .max_temp_size(67_108_864)
-        .level(&"none")
-
-    println!("bounds: {}", bounded.resource_enforcement_kind().len() > 0)
+    // An explicit allow outranks a denial the policy carries: the
+    // precedence rule has to hold through the release pipeline too.
+    let carved = sandbox::Policy::new().deny(&".").read_write(&".").level(&"none")
+    println!("allow wins: {}", carved.access(&".") == "read-write")
     println!("by ref: {}", reads_by_reference(&full))
 
     // An unknown name is refused rather than applied, so a typo can
@@ -112,8 +99,7 @@ fn main() {
     // that reports through it.
     println!("codes: {} {} {} {}", sandbox::exit_policy_error(), sandbox::exit_command_not_found(), sandbox::exit_level_unavailable(), sandbox::exit_signal_base())
     println!("inherited: {}", sandbox::run_inherit(&policy, &#["true"]))
-    println!("discovery: {} {}", sandbox::home_directory().is_some(), sandbox::rust_toolchain_paths().len() >= 0)
-    println!("stale: {}", sandbox::stale_grant_count() >= 0)
+    println!("discovery: {} {}", sandbox::home_directory().is_some(), sandbox::expand(&"~").is_some())
 }
 "#;
 
@@ -121,7 +107,7 @@ const EXPECTED: &str = "level known: true\n\
      platform: true\n\
      notes: true\n\
      json: true\n\
-     explain: true\n\
+     named: true\n\
      run: 0 released\n\
      preset: true\n\
      mode: client\n\
@@ -131,17 +117,16 @@ const EXPECTED: &str = "level known: true\n\
      names: true\n\
      mechanisms: true\n\
      policy json: true\n\
-     verdicts: true true\n\
+     verdicts: true\n\
      unblocked: true\n\
      check: ok\n\
-     bounds: true\n\
+     allow wins: true\n\
      by ref: true\n\
      typo: open\n\
      fetch: client\n\
      codes: 126 127 64 128\n\
      inherited: 0\n\
-     discovery: true true\n\
-     stale: true\n";
+     discovery: true true\n";
 
 #[test]
 fn the_sandbox_surface_survives_a_release_build() {

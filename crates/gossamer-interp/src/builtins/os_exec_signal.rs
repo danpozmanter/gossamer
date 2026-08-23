@@ -95,6 +95,20 @@ fn builtin_env_temp_dir(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(env_std::temp_dir().into()))
 }
 
+fn builtin_env_vars(_args: &[Value]) -> RuntimeResult<Value> {
+    let pairs = env_std::vars();
+    let mut storage = crate::value::dense_map_with_capacity(pairs.len());
+    for (name, value) in pairs {
+        storage.insert(
+            crate::value::MapKey::Str(SmolStr::from(name)),
+            Value::String(SmolStr::from(value)),
+        );
+    }
+    Ok(Value::Map(std::sync::Arc::new(parking_lot::Mutex::new(
+        storage,
+    ))))
+}
+
 fn builtin_process_id(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Int(i64::from(std::process::id())))
 }

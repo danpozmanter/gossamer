@@ -1,0 +1,56 @@
+// A `String` key inserted into a map while the caller still holds it.
+//
+// A consuming insert copies the key's bytes and gives up the one reference
+// the call handed it. If it instead drops the whole count, the caller's own
+// binding is left pointing at freed memory, and the next allocation of the
+// same shape takes that block - so the key silently reads as some later
+// string. Reading each key back after the insert, and again after allocating
+// over it, is what catches that; a count that is merely wrong by one shows
+// up as a leak rather than as a wrong answer, so the totals are printed too.
+
+fn main() {
+    let mut counts: Map<String, i64> = Map::new()
+    let mut wrong_key = 0
+    let mut wrong_lookup = 0
+    let mut wrong_other = 0
+
+    for i in 0..200 {
+        let key = format!("key-{}", i)
+        let expected = format!("key-{}", i)
+
+        // The caller keeps `key`; the map gets a reference of its own.
+        counts.insert(key.clone(), i)
+
+        // Same shape and size as `key`, so a freed `key` block is what this
+        // allocation takes.
+        let other = format!("oth-{}", i)
+
+        if key != expected {
+            wrong_key += 1
+        }
+        if counts.get(&key).unwrap_or(-1) != i {
+            wrong_lookup += 1
+        }
+        if other.starts_with("oth-") == false {
+            wrong_other += 1
+        }
+    }
+
+    println!("keys that changed under the caller: {}", wrong_key)
+    println!("keys the map could not find:        {}", wrong_lookup)
+    println!("later strings that were corrupted:  {}", wrong_other)
+    println!("entries: {}", counts.len())
+
+    // The same key inserted twice, with two live holders, is still one entry
+    // and both holders still read it.
+    let held = format!("shared-key")
+    let alias = held.clone()
+    counts.insert(held.clone(), 1)
+    counts.insert(held.clone(), 2)
+    println!("held: {} alias: {} value: {}", held, alias, counts.get(&held).unwrap_or(-1))
+
+    // A temporary handed straight over is the map's alone to release.
+    counts.insert(format!("temp-key"), 7)
+    println!("temp: {}", counts.get(&"temp-key").unwrap_or(-1))
+    println!("entries: {}", counts.len())
+}

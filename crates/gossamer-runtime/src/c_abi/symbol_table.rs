@@ -1314,6 +1314,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_enum_unit as *const u8,
         ),
         (
+            "gos_rt_env_vars",
+            crate::c_abi::gos_rt_env_vars as *const u8,
+        ),
+        (
             "gos_rt_env_home_dir",
             crate::c_abi::gos_rt_env_home_dir as *const u8,
         ),
@@ -6496,10 +6500,6 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_sandbox_policy_new as *const u8,
         ),
         (
-            "gos_rt_sandbox_policy_build_default",
-            crate::c_abi::gos_rt_sandbox_policy_build_default as *const u8,
-        ),
-        (
             "gos_rt_sandbox_policy_command_default",
             crate::c_abi::gos_rt_sandbox_policy_command_default as *const u8,
         ),
@@ -6516,10 +6516,6 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_sandbox_policy_deny as *const u8,
         ),
         (
-            "gos_rt_sandbox_policy_network",
-            crate::c_abi::gos_rt_sandbox_policy_network as *const u8,
-        ),
-        (
             "gos_rt_sandbox_policy_env_allow",
             crate::c_abi::gos_rt_sandbox_policy_env_allow as *const u8,
         ),
@@ -6528,20 +6524,12 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_sandbox_policy_env_set as *const u8,
         ),
         (
-            "gos_rt_sandbox_policy_timeout",
-            crate::c_abi::gos_rt_sandbox_policy_timeout as *const u8,
-        ),
-        (
             "gos_rt_sandbox_policy_level",
             crate::c_abi::gos_rt_sandbox_policy_level as *const u8,
         ),
         (
             "gos_rt_sandbox_policy_working_directory",
             crate::c_abi::gos_rt_sandbox_policy_working_directory as *const u8,
-        ),
-        (
-            "gos_rt_sandbox_policy_explain",
-            crate::c_abi::gos_rt_sandbox_policy_explain as *const u8,
         ),
         (
             "gos_rt_sandbox_run",
@@ -6566,30 +6554,6 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_sandbox_policy_temp",
             crate::c_abi::gos_rt_sandbox_policy_temp as *const u8,
-        ),
-        (
-            "gos_rt_sandbox_policy_temp_path",
-            crate::c_abi::gos_rt_sandbox_policy_temp_path as *const u8,
-        ),
-        (
-            "gos_rt_sandbox_policy_max_processes",
-            crate::c_abi::gos_rt_sandbox_policy_max_processes as *const u8,
-        ),
-        (
-            "gos_rt_sandbox_policy_max_memory",
-            crate::c_abi::gos_rt_sandbox_policy_max_memory as *const u8,
-        ),
-        (
-            "gos_rt_sandbox_policy_max_cpu_time",
-            crate::c_abi::gos_rt_sandbox_policy_max_cpu_time as *const u8,
-        ),
-        (
-            "gos_rt_sandbox_policy_max_file_size",
-            crate::c_abi::gos_rt_sandbox_policy_max_file_size as *const u8,
-        ),
-        (
-            "gos_rt_sandbox_policy_max_temp_size",
-            crate::c_abi::gos_rt_sandbox_policy_max_temp_size as *const u8,
         ),
         (
             "gos_rt_sandbox_policy_check",
@@ -6652,14 +6616,6 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_sandbox_policy_network_enforcement_reason as *const u8,
         ),
         (
-            "gos_rt_sandbox_policy_resource_enforcement_kind",
-            crate::c_abi::gos_rt_sandbox_policy_resource_enforcement_kind as *const u8,
-        ),
-        (
-            "gos_rt_sandbox_policy_resource_enforcement_reason",
-            crate::c_abi::gos_rt_sandbox_policy_resource_enforcement_reason as *const u8,
-        ),
-        (
             "gos_rt_sandbox_os_description",
             crate::c_abi::gos_rt_sandbox_os_description as *const u8,
         ),
@@ -6688,12 +6644,8 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_sandbox_process_isolation_reason as *const u8,
         ),
         (
-            "gos_rt_sandbox_resource_limits_kind",
-            crate::c_abi::gos_rt_sandbox_resource_limits_kind as *const u8,
-        ),
-        (
-            "gos_rt_sandbox_resource_limits_reason",
-            crate::c_abi::gos_rt_sandbox_resource_limits_reason as *const u8,
+            "gos_rt_sandbox_env_never_passed",
+            crate::c_abi::gos_rt_sandbox_env_never_passed as *const u8,
         ),
         (
             "gos_rt_sandbox_expand",
@@ -6710,18 +6662,6 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_sandbox_home_directory",
             crate::c_abi::gos_rt_sandbox_home_directory as *const u8,
-        ),
-        (
-            "gos_rt_sandbox_rust_toolchain_paths",
-            crate::c_abi::gos_rt_sandbox_rust_toolchain_paths as *const u8,
-        ),
-        (
-            "gos_rt_sandbox_stale_grant_count",
-            crate::c_abi::gos_rt_sandbox_stale_grant_count as *const u8,
-        ),
-        (
-            "gos_rt_sandbox_clean_stale_grants",
-            crate::c_abi::gos_rt_sandbox_clean_stale_grants as *const u8,
         ),
         (
             "gos_rt_sandbox_exit_policy_error",
@@ -6746,22 +6686,6 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_sandbox_platform",
             crate::c_abi::gos_rt_sandbox_platform as *const u8,
-        ),
-        (
-            "gos_rt_sandbox_filesystem",
-            crate::c_abi::gos_rt_sandbox_filesystem as *const u8,
-        ),
-        (
-            "gos_rt_sandbox_network_enforcement",
-            crate::c_abi::gos_rt_sandbox_network_enforcement as *const u8,
-        ),
-        (
-            "gos_rt_sandbox_process_isolation",
-            crate::c_abi::gos_rt_sandbox_process_isolation as *const u8,
-        ),
-        (
-            "gos_rt_sandbox_resource_limits",
-            crate::c_abi::gos_rt_sandbox_resource_limits as *const u8,
         ),
         (
             "gos_rt_sandbox_capabilities_json",
@@ -7071,6 +6995,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_vec_reversed",
             crate::c_abi::gos_rt_vec_reversed as *const u8,
+        ),
+        (
+            "gos_rt_vec_set_slots",
+            crate::c_abi::gos_rt_vec_set_slots as *const u8,
         ),
         (
             "gos_rt_vec_set_i64",

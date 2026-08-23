@@ -130,8 +130,6 @@ pub struct SandboxCapabilities {
     pub network: Enforcement,
     /// Process-table and signal isolation.
     pub process_isolation: Enforcement,
-    /// Memory, CPU, and process-count limits.
-    pub resource_limits: Enforcement,
     /// Highest level this host can honor.
     pub max_level: Level,
     /// Everything a caller has to know that the fields above cannot
@@ -150,7 +148,6 @@ impl SandboxCapabilities {
             filesystem: Enforcement::None,
             network: Enforcement::None,
             process_isolation: Enforcement::None,
-            resource_limits: Enforcement::None,
             max_level: Level::None,
             notes: vec![note.to_string()],
         }

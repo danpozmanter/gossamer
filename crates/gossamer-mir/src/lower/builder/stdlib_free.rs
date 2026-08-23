@@ -3135,6 +3135,15 @@ impl<'a> Builder<'a> {
             ),
             "env::temp_dir" => ("gos_rt_env_temp_dir", self.tcx.string_ty()),
             "env::home_dir" => ("gos_rt_env_home_dir", self.option_string_adt_ty()),
+            "env::vars" => {
+                let string_ty = self.tcx.string_ty();
+                let map_ty = self.tcx.intern(gossamer_types::TyKind::HashMap {
+                    key: string_ty,
+                    value: string_ty,
+                    ordered: false,
+                });
+                ("gos_rt_env_vars", map_ty)
+            }
             _ => return None,
         })
     }
@@ -4237,10 +4246,6 @@ impl<'a> Builder<'a> {
             "sandbox::Policy::new" | "sandbox::new" => {
                 ("gos_rt_sandbox_policy_new", self.sandbox_policy_ty())
             }
-            "sandbox::Policy::build_default" | "sandbox::build_default" => (
-                "gos_rt_sandbox_policy_build_default",
-                self.sandbox_policy_ty(),
-            ),
             "sandbox::Policy::command_default" | "sandbox::command_default" => (
                 "gos_rt_sandbox_policy_command_default",
                 self.sandbox_policy_ty(),
@@ -4265,10 +4270,6 @@ impl<'a> Builder<'a> {
             }
             "sandbox::max_level" => ("gos_rt_sandbox_max_level", string_ty),
             "sandbox::platform" => ("gos_rt_sandbox_platform", string_ty),
-            "sandbox::filesystem" => ("gos_rt_sandbox_filesystem", string_ty),
-            "sandbox::network_enforcement" => ("gos_rt_sandbox_network_enforcement", string_ty),
-            "sandbox::process_isolation" => ("gos_rt_sandbox_process_isolation", string_ty),
-            "sandbox::resource_limits" => ("gos_rt_sandbox_resource_limits", string_ty),
             "sandbox::capabilities_json" => ("gos_rt_sandbox_capabilities_json", string_ty),
             "sandbox::notes" => (
                 "gos_rt_sandbox_notes",
@@ -4285,20 +4286,12 @@ impl<'a> Builder<'a> {
             "sandbox::process_isolation_reason" => {
                 ("gos_rt_sandbox_process_isolation_reason", string_ty)
             }
-            "sandbox::resource_limits_kind" => ("gos_rt_sandbox_resource_limits_kind", string_ty),
-            "sandbox::resource_limits_reason" => {
-                ("gos_rt_sandbox_resource_limits_reason", string_ty)
-            }
-            "sandbox::stale_grant_count" => ("gos_rt_sandbox_stale_grant_count", i64_ty),
             "sandbox::exit_policy_error" => ("gos_rt_sandbox_exit_policy_error", i64_ty),
             "sandbox::exit_command_not_found" => ("gos_rt_sandbox_exit_command_not_found", i64_ty),
             "sandbox::exit_level_unavailable" => ("gos_rt_sandbox_exit_level_unavailable", i64_ty),
             "sandbox::exit_signal_base" => ("gos_rt_sandbox_exit_signal_base", i64_ty),
             "sandbox::run_inherit" => ("gos_rt_sandbox_run_inherit", i64_ty),
-            "sandbox::rust_toolchain_paths" => (
-                "gos_rt_sandbox_rust_toolchain_paths",
-                self.tcx.intern(gossamer_types::TyKind::Vec(string_ty)),
-            ),
+            "sandbox::env_never_passed" => ("gos_rt_sandbox_env_never_passed", self.tcx.bool_ty()),
             "sandbox::expand" => ("gos_rt_sandbox_expand", self.option_string_adt_ty()),
             "sandbox::prefix_of" => ("gos_rt_sandbox_prefix_of", self.option_string_adt_ty()),
             "sandbox::resolve_on_path" => (
@@ -4308,10 +4301,6 @@ impl<'a> Builder<'a> {
             "sandbox::home_directory" => {
                 ("gos_rt_sandbox_home_directory", self.option_string_adt_ty())
             }
-            "sandbox::clean_stale_grants" => (
-                "gos_rt_sandbox_clean_stale_grants",
-                self.result_i64_error_adt_ty(),
-            ),
             _ => return None,
         })
     }
@@ -4695,9 +4684,9 @@ impl<'a> Builder<'a> {
     fn stdlib_runtime_kind(rt_name: &str) -> Option<&'static str> {
         match rt_name {
             "gos_rt_flag_set_new" => Some("flag::Set"),
-            "gos_rt_sandbox_policy_new"
-            | "gos_rt_sandbox_policy_build_default"
-            | "gos_rt_sandbox_policy_command_default" => Some("sandbox::Policy"),
+            "gos_rt_sandbox_policy_new" | "gos_rt_sandbox_policy_command_default" => {
+                Some("sandbox::Policy")
+            }
             "gos_rt_signal_on" => Some("signal::Notifier"),
             "gos_rt_bufio_scanner_new" => Some("bufio::Scanner"),
             "gos_rt_http_client_new" => Some("http::Client"),

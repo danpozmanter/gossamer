@@ -9,7 +9,8 @@
 //! mutation of the user's host ACLs performed by a sandbox, so it is
 //! stated in `--explain`, the SID is derived deterministically from a
 //! stable container name (a crashed run's grants stay findable), and
-//! [`clean_stale_grants`] removes what a crash left behind.
+//! the next run revokes what a crash left behind before it grants
+//! anything of its own.
 //!
 //! The second constraint: loopback is blocked inside an `AppContainer`
 //! without an admin exemption, so `network = Allow` there does not
@@ -57,14 +58,6 @@ pub(crate) fn capabilities() -> SandboxCapabilities {
     } else {
         notes.push("AppContainer is unavailable on this host".to_string());
     }
-    let stale = acl::stale_grant_count();
-    if stale > 0 {
-        notes.push(format!(
-            "{stale} stale AppContainer ACL grant(s) from an interrupted run - \
-             `clean_stale_grants` removes them"
-        ));
-    }
-
     let max_level = if app_container {
         Level::Strict
     } else if restricted_token {
@@ -97,12 +90,6 @@ pub(crate) fn capabilities() -> SandboxCapabilities {
         } else {
             Enforcement::Partial("job object only: tree cleanup, not isolation".to_string())
         },
-        // Job objects bound processes, memory, and CPU time. A
-        // per-file size limit has no job-object equivalent, so it is
-        // named here rather than accepted and dropped.
-        resource_limits: Enforcement::Partial(
-            "job objects only: processes, memory, and CPU time; no per-file size limit".to_string(),
-        ),
         max_level,
         notes,
     }
@@ -174,10 +161,17 @@ pub(crate) fn run(
     policy: &CompiledPolicy,
     argv: &[String],
     stdio: Stdio,
+    bound: Option<std::time::Duration>,
 ) -> Result<SandboxOutput, SandboxError> {
     if policy.level < Level::Standard {
-        return run_unrestricted(policy, argv, stdio);
+        return run_unrestricted(policy, argv, stdio, bound);
     }
+
+    // An interrupted run leaves host ACL grants behind. They are
+    // revoked here rather than by a cleanup command nobody remembers to
+    // run; a record whose process is still alive belongs to a
+    // concurrent run and is left alone.
+    let _ = appcontainer::clean_stale_grants();
 
     // Held for the length of the run: dropping the container revokes
     // every host ACL grant it made.
@@ -209,7 +203,7 @@ pub(crate) fn run(
     })?;
 
     let _job = attach_job(policy, child.process())?;
-    exec::wait_for(policy, child, stdio)
+    exec::wait_for(policy, child, stdio, bound)
 }
 
 /// The `none` and `basic` path: an ordinary child in a job object.
@@ -217,6 +211,7 @@ fn run_unrestricted(
     policy: &CompiledPolicy,
     argv: &[String],
     stdio: Stdio,
+    bound: Option<std::time::Duration>,
 ) -> Result<SandboxOutput, SandboxError> {
     let mut command = exec::base_command(policy, argv, stdio)?;
     appcontainer::apply_standard_mitigations(&mut command);
@@ -228,7 +223,7 @@ fn run_unrestricted(
         }
     })?;
     let _job = attach_job(policy, child.as_raw_handle().cast())?;
-    exec::wait_for(policy, child, stdio)
+    exec::wait_for(policy, child, stdio, bound)
 }
 
 /// Puts `process` in a kill-on-close job so the whole tree ends with
@@ -240,21 +235,9 @@ fn attach_job(
     if !policy.kill_tree_on_exit {
         return Ok(None);
     }
-    let job = job::Job::create(&policy.resources).map_err(SandboxError::Spawn)?;
+    let job = job::Job::create().map_err(SandboxError::Spawn)?;
     job.assign(process).map_err(SandboxError::Spawn)?;
     Ok(Some(job))
-}
-
-/// Revokes every ACL grant an interrupted run left behind, for
-/// a consumer's cleanup command. Returns how many paths were revoked.
-pub fn clean_stale_grants() -> Result<usize, String> {
-    appcontainer::clean_stale_grants()
-}
-
-/// How many interrupted runs left grants behind.
-#[must_use]
-pub fn stale_grant_count() -> usize {
-    acl::stale_grant_count()
 }
 
 /// Removes the sandbox's `AppContainer` profile.
@@ -293,26 +276,4 @@ mod windows_tests {
             "{lines:?}"
         );
     }
-}
-
-/// Whether this host can enforce every limit in `resources`.
-///
-/// The job object carries memory, process-count, and CPU limits. There
-/// is no per-file size limit, so one is refused.
-#[must_use]
-pub(crate) fn resource_enforcement(
-    resources: &crate::policy::Resources,
-    _level: Level,
-) -> Enforcement {
-    if resources.max_temp_size.is_some() {
-        return Enforcement::Partial(
-            "Windows has no private mount for the temporary directory: --max-temp-mb \
-             cannot be applied here"
-                .to_string(),
-        );
-    }
-    if resources.max_file_size.is_some() {
-        return Enforcement::Partial("a Windows job object has no per-file size limit".to_string());
-    }
-    Enforcement::Full
 }

@@ -197,6 +197,7 @@ feature-testing-examples/map_entry_and_format_paths.gos	bytecode-only local
 feature-testing-examples/map_from_sequence.gos	bytecode-only local
 feature-testing-examples/map_inc_at_oob.gos	no hot body
 feature-testing-examples/map_iter_wildcard_destructure.gos	bytecode-only local
+feature-testing-examples/map_owned_struct_value_rc.gos	bytecode-only local
 feature-testing-examples/map_set_aggregate_value_equality.gos	bytecode-only local
 feature-testing-examples/method_dispatch_collision.gos	bytecode-only local
 feature-testing-examples/method_dispatch_collisions.gos	no hot body

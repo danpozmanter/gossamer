@@ -149,12 +149,139 @@ struct CoreMethodEntry {
     doc: String,
 }
 
-pub(crate) fn core_method_names(owner: &str) -> Vec<&'static str> {
+/// What a binding's name reaches through a dot: the methods its type and
+/// capability can call, the fields its session-declared type has, and the
+/// positions a tuple is read by. `%explain` prints this surface and Tab
+/// completes it, so what discovery lists is what completion offers.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct BindingSurface {
+    owner: Option<String>,
+    type_name: String,
+    fixed_array: bool,
+    can_mutate: bool,
+    tuple_arity: usize,
+}
+
+impl BindingSurface {
+    /// A surface owned by one type, with a writable receiver. Test-only:
+    /// the REPL builds every surface from a binding it has type-checked.
+    #[cfg(test)]
+    pub(crate) fn owned_by(owner: &str) -> Self {
+        Self {
+            owner: Some(owner.to_string()),
+            type_name: owner.to_string(),
+            fixed_array: owner == "Array",
+            can_mutate: true,
+            tuple_arity: 0,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_tuple_arity(&mut self, arity: usize) {
+        self.tuple_arity = arity;
+    }
+
+    fn of(var: &ReplBindingVar, ty: &ReplValueType) -> Self {
+        Self {
+            owner: ty.method_owner.clone(),
+            type_name: base_type_name(&ty.rendered).to_string(),
+            fixed_array: ty.fixed_array,
+            can_mutate: binding_can_mutate(var, ty),
+            tuple_arity: ty.tuple_elements.len(),
+        }
+    }
+}
+
+/// Every member `binding.` reaches, sorted and de-duplicated. The session's
+/// own declarations are read on each call, so an `impl` block added after
+/// the binding is offered the moment it is accepted.
+pub(crate) fn binding_member_names(
+    surface: &BindingSurface,
+    declarations: &[String],
+) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    if let Some(ref owner) = surface.owner {
+        names.extend(
+            core_methods_for(owner, surface.fixed_array, surface.can_mutate)
+                .into_iter()
+                .map(|method| method.name),
+        );
+    }
+    for position in 0..surface.tuple_arity {
+        names.push(position.to_string());
+    }
+    let index = session_index(declarations);
+    if let Some(fields) = index.fields.get(&surface.type_name) {
+        names.extend(fields.iter().map(|(field, _)| field.clone()));
+    }
+    if let Some(methods) = index.methods.get(&surface.type_name) {
+        names.extend(
+            methods
+                .iter()
+                .filter_map(|(signature, _)| receiver_method_name(signature)),
+        );
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Every member a type's own name reaches, whichever spelling of the type
+/// is written: the methods and associated functions `%info` reports for it,
+/// plus what the session's own `impl` blocks add.
+pub(crate) fn qualified_member_names(owner: &str, declarations: &[String]) -> Vec<String> {
+    let canonical = canonical_collection_owner(owner);
+    let short = canonical.rsplit("::").next().unwrap_or(canonical);
+    let mut names: Vec<String> = core_method_entries()
+        .into_iter()
+        .filter(|entry| entry.owner == canonical || entry.owner == short)
+        .map(|entry| entry.name)
+        .collect();
+    let index = session_index(declarations);
+    if let Some(methods) = index.methods.get(canonical) {
+        names.extend(methods.iter().filter_map(|(signature, _)| {
+            signature.split_once('(').map(|(name, _)| name.to_string())
+        }));
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// The name of a session-declared function when it takes a receiver, so an
+/// associated function is not offered as a method of a value.
+fn receiver_method_name(signature: &str) -> Option<String> {
+    let (name, rest) = signature.split_once('(')?;
+    signature_takes_receiver(rest).then(|| name.to_string())
+}
+
+/// Whether a parameter list, written without its opening parenthesis,
+/// begins with a `self` receiver.
+fn signature_takes_receiver(params: &str) -> bool {
+    let params = params.trim_start();
+    let params = params
+        .strip_prefix("&mut ")
+        .or_else(|| params.strip_prefix('&'))
+        .unwrap_or(params);
+    let Some(rest) = params.strip_prefix("self") else {
+        return false;
+    };
+    rest.starts_with([',', ')', ':'])
+}
+
+/// The core methods a receiver of this shape can call: no resizing method
+/// on a fixed-length sequence, and no in-place mutation without writable
+/// access to the binding.
+fn core_methods_for(owner: &str, fixed_array: bool, can_mutate: bool) -> Vec<CoreMethodEntry> {
     let owner = canonical_collection_owner(owner);
-    CORE_METHODS
-        .iter()
-        .filter(|method| method.owner == owner && method.kind == "method")
-        .map(|method| method.name)
+    core_method_entries()
+        .into_iter()
+        .filter(|method| {
+            method.kind == "method"
+                && method.owner == owner
+                && (!fixed_array || !gossamer_types::is_vec_only_sequence_method(&method.name))
+                && (can_mutate || !gossamer_types::is_mutating_method_name(&method.name))
+        })
         .collect()
 }
 
@@ -1982,7 +2109,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                                 let entry = format!("__irepl_drop_{input_no}");
                                 let probe = format!(
                                     "{}\nfn {entry}() {{\n    {probe_body}}}\n",
-                                    plan.declarations.join("\n"),
+                                    render_repl_declarations(&plan.declarations),
                                 );
                                 match rebuild_session(&plan.declarations)
                                     .and_then(|()| build_and_call(&probe, &entry).map(|_| ()))
@@ -1993,9 +2120,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                                             for dropped in &plan.dropped_names {
                                                 helper.forget_binding(dropped);
                                             }
-                                            helper.set_session_type_names(session_type_names(
-                                                &declarations,
-                                            ));
+                                            helper.set_declarations(&declarations);
                                         }
                                         let dropped =
                                             render_dropped_declaration_names(&plan.dropped_names);
@@ -2021,7 +2146,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                     let entry = format!("__irepl_drop_{input_no}");
                     let probe = format!(
                         "{}\nfn {entry}() {{\n    {probe_body}}}\n",
-                        declarations.join("\n"),
+                        render_repl_declarations(&declarations),
                     );
                     match build_and_call(&probe, &entry) {
                         Ok(_) => {
@@ -2192,7 +2317,7 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
             match rebuild_session(&declarations) {
                 Ok(()) => {
                     if let Some(helper) = editor.helper_mut() {
-                        helper.set_session_type_names(session_type_names(&declarations));
+                        helper.set_declarations(&declarations);
                     }
                     if verbose {
                         println!("    added {} declarations", declarations.len());
@@ -2220,32 +2345,28 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
             let probe_body = format!("{}{candidate}\n    ()\n", render_repl_setup(&lets));
             let probe = format!(
                 "{}\nfn __irepl_{n}() {{\n    {body}}}\n",
-                declarations.join("\n"),
+                render_repl_declarations(&declarations),
                 n = input_no,
                 body = probe_body,
             );
             match build_and_call(&probe, &format!("__irepl_{input_no}")) {
                 Ok(_) => {
                     new_binding.source_index = lets.len();
-                    let completion_names = new_binding
-                        .vars
-                        .iter()
-                        .map(|var| var.name.clone())
-                        .collect::<Vec<_>>();
+                    let completion_vars = new_binding.vars.clone();
                     update_repl_bindings(&mut bindings, new_binding);
                     lets.push(candidate.clone());
-                    let completion_owners = completion_names
+                    let completion_surfaces = completion_vars
                         .iter()
-                        .map(|name| {
-                            let owner = infer_repl_binding_type(&declarations, &lets, name)
+                        .map(|var| {
+                            let surface = infer_repl_binding_type(&declarations, &lets, &var.name)
                                 .ok()
-                                .and_then(|ty| ty.method_owner);
-                            (name, owner)
+                                .map(|ty| BindingSurface::of(var, &ty));
+                            (var.name.clone(), surface)
                         })
                         .collect::<Vec<_>>();
                     if let Some(helper) = editor.helper_mut() {
-                        for (name, owner) in completion_owners {
-                            helper.set_binding_method_owner(name, owner.as_deref());
+                        for (name, surface) in completion_surfaces {
+                            helper.set_binding_surface(&name, surface);
                         }
                     }
                     if verbose {
@@ -2267,16 +2388,16 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
             let probe_body = format!("{}{trimmed}", render_repl_setup(&lets));
             let probe = format!(
                 "{}\nfn __irepl_{n}() {{\n    {body}}}\n",
-                declarations.join("\n"),
+                render_repl_declarations(&declarations),
                 n = input_no,
                 body = probe_body,
             );
-            match build_and_call(&probe, &format!("__irepl_{input_no}")) {
-                Ok(value) => {
+            match build_and_call_with_type(&probe, &format!("__irepl_{input_no}")) {
+                Ok((value, ty)) => {
                     if matches!(value, gossamer_interp::Value::Unit) {
                         lets.push(trimmed.to_string());
                     } else {
-                        print_repl_result(&value);
+                        print_repl_result(&value, &ty);
                         // The call is a tail expression in the probe so its
                         // Result can be displayed. On later inputs it becomes
                         // a statement, where an unused Result is rightly a
@@ -2295,15 +2416,15 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
         let let_body = render_repl_setup(&lets);
         let program_source = format!(
             "{}\nfn __irepl_{n}() {{ {lets}{expr}\n}}\n",
-            declarations.join("\n"),
+            render_repl_declarations(&declarations),
             n = input_no,
             lets = let_body,
             expr = trimmed,
         );
-        match build_and_call(&program_source, &format!("__irepl_{input_no}")) {
-            Ok(value) => {
+        match build_and_call_with_type(&program_source, &format!("__irepl_{input_no}")) {
+            Ok((value, ty)) => {
                 if !matches!(value, gossamer_interp::Value::Unit) {
-                    print_repl_result(&value);
+                    print_repl_result(&value, &ty);
                 }
             }
             Err(msg) => {
@@ -2353,6 +2474,7 @@ impl ReplValueType {
             Some(gossamer_types::TyKind::JoinHandle(_)) => (Some("JoinHandle".to_string()), false),
             Some(gossamer_types::TyKind::Duration) => (Some("Duration".to_string()), false),
             Some(gossamer_types::TyKind::Instant) => (Some("Instant".to_string()), false),
+            Some(gossamer_types::TyKind::Tuple(_)) => (Some("Tuple".to_string()), false),
             Some(gossamer_types::TyKind::Adt { def, .. }) => {
                 (tcx.def_name(*def).map(str::to_string), false)
             }
@@ -2411,11 +2533,30 @@ fn render_repl_binding_value(value: &gossamer_interp::Value, ty: &ReplValueType)
     rendered
 }
 
-fn print_repl_result(value: &gossamer_interp::Value) {
-    println!("{}", render_repl_value(value));
+/// Prints an expression's value in the spelling its type is written in, the
+/// same one `%bindings` shows for a binding of that type.
+fn print_repl_result(value: &gossamer_interp::Value, ty: &ReplValueType) {
+    println!("{}", render_repl_binding_value(value, ty));
     std::io::stdout()
         .flush()
         .expect("flush REPL expression result");
+}
+
+/// The session's declarations as one source block, imports first.
+///
+/// A file's `use` declarations precede its items, and the prompt accepts
+/// them in whatever order the session reached them, so the block the REPL
+/// assembles puts them back in the order the grammar states.
+fn render_repl_declarations(declarations: &[String]) -> String {
+    let (imports, items): (Vec<&String>, Vec<&String>) = declarations
+        .iter()
+        .partition(|declaration| declaration.trim_start().starts_with("use "));
+    imports
+        .into_iter()
+        .chain(items)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn render_repl_setup(lets: &[String]) -> String {
@@ -2676,7 +2817,7 @@ fn render_repl_bindings(
             let entry = format!("__irepl_binding_{}", lines.len());
             let source = format!(
                 "{}\nfn {entry}() {{ {lets}{name} }}\n",
-                declarations.join("\n"),
+                render_repl_declarations(declarations),
                 lets = let_body,
                 name = var.name,
             );
@@ -2762,7 +2903,7 @@ fn repl_binding_info_for(
         };
         let mut out = format!("{} [binding]\n  type: {}\n  capability: {capability}\n", var.name, ty.rendered);
         if !ty.tuple_elements.is_empty() {
-            out.push_str("  method surface: tuple (positional elements; no methods)\n");
+            out.push_str("  method surface: tuple (positional elements and the methods below)\n");
             for (index, elem) in ty.tuple_elements.iter().enumerate() {
                 out.push_str(&format!("  {}.{index}: {elem} [element]\n", var.name));
             }
@@ -2779,7 +2920,6 @@ fn repl_binding_info_for(
                     .join(", "),
                 var.name
             ));
-            return out;
         }
         if let Some(session) = render_session_type(
             &session_index(declarations),
@@ -2931,15 +3071,7 @@ fn available_repl_binding_methods(
     owner: &str,
     can_mutate: bool,
 ) -> Vec<CoreMethodEntry> {
-    core_method_entries()
-        .into_iter()
-        .filter(|method| {
-            method.kind == "method"
-                && method.owner == owner
-                && (!ty.fixed_array || !gossamer_types::is_vec_only_sequence_method(&method.name))
-                && (can_mutate || !gossamer_types::is_mutating_method_name(&method.name))
-        })
-        .collect()
+    core_methods_for(owner, ty.fixed_array, can_mutate)
 }
 
 fn resolve_repl_binding(
@@ -2951,7 +3083,7 @@ fn resolve_repl_binding(
     let entry = "__irepl_binding_info";
     let source = format!(
         "{}\nfn {entry}() {{ {lets}{name} }}\n",
-        declarations.join("\n"),
+        render_repl_declarations(declarations),
         lets = let_body,
     );
     build_and_call_with_type_for_inspection(&source, entry)
@@ -2966,7 +3098,7 @@ fn infer_repl_binding_type(
     let entry = "__irepl_binding_type";
     let source = format!(
         "{}\nfn {entry}() {{ {lets}{name} }}\n",
-        declarations.join("\n"),
+        render_repl_declarations(declarations),
         lets = let_body,
     );
     infer_repl_tail_type(&source)
@@ -3911,7 +4043,15 @@ fn push_catalog_entry(out: &mut String, path: &str, kind: &str, description: &st
     ));
 }
 
+/// The core method catalog, derived once. Its inputs - the static table,
+/// the stdlib manifest, and the interpreter's registered builtins - are
+/// fixed for the life of the process.
 fn core_method_entries() -> Vec<CoreMethodEntry> {
+    static CATALOG: std::sync::OnceLock<Vec<CoreMethodEntry>> = std::sync::OnceLock::new();
+    CATALOG.get_or_init(build_core_method_entries).clone()
+}
+
+fn build_core_method_entries() -> Vec<CoreMethodEntry> {
     let mut entries = BTreeMap::<(String, String), CoreMethodEntry>::new();
     for method in CORE_METHODS {
         insert_core_method_entry(
@@ -3939,7 +4079,7 @@ fn core_method_entries() -> Vec<CoreMethodEntry> {
             if !gossamer_types::core_type_accepts_method(&owner, &name) {
                 continue;
             }
-            let kind = if runtime_assoc_name(&name) {
+            let named_kind = if runtime_assoc_name(&name) {
                 "assoc"
             } else {
                 "method"
@@ -3949,7 +4089,21 @@ fn core_method_entries() -> Vec<CoreMethodEntry> {
             // signature metadata is being filled in. An empty signature is
             // truthful and renders as a method name, unlike the old `...`
             // placeholder that pretended to know an argument contract.
-            let signature = runtime_core_method_signature(&owner, &name, kind).unwrap_or_default();
+            let signature =
+                runtime_core_method_signature(&owner, &name, named_kind).unwrap_or_default();
+            // A stated contract is the authority on whether the call takes a
+            // receiver, so a constructor is listed under its type rather than
+            // offered on a value of it.
+            let kind = match signature.split_once('(') {
+                Some((_, params)) => {
+                    if signature_takes_receiver(params) {
+                        "method"
+                    } else {
+                        "assoc"
+                    }
+                }
+                None => named_kind,
+            };
             let doc = runtime_core_method_doc(&owner, &name)
                 .map_or_else(|| format!("Built-in {kind} on {owner}."), str::to_string);
             insert_core_method_entry(
@@ -4010,7 +4164,55 @@ fn core_method_entries() -> Vec<CoreMethodEntry> {
         },
     );
     fill_collection_sequence_signatures(&mut entries);
+    catalog_under_receiver_types(&mut entries);
     entries.into_values().collect()
+}
+
+/// Also files a method under the type its receiver names. One runtime
+/// namespace can serve several types - `Channel` carries `send`, `recv`,
+/// and `join`, whose receivers are a `Sender`, a `Receiver`, and a
+/// `JoinHandle` - and a binding of one of those types reaches its methods
+/// through its own name.
+fn catalog_under_receiver_types(entries: &mut BTreeMap<(String, String), CoreMethodEntry>) {
+    let rehomed: Vec<CoreMethodEntry> = entries
+        .values()
+        .filter(|entry| entry.kind == "method")
+        .filter_map(|entry| {
+            let owner = receiver_type_name(&entry.signature)?;
+            // The receiver is written as the checker resolves it, module path
+            // and all: `flag::Set` is a type of its own, not the collection
+            // the last segment also names.
+            (short_type_name(owner) != short_type_name(&entry.owner)
+                && gossamer_types::core_type_accepts_method(owner, &entry.name))
+            .then(|| CoreMethodEntry {
+                owner: owner.to_string(),
+                ..entry.clone()
+            })
+        })
+        .collect();
+    for entry in rehomed {
+        insert_core_method_entry(entries, entry);
+    }
+}
+
+/// The type a signature's `self` parameter is written as, module path and
+/// all, or `None` when the signature states no receiver.
+fn receiver_type_name(signature: &str) -> Option<&str> {
+    let params = signature.split_once('(')?.1;
+    if !signature_takes_receiver(params) {
+        return None;
+    }
+    let ty = params.split_once("self: ")?.1;
+    let ty = ty.trim_start_matches("&mut ").trim_start_matches('&');
+    // A sequence receiver is written as a bracketed shape rather than a
+    // named type, and belongs to the owner the entry already carries.
+    let name = ty.split(['<', ',', ')', ' ', '[']).next().unwrap_or(ty);
+    (!name.is_empty()).then_some(name)
+}
+
+/// A type name without its module path: `time::Duration` is `Duration`.
+fn short_type_name(name: &str) -> &str {
+    name.rsplit("::").next().unwrap_or(name)
 }
 
 /// Names a map's elements are pairs of, so the `Vec` sequence surface it
@@ -4116,16 +4318,46 @@ fn replace_generic(signature: &str, from: &str, to: &str) -> String {
     out
 }
 
+/// The same contract read over a fixed array or a slice: only the receiver
+/// changes, and it keeps whatever element type the `Vec` form carries.
 fn sequence_owner_signature(signature: &str, owner: &str) -> String {
-    let shared_receiver = if owner == "Array" { "&[T; N]" } else { "&[T]" };
-    let mutable_receiver = if owner == "Array" {
-        "&mut [T; N]"
-    } else {
-        "&mut [T]"
+    const RECEIVER: &str = "self: ";
+    let Some(start) = signature.find(RECEIVER) else {
+        return signature.to_string();
     };
-    signature
-        .replace("self: &mut Vec<T>", &format!("self: {mutable_receiver}"))
-        .replace("self: Vec<T>", &format!("self: {shared_receiver}"))
+    let rest = &signature[start + RECEIVER.len()..];
+    let (mutability, ty) = rest.strip_prefix("&mut ").map_or_else(
+        || ("&", rest.strip_prefix('&').unwrap_or(rest)),
+        |ty| ("&mut ", ty),
+    );
+    let Some((element, tail)) = vec_element_and_tail(ty) else {
+        return signature.to_string();
+    };
+    let length = if owner == "Array" { "; N" } else { "" };
+    format!(
+        "{}{RECEIVER}{mutability}[{element}{length}]{tail}",
+        &signature[..start]
+    )
+}
+
+/// Splits `Vec<E>rest` into its element type and what follows it, keeping a
+/// nested `Vec<Vec<T>>` element whole.
+fn vec_element_and_tail(ty: &str) -> Option<(&str, &str)> {
+    let body = ty.strip_prefix("Vec<")?;
+    let mut depth = 1usize;
+    for (offset, ch) in body.char_indices() {
+        match ch {
+            '<' => depth += 1,
+            '>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((&body[..offset], &body[offset + 1..]));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Exposes a data-last standard module as receiver methods without maintaining
@@ -4808,7 +5040,7 @@ fn input_mutates_binding(input: &str, user_mutating_methods: &HashSet<String>) -
 fn collect_repl_mut_self_method_names(declarations: &[String]) -> HashSet<String> {
     use gossamer_ast::{FnParam, ImplItem, ItemKind, Receiver};
 
-    let source = declarations.join("\n");
+    let source = render_repl_declarations(declarations);
     if source.trim().is_empty() {
         return HashSet::new();
     }
@@ -5182,7 +5414,7 @@ fn rebuild_session(declarations: &[String]) -> std::result::Result<(), String> {
     // Parse declarations before appending the synthetic probe function. A
     // missing item body must point at the user's end of input, not at the
     // generated `fn __irepl_probe` that follows it.
-    let declarations_source = declarations.join("\n");
+    let declarations_source = render_repl_declarations(declarations);
     let mut declarations_map = gossamer_lex::SourceMap::new();
     let declarations_file =
         declarations_map.add_file("<repl>".to_string(), declarations_source.clone());
@@ -5192,7 +5424,7 @@ fn rebuild_session(declarations: &[String]) -> std::result::Result<(), String> {
         return Err(format_parse_diags(&declaration_diags, &declarations_map));
     }
 
-    let source = declarations.join("\n") + "\nfn __irepl_probe() { }\n";
+    let source = render_repl_declarations(declarations) + "\nfn __irepl_probe() { }\n";
     let source = gossamer_parse::autoderive::augment_source(&source);
     let mut map = gossamer_lex::SourceMap::new();
     let file = map.add_file("<repl>".to_string(), source.clone());
@@ -5229,6 +5461,13 @@ fn build_and_call(
     entry: &str,
 ) -> std::result::Result<gossamer_interp::Value, String> {
     build_and_call_with_type_inner(source, entry, false).map(|(value, _)| value)
+}
+
+fn build_and_call_with_type(
+    source: &str,
+    entry: &str,
+) -> std::result::Result<(gossamer_interp::Value, ReplValueType), String> {
+    build_and_call_with_type_inner(source, entry, false)
 }
 
 fn build_and_call_with_type_for_inspection(
@@ -5572,6 +5811,138 @@ mod tests {
                 rendered.contains(expected),
                 "missing `{expected}`:\n{rendered}"
             );
+        }
+    }
+
+    /// Completion offers exactly what discovery reports: every member
+    /// `%explain` lists for a binding is a candidate after that binding's
+    /// dot, whatever its type. A fixed array is the receiver this most
+    /// easily misses, because its surface is derived from `Vec` rather
+    /// than written out.
+    #[test]
+    fn every_member_explain_lists_is_completed() {
+        let declarations = vec![
+            "use std::{sandbox, time}".to_string(),
+            "struct Point { x: i64, y: i64 }".to_string(),
+            "impl Point { fn norm(&self) -> i64 { self.x + self.y } }".to_string(),
+        ];
+        let lets = vec![
+            "let array = [1, 2, 3]".to_string(),
+            "let vector = #[1, 2, 3]".to_string(),
+            "let text = \"hi\"".to_string(),
+            "let scores = {\"a\": 1}".to_string(),
+            "let sorted = BTreeMap::from([(1, 2)])".to_string(),
+            "let names = #{\"a\"}".to_string(),
+            "let deque = Deque::from([1, 2])".to_string(),
+            "let queue = Queue::from([1, 2])".to_string(),
+            "let stack = Stack::from([1, 2])".to_string(),
+            "let heap = MinHeap::from([1, 2])".to_string(),
+            "let maybe = Some(1)".to_string(),
+            "let outcome: Result<i64, String> = Ok(1)".to_string(),
+            "let pair = (1, 2)".to_string(),
+            "let point = Point { x: 1, y: 2 }".to_string(),
+            "let span = time::Duration::from_millis(5)".to_string(),
+            "let policy = sandbox::Policy::new()".to_string(),
+            "let mut cursor = #[1, 2].iter()".to_string(),
+        ];
+        for name in [
+            "array", "vector", "text", "scores", "sorted", "names", "deque", "queue", "stack",
+            "heap", "maybe", "outcome", "pair", "point", "span", "policy", "cursor",
+        ] {
+            let var = ReplBindingVar {
+                name: name.to_string(),
+                mutable: name == "cursor",
+            };
+            let ty = infer_repl_binding_type(&declarations, &lets, name)
+                .unwrap_or_else(|error| panic!("infer {name}: {error}"));
+            let surface = BindingSurface::of(&var, &ty);
+            let members = binding_member_names(&surface, &declarations);
+            assert!(!members.is_empty(), "{name} reaches no members");
+            let listing = repl_binding_listing_for(&declarations, &lets, &var)
+                .unwrap_or_else(|error| panic!("explain {name}: {error}"));
+            let prefix = format!("{name}.");
+            for line in listing.lines() {
+                let line = line.trim();
+                let Some(call) = line.strip_prefix(&prefix) else {
+                    continue;
+                };
+                let member = call
+                    .split(['(', '<', ' ', ':'])
+                    .next()
+                    .expect("a member name");
+                assert!(
+                    members.contains(&member.to_string()),
+                    "{name}.{member} is listed but not completed: {members:?}"
+                );
+            }
+        }
+        let point = ReplBindingVar {
+            name: "point".to_string(),
+            mutable: false,
+        };
+        let ty = infer_repl_binding_type(&declarations, &lets, "point").expect("infer point");
+        let members = binding_member_names(&BindingSurface::of(&point, &ty), &declarations);
+        assert_eq!(members, vec!["norm", "x", "y"], "{members:?}");
+    }
+
+    /// A binding that cannot be written through does not complete a method
+    /// that would write through it.
+    #[test]
+    fn an_immutable_binding_completes_no_mutating_method() {
+        let lets = vec!["let values = #[1, 2, 3]".to_string()];
+        let var = ReplBindingVar {
+            name: "values".to_string(),
+            mutable: false,
+        };
+        let ty = infer_repl_binding_type(&[], &lets, "values").expect("infer values");
+        let members = binding_member_names(&BindingSurface::of(&var, &ty), &[]);
+        assert!(members.contains(&"len".to_string()), "{members:?}");
+        assert!(!members.contains(&"push".to_string()), "{members:?}");
+
+        let mutable = ReplBindingVar {
+            name: "values".to_string(),
+            mutable: true,
+        };
+        let members = binding_member_names(&BindingSurface::of(&mutable, &ty), &[]);
+        assert!(members.contains(&"push".to_string()), "{members:?}");
+    }
+
+    /// Every catalog entry is filed under a type a user can name. A
+    /// receiver written as a bracketed sequence shape names no type, so the
+    /// entry keeps the owner it already carries.
+    #[test]
+    fn every_catalog_owner_is_a_named_type() {
+        let anonymous: Vec<String> = core_method_entries()
+            .into_iter()
+            .filter(|entry| {
+                entry.owner.trim().is_empty()
+                    || !entry
+                        .owner
+                        .starts_with(|ch: char| ch.is_alphabetic() || ch == '_')
+            })
+            .map(|entry| format!("{}::{}", entry.owner, entry.name))
+            .collect();
+        assert!(
+            anonymous.is_empty(),
+            "unnamed catalog owners: {anonymous:?}"
+        );
+    }
+
+    /// A constructor is named through its type, so it is not offered on a
+    /// value of that type.
+    #[test]
+    fn a_constructor_is_not_a_member_of_its_own_type() {
+        let entries = core_method_entries();
+        for (owner, name) in [
+            ("Duration", "from_millis"),
+            ("Policy", "command_default"),
+            ("Policy", "new"),
+        ] {
+            let entry = entries
+                .iter()
+                .find(|entry| entry.owner == owner && entry.name == name)
+                .unwrap_or_else(|| panic!("{owner}::{name} is cataloged"));
+            assert_eq!(entry.kind, "assoc", "{owner}::{name}");
         }
     }
 
@@ -6327,7 +6698,7 @@ fn session_index(declarations: &[String]) -> SessionIndex {
 
 /// Names the session declares that a type position may name, for the
 /// highlighter: structs, enums, traits, and aliases.
-fn session_type_names(declarations: &[String]) -> std::collections::HashSet<String> {
+pub(crate) fn session_type_names(declarations: &[String]) -> std::collections::HashSet<String> {
     session_index(declarations)
         .kinds
         .into_iter()
@@ -6390,7 +6761,9 @@ fn render_session_type(index: &SessionIndex, name: &str, receiver: Option<&str>)
             let origin = from_trait
                 .as_ref()
                 .map_or_else(|| "[inherent]".to_string(), |t| format!("[{t}]"));
-            match receiver {
+            // An associated function has no receiver to be called through, so
+            // it keeps its qualified spelling even where a binding is named.
+            match receiver.filter(|_| receiver_method_name(signature).is_some()) {
                 Some(binding) => {
                     let call = signature.replacen("(&mut self, ", "(", 1);
                     let call = call.replacen("(&mut self)", "()", 1);

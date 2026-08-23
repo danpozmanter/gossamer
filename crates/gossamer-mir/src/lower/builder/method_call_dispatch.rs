@@ -998,25 +998,15 @@ impl<'a> Builder<'a> {
             "gos_rt_sandbox_policy_read_write"
             | "gos_rt_sandbox_policy_read_only"
             | "gos_rt_sandbox_policy_deny"
-            | "gos_rt_sandbox_policy_network"
             | "gos_rt_sandbox_policy_env_allow"
             | "gos_rt_sandbox_policy_env_set"
-            | "gos_rt_sandbox_policy_timeout"
             | "gos_rt_sandbox_policy_level"
             | "gos_rt_sandbox_policy_working_directory"
             | "gos_rt_sandbox_policy_network_mode"
             | "gos_rt_sandbox_policy_for_fetch_phase"
             | "gos_rt_sandbox_policy_read_only_cwd"
-            | "gos_rt_sandbox_policy_temp"
-            | "gos_rt_sandbox_policy_temp_path"
-            | "gos_rt_sandbox_policy_max_processes"
-            | "gos_rt_sandbox_policy_max_memory"
-            | "gos_rt_sandbox_policy_max_cpu_time"
-            | "gos_rt_sandbox_policy_max_file_size"
-            | "gos_rt_sandbox_policy_max_temp_size"
-            => self.sandbox_policy_ty(),
-            "gos_rt_sandbox_policy_explain"
-            | "gos_rt_sandbox_policy_to_json"
+            | "gos_rt_sandbox_policy_temp" => self.sandbox_policy_ty(),
+            "gos_rt_sandbox_policy_to_json"
             | "gos_rt_sandbox_policy_access"
             | "gos_rt_sandbox_policy_environment_value"
             | "gos_rt_sandbox_policy_level_name"
@@ -1025,8 +1015,6 @@ impl<'a> Builder<'a> {
             | "gos_rt_sandbox_policy_level_blocker"
             | "gos_rt_sandbox_policy_network_enforcement_kind"
             | "gos_rt_sandbox_policy_network_enforcement_reason"
-            | "gos_rt_sandbox_policy_resource_enforcement_kind"
-            | "gos_rt_sandbox_policy_resource_enforcement_reason"
             => self.tcx.string_ty(),
             // A reader that answers a list of paths or names: pinned so a
             // `for` over it walks strings rather than an unresolved Var.
@@ -1127,22 +1115,14 @@ impl<'a> Builder<'a> {
             "gos_rt_sandbox_policy_read_write"
             | "gos_rt_sandbox_policy_read_only"
             | "gos_rt_sandbox_policy_deny"
-            | "gos_rt_sandbox_policy_network"
             | "gos_rt_sandbox_policy_env_allow"
             | "gos_rt_sandbox_policy_env_set"
-            | "gos_rt_sandbox_policy_timeout"
             | "gos_rt_sandbox_policy_level"
             | "gos_rt_sandbox_policy_working_directory"
             | "gos_rt_sandbox_policy_network_mode"
             | "gos_rt_sandbox_policy_for_fetch_phase"
             | "gos_rt_sandbox_policy_read_only_cwd"
-            | "gos_rt_sandbox_policy_temp"
-            | "gos_rt_sandbox_policy_temp_path"
-            | "gos_rt_sandbox_policy_max_processes"
-            | "gos_rt_sandbox_policy_max_memory"
-            | "gos_rt_sandbox_policy_max_cpu_time"
-            | "gos_rt_sandbox_policy_max_file_size"
-            | "gos_rt_sandbox_policy_max_temp_size" => Some("sandbox::Policy"),
+            | "gos_rt_sandbox_policy_temp" => Some("sandbox::Policy"),
             _ => None,
         };
         if let Some(rk) = dest_kind {

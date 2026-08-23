@@ -4968,7 +4968,19 @@ impl<'a> Builder<'a> {
         // bulk-freed at the iteration boundary. Eligibility rejects any
         // escape, so this can only speed the loop up, never change a result.
         let regioned = self.begin_loop_region(for_loop.body, span);
+        // `continue` jumps to the counter bump, `break` leaves the loop.
+        // Without this context the body's `break` / `continue` finds no
+        // target: it reaches an outer loop's, or none at all.
+        self.loop_stack.push(LoopContext {
+            continue_to: step_block,
+            break_to: exit,
+            result: None,
+            break_used: false,
+            defer_depth: self.defer_stack.len(),
+            label: self.pending_loop_label.take(),
+        });
         let _ = self.lower_expr(for_loop.body);
+        self.loop_stack.pop();
         self.pop_scope();
         self.end_auto_region(regioned, span);
         self.terminate(Terminator::Goto { target: step_block });
@@ -5133,7 +5145,19 @@ impl<'a> Builder<'a> {
         self.set_current(after_val);
 
         let regioned = self.begin_loop_region(for_loop.body, span);
+        // `continue` jumps to the counter bump, `break` leaves the loop.
+        // Without this context the body's `break` / `continue` finds no
+        // target: it reaches an outer loop's, or none at all.
+        self.loop_stack.push(LoopContext {
+            continue_to: step_block,
+            break_to: exit,
+            result: None,
+            break_used: false,
+            defer_depth: self.defer_stack.len(),
+            label: self.pending_loop_label.take(),
+        });
         let _ = self.lower_expr(for_loop.body);
+        self.loop_stack.pop();
         self.pop_scope();
         self.end_auto_region(regioned, span);
         self.terminate(Terminator::Goto { target: step_block });
@@ -5291,7 +5315,19 @@ impl<'a> Builder<'a> {
         // snapshot above (outside the region), so only the body's
         // per-iteration allocations are arena-freed at the boundary.
         let regioned = self.begin_loop_region(for_loop.body, span);
+        // `continue` jumps to the counter bump, `break` leaves the loop.
+        // Without this context the body's `break` / `continue` finds no
+        // target: it reaches an outer loop's, or none at all.
+        self.loop_stack.push(LoopContext {
+            continue_to: step_block,
+            break_to: exit,
+            result: None,
+            break_used: false,
+            defer_depth: self.defer_stack.len(),
+            label: self.pending_loop_label.take(),
+        });
         let _ = self.lower_expr(for_loop.body);
+        self.loop_stack.pop();
         self.pop_scope();
         self.end_auto_region(regioned, span);
         self.terminate(Terminator::Goto { target: step_block });

@@ -1,0 +1,54 @@
+// Assigning a whole element into a Vec of tuples.
+//
+// A tuple element occupies a block of slots rather than one machine
+// word, so the indexed write has to copy the whole block and hand over
+// the element's reference-counted children with it. A word-sized store
+// would write the first field and leave the rest of the element as it
+// was.
+
+struct Pair { name: String, count: i64 }
+
+fn main() {
+    let mut numbers = #[(1, 2), (3, 4), (5, 6)]
+    numbers[1] = (30, 40)
+    for (a, b) in numbers {
+        println!("numbers {} {}", a, b)
+    }
+
+    let mut mixed = #[("p", 1), ("q", 2)]
+    mixed[0] = ("z", 20)
+    for (name, value) in mixed {
+        println!("mixed {} {}", name, value)
+    }
+
+    // Both fields heap-allocated: the outgoing element's strings are
+    // released and the incoming ones retained, so the vec ends holding
+    // exactly one share of each.
+    let mut text = #[("alpha", "one"), ("beta", "two"), ("gamma", "three")]
+    let replacement = ("delta", "four")
+    text[1] = replacement
+    for (key, value) in text {
+        println!("text {} {}", key, value)
+    }
+
+    // A rebuild-in-place walk, the shape a lookup table gets when one
+    // row is corrected.
+    let mut rows = #[("a", "1"), ("b", "2"), ("c", "3")]
+    let mut index = 0
+    while index < rows.len() {
+        let (name, value) = rows[index]
+        if name == "b" {
+            rows[index] = (name, format!("{}!", value))
+        }
+        index += 1
+    }
+    for (name, value) in rows {
+        println!("rows {} {}", name, value)
+    }
+
+    let mut structs = #[Pair { name: "one", count: 1 }, Pair { name: "two", count: 2 }]
+    structs[1] = Pair { name: "replaced", count: 99 }
+    for pair in structs {
+        println!("struct {} {}", pair.name, pair.count)
+    }
+}

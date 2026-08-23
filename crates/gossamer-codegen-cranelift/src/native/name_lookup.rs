@@ -287,39 +287,25 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_io_close_writer" => Some("gos_rt_io_close_writer"),
         "gos_rt_io_read_all" => Some("gos_rt_io_read_all"),
         "gos_rt_sandbox_policy_new" => Some("gos_rt_sandbox_policy_new"),
-        "gos_rt_sandbox_policy_build_default" => Some("gos_rt_sandbox_policy_build_default"),
         "gos_rt_sandbox_policy_command_default" => Some("gos_rt_sandbox_policy_command_default"),
         "gos_rt_sandbox_policy_read_write" => Some("gos_rt_sandbox_policy_read_write"),
         "gos_rt_sandbox_policy_read_only" => Some("gos_rt_sandbox_policy_read_only"),
         "gos_rt_sandbox_policy_deny" => Some("gos_rt_sandbox_policy_deny"),
-        "gos_rt_sandbox_policy_network" => Some("gos_rt_sandbox_policy_network"),
         "gos_rt_sandbox_policy_env_allow" => Some("gos_rt_sandbox_policy_env_allow"),
         "gos_rt_sandbox_policy_env_set" => Some("gos_rt_sandbox_policy_env_set"),
-        "gos_rt_sandbox_policy_timeout" => Some("gos_rt_sandbox_policy_timeout"),
         "gos_rt_sandbox_policy_level" => Some("gos_rt_sandbox_policy_level"),
         "gos_rt_sandbox_policy_working_directory" => {
             Some("gos_rt_sandbox_policy_working_directory")
         }
-        "gos_rt_sandbox_policy_explain" => Some("gos_rt_sandbox_policy_explain"),
         "gos_rt_sandbox_run" => Some("gos_rt_sandbox_run"),
         "gos_rt_sandbox_max_level" => Some("gos_rt_sandbox_max_level"),
         "gos_rt_sandbox_platform" => Some("gos_rt_sandbox_platform"),
-        "gos_rt_sandbox_filesystem" => Some("gos_rt_sandbox_filesystem"),
-        "gos_rt_sandbox_network_enforcement" => Some("gos_rt_sandbox_network_enforcement"),
-        "gos_rt_sandbox_process_isolation" => Some("gos_rt_sandbox_process_isolation"),
-        "gos_rt_sandbox_resource_limits" => Some("gos_rt_sandbox_resource_limits"),
         "gos_rt_sandbox_capabilities_json" => Some("gos_rt_sandbox_capabilities_json"),
         "gos_rt_sandbox_notes" => Some("gos_rt_sandbox_notes"),
         "gos_rt_sandbox_policy_network_mode" => Some("gos_rt_sandbox_policy_network_mode"),
         "gos_rt_sandbox_policy_for_fetch_phase" => Some("gos_rt_sandbox_policy_for_fetch_phase"),
         "gos_rt_sandbox_policy_read_only_cwd" => Some("gos_rt_sandbox_policy_read_only_cwd"),
         "gos_rt_sandbox_policy_temp" => Some("gos_rt_sandbox_policy_temp"),
-        "gos_rt_sandbox_policy_temp_path" => Some("gos_rt_sandbox_policy_temp_path"),
-        "gos_rt_sandbox_policy_max_processes" => Some("gos_rt_sandbox_policy_max_processes"),
-        "gos_rt_sandbox_policy_max_memory" => Some("gos_rt_sandbox_policy_max_memory"),
-        "gos_rt_sandbox_policy_max_cpu_time" => Some("gos_rt_sandbox_policy_max_cpu_time"),
-        "gos_rt_sandbox_policy_max_file_size" => Some("gos_rt_sandbox_policy_max_file_size"),
-        "gos_rt_sandbox_policy_max_temp_size" => Some("gos_rt_sandbox_policy_max_temp_size"),
         "gos_rt_sandbox_policy_check" => Some("gos_rt_sandbox_policy_check"),
         "gos_rt_sandbox_policy_mechanisms" => Some("gos_rt_sandbox_policy_mechanisms"),
         "gos_rt_sandbox_policy_to_json" => Some("gos_rt_sandbox_policy_to_json"),
@@ -347,12 +333,6 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_sandbox_policy_network_enforcement_reason" => {
             Some("gos_rt_sandbox_policy_network_enforcement_reason")
         }
-        "gos_rt_sandbox_policy_resource_enforcement_kind" => {
-            Some("gos_rt_sandbox_policy_resource_enforcement_kind")
-        }
-        "gos_rt_sandbox_policy_resource_enforcement_reason" => {
-            Some("gos_rt_sandbox_policy_resource_enforcement_reason")
-        }
         "gos_rt_sandbox_os_description" => Some("gos_rt_sandbox_os_description"),
         "gos_rt_sandbox_filesystem_kind" => Some("gos_rt_sandbox_filesystem_kind"),
         "gos_rt_sandbox_filesystem_reason" => Some("gos_rt_sandbox_filesystem_reason"),
@@ -362,15 +342,11 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_sandbox_process_isolation_reason" => {
             Some("gos_rt_sandbox_process_isolation_reason")
         }
-        "gos_rt_sandbox_resource_limits_kind" => Some("gos_rt_sandbox_resource_limits_kind"),
-        "gos_rt_sandbox_resource_limits_reason" => Some("gos_rt_sandbox_resource_limits_reason"),
+        "gos_rt_sandbox_env_never_passed" => Some("gos_rt_sandbox_env_never_passed"),
         "gos_rt_sandbox_expand" => Some("gos_rt_sandbox_expand"),
         "gos_rt_sandbox_prefix_of" => Some("gos_rt_sandbox_prefix_of"),
         "gos_rt_sandbox_resolve_on_path" => Some("gos_rt_sandbox_resolve_on_path"),
         "gos_rt_sandbox_home_directory" => Some("gos_rt_sandbox_home_directory"),
-        "gos_rt_sandbox_rust_toolchain_paths" => Some("gos_rt_sandbox_rust_toolchain_paths"),
-        "gos_rt_sandbox_stale_grant_count" => Some("gos_rt_sandbox_stale_grant_count"),
-        "gos_rt_sandbox_clean_stale_grants" => Some("gos_rt_sandbox_clean_stale_grants"),
         "gos_rt_sandbox_exit_policy_error" => Some("gos_rt_sandbox_exit_policy_error"),
         "gos_rt_sandbox_exit_command_not_found" => Some("gos_rt_sandbox_exit_command_not_found"),
         "gos_rt_sandbox_exit_level_unavailable" => Some("gos_rt_sandbox_exit_level_unavailable"),
@@ -524,6 +500,7 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_os_program_name" => Some("gos_rt_os_program_name"),
         "gos_rt_env_temp_dir" => Some("gos_rt_env_temp_dir"),
         "gos_rt_env_home_dir" => Some("gos_rt_env_home_dir"),
+        "gos_rt_env_vars" => Some("gos_rt_env_vars"),
         "gos_rt_os_cwd" => Some("gos_rt_os_cwd"),
         "gos_rt_os_exists" => Some("gos_rt_os_exists"),
         "gos_rt_os_is_file" => Some("gos_rt_os_is_file"),
@@ -789,6 +766,7 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         // behavior, bit-identical to the VM and the checked path.
         "gos_rt_vec_get_i64_unchecked" => Some("gos_rt_vec_get_i64"),
         "gos_rt_vec_set_i64" => Some("gos_rt_vec_set_i64"),
+        "gos_rt_vec_set_slots" => Some("gos_rt_vec_set_slots"),
         "gos_rt_vec_set_i128" => Some("gos_rt_vec_set_i128"),
         // The JIT is not the perf target: resolve the bounds-free counted-loop
         // writer to the checked symbol so it keeps the lenient null/OOB no-op

@@ -1,29 +1,13 @@
-//! cgroup v2: the memory and process-count limits, and the only
-//! mechanism on Linux that reaches a descendant which left its process
-//! group.
+//! cgroup v2: the only mechanism on Linux that reaches a descendant
+//! which left its process group.
 //!
-//! Setting a limit that silently does nothing is worse than reporting
-//! no limits at all, so the enforcement report answers from what this
-//! process can actually write, and [`crate::Sandbox::new`] refuses a
-//! limit the report says is unenforceable.
+//! The run's tree lives in a cgroup of its own, so `cgroup.kill` ends
+//! every process in it whatever session or process group it moved
+//! itself into. No controller is enabled, so a host that delegates a
+//! cgroup at all can contain a run.
 
 use std::ffi::CString;
-use std::path::{Path, PathBuf};
-
-use crate::level::Enforcement;
-use crate::policy::Resources;
-
-/// Controllers a policy's limits need in the delegated subtree.
-const REQUIRED_CONTROLLERS: [&str; 2] = ["memory", "pids"];
-
-/// Name of the leaf the supervisor moves itself into.
-///
-/// cgroup v2 refuses to enable a controller for the children of a
-/// cgroup that holds processes of its own, so the delegated cgroup has
-/// to be emptied before it can carry limits. Emptying it means moving
-/// the supervisor down one level, which is what every tool that sets
-/// limits under a delegated subtree does.
-const SUPERVISOR_LEAF: &str = "gossamer-sandbox.supervisor";
+use std::path::PathBuf;
 
 /// The delegated cgroup this process may create children under, or
 /// `None` when the host delegates none.
@@ -41,13 +25,6 @@ pub(crate) fn delegated_cgroup() -> Option<PathBuf> {
         .trim()
         .to_string();
     let root = PathBuf::from("/sys/fs/cgroup").join(relative.trim_start_matches('/'));
-    // The supervisor may already have moved itself into its leaf, in
-    // which case the delegated cgroup is the level above it.
-    let root = if root.file_name().is_some_and(|name| name == SUPERVISOR_LEAF) {
-        root.parent()?.to_path_buf()
-    } else {
-        root
-    };
     // Delegation is exactly the ability to write the controls; a
     // readable-but-not-writable directory is the undelegated case.
     let can_write = std::fs::OpenOptions::new()
@@ -57,54 +34,11 @@ pub(crate) fn delegated_cgroup() -> Option<PathBuf> {
     can_write.then_some(root)
 }
 
-/// Whether `root` offers every controller a limit needs.
-fn has_controllers(root: &Path) -> bool {
-    let Ok(available) = std::fs::read_to_string(root.join("cgroup.controllers")) else {
-        return false;
-    };
-    let available: Vec<&str> = available.split_whitespace().collect();
-    REQUIRED_CONTROLLERS
-        .iter()
-        .all(|needed| available.contains(needed))
-}
-
-/// Whether a cgroup this process can write limits into is reachable.
+/// Whether a cgroup this process can create children under is
+/// reachable.
 #[must_use]
 pub(crate) fn available() -> bool {
-    delegated_cgroup().is_some_and(|root| has_controllers(&root))
-}
-
-/// Whether every limit in `resources` can be enforced here.
-///
-/// `max_cpu_time` and `max_file_size` ride `setrlimit`, which needs no
-/// delegation. Memory and process counts need a cgroup, and a host
-/// without one gets `Partial` naming what it cannot do rather than a
-/// limit nobody set.
-#[must_use]
-pub(crate) fn enforcement(resources: &Resources) -> Enforcement {
-    let needs_cgroup = resources.max_memory.is_some() || resources.max_processes.is_some();
-    if !needs_cgroup && !is_probe(resources) {
-        return Enforcement::Full;
-    }
-    if available() {
-        Enforcement::Full
-    } else {
-        Enforcement::Partial(
-            "no delegated cgroup v2 with the memory and pids controllers: --max-memory-mb \
-             and --max-processes are refused here, and a descendant that calls setsid \
-             outlives the process-group kill"
-                .to_string(),
-        )
-    }
-}
-
-/// Whether this call is the capability report asking what the host can
-/// do, rather than a policy asking whether its own limits will hold.
-///
-/// The report has no limits to ask about, so it must answer for the
-/// mechanism instead of trivially answering `full`.
-fn is_probe(resources: &Resources) -> bool {
-    resources == &Resources::default()
+    delegated_cgroup().is_some()
 }
 
 /// A cgroup holding one run's process tree.
@@ -128,13 +62,10 @@ impl Cgroup {
     /// `Ok(None)` when the host delegates no usable cgroup: the caller
     /// has already refused any limit that needed one, so what remains
     /// is a run whose teardown falls back to the process group.
-    pub(crate) fn create(resources: &Resources) -> Result<Option<Self>, String> {
-        let Some(root) = delegated_cgroup().filter(|root| has_controllers(root)) else {
+    pub(crate) fn create() -> Result<Option<Self>, String> {
+        let Some(root) = delegated_cgroup() else {
             return Ok(None);
         };
-        move_supervisor_out_of(&root)?;
-        enable_controllers(&root)?;
-
         let directory = root.join(format!(
             "gossamer-sandbox.{}.{}",
             std::process::id(),
@@ -142,16 +73,6 @@ impl Cgroup {
         ));
         std::fs::create_dir_all(&directory)
             .map_err(|error| format!("creating {}: {error}", directory.display()))?;
-
-        if let Some(bytes) = resources.max_memory {
-            write_control(&directory, "memory.max", &bytes.to_string())?;
-            // Without this the kernel swaps rather than refusing, and a
-            // memory limit that turns into disk traffic is not a limit.
-            write_control(&directory, "memory.swap.max", "0")?;
-        }
-        if let Some(count) = resources.max_processes {
-            write_control(&directory, "pids.max", &count.to_string())?;
-        }
 
         let join = directory.join("cgroup.procs");
         let join_path = CString::new(join.as_os_str().as_encoded_bytes())
@@ -211,68 +132,6 @@ impl Drop for Cgroup {
     }
 }
 
-/// Moves this process into its own leaf so `root` holds no processes.
-///
-/// The postcondition is about `root`, not about any single member: the
-/// list is a snapshot of a directory other processes share, and a pid
-/// in it may exit or be moved by a concurrent supervisor before the
-/// write reaches it. `ESRCH` reports exactly that, which is the state
-/// the move was asking for, so it counts as done.
-fn move_supervisor_out_of(root: &Path) -> Result<(), String> {
-    let leaf = root.join(SUPERVISOR_LEAF);
-    if !leaf.is_dir() {
-        std::fs::create_dir_all(&leaf)
-            .map_err(|error| format!("creating {}: {error}", leaf.display()))?;
-    }
-    let members =
-        std::fs::read_to_string(root.join("cgroup.procs")).unwrap_or_else(|_| String::new());
-    for pid in members.lines().filter(|line| !line.trim().is_empty()) {
-        place(&leaf, pid.trim())?;
-    }
-    Ok(())
-}
-
-/// Writes one pid into `leaf`, treating a process that is no longer
-/// there as a move that no longer needs doing.
-fn place(leaf: &Path, pid: &str) -> Result<(), String> {
-    match std::fs::write(leaf.join("cgroup.procs"), pid) {
-        Ok(()) => Ok(()),
-        Err(error) if error.raw_os_error() == Some(libc::ESRCH) => Ok(()),
-        Err(error) => Err(format!("moving {pid} into {}: {error}", leaf.display())),
-    }
-}
-
-/// Turns on the controllers a limit needs for `root`'s children.
-fn enable_controllers(root: &Path) -> Result<(), String> {
-    let enabled = std::fs::read_to_string(root.join("cgroup.subtree_control")).unwrap_or_default();
-    let enabled: Vec<&str> = enabled.split_whitespace().collect();
-    for controller in REQUIRED_CONTROLLERS {
-        if enabled.contains(&controller) {
-            continue;
-        }
-        std::fs::write(
-            root.join("cgroup.subtree_control"),
-            format!("+{controller}"),
-        )
-        .map_err(|error| {
-            format!(
-                "enabling the {controller} controller in {}: {error}",
-                root.display()
-            )
-        })?;
-    }
-    Ok(())
-}
-
-fn write_control(directory: &Path, name: &str, value: &str) -> Result<(), String> {
-    std::fs::write(directory.join(name), value).map_err(|error| {
-        format!(
-            "writing {} = {value}: {error}",
-            directory.join(name).display()
-        )
-    })
-}
-
 /// A cgroup name no other run in this process shares.
 fn serial() -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -284,65 +143,20 @@ fn serial() -> u64 {
 mod cgroup_tests {
     use super::*;
 
+    /// A run is contained by a cgroup of its own, which needs a
+    /// delegated parent and nothing else: no controller is enabled, so
+    /// a host that delegates a cgroup without the memory or pids
+    /// controller still contains its runs.
     #[test]
-    fn a_policy_asking_for_no_limits_needs_no_delegation() {
-        let resources = Resources {
-            max_file_size: Some(1 << 20),
-            ..Resources::default()
-        };
-        assert_eq!(enforcement(&resources), Enforcement::Full);
-    }
-
-    #[test]
-    fn a_memory_limit_reports_what_the_host_can_do() {
-        let resources = Resources {
-            max_memory: Some(1 << 30),
-            ..Resources::default()
-        };
-        // Either answer is correct depending on the host; what must
-        // never happen is a limit reported as enforced while nothing
-        // is written.
-        match enforcement(&resources) {
-            Enforcement::Full => assert!(available()),
-            Enforcement::Partial(reason) => {
-                assert!(!available());
-                assert!(reason.contains("delegated cgroup"), "{reason}");
-            }
-            Enforcement::None => panic!("a memory limit is never silently unreported"),
-        }
-    }
-
-    /// The delegated cgroup is shared with every other process in the
-    /// slice, so a pid read from it may be gone by the time the move
-    /// reaches it. That is the state the move wanted, and a run must
-    /// not fail because a neighbour exited first.
-    #[test]
-    fn a_member_that_is_already_gone_is_not_a_failure() {
-        let Some(root) = delegated_cgroup().filter(|root| has_controllers(root)) else {
+    fn a_run_gets_a_cgroup_of_its_own_wherever_one_is_delegated() {
+        let Some(group) = Cgroup::create().expect("create") else {
+            assert!(!available(), "a host with a delegated cgroup creates one");
             return;
         };
-        let leaf = root.join(SUPERVISOR_LEAF);
-        if std::fs::create_dir_all(&leaf).is_err() {
-            return;
-        }
-        // `pid_max` is an exclusive bound, so this pid can never name a
-        // live process and the write answers ESRCH.
-        let unassignable = std::fs::read_to_string("/proc/sys/kernel/pid_max").map_or_else(
-            |_| 4_194_304,
-            |text| text.trim().parse().unwrap_or(4_194_304),
+        assert!(available());
+        assert!(
+            group.join_path().to_bytes().ends_with(b"cgroup.procs"),
+            "the child joins through cgroup.procs"
         );
-        assert_eq!(place(&leaf, &unassignable.to_string()), Ok(()));
-    }
-
-    /// The capability report asks with no limits set, and must still
-    /// answer for the mechanism rather than trivially reporting `full`.
-    #[test]
-    fn the_capability_probe_answers_for_the_mechanism() {
-        let reported = enforcement(&Resources::default());
-        if available() {
-            assert_eq!(reported, Enforcement::Full);
-        } else {
-            assert!(matches!(reported, Enforcement::Partial(_)), "{reported}");
-        }
     }
 }

@@ -1,0 +1,54 @@
+// A closure's parameter list is part of its type, so a call through a
+// closure value coerces its arguments the same way a call to a named
+// function does. A fixed-array argument reaching a `&[T]` parameter
+// becomes a borrowing view of that array; passing the flat buffer
+// instead hands the callee a header it never wrote (#219).
+//
+// The trigger needed a loop: a call the front end can beta-reduce is
+// not an indirect call at all, so the coercion it skipped was invisible
+// until the same closure had to be called through its value.
+
+fn apply(f: Fn(&[i64]) -> i64, xs: &[i64]) -> i64 { f(xs) }
+fn twice(x: &[f64]) -> f64 { x[0] + x[1] }
+
+fn main() {
+    // the issue's shape
+    let beam = |input: &[i64]| -> i64 { input[0] + input[1] }
+    let mut acc = 0
+    for x in ..3 { for y in ..3 { acc += beam(&[x, y]) } }
+    println!("nested loops: {}", acc)
+
+    // f64 elements
+    let fbeam = |input: &[f64]| -> f64 { input[0] * input[1] }
+    let mut f = 0.0
+    for i in ..3 { f += fbeam(&[1.5, i as f64]) }
+    println!("f64 slice: {}", f)
+
+    // a Vec argument through the same closure
+    let v = #[10, 20]
+    let mut fromvec = 0
+    for _ in ..2 { fromvec += beam(&v) }
+    println!("vec argument: {}", fromvec)
+
+    // an Fn parameter reached with an array literal, in a loop
+    let mut through = 0
+    for i in ..3 { through += apply(beam, &[i, i]) }
+    println!("through an Fn parameter: {}", through)
+
+    // a named fn as the Fn value, in a loop
+    let mut named = 0.0
+    for i in ..2 { named += twice(&[0.5, i as f64]) }
+    println!("named fn: {}", named)
+
+    // a closure taking a String reference, in a loop
+    let shout = |s: &String| -> i64 { s.len() }
+    let mut chars = 0
+    for _ in ..3 { chars += shout(&"abc") }
+    println!("string param: {}", chars)
+
+    // the array outlives the call and still owns its elements
+    let held = [7, 8]
+    let mut sum = 0
+    for _ in ..2 { sum += beam(&held) }
+    println!("borrowed array survives: {} {}", sum, held[0] + held[1])
+}

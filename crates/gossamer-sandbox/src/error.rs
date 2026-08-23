@@ -5,13 +5,10 @@
 //! failure class gets its own variant and its own code, so a caller can
 //! tell a policy mistake from a program that simply failed.
 
-use std::time::Duration;
-
 use crate::level::Level;
 
-/// Exit code for a policy that could not be compiled, a sandbox that
-/// could not start, or a run whose tree was killed for exceeding its
-/// timeout.
+/// Exit code for a policy that could not be compiled or a sandbox that
+/// could not start.
 ///
 /// A sandbox failure and a child that happens to exit 126 are told
 /// apart by which of them ran, not by the number: nothing was executed
@@ -70,9 +67,12 @@ pub enum SandboxError {
         stderr: String,
     },
 
-    /// The child outlived the policy's timeout and its tree was killed.
-    #[error("child exceeded the {} ms timeout and its process tree was killed", .0.as_millis())]
-    Timeout(Duration),
+    /// The child outlived the bound its caller asked for, so the tree
+    /// was killed. The bound is the caller's own clock, not a policy
+    /// setting: a policy says what a command may reach, never how long
+    /// it may take.
+    #[error("child exceeded the {} ms this run was bounded to, and its process tree was killed", .0.as_millis())]
+    Timeout(std::time::Duration),
 
     /// The operator interrupted the supervisor twice, so the tree was
     /// killed rather than given a further chance to stop on its own.

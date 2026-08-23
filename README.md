@@ -350,7 +350,8 @@ symbol by name and shows its item help - `*` widens the name to a prefix
 (`Set*`), a suffix (`*Set`), or a substring (`*Set*`) - `%bindings`/`%b`,
 `%declarations`/`%d`,
 and `%history`/`%h` inspect the session, `%reset`/`%r` clears it, and
-`%quit`/`%q` exits. Up/down cycles history; Enter continues until braces close;
+`%quit`/`%q` exits. Tab completes the word at the cursor, including every
+member a binding reaches after `.`. Up/down cycles history; Enter continues until braces close;
 Ctrl-D also exits. Expression results print as plain values. Declaration and
 binding confirmations are hidden unless the REPL is started with `-v`; listings
 wrap to the terminal width.

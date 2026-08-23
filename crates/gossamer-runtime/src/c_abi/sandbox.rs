@@ -81,36 +81,12 @@ pub extern "C" fn gos_rt_sandbox_policy_new() -> i64 {
     insert(SandboxPolicy::new())
 }
 
-/// `sandbox::Policy::build_default(root)` - the policy
-/// `gos build --sandbox` compiles under.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_sandbox_policy_build_default(root: *const c_char) -> i64 {
-    let root = std::path::PathBuf::from(unsafe { text(root) });
-    let caches = default_cache_roots();
-    let toolchain = default_toolchain_roots();
-    insert(SandboxPolicy::build_default(&root, &caches, &toolchain))
-}
-
 /// `sandbox::Policy::command_default(cwd)` - the working directory
 /// read-write, the network denied, HOME and the credentials denied.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_sandbox_policy_command_default(cwd: *const c_char) -> i64 {
     let cwd = std::path::PathBuf::from(unsafe { text(cwd) });
     insert(SandboxPolicy::command_default(&cwd))
-}
-
-fn default_cache_roots() -> Vec<std::path::PathBuf> {
-    let mut roots = Vec::new();
-    if let Some(home) = gossamer_sandbox::home_directory() {
-        roots.push(home.join(".gossamer").join("cache"));
-        roots.push(home.join(".cargo").join("registry"));
-        roots.push(home.join(".cargo").join("git"));
-    }
-    roots
-}
-
-fn default_toolchain_roots() -> Vec<std::path::PathBuf> {
-    gossamer_sandbox::discover::rust_toolchain_paths()
 }
 
 /// `policy.read_write(path)`.
@@ -134,17 +110,6 @@ pub unsafe extern "C" fn gos_rt_sandbox_policy_deny(handle: i64, path: *const c_
     edit(handle, |policy| policy.deny(path))
 }
 
-/// `policy.network(allow)`.
-#[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_sandbox_policy_network(handle: i64, allow: i64) -> i64 {
-    let network = if allow == 0 {
-        Network::None
-    } else {
-        Network::Open
-    };
-    edit(handle, |policy| policy.network(network))
-}
-
 /// `policy.env_allow(name)`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_sandbox_policy_env_allow(handle: i64, name: *const c_char) -> i64 {
@@ -162,13 +127,6 @@ pub unsafe extern "C" fn gos_rt_sandbox_policy_env_set(
     let name = unsafe { text(name) };
     let value = unsafe { text(value) };
     edit(handle, |policy| policy.env_set(name, value))
-}
-
-/// `policy.timeout(milliseconds)`.
-#[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_sandbox_policy_timeout(handle: i64, milliseconds: i64) -> i64 {
-    let limit = std::time::Duration::from_millis(milliseconds.max(0) as u64);
-    edit(handle, |policy| policy.timeout(limit))
 }
 
 /// `policy.level(name)`. An unknown name leaves the level unchanged
@@ -190,40 +148,6 @@ pub unsafe extern "C" fn gos_rt_sandbox_policy_working_directory(
 ) -> i64 {
     let path = unsafe { text(path) };
     edit(handle, |policy| policy.working_directory(path))
-}
-
-/// `policy.explain()` - the compiled policy and the mechanisms a run
-/// would install, or the reason it cannot be compiled.
-#[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_sandbox_policy_explain(handle: i64) -> *mut c_char {
-    let Some(policy) = peek(handle) else {
-        return alloc_cstring(b"sandbox: no such policy");
-    };
-    let text = match gossamer_sandbox::Sandbox::new(&policy) {
-        Ok(sandbox) => {
-            let compiled = sandbox.policy();
-            let mut out = format!("level {}\n", compiled.level);
-            for line in sandbox.mechanisms() {
-                out.push_str(&format!("mechanism {line}\n"));
-            }
-            for rule in compiled.grants() {
-                out.push_str(&format!(
-                    "{} {}\n",
-                    match rule.access {
-                        gossamer_sandbox::Access::ReadWrite => "read-write",
-                        _ => "read-only",
-                    },
-                    rule.path.display()
-                ));
-            }
-            for rule in compiled.denials() {
-                out.push_str(&format!("denied {}\n", rule.path.display()));
-            }
-            out
-        }
-        Err(error) => error.to_string(),
-    };
-    alloc_cstring(text.as_bytes())
 }
 
 /// `sandbox::run(policy, argv) -> Result<Output, errors::Error>`.
@@ -307,54 +231,6 @@ pub extern "C" fn gos_rt_sandbox_platform() -> *mut c_char {
     alloc_cstring(
         gossamer_sandbox::capabilities()
             .platform
-            .to_string()
-            .as_bytes(),
-    )
-}
-
-/// `sandbox::filesystem()` - how completely a filesystem policy is
-/// enforced here.
-#[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_sandbox_filesystem() -> *mut c_char {
-    alloc_cstring(
-        gossamer_sandbox::capabilities()
-            .filesystem
-            .to_string()
-            .as_bytes(),
-    )
-}
-
-/// `sandbox::network_enforcement()` - how completely network denial is
-/// enforced here.
-#[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_sandbox_network_enforcement() -> *mut c_char {
-    alloc_cstring(
-        gossamer_sandbox::capabilities()
-            .network
-            .to_string()
-            .as_bytes(),
-    )
-}
-
-/// `sandbox::process_isolation()` - how completely the process table
-/// is isolated here.
-#[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_sandbox_process_isolation() -> *mut c_char {
-    alloc_cstring(
-        gossamer_sandbox::capabilities()
-            .process_isolation
-            .to_string()
-            .as_bytes(),
-    )
-}
-
-/// `sandbox::resource_limits()` - how completely resource limits are
-/// enforced here.
-#[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_sandbox_resource_limits() -> *mut c_char {
-    alloc_cstring(
-        gossamer_sandbox::capabilities()
-            .resource_limits
             .to_string()
             .as_bytes(),
     )
@@ -454,73 +330,6 @@ pub unsafe extern "C" fn gos_rt_sandbox_policy_temp(handle: i64, mode: *const c_
         Some(temp) => policy.temp(temp),
         None => policy,
     })
-}
-
-/// `policy.temp_path(path)` - a caller-chosen temporary directory.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_sandbox_policy_temp_path(handle: i64, path: *const c_char) -> i64 {
-    let path = std::path::PathBuf::from(unsafe { text(path) });
-    edit(handle, |policy| policy.temp(Temp::Path(path)))
-}
-
-/// `policy.max_processes(count)`. A count at or below zero clears the
-/// limit rather than asking for one nothing can satisfy.
-#[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_sandbox_policy_max_processes(handle: i64, count: i64) -> i64 {
-    edit(handle, move |mut policy| {
-        // Saturating rather than truncating: a count past `u32` would
-        // wrap to a tiny one, turning the largest bound a caller can
-        // write into the most restrictive one.
-        policy.resources.max_processes =
-            positive(count).map(|value| u32::try_from(value).unwrap_or(u32::MAX));
-        policy
-    })
-}
-
-/// `policy.max_memory(bytes)`.
-#[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_sandbox_policy_max_memory(handle: i64, bytes: i64) -> i64 {
-    edit(handle, move |mut policy| {
-        policy.resources.max_memory = positive(bytes);
-        policy
-    })
-}
-
-/// `policy.max_file_size(bytes)`.
-#[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_sandbox_policy_max_file_size(handle: i64, bytes: i64) -> i64 {
-    edit(handle, move |mut policy| {
-        policy.resources.max_file_size = positive(bytes);
-        policy
-    })
-}
-
-/// `policy.max_temp_size(bytes)`.
-#[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_sandbox_policy_max_temp_size(handle: i64, bytes: i64) -> i64 {
-    edit(handle, move |mut policy| {
-        policy.resources.max_temp_size = positive(bytes);
-        policy
-    })
-}
-
-/// `policy.max_cpu_time(ms)`.
-#[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_sandbox_policy_max_cpu_time(handle: i64, milliseconds: i64) -> i64 {
-    edit(handle, move |mut policy| {
-        policy.resources.max_cpu_time =
-            positive(milliseconds).map(std::time::Duration::from_millis);
-        policy
-    })
-}
-
-/// The limit `value` asks for, or `None` when it asks for none.
-///
-/// Zero and below clear the limit: a caller that computed a bound and
-/// got nothing means "unbounded", and a zero-byte memory cap would kill
-/// every child before it started.
-const fn positive(value: i64) -> Option<u64> {
-    if value > 0 { Some(value as u64) } else { None }
 }
 
 // ---------------------------------------------------------------------
@@ -736,25 +545,6 @@ fn policy_network_enforcement(handle: i64) -> gossamer_sandbox::Enforcement {
         })
 }
 
-/// `policy.resource_enforcement_kind()` - whether every limit the
-/// policy names will actually be applied here.
-#[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_sandbox_policy_resource_enforcement_kind(handle: i64) -> *mut c_char {
-    alloc_cstring(enforcement_kind(&policy_resource_enforcement(handle)).as_bytes())
-}
-
-/// `policy.resource_enforcement_reason()`.
-#[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_sandbox_policy_resource_enforcement_reason(handle: i64) -> *mut c_char {
-    alloc_cstring(enforcement_reason(&policy_resource_enforcement(handle)).as_bytes())
-}
-
-fn policy_resource_enforcement(handle: i64) -> gossamer_sandbox::Enforcement {
-    peek(handle).map_or(gossamer_sandbox::Enforcement::None, |policy| {
-        gossamer_sandbox::resource_enforcement(&policy.resources, policy.level)
-    })
-}
-
 /// `full`, `partial`, or `none` - the arm of an [`Enforcement`], for a
 /// caller that matches on the verdict rather than printing it.
 ///
@@ -824,21 +614,17 @@ pub extern "C" fn gos_rt_sandbox_process_isolation_reason() -> *mut c_char {
     )
 }
 
-/// `sandbox::resource_limits_kind()`.
-#[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_sandbox_resource_limits_kind() -> *mut c_char {
-    alloc_cstring(enforcement_kind(&gossamer_sandbox::capabilities().resource_limits).as_bytes())
-}
-
-/// `sandbox::resource_limits_reason()`.
-#[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_sandbox_resource_limits_reason() -> *mut c_char {
-    alloc_cstring(enforcement_reason(&gossamer_sandbox::capabilities().resource_limits).as_bytes())
-}
-
 // ---------------------------------------------------------------------
 // Discovery, so a profile can name a path the way an operator writes it.
 // ---------------------------------------------------------------------
+
+/// `sandbox::env_never_passed(name) -> bool` - whether a policy will
+/// refuse to pass `name` to a sandboxed command, because it redirects
+/// the loader or an interpreter's startup.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sandbox_env_never_passed(name: *const c_char) -> i64 {
+    i64::from(gossamer_sandbox::is_never_passed(&unsafe { text(name) }))
+}
 
 /// `sandbox::expand(text) -> Option<String>` - a written path with
 /// `~` and the environment resolved.
@@ -870,16 +656,6 @@ pub unsafe extern "C" fn gos_rt_sandbox_resolve_on_path(name: *const c_char) -> 
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_sandbox_home_directory() -> i128 {
     optional_path(gossamer_sandbox::home_directory())
-}
-
-/// `sandbox::rust_toolchain_paths() -> Vec<String>`.
-#[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_sandbox_rust_toolchain_paths() -> *mut GosVec {
-    let paths: Vec<String> = default_toolchain_roots()
-        .iter()
-        .map(|path| path.display().to_string())
-        .collect();
-    string_vec(&paths)
 }
 
 /// A `Option<String>` carrier over a path that may not exist.
@@ -914,52 +690,6 @@ fn string_vec(values: &[String]) -> *mut GosVec {
 // ---------------------------------------------------------------------
 // Host maintenance and the exit-code contract.
 // ---------------------------------------------------------------------
-
-/// `sandbox::stale_grant_count()` - how many interrupted runs left an
-/// ACL grant behind. Always zero where grants are not how the backend
-/// reaches a path.
-#[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_sandbox_stale_grant_count() -> i64 {
-    stale_grants() as i64
-}
-
-/// `sandbox::clean_stale_grants() -> Result<i64, errors::Error>` -
-/// revokes them, answering how many were revoked.
-#[unsafe(no_mangle)]
-pub extern "C" fn gos_rt_sandbox_clean_stale_grants() -> i128 {
-    match clean_grants() {
-        Ok(count) => unsafe { gos_rt_result_new(0, count as i64) },
-        Err(reason) => sandbox_err(&reason),
-    }
-}
-
-#[cfg(windows)]
-fn stale_grants() -> usize {
-    gossamer_sandbox::windows::stale_grant_count()
-}
-
-/// Windows grants a path to the container by writing its ACL, so an
-/// interrupted run can leave one behind. No other backend edits a
-/// path's permissions, so no other backend has anything to clean.
-#[cfg(not(windows))]
-const fn stale_grants() -> usize {
-    0
-}
-
-#[cfg(windows)]
-fn clean_grants() -> Result<usize, String> {
-    gossamer_sandbox::windows::clean_stale_grants()
-}
-
-#[cfg(not(windows))]
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "the Windows twin edits ACLs and genuinely fails; both arms of a \
-              cfg pair have to answer the same type"
-)]
-const fn clean_grants() -> Result<usize, String> {
-    Ok(0)
-}
 
 /// `sandbox::exit_policy_error()`.
 #[unsafe(no_mangle)]
@@ -1030,7 +760,8 @@ mod sandbox_abi_tests {
     fn a_builder_leaves_the_policy_it_was_read_from_live() {
         let first = gos_rt_sandbox_policy_new();
         assert!(first > 0);
-        let second = gos_rt_sandbox_policy_network(first, 1);
+        let open = std::ffi::CString::new("open").expect("cstring");
+        let second = unsafe { gos_rt_sandbox_policy_network_mode(first, open.as_ptr()) };
         assert!(second > 0);
         assert_ne!(first, second);
         assert_eq!(
@@ -1058,7 +789,11 @@ mod sandbox_abi_tests {
 
     #[test]
     fn a_handle_that_names_nothing_answers_zero_rather_than_panicking() {
-        assert_eq!(gos_rt_sandbox_policy_network(999_999, 1), 0);
+        let mode = std::ffi::CString::new("open").expect("cstring");
+        assert_eq!(
+            unsafe { gos_rt_sandbox_policy_network_mode(999_999, mode.as_ptr()) },
+            0
+        );
     }
 
     #[test]
@@ -1073,29 +808,6 @@ mod sandbox_abi_tests {
         let handle = gos_rt_sandbox_policy_new();
         let next = unsafe { gos_rt_sandbox_policy_network_mode(handle, typo.as_ptr()) };
         assert_eq!(peek(next).expect("live").network, Network::None);
-    }
-
-    #[test]
-    fn a_limit_at_or_below_zero_clears_the_bound_rather_than_setting_one() {
-        let handle = gos_rt_sandbox_policy_max_memory(gos_rt_sandbox_policy_new(), 4096);
-        assert_eq!(peek(handle).expect("live").resources.max_memory, Some(4096));
-        let cleared = gos_rt_sandbox_policy_max_memory(handle, 0);
-        assert_eq!(peek(cleared).expect("live").resources.max_memory, None);
-    }
-
-    /// A count past `u32` must answer the largest bound the field can
-    /// hold, never a wrapped one: truncation would turn the biggest
-    /// number a caller can write into the most restrictive limit.
-    #[test]
-    fn a_process_count_past_the_field_saturates_instead_of_wrapping() {
-        let handle = gos_rt_sandbox_policy_max_processes(
-            gos_rt_sandbox_policy_new(),
-            i64::from(u32::MAX) + 1,
-        );
-        assert_eq!(
-            peek(handle).expect("live").resources.max_processes,
-            Some(u32::MAX)
-        );
     }
 
     /// The verdict a caller matches on has exactly three spellings, and

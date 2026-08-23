@@ -88,15 +88,16 @@ policy error rather than honored.
 
 `--sandbox` does not sandbox your own program under `gos run`. For
 that, run it under a sandbox of your own: `std::sandbox` builds one, and
-`gosbox` runs any command under one.
+`build-with-restrictions` runs any command under one.
 
 ## Any command
 
-The same policy model is also a standalone application, `gosbox`, which
-runs any command - `cargo build`, `npm ci`, `./gradlew build`, an
-untrusted binary - under the sandbox this crate provides. It ships
-separately from the Gossamer toolchain and carries build-system
-profiles of its own.
+The same policy model is also a standalone application,
+`build-with-restrictions` (`bwr`), which runs any command - `cargo
+build`, `npm ci`, `./gradlew build`, an untrusted binary - under the
+sandbox this crate provides. It ships separately from the Gossamer
+toolchain and carries build-system profiles of its own: where a tool
+keeps its caches is the wrapper's knowledge, not the language's.
 
 From Gossamer, `std::sandbox` reaches the same library directly; see
 below.
@@ -134,9 +135,8 @@ fn main() {
     let policy = sandbox::Policy::new()
         .read_write(&".")
         .read_only(&"/usr")
-        .network(false)
+        .network_mode(&"none")
         .env_allow(&"PATH")
-        .timeout(30_000)
         .level(&"standard")
 
     // The capability report is a value, so a program branches on what
@@ -152,12 +152,16 @@ fn main() {
 }
 ```
 
-`sandbox::Policy::build_default(&root)` and
-`sandbox::Policy::command_default(&cwd)` are the two shipped policies as
-constructors, so a program reproduces either consumer's policy without
-reassembling a dozen grants and getting one wrong. `sandbox::run` blocks
-for the length of the child but does so off the scheduler, so one
-sandboxed build does not hold a worker.
+`sandbox::Policy::command_default(&cwd)` is the shipped policy as a
+constructor, so a program reproduces it without reassembling a dozen
+grants and getting one wrong. `sandbox::run` blocks for the length of
+the child but does so off the scheduler, so one sandboxed build does not
+hold a worker.
+
+A policy says what a command may reach. Bounding how long it runs or how
+much memory it takes is the caller's own business: those were policy
+settings once, and two of the three backends could only partly apply
+them, which is a guarantee in name only.
 
 ## What is not claimed
 

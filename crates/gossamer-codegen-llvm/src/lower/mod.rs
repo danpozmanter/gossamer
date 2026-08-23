@@ -708,6 +708,7 @@ fn map_prelude_symbol(name: &str) -> &str {
         "os::program_name" | "env::program_name" => "gos_rt_os_program_name",
         "env::temp_dir" | "os::temp_dir" => "gos_rt_env_temp_dir",
         "env::home_dir" | "os::home_dir" => "gos_rt_env_home_dir",
+        "env::vars" => "gos_rt_env_vars",
         "os::exit" | "process::exit" => "gos_rt_exit",
         "process::id" => "gos_rt_process_id",
         "process::abort" => "gos_rt_process_abort",

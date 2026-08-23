@@ -975,6 +975,11 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::env",
+        name: "vars",
+        signature: "fn vars() -> Map<String, String>",
+    },
+    StdFunctionSignature {
+        module_path: "std::env",
         name: "temp_dir",
         signature: "fn temp_dir() -> String",
     },
@@ -2515,26 +2520,6 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::sandbox",
-        name: "filesystem",
-        signature: "fn filesystem() -> String",
-    },
-    StdFunctionSignature {
-        module_path: "std::sandbox",
-        name: "network_enforcement",
-        signature: "fn network_enforcement() -> String",
-    },
-    StdFunctionSignature {
-        module_path: "std::sandbox",
-        name: "process_isolation",
-        signature: "fn process_isolation() -> String",
-    },
-    StdFunctionSignature {
-        module_path: "std::sandbox",
-        name: "resource_limits",
-        signature: "fn resource_limits() -> String",
-    },
-    StdFunctionSignature {
-        module_path: "std::sandbox",
         name: "notes",
         signature: "fn notes() -> Vec<String>",
     },
@@ -2580,13 +2565,8 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::sandbox",
-        name: "resource_limits_kind",
-        signature: "fn resource_limits_kind() -> String",
-    },
-    StdFunctionSignature {
-        module_path: "std::sandbox",
-        name: "resource_limits_reason",
-        signature: "fn resource_limits_reason() -> String",
+        name: "env_never_passed",
+        signature: "fn env_never_passed(name: String) -> bool",
     },
     StdFunctionSignature {
         module_path: "std::sandbox",
@@ -2607,21 +2587,6 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         module_path: "std::sandbox",
         name: "home_directory",
         signature: "fn home_directory() -> Option<String>",
-    },
-    StdFunctionSignature {
-        module_path: "std::sandbox",
-        name: "rust_toolchain_paths",
-        signature: "fn rust_toolchain_paths() -> Vec<String>",
-    },
-    StdFunctionSignature {
-        module_path: "std::sandbox",
-        name: "stale_grant_count",
-        signature: "fn stale_grant_count() -> i64",
-    },
-    StdFunctionSignature {
-        module_path: "std::sandbox",
-        name: "clean_stale_grants",
-        signature: "fn clean_stale_grants() -> Result<i64, errors::Error>",
     },
     StdFunctionSignature {
         module_path: "std::sandbox",

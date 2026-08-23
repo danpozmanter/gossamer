@@ -81,6 +81,50 @@ fn run_repl_args(input: &str, args: &[&str]) -> ReplOutput {
     output
 }
 
+/// A file's imports precede its items, and the prompt reaches a session's
+/// declarations in whatever order the user types them, so an import written
+/// after a struct still lands in the session it belongs to.
+#[test]
+fn repl_accepts_an_import_after_another_declaration() {
+    let out = run_repl(
+        "struct Point { x: i64 }\nuse std::time\ntime::Duration::from_millis(5).as_millis()\n",
+    );
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        !out.stderr.contains("GP0001"),
+        "an import after a declaration was rejected; stderr: {}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.contains('5'),
+        "expected the imported call's result; stdout: {}",
+        out.stdout
+    );
+}
+
+/// A REPL result reads in the spelling its type is written in, the same one
+/// `%bindings` shows for a binding of that type.
+#[test]
+fn repl_prints_a_sequence_in_its_own_literal_spelling() {
+    let out = run_repl("#[1, 2, 3]\n[1, 2]\n#{7}\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("#[1, 2, 3]"),
+        "a Vec prints in the Vec spelling; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("[1, 2]") && !out.stdout.contains("#[1, 2]\n"),
+        "a fixed array prints in the bare bracket spelling; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("#{7}"),
+        "a Set prints in the Set spelling; stdout: {}",
+        out.stdout
+    );
+}
+
 #[test]
 fn repl_evaluates_simple_expression() {
     let out = run_repl("1 + 2\n");

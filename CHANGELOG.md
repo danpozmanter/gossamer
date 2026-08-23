@@ -1,5 +1,118 @@
 # Changelog
 
+## 0.55.3 - REPL completion, sandbox policy model, closure argument coercion
+
+- A `String` key handed to a map or set insert no longer takes every other
+  reference to it down with it. A consuming insert copies the key's bytes and
+  gives up the one reference the call handed it, but it was clamping the
+  count to one and then releasing, so a key the caller still held - the shape
+  `m.insert(k.clone(), v)` produces, and every `k` reachable from elsewhere -
+  was freed while that binding still pointed at it. The next allocation of
+  the same size took the block, so the caller's string silently became some
+  later string. A compiled program that prepared statements keyed by their
+  SQL text failed roughly a third of them; the bytecode VM was unaffected,
+  which is what let it go unseen.
+- A struct or tuple stored in a container now keeps its heap fields alive.
+  Two halves were missing. The compiled tiers count a struct's `String` and
+  `Vec` fields per binding rather than through the aggregate, and a consuming
+  container call - `Map::insert`, `Set::insert`, a channel `send` - retained
+  only a scalar or `Vec` argument, so a struct argument left the entry with no
+  share of any field: they were freed where the caller's own binding ended.
+  A map that owns its values also took no share of the value word itself,
+  though the `get` path hands one out and the overwrite path releases one. A
+  `Map<String, T>` whose `T` carries heap fields therefore kept working only
+  until the binding that inserted it died, and then read freed memory - a
+  struct cached under a `String` key and read back later is the shape that
+  meets it.
+- Tab after a binding's dot in the REPL offers every member `%explain` reports
+  for it: a fixed array, a slice, an iterator, a channel end, a tuple's
+  positions, a handle such as `sandbox::Policy`, and the fields and methods a
+  session-declared type carries. Completion read a small static table that
+  listed only the collections, so a `Vec` completed and the array beside it
+  offered nothing; both now read the one catalog, and a session `impl` written
+  after the binding is offered as soon as it is accepted.
+- A type's own name completes its surface too, so `Vec::in` offers
+  `Vec::insert` and `Point::or` offers a session-declared `Point::origin`.
+- `%explain` on a tuple binding lists the methods every tuple answers - `len`,
+  `is_empty`, `get`, `clone`, `to_string`, `into`, `try_into` - alongside its
+  positional elements.
+- A constructor is no longer shown as a method of the type it builds.
+  `d.from_millis` and `policy.build_default` were listed on a binding; a
+  stated contract now decides, so a signature with no receiver is an
+  associated function wherever it is shown.
+- A `Sender`, a `Receiver`, and a `JoinHandle` report their own methods, and a
+  `flag::Set` reports `get`. The channel surface is registered under one
+  runtime namespace, so each method is now also filed under the type its
+  receiver names.
+- Every `sandbox::Policy` method states its parameters and return type in
+  `%info` and `%explain` instead of showing a bare name.
+- A fixed array's inherited signature keeps its element type, so `flatten` on
+  a `[Vec<i64>; 2]` reads `self: &[Vec<T>; N]` rather than `self: Vec<Vec<T>>`.
+- A REPL expression prints in the spelling its type is written in, the one a
+  binding of that type already showed: `#[1, 2, 3]` for a `Vec`, `#{1, 2}` for
+  a `Set`.
+- Completion follows Unicode identifiers, so a binding named `café` completes
+  its members.
+- A `use` written at the prompt after another declaration is accepted. The
+  REPL assembled its session in the order the inputs arrived, and a file's
+  imports precede its items, so a later import was rejected by the parser it
+  was handed to.
+- A `use` after the first item in a file reports where the import belongs
+  (`GP0001`) instead of listing `use` among the constructs it would accept
+  there.
+- A closure called through its value coerces its arguments the way a call to
+  a named function does. The parameter types were read only from a resolved
+  name, so an indirect call skipped every argument coercion: a fixed array
+  reaching a `&[T]` parameter arrived as a flat buffer the callee then read
+  as a `Vec` header, panicking with a length of zero or faulting (#219). A
+  call the front end can reduce is not an indirect call, which is why the
+  trigger needed a loop.
+- An explicit allow in a `sandbox::Policy` outranks a deny of the same path.
+  A grant naming a denied path was refused outright before; a denial is now
+  the default a later allow can override, while a denial beneath a grant
+  still wins by being the more specific rule. The paths no policy may reach
+  at all - a container daemon's socket, an agent socket - are unchanged, and
+  a grant that names one is still refused.
+- `std::sandbox` drops the resource axis: `timeout`, `max_processes`,
+  `max_memory`, `max_cpu_time`, `max_file_size`, `max_temp_size`, and the
+  `resource_limits` / `resource_enforcement_*` verdicts. A policy says what a
+  command may reach, and a bound that macOS and Windows could only partly
+  apply was a guarantee in name only. A caller that must bound a run supplies
+  its own clock.
+- `std::sandbox` drops a second spelling of four settings: `network(bool)`
+  (write `network_mode("none"|"client"|"open")`), `temp_path` (write `temp`),
+  `explain` (read `mechanisms` and `to_json`), and the prose
+  `filesystem` / `network_enforcement` / `process_isolation` accessors (read
+  the `_kind` / `_reason` pair).
+- `Policy::build_default` and `rust_toolchain_paths` are no longer standard
+  library surface: where a build tool keeps its caches is the wrapper's
+  knowledge, not the language's. `gos build --sandbox` still compiles under
+  the same policy.
+- An ACL grant an interrupted Windows run left behind is revoked by the next
+  run rather than by a cleanup call, so `stale_grant_count` and
+  `clean_stale_grants` are gone. Each run's record now names the process that
+  wrote it, so a sweep leaves a concurrent run's grants alone - one shared
+  record meant two runs overwrote each other's, and a cleanup during a live
+  run revoked the grants it was using.
+- On Windows, a denial inside a granted tree is enforced. A grant on a parent
+  reaches its children by inheritance and denials were dropped, so
+  `deny(path)` under a grant held on Linux and macOS and silently did nothing
+  there; it is now an explicit deny entry, which Windows evaluates first.
+- A sandboxed run needs only a delegated cgroup, not one carrying the memory
+  and pids controllers, so the process tree is contained on hosts that
+  delegate less.
+- A sandboxed run at `strict` can be bounded, interrupted, and read while it
+  runs. The namespace reaper never execs, so every descriptor it inherited
+  stayed open for the length of the payload - including the pipe
+  `Command::spawn` reads to learn the exec happened, which kept the
+  supervisor inside the spawn until the payload finished. It closes them now,
+  and a caller can bound a run with `run_bounded` whatever level it asked for.
+- `gos mcp`'s `execute` runs the program under a policy: the working
+  directory and the package cache are writable, the toolchain and the system
+  readable, credentials denied, and the network closed. It is the one tool
+  that runs code a model wrote, and it ran with the server's own reach. A
+  host with no sandbox backend runs it as before rather than refusing.
+
 ## 0.55.2 - Carrier element ownership, numeric-literal methods, conversion targets
 
 - An `Option` / `Result` element written through an index - `xs[i] = Some(..)`
