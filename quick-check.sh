@@ -183,6 +183,14 @@ run_step "cargo test -p gossamer-std --test resolver_manifest_items" \
     cargo test -p gossamer-std --test resolver_manifest_items
 run_step "cargo test -p gossamer-resolve --lib stdlib_exports" \
     cargo test -p gossamer-resolve --lib stdlib_exports
+# The C-ABI registry is binary-searched, so an entry filed out of order
+# hides every entry past it; the drift check catches a name the resolver
+# still exports after the runtime stopped registering it. Both are
+# table-shaped edits a session makes without running the crate that owns
+# the table, and both are seconds once `gos` is built.
+run_step "cargo test -p gossamer-abi" cargo test -p gossamer-abi
+run_step "cargo test -p gossamer-cli --test dispatch_consistency --test stdlib_export_drift" \
+    cargo test -p gossamer-cli --test dispatch_consistency --test stdlib_export_drift
 # The whole lib suite rather than one module: it also holds the check
 # that the committed tier-parity evidence still names every stdlib module
 # a fixture imports, and it finishes in under two seconds.

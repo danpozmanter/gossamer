@@ -220,6 +220,10 @@ fn a_denial_inside_a_grant_is_enforced_even_though_landlock_has_no_deny_rule() {
 /// supervisor inside the spawn until the payload finished - no wait
 /// loop, so no bound, no forwarded interrupt, and no captured output
 /// until the end.
+///
+/// Linux-only with the helpers it uses; the namespace reaper the case
+/// is about exists on no other backend.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_bound_ends_a_run_that_outlives_it() {
     if skip_unless_enforcing() {
@@ -256,13 +260,21 @@ fn a_detached_grandchild_dies_with_the_tree() {
     let marker = root.join("grandchild-alive");
     let sandbox = Sandbox::new(&shell_policy(&root, Level::Standard)).expect("build sandbox");
 
-    // The child exits at once and leaves a grandchild behind in a
-    // session of its own, which is the process the teardown has to
-    // reach on the ordinary exit path.
+    // The child leaves a grandchild behind and exits, which is the
+    // process the teardown has to reach on the ordinary exit path. It
+    // waits for the grandchild to be live first: a grandchild the
+    // scheduler had not reached yet would make the marker's absence
+    // prove nothing, and that wait is what makes the case reliable on a
+    // loaded machine rather than only on an idle one.
     let script = format!(
-        "( echo up > {}; sleep 30; echo alive > {} ) & exit 0",
-        started.display(),
-        marker.display()
+        "( echo up > {started}; sleep 30; echo alive > {marker} ) & \
+         waited=0; \
+         while [ ! -f {started} ] && [ $waited -lt 500 ]; do \
+           waited=$((waited+1)); sleep 0.01; \
+         done; \
+         exit 0",
+        started = started.display(),
+        marker = marker.display()
     );
     let argv = vec!["/bin/sh".to_string(), "-c".to_string(), script];
     let output = sandbox.run_with(&argv, Stdio::Capture).expect("run");
