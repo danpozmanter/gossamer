@@ -306,15 +306,17 @@ pub unsafe extern "C" fn gos_rt_set_is_empty(s: *const GosSet) -> i32 {
     ffi_entry!(1, { i32::from(unsafe { gos_rt_set_len(s) } <= 0) })
 }
 
-fn set_format_prefix(ordered: i32) -> &'static str {
-    if ordered != 0 { "BTreeSet" } else { "Set" }
+/// How a set opens when it is rendered: its own literal spelling, the
+/// same one a program writes to build it. A `Set` and a `BTreeSet` are
+/// both written `#{..}`, so both render that way.
+fn set_format_open() -> &'static str {
+    "#{"
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_set_format_i64(s: *const GosSet, ordered: i32) -> *mut c_char {
+pub unsafe extern "C" fn gos_rt_set_format_i64(s: *const GosSet, _ordered: i32) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        let mut out = String::from(set_format_prefix(ordered));
-        out.push_str(" {");
+        let mut out = String::from(set_format_open());
         if !s.is_null() {
             let set = unsafe { &*s };
             let mut keys: Vec<i64> = set.i64_inner.iter().copied().collect();
@@ -340,12 +342,11 @@ pub unsafe extern "C" fn gos_rt_set_format_i64(s: *const GosSet, ordered: i32) -
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_format_tagged(
     s: *const GosSet,
-    ordered: i32,
+    _ordered: i32,
     tag: i32,
 ) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        let mut out = String::from(set_format_prefix(ordered));
-        out.push_str(" {");
+        let mut out = String::from(set_format_open());
         if !s.is_null() {
             let set = unsafe { &*s };
             let mut keys: Vec<i64> = set.i64_inner.iter().copied().collect();
@@ -372,12 +373,11 @@ pub unsafe extern "C" fn gos_rt_set_format_tagged(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_format_desc(
     s: *const GosSet,
-    ordered: i32,
+    _ordered: i32,
     tags: *const u8,
 ) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        let mut out = String::from(set_format_prefix(ordered));
-        out.push_str(" {");
+        let mut out = String::from(set_format_open());
         if !s.is_null() && !tags.is_null() {
             let tags = unsafe { crate::c_abi::map::DescStream::new(tags) };
             let set = unsafe { &*s };
@@ -410,10 +410,9 @@ pub unsafe extern "C" fn gos_rt_set_format_desc(
 /// same slots as [`gos_rt_set_format_i64`], read as unsigned so an element at
 /// or above `i64::MAX` shows its own decimal.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_set_format_u64(s: *const GosSet, ordered: i32) -> *mut c_char {
+pub unsafe extern "C" fn gos_rt_set_format_u64(s: *const GosSet, _ordered: i32) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        let mut out = String::from(set_format_prefix(ordered));
-        out.push_str(" {");
+        let mut out = String::from(set_format_open());
         if !s.is_null() {
             let set = unsafe { &*s };
             let mut keys: Vec<u64> = set.i64_inner.iter().map(|n| *n as u64).collect();
@@ -431,10 +430,9 @@ pub unsafe extern "C" fn gos_rt_set_format_u64(s: *const GosSet, ordered: i32) -
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_set_format_string(s: *const GosSet, ordered: i32) -> *mut c_char {
+pub unsafe extern "C" fn gos_rt_set_format_string(s: *const GosSet, _ordered: i32) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        let mut out = String::from(set_format_prefix(ordered));
-        out.push_str(" {");
+        let mut out = String::from(set_format_open());
         if !s.is_null() {
             let set = unsafe { &*s };
             let mut keys: Vec<&str> = set.inner.iter().map(String::as_str).collect();
@@ -1027,12 +1025,11 @@ pub unsafe extern "C" fn gos_rt_set_to_vec_ekey(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_format_ekey(
     s: *const GosSet,
-    ordered: i32,
+    _ordered: i32,
     tags: *const u8,
 ) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        let mut out = String::from(set_format_prefix(ordered));
-        out.push_str(" {");
+        let mut out = String::from(set_format_open());
         if !s.is_null() && !tags.is_null() {
             let tags = unsafe { crate::c_abi::map::DescStream::new(tags) };
             let set = unsafe { &*s };

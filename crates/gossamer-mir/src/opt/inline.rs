@@ -112,8 +112,16 @@ fn body_cost(body: &Body) -> usize {
 struct InlineableCallee {
     arity: u32,
     /// Callee locals from index `arity + 1` onward (the temps only;
-    /// params and the return slot are remapped to caller locals).
+    /// a parameter and the return slot are remapped to caller locals).
     extra_locals: Vec<crate::ir::LocalDecl>,
+    /// Declarations of the callee's own parameter locals, for the
+    /// parameters that need one of their own at the call site.
+    param_locals: Vec<crate::ir::LocalDecl>,
+    /// One-based indices of the parameters the callee assigns to. Such
+    /// a parameter cannot share the caller's argument local: a `mut`
+    /// parameter is the callee's own value, and remapping it onto the
+    /// argument would land the write in the caller's variable.
+    written_params: Vec<u32>,
     /// Statements from the callee's single computation block, before
     /// remapping.
     stmts: Vec<crate::ir::Statement>,
@@ -209,12 +217,40 @@ fn try_build_inlineable(body: &Body) -> Option<InlineableCallee> {
     } else {
         Vec::new()
     };
+    let param_locals = body.locals[1..param_end.min(body.locals.len())].to_vec();
     Some(InlineableCallee {
         arity: body.arity,
         extra_locals,
+        param_locals,
+        written_params: written_parameters(body.arity, &bb0.stmts),
         stmts: bb0.stmts.clone(),
         cost,
     })
+}
+
+/// The one-based parameter indices `stmts` writes to, either by
+/// assigning the local or by taking a mutable reference to it.
+fn written_parameters(arity: u32, stmts: &[crate::ir::Statement]) -> Vec<u32> {
+    let mut written = Vec::new();
+    let note = |local: Local, written: &mut Vec<u32>| {
+        if local.0 >= 1 && local.0 <= arity && !written.contains(&local.0) {
+            written.push(local.0);
+        }
+    };
+    for stmt in stmts {
+        let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+            continue;
+        };
+        note(place.local, &mut written);
+        if let Rvalue::Ref {
+            mutable: true,
+            place,
+        } = rvalue
+        {
+            note(place.local, &mut written);
+        }
+    }
+    written
 }
 
 fn inline_into_body(
@@ -285,6 +321,30 @@ fn inline_into_body(
         let orig_local_count = body.locals.len() as u32;
         body.locals.extend(ic.extra_locals.iter().cloned());
 
+        // A parameter the callee writes gets a local of its own here,
+        // initialized from the argument. Sharing the caller's argument
+        // local is what makes the read-only case free, and is exactly
+        // what a written parameter must not do: `fn f(mut n: i64)`
+        // takes the caller's value, not the caller's variable.
+        let mut param_copies: Vec<(u32, Local)> = Vec::new();
+        let mut bindings: Vec<crate::ir::Statement> = Vec::new();
+        for &idx in &ic.written_params {
+            let decl = ic.param_locals[(idx - 1) as usize].clone();
+            let copy = Local(body.locals.len() as u32);
+            body.locals.push(decl);
+            bindings.push(crate::ir::Statement {
+                kind: StatementKind::Assign {
+                    place: Place {
+                        local: copy,
+                        projection: Vec::new(),
+                    },
+                    rvalue: Rvalue::Use(args[(idx - 1) as usize].clone()),
+                },
+                span: body.blocks[bi].span,
+            });
+            param_copies.push((idx, copy));
+        }
+
         // Build a remapping closure: callee Local → caller Local.
         let remap = |l: Local| -> Local {
             if l == Local::RETURN {
@@ -292,7 +352,11 @@ fn inline_into_body(
             }
             let idx = l.0;
             if idx >= 1 && idx <= ic.arity {
-                // Param: map to the corresponding arg local.
+                if let Some((_, copy)) = param_copies.iter().find(|(param, _)| *param == idx) {
+                    return *copy;
+                }
+                // Param the callee only reads: the argument local is
+                // the same value, so it needs no copy.
                 return arg_locals[(idx - 1) as usize].unwrap_or(Local(idx));
             }
             // Temp: shift by (orig_local_count - (arity + 1)).
@@ -308,6 +372,7 @@ fn inline_into_body(
 
         // Replace the Call terminator with Goto and splice statements.
         let continuation = target.unwrap_or(BlockId(bi as u32 + 1));
+        body.blocks[bi].stmts.extend(bindings);
         body.blocks[bi].stmts.extend(remapped);
         body.blocks[bi].terminator = Terminator::Goto {
             target: continuation,

@@ -217,10 +217,22 @@ impl<'tcx> FnBuilder<'tcx> {
         let capture_cell_mark = self.capture_cells.len();
         for (pattern, arg) in info.params.iter().zip(arg_regs.iter()) {
             if let HirPatKind::Binding {
-                name: param_name, ..
+                name: param_name,
+                mutable,
             } = &pattern.kind
             {
-                self.bind_local(&param_name.name, *arg);
+                // A parameter the callee may write gets a register of
+                // its own, the way a `let` binding does. Binding it to
+                // the argument register is what makes the read-only
+                // case free, and is exactly what a `mut` parameter must
+                // not do: it takes the caller's value, not the caller's
+                // variable.
+                let bound = if *mutable {
+                    self.bind_to_fresh(*arg)
+                } else {
+                    *arg
+                };
+                self.bind_local(&param_name.name, bound);
             }
         }
         let result = (|| {

@@ -509,6 +509,19 @@ impl<'a> Lowerer<'a> {
                 | "gos_rt_map_insert_str_i64_opt"
                 | "gos_rt_map_insert_typed_str_i64_opt"
         );
+        // The same rationale for a content-keyed insert, whose value is
+        // one argument later because the key's layout descriptor travels
+        // between them. A stored value still pointing at the inserting
+        // frame's slot is overwritten by the next iteration, so every
+        // entry reads back as the last one inserted.
+        let skey_insert_heap_copy = matches!(
+            symbol,
+            "gos_rt_map_insert_skey"
+                | "gos_rt_map_insert_skey_opt"
+                // `or_insert` stores its default when the slot is
+                // absent, so that default is a stored value too.
+                | "gos_rt_map_or_insert_skey"
+        );
         // Win64: the runtime invokes a two-word spawn callable as
         // `extern "C-unwind" fn(usize) -> i128` and reads the result from
         // xmm0, but the callable is a gossamer `ret i128` (GP-register
@@ -562,6 +575,15 @@ impl<'a> Lowerer<'a> {
             }
             if map_insert_heap_copy
                 && i == 2
+                && let Some(heap_v) = self
+                    .maybe_heap_copy_value_enum(arg)
+                    .or_else(|| self.maybe_heap_copy_aggregate_for_map(arg))
+            {
+                let _ = write!(arg_text, "i64 {heap_v}");
+                continue;
+            }
+            if skey_insert_heap_copy
+                && i == 3
                 && let Some(heap_v) = self
                     .maybe_heap_copy_value_enum(arg)
                     .or_else(|| self.maybe_heap_copy_aggregate_for_map(arg))

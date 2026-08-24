@@ -1,0 +1,103 @@
+// A `mut` parameter is the callee's own value, not the caller's
+// variable.
+//
+// A by-value parameter binds what the caller passed; declaring it `mut`
+// lets the callee write it and changes nothing for the caller. Only a
+// `&mut` parameter writes through. The inliners on both sides made this
+// visible: a small callee's parameter was bound straight to the
+// caller's argument slot, so a write landed in the caller's binding -
+// including one the caller never declared `mut`.
+//
+// Both a small (inline-eligible) and a large callee are exercised, so
+// the two paths answer the same thing.
+
+use std::collections::Map
+
+fn small_scalar(mut n: i64) -> i64 {
+    n += 2
+    n
+}
+
+// Past the inliner's cost ceiling, so the same question is asked of a
+// real call as well as of a spliced body.
+fn large_scalar(mut n: i64) -> i64 {
+    n += 1
+    let a = n * 2
+    let b = a + 3
+    let c = b - 1
+    let d = c * 5
+    let e = d + 7
+    let f = e - 2
+    let g = f + 11
+    n = g - (g - n)
+    n
+}
+
+fn writes_float(mut x: f64) -> f64 {
+    x += 1.5
+    x
+}
+
+fn writes_bool(mut b: bool) -> bool {
+    b = !b
+    b
+}
+
+fn writes_vec(mut xs: Vec<i64>) -> i64 {
+    xs.push(99)
+    xs.len()
+}
+
+fn writes_map(mut m: Map<String, i64>) -> i64 {
+    m.insert("added", 1)
+    m.len()
+}
+
+fn writes_string(mut s: String) -> i64 {
+    s += "!"
+    s.len()
+}
+
+fn through_reference(xs: &mut Vec<i64>) {
+    xs.push(77)
+}
+
+struct Holder {
+    items: Vec<i64>
+}
+
+fn writes_field(mut h: Holder) -> i64 {
+    h.items.push(5)
+    h.items.len()
+}
+
+fn main() {
+    // An immutable caller binding is never written by a callee.
+    let a = 5
+    println!("small returned {}, caller {}", small_scalar(a), a)
+    let b = 5
+    println!("large returned {}, caller {}", large_scalar(b), b)
+
+    let x = 1.0
+    println!("float returned {}, caller {}", writes_float(x), x)
+    let flag = true
+    println!("bool returned {}, caller {}", writes_bool(flag), flag)
+
+    let xs = #[1, 2]
+    println!("vec returned {}, caller {:?}", writes_vec(xs), xs)
+
+    let mut m: Map<String, i64> = Map::new()
+    m.insert("a", 1)
+    println!("map returned {}, caller {:?}", writes_map(m), m)
+
+    let s = "hi"
+    println!("string returned {}, caller {}", writes_string(s), s)
+
+    let h = Holder { items: #[1] }
+    println!("field returned {}, caller {:?}", writes_field(h), h.items)
+
+    // A reference parameter is the one that does write through.
+    let mut owned = #[1]
+    through_reference(&mut owned)
+    println!("through &mut: {:?}", owned)
+}

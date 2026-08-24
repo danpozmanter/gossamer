@@ -2518,14 +2518,11 @@ fn render_repl_binding_value(value: &gossamer_interp::Value, ty: &ReplValueType)
     }
     let mut rendered = render_repl_value(value);
     // A Vec prints in its own spelling; a fixed array is the bare bracket
-    // form, which `render_repl_value` already produces.
+    // form, which `render_repl_value` already produces. A set needs
+    // nothing here: it renders in its own spelling at every depth, on
+    // every tier.
     if matches!(ty.method_owner.as_deref(), Some("Vec")) && rendered.starts_with('[') {
         rendered = format!("#{rendered}");
-    } else if matches!(ty.method_owner.as_deref(), Some("Set" | "BTreeSet"))
-        && let Some((_, rest)) = rendered.split_once(' ')
-        && rest.starts_with('{')
-    {
-        rendered = format!("#{rest}");
     }
     for mutability in ty.references.iter().rev() {
         rendered = format!("{}{rendered}", mutability.prefix());

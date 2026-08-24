@@ -3067,7 +3067,7 @@ impl fmt::Display for Value {
                     return out.write_str(inner.name.as_str());
                 }
                 if is_set_struct_name(inner.name.as_str()) {
-                    return out.write_str(&repr_set(self, inner.name.as_str()));
+                    return out.write_str(&repr_set(self));
                 }
                 if is_deque_struct_name(inner.name.as_str()) {
                     return out.write_str(&repr_deque(self, inner.name.as_str()));
@@ -3383,9 +3383,7 @@ fn repr_value(value: &Value) -> String {
         {
             inner.name.as_str().to_string()
         }
-        Value::Struct(inner) if is_set_struct_name(inner.name.as_str()) => {
-            repr_set(value, inner.name.as_str())
-        }
+        Value::Struct(inner) if is_set_struct_name(inner.name.as_str()) => repr_set(value),
         Value::Struct(inner) if is_deque_struct_name(inner.name.as_str()) => {
             repr_deque(value, inner.name.as_str())
         }
@@ -3436,7 +3434,7 @@ fn repr_value(value: &Value) -> String {
 /// stable whatever order the elements went in. Elements print in their Display
 /// form, matching `gos_rt_set_format_*` and the way a sequence of the same
 /// elements prints.
-fn repr_set(value: &Value, owner: &str) -> String {
+fn repr_set(value: &Value) -> String {
     let values = crate::stdlib_builtins::set::set_display_snapshot(value).unwrap_or_default();
     // The rendered copy of a set whose elements were declared `u64` / `usize`
     // carries the marker, so those elements read as unsigned here.
@@ -3448,8 +3446,11 @@ fn repr_set(value: &Value, owner: &str) -> String {
                 .iter()
                 .any(|(name, _)| *name == SET_UINT_MARKER)
     );
+    // A set renders in its own literal spelling, the same one a program
+    // writes to build it, at every depth and on every tier. `Set` and
+    // `BTreeSet` are both written `#{..}`.
     format!(
-        "{owner} {{{}}}",
+        "#{{{}}}",
         values
             .iter()
             .map(|element| match element {

@@ -1110,8 +1110,8 @@ fn main() {
     let expected = "\
 (1, x, true)
 ({\"a\": 1, \"b\": 2}, [1, 2, 3])
-Set {1, 2, 3}
-BTreeSet {1, 2, 3}
+#{1, 2, 3}
+#{1, 2, 3}
 Rec { name: \"r\", nums: [1, 2] }
 ";
     let dir = fresh_dir("collection_display_literals");

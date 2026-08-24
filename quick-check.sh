@@ -196,6 +196,13 @@ run_step "cargo test -p gossamer-cli --test dispatch_consistency --test stdlib_e
 # a fixture imports, and it finishes in under two seconds.
 run_step "cargo test -p gossamer-cli --lib" cargo test -p gossamer-cli --lib
 
+# The workflow definitions themselves. A file that does not parse fails
+# the whole CI run before any job starts, which reports only as "this
+# run likely failed because of a workflow file issue" - no job, no log,
+# no annotation. This gate costs milliseconds and names the line.
+run_step "GitHub workflow files parse" \
+    "${GOS_HARNESS_BIN:-./target/debug/gos}" run scripts/check_workflows.gos
+
 # Every fixture through both execution paths of `gos run`. The full
 # tier-parity walk also builds each fixture natively and takes tens of
 # minutes; this compares the two paths that need no compiler invocation,

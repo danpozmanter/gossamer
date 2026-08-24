@@ -95,7 +95,18 @@ fn initialize_result(params: &Value) -> Value {
                MinHeap or MaxHeap for priority queues, and Deque only when \
                both ends matter. Keep HTML in its own file and read or embed \
                it from there rather than writing markup inside Gossamer \
-               source.",
+               source. The syntax is Rust-flavoured and the semantics are \
+               not: there is no ownership transfer, no borrow checker, and \
+               no lifetimes. Every parameter is by value - passing a \
+               collection copies nothing and the callee still cannot change \
+               the caller's value; `mut` on a parameter is the callee's own \
+               value, and only a `&mut T` parameter, spelled `&mut x` at the \
+               call site, writes back. `let b = a` gives `b` a value of its \
+               own, and passing a value twice needs no clone. A `Vec` \
+               literal is `#[a, b]` (there is no `vec!`), a fixed array is \
+               `[a, b]`, a map is `{\"k\": 1}`, and a set is `#{a, b}`; a \
+               string literal already IS a `String`; a file IS a module, \
+               reached with `use`, and there is no `include`.",
             ),
         ),
     ])

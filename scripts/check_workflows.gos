@@ -1,0 +1,114 @@
+// Parse every GitHub Actions workflow and refuse a file that is not
+// valid YAML or carries no jobs.
+//
+// Usage: gos run scripts/check_workflows.gos
+//
+// A workflow file that does not parse fails the whole run before any
+// job starts, which reports as "this run likely failed because of a
+// workflow file issue" and nothing else - no job, no log, no
+// annotation on the step that broke. This gate is the local answer to
+// that: it runs in milliseconds and names the file and the reason.
+
+use std::{env, fs, path, process, sort}
+use std::encoding::{json, yaml}
+
+/// Where the workflow definitions live.
+const WORKFLOWS: String = ".github/workflows"
+
+/// Composite actions are workflow-shaped but carry steps rather than
+/// jobs, so they are parsed and not job-checked.
+const ACTIONS: String = ".github/actions"
+
+/// The checkout that holds the workflows.
+fn repo_root() -> String {
+    let mut directory = env::current_dir().unwrap_or(".")
+    loop {
+        if fs::is_dir(&path::join(&directory, &WORKFLOWS)) {
+            return directory
+        }
+        match path::parent(&directory) {
+            Some(parent) => directory = parent
+            None => return "."
+        }
+    }
+}
+
+/// Every `.yml` / `.yaml` file directly under `directory`, sorted.
+fn yaml_files(directory: &String) -> Vec<String> {
+    let mut found = #[]
+    for entry in fs::read_dir(directory).unwrap_or(#[]) {
+        if entry.is_file && (entry.name.ends_with(".yml") || entry.name.ends_with(".yaml")) {
+            found.push(entry.path)
+        }
+        if entry.is_dir {
+            for nested in fs::read_dir(&entry.path).unwrap_or(#[]) {
+                if nested.is_file
+                && (nested.name.ends_with(".yml") || nested.name.ends_with(".yaml"))
+                {
+                    found.push(nested.path)
+                }
+            }
+        }
+    }
+    sort::sort_stable(found)
+}
+
+/// Reports `path`, answering whether it is usable.
+fn check(file: &String, needs_jobs: bool) -> bool {
+    let text = match fs::read_to_string(file) {
+        Ok(text) => text
+        Err(e) => {
+            eprintln!("workflows: reading {}: {}", file, e)
+            return false
+        }
+    }
+    // Parsed through JSON because that is where the accessors are: a
+    // YAML document that converts is a YAML document that parses, and
+    // the job table is then an ordinary object to read.
+    let converted = match yaml::to_json(&text) {
+        Ok(converted) => converted
+        Err(e) => {
+            eprintln!("workflows: {} is not valid YAML: {}", file, e)
+            return false
+        }
+    }
+    if !needs_jobs {
+        println!("ok   {}", file)
+        return true
+    }
+    let document = match json::parse(&converted) {
+        Ok(document) => document
+        Err(e) => {
+            eprintln!("workflows: {} did not convert to a readable document: {}", file, e)
+            return false
+        }
+    }
+    let count = match json::get(document, "jobs") {
+        Some(jobs) => json::len(jobs)
+        None => 0
+    }
+    if count <= 0 {
+        eprintln!("workflows: {} declares no jobs", file)
+        return false
+    }
+    println!("ok   {} ({} jobs)", file, count)
+    true
+}
+
+fn main() {
+    let root = repo_root()
+    let mut failed = false
+    for file in yaml_files(&path::join(&root, &WORKFLOWS)) {
+        if !check(&file, true) {
+            failed = true
+        }
+    }
+    for file in yaml_files(&path::join(&root, &ACTIONS)) {
+        if !check(&file, false) {
+            failed = true
+        }
+    }
+    if failed {
+        process::exit(1)
+    }
+}

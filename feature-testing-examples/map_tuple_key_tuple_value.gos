@@ -1,0 +1,49 @@
+// A content-keyed map owns the values it is given.
+//
+// A map whose key is an aggregate reads the key through a layout
+// descriptor that travels with the call, which puts the value one
+// argument further along. The compiled tiers heap-copy an aggregate
+// value for every other insert shape; missing it here left each stored
+// value pointing at the inserting frame's own slot, so a loop that
+// inserted three entries answered the last one for every key while the
+// length and the absent-key answer stayed right.
+
+use std::collections::Map
+
+fn main() {
+    let mut inserted: Map<(i64, i64), (i64, i64)> = Map::new()
+    for i in 0..3 {
+        inserted.insert((i, i), (i * 10, i * 10))
+    }
+    println!(
+        "insert: {:?} {:?} {:?}"
+        inserted.get((0, 0))
+        inserted.get((1, 1))
+        inserted.get((2, 2))
+    )
+    println!("absent: {:?}", inserted.get((9, 9)))
+    println!("len: {}", inserted.len())
+
+    // `or_insert` stores its default, so it is the same question.
+    let mut defaulted: Map<(i64, i64), (i64, i64)> = Map::new()
+    for i in 0..3 {
+        let _ = defaulted.or_insert((i, i), (i + 100, i + 200))
+    }
+    println!(
+        "or_insert: {:?} {:?} {:?}"
+        defaulted.get((0, 0))
+        defaulted.get((1, 1))
+        defaulted.get((2, 2))
+    )
+
+    // A struct key with a struct value is the same layout question.
+    let mut structs: Map<(i64, String), (String, i64)> = Map::new()
+    for i in 0..3 {
+        structs.insert((i, format!("k{}", i)), (format!("v{}", i), i))
+    }
+    println!(
+        "mixed: {:?} {:?}"
+        structs.get((0, "k0"))
+        structs.get((2, "k2"))
+    )
+}

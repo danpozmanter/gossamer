@@ -711,6 +711,6 @@ mod set_registry_tests {
             snapshot.first().map(MapKey::from_value),
             Some(MapKey::from_value(&first))
         );
-        assert_eq!(handle.repr(), "Set {Point { x: 1, y: 2 }}");
+        assert_eq!(handle.repr(), "#{Point { x: 1, y: 2 }}");
     }
 }

@@ -75,6 +75,60 @@ fn main() {
 
 ## 4. Idioms
 
+### 4.1 Not Rust: values, parameters, assignment
+
+The syntax is Rust-flavoured; the semantics are not. There is **no
+ownership transfer, no borrow checker, and no lifetimes**. Reason about
+values, not moves.
+
+**Every parameter is by value, and by value means the caller is safe.**
+Passing a collection copies nothing - the callee reads the same storage -
+and the callee still cannot change what the caller holds. Declaring the
+parameter `mut` lets the callee write it; the write lands on the
+callee's own value, never on the caller's variable.
+
+```gossamer
+fn tally(mut xs: Vec<i64>) -> i64 { xs.push(1); xs.len() }   // no copy on the way in
+fn extend(xs: &mut Vec<i64>) { xs.push(1) }                  // the one form that writes back
+
+let mut items = #[1, 2]
+tally(items)                 // items is still #[1, 2]
+extend(&mut items)           // items is now #[1, 2, 1]
+```
+
+- **Pass `coll`, not `&coll`.** A `&` is for writing back (`&mut`) or for
+  a signature that asks for one; it is never needed to avoid a copy.
+- **A call never takes `&mut` implicitly.** `change(&mut value)` is
+  spelled at the call site, and the parameter's type says `&mut T`.
+- **Assignment is the same story**: `let b = a` gives `b` a value of its
+  own. `b.push(3)` leaves `a` alone. `a.clone()` is only needed when you
+  want a second value from one you are still writing to.
+- **Passing a value twice is fine.** Nothing is consumed, so `f(xs)`
+  then `g(xs)` needs no clone and no borrow.
+- **Scalars are copies** (`i64`, `f64`, `bool`, `char`).
+- **The one asymmetry is closure capture**: a closure captures a heap
+  value (`Vec`, `Map`, `Set`, `String`, a struct) by managed reference,
+  so `xs.push(v)` inside a closure IS visible outside it, while a `Copy`
+  scalar is captured by copy and `count += 1` is not. Accumulate into a
+  collection, never into a captured scalar.
+
+The Rust habits that do not compile here, in the order they actually
+show up:
+
+| Rust habit | Gossamer |
+|---|---|
+| `vec![a, b]` | `#[a, b]` (`[a, b]` is a fixed array) |
+| `HashMap::new()` + `insert` | `{"k": 1}` / `Map::new()` |
+| `HashSet` / `BTreeSet::from` | `#{a, b}` |
+| `include!` / `#[path]` | a file IS a module - reach it with `use` |
+| `"text".to_string()` | a string literal already IS a `String` |
+| `&str` vs `String` | one `String` type; `&"lit"` where `&String` is asked |
+| `move` closures, lifetimes, `Rc<RefCell<_>>` | capture is automatic; RC is the memory model |
+| `impl Display` to print | `{}` renders every type; `impl Display` only to override |
+| `?` on an `Option` in a `Result` fn | works, but the fn must return `Option` for the `Option` case |
+
+### 4.2 Writing it
+
 Write clear, low-complexity, concise code.
 
 - **Import everything you name.** A module's items are never in scope on

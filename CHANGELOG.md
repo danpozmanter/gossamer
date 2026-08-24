@@ -46,11 +46,30 @@
 - `http::static_files::FileServer` serves a directory as the `index.html`
   inside it, and redirects a request that named the directory without a
   trailing slash to the form the page's own relative links resolve under.
+- A `mut` parameter is the callee's own value on every tier. Both inliners
+  bound a small callee's parameter to the caller's argument slot, so a write
+  to a `mut` parameter landed in the caller's variable - including one the
+  caller never declared `mut`.
+- A `Map` whose key and value are both aggregates keeps every entry on the
+  compiled tiers. The stored value went on pointing at the inserting frame's
+  own slot, so a loop that filled three entries answered the last one for
+  every key while the length and the absent-key answer stayed right.
+- A set renders in its own literal spelling - `#{1, 2}` - at every depth, on
+  every tier, and in the REPL, for `Set` and `BTreeSet` alike. It read as
+  `Set {1, 2}` when printed and `#{1, 2}` only at the REPL's top level.
+- `SKILL.md` and the MCP server state Gossamer's value semantics: every
+  parameter is by value, passing a collection copies nothing and cannot
+  change the caller's value, `mut` on a parameter is local, and only a
+  `&mut T` parameter written `&mut x` at the call site writes back. The
+  Rust habits that do not compile are listed beside them.
+- `quick-check.sh` parses the GitHub workflow files. One that does not parse
+  fails a CI run before any job starts, which reports as a workflow file
+  issue with no job, no log, and no annotation to read.
 - The repository's own tooling is written in Gossamer: the benchmark-suite
   runner, the perf-gate parsers, the feature-status diff, the cross-build
-  fixture driver, the VM-vs-JIT sweep, the site preview server, and the
-  binding, QEMU, idle-CPU, and load harnesses. Building the site locally no
-  longer needs Python.
+  fixture driver, the VM-vs-JIT sweep, the site preview server, the workflow
+  check, and the binding, QEMU, idle-CPU, and load harnesses. Building the
+  site locally no longer needs Python.
 
 ## 0.55.5 - Returned-aggregate container ownership
 
