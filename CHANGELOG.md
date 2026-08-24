@@ -70,6 +70,13 @@
   the whole suite on pure bytecode, so nothing else notices the gap. Its
   free-function twin has existed since the same class of drift was found
   there.
+- The tier-parity JIT allowlist now names the body each fixture was actually
+  excluded for. A reason was read off the first `jit: unsupported` line, which
+  is almost always an injected `__gos_serde_*` body no program calls, so 74 of
+  the 360 rows blamed a cause their own trace contradicts - `bytecode-only
+  local` claimed 122 rows where it holds for 56, hiding the entry-shape gate
+  as the JIT's largest structural gap. The header states how to re-derive a
+  reason and which trace lines to ignore.
 
 ## 0.55.3 - REPL completion, sandbox policy model, closure argument coercion
 
