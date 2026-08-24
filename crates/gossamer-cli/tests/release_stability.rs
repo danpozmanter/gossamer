@@ -155,21 +155,25 @@ fn run_server() {
     }
 }
 
-fn await_ready() {
-    let none: Vec<(String, String)> = Vec::from([])
+fn await_ready() -> bool {
     let mut tries = 0
-    while tries < 400 {
+    while tries < 1600 {
+        let none: Vec<(String, String)> = Vec::from([])
         if let Ok(_) = http::get("http://127.0.0.1:23924/probe", none) {
-            return
+            return true
         }
         time::sleep(25)
         tries += 1
     }
+    false
 }
 
 fn main() {
     go run_server()
-    await_ready()
+    if !await_ready() {
+        println!("server never became ready")
+        process::exit(0)
+    }
     let none: Vec<(String, String)> = Vec::from([])
     match http::get("http://127.0.0.1:23924/echo?k=1&n=2", none) {
         Ok(r) => println!("status={} body={}", r.status, r.body),
@@ -213,20 +217,24 @@ fn run_server() {
 
 // Polls until the server goroutine accepts connections; binding is
 // asynchronous, so readiness is observable only by connecting.
-fn await_ready(url: &String) {
+fn await_ready(url: &String) -> bool {
     let mut tries = 0
-    while tries < 400 {
+    while tries < 1600 {
         if let Ok(_) = http::get(url, Vec::from([])) {
-            return
+            return true
         }
         time::sleep(25)
         tries += 1
     }
+    false
 }
 
 fn main() {
     go run_server()
-    await_ready(&"http://127.0.0.1:23921/x")
+    if !await_ready(&"http://127.0.0.1:23921/x") {
+        println!("server never became ready")
+        process::exit(0)
+    }
     match http::get("http://127.0.0.1:23921/x", Vec::from([])) {
         Ok(r) => println!("status={} body={}", r.status, r.body),
         Err(e) => println!("error: {}", e),
@@ -284,26 +292,39 @@ fn run_proxy() {
     }
 }
 
-// Polls until the server goroutine accepts connections; binding is
-// asynchronous, so readiness is observable only by connecting.
-// Upstream is probed before the proxy: the proxy answers 502
-// (an Ok response) while the upstream is still down.
-fn await_ready(url: &String) {
+// Polls until the endpoint answers `want`; binding is asynchronous, so
+// readiness is observable only by connecting. The proxy answers 502 - an
+// Ok response - for as long as the upstream is down, so the status is
+// part of the readiness condition rather than a result to assert on.
+// The try budget is a precondition on a runner compiling the sibling
+// fixtures at the same time, where a goroutine can be slow to reach
+// `bind`; exhausting it reports itself rather than failing a later
+// assertion.
+fn await_status(url: &String, want: i64) -> bool {
     let mut tries = 0
-    while tries < 400 {
-        if let Ok(_) = http::get(url, Vec::from([])) {
-            return
+    while tries < 1600 {
+        if let Ok(r) = http::get(url, Vec::from([])) {
+            if r.status == want {
+                return true
+            }
         }
         time::sleep(25)
         tries += 1
     }
+    false
 }
 
 fn main() {
     go run_upstream()
     go run_proxy()
-    await_ready(&"http://127.0.0.1:23922/data")
-    await_ready(&"http://127.0.0.1:23923/x")
+    if !await_status(&"http://127.0.0.1:23922/data", 200) {
+        println!("upstream never became ready")
+        process::exit(0)
+    }
+    if !await_status(&"http://127.0.0.1:23923/x", 200) {
+        println!("proxy never served the upstream body")
+        process::exit(0)
+    }
     match http::get("http://127.0.0.1:23923/x", Vec::from([])) {
         Ok(r) => println!("status={} ct={} body={}", r.status, r.content_type, r.body),
         Err(e) => println!("error: {}", e),
