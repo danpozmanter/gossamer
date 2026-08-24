@@ -504,9 +504,9 @@ impl Resolver {
 /// dependency is written. A git dependency carries its identity in the URL
 /// instead, and a path dependency in the `project.toml` it points at, so
 /// either one's key is free to be the module name source reaches it by -
-/// `pgsql_gos = { git = "https://github.com/danpozmanter/pgsql-gos" }` and
+/// `pgsql_gos = { git = "https://github.com/gossamer-lang/pgsql-gos" }` and
 /// `pgsql_gos = { path = "../.." }` are both the same package as
-/// `"github.com/danpozmanter/pgsql-gos"`.
+/// `"github.com/gossamer-lang/pgsql-gos"`.
 ///
 /// # Errors
 ///
@@ -825,15 +825,15 @@ mod identity_tests {
 
     #[test]
     fn a_path_dependency_takes_its_identity_from_the_manifest_it_points_at() {
-        let (base, _) = package_at("github.com/danpozmanter/pgsql-gos");
+        let (base, _) = package_at("github.com/gossamer-lang/pgsql-gos");
         let id = dependency_identity("pgsql_gos", &path_spec("driver"), Some(&base)).unwrap();
-        assert_eq!(id.as_str(), "github.com/danpozmanter/pgsql-gos");
+        assert_eq!(id.as_str(), "github.com/gossamer-lang/pgsql-gos");
         std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]
     fn a_key_that_spells_an_identity_outranks_the_manifest_it_points_at() {
-        let (base, _) = package_at("github.com/danpozmanter/pgsql-gos");
+        let (base, _) = package_at("github.com/gossamer-lang/pgsql-gos");
         let id =
             dependency_identity("example.com/alias", &path_spec("driver"), Some(&base)).unwrap();
         assert_eq!(id.as_str(), "example.com/alias");
@@ -858,10 +858,10 @@ mod identity_tests {
     #[test]
     fn a_git_dependency_still_takes_its_identity_from_the_url() {
         let spec = DependencySpec::Inline(InlineDependency::Git {
-            url: "https://github.com/danpozmanter/pgsql-gos".to_string(),
+            url: "https://github.com/gossamer-lang/pgsql-gos".to_string(),
             reference: "main".to_string(),
         });
         let id = dependency_identity("pgsql_gos", &spec, None).unwrap();
-        assert_eq!(id.as_str(), "github.com/danpozmanter/pgsql-gos");
+        assert_eq!(id.as_str(), "github.com/gossamer-lang/pgsql-gos");
     }
 }

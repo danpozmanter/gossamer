@@ -12,7 +12,7 @@
         <meta name="author" content="Gossamer contributors">
 
 
-        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/stdlib/sandbox/">
+        <link rel="canonical" href="https://gossamer-lang.org/docs/stdlib/sandbox/">
 
 
 
@@ -2156,10 +2156,10 @@
 </li>
 
           <li class="md-nav__item">
-  <a href="#discovery-and-host-upkeep" class="md-nav__link">
+  <a href="#discovery" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Discovery and host upkeep
+        Discovery
 
     </span>
   </a>
@@ -2196,6 +2196,7 @@
 <h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
 <p>The <a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-sandbox/src/lib.rs">policy model and the three backends</a> live in their own crate, which depends on no other Gossamer crate: a sandbox exists to contain a build system, so it must not need one in order to build. The <a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-runtime/src/c_abi/sandbox.rs">language binding</a> exposes that model unchanged.</p>
 <p>A level the host cannot honor fails closed and names the blocking primitive; it is never quietly downgraded. An unknown enum spelling - a level, a network mode, a temp mode - leaves the setting as it was, so a typo can never weaken a policy.</p>
+<p>A policy says what a command may reach. It carries no timeout, no memory cap, and no process count: bounding what a run uses is the caller's own business, and a limit two of the three backends could only partly apply would be a guarantee in name only.</p>
 <h3 id="building-a-policy">Building a policy<a class="headerlink" href="#building-a-policy" title="Permanent link">&para;</a></h3>
 <p>Every builder answers the policy as it now stands, so a chain reads as one expression.</p>
 <table>
@@ -2218,11 +2219,6 @@
 <td>Nothing reachable, no network, a private temp, level <code>standard</code>.</td>
 </tr>
 <tr>
-<td><code>Policy::build_default</code></td>
-<td><code>fn build_default(root: String) -&gt; sandbox::Policy</code></td>
-<td>The policy <code>gos build --sandbox</code> compiles under.</td>
-</tr>
-<tr>
 <td><code>Policy::command_default</code></td>
 <td><code>fn command_default(cwd: String) -&gt; sandbox::Policy</code></td>
 <td>The working directory read-write, the network denied, credentials denied.</td>
@@ -2230,12 +2226,12 @@
 <tr>
 <td><code>read_write</code> / <code>read_only</code> / <code>deny</code></td>
 <td><code>fn read_write(path: String) -&gt; sandbox::Policy</code></td>
-<td>Grants or refuses a path and everything beneath it. A denial beats a grant at equal specificity.</td>
+<td>Grants or refuses a path and everything beneath it. An explicit allow outranks a deny of the same path; a deny beneath a grant wins by being the more specific rule.</td>
 </tr>
 <tr>
-<td><code>network</code></td>
-<td><code>fn network(allow: bool) -&gt; sandbox::Policy</code></td>
-<td>The two-way form: open or denied.</td>
+<td><code>read_only_cwd</code></td>
+<td><code>fn read_only_cwd() -&gt; sandbox::Policy</code></td>
+<td>Downgrades the working directory to read-only.</td>
 </tr>
 <tr>
 <td><code>network_mode</code></td>
@@ -2253,19 +2249,9 @@
 <td>The environment is an allowlist, not an addition. Loader variables are refused outright.</td>
 </tr>
 <tr>
-<td><code>temp</code> / <code>temp_path</code></td>
+<td><code>temp</code></td>
 <td><code>fn temp(mode: String) -&gt; sandbox::Policy</code></td>
-<td><code>private</code> (default, removed on exit) or <code>inherit</code>; <code>temp_path</code> names one.</td>
-</tr>
-<tr>
-<td><code>timeout</code></td>
-<td><code>fn timeout(ms: i64) -&gt; sandbox::Policy</code></td>
-<td>Wall-clock bound on the whole process tree.</td>
-</tr>
-<tr>
-<td><code>max_processes</code> / <code>max_memory</code> / <code>max_cpu_time</code> / <code>max_file_size</code> / <code>max_temp_size</code></td>
-<td><code>fn max_memory(bytes: i64) -&gt; sandbox::Policy</code></td>
-<td>Resource bounds. A value at or below zero clears the bound.</td>
+<td><code>private</code> (default, removed on exit) or <code>inherit</code>.</td>
 </tr>
 <tr>
 <td><code>level</code></td>
@@ -2322,11 +2308,6 @@
 <td>What a run would refuse before anything is spawned.</td>
 </tr>
 <tr>
-<td><code>explain</code></td>
-<td><code>fn explain() -&gt; String</code></td>
-<td>The compiled policy and the mechanisms a run would install, as text.</td>
-</tr>
-<tr>
 <td><code>mechanisms</code></td>
 <td><code>fn mechanisms() -&gt; Vec&lt;String&gt;</code></td>
 <td>The enforcement a run installs, in the order it is applied.</td>
@@ -2380,27 +2361,17 @@
 <td>How completely this run's network setting is enforced.</td>
 </tr>
 <tr>
-<td><code>resource_enforcement_kind</code> / <code>_reason</code></td>
-<td><code>fn resource_enforcement_kind() -&gt; String</code></td>
-<td>Whether every limit the policy names will be applied.</td>
-</tr>
-<tr>
 <td><code>max_level</code> / <code>platform</code> / <code>os_description</code></td>
 <td><code>fn max_level() -&gt; String</code></td>
 <td>The highest level this host can honor, which backend answers, and the machine.</td>
 </tr>
 <tr>
-<td><code>filesystem</code> / <code>network_enforcement</code> / <code>process_isolation</code> / <code>resource_limits</code></td>
-<td><code>fn filesystem() -&gt; String</code></td>
-<td>Each dimension as a sentence: <code>full</code>, <code>partial (reason)</code>, or <code>none</code>.</td>
-</tr>
-<tr>
-<td><code>filesystem_kind</code> / <code>network_kind</code> / <code>process_isolation_kind</code> / <code>resource_limits_kind</code></td>
+<td><code>filesystem_kind</code> / <code>network_kind</code> / <code>process_isolation_kind</code></td>
 <td><code>fn filesystem_kind() -&gt; String</code></td>
-<td>The same verdict as an arm to match on: <code>full</code>, <code>partial</code>, or <code>none</code>.</td>
+<td>Each dimension as an arm to match on: <code>full</code>, <code>partial</code>, or <code>none</code>.</td>
 </tr>
 <tr>
-<td><code>filesystem_reason</code> / <code>network_reason</code> / <code>process_isolation_reason</code> / <code>resource_limits_reason</code></td>
+<td><code>filesystem_reason</code> / <code>network_reason</code> / <code>process_isolation_reason</code></td>
 <td><code>fn filesystem_reason() -&gt; String</code></td>
 <td>What a partial verdict does not cover, or the empty string.</td>
 </tr>
@@ -2416,7 +2387,7 @@
 </tr>
 </tbody>
 </table>
-<h3 id="discovery-and-host-upkeep">Discovery and host upkeep<a class="headerlink" href="#discovery-and-host-upkeep" title="Permanent link">&para;</a></h3>
+<h3 id="discovery">Discovery<a class="headerlink" href="#discovery" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
@@ -2442,17 +2413,13 @@
 <td>The caller's home, as the presets resolve it.</td>
 </tr>
 <tr>
-<td><code>rust_toolchain_paths</code></td>
-<td><code>fn rust_toolchain_paths() -&gt; Vec&lt;String&gt;</code></td>
-<td>Every path a policy that has to run cargo must grant.</td>
-</tr>
-<tr>
-<td><code>stale_grant_count</code> / <code>clean_stale_grants</code></td>
-<td><code>fn clean_stale_grants() -&gt; Result&lt;i64, errors::Error&gt;</code></td>
-<td>The ACL grants an interrupted Windows run leaves behind. Zero everywhere else: no other backend reaches a path by editing its permissions.</td>
+<td><code>env_never_passed</code></td>
+<td><code>fn env_never_passed(name: String) -&gt; bool</code></td>
+<td>Whether a policy refuses to pass a name, because it redirects the loader or an interpreter's startup.</td>
 </tr>
 </tbody>
 </table>
+<p>A grant an interrupted Windows run leaves on a host ACL is revoked by the next run before it grants anything of its own, so there is no cleanup command to remember.</p>
 
 
 

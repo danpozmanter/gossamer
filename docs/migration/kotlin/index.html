@@ -12,7 +12,7 @@
         <meta name="author" content="Gossamer contributors">
 
 
-        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/migration/kotlin/">
+        <link rel="canonical" href="https://gossamer-lang.org/docs/migration/kotlin/">
 
 
         <link rel="prev" href="../fsharp/">
@@ -2616,7 +2616,9 @@ handle it.</p>
 </code></pre></div>
 <h2 id="collections">Collections<a class="headerlink" href="#collections" title="Permanent link">&para;</a></h2>
 <p>Kotlin collection chains become <code>std::iter</code> pipelines. The pipe operator
-passes the value on the left into the last argument of the next call.</p>
+passes the value on the left into a free function: a bare callable takes
+it as its only argument, and a closure names the slot it fills (<code>v</code>
+below), so a data-first callee reads left to right.</p>
 <div class="language-kotlin highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="kd">val</span><span class="w"> </span><span class="nv">total</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">listOf</span><span class="p">(</span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="m">2</span><span class="p">,</span><span class="w"> </span><span class="m">3</span><span class="p">,</span><span class="w"> </span><span class="m">4</span><span class="p">)</span>
 <a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">    </span><span class="p">.</span><span class="na">filter</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nb">it</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="m">2</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="p">}</span>
 <a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">    </span><span class="p">.</span><span class="na">sumOf</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nb">it</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nb">it</span><span class="w"> </span><span class="p">}</span>

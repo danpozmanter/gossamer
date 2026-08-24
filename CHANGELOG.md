@@ -4,6 +4,15 @@
 
 - A container built into an aggregate a function returns no longer leaks a
   buffer per call on the compiled tiers.
+- An installed toolchain resolves its runtime archive from its own prefix.
+  The path baked in when the cli was compiled now ranks below every lookup an
+  installation owns, so `gos build` links `<prefix>/lib/libgossamer_runtime.a`
+  rather than reaching back into the tree the cli was built in. The same order
+  applies to the musl archive a static-release link selects.
+- The `GOS_LEAK_LEDGER` report prints at exit on Windows, which previously
+  tallied the counters and printed nothing.
+- The published documentation resolves its own assets and canonical links,
+  which were addressed under the project's former repository path.
 
 ## 0.55.4 - Destructuring assignment, socket deadlines
 

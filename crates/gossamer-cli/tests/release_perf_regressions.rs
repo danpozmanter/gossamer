@@ -66,7 +66,6 @@ fn assert_linear_and_fast(name: &str, small: Duration, large: Duration, ceiling:
     );
 }
 
-#[cfg(unix)]
 fn assert_bounded_live_vecs(binary: &Path) {
     let output = Command::new(binary)
         .arg("1000")
@@ -163,9 +162,5 @@ println!("{}", src[0])
     let small = timed(&binary, 500_000);
     let large = timed(&binary, 1_000_000);
     assert_linear_and_fast("radix-sort-like", small, large, Duration::from_secs(3));
-    // The leak ledger's at-exit report is intentionally Unix-only. Windows
-    // still runs the release build, checksum, timing, and scaling regression,
-    // but has no stderr ledger line to parse.
-    #[cfg(unix)]
     assert_bounded_live_vecs(&binary);
 }

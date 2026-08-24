@@ -12,7 +12,7 @@
         <meta name="author" content="Gossamer contributors">
 
 
-        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/stdlib_coverage/">
+        <link rel="canonical" href="https://gossamer-lang.org/docs/stdlib_coverage/">
 
 
         <link rel="prev" href="../stdlib/collection_patterns/">
@@ -2328,7 +2328,7 @@ evidence visible.</p>
 <tr>
 <td><code>std::env</code></td>
 <td>shipped</td>
-<td style="text-align: right;">9</td>
+<td style="text-align: right;">10</td>
 <td>none</td>
 <td>none</td>
 <td>none</td>
@@ -2346,7 +2346,7 @@ evidence visible.</p>
 <tr>
 <td><code>std::sandbox</code></td>
 <td>experimental</td>
-<td style="text-align: right;">10</td>
+<td style="text-align: right;">23</td>
 <td>none</td>
 <td>none</td>
 <td>none</td>
@@ -4675,6 +4675,12 @@ evidence is linked to that canonical item path yet.</p>
 </tr>
 <tr>
 <td><code>std::env::var</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td><code>examples/cli_args.gos</code>, <code>examples/environment.gos</code>, <code>examples/file_io.gos</code>, <code>examples/grep.gos</code>, <code>examples/list_dir.gos</code>, <code>feature-testing-examples/fs_dir_ops.gos</code>, <code>feature-testing-examples/fs_metadata.gos</code>, <code>feature-testing-examples/fs_temp_file_lifecycle.gos</code>, <code>feature-testing-examples/nul_in_strings.gos</code>, <code>feature-testing-examples/os_args_clone_roundtrip.gos</code>, <code>feature-testing-examples/stdlib_alias_wiring.gos</code>, <code>feature-testing-examples/stdlib_env_portable.gos</code>, <code>feature-testing-examples/stdlib_fs_portable.gos</code>, <code>feature-testing-examples/stdlib_fs_rename.gos</code>, <code>feature-testing-examples/winb_sys_misc.gos</code>, <code>feature-testing-examples/write_file_bytes.gos</code></td>
+</tr>
+<tr>
+<td><code>std::env::vars</code></td>
 <td>Function</td>
 <td>experimental</td>
 <td><code>examples/cli_args.gos</code>, <code>examples/environment.gos</code>, <code>examples/file_io.gos</code>, <code>examples/grep.gos</code>, <code>examples/list_dir.gos</code>, <code>feature-testing-examples/fs_dir_ops.gos</code>, <code>feature-testing-examples/fs_metadata.gos</code>, <code>feature-testing-examples/fs_temp_file_lifecycle.gos</code>, <code>feature-testing-examples/nul_in_strings.gos</code>, <code>feature-testing-examples/os_args_clone_roundtrip.gos</code>, <code>feature-testing-examples/stdlib_alias_wiring.gos</code>, <code>feature-testing-examples/stdlib_env_portable.gos</code>, <code>feature-testing-examples/stdlib_fs_portable.gos</code>, <code>feature-testing-examples/stdlib_fs_rename.gos</code>, <code>feature-testing-examples/winb_sys_misc.gos</code>, <code>feature-testing-examples/write_file_bytes.gos</code></td>
@@ -7890,7 +7896,55 @@ evidence is linked to that canonical item path yet.</p>
 <td><code>feature-testing-examples/sandbox.gos</code></td>
 </tr>
 <tr>
-<td><code>std::sandbox::filesystem</code></td>
+<td><code>std::sandbox::env_never_passed</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td><code>feature-testing-examples/sandbox.gos</code></td>
+</tr>
+<tr>
+<td><code>std::sandbox::exit_command_not_found</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td><code>feature-testing-examples/sandbox.gos</code></td>
+</tr>
+<tr>
+<td><code>std::sandbox::exit_level_unavailable</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td><code>feature-testing-examples/sandbox.gos</code></td>
+</tr>
+<tr>
+<td><code>std::sandbox::exit_policy_error</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td><code>feature-testing-examples/sandbox.gos</code></td>
+</tr>
+<tr>
+<td><code>std::sandbox::exit_signal_base</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td><code>feature-testing-examples/sandbox.gos</code></td>
+</tr>
+<tr>
+<td><code>std::sandbox::expand</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td><code>feature-testing-examples/sandbox.gos</code></td>
+</tr>
+<tr>
+<td><code>std::sandbox::filesystem_kind</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td><code>feature-testing-examples/sandbox.gos</code></td>
+</tr>
+<tr>
+<td><code>std::sandbox::filesystem_reason</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td><code>feature-testing-examples/sandbox.gos</code></td>
+</tr>
+<tr>
+<td><code>std::sandbox::home_directory</code></td>
 <td>Function</td>
 <td>experimental</td>
 <td><code>feature-testing-examples/sandbox.gos</code></td>
@@ -7902,7 +7956,13 @@ evidence is linked to that canonical item path yet.</p>
 <td><code>feature-testing-examples/sandbox.gos</code></td>
 </tr>
 <tr>
-<td><code>std::sandbox::network_enforcement</code></td>
+<td><code>std::sandbox::network_kind</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td><code>feature-testing-examples/sandbox.gos</code></td>
+</tr>
+<tr>
+<td><code>std::sandbox::network_reason</code></td>
 <td>Function</td>
 <td>experimental</td>
 <td><code>feature-testing-examples/sandbox.gos</code></td>
@@ -7914,25 +7974,49 @@ evidence is linked to that canonical item path yet.</p>
 <td><code>feature-testing-examples/sandbox.gos</code></td>
 </tr>
 <tr>
+<td><code>std::sandbox::os_description</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td><code>feature-testing-examples/sandbox.gos</code></td>
+</tr>
+<tr>
 <td><code>std::sandbox::platform</code></td>
 <td>Function</td>
 <td>experimental</td>
 <td><code>feature-testing-examples/sandbox.gos</code></td>
 </tr>
 <tr>
-<td><code>std::sandbox::process_isolation</code></td>
+<td><code>std::sandbox::prefix_of</code></td>
 <td>Function</td>
 <td>experimental</td>
 <td><code>feature-testing-examples/sandbox.gos</code></td>
 </tr>
 <tr>
-<td><code>std::sandbox::resource_limits</code></td>
+<td><code>std::sandbox::process_isolation_kind</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td><code>feature-testing-examples/sandbox.gos</code></td>
+</tr>
+<tr>
+<td><code>std::sandbox::process_isolation_reason</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td><code>feature-testing-examples/sandbox.gos</code></td>
+</tr>
+<tr>
+<td><code>std::sandbox::resolve_on_path</code></td>
 <td>Function</td>
 <td>experimental</td>
 <td><code>feature-testing-examples/sandbox.gos</code></td>
 </tr>
 <tr>
 <td><code>std::sandbox::run</code></td>
+<td>Function</td>
+<td>experimental</td>
+<td><code>feature-testing-examples/sandbox.gos</code></td>
+</tr>
+<tr>
+<td><code>std::sandbox::run_inherit</code></td>
 <td>Function</td>
 <td>experimental</td>
 <td><code>feature-testing-examples/sandbox.gos</code></td>

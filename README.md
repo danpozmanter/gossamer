@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/gossamer-lang/gossamer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gossamer-lang/gossamer/actions/workflows/ci.yml)
 
-[Homepage and Docs](http://gossamer-lang.org/)
+[Homepage and Docs](https://gossamer-lang.org/)
 
 ## North Star Goals
 
@@ -438,7 +438,7 @@ a `Result::Err`. There is no source-level `extern "C"` item form - the
 single FFI surface. The full instructions - the type vocabulary,
 errors, opaque handles, blocking work, wrapping a crate that knows
 nothing about Gossamer, and the tier rules - are in [Calling
-Rust](https://danpozmanter.github.io/gossamer/docs/rust_bindings/).
+Rust](https://gossamer-lang.org/docs/rust_bindings/).
 See also [`SPEC.md` section 12](SPEC.md) and
 [`example-external-libraries/`](example-external-libraries/) for
 end-to-end examples (a Gossamer-aware crate, and a plain published

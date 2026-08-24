@@ -701,9 +701,16 @@ impl NativeBuildError {
 
 /// Locates `libgossamer_runtime.a` - the static library produced
 /// by the `gossamer-runtime` crate with `crate-type =
-/// ["staticlib", "rlib"]`. First tries `$GOS_RUNTIME_LIB`, then
-/// walks up from the executable looking for `target/<profile>/`,
-/// then finally from the manifest directory at build time.
+/// ["staticlib", "rlib"]`. Tries `$GOS_RUNTIME_LIB`, then the
+/// install layout around the executable, then `target/<profile>/`
+/// under the current directory, and only then the path baked in at
+/// cli build time.
+///
+/// The bake comes last because it names the tree the cli itself was
+/// compiled in: an installed toolchain must resolve its runtime from
+/// its own prefix, and a path inside someone's checkout is a
+/// last-resort fallback for a binary moved out of its build
+/// directory.
 ///
 /// Public to the crate so `cmd::env` can surface the resolved
 /// path in `gos env`.
@@ -720,9 +727,6 @@ pub(crate) fn find_runtime_lib() -> std::result::Result<PathBuf, NativeBuildErro
         &["libgossamer_runtime.a", "gossamer_runtime.lib"]
     };
     let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(baked) = option_env!("GOSSAMER_RUNTIME_LIB_PATH") {
-        candidates.push(PathBuf::from(baked));
-    }
     let mut push_with_names = |dir: &Path| {
         for name in lib_names {
             candidates.push(dir.join(name));
@@ -739,6 +743,9 @@ pub(crate) fn find_runtime_lib() -> std::result::Result<PathBuf, NativeBuildErro
     }
     push_with_names(Path::new("target/release"));
     push_with_names(Path::new("target/debug"));
+    if let Some(baked) = option_env!("GOSSAMER_RUNTIME_LIB_PATH") {
+        candidates.push(PathBuf::from(baked));
+    }
     for c in &candidates {
         if c.exists() {
             return Ok(c.clone());
@@ -838,14 +845,16 @@ fn resolve_link_target(target: Option<&str>) -> LinkTarget {
 /// not pull host-arch objects into a foreign-arch binary.
 ///
 /// 1. `GOS_RUNTIME_LIB_<TRIPLE>` env override (path must exist).
-/// 2. The baked host-arch musl archive, only when `triple` is the
-///    host arch's musl triple (the host == target musl case).
-/// 3. `<gos-bin>/../lib/libgossamer_runtime-musl.a` for the installed
+/// 2. `<gos-bin>/../lib/libgossamer_runtime-musl.a` for the installed
 ///    host-architecture musl runtime.
-/// 4. `<gos-bin>/../lib/<triple>/libgossamer_runtime.a` (installed
+/// 3. `<gos-bin>/../lib/<triple>/libgossamer_runtime.a` (installed
 ///    cross-toolchain layout).
-/// 5. `target/<triple>/{release,debug}/libgossamer_runtime.a` (dev
+/// 4. `target/<triple>/{release,debug}/libgossamer_runtime.a` (dev
 ///    tree).
+/// 5. The musl archive baked in at cli build time, only when `triple`
+///    is the host arch's musl triple (the host == target musl case).
+///    It names the tree the cli was compiled in, so it ranks below
+///    every path an installed toolchain owns.
 fn find_runtime_lib_for_target(triple: &str) -> std::result::Result<PathBuf, NativeBuildError> {
     let env_key = format!(
         "GOS_RUNTIME_LIB_{}",
@@ -853,14 +862,6 @@ fn find_runtime_lib_for_target(triple: &str) -> std::result::Result<PathBuf, Nat
     );
     if let Ok(p) = std::env::var(&env_key) {
         let p = PathBuf::from(p);
-        if p.exists() {
-            return Ok(p);
-        }
-    }
-    if let Some(baked) = MUSL_RUNTIME_LIB
-        && triple == musl_triple_for_arch(std::env::consts::ARCH)
-    {
-        let p = PathBuf::from(baked);
         if p.exists() {
             return Ok(p);
         }
@@ -892,6 +893,14 @@ fn find_runtime_lib_for_target(triple: &str) -> std::result::Result<PathBuf, Nat
             .join("libgossamer_runtime.a");
         if cand.exists() {
             return Ok(cand);
+        }
+    }
+    if let Some(baked) = MUSL_RUNTIME_LIB
+        && triple == musl_triple_for_arch(std::env::consts::ARCH)
+    {
+        let p = PathBuf::from(baked);
+        if p.exists() {
+            return Ok(p);
         }
     }
     Err(NativeBuildError::LinkerMissing(format!(

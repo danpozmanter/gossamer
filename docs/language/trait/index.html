@@ -12,7 +12,7 @@
         <meta name="author" content="Gossamer contributors">
 
 
-        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/language/trait/">
+        <link rel="canonical" href="https://gossamer-lang.org/docs/language/trait/">
 
 
 
@@ -2295,7 +2295,8 @@ traits are <strong>not</strong> <code>#[derive]</code>-able.</p>
 <p>A <code>from</code> impl powers both <code>B::from(x)</code> and <code>x.into()</code>; a <code>try_from</code> impl
 powers <code>B::try_from(x)</code> and <code>x.try_into() -&gt; Result&lt;B, E&gt;</code>. The <code>into</code> /
 <code>try_into</code> target is inferred from the use site (<code>let B</code>, a <code>B</code> parameter
-or return):</p>
+or return) and never from the receiver, so a bare <code>x.into()</code> that no use
+site reaches has no target at all and is reported as <code>GT0066</code>:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">struct</span> <span class="nc">Celsius</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">t</span>: <span class="kt">i64</span> <span class="p">}</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="k">struct</span> <span class="nc">Fahrenheit</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">t</span>: <span class="kt">i64</span> <span class="p">}</span>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>

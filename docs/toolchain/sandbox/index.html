@@ -12,7 +12,7 @@
         <meta name="author" content="Gossamer contributors">
 
 
-        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/toolchain/sandbox/">
+        <link rel="canonical" href="https://gossamer-lang.org/docs/toolchain/sandbox/">
 
 
         <link rel="prev" href="../diagnostics/">
@@ -2409,13 +2409,14 @@ grant never lifts a denial, so <code>--sandbox-ro ~/.ssh</code> is refused as a
 policy error rather than honored.</p>
 <p><code>--sandbox</code> does not sandbox your own program under <code>gos run</code>. For
 that, run it under a sandbox of your own: <code>std::sandbox</code> builds one, and
-<code>gosbox</code> runs any command under one.</p>
+<code>build-with-restrictions</code> runs any command under one.</p>
 <h2 id="any-command">Any command<a class="headerlink" href="#any-command" title="Permanent link">&para;</a></h2>
-<p>The same policy model is also a standalone application, <code>gosbox</code>, which
-runs any command - <code>cargo build</code>, <code>npm ci</code>, <code>./gradlew build</code>, an
-untrusted binary - under the sandbox this crate provides. It ships
-separately from the Gossamer toolchain and carries build-system
-profiles of its own.</p>
+<p>The same policy model is also a standalone application,
+<code>build-with-restrictions</code> (<code>bwr</code>), which runs any command - <code>cargo
+build</code>, <code>npm ci</code>, <code>./gradlew build</code>, an untrusted binary - under the
+sandbox this crate provides. It ships separately from the Gossamer
+toolchain and carries build-system profiles of its own: where a tool
+keeps its caches is the wrapper's knowledge, not the language's.</p>
 <p>From Gossamer, <code>std::sandbox</code> reaches the same library directly; see
 below.</p>
 <h2 id="levels">Levels<a class="headerlink" href="#levels" title="Permanent link">&para;</a></h2>
@@ -2478,29 +2479,31 @@ policy.</p>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">policy</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sandbox</span>::<span class="n">Policy</span>::<span class="n">new</span><span class="p">()</span>
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">        </span><span class="p">.</span><span class="n">read_write</span><span class="p">(</span><span class="o">&amp;</span><span class="s">&quot;.&quot;</span><span class="p">)</span>
 <a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">        </span><span class="p">.</span><span class="n">read_only</span><span class="p">(</span><span class="o">&amp;</span><span class="s">&quot;/usr&quot;</span><span class="p">)</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">        </span><span class="p">.</span><span class="n">network</span><span class="p">(</span><span class="kc">false</span><span class="p">)</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">        </span><span class="p">.</span><span class="n">network_mode</span><span class="p">(</span><span class="o">&amp;</span><span class="s">&quot;none&quot;</span><span class="p">)</span>
 <a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">        </span><span class="p">.</span><span class="n">env_allow</span><span class="p">(</span><span class="o">&amp;</span><span class="s">&quot;PATH&quot;</span><span class="p">)</span>
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">        </span><span class="p">.</span><span class="n">timeout</span><span class="p">(</span><span class="mi">30_000</span><span class="p">)</span>
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">        </span><span class="p">.</span><span class="n">level</span><span class="p">(</span><span class="o">&amp;</span><span class="s">&quot;standard&quot;</span><span class="p">)</span>
-<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>
-<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">    </span><span class="c1">// The capability report is a value, so a program branches on what</span>
-<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">    </span><span class="c1">// the host honors instead of assuming one operating system.</span>
-<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="n">sandbox</span>::<span class="n">max_level</span><span class="p">()</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s">&quot;strict&quot;</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="w">        </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sandbox</span>::<span class="n">notes</span><span class="p">().</span><span class="n">join</span><span class="p">(</span><span class="o">&amp;</span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">))</span>
-<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="w">    </span><span class="p">}</span>
-<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>
-<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="w">    </span><span class="k">match</span><span class="w"> </span><span class="n">sandbox</span>::<span class="n">run</span><span class="p">(</span><span class="o">&amp;</span><span class="n">policy</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="cp">#[</span><span class="s">&quot;cargo&quot;</span><span class="cp">, </span><span class="s">&quot;build&quot;</span><span class="cp">]</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="w">        </span><span class="nb">Ok</span><span class="p">(</span><span class="n">out</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{} {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">out</span><span class="p">.</span><span class="n">code</span><span class="p">,</span><span class="w"> </span><span class="n">out</span><span class="p">.</span><span class="n">stdout</span><span class="p">)</span>
-<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="w">        </span><span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="fm">eprintln!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">e</span><span class="p">)</span>
-<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="w">    </span><span class="p">}</span>
-<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a><span class="p">}</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">        </span><span class="p">.</span><span class="n">level</span><span class="p">(</span><span class="o">&amp;</span><span class="s">&quot;standard&quot;</span><span class="p">)</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">    </span><span class="c1">// The capability report is a value, so a program branches on what</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">    </span><span class="c1">// the host honors instead of assuming one operating system.</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="n">sandbox</span>::<span class="n">max_level</span><span class="p">()</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s">&quot;strict&quot;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">        </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">sandbox</span>::<span class="n">notes</span><span class="p">().</span><span class="n">join</span><span class="p">(</span><span class="o">&amp;</span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">))</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="w">    </span><span class="k">match</span><span class="w"> </span><span class="n">sandbox</span>::<span class="n">run</span><span class="p">(</span><span class="o">&amp;</span><span class="n">policy</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="cp">#[</span><span class="s">&quot;cargo&quot;</span><span class="cp">, </span><span class="s">&quot;build&quot;</span><span class="cp">]</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="w">        </span><span class="nb">Ok</span><span class="p">(</span><span class="n">out</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{} {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">out</span><span class="p">.</span><span class="n">code</span><span class="p">,</span><span class="w"> </span><span class="n">out</span><span class="p">.</span><span class="n">stdout</span><span class="p">)</span>
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="w">        </span><span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="fm">eprintln!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">e</span><span class="p">)</span>
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="p">}</span>
 </code></pre></div>
-<p><code>sandbox::Policy::build_default(&amp;root)</code> and
-<code>sandbox::Policy::command_default(&amp;cwd)</code> are the two shipped policies as
-constructors, so a program reproduces either consumer's policy without
-reassembling a dozen grants and getting one wrong. <code>sandbox::run</code> blocks
-for the length of the child but does so off the scheduler, so one
-sandboxed build does not hold a worker.</p>
+<p><code>sandbox::Policy::command_default(&amp;cwd)</code> is the shipped policy as a
+constructor, so a program reproduces it without reassembling a dozen
+grants and getting one wrong. <code>sandbox::run</code> blocks for the length of
+the child but does so off the scheduler, so one sandboxed build does not
+hold a worker.</p>
+<p>A policy says what a command may reach. Bounding how long it runs or how
+much memory it takes is the caller's own business: those were policy
+settings once, and two of the three backends could only partly apply
+them, which is a guarantee in name only.</p>
 <h2 id="what-is-not-claimed">What is not claimed<a class="headerlink" href="#what-is-not-claimed" title="Permanent link">&para;</a></h2>
 <p>Not a defense against a kernel local-privilege-escalation exploit. Not
 equivalent to a VM or a hypervisor boundary. Not a defense against a

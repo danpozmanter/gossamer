@@ -185,10 +185,18 @@ fn map_alloc_stats_enabled() -> bool {
     cfg!(test) || *MAP_ALLOC_STATS_ENABLED
 }
 
-#[cfg(all(unix, not(miri)))]
+#[cfg(all(any(unix, windows), not(miri)))]
 static ARMED: std::sync::Once = std::sync::Once::new();
 
-#[cfg(all(unix, not(miri)))]
+// The report runs from the C runtime's exit path. Declaring `atexit`
+// directly rather than through `libc` reaches it on every hosted target,
+// including Windows, where `libc` is a unix-only dependency.
+#[cfg(all(any(unix, windows), not(miri)))]
+unsafe extern "C" {
+    fn atexit(callback: extern "C" fn()) -> std::ffi::c_int;
+}
+
+#[cfg(all(any(unix, windows), not(miri)))]
 extern "C" fn report() {
     if std::env::var("GOS_LEAK_LEDGER").is_ok() {
         eprintln!(
@@ -236,17 +244,16 @@ extern "C" fn report() {
     }
 }
 
-// At-exit auto-print of the ledger is unix-only (`libc::atexit`) and is
-// additionally skipped under Miri, which cannot execute `atexit` (and runs
-// with `-Zmiri-ignore-leaks`, so the report is moot there anyway). On other
-// targets the counters still tally but the report is read via a debugger /
-// explicit query rather than printed at exit. This keeps the Windows build -
-// where `libc` is not a dependency - and the Miri job compiling and running.
+// At-exit auto-print of the ledger covers every target with a C runtime and
+// is skipped under Miri, which cannot execute `atexit` (and runs with
+// `-Zmiri-ignore-leaks`, so the report is moot there anyway). On a target
+// without one - wasm - the counters still tally but the report is read via a
+// debugger / explicit query rather than printed at exit.
 #[inline]
 fn arm() {
-    #[cfg(all(unix, not(miri)))]
+    #[cfg(all(any(unix, windows), not(miri)))]
     ARMED.call_once(|| unsafe {
-        libc::atexit(report);
+        atexit(report);
     });
 }
 

@@ -12,7 +12,7 @@
         <meta name="author" content="Gossamer contributors">
 
 
-        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/libraries/">
+        <link rel="canonical" href="https://gossamer-lang.org/docs/libraries/">
 
 
         <link rel="prev" href="../memory/">
@@ -2404,13 +2404,13 @@ Rust</a>).</p>
 source names its own identity, as a <code>git</code>, <code>path</code>, or <code>tarball</code> entry does -
 by the module name source imports it as:</p>
 <div class="language-toml highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">[dependencies]</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">pgsql_gos</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">git</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;https://github.com/danpozmanter/pgsql-gos&quot;</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">pgsql_gos</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">git</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;https://github.com/gossamer-lang/pgsql-gos&quot;</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
 <p>A package name may carry <code>-</code>, which no identifier may, so its module name is
 the final path segment with each <code>-</code> replaced by <code>_</code>. Every import spelling
 that names that module reaches the package: <code>use pgsql_gos</code>,
 <code>use pgsql_gos::greet</code>, <code>use pgsql_gos::{greet}</code>, <code>use pgsql_gos as pg</code>, and
-<code>use "github.com/danpozmanter/pgsql-gos"</code>. A <code>use pgsql-gos</code> is rejected
+<code>use "github.com/gossamer-lang/pgsql-gos"</code>. A <code>use pgsql-gos</code> is rejected
 (<code>GP0040</code>) - <code>-</code> is subtraction, never part of an identifier - and two
 dependencies reaching source under one module name are rejected (<code>GR0019</code>),
 which an explicit alias or a distinct key resolves.</p>
@@ -2418,7 +2418,7 @@ which an explicit alias or a distinct key resolves.</p>
 <code>branch</code>, or <code>rev</code>, defaulting to <code>main</code>. The resolved reference is written to
 <code>project.lock</code>, so a build repeats the same checkout.</p>
 <div class="language-toml highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">[dependencies]</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">pgsql_gos</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">git</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;https://github.com/danpozmanter/pgsql-gos&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">tag</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;v1.2.3&quot;</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">pgsql_gos</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">git</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;https://github.com/gossamer-lang/pgsql-gos&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">tag</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;v1.2.3&quot;</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
 <p>A <code>version</code> requirement belongs to a registry dependency, which resolves
 within it; writing one beside <code>git</code> is rejected rather than silently ignored.

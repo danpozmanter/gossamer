@@ -12,7 +12,7 @@
         <meta name="author" content="Gossamer contributors">
 
 
-        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/toolchain/">
+        <link rel="canonical" href="https://gossamer-lang.org/docs/toolchain/">
 
 
         <link rel="prev" href="../stdlib_coverage/">
@@ -2671,6 +2671,11 @@ It starts with <code>gos &lt;version&gt; REPL [&lt;architecture&gt;-&lt;os&gt;]<
   <code>%drop</code> also accepts a declared name, removing the declaration that introduced
   it along with the declarations that name it, so <code>%drop f</code> frees <code>f</code> to be
   declared again. <code>%reset</code> (<code>%r</code>) clears bindings and declarations.</li>
+<li>Tab completes the word at the cursor: a keyword, a <code>module::item</code> path,
+  every member a binding reaches after <code>.</code> - the methods its type and
+  mutability can call, a session-declared type's fields, a tuple's positions -
+  and a type's own methods and associated functions after <code>::</code>. What
+  <code>%explain</code> lists for a binding is what completion offers for it.</li>
 <li>Up/down cycles history. Enter continues until braces close. Ctrl-D or
   <code>%quit</code> (<code>%q</code>) exits.</li>
 </ul>

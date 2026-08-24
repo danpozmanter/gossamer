@@ -12,7 +12,7 @@
         <meta name="author" content="Gossamer contributors">
 
 
-        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/language/opaque_nominal_alias/">
+        <link rel="canonical" href="https://gossamer-lang.org/docs/language/opaque_nominal_alias/">
 
 
         <link rel="prev" href="../keyword_arguments/">
@@ -2309,7 +2309,9 @@ directions. The two are one value, so the conversion carries no work:</p>
 </code></pre></div>
 <p>Every other pair needs a conversion written for it. Reaching for
 <code>.into()</code> without one is reported at check time rather than failing when
-the program runs:</p>
+the program runs. So is a call no use site gives a target: the target of
+<code>.into()</code> comes from the annotation, parameter, or return that receives
+it, never from the receiver.</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">s</span>: <span class="nc">Score</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">id</span><span class="p">.</span><span class="n">into</span><span class="p">()</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="c1">// error[GT0066]: no conversion from `UserId` to `Score`</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="c1">//   = help: write `impl From&lt;UserId&gt; for Score`</span>

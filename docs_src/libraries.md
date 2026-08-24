@@ -72,14 +72,14 @@ by the module name source imports it as:
 
 ```toml
 [dependencies]
-pgsql_gos = { git = "https://github.com/danpozmanter/pgsql-gos" }
+pgsql_gos = { git = "https://github.com/gossamer-lang/pgsql-gos" }
 ```
 
 A package name may carry `-`, which no identifier may, so its module name is
 the final path segment with each `-` replaced by `_`. Every import spelling
 that names that module reaches the package: `use pgsql_gos`,
 `use pgsql_gos::greet`, `use pgsql_gos::{greet}`, `use pgsql_gos as pg`, and
-`use "github.com/danpozmanter/pgsql-gos"`. A `use pgsql-gos` is rejected
+`use "github.com/gossamer-lang/pgsql-gos"`. A `use pgsql-gos` is rejected
 (`GP0040`) - `-` is subtraction, never part of an identifier - and two
 dependencies reaching source under one module name are rejected (`GR0019`),
 which an explicit alias or a distinct key resolves.
@@ -90,7 +90,7 @@ A git source is versioned by the reference it is checked out at: `tag`,
 
 ```toml
 [dependencies]
-pgsql_gos = { git = "https://github.com/danpozmanter/pgsql-gos", tag = "v1.2.3" }
+pgsql_gos = { git = "https://github.com/gossamer-lang/pgsql-gos", tag = "v1.2.3" }
 ```
 
 A `version` requirement belongs to a registry dependency, which resolves

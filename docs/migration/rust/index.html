@@ -12,7 +12,7 @@
         <meta name="author" content="Gossamer contributors">
 
 
-        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/migration/rust/">
+        <link rel="canonical" href="https://gossamer-lang.org/docs/migration/rust/">
 
 
         <link rel="prev" href="../../codegen_abi/">
@@ -2625,7 +2625,9 @@ keys when code must run across all tiers.</p>
 operations where the standard library provides integration.</p>
 <h2 id="collections-and-pipelines">Collections And Pipelines<a class="headerlink" href="#collections-and-pipelines" title="Permanent link">&para;</a></h2>
 <p>Rust iterator method chains become <code>std::iter</code> pipelines. Gossamer's
-pipe operator sends the left-hand value to the last argument.</p>
+pipe operator passes the left-hand value into a free function: a bare
+callable takes it as its only argument, and a closure names the slot it
+fills (<code>v</code> below), so a data-first callee reads left to right.</p>
 <div class="language-rust highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">total</span>: <span class="kt">i64</span> <span class="o">=</span><span class="w"> </span><span class="n">xs</span><span class="p">.</span><span class="n">iter</span><span class="p">()</span>
 <a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">    </span><span class="p">.</span><span class="n">filter</span><span class="p">(</span><span class="o">|</span><span class="n">n</span><span class="o">|</span><span class="w"> </span><span class="o">**</span><span class="n">n</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span>
 <a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">    </span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="o">|</span><span class="n">n</span><span class="o">|</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">n</span><span class="p">)</span>

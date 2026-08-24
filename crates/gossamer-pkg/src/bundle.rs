@@ -553,7 +553,7 @@ mod bundle_tests {
         fs::create_dir_all(dep.join("src")).unwrap();
         fs::write(
             dep.join("project.toml"),
-            "[project]\nid = \"github.com/danpozmanter/pgsql-gos\"\nversion = \"0.1.0\"\n",
+            "[project]\nid = \"github.com/gossamer-lang/pgsql-gos\"\nversion = \"0.1.0\"\n",
         )
         .unwrap();
         fs::write(dep.join("src").join("lib.gos"), "pub fn connect() { }\n").unwrap();
@@ -564,13 +564,13 @@ mod bundle_tests {
     fn a_git_dependency_compiles_against_the_tree_vendoring_prepared() {
         let entry = project_with_dependency(
             "vendored",
-            "pgsql_gos = { git = \"https://github.com/danpozmanter/pgsql-gos\", rev = \"cf4da891f2e1a37eade4637ad6455a8d65d4a0b4\" }",
-            "vendor/github.com__danpozmanter__pgsql-gos",
+            "pgsql_gos = { git = \"https://github.com/gossamer-lang/pgsql-gos\", rev = \"cf4da891f2e1a37eade4637ad6455a8d65d4a0b4\" }",
+            "vendor/github.com__gossamer-lang__pgsql-gos",
         );
         let bundled =
             bundle_path_dependencies(&entry, fs::read_to_string(&entry).unwrap(), &mut Vec::new());
         assert!(
-            bundled.contains("#[dependency(\"github.com/danpozmanter/pgsql-gos\")]"),
+            bundled.contains("#[dependency(\"github.com/gossamer-lang/pgsql-gos\")]"),
             "vendored dependency not bundled:\n{bundled}"
         );
         assert!(
@@ -584,7 +584,7 @@ mod bundle_tests {
     fn a_dependency_with_no_prepared_tree_is_left_to_the_fetch_step() {
         let entry = project_with_dependency(
             "unfetched",
-            "pgsql_gos = { git = \"https://github.com/danpozmanter/pgsql-gos\", rev = \"cf4da891f2e1a37eade4637ad6455a8d65d4a0b4\" }",
+            "pgsql_gos = { git = \"https://github.com/gossamer-lang/pgsql-gos\", rev = \"cf4da891f2e1a37eade4637ad6455a8d65d4a0b4\" }",
             "elsewhere",
         );
         let bundled =
