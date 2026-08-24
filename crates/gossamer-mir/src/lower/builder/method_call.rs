@@ -177,6 +177,22 @@ impl<'a> Builder<'a> {
             };
             return self.lower_method_call(&deref, method, args, ty, span);
         }
+        // Some handle methods are the method spelling of a free stdlib
+        // call, and only the free lowering knows how to build what they
+        // need: an env thunk for a closure argument, or the carrier a
+        // `Result` / `Option` return crosses the C-ABI in. `o.call(f)` and
+        // `sync::Once::call(o, f)` name the same call, so the method
+        // spelling routes there with the receiver in the first slot.
+        if let Some(joined) = self.free_form_method_path(receiver, method, args) {
+            let mut ordered = vec![receiver.clone()];
+            ordered.extend(args.iter().cloned());
+            if let Some(local) = self.try_lower_combinator_call(joined, &ordered, ty, span) {
+                return Some(local);
+            }
+            if let Some((rt_name, ret_ty)) = self.lower_errors_regex_free(joined, &ordered) {
+                return self.emit_stdlib_free_call(rt_name, ret_ty, &ordered, span);
+            }
+        }
         // `server.serve(handler)` needs the handler's dispatch address
         // alongside its environment, the same three-argument shape
         // `http::serve(addr, handler)` lowers to. The generic method
@@ -3043,6 +3059,10 @@ impl<'a> Builder<'a> {
             "load" => Some("gos_rt_atomic_i64_load"),
             "store" => Some("gos_rt_atomic_i64_store"),
             "fetch_add" => Some("gos_rt_atomic_i64_fetch_add"),
+            "fetch_sub" => Some("gos_rt_atomic_i64_fetch_sub"),
+            // The AtomicBool receiver is matched by kind above; every other
+            // atomic compares through the i64 storage they all share.
+            "compare_exchange" => Some("gos_rt_atomic_i64_cas"),
             "set_at" => Some("gos_rt_heap_i64_set"),
             "get_at" => Some("gos_rt_heap_i64_get"),
             "vec_len" => Some("gos_rt_heap_i64_len"),
@@ -3055,6 +3075,10 @@ impl<'a> Builder<'a> {
             // i64-stride helper to a u8 buffer, corrupting
             // adjacent bytes.
             "set_byte" => Some("gos_rt_heap_u8_set"),
+            "window_key" => Some("gos_rt_heap_u8_window_key"),
+            "count_singles" => Some("gos_rt_heap_u8_count_singles"),
+            "count_pairs" => Some("gos_rt_heap_u8_count_pairs"),
+            "count_kmers" => Some("gos_rt_heap_u8_count_kmers"),
             "get_byte" => Some("gos_rt_heap_u8_get"),
             "byte_len" => Some("gos_rt_heap_u8_len"),
             "write_byte_range_to_stdout" => Some("gos_rt_heap_u8_write_bytes_to_stdout"),
@@ -3503,6 +3527,7 @@ impl<'a> Builder<'a> {
             // table below keeps AtomicI64 on the i64 path.
             (Some("sync::AtomicBool"), "load") => Some("gos_rt_atomic_bool_load"),
             (Some("sync::AtomicBool"), "store") => Some("gos_rt_atomic_bool_store"),
+            (Some("sync::AtomicBool"), "compare_exchange") => Some("gos_rt_atomic_bool_cas"),
             (Some("context::Context"), "is_cancelled") => Some("gos_rt_ctx_is_cancelled"),
             (Some("context::Context"), "cancel") => Some("gos_rt_ctx_cancel"),
             (Some("context::Context"), "done") => Some("gos_rt_ctx_done"),
@@ -3598,6 +3623,9 @@ impl<'a> Builder<'a> {
             (Some("sandbox::Policy"), "read_only") => Some("gos_rt_sandbox_policy_read_only"),
             (Some("sandbox::Policy"), "deny") => Some("gos_rt_sandbox_policy_deny"),
             (Some("sandbox::Policy"), "env_allow") => Some("gos_rt_sandbox_policy_env_allow"),
+            (Some("sandbox::Policy"), "env_allow_all") => {
+                Some("gos_rt_sandbox_policy_env_allow_all")
+            }
             (Some("sandbox::Policy"), "env_set") => Some("gos_rt_sandbox_policy_env_set"),
             (Some("sandbox::Policy"), "level") => Some("gos_rt_sandbox_policy_level"),
             (Some("sandbox::Policy"), "working_directory") => {
@@ -4098,6 +4126,7 @@ impl<'a> Builder<'a> {
             | "gos_rt_sandbox_policy_read_only"
             | "gos_rt_sandbox_policy_deny"
             | "gos_rt_sandbox_policy_env_allow"
+            | "gos_rt_sandbox_policy_env_allow_all"
             | "gos_rt_sandbox_policy_env_set"
             | "gos_rt_sandbox_policy_level"
             | "gos_rt_sandbox_policy_working_directory"
@@ -4298,6 +4327,8 @@ impl<'a> Builder<'a> {
             "gos_rt_validate_errors_is_empty"
             | "gos_rt_ctx_is_cancelled"
             | "gos_rt_atomic_bool_load"
+            | "gos_rt_atomic_bool_cas"
+            | "gos_rt_atomic_i64_cas"
             | "gos_rt_wg_wait_ctx"
             | "gos_rt_ctx_done" => self.tcx.bool_ty(),
             "gos_rt_ctx_cancelled" => {
@@ -4431,6 +4462,7 @@ impl<'a> Builder<'a> {
             | "gos_rt_sandbox_policy_read_only"
             | "gos_rt_sandbox_policy_deny"
             | "gos_rt_sandbox_policy_env_allow"
+            | "gos_rt_sandbox_policy_env_allow_all"
             | "gos_rt_sandbox_policy_env_set"
             | "gos_rt_sandbox_policy_level"
             | "gos_rt_sandbox_policy_working_directory"
@@ -4773,6 +4805,7 @@ impl<'a> Builder<'a> {
             (Some("sync::Shared"), "set") => Some("gos_rt_shared_set"),
             (Some("sync::AtomicBool"), "load") => Some("gos_rt_atomic_bool_load"),
             (Some("sync::AtomicBool"), "store") => Some("gos_rt_atomic_bool_store"),
+            (Some("sync::AtomicBool"), "compare_exchange") => Some("gos_rt_atomic_bool_cas"),
             (Some("context::Context"), "is_cancelled") => Some("gos_rt_ctx_is_cancelled"),
             (Some("context::Context"), "cancel") => Some("gos_rt_ctx_cancel"),
             (Some("context::Context"), "done") => Some("gos_rt_ctx_done"),
@@ -5952,6 +5985,37 @@ impl<'a> Builder<'a> {
         match self.try_lower_combinator_call(joined, &reordered, ty, span) {
             Some(dest) => MethodLowering::Handled(Some(dest)),
             None => MethodLowering::Pass,
+        }
+    }
+
+    /// Free-function path a handle method stands for, or `None` when the
+    /// method is not one. Keyed on the receiver's runtime kind so a user
+    /// type that happens to declare `call` or `captures` is untouched.
+    fn free_form_method_path(
+        &mut self,
+        receiver: &HirExpr,
+        method: &Ident,
+        args: &[HirExpr],
+    ) -> Option<&'static str> {
+        if args.len() != 1 {
+            return None;
+        }
+        // A handle whose constructor took no argument leaves the checker
+        // nothing to pin its type to, so the construction tag recorded on
+        // the receiver's local answers where the type cannot.
+        let kind = self.runtime_kind_from_ty(receiver.ty).or_else(|| {
+            self.receiver_local_from_path(receiver)
+                .and_then(|local| self.local_runtime_kind.get(&local).copied())
+        });
+        match (kind, method.name.as_str()) {
+            (Some("sync::Once"), "call") => Some("sync::Once::call"),
+            (Some("sync::RwLock"), "with_read") => Some("sync::RwLock::with_read"),
+            (Some("sync::RwLock"), "with_write") => Some("sync::RwLock::with_write"),
+            (Some("sync::Shared"), "with") => Some("sync::Shared::with"),
+            (Some("sync::Shared"), "update") => Some("sync::Shared::update"),
+            (Some("regex::Pattern"), "captures") => Some("regex::captures"),
+            (Some("regex::Pattern"), "captures_all") => Some("regex::captures_all"),
+            _ => None,
         }
     }
 

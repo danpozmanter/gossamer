@@ -109,7 +109,13 @@ Write clear, low-complexity, concise code.
   Let-chains: `if let Some(x) = a && let Some(y) = b && x > 0 { .. }`
   (`&&`-only; earlier binds visible later).
 - **Tuple destructuring everywhere**: `let (a, b) = pair`, `for (k, v)
-  in m.iter()`, `let (tx, rx) = channel()`.
+  in m.iter()`, `let (tx, rx) = channel()`. A tuple on the left of `=`
+  destructures for mutation too: `(a, b) = (b, a)` swaps with no
+  temporary, since the right side is evaluated before the first write.
+  Each element must be a writable place (a binding, field, index, tuple
+  position, or dereference) or `_` to discard it; elements nest, and
+  only plain `=` destructures - `(a, b) += ..` reports GT0078, as does
+  any target naming no place (`5 = 1`).
 - **`for x in xs`** over collections - no `.iter()`, no `*x`.
   Bare `String` iteration yields Unicode `char` values; use `.bytes()`
   for UTF-8 bytes; `s.chars()` is a cursor, so `.collect()` materialises it. An omitted range start begins at zero (`..3` yields

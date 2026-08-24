@@ -276,3 +276,132 @@ pub unsafe extern "C" fn gos_rt_heap_u8_write_bytes_to_stdout(
         unsafe { *len_ptr = cur };
     });
 }
+
+// ---------------------------------------------------------------
+// Small-alphabet scans (`window_key`, `count_singles`,
+// `count_pairs`, `count_kmers`)
+// ---------------------------------------------------------------
+//
+// The compiled mirrors of the VM's `U8Vec` scan builtins. Each is a
+// single C-side loop over the byte buffer, replacing the per-byte
+// bytecode loop user code would otherwise write. The buffer holds
+// 2-bit alphabet codes, so a window packs into an `i64` key by
+// `(key << 2) | byte`.
+
+/// Bytes read from a `U8Vec`, clamped to the buffer's own length.
+unsafe fn u8_slice<'a>(v: *const GosU8Vec, limit: i64) -> &'a [u8] {
+    if v.is_null() || limit <= 0 {
+        return &[];
+    }
+    let v = unsafe { &*v };
+    if v.data.is_null() || v.len <= 0 {
+        return &[];
+    }
+    let len = usize::try_from(v.len.min(limit)).unwrap_or(0);
+    unsafe { std::slice::from_raw_parts(v.data, len) }
+}
+
+/// Pack the `k` bytes starting at `index` into one 2-bit-per-byte key.
+/// A window running past the end zero-extends, matching the by-byte
+/// loop it replaces.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_heap_u8_window_key(v: *const GosU8Vec, index: i64, k: i64) -> i64 {
+    ffi_entry!(0, {
+        if v.is_null() || index < 0 || k <= 0 {
+            return 0;
+        }
+        let v_ref = unsafe { &*v };
+        if v_ref.data.is_null() {
+            return 0;
+        }
+        let len = usize::try_from(v_ref.len.max(0)).unwrap_or(0);
+        let start = usize::try_from(index).unwrap_or(usize::MAX).min(len);
+        let want = usize::try_from(k).unwrap_or(0);
+        let stop = start.saturating_add(want).min(len);
+        let mut key: i64 = 0;
+        for offset in start..stop {
+            let byte = unsafe { *v_ref.data.add(offset) };
+            key = (key << 2) | i64::from(byte);
+        }
+        for _ in 0..(start.saturating_add(want).saturating_sub(stop)) {
+            key <<= 2;
+        }
+        key
+    })
+}
+
+/// Frequency of each of the four single-byte codes, as a `Vec<i64>`
+/// of length 4 indexed by the code.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_heap_u8_count_singles(
+    v: *const GosU8Vec,
+    length: i64,
+) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe { gos_rt_vec_new(8) };
+        let mut counts = [0i64; 4];
+        for &byte in unsafe { u8_slice(v, length) } {
+            if (byte as usize) < counts.len() {
+                counts[byte as usize] += 1;
+            }
+        }
+        for count in counts {
+            let bytes = count.to_ne_bytes();
+            unsafe { gos_rt_vec_push(out, bytes.as_ptr()) };
+        }
+        out
+    })
+}
+
+/// Frequency of each adjacent byte pair, as a `Vec<i64>` of length 16
+/// indexed by `(first << 2) | second`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_heap_u8_count_pairs(
+    v: *const GosU8Vec,
+    length: i64,
+) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe { gos_rt_vec_new(8) };
+        let mut counts = [0i64; 16];
+        let bytes = unsafe { u8_slice(v, length) };
+        for window in bytes.windows(2) {
+            let key = ((window[0] as usize) << 2) | (window[1] as usize);
+            if key < counts.len() {
+                counts[key] += 1;
+            }
+        }
+        for count in counts {
+            let raw = count.to_ne_bytes();
+            unsafe { gos_rt_vec_push(out, raw.as_ptr()) };
+        }
+        out
+    })
+}
+
+/// Sliding-window k-mer frequencies, as a `Map<i64, i64>` from the
+/// packed window key to its count.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_heap_u8_count_kmers(
+    v: *const GosU8Vec,
+    length: i64,
+    k: i64,
+) -> *mut GosMap {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe { gos_rt_map_new(8, 8) };
+        let bytes = unsafe { u8_slice(v, length) };
+        let Ok(width) = usize::try_from(k) else {
+            return out;
+        };
+        if width == 0 || width > bytes.len() {
+            return out;
+        }
+        for window in bytes.windows(width) {
+            let mut key: i64 = 0;
+            for &byte in window {
+                key = (key << 2) | i64::from(byte);
+            }
+            unsafe { gos_rt_map_inc_i64(out, key, 1) };
+        }
+        out
+    })
+}

@@ -559,6 +559,7 @@ pub(super) fn lower_generic_rt_call(
         | "gos_rt_sandbox_process_isolation_kind"
         | "gos_rt_sandbox_process_isolation_reason" => (&[], Some(ptr_ty)),
         "gos_rt_sandbox_env_never_passed" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_sandbox_policy_env_allow_all" => (&[types::I64, ptr_ty], Some(types::I64)),
         "gos_rt_sandbox_expand" | "gos_rt_sandbox_prefix_of" | "gos_rt_sandbox_resolve_on_path" => {
             (&[ptr_ty], Some(types::I128))
         }

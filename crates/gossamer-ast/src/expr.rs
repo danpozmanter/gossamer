@@ -27,6 +27,33 @@ impl Expr {
     pub fn new(id: NodeId, span: Span, kind: ExprKind) -> Self {
         Self { id, span, kind }
     }
+
+    /// Whether this expression is the `_` wildcard, which names no binding
+    /// and is written for a destructuring-assignment element to discard.
+    #[must_use]
+    pub fn is_wildcard(&self) -> bool {
+        matches!(&self.kind, ExprKind::Path(path)
+            if path.segments.len() == 1
+                && path.segments[0].generics.is_empty()
+                && path.segments[0].name.name == "_")
+    }
+
+    /// Whether this expression names a place an assignment can write
+    /// through: a binding or item path, a field, an index, or a
+    /// dereference. Every other expression answers a temporary.
+    #[must_use]
+    pub fn is_place(&self) -> bool {
+        matches!(
+            &self.kind,
+            ExprKind::Path(_)
+                | ExprKind::FieldAccess { .. }
+                | ExprKind::Index { .. }
+                | ExprKind::Unary {
+                    op: UnaryOp::Deref,
+                    ..
+                }
+        )
+    }
 }
 
 impl PartialEq for Expr {

@@ -153,6 +153,24 @@ and continue. The REPL prints open ranges without
 realising them, such as `10..` or `..10`. Because `..=` is inclusive, it
 always requires an upper bound; `10..=` is a parse error.
 
+## Destructuring assignment
+
+A tuple on the left of `=` writes each element to its own target. The
+right-hand side is evaluated before the first write, so a swap needs no
+temporary:
+
+```gossamer
+let mut a = 1
+let mut b = 2
+(a, b) = (b, a)
+(p.x, xs[1]) = (5, 6)
+(_, kept) = (99, 42)
+```
+
+Each target must be a writable place - a binding, a field, an index, a tuple
+position, or a dereference - or `_` to discard the element. Targets nest, and
+only plain `=` destructures.
+
 ## Forward pipe (`|>`)
 
 The forward-pipe operator composes free functions, which have no

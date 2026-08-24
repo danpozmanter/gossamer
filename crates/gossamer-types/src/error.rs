@@ -823,6 +823,22 @@ pub enum TypeError {
         /// Name of the immutable root binding.
         name: String,
     },
+    /// A compound assignment (`+=`, `*=`, ...) was written against a tuple.
+    /// A tuple on the left destructures the right-hand side, which only
+    /// plain `=` does.
+    #[error("cannot apply `{op}` to a destructuring assignment")]
+    CompoundDestructuringAssign {
+        /// The compound operator as written.
+        op: String,
+    },
+    /// An assignment targets an expression that names no place: a
+    /// literal, a call result, or another temporary. Only a binding, a
+    /// field, an index, or a dereference is writable.
+    #[error("cannot assign to `{target}`")]
+    InvalidAssignTarget {
+        /// Rendering of the offending target expression.
+        target: String,
+    },
     /// An assignment targets a place reached through a shared `&T`
     /// reference. The reference binding's own `mut` qualifier cannot make
     /// its referent writable.
@@ -994,6 +1010,8 @@ impl TypeError {
             Self::CombinatorDataArgMismatch { .. } => "combinator-data-arg-mismatch",
             Self::AssignToImmutable { .. } => "assign-to-immutable",
             Self::AssignThroughSharedReference { .. } => "assign-through-shared-reference",
+            Self::InvalidAssignTarget { .. } => "invalid-assign-target",
+            Self::CompoundDestructuringAssign { .. } => "compound-destructuring-assign",
             Self::MutableReferenceToImmutable { .. } => "mutable-reference-to-immutable",
             Self::MutableReferenceConflict { .. } => "mutable-reference-conflict",
             Self::ReferenceEscapeUnsupported { .. } => "reference-escape-unsupported",
@@ -1092,6 +1110,7 @@ impl TypeError {
             Self::CombinatorDataArgMismatch { .. } => "GT0029",
             Self::AssignToImmutable { .. } => "GT0030",
             Self::AssignThroughSharedReference { .. } => "GT0031",
+            Self::InvalidAssignTarget { .. } | Self::CompoundDestructuringAssign { .. } => "GT0078",
             Self::MutableReferenceToImmutable { .. } => "GT0032",
             Self::MutableReferenceConflict { .. } => "GT0043",
             Self::ReferenceEscapeUnsupported { .. } => "GT0052",
@@ -1854,6 +1873,29 @@ impl TypeDiagnostic {
                     ))
                     .with_note(
                         "bindings are immutable by default; only a `mut` place can be assigned",
+                    );
+            }
+            TypeError::CompoundDestructuringAssign { op } => {
+                let scalar = op.trim_end_matches('=');
+                out = out
+                    .with_help(format!(
+                        "write each element on its own: `a {op} ..` and `b {op} ..`, or \
+                         `(a, b) = (a {scalar} .., b {scalar} ..)`"
+                    ))
+                    .with_note(
+                        "a tuple on the left destructures the right-hand side, which only \
+                         plain `=` does",
+                    );
+            }
+            TypeError::InvalidAssignTarget { target } => {
+                out = out
+                    .with_help(format!(
+                        "bind the value instead: `let value = {target}`, or assign to a \
+                         binding, field, index, or dereference"
+                    ))
+                    .with_note(
+                        "an assignment writes through a place; a literal, a call result, and \
+                         any other temporary name none",
                     );
             }
             TypeError::AssignThroughSharedReference { name } => {

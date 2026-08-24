@@ -1195,6 +1195,15 @@ pub const REGISTRY: &[(&str, &str)] = &[
             channel instead, or keep a `Shared` per scalar field.",
     ),
     (
+        "GT0078",
+        "An assignment targets an expression that names no place. Only a\n\
+            binding, a field, an index, or a dereference is writable - a\n\
+            literal, a call result, and any other temporary name nothing to\n\
+            write through. A destructuring assignment applies the same rule\n\
+            to every element of its tuple; write `_` for an element to\n\
+            discard.",
+    ),
+    (
         "GX0001",
         "An operation received a value of an incompatible type. The\n\
                      diagnostic names the type that was required and the type\n\

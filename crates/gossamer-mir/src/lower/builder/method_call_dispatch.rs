@@ -969,6 +969,30 @@ impl<'a> Builder<'a> {
             | "gos_rt_testing_check_eq_i64"
             | "gos_rt_str_is_empty"
             | "gos_rt_len_is_zero" => self.tcx.bool_ty(),
+            // `p.captures(text)` answers `Option<Vec<Option<String>>>` and
+            // `p.captures_all(text)` a `Vec` of those rows - the same shapes
+            // the free `regex::captures` / `regex::captures_all` build.
+            "gos_rt_regex_captures" => self.option_vec_option_string_ty(),
+            "gos_rt_regex_captures_all" => {
+                let opt_s = self.option_string_ty();
+                let row = self.tcx.intern(gossamer_types::TyKind::Vec(opt_s));
+                self.tcx.intern(gossamer_types::TyKind::Vec(row))
+            }
+            // The small-alphabet scans answer flat i64 tallies: a 4- or
+            // 16-slot `Vec<i64>` indexed by the code, and a `Map<i64, i64>`
+            // from packed k-mer key to count.
+            "gos_rt_heap_u8_count_singles" | "gos_rt_heap_u8_count_pairs" => {
+                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                self.tcx.intern(gossamer_types::TyKind::Vec(i))
+            }
+            "gos_rt_heap_u8_count_kmers" => {
+                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                self.tcx.intern(gossamer_types::TyKind::HashMap {
+                    key: i,
+                    value: i,
+                    ordered: false,
+                })
+            }
             "gos_rt_json_get" | "gos_rt_json_at" | "gos_rt_json_parse" => self.tcx.json_value_ty(),
             "gos_rt_error_cause" => self.option_adt_ty(),
             "gos_rt_error_chain" => {
@@ -999,6 +1023,7 @@ impl<'a> Builder<'a> {
             | "gos_rt_sandbox_policy_read_only"
             | "gos_rt_sandbox_policy_deny"
             | "gos_rt_sandbox_policy_env_allow"
+            | "gos_rt_sandbox_policy_env_allow_all"
             | "gos_rt_sandbox_policy_env_set"
             | "gos_rt_sandbox_policy_level"
             | "gos_rt_sandbox_policy_working_directory"
@@ -1116,6 +1141,7 @@ impl<'a> Builder<'a> {
             | "gos_rt_sandbox_policy_read_only"
             | "gos_rt_sandbox_policy_deny"
             | "gos_rt_sandbox_policy_env_allow"
+            | "gos_rt_sandbox_policy_env_allow_all"
             | "gos_rt_sandbox_policy_env_set"
             | "gos_rt_sandbox_policy_level"
             | "gos_rt_sandbox_policy_working_directory"

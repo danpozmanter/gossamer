@@ -175,7 +175,7 @@ pub const SANDBOX: StdModule = StdModule {
         StdItem {
             name: "Policy",
             kind: StdItemKind::Type,
-            doc: "What a command may reach. Built with read_write / read_only / deny / read_only_cwd / network_mode / for_fetch_phase / env_allow / env_set / temp / level / working_directory, each answering the policy as it now stands; an explicit allow outranks a deny of the same path, and a deny beneath a grant wins by being the more specific rule. A policy says what a command may reach, never how long it may take. Read back with check / mechanisms / to_json / access / read_write_grants / read_only_grants / denials / environment_names / environment_value / level_name / network_name / working_directory_path / level_blocker, and asked what this host will actually honor with network_enforcement_kind / network_enforcement_reason.",
+            doc: "What a command may reach. Built with read_write / read_only / deny / read_only_cwd / network_mode / for_fetch_phase / env_allow / env_allow_all / env_set / temp / level / working_directory, each answering the policy as it now stands; an explicit allow outranks a deny of the same path, and a deny beneath a grant wins by being the more specific rule. A policy says what a command may reach, never how long it may take. Read back with check / mechanisms / to_json / access / read_write_grants / read_only_grants / denials / environment_names / environment_value / level_name / network_name / working_directory_path / level_blocker, and asked what this host will actually honor with network_enforcement_kind / network_enforcement_reason.",
         },
         StdItem {
             name: "run",

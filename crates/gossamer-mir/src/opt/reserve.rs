@@ -80,7 +80,12 @@ fn block_dominates(body: &Body, gate: BlockId, target: BlockId) -> bool {
     true
 }
 
-fn counted_push_loop_bound(body: &Body, start: BlockId, vec_local: Local) -> Option<Operand> {
+fn counted_push_loop_bound(
+    body: &Body,
+    allocation: BlockId,
+    start: BlockId,
+    vec_local: Local,
+) -> Option<Operand> {
     let mut seen = HashSet::new();
     let mut work = VecDeque::from([(start, 0usize)]);
     while let Some((bid, depth)) = work.pop_front() {
@@ -89,6 +94,7 @@ fn counted_push_loop_bound(body: &Body, start: BlockId, vec_local: Local) -> Opt
         }
         let block = body.blocks.get(bid.0 as usize)?;
         if let Some((body_entry, bound)) = counted_loop_body_and_bound(block)
+            && allocation_precedes_loop(body, allocation, bid)
             && loop_body_has_exactly_one_vec_push(body, body_entry, bid, vec_local)
         {
             return Some(bound);
@@ -100,7 +106,12 @@ fn counted_push_loop_bound(body: &Body, start: BlockId, vec_local: Local) -> Opt
     None
 }
 
-fn counted_insert_loop_bound(body: &Body, start: BlockId, map_local: Local) -> Option<Operand> {
+fn counted_insert_loop_bound(
+    body: &Body,
+    allocation: BlockId,
+    start: BlockId,
+    map_local: Local,
+) -> Option<Operand> {
     let mut seen = HashSet::new();
     let mut work = VecDeque::from([(start, 0usize)]);
     while let Some((bid, depth)) = work.pop_front() {
@@ -109,6 +120,7 @@ fn counted_insert_loop_bound(body: &Body, start: BlockId, map_local: Local) -> O
         }
         let block = body.blocks.get(bid.0 as usize)?;
         if let Some((body_entry, bound)) = counted_loop_body_and_bound(block)
+            && allocation_precedes_loop(body, allocation, bid)
             && loop_body_has_exactly_one_map_insert(body, body_entry, bid, map_local)
         {
             return Some(bound);
@@ -118,6 +130,15 @@ fn counted_insert_loop_bound(body: &Body, start: BlockId, map_local: Local) -> O
         }
     }
     None
+}
+
+/// Whether the container is built once, ahead of the loop that fills it.
+/// The reserve reasons about the whole loop, so it is only a capacity when
+/// the allocation runs before the loop head - an allocation the loop body
+/// itself performs runs once per iteration, and reserving the trip count
+/// there sizes every one of those containers for the entire loop.
+fn allocation_precedes_loop(body: &Body, allocation: BlockId, loop_head: BlockId) -> bool {
+    block_dominates(body, allocation, loop_head)
 }
 
 fn counted_loop_body_and_bound(block: &BasicBlock) -> Option<(BlockId, Operand)> {

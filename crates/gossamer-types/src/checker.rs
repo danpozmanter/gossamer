@@ -7211,6 +7211,10 @@ impl<'a> TypeChecker<'a> {
             // Builders: each answers the policy as it now stands.
             "read_write" | "read_only" | "deny" | "working_directory" | "temp" | "network_mode"
             | "level" | "env_allow" => (vec![string], policy),
+            // One edit for a whole list: each builder call copies the
+            // policy, so allow-listing an inherited environment one name at
+            // a time copies a growing policy once per variable.
+            "env_allow_all" => (vec![strings], policy),
             "env_set" => (vec![string, string], policy),
             "for_fetch_phase" | "read_only_cwd" => (vec![], policy),
             // Readers.
@@ -13568,6 +13572,29 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Names an invalid assignment target in its diagnostic: the literal as
+    /// written where the expression is one, and the expression's category
+    /// otherwise.
+    fn assign_target_display(target: &Expr) -> String {
+        match &target.kind {
+            ExprKind::Literal(
+                gossamer_ast::Literal::Int(text) | gossamer_ast::Literal::Float(text),
+            ) => text.clone(),
+            ExprKind::Literal(gossamer_ast::Literal::Bool(value)) => value.to_string(),
+            ExprKind::Literal(gossamer_ast::Literal::String(text)) => format!("{text:?}"),
+            ExprKind::Literal(gossamer_ast::Literal::Char(value)) => format!("'{value}'"),
+            ExprKind::Call { .. } => "a call result".to_string(),
+            ExprKind::MethodCall { .. } => "a method result".to_string(),
+            ExprKind::Binary { .. } | ExprKind::Unary { .. } => "an operator result".to_string(),
+            ExprKind::Array(_) | ExprKind::FixedArray(_) => "a sequence literal".to_string(),
+            ExprKind::MapLiteral(_) => "a map literal".to_string(),
+            ExprKind::SetLiteral(_) => "a set literal".to_string(),
+            ExprKind::Struct { .. } => "a struct literal".to_string(),
+            ExprKind::Range { .. } => "a range".to_string(),
+            _ => "this expression".to_string(),
+        }
+    }
+
     fn place_display(place: &Expr) -> String {
         match &place.kind {
             ExprKind::Path(path) => path
@@ -13629,11 +13656,9 @@ impl<'a> TypeChecker<'a> {
         value_ty
     }
 
-    fn check_assign(&mut self, place: &Expr, value: &Expr, op: gossamer_ast::AssignOp) -> Ty {
-        let previous_suppression = self.suppressed.borrow_read_conflict;
-        self.suppressed.borrow_read_conflict = true;
-        let place_ty = self.check_expr(place);
-        self.suppressed.borrow_read_conflict = previous_suppression;
+    /// Reports a place that cannot be written: one borrowed elsewhere, one
+    /// rooted at an immutable binding, or one reached through a shared `&T`.
+    fn check_place_writable(&mut self, place: &Expr) {
         let name = Self::place_root_name(place).unwrap_or_else(|| "value".to_string());
         if let Some(borrower) = self
             .active_mutable_borrower(&name)
@@ -13658,6 +13683,83 @@ impl<'a> TypeChecker<'a> {
             }
             PlaceMut::Writable | PlaceMut::Unknown => {}
         }
+    }
+
+    /// Types one destructuring-assignment target. A tuple recurses
+    /// element-wise, `_` discards its element and answers a fresh variable,
+    /// and every other element must name a writable place.
+    fn check_assign_target(&mut self, target: &Expr) -> Ty {
+        if let ExprKind::Tuple(elems) = &target.kind {
+            let tys: Vec<Ty> = elems
+                .iter()
+                .map(|elem| self.check_assign_target(elem))
+                .collect();
+            let ty = self.tcx.intern(TyKind::Tuple(tys));
+            self.record(target.id, ty);
+            return ty;
+        }
+        if target.is_wildcard() {
+            let ty = self.fresh();
+            self.record(target.id, ty);
+            return ty;
+        }
+        if !target.is_place() {
+            self.emit(
+                TypeError::InvalidAssignTarget {
+                    target: Self::assign_target_display(target),
+                },
+                target.span,
+            );
+            return self.tcx.error_ty();
+        }
+        let previous_suppression = self.suppressed.borrow_read_conflict;
+        self.suppressed.borrow_read_conflict = true;
+        let ty = self.check_expr(target);
+        self.suppressed.borrow_read_conflict = previous_suppression;
+        self.check_place_writable(target);
+        ty
+    }
+
+    /// Type-checks `(a, b.c, xs[i]) = rhs`, whose targets are the elements of
+    /// the left-hand tuple. The tuple of element types is the expectation the
+    /// right-hand side is checked against, so a literal there is shaped by
+    /// the destination exactly as in a scalar assignment.
+    fn check_destructuring_assign(&mut self, place: &Expr, value: &Expr) -> Ty {
+        let place_ty = self.check_assign_target(place);
+        let value_ty = self.check_expr_expecting(value, Expectation::HasType(place_ty));
+        self.unify(place_ty, value_ty, value.span);
+        self.tcx.unit()
+    }
+
+    fn check_assign(&mut self, place: &Expr, value: &Expr, op: gossamer_ast::AssignOp) -> Ty {
+        if matches!(place.kind, ExprKind::Tuple(_)) {
+            if matches!(op, gossamer_ast::AssignOp::Assign) {
+                return self.check_destructuring_assign(place, value);
+            }
+            self.emit(
+                TypeError::CompoundDestructuringAssign {
+                    op: op.as_str().to_string(),
+                },
+                place.span,
+            );
+            let _ = self.check_expr(value);
+            return self.tcx.unit();
+        }
+        if !place.is_place() {
+            self.emit(
+                TypeError::InvalidAssignTarget {
+                    target: Self::assign_target_display(place),
+                },
+                place.span,
+            );
+            let _ = self.check_expr(value);
+            return self.tcx.unit();
+        }
+        let previous_suppression = self.suppressed.borrow_read_conflict;
+        self.suppressed.borrow_read_conflict = true;
+        let place_ty = self.check_expr(place);
+        self.suppressed.borrow_read_conflict = previous_suppression;
+        self.check_place_writable(place);
         let place_resolved = self.infer.resolve(self.tcx, place_ty);
         let place_is_reference = matches!(self.tcx.kind(place_resolved), Some(TyKind::Ref { .. }));
         // A reference binding must be rebound with another reference. Do not

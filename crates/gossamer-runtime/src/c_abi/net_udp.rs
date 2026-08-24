@@ -49,6 +49,12 @@ fn udp_err(msg: &str) -> i128 {
     super::vec::gos_rt_result_new(1, err as i64)
 }
 
+/// The text a datagram failure reads as, matching the interp tier's
+/// `IoError` rendering so one failure reads the same on every tier.
+fn socket_error(err: &std::io::Error, context: &str) -> String {
+    crate::c_abi::fs::classify_io_error(err, context)
+}
+
 fn socket_clone(h: i64) -> Option<Arc<UdpSocket>> {
     UDP_SOCKETS.lock().as_ref().and_then(|m| m.get(&h).cloned())
 }
@@ -67,7 +73,7 @@ pub unsafe extern "C" fn gos_rt_udp_bind(addr: *const c_char) -> i128 {
                     .insert(h, Arc::new(s));
                 super::vec::gos_rt_result_new(0, h)
             }
-            Err(e) => udp_err(&format!("{e}")),
+            Err(e) => udp_err(&socket_error(&e, &a)),
         }
     })
 }
@@ -89,7 +95,7 @@ pub unsafe extern "C" fn gos_rt_udp_send_to(
         let target = cstr_to_str(addr);
         match sock.send_to(&bytes, &target) {
             Ok(n) => super::vec::gos_rt_result_new(0, n as i64),
-            Err(e) => udp_err(&format!("{e}")),
+            Err(e) => udp_err(&socket_error(&e, &target)),
         }
     })
 }
@@ -125,7 +131,7 @@ pub unsafe extern "C" fn gos_rt_udp_recv_from(h: i64, max: i64) -> i128 {
                 }));
                 super::vec::gos_rt_result_new(0, pair as i64)
             }
-            Ok(Err(e)) => udp_err(&format!("{e}")),
+            Ok(Err(e)) => udp_err(&socket_error(&e, "UdpSocket::recv_from")),
             Err(e) => udp_err(&e),
         }
     })
@@ -143,7 +149,7 @@ pub unsafe extern "C" fn gos_rt_udp_local_addr(h: i64) -> i128 {
                 0,
                 super::string::alloc_cstring(a.to_string().as_bytes()) as i64,
             ),
-            Err(e) => udp_err(&format!("{e}")),
+            Err(e) => udp_err(&socket_error(&e, "local_addr")),
         }
     })
 }

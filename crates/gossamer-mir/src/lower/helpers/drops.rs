@@ -1933,7 +1933,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             // The RHS temp keeps its own cleanup (ctor-free / scope
             // release) and the aggregate's field-death free owns the
             // new share, so each reference is freed exactly once.
-            if let StatementKind::Assign { place, .. } = &stmt.kind
+            if let StatementKind::Assign { place, rvalue } = &stmt.kind
                 && !place.projection.is_empty()
                 && place
                     .projection
@@ -1944,6 +1944,18 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                         .iter()
                         .any(|(l, _)| *l == place.local.0 as usize))
             {
+                // A source whose single consuming read is this store hands
+                // its own reference to the field: the retain that would mint
+                // a second one is dropped for the same reason the whole-local
+                // move drops it, and the field's death frees the one share
+                // that arrived.
+                let source_moved = matches!(
+                    rvalue,
+                    Rvalue::Use(Operand::Copy(src))
+                        if src.projection.is_empty()
+                            && (src.local.0 as usize) < moved.len()
+                            && moved[src.local.0 as usize]
+                );
                 let path: Vec<u32> = place
                     .projection
                     .iter()
@@ -1960,7 +1972,9 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     .map(|(p, k)| (p.clone(), *k))
                 {
                     field_gaps[bi][si].push((false, place.local, path.clone(), kind));
-                    field_gaps[bi][si + 1].push((true, place.local, path, kind));
+                    if !source_moved {
+                        field_gaps[bi][si + 1].push((true, place.local, path, kind));
+                    }
                 }
             }
             if let StatementKind::Assign { place, rvalue } = &stmt.kind
@@ -4259,6 +4273,23 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 {
                     aliased[p.local.0 as usize] = true;
                 }
+                // `gos_store(slot, offset, value)` writes `value` into a heap
+                // slot - a closure environment is built this way, and the
+                // closure reads the container through that slot for as long
+                // as it lives. The slot is a second holder the frame cannot
+                // see, so the per-iteration reuse free must not reclaim what
+                // it points at.
+                if let StatementKind::Assign {
+                    rvalue: Rvalue::CallIntrinsic { name, args },
+                    ..
+                } = &stmt.kind
+                    && *name == "gos_store"
+                    && let Some(Operand::Copy(p)) = args.get(2)
+                    && p.projection.is_empty()
+                    && (p.local.0 as usize) < aliased.len()
+                {
+                    aliased[p.local.0 as usize] = true;
+                }
             }
             if let Terminator::Call {
                 callee: Operand::Const(ConstValue::Str(name)),
@@ -4401,7 +4432,22 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 }
                 Terminator::Call { callee, args, .. } => {
                     bump_op_read(&mut consume_reads, callee);
-                    for op in args {
+                    // An in-place append writes through the container it is
+                    // handed; it takes no share of it and keeps no pointer to
+                    // it, so it does not stand between the container and the
+                    // local a later move hands it to. Counting it would leave
+                    // `let v = #[a, b]` inside a loop non-transferable, and
+                    // the outer binding it is moved into would leak every
+                    // prior buffer.
+                    let in_place_container = matches!(
+                        callee,
+                        Operand::Const(ConstValue::Str(name))
+                            if appends_through_container(name.as_str())
+                    );
+                    for (idx, op) in args.iter().enumerate() {
+                        if in_place_container && idx == 0 {
+                            continue;
+                        }
                         bump_op_read(&mut consume_reads, op);
                     }
                 }
@@ -4409,6 +4455,77 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 Terminator::Drop { place, .. } => bump_place_read(&mut consume_reads, place),
                 _ => {}
             }
+        }
+        // The sole whole-local definition of each local, when it is a bare
+        // copy of another local. `let t = make(); x = t` names one allocation
+        // through `t`, and the transfer has to see past that hop: otherwise
+        // the first copy is refused because `t` is copied onward and the
+        // second because `t` never became an owner, so neither end frees and
+        // every prior buffer is lost.
+        let sole_copy_source: Vec<Option<usize>> = {
+            let mut source: Vec<Option<usize>> = vec![None; body.locals.len()];
+            let mut definitions = vec![0u32; body.locals.len()];
+            for block in &body.blocks {
+                for stmt in &block.stmts {
+                    if let StatementKind::Assign { place, rvalue } = &stmt.kind
+                        && place.projection.is_empty()
+                        && (place.local.0 as usize) < source.len()
+                    {
+                        let i = place.local.0 as usize;
+                        definitions[i] = definitions[i].saturating_add(1);
+                        if let Rvalue::Use(Operand::Copy(from)) = rvalue
+                            && from.projection.is_empty()
+                        {
+                            source[i] = Some(from.local.0 as usize);
+                        }
+                    }
+                }
+                if let Terminator::Call { destination, .. } = &block.terminator
+                    && destination.projection.is_empty()
+                    && (destination.local.0 as usize) < source.len()
+                {
+                    let i = destination.local.0 as usize;
+                    definitions[i] = definitions[i].saturating_add(1);
+                }
+            }
+            for i in 0..source.len() {
+                if definitions[i] != 1 {
+                    source[i] = None;
+                }
+            }
+            source
+        };
+        // Walks back through pass-through hops to the local that owns the
+        // allocation, answering it with the hops crossed. A hop qualifies
+        // only when its one definition is the copy that brought the
+        // allocation in and its one read is the copy that hands it on, so it
+        // holds that allocation and nothing else, and clearing its ownership
+        // record can strand nothing.
+        fn resolve_origin(
+            mut current: usize,
+            owner_ctor: &[Option<&'static str>],
+            fresh_container_free: &[Option<&'static str>],
+            sole_copy_source: &[Option<usize>],
+            consume_reads: &[u32],
+            arity: usize,
+        ) -> Option<(usize, Vec<usize>)> {
+            let mut hops = Vec::new();
+            for _ in 0..8 {
+                if owner_ctor[current]
+                    .or(fresh_container_free[current])
+                    .is_some()
+                {
+                    return Some((current, hops));
+                }
+                let previous = sole_copy_source[current]?;
+                if previous <= arity || previous >= owner_ctor.len() || consume_reads[current] != 1
+                {
+                    return None;
+                }
+                hops.push(current);
+                current = previous;
+            }
+            None
         }
         // A move-transfer target must ALWAYS hold a value it owns, so its
         // drop-before-overwrite never frees a pointer another local owns.
@@ -4423,17 +4540,28 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 return false;
             }
             let s = src.local.0 as usize;
-            s < owner_ctor.len()
-                && matches!(
-                    owner_ctor[s].or(fresh_container_free[s]),
-                    Some(
-                        "gos_rt_vec_free"
-                            | "gos_rt_map_free"
-                            | "gos_rt_lazy_iter_drop_i64"
-                            | "gos_rt_lazy_iter_drop_pair_i64"
-                    )
+            if s >= owner_ctor.len() {
+                return false;
+            }
+            let Some((origin, _)) = resolve_origin(
+                s,
+                &owner_ctor,
+                &fresh_container_free,
+                &sole_copy_source,
+                &consume_reads,
+                arity,
+            ) else {
+                return false;
+            };
+            matches!(
+                owner_ctor[origin].or(fresh_container_free[origin]),
+                Some(
+                    "gos_rt_vec_free"
+                        | "gos_rt_map_free"
+                        | "gos_rt_lazy_iter_drop_i64"
+                        | "gos_rt_lazy_iter_drop_pair_i64"
                 )
-                && consume_reads[s] == 1
+            ) && consume_reads[origin] == 1
         };
         let mut dst_all_owning = vec![true; body.locals.len()];
         for block in &body.blocks {
@@ -4486,8 +4614,19 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 // `src` is a live owner either recorded in `owner_ctor`
                 // (a constructor / `Vec`-returning call) or a fresh
                 // `Vec`/`Slice`/`Map` call-result (`fresh_container_free`,
-                // which unlike `owner_ctor` also covers `Slice`).
-                let Some(free) = owner_ctor[s].or(fresh_container_free[s]) else {
+                // which unlike `owner_ctor` also covers `Slice`), reached
+                // through any number of pass-through copies.
+                let Some((origin, hops)) = resolve_origin(
+                    s,
+                    &owner_ctor,
+                    &fresh_container_free,
+                    &sole_copy_source,
+                    &consume_reads,
+                    arity,
+                ) else {
+                    continue;
+                };
+                let Some(free) = owner_ctor[origin].or(fresh_container_free[origin]) else {
                     continue;
                 };
                 if !matches!(
@@ -4503,7 +4642,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 // must not be aliased into another holder. `dst` may only
                 // already own the same free (a prior constructor of the
                 // same kind, disqualified by pass 1's reassignment rule).
-                if consume_reads[s] != 1 || aliased[d] {
+                if consume_reads[origin] != 1 || aliased[d] {
                     continue;
                 }
                 if let Some(existing) = owner_ctor[d]
@@ -4512,7 +4651,10 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                     continue;
                 }
                 owner_ctor[d] = Some(free);
-                owner_ctor[s] = None;
+                owner_ctor[origin] = None;
+                for hop in hops {
+                    owner_ctor[hop] = None;
+                }
                 move_copy_sites.push((bi, si, place.local));
             }
         }

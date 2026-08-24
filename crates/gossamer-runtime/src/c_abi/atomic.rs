@@ -142,6 +142,52 @@ pub unsafe extern "C" fn gos_rt_atomic_bool_store(a: *mut GosAtomicI64, val: boo
     });
 }
 
+/// Atomically subtract from an i64 and answer the previous value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_atomic_i64_fetch_sub(a: *mut GosAtomicI64, delta: i64) -> i64 {
+    ffi_entry!(-1, {
+        if a.is_null() {
+            return 0;
+        }
+        let a = unsafe { &*a };
+        let prior = a.inner.fetch_sub(delta, Ordering::SeqCst);
+        record_atomic_acquire(a);
+        record_atomic_release(a);
+        prior
+    })
+}
+
+/// Compare-and-swap an atomic boolean with sequentially-consistent
+/// ordering. Separate from the i64 form because a Gossamer `bool`
+/// crosses the C-ABI as an `i8`, and reading the i64 form's operands
+/// off byte-wide arguments would compare against uninitialised bits.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_atomic_bool_cas(
+    a: *mut GosAtomicI64,
+    expected: bool,
+    new: bool,
+) -> bool {
+    ffi_entry!(false, {
+        if a.is_null() {
+            return false;
+        }
+        let a = unsafe { &*a };
+        match a.inner.compare_exchange(
+            i64::from(expected),
+            i64::from(new),
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        ) {
+            Ok(_) => {
+                record_atomic_acquire(a);
+                record_atomic_release(a);
+                true
+            }
+            Err(_) => false,
+        }
+    })
+}
+
 /// Acquire-ordered load. Cheaper than the SeqCst variant on
 /// architectures with relaxed memory models (ARM64, RISC-V); on
 /// x86 it lowers to the same instruction. Pair with the `_release`

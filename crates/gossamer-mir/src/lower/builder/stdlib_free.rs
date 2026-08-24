@@ -1064,7 +1064,7 @@ impl<'a> Builder<'a> {
         )
     }
 
-    fn lower_errors_regex_free(
+    pub(crate) fn lower_errors_regex_free(
         &mut self,
         joined: &str,
         args: &[HirExpr],
@@ -1097,7 +1097,9 @@ impl<'a> Builder<'a> {
             // on the compiled tiers exactly as it does on the VM; the
             // bare-pointer `gos_rt_regex_compile` shim made every
             // compile look like Ok, with a null handle on bad input.
-            "regex::compile" => {
+            // `regex::Pattern::compile(p)` is the type-qualified spelling of
+            // the same call; both answer `Result<Pattern, errors::Error>`.
+            "regex::compile" | "regex::Pattern::compile" | "Pattern::compile" => {
                 let handle = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 let ty = self.result_payload_string_error_ty(handle);
                 ("gos_rt_regex_compile_result", ty)
@@ -3392,7 +3394,9 @@ impl<'a> Builder<'a> {
             "sync::AtomicI64::new"
             | "AtomicI64::new"
             | "sync::AtomicU64::new"
-            | "AtomicU64::new" => (
+            | "AtomicU64::new"
+            | "sync::AtomicI32::new"
+            | "AtomicI32::new" => (
                 "gos_rt_atomic_i64_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
@@ -4448,7 +4452,7 @@ impl<'a> Builder<'a> {
         })
     }
 
-    fn emit_stdlib_free_call(
+    pub(crate) fn emit_stdlib_free_call(
         &mut self,
         rt_name: &str,
         ret_ty: gossamer_types::Ty,
@@ -4719,6 +4723,7 @@ impl<'a> Builder<'a> {
             "gos_rt_math_rng_new" => Some("math::rand::Rng"),
             "gos_rt_field_error_new" => Some("validate::FieldError"),
             "gos_rt_validate_errors_new" => Some("validate::Errors"),
+            "gos_rt_once_new" => Some("sync::Once"),
             "gos_rt_rwlock_new" => Some("sync::RwLock"),
             "gos_rt_shared_new" => Some("sync::Shared"),
             "gos_rt_atomic_bool_new" => Some("sync::AtomicBool"),

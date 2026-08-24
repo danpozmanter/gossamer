@@ -387,6 +387,15 @@ fn block_thread_on_io<S: mio::event::Source + ?Sized>(
     io: &mut S,
     interest: crate::sched::Interest,
 ) -> io::Result<()> {
+    block_thread_on_io_for(io, interest, RECHECK_INTERVAL)
+}
+
+/// Blocks the calling OS thread until `io` is ready or `slice` passes.
+fn block_thread_on_io_for<S: mio::event::Source + ?Sized>(
+    io: &mut S,
+    interest: crate::sched::Interest,
+    slice: Duration,
+) -> io::Result<()> {
     let mio_interest = match interest {
         crate::sched::Interest::Readable => mio::Interest::READABLE,
         crate::sched::Interest::Writable => mio::Interest::WRITABLE,
@@ -406,7 +415,7 @@ fn block_thread_on_io<S: mio::event::Source + ?Sized>(
     // observe a cancellation. The bound is the re-check interval, not a
     // guess at how long readiness takes - readiness still wakes the poll
     // immediately.
-    let waited = match poll.poll(&mut events, Some(RECHECK_INTERVAL)) {
+    let waited = match poll.poll(&mut events, Some(slice)) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::Interrupted => Ok(()),
         Err(e) => Err(e),
@@ -478,8 +487,12 @@ pub fn wait_io_until<S: mio::event::Source + ?Sized>(
         return Ok(false);
     }
     if !gossamer_coro::in_goroutine() {
-        std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
-        return Ok(false);
+        // Readiness still ends the wait: the poll is bounded by the
+        // deadline, and the caller retries its transfer while the
+        // deadline holds.
+        let slice = RECHECK_INTERVAL.min(deadline.saturating_duration_since(Instant::now()));
+        block_thread_on_io_for(io, interest, slice)?;
+        return Ok(Instant::now() < deadline);
     }
 
     let gid = current_gid().expect("goroutine lost its gid while waiting for I/O");

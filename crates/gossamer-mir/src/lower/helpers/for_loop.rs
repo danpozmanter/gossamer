@@ -67,6 +67,19 @@ pub(crate) fn is_aggregate_ctor_callee(callee: &Operand) -> bool {
     false
 }
 
+/// Runtime helpers that append through the container handed to them as
+/// their first argument. Each writes into that container's own storage,
+/// returns unit, takes no share of the container, and keeps no pointer to
+/// it, so reading a container here does not make some other holder its
+/// owner. The re-binding `push_back` / `push_front` family is excluded: it
+/// answers the container pointer, and its result is what the caller keeps.
+pub(crate) fn appends_through_container(name: &str) -> bool {
+    matches!(
+        name,
+        "gos_rt_vec_push" | "gos_rt_vec_push_i64" | "gos_rt_vec_push_i128"
+    )
+}
+
 pub(crate) fn returns_borrowed_pointer(name: &str) -> bool {
     matches!(
         name,

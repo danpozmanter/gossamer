@@ -38,8 +38,9 @@ use std::net::{
     SocketAddr, TcpListener as StdTcpListener, TcpStream as StdTcpStream, ToSocketAddrs,
     UdpSocket as StdUdpSocket,
 };
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::pem::PemObject;
@@ -57,6 +58,11 @@ use gossamer_sched::Interest;
 pub struct TcpListener {
     inner: StdTcpListener,
     mio: Option<mio::net::TcpListener>,
+}
+
+/// Milliseconds a deadline is stored as; 0 means unbounded.
+fn duration_millis(timeout: Option<Duration>) -> u64 {
+    timeout.map_or(0, |d| d.as_millis().max(1).min(u128::from(u64::MAX)) as u64)
 }
 
 impl TcpListener {
@@ -159,6 +165,12 @@ impl TcpListener {
 pub struct TcpStream {
     inner: StdTcpStream,
     mio: Option<mio::net::TcpStream>,
+    // The socket is non-blocking so the poller can park a goroutine on it,
+    // which makes `SO_RCVTIMEO` / `SO_SNDTIMEO` unreachable: a read returns
+    // `WouldBlock` at once and the deadline the kernel holds never fires. The
+    // deadline a caller sets is therefore kept here and applied to the park.
+    read_timeout: Arc<AtomicU64>,
+    write_timeout: Arc<AtomicU64>,
 }
 
 impl TcpStream {
@@ -173,30 +185,78 @@ impl TcpStream {
             .set_nonblocking(true)
             .map_err(|e| IoError::from_std(e, "set_nonblocking"))?;
         let mirror = inner.try_clone().map(mio::net::TcpStream::from_std).ok();
-        Ok(Self { inner, mio: mirror })
+        Ok(Self {
+            inner,
+            mio: mirror,
+            read_timeout: Arc::new(AtomicU64::new(0)),
+            write_timeout: Arc::new(AtomicU64::new(0)),
+        })
     }
 
     /// Duplicates the underlying socket while preserving this wrapper's
-    /// netpoller-aware nonblocking configuration.
+    /// netpoller-aware nonblocking configuration and its deadlines - the
+    /// clone reads the same socket, so it waits on the same terms.
     pub fn try_clone(&self) -> Result<Self, IoError> {
-        self.inner
+        let mut cloned = self
+            .inner
             .try_clone()
             .map_err(|e| IoError::from_std(e, "TcpStream::try_clone"))
-            .and_then(Self::from_std)
+            .and_then(Self::from_std)?;
+        cloned.read_timeout = Arc::clone(&self.read_timeout);
+        cloned.write_timeout = Arc::clone(&self.write_timeout);
+        Ok(cloned)
     }
 
-    /// Sets the per-syscall read timeout on the underlying socket.
+    /// Sets the read deadline.
+    ///
+    /// The socket is non-blocking so a goroutine can park on the poller
+    /// rather than hold a thread, which puts `SO_RCVTIMEO` out of reach: the
+    /// read returns `WouldBlock` at once and the kernel's own deadline never
+    /// fires. The option is still set for a caller that takes the socket
+    /// blocking, and the duration is kept here so [`Self::read`] bounds its
+    /// park by it.
     pub fn set_read_timeout(&self, timeout: Option<Duration>) -> Result<(), IoError> {
+        self.read_timeout
+            .store(duration_millis(timeout), Ordering::Relaxed);
         self.inner
             .set_read_timeout(timeout)
             .map_err(|e| IoError::from_std(e, "TcpStream::set_read_timeout"))
     }
 
-    /// Sets the per-syscall write timeout on the underlying socket.
+    /// Sets the write deadline; see [`Self::set_read_timeout`].
     pub fn set_write_timeout(&self, timeout: Option<Duration>) -> Result<(), IoError> {
+        self.write_timeout
+            .store(duration_millis(timeout), Ordering::Relaxed);
         self.inner
             .set_write_timeout(timeout)
             .map_err(|e| IoError::from_std(e, "TcpStream::set_write_timeout"))
+    }
+
+    /// The deadline a wait should not run past, or `None` when unbounded.
+    fn deadline(slot: &AtomicU64) -> Option<Instant> {
+        match slot.load(Ordering::Relaxed) {
+            0 => None,
+            ms => Some(Instant::now() + Duration::from_millis(ms)),
+        }
+    }
+
+    /// Parks until `interest` is ready or `deadline` passes; `Ok(false)`
+    /// means the deadline won.
+    fn wait_io_deadline(
+        &mut self,
+        interest: Interest,
+        deadline: Option<Instant>,
+    ) -> Result<bool, IoError> {
+        let Some(deadline) = deadline else {
+            self.wait_io(interest)?;
+            return Ok(true);
+        };
+        let Some(mio_handle) = self.mio.as_mut() else {
+            std::thread::sleep(Duration::from_millis(1));
+            return Ok(Instant::now() < deadline);
+        };
+        sched_global::wait_io_until(mio_handle, interest, deadline)
+            .map_err(|e| IoError::from_std(e, "poller wait"))
     }
 
     /// Convenience wrapper for Gossamer code: non-positive values clear.
@@ -222,11 +282,17 @@ impl TcpStream {
     /// Reads up to `buf.len()` bytes into `buf`. Parks the caller on
     /// the poller while the kernel buffer is empty.
     pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, IoError> {
+        let deadline = Self::deadline(&self.read_timeout);
         loop {
             match self.inner.read(buf) {
                 Ok(n) => return Ok(n),
                 Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                    self.wait_io(Interest::Readable)?;
+                    if !self.wait_io_deadline(Interest::Readable, deadline)? {
+                        return Err(IoError::from_std(
+                            io::Error::new(ErrorKind::WouldBlock, "read timed out"),
+                            "TcpStream::read",
+                        ));
+                    }
                 }
                 Err(e) => return Err(IoError::from_std(e, "TcpStream::read")),
             }
@@ -254,6 +320,7 @@ impl TcpStream {
         if let Some(g) = gid {
             ctx.register_waiter(g);
         }
+        let deadline = Self::deadline(&self.read_timeout);
         loop {
             match self.inner.read(buf) {
                 Ok(n) => {
@@ -276,7 +343,15 @@ impl TcpStream {
                                 .unwrap_or_else(|| crate::errors::Error::new("context cancelled")),
                         ));
                     }
-                    self.wait_io(Interest::Readable)?;
+                    if !self.wait_io_deadline(Interest::Readable, deadline)? {
+                        if let Some(g) = gid {
+                            ctx.deregister_waiter(g);
+                        }
+                        return Err(IoError::from_std(
+                            io::Error::new(ErrorKind::WouldBlock, "read timed out"),
+                            "TcpStream::read_ctx",
+                        ));
+                    }
                 }
                 Err(e) => {
                     if let Some(g) = gid {
@@ -290,6 +365,7 @@ impl TcpStream {
 
     /// Writes every byte in `buf`.
     pub fn write_all(&mut self, buf: &[u8]) -> Result<(), IoError> {
+        let write_deadline = Self::deadline(&self.write_timeout);
         let mut written = 0;
         while written < buf.len() {
             match self.inner.write(&buf[written..]) {
@@ -301,7 +377,12 @@ impl TcpStream {
                 }
                 Ok(n) => written += n,
                 Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                    self.wait_io(Interest::Writable)?;
+                    if !self.wait_io_deadline(Interest::Writable, write_deadline)? {
+                        return Err(IoError::from_std(
+                            io::Error::new(ErrorKind::WouldBlock, "write timed out"),
+                            "TcpStream::write_all",
+                        ));
+                    }
                 }
                 Err(e) => return Err(IoError::from_std(e, "TcpStream::write_all")),
             }
@@ -322,6 +403,7 @@ impl TcpStream {
         if let Some(g) = gid {
             ctx.register_waiter(g);
         }
+        let deadline = Self::deadline(&self.write_timeout);
         let mut written = 0;
         while written < buf.len() {
             match self.inner.write(&buf[written..]) {
@@ -345,7 +427,15 @@ impl TcpStream {
                                 .unwrap_or_else(|| crate::errors::Error::new("context cancelled")),
                         ));
                     }
-                    self.wait_io(Interest::Writable)?;
+                    if !self.wait_io_deadline(Interest::Writable, deadline)? {
+                        if let Some(g) = gid {
+                            ctx.deregister_waiter(g);
+                        }
+                        return Err(IoError::from_std(
+                            io::Error::new(ErrorKind::WouldBlock, "write timed out"),
+                            "TcpStream::write_all_ctx",
+                        ));
+                    }
                 }
                 Err(e) => {
                     if let Some(g) = gid {

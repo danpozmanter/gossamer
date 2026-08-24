@@ -1357,6 +1357,7 @@ pub const STDLIB_QUALIFIED: &[&str] = &[
     "sandbox::Policy::denials",
     "sandbox::Policy::deny",
     "sandbox::Policy::env_allow",
+    "sandbox::Policy::env_allow_all",
     "sandbox::Policy::env_set",
     "sandbox::Policy::environment_names",
     "sandbox::Policy::environment_value",

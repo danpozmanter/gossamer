@@ -112,6 +112,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_arr_sort_tuple as *const u8,
         ),
         (
+            "gos_rt_atomic_bool_cas",
+            crate::c_abi::gos_rt_atomic_bool_cas as *const u8,
+        ),
+        (
             "gos_rt_atomic_bool_load",
             crate::c_abi::gos_rt_atomic_bool_load as *const u8,
         ),
@@ -130,6 +134,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_atomic_i64_cas_acq_rel",
             crate::c_abi::gos_rt_atomic_i64_cas_acq_rel as *const u8,
+        ),
+        (
+            "gos_rt_atomic_i64_fetch_sub",
+            crate::c_abi::gos_rt_atomic_i64_fetch_sub as *const u8,
         ),
         (
             "gos_rt_atomic_i64_fetch_add",
@@ -1868,6 +1876,18 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_heap_i64_write_lines_to_stdout as *const u8,
         ),
         (
+            "gos_rt_heap_u8_count_kmers",
+            crate::c_abi::gos_rt_heap_u8_count_kmers as *const u8,
+        ),
+        (
+            "gos_rt_heap_u8_count_pairs",
+            crate::c_abi::gos_rt_heap_u8_count_pairs as *const u8,
+        ),
+        (
+            "gos_rt_heap_u8_count_singles",
+            crate::c_abi::gos_rt_heap_u8_count_singles as *const u8,
+        ),
+        (
             "gos_rt_heap_u8_free",
             crate::c_abi::gos_rt_heap_u8_free as *const u8,
         ),
@@ -1886,6 +1906,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_heap_u8_set",
             crate::c_abi::gos_rt_heap_u8_set as *const u8,
+        ),
+        (
+            "gos_rt_heap_u8_window_key",
+            crate::c_abi::gos_rt_heap_u8_window_key as *const u8,
         ),
         (
             "gos_rt_heap_u8_to_string",
@@ -6518,6 +6542,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_sandbox_policy_env_allow",
             crate::c_abi::gos_rt_sandbox_policy_env_allow as *const u8,
+        ),
+        (
+            "gos_rt_sandbox_policy_env_allow_all",
+            crate::c_abi::gos_rt_sandbox_policy_env_allow_all as *const u8,
         ),
         (
             "gos_rt_sandbox_policy_env_set",

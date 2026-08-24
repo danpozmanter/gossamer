@@ -458,7 +458,9 @@ pub(crate) fn reserve_vecs_for_counted_push_loops(body: &mut Body) {
             continue;
         }
         let Some(start) = target else { continue };
-        let Some(bound) = counted_push_loop_bound(body, *start, destination.local) else {
+        let Some(bound) =
+            counted_push_loop_bound(body, block.id, *start, destination.local)
+        else {
             continue;
         };
         if !reserve_bound_available_at_entry(body, &bound, block.id) {
@@ -520,7 +522,9 @@ pub(crate) fn reserve_hashmaps_for_counted_insert_loops(body: &mut Body, tcx: &T
             continue;
         }
         let Some(start) = target else { continue };
-        let Some(bound) = counted_insert_loop_bound(body, *start, destination.local) else {
+        let Some(bound) =
+            counted_insert_loop_bound(body, block.id, *start, destination.local)
+        else {
             continue;
         };
         if !reserve_bound_available_at_entry(body, &bound, block.id) {

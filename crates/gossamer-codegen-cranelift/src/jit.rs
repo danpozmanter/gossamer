@@ -3312,6 +3312,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_sandbox_process_isolation_kind" => rt::gos_rt_sandbox_process_isolation_kind,
         "gos_rt_sandbox_process_isolation_reason" => rt::gos_rt_sandbox_process_isolation_reason,
         "gos_rt_sandbox_env_never_passed" => rt::gos_rt_sandbox_env_never_passed,
+        "gos_rt_sandbox_policy_env_allow_all" => rt::gos_rt_sandbox_policy_env_allow_all,
         "gos_rt_sandbox_expand" => rt::gos_rt_sandbox_expand,
         "gos_rt_sandbox_prefix_of" => rt::gos_rt_sandbox_prefix_of,
         "gos_rt_sandbox_resolve_on_path" => rt::gos_rt_sandbox_resolve_on_path,
@@ -3713,6 +3714,10 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         // with byte-aligned storage.
         "gos_rt_heap_u8_new"         => rt::gos_rt_heap_u8_new,
         "gos_rt_heap_u8_free"        => rt::gos_rt_heap_u8_free,
+        "gos_rt_heap_u8_count_kmers" => rt::gos_rt_heap_u8_count_kmers,
+        "gos_rt_heap_u8_count_pairs" => rt::gos_rt_heap_u8_count_pairs,
+        "gos_rt_heap_u8_count_singles" => rt::gos_rt_heap_u8_count_singles,
+        "gos_rt_heap_u8_window_key" => rt::gos_rt_heap_u8_window_key,
         "gos_rt_heap_u8_get"         => rt::gos_rt_heap_u8_get,
         "gos_rt_heap_u8_set"         => rt::gos_rt_heap_u8_set,
         "gos_rt_heap_u8_len"         => rt::gos_rt_heap_u8_len,
@@ -3734,11 +3739,13 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_wg_error_clear"      => rt::gos_rt_wg_error_clear,
         "gos_rt_atomic_i64_new"      => rt::gos_rt_atomic_i64_new,
         "gos_rt_atomic_bool_new"     => rt::gos_rt_atomic_bool_new,
+        "gos_rt_atomic_bool_cas"     => rt::gos_rt_atomic_bool_cas,
         "gos_rt_atomic_bool_load"    => rt::gos_rt_atomic_bool_load,
         "gos_rt_atomic_bool_store"   => rt::gos_rt_atomic_bool_store,
         "gos_rt_atomic_i64_load"     => rt::gos_rt_atomic_i64_load,
         "gos_rt_atomic_i64_store"    => rt::gos_rt_atomic_i64_store,
         "gos_rt_atomic_i64_fetch_add"=> rt::gos_rt_atomic_i64_fetch_add,
+        "gos_rt_atomic_i64_fetch_sub"=> rt::gos_rt_atomic_i64_fetch_sub,
         "gos_rt_atomic_i64_load_acquire"
                                      => rt::gos_rt_atomic_i64_load_acquire,
         "gos_rt_atomic_i64_store_release"

@@ -117,6 +117,20 @@ pub unsafe extern "C" fn gos_rt_sandbox_policy_env_allow(handle: i64, name: *con
     edit(handle, |policy| policy.env_allow([name]))
 }
 
+/// `policy.env_allow_all(names)` - every name in one edit.
+///
+/// Each builder call copies the policy it edits, so allow-listing a whole
+/// inherited environment one name at a time copies a growing policy once
+/// per variable. A caller that already has the list hands it over whole.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sandbox_policy_env_allow_all(
+    handle: i64,
+    names: *mut GosVec,
+) -> i64 {
+    let names = unsafe { read_string_vec(names) };
+    edit(handle, |policy| policy.env_allow(names))
+}
+
 /// `policy.env_set(name, value)`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_sandbox_policy_env_set(

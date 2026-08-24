@@ -504,6 +504,8 @@ fn mangled_stdlib_name(parent: &str, item: &str) -> Option<&'static str> {
         ("fs", "metadata") => Some("__gos_fs_metadata"),
         ("fs", "Metadata") => Some("__gos_fs_Metadata"),
         ("path", "Path") => Some("__gos_path_Path"),
+        ("http", "Http2Config") => Some("__gos_http_Http2Config"),
+        ("Http2Config", "default") => Some("__gos_http_Http2Config_default"),
         ("time", "Location") => Some("__gos_time_Location"),
         ("time", "CivilTime") => Some("__gos_time_CivilTime"),
         ("time", "CivilResolution") => Some("__gos_time_CivilResolution"),

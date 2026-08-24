@@ -1449,6 +1449,131 @@ impl Lowerer<'_> {
         })
     }
 
+    /// Rewrites `(a, b.c) = rhs` into
+    /// `{ let (t0, t1) = rhs; a = t0; b.c = t1 }`, so every tier sees the
+    /// ordinary assignments the destructuring stands for. The right-hand
+    /// side is evaluated once, before the first target is written.
+    fn lower_destructuring_assign<'a>(
+        &mut self,
+        elems: &'a [AstExpr],
+        place: &AstExpr,
+        value: &'a AstExpr,
+        span: Span,
+    ) -> HirExprKind {
+        let tuple_ty = self.ty_of(place.id);
+        let lowered_value = self.lower_expr(value);
+        let mut targets: Vec<(&'a AstExpr, Ident)> = Vec::new();
+        let mut next = 0usize;
+        let pattern = self.destructuring_pattern(elems, tuple_ty, span, &mut next, &mut targets);
+        let unit = self.tcx.unit();
+        let mut stmts = vec![HirStmt {
+            id: self.fresh(),
+            span,
+            kind: HirStmtKind::Let {
+                pattern,
+                ty: tuple_ty,
+                init: Some(lowered_value),
+            },
+        }];
+        for (target, name) in targets {
+            let ty = self.ty_of(target.id);
+            let lowered_target = self.lower_expr(target);
+            let source = HirExpr {
+                id: self.fresh(),
+                span: target.span,
+                ty,
+                kind: HirExprKind::Path {
+                    segments: vec![name],
+                    def: None,
+                },
+            };
+            let write = HirExpr {
+                id: self.fresh(),
+                span: target.span,
+                ty: unit,
+                kind: HirExprKind::Assign {
+                    place: Box::new(lowered_target),
+                    value: Box::new(source),
+                },
+            };
+            stmts.push(HirStmt {
+                id: self.fresh(),
+                span: target.span,
+                kind: HirStmtKind::Expr {
+                    expr: write,
+                    has_semi: true,
+                },
+            });
+        }
+        HirExprKind::Block(HirBlock {
+            id: self.fresh(),
+            span,
+            ty: unit,
+            stmts,
+            tail: None,
+            is_comptime: false,
+        })
+    }
+
+    /// Builds the tuple pattern binding one temporary per destructuring
+    /// target, collecting each target with the name it reads back from. A
+    /// nested tuple recurses; a `_` element binds nothing.
+    fn destructuring_pattern<'a>(
+        &mut self,
+        elems: &'a [AstExpr],
+        tuple_ty: Ty,
+        span: Span,
+        next: &mut usize,
+        targets: &mut Vec<(&'a AstExpr, Ident)>,
+    ) -> HirPat {
+        let declared: Option<Vec<Ty>> = match self.tcx.kind(tuple_ty) {
+            Some(gossamer_types::TyKind::Tuple(tys)) if tys.len() == elems.len() => {
+                Some(tys.clone())
+            }
+            _ => None,
+        };
+        let elem_tys: Vec<Ty> = if let Some(tys) = declared {
+            tys
+        } else {
+            let mut tys = Vec::with_capacity(elems.len());
+            for elem in elems {
+                tys.push(self.ty_of(elem.id));
+            }
+            tys
+        };
+        let mut pats = Vec::with_capacity(elems.len());
+        for (elem, elem_ty) in elems.iter().zip(elem_tys) {
+            let kind = match &elem.kind {
+                AstExprKind::Tuple(inner) => {
+                    pats.push(self.destructuring_pattern(inner, elem_ty, elem.span, next, targets));
+                    continue;
+                }
+                _ if elem.is_wildcard() => HirPatKind::Wildcard,
+                _ => {
+                    let name = Ident::new(format!("__gos_destructure_{next}"));
+                    *next += 1;
+                    targets.push((elem, name.clone()));
+                    HirPatKind::Binding {
+                        name,
+                        mutable: false,
+                    }
+                }
+            };
+            pats.push(HirPat {
+                id: self.fresh(),
+                span: elem.span,
+                ty: elem_ty,
+                kind,
+            });
+        }
+        HirPat {
+            id: self.fresh(),
+            span,
+            ty: tuple_ty,
+            kind: HirPatKind::Tuple(pats),
+        }
+    }
+
     fn lower_assign(
         &mut self,
         op: AssignOp,
@@ -1457,6 +1582,9 @@ impl Lowerer<'_> {
         outer: &AstExpr,
     ) -> HirExprKind {
         if matches!(op, AssignOp::Assign) {
+            if let AstExprKind::Tuple(elems) = &place.kind {
+                return self.lower_destructuring_assign(elems, place, value, outer.span);
+            }
             return HirExprKind::Assign {
                 place: Box::new(self.lower_expr(place)),
                 value: Box::new(self.lower_expr(value)),

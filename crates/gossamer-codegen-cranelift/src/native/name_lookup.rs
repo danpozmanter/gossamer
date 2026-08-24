@@ -343,6 +343,7 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
             Some("gos_rt_sandbox_process_isolation_reason")
         }
         "gos_rt_sandbox_env_never_passed" => Some("gos_rt_sandbox_env_never_passed"),
+        "gos_rt_sandbox_policy_env_allow_all" => Some("gos_rt_sandbox_policy_env_allow_all"),
         "gos_rt_sandbox_expand" => Some("gos_rt_sandbox_expand"),
         "gos_rt_sandbox_prefix_of" => Some("gos_rt_sandbox_prefix_of"),
         "gos_rt_sandbox_resolve_on_path" => Some("gos_rt_sandbox_resolve_on_path"),

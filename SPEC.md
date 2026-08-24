@@ -1044,6 +1044,21 @@ AOT tiers.
 
 Shadowing is permitted.
 
+A tuple written on the left of `=` in an assignment is a destructuring
+target: each element is written from the matching element of the
+right-hand side, which is evaluated in full before the first write. Every
+element must be a writable place - a binding, a field, an index, a tuple
+position, or a dereference - or `_`, which discards its element. Targets
+nest. Only plain `=` destructures; a compound operator on a tuple target is
+rejected.
+
+```
+(a, b) = (b, a)
+(p.x, xs[1]) = (5, 6)
+(head, (left, right)) = (1, (2, 3))
+(_, kept) = (99, 42)
+```
+
 The left side of `=` is a pattern and the right side is an expression. This
 makes the two uses of reference syntax complementary: `&mut place` in an
 expression creates a mutable reference, while `&mut pattern` in a pattern

@@ -106,6 +106,39 @@ let by_position: Map<(i64, i64), String> = Map::new()
 `Map::iter()` yields `[(K, V)]`, and `Vec::enumerate()` yields
 `Vec<(i64, T)>`, so the `for (a, b) in ...` shape reads the same everywhere.
 
+## Destructuring assignment
+
+A tuple on the left of `=` writes each element to its own target, so several
+places update from one right-hand side. The right-hand side is evaluated in
+full before the first write, which is what makes a swap need no temporary:
+
+```gossamer
+let mut a = 1
+let mut b = 2
+(a, b) = (b, a)
+```
+
+Every target follows the rules a scalar assignment follows: it must be a
+writable place, so a binding, a field, an index, a tuple position, or a
+dereference. Targets may nest, and `_` discards the element opposite it:
+
+```gossamer
+let mut point = Point { x: 0, y: 0 }
+let mut cells = #[0, 0]
+(point.x, cells[1]) = (5, 6)
+
+let mut head = 0
+let mut left = 0
+let mut right = 0
+(head, (left, right)) = (1, (2, 3))
+
+let mut kept = 0
+(_, kept) = (99, 42)
+```
+
+Only plain `=` destructures. `(a, b) += (1, 2)` is rejected: write the
+elements individually, or `(a, b) = (a + 1, b + 2)`.
+
 ## Methods
 
 A tuple's surface is mostly syntax: positional access, destructuring, and

@@ -176,6 +176,9 @@ const SPECS: &[Spec] = &[
     // element is a block of slots, not one word, and its reference-counted
     // children are handed over with the copy.
     spec("feature-testing-examples/vec_tuple_element_assign.gos"),
+    // `policy.env_allow_all(names)`: one edit for a whole list, reaching
+    // the same policy a call per name does.
+    spec("feature-testing-examples/sandbox_env_allow_all.gos"),
     // `std::sandbox`: the policy builder, the capability report, and a
     // run under a level-`none` policy, which is what makes the fixture
     // host-independent - every tier answers the same lines whatever the
@@ -828,6 +831,9 @@ const SPECS: &[Spec] = &[
     // Irrefutable let-pattern destructuring (struct / tuple-struct / enum
     // variant / nested / or-pattern) and const generic array length.
     spec("feature-testing-examples/let_destructure_struct.gos"),
+    // Tuple-destructuring assignment over bindings, fields, indices, tuple
+    // positions, nested tuples, and `_`.
+    spec("feature-testing-examples/destructuring_assignment.gos"),
     spec("feature-testing-examples/const_generic_array_len.gos"),
     spec("feature-testing-examples/container_display.gos"),
     spec("feature-testing-examples/container_reassign_loop.gos"),
@@ -1013,6 +1019,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/bytes_builder.gos"),
     spec("feature-testing-examples/net_ip.gos"),
     spec("feature-testing-examples/net_tcp_echo.gos"),
+    spec("feature-testing-examples/net_tcp_read_deadline.gos"),
     spec("feature-testing-examples/net_smtp_send.gos"),
     Spec {
         // Unix-domain sockets are POSIX-only; on Windows every entry

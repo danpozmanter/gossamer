@@ -70,6 +70,7 @@ pub(crate) fn install_sandbox(globals: &mut Vec<(&'static str, Value)>) {
         ("Policy::read_only", builtin_policy_read_only),
         ("Policy::deny", builtin_policy_deny),
         ("Policy::env_allow", builtin_policy_env_allow),
+        ("Policy::env_allow_all", builtin_policy_env_allow_all),
         ("Policy::env_set", builtin_policy_env_set),
         ("Policy::level", builtin_policy_level),
         (
@@ -195,6 +196,17 @@ fn builtin_policy_deny(args: &[Value]) -> RuntimeResult<Value> {
 fn builtin_policy_env_allow(args: &[Value]) -> RuntimeResult<Value> {
     let name = args.get(1).and_then(as_str).unwrap_or("").to_string();
     edited(args, |policy| policy.env_allow([name]))
+}
+
+fn builtin_policy_env_allow_all(args: &[Value]) -> RuntimeResult<Value> {
+    let names: Vec<String> = match args.get(1) {
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| as_str(item).map(ToString::to_string))
+            .collect(),
+        _ => Vec::new(),
+    };
+    edited(args, |policy| policy.env_allow(names))
 }
 
 fn builtin_policy_env_set(args: &[Value]) -> RuntimeResult<Value> {

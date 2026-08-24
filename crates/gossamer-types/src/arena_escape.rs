@@ -110,6 +110,15 @@ fn peel_refs(expr: &Expr) -> &Expr {
 }
 
 /// Root path name of a place expression (`x`, `*x`, `x.f`, `x[i]`, `&x`).
+/// Root binding names an assignment writes through. A tuple on the left is a
+/// destructuring target, so each element contributes its own root.
+fn assign_roots(place: &Expr) -> Box<dyn Iterator<Item = &str> + '_> {
+    match &place.kind {
+        ExprKind::Tuple(elems) => Box::new(elems.iter().flat_map(assign_roots)),
+        _ => Box::new(root_name(place).into_iter()),
+    }
+}
+
 fn root_name(expr: &Expr) -> Option<&str> {
     match &expr.kind {
         ExprKind::Path(path) => path.segments.first().map(|seg| seg.name.name.as_str()),
@@ -373,8 +382,7 @@ impl Scan<'_> {
                 {
                     self.unsafe_now = true;
                 }
-                if self.non_copy(value) && root_name(place).is_some_and(|r| self.params.contains(r))
-                {
+                if self.non_copy(value) && assign_roots(place).any(|r| self.params.contains(r)) {
                     self.unsafe_now = true;
                 }
                 self.expr(place);
@@ -864,8 +872,32 @@ impl Analyzer<'_> {
     fn sink_assign(&mut self, place: &Expr, value: &Expr) {
         self.expr(place);
         self.expr(value);
-        if self.escapes_outer(place) && self.is_region_local(value) {
+        self.check_assign_escape(place, value);
+    }
+
+    /// Flags an arena-local value written into a place that outlives the
+    /// region. Tuples on both sides pair element-wise, so a destructuring
+    /// assignment is judged per target rather than as one opaque write.
+    fn check_assign_escape(&mut self, place: &Expr, value: &Expr) {
+        if let (ExprKind::Tuple(targets), ExprKind::Tuple(values)) = (&place.kind, &value.kind)
+            && targets.len() == values.len()
+        {
+            for (target, element) in targets.iter().zip(values) {
+                self.check_assign_escape(target, element);
+            }
+            return;
+        }
+        if self.target_escapes_outer(place) && self.is_region_local(value) {
             self.flag(value.span, ArenaEscapeKind::OuterAssign);
+        }
+    }
+
+    /// Whether an assignment target reaches a place outliving the region.
+    /// A destructuring tuple does when any of its elements does.
+    fn target_escapes_outer(&self, place: &Expr) -> bool {
+        match &place.kind {
+            ExprKind::Tuple(elems) => elems.iter().any(|e| self.target_escapes_outer(e)),
+            _ => self.escapes_outer(place),
         }
     }
 

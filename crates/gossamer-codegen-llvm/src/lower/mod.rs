@@ -771,7 +771,9 @@ fn map_prelude_symbol(name: &str) -> &str {
         | "AtomicI64::new"
         | "sync::AtomicI64::new"
         | "AtomicU64::new"
-        | "sync::AtomicU64::new" => "gos_rt_atomic_i64_new",
+        | "sync::AtomicU64::new"
+        | "AtomicI32::new"
+        | "sync::AtomicI32::new" => "gos_rt_atomic_i64_new",
         "AtomicBool::new" | "sync::AtomicBool::new" => "gos_rt_atomic_bool_new",
         "lcg::jump" | "lcg_jump" => "gos_rt_lcg_jump",
         other => other,

@@ -1,5 +1,76 @@
 # Changelog
 
+## 0.55.4 - Destructuring assignment, socket deadlines
+
+- A read or write deadline on a `net::TcpStream` now bounds the wait on the
+  bytecode VM. The socket is non-blocking so a goroutine can park on the
+  poller, which puts the kernel's own `SO_RCVTIMEO` out of reach: a transfer
+  answered `WouldBlock` at once and then parked with no bound, so
+  `set_read_timeout_ms` changed nothing and a peer that went silent held the
+  caller for as long as it stayed silent. The deadline is now kept with the
+  socket and applied to the park, a duplicate of the socket waits on the same
+  terms, and the cancellation-aware `read_ctx` / `write_all_ctx` honour it
+  alongside their context.
+- A deadline-bounded wait outside a goroutine now ends when the socket is
+  ready rather than when the deadline passes, so a bounded read that has its
+  answer in ten milliseconds returns it instead of reporting a timeout at the
+  deadline. The VM reads sockets from the blocking pool, which is one such
+  caller; so is the compiled HTTP/1 server's request deadline.
+- A socket failure reads the same on every tier. The compiled tiers rendered
+  the OS text bare where the VM names the call the failure came out of and the
+  address it was made against, so one failure read as
+  `io: 127.0.0.1:5432: Connection refused` on the VM and as
+  `Connection refused (os error 111)` under `gos build`. A deadline that fires
+  now reads as `io: TcpStream::read: read timed out` on every tier.
+- A tuple on the left of `=` is now a destructuring target, so several places
+  update from one right-hand side: `(x, y) = (y, x)` swaps without a
+  temporary, because the right side is evaluated in full before the first
+  write. Targets are bindings, fields, indices, tuple positions, and
+  dereferences, they nest, and `_` discards the element opposite it. The form
+  was accepted by `gos check` and then refused at VM load with GX0007.
+- An assignment to an expression that names no place is rejected with GT0078
+  instead of being accepted by `gos check` and failing at run time. This
+  covers `5 = 1` and a literal or call result written as a destructuring
+  element. A compound operator on a tuple target (`(a, b) += (1, 2)`) reports
+  the same code, naming the plain-`=` form that does destructure.
+- `mut` is no longer reported as unused when the only write to a binding is
+  through a destructuring assignment, and an arena-local value assigned to an
+  outer binding through one is now flagged as an escape.
+- A sequence built inside a loop body no longer reserves the loop's whole trip
+  count. The capacity plan for `let mut v = #[]` followed by a counted push
+  loop was applied to any allocation the loop's pushes could be traced back
+  to, including one the body itself performs each iteration, so `for i in
+  0..200000 { let b = #[i]; .. }` asked for a 1.6 MB buffer 200000 times: 1.7
+  GB of resident memory and 11 seconds where the bytecode VM used 17 MB and
+  0.01 s. The reserve now applies only where the allocation runs ahead of the
+  loop.
+- A container built in a loop body and moved into a binding outside it now
+  reclaims the buffer it replaces on the compiled tiers. An in-place append
+  was counted as a second holder of the container it writes through, which
+  left `outer = #[..]` untransferable and leaked every prior buffer; memory
+  grew with the iteration count. A container a closure captured keeps the
+  conservative treatment - its environment holds a reference the frame cannot
+  see.
+- A `String` or `Vec` assigned to a struct field in a loop no longer leaks the
+  value it replaced on the compiled tiers. The store minted the field a share
+  while the source's own share was already being handed over, so each
+  iteration left one reference nothing released.
+- Fourteen advertised standard-library handle methods now reach the compiled
+  tiers: `sync::Once::call`, `sync::RwLock::with_read` / `with_write`,
+  `regex::Pattern::compile` / `captures` / `captures_all`,
+  `compare_exchange` on every atomic, `sync::AtomicI64::fetch_sub`,
+  `sync::AtomicI32::new`, `http::Http2Config::default`, and `U8Vec`'s
+  `window_key` / `count_singles` / `count_pairs` / `count_kmers`. Each was
+  bound in the bytecode VM only, so `gos check`, `gos run`, and `gos test`
+  accepted it and `gos build` failed with `undefined symbols before LLVM
+  tools`.
+- A new gate enumerates the compiled-tier method dispatch and fails naming any
+  handle method the catalogue advertises that only the VM can reach. The VM
+  resolves a method by its bare name through the prelude, and `gos test` runs
+  the whole suite on pure bytecode, so nothing else notices the gap. Its
+  free-function twin has existed since the same class of drift was found
+  there.
+
 ## 0.55.3 - REPL completion, sandbox policy model, closure argument coercion
 
 - A `String` key handed to a map or set insert no longer takes every other

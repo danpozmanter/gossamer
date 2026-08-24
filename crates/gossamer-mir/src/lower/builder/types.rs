@@ -1299,6 +1299,13 @@ impl<'a> Builder<'a> {
             // its `is_cancelled` / `cancel` / `done` / `done_chan` calls
             // route through the type here.
             "Context" => Some("context::Context"),
+            // `sync::Once` / `sync::RwLock` / `sync::Shared` reaching a
+            // method call recover their handle kind from the named type;
+            // their closure-taking methods route to the free lowering,
+            // which is the only path that can build the env thunk.
+            "Once" => Some("sync::Once"),
+            "RwLock" => Some("sync::RwLock"),
+            "Shared" => Some("sync::Shared"),
             // `net::TcpStream` / `TcpListener` / `UdpSocket` / `UnixStream`
             // / `UnixListener` flowing through a struct field or parameter
             // (no local construction tag) recover their handle kind from
@@ -1369,10 +1376,10 @@ impl<'a> Builder<'a> {
             // dispatching on the policy kind.
             (
                 "sandbox::Policy",
-                "read_write" | "read_only" | "deny" | "network" | "env_allow" | "env_set"
-                | "timeout" | "level" | "working_directory" | "network_mode" | "for_fetch_phase"
-                | "read_only_cwd" | "temp" | "temp_path" | "max_processes" | "max_memory"
-                | "max_cpu_time" | "max_file_size" | "max_temp_size",
+                "read_write" | "read_only" | "deny" | "network" | "env_allow" | "env_allow_all"
+                | "env_set" | "timeout" | "level" | "working_directory" | "network_mode"
+                | "for_fetch_phase" | "read_only_cwd" | "temp" | "temp_path" | "max_processes"
+                | "max_memory" | "max_cpu_time" | "max_file_size" | "max_temp_size",
             ) => Some("sandbox::Policy"),
             _ => None,
         }

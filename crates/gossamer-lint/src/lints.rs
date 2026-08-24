@@ -415,7 +415,9 @@ pub(crate) fn block_reassigns(block: &Block, target: &str) -> bool {
         // counting them keeps the lint free of false positives on
         // receiver-mutating APIs.
         match &expr.kind {
-            ExprKind::Assign { place, .. } if place_root_is(place, target) => found = true,
+            ExprKind::Assign { place, .. } if assign_writes_root(place, target) => {
+                found = true;
+            }
             ExprKind::MethodCall { receiver, .. } if place_root_is(receiver, target) => {
                 found = true;
             }
@@ -427,6 +429,15 @@ pub(crate) fn block_reassigns(block: &Block, target: &str) -> bool {
         }
     });
     found
+}
+
+/// `true` when an assignment's left-hand side writes through `target`. A
+/// tuple there is a destructuring target, so each element is its own place.
+pub(crate) fn assign_writes_root(place: &Expr, target: &str) -> bool {
+    match &place.kind {
+        ExprKind::Tuple(elems) => elems.iter().any(|e| assign_writes_root(e, target)),
+        _ => place_root_is(place, target),
+    }
 }
 
 /// `true` when `expr` is a place rooted at `target`.

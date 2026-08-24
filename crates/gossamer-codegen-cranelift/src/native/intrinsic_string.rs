@@ -987,7 +987,7 @@ pub(super) fn lower_intrinsic_call_string(
             );
             Ok(true)
         }
-        "gos_rt_atomic_i64_fetch_add" => {
+        "gos_rt_atomic_i64_fetch_add" | "gos_rt_atomic_i64_fetch_sub" => {
             let a = match args.first() {
                 Some(a) => lower_operand(
                     module,
@@ -1015,12 +1015,12 @@ pub(super) fn lower_intrinsic_call_string(
                 None => builder.ins().iconst(types::I64, 0),
             };
             let d64 = coerce_arg_to(builder, d, types::I64)?;
-            let f = intrinsics.extern_fn(
-                module,
-                "gos_rt_atomic_i64_fetch_add",
-                &[ptr_ty, types::I64],
-                &[types::I64],
-            )?;
+            let symbol: &'static str = if name == "gos_rt_atomic_i64_fetch_sub" {
+                "gos_rt_atomic_i64_fetch_sub"
+            } else {
+                "gos_rt_atomic_i64_fetch_add"
+            };
+            let f = intrinsics.extern_fn(module, symbol, &[ptr_ty, types::I64], &[types::I64])?;
             let fref = module.declare_func_in_func(f, builder.func);
             let call = builder.ins().call(fref, &[a, d64]);
             let val = builder.inst_results(call)[0];

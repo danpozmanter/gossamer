@@ -22,6 +22,14 @@ fn mentions_path(source: &str, marker: &str) -> bool {
     false
 }
 
+/// Gossamer source the stdlib-wrapper pass would inject for `source`.
+/// Exposed so a gate can pin the constants these wrappers spell out
+/// against the Rust values they mirror.
+#[must_use]
+pub fn stdlib_wrapper_source(source: &str) -> String {
+    synthesize_stdlib_wrappers(source)
+}
+
 fn synthesize_stdlib_wrappers(source: &str) -> String {
     let mut stdlib_wrappers = String::new();
     if mentions_path(source, "pem::") {
@@ -35,6 +43,9 @@ fn synthesize_stdlib_wrappers(source: &str) -> String {
     }
     if source.contains("path::Path") {
         stdlib_wrappers.push_str(PATH_WRAPPERS);
+    }
+    if source.contains("Http2Config") {
+        stdlib_wrappers.push_str(HTTP2_CONFIG_WRAPPERS);
     }
     if mentions_path(source, "tar::") {
         stdlib_wrappers.push_str(TAR_WRAPPERS);
@@ -175,6 +186,18 @@ struct __gos_fs_Metadata { size: i64, is_file: bool, is_dir: bool, is_symlink: b
 fn __gos_fs_metadata(path: &String) -> Result<__gos_fs_Metadata, errors::Error> {
     let (size, is_file, is_dir, is_symlink, readonly, modified) = __gos_fs_metadata_raw(path)?
     Ok(__gos_fs_Metadata { size: size, is_file: is_file, is_dir: is_dir, is_symlink: is_symlink, readonly: readonly, modified_unix_ms: modified })
+}
+";
+
+/// `http::Http2Config` as a real Gossamer struct, so the tuning fields
+/// read the same words on every tier instead of leaving the compiled
+/// tiers with an opaque type they cannot construct. The defaults must
+/// match `gossamer_std::http_h2::Config::default()`, which
+/// `http2_config_defaults_match_the_runtime` pins.
+const HTTP2_CONFIG_WRAPPERS: &str = r"
+struct __gos_http_Http2Config { max_concurrent_streams: i64, initial_window_size: i64, initial_connection_window_size: i64, max_frame_size: i64, max_header_list_size: i64 }
+fn __gos_http_Http2Config_default() -> __gos_http_Http2Config {
+    __gos_http_Http2Config { max_concurrent_streams: 100, initial_window_size: 1048576, initial_connection_window_size: 8388608, max_frame_size: 16384, max_header_list_size: 16384 }
 }
 ";
 

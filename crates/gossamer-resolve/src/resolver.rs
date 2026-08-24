@@ -1670,6 +1670,21 @@ impl Resolver {
         }
     }
 
+    /// Resolves an assignment's left-hand side. A tuple there is a
+    /// destructuring target, so each element resolves as its own place and a
+    /// `_` element discards its value rather than naming a binding.
+    fn resolve_assign_place(&mut self, place: &Expr) {
+        match &place.kind {
+            ExprKind::Tuple(elems) => {
+                for elem in elems {
+                    self.resolve_assign_place(elem);
+                }
+            }
+            _ if place.is_wildcard() => {}
+            _ => self.resolve_expr(place),
+        }
+    }
+
     fn resolve_expr(&mut self, expr: &Expr) {
         match &expr.kind {
             ExprKind::Literal(lit) => self.resolve_literal(lit),
@@ -1691,14 +1706,13 @@ impl Resolver {
                 self.resolve_expr(base);
                 self.resolve_expr(index);
             }
-            ExprKind::Binary { lhs, rhs, .. }
-            | ExprKind::Assign {
-                place: lhs,
-                value: rhs,
-                ..
-            } => {
+            ExprKind::Binary { lhs, rhs, .. } => {
                 self.resolve_expr(lhs);
                 self.resolve_expr(rhs);
+            }
+            ExprKind::Assign { place, value, .. } => {
+                self.resolve_assign_place(place);
+                self.resolve_expr(value);
             }
             ExprKind::Cast { value, ty } => {
                 self.resolve_expr(value);
