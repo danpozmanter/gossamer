@@ -2684,6 +2684,52 @@ pub unsafe extern "C" fn gos_rt_vec_copy_from_slice(dst: *mut GosVec, src: *cons
     });
 }
 
+/// Decodes a `Vec<(String, String)>` argument: each slot is a 16-byte
+/// tuple of `(key, value)` c-string pointers (key at +0, value at +8).
+///
+/// Lives here rather than beside the HTTP client because the shape is
+/// the ABI's, not any one module's: header lists and a child process's
+/// environment overrides are the same pairs.
+pub(crate) fn decode_header_tuple_vec(headers: *const GosVec) -> Vec<(String, String)> {
+    let mut header_pairs: Vec<(String, String)> = Vec::new();
+    if headers.is_null() {
+        return header_pairs;
+    }
+    let v = unsafe { &*headers };
+    let elem_bytes = v.elem_bytes as usize;
+    if elem_bytes == 0 || v.ptr.is_null() {
+        return header_pairs;
+    }
+    // Each slot must hold two 8-byte pointers; a narrower element
+    // stride means the vec is not tuple-shaped and reading +8 would
+    // run past the slot.
+    if elem_bytes < 16 {
+        return header_pairs;
+    }
+    for i in 0..v.len {
+        let slot = unsafe { v.ptr.add((i as usize) * elem_bytes) };
+        // Slots hold cstring pointers exposed as integers by the
+        // flat-slot ABI; recover provenance before reading the bytes.
+        let key_ptr: *const std::os::raw::c_char =
+            std::ptr::with_exposed_provenance(unsafe { (slot as *const usize).read_unaligned() });
+        let val_ptr: *const std::os::raw::c_char = std::ptr::with_exposed_provenance(unsafe {
+            (slot.add(8) as *const usize).read_unaligned()
+        });
+        let key = if key_ptr.is_null() {
+            String::new()
+        } else {
+            unsafe { crate::c_abi::gos_str_arg_string(key_ptr) }
+        };
+        let val = if val_ptr.is_null() {
+            String::new()
+        } else {
+            unsafe { crate::c_abi::gos_str_arg_string(val_ptr) }
+        };
+        header_pairs.push((key, val));
+    }
+    header_pairs
+}
+
 #[cfg(test)]
 mod packed_row_tests {
     use super::*;

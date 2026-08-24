@@ -8,7 +8,8 @@ Run on Linux with release tools available:
 
 ```bash
 cargo build --release -p gossamer-cli
-python3 benchmarks/suite/run.py --runs 7 --output benchmarks/suite/results/local.json
+./target/release/gos run benchmarks/suite/run.gos --runs 7 \
+  --output benchmarks/suite/results/local.json
 ```
 
 The measured tiers are `vm-no-jit`, `vm-jit`, `llvm-debug`, `llvm-release`, and
@@ -22,7 +23,7 @@ pull-request run. Update a baseline explicitly after reviewing output and host
 metadata:
 
 ```bash
-python3 benchmarks/suite/run.py --runs 11 \
+./target/release/gos run benchmarks/suite/run.gos --runs 11 \
   --output benchmarks/suite/baselines/linux-x86_64.json
 ```
 

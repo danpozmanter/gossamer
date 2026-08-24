@@ -40,8 +40,13 @@ pub(crate) fn run(options: Options) -> Result<()> {
         .with_context(|| format!("resolve {}", entry.display()))?;
     let status = Status::new();
     status.info(&format!("watching {}", entry.display()));
+    // Files a `comptime` region embeds are part of a revision even
+    // though no line of the source names them. They are only knowable
+    // from a fold, so they are learned from the validation pass and
+    // stay empty when there is none.
+    let mut embedded: BTreeSet<PathBuf> = BTreeSet::new();
     if options.check {
-        validate(&entry, options.locked, &status)?;
+        embedded = validate(&entry, options.locked, &status)?;
     }
     let signals = SupervisorSignals::new();
     let mut generation = 1_u64;
@@ -49,7 +54,7 @@ pub(crate) fn run(options: Options) -> Result<()> {
 
     loop {
         let (watcher, events) = watch_inputs(&entry)?;
-        let decision = wait_for_batch(&events, options.debounce, &signals)?;
+        let decision = wait_for_batch(&events, options.debounce, &signals, &embedded)?;
         drop(watcher);
         if decision == WatchDecision::Shutdown {
             stop_child(&mut child, options.grace, &status)?;
@@ -64,7 +69,7 @@ pub(crate) fn run(options: Options) -> Result<()> {
         }
         if options.check {
             match validate(&entry, options.locked, &status) {
-                Ok(()) => {}
+                Ok(inputs) => embedded = inputs,
                 Err(error) => {
                     status.error(&format!(
                         "check failed; keeping generation {generation} running"
@@ -134,7 +139,9 @@ impl SupervisorSignals {
     }
 }
 
-fn validate(entry: &Path, locked: bool, status: &Status) -> Result<()> {
+/// Checks the next revision, answering the paths its `comptime`
+/// regions read so a later edit to one of them counts as a change.
+fn validate(entry: &Path, locked: bool, status: &Status) -> Result<BTreeSet<PathBuf>> {
     let stage = Instant::now();
     let _cwd = if let Some(root) = crate::paths::project_root_for_entry(entry) {
         Some(CurrentDirGuard::push(&root)?)
@@ -149,6 +156,7 @@ fn validate(entry: &Path, locked: bool, status: &Status) -> Result<()> {
     let user_source = unit.source;
     let source = gossamer_parse::autoderive::augment_source(&user_source);
     let source = crate::comptime_fold::fold_comptime(source, &entry.to_string_lossy())?;
+    let embedded = comptime_inputs();
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(entry.to_string_lossy().into_owned(), source.clone());
     crate::paths::register_unit_origins(&mut map, file_id, &unit.entry, &unit.origins);
@@ -170,7 +178,16 @@ fn validate(entry: &Path, locked: bool, status: &Status) -> Result<()> {
         outcome.checked.sf.items.len(),
         stage.elapsed().as_millis()
     ));
-    Ok(())
+    Ok(embedded)
+}
+
+/// Paths the fold just read, resolved so an event path can be compared
+/// with them.
+fn comptime_inputs() -> BTreeSet<PathBuf> {
+    gossamer_runtime::comptime_inputs::take()
+        .into_iter()
+        .map(|path| path.canonicalize().unwrap_or(path))
+        .collect()
 }
 
 fn start_child(entry: &Path, options: &Options, generation: u64, status: &Status) -> Result<Child> {
@@ -299,6 +316,7 @@ fn wait_for_batch(
     events: &Receiver<Event>,
     debounce: Duration,
     signals: &SupervisorSignals,
+    embedded: &BTreeSet<PathBuf>,
 ) -> Result<WatchDecision> {
     loop {
         if signals.received() {
@@ -311,7 +329,7 @@ fn wait_for_batch(
                 return Err(anyhow!("filesystem watcher disconnected"));
             }
         };
-        if !is_relevant(Path::new(&first.path)) {
+        if !is_relevant(Path::new(&first.path), embedded) {
             continue;
         }
         let started = Instant::now();
@@ -327,7 +345,9 @@ fn wait_for_batch(
                 return Ok(WatchDecision::Shutdown);
             }
             match events.recv_timeout(limit) {
-                Ok(event) if is_relevant(Path::new(&event.path)) => latest = Instant::now(),
+                Ok(event) if is_relevant(Path::new(&event.path), embedded) => {
+                    latest = Instant::now();
+                }
                 Ok(_) => {}
                 Err(RecvTimeoutError::Timeout) => return Ok(WatchDecision::Changed),
                 Err(RecvTimeoutError::Disconnected) => {
@@ -340,7 +360,19 @@ fn wait_for_batch(
 
 /// Whether an event path can affect a project revision. Kept pure so the
 /// platform watcher adapter stays a small, testable boundary.
-fn is_relevant(path: &Path) -> bool {
+///
+/// `embedded` holds the files the last validation's `comptime` regions
+/// read: their bytes are compiled into the revision, so an edit to one
+/// is a change even though the name is nowhere in the source. The set
+/// comes from a fold, so it is populated only under `--check`.
+fn is_relevant(path: &Path, embedded: &BTreeSet<PathBuf>) -> bool {
+    if embedded.contains(path)
+        || path
+            .canonicalize()
+            .is_ok_and(|resolved| embedded.contains(&resolved))
+    {
+        return true;
+    }
     if path
         .components()
         .any(|component| matches!(component.as_os_str().to_str(), Some(".git" | "target")))
@@ -369,16 +401,37 @@ mod tests {
         Options, SupervisorSignals, WatchDecision, child_arguments, is_relevant, wait_for_batch,
     };
     use gossamer_std::signal;
-    use std::path::Path;
+    use std::collections::BTreeSet;
+    use std::path::{Path, PathBuf};
     use std::sync::mpsc;
+
+    fn nothing_embedded() -> BTreeSet<PathBuf> {
+        BTreeSet::new()
+    }
 
     #[test]
     fn filters_build_outputs_and_editor_files() {
-        assert!(is_relevant(Path::new("src/main.gos")));
-        assert!(is_relevant(Path::new("project.toml")));
-        assert!(!is_relevant(Path::new("target/debug/main.gos")));
-        assert!(!is_relevant(Path::new("src/main.gos~")));
-        assert!(!is_relevant(Path::new("src/.main.gos")));
+        let embedded = nothing_embedded();
+        assert!(is_relevant(Path::new("src/main.gos"), &embedded));
+        assert!(is_relevant(Path::new("project.toml"), &embedded));
+        assert!(!is_relevant(Path::new("target/debug/main.gos"), &embedded));
+        assert!(!is_relevant(Path::new("src/main.gos~"), &embedded));
+        assert!(!is_relevant(Path::new("src/.main.gos"), &embedded));
+    }
+
+    /// A file whose bytes a `comptime` region compiled into the
+    /// revision is a change to that revision, whatever it is named.
+    #[test]
+    fn a_file_a_comptime_region_embedded_is_a_change() {
+        let embedded: BTreeSet<PathBuf> = [PathBuf::from("profiles/standard.toml")]
+            .into_iter()
+            .collect();
+        assert!(is_relevant(Path::new("profiles/standard.toml"), &embedded));
+        assert!(!is_relevant(Path::new("profiles/other.toml"), &embedded));
+        assert!(
+            !is_relevant(Path::new("profiles/standard.toml"), &nothing_embedded()),
+            "a file nothing embedded is still not a source file"
+        );
     }
 
     #[test]
@@ -388,8 +441,13 @@ mod tests {
 
         signal::deliver(signal::sigs::SIGTERM);
 
-        let decision = wait_for_batch(&rx, std::time::Duration::from_millis(150), &signals)
-            .expect("shutdown decision");
+        let decision = wait_for_batch(
+            &rx,
+            std::time::Duration::from_millis(150),
+            &signals,
+            &nothing_embedded(),
+        )
+        .expect("shutdown decision");
         assert_eq!(decision, WatchDecision::Shutdown);
     }
 

@@ -57,6 +57,10 @@ pub fn fold_into_source_anchored(
     // the length of the fold and the source's own directory is the
     // root a confined read may not escape.
     let _confinement = gossamer_runtime::comptime_policy::Confined::at_source(anchor_source);
+    // Whatever this fold reads becomes an input of the build that
+    // folded it, so the set is collected from here and read back with
+    // `comptime_inputs::take`.
+    gossamer_runtime::comptime_inputs::begin();
     let mut vm = crate::vm::Vm::new();
     vm.set_collect_comptime(true);
     vm.set_comptime_gate(true);

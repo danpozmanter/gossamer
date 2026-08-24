@@ -24,15 +24,45 @@ pub fn resolve_on_path(name: &str) -> Option<PathBuf> {
         return candidate.canonicalize().ok();
     }
     let path = std::env::var_os("PATH")?;
-    for directory in std::env::split_paths(&path) {
+    search_path(name, &path).and_then(|full| full.canonicalize().ok())
+}
+
+/// The first file named `name` in `path_var`, a `PATH`-shaped list.
+///
+/// The directories are walked in order and the answer is the entry as
+/// it was found, not canonicalized: a caller that needs the real
+/// binary asks for it, and a caller launching the file wants the name
+/// the launch will use.
+#[must_use]
+pub(crate) fn search_path(name: &str, path_var: &std::ffi::OsStr) -> Option<PathBuf> {
+    for directory in std::env::split_paths(path_var) {
         for suffix in executable_suffixes() {
             let full = directory.join(format!("{name}{suffix}"));
-            if full.is_file() {
-                return full.canonicalize().ok();
+            if is_executable_file(&full) {
+                return Some(full);
             }
         }
     }
     None
+}
+
+/// Whether `path` is a file this host would actually execute.
+///
+/// The exec family skips a file on `PATH` that carries no execute bit
+/// and keeps searching, so a search that answered with one would name
+/// a program the launch then refuses.
+#[must_use]
+pub(crate) fn is_executable_file(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path).is_ok_and(|meta| meta.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    true
 }
 
 fn executable_suffixes() -> &'static [&'static str] {

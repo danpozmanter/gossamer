@@ -1311,23 +1311,50 @@ pub fn symlink_dir(_src: impl AsRef<Path>, _dst: impl AsRef<Path>) -> io::Result
     ))
 }
 
-/// Sets the Unix permission bits on `path` from `mode`. The bits
-/// match the chmod(2) value (e.g. `0o755`). Returns
-/// `ErrorKind::Unsupported` on non-Unix platforms.
-#[cfg(unix)]
+/// Sets the permission bits on `path` from `mode`, in the chmod(2)
+/// encoding (e.g. `0o755`).
+///
+/// Windows has no permission bits: only the owner write bit is
+/// meaningful there, and it sets or clears the read-only attribute.
 pub fn set_permissions_mode(path: impl AsRef<Path>, mode: u32) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    stdfs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+    gossamer_runtime::fs_mode::apply(path.as_ref(), mode)
 }
 
-/// Non-Unix stub for [`set_permissions_mode`]. Returns
-/// `ErrorKind::Unsupported`.
-#[cfg(not(unix))]
-pub fn set_permissions_mode(_path: impl AsRef<Path>, _mode: u32) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "set_permissions_mode is only supported on Unix targets",
-    ))
+/// The permission bits of `path`, in the chmod(2) encoding.
+///
+/// On Windows the read-only attribute is widened into the bits an
+/// equivalent Unix path would carry, so one value tests and re-applies
+/// on both.
+pub fn permissions_mode(path: impl AsRef<Path>) -> io::Result<u32> {
+    gossamer_runtime::fs_mode::read(path.as_ref())
+}
+
+/// Creates the directory `path` and gives it exactly `mode`.
+///
+/// The mode is applied after the directory exists, so the process
+/// umask cannot mask a bit out of it - `mkdir -m 0777` is the same two
+/// steps, and a directory a tool requires to be world-writable is
+/// world-writable however the umask is set.
+pub fn create_dir_mode(path: impl AsRef<Path>, mode: u32) -> io::Result<()> {
+    gossamer_runtime::fs_mode::create_dir(path.as_ref(), mode)
+}
+
+/// Creates `path` and every missing parent, giving `mode` to each
+/// directory this call creates and leaving one that already existed as
+/// it is.
+pub fn create_dir_all_mode(path: impl AsRef<Path>, mode: u32) -> io::Result<()> {
+    gossamer_runtime::fs_mode::create_dir_all(path.as_ref(), mode)
+}
+
+/// Writes `contents` to `path` and gives the file exactly `mode`.
+///
+/// The file is created with `mode` and then set to it, so it is never
+/// more permissive than asked for at any point and the umask cannot
+/// leave it less permissive than asked for at the end.
+pub fn write_mode(path: impl AsRef<Path>, contents: impl AsRef<[u8]>, mode: u32) -> io::Result<()> {
+    let path = path.as_ref().to_path_buf();
+    let bytes = contents.as_ref().to_vec();
+    crate::blocking_pool::run(move || gossamer_runtime::fs_mode::write(&path, &bytes, mode))
 }
 
 /// Changes the owner and / or group of `path`. Pass `-1` for `uid`
@@ -2184,6 +2211,87 @@ mod tests {
         // Restore write bit so cleanup can succeed.
         set_permissions_mode(&path, 0o644).unwrap();
         let _ = remove_all(&dir);
+    }
+
+    #[test]
+    fn create_dir_mode_defeats_the_umask() {
+        let dir = scratch("create-dir-mode");
+        stdfs::create_dir_all(&dir).unwrap();
+        let made = dir.join("shared");
+        create_dir_mode(&made, 0o777).unwrap();
+        assert!(made.is_dir());
+        assert_eq!(permissions_mode(&made).unwrap(), 0o777);
+        let _ = remove_all(&dir);
+    }
+
+    #[test]
+    fn create_dir_all_mode_gives_every_directory_it_creates_the_mode() {
+        let dir = scratch("create-dir-all-mode");
+        stdfs::create_dir_all(&dir).unwrap();
+        let leaf = dir.join("one").join("two").join("three");
+        create_dir_all_mode(&leaf, 0o701).unwrap();
+        assert!(leaf.is_dir());
+        #[cfg(unix)]
+        for made in [dir.join("one"), dir.join("one").join("two"), leaf.clone()] {
+            assert_eq!(
+                permissions_mode(&made).unwrap(),
+                0o701,
+                "{}",
+                made.display()
+            );
+        }
+        // What already exists is left alone, mode included: this call
+        // creates directories, it does not re-mode a tree.
+        create_dir_all_mode(&leaf, 0o700).unwrap();
+        #[cfg(unix)]
+        assert_eq!(permissions_mode(&leaf).unwrap(), 0o701);
+        #[cfg(unix)]
+        set_permissions_mode(dir.join("one"), 0o755).unwrap();
+        let _ = remove_all(&dir);
+    }
+
+    #[test]
+    fn write_mode_writes_the_bytes_and_the_bits() {
+        let dir = scratch("write-mode");
+        let path = dir.join("secret.txt");
+        stdfs::create_dir_all(&dir).unwrap();
+        write_mode(&path, b"hello", 0o600).unwrap();
+        assert_eq!(read_to_string(&path).unwrap(), "hello");
+        #[cfg(unix)]
+        assert_eq!(permissions_mode(&path).unwrap(), 0o600);
+        // A rewrite states the mode again rather than inheriting
+        // whatever the file already carried.
+        write_mode(&path, b"bye", 0o644).unwrap();
+        assert_eq!(read_to_string(&path).unwrap(), "bye");
+        #[cfg(unix)]
+        assert_eq!(permissions_mode(&path).unwrap(), 0o644);
+        let _ = remove_all(&dir);
+    }
+
+    #[test]
+    fn permissions_mode_reads_back_what_was_written() {
+        let dir = scratch("permissions-mode");
+        let path = dir.join("file.txt");
+        write(&path, "x").unwrap();
+        set_permissions_mode(&path, 0o640).unwrap();
+        let mode = permissions_mode(&path).unwrap();
+        #[cfg(unix)]
+        assert_eq!(mode, 0o640);
+        // Windows carries one bit of this, and it is the one every
+        // platform agrees on: the path is writable.
+        assert_ne!(mode & 0o200, 0, "{mode:o}");
+        set_permissions_mode(&path, 0o444).unwrap();
+        assert_eq!(permissions_mode(&path).unwrap() & 0o200, 0);
+        // Restored so the fixture can be removed.
+        set_permissions_mode(&path, 0o644).unwrap();
+        let _ = remove_all(&dir);
+    }
+
+    #[test]
+    fn permissions_mode_fails_for_a_missing_path() {
+        let dir = scratch("permissions-mode-missing");
+        let err = permissions_mode(dir.join("nope.txt")).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
     }
 
     #[test]

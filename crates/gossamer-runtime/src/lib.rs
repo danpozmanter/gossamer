@@ -212,9 +212,11 @@ pub fn collect_process_allocator(force: bool) {
 pub mod builtins;
 pub mod c_abi;
 pub mod clock;
+pub mod comptime_inputs;
 pub mod comptime_paths;
 pub mod comptime_policy;
 pub mod coverage;
+pub mod fs_mode;
 pub mod pprof;
 pub mod preempt;
 pub mod race;

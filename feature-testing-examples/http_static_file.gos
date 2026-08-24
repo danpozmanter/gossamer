@@ -52,10 +52,25 @@ fn await_ready(url: &String) {
     }
 }
 
+// A response's headers are name/value pairs in arrival order, so a
+// lookup is a scan rather than a map read.
+fn header_of(headers: &Vec<(String, String)>, name: String) -> String {
+    for (key, value) in headers {
+        if key.to_lowercase() == name {
+            return value
+        }
+    }
+    "none"
+}
+
 fn main() {
     let root = doc_root()
     let _ = fs::create_dir_all(root)
     let _ = fs::write(path::join(&root, &"hello.txt"), "static file ok".as_bytes())
+    let _ = fs::write(path::join(&root, &"index.html"), "root index".as_bytes())
+    let tour = path::join(&root, &"tour")
+    let _ = fs::create_dir_all(tour)
+    let _ = fs::write(path::join(&tour, &"index.html"), "tour index".as_bytes())
 
     go serve_files(root)
     await_ready(&"http://127.0.0.1:23890/hello.txt")
@@ -67,6 +82,29 @@ fn main() {
     match http::get("http://127.0.0.1:23890/missing.txt", Vec::from([])) {
         Ok(r) => println!("missing status={}", r.status)
         Err(e) => println!("missing error: {}", e)
+    }
+
+    // A directory is served as the index.html inside it, and a request
+    // that named the directory without a trailing slash is redirected
+    // to the form the page's own relative links resolve under.
+    match http::get("http://127.0.0.1:23890/", Vec::from([])) {
+        Ok(r) => println!("root status={} body={}", r.status, r.body)
+        Err(e) => println!("root error: {}", e)
+    }
+    match http::get("http://127.0.0.1:23890/tour/", Vec::from([])) {
+        Ok(r) => println!("dir status={} body={}", r.status, r.body)
+        Err(e) => println!("dir error: {}", e)
+    }
+    // A client that does not follow redirects sees the 301 itself; the
+    // default client follows it and lands on the same index.
+    let direct = http::Client::builder().max_redirects(0).build()
+    match direct.request("GET", "http://127.0.0.1:23890/tour", "", Vec::from([])) {
+        Ok(r) => println!("dir-no-slash status={} location={}", r.status, header_of(&r.headers, "location"))
+        Err(e) => println!("dir-no-slash error: {}", e)
+    }
+    match http::get("http://127.0.0.1:23890/tour", Vec::from([])) {
+        Ok(r) => println!("dir-followed status={} body={}", r.status, r.body)
+        Err(e) => println!("dir-followed error: {}", e)
     }
 
     let _ = fs::remove_dir_all(root)

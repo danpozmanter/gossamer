@@ -128,6 +128,11 @@ pub(crate) fn install_fs_extras(globals: &mut Vec<(&'static str, Value)>) {
             ("temp_dir", builtin_fs_temp_dir),
             ("temp_file", builtin_fs_temp_file),
             ("sync_dir", builtin_fs_sync_dir),
+            ("permissions", builtin_fs_permissions),
+            ("set_permissions", builtin_fs_set_permissions),
+            ("create_dir_mode", builtin_fs_create_dir_mode),
+            ("create_dir_all_mode", builtin_fs_create_dir_all_mode),
+            ("write_mode", builtin_fs_write_mode),
         ],
         globals,
     );
@@ -736,8 +741,9 @@ pub(crate) fn builtin_fs_file_close(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_fs_metadata_raw(args: &[Value]) -> RuntimeResult<Value> {
     let path = args.first().and_then(as_str).unwrap_or("");
-    crate::comptime_gate::guard_read("fs::metadata", path)?;
-    match std::fs::metadata(path) {
+    let path = gossamer_runtime::comptime_paths::resolve(path);
+    crate::comptime_gate::guard_read("fs::metadata", &path)?;
+    match std::fs::metadata(&path) {
         Ok(meta) => {
             let modified = meta
                 .modified()
@@ -759,8 +765,9 @@ pub(crate) fn builtin_fs_metadata_raw(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_fs_metadata(args: &[Value]) -> RuntimeResult<Value> {
     let path = args.first().and_then(as_str).unwrap_or("");
-    crate::comptime_gate::guard_read("fs::metadata", path)?;
-    match std::fs::metadata(path) {
+    let path = gossamer_runtime::comptime_paths::resolve(path);
+    crate::comptime_gate::guard_read("fs::metadata", &path)?;
+    match std::fs::metadata(&path) {
         Ok(meta) => {
             let fields = vec![
                 (
@@ -787,6 +794,96 @@ pub(crate) fn builtin_fs_metadata(args: &[Value]) -> RuntimeResult<Value> {
             )))
         }
         Err(e) => Ok(err_variant(format!("metadata: {e}"))),
+    }
+}
+
+/// `fs::permissions(path) -> Result<i64, errors::Error>` - the
+/// permission bits of `path`, in the chmod(2) encoding.
+pub(crate) fn builtin_fs_permissions(args: &[Value]) -> RuntimeResult<Value> {
+    let path = match arg_str_at(args, 0, "permissions", "path") {
+        Ok(s) => s,
+        Err(v) => return Ok(v),
+    };
+    let path = gossamer_runtime::comptime_paths::resolve(&path);
+    crate::comptime_gate::guard_read("fs::permissions", &path)?;
+    let context = path.clone();
+    match gossamer_runtime::sched_global::run_blocking("fs-permissions", move || {
+        gossamer_runtime::fs_mode::read(std::path::Path::new(&path))
+    }) {
+        Ok(Ok(mode)) => Ok(ok_variant(Value::Int(i64::from(mode)))),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, &context))),
+        Err(e) => Ok(err_variant(e)),
+    }
+}
+
+/// `fs::set_permissions(path, mode) -> Result<(), errors::Error>`.
+pub(crate) fn builtin_fs_set_permissions(args: &[Value]) -> RuntimeResult<Value> {
+    mode_call(args, "set_permissions", |path, mode| {
+        gossamer_runtime::fs_mode::apply(path, mode)
+    })
+}
+
+/// `fs::create_dir_mode(path, mode) -> Result<(), errors::Error>`.
+pub(crate) fn builtin_fs_create_dir_mode(args: &[Value]) -> RuntimeResult<Value> {
+    mode_call(args, "create_dir_mode", |path, mode| {
+        gossamer_runtime::fs_mode::create_dir(path, mode)
+    })
+}
+
+/// `fs::create_dir_all_mode(path, mode) -> Result<(), errors::Error>`.
+pub(crate) fn builtin_fs_create_dir_all_mode(args: &[Value]) -> RuntimeResult<Value> {
+    mode_call(args, "create_dir_all_mode", |path, mode| {
+        gossamer_runtime::fs_mode::create_dir_all(path, mode)
+    })
+}
+
+/// The shared shape of the mode-taking calls: a path, a mode, and a
+/// `Result<(), errors::Error>` carrying the same text the compiled
+/// tiers produce.
+fn mode_call(
+    args: &[Value],
+    name: &str,
+    operation: impl FnOnce(&std::path::Path, u32) -> std::io::Result<()> + Send + 'static,
+) -> RuntimeResult<Value> {
+    let path = match arg_str_at(args, 0, name, "path") {
+        Ok(s) => s,
+        Err(v) => return Ok(v),
+    };
+    let Some(mode) = args.get(1).and_then(value_to_int) else {
+        return Ok(err_variant(format!("{name}: expected integer mode")));
+    };
+    let mode = gossamer_runtime::fs_mode::bits(mode);
+    let context = path.clone();
+    match gossamer_runtime::sched_global::run_blocking("fs-mode", move || {
+        operation(std::path::Path::new(&path), mode)
+    }) {
+        Ok(Ok(())) => Ok(ok_variant(Value::Unit)),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, &context))),
+        Err(e) => Ok(err_variant(e)),
+    }
+}
+
+/// `fs::write_mode(path, contents, mode) -> Result<(), errors::Error>`.
+pub(crate) fn builtin_fs_write_mode(args: &[Value]) -> RuntimeResult<Value> {
+    let path = match arg_str_at(args, 0, "write_mode", "path") {
+        Ok(s) => s,
+        Err(v) => return Ok(v),
+    };
+    let Some(contents) = args.get(1).and_then(as_str).map(str::as_bytes) else {
+        return Ok(err_variant("write_mode: expected string contents"));
+    };
+    let contents = contents.to_vec();
+    let Some(mode) = args.get(2).and_then(value_to_int) else {
+        return Ok(err_variant("write_mode: expected integer mode"));
+    };
+    let mode = gossamer_runtime::fs_mode::bits(mode);
+    let context = path.clone();
+    match gossamer_runtime::sched_global::run_blocking("fs-write-mode", move || {
+        gossamer_runtime::fs_mode::write(std::path::Path::new(&path), &contents, mode)
+    }) {
+        Ok(Ok(())) => Ok(ok_variant(Value::Unit)),
+        Ok(Err(e)) => Ok(err_variant(classify_io_error(&e, &context))),
+        Err(e) => Ok(err_variant(e)),
     }
 }
 

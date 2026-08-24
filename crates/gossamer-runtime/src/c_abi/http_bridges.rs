@@ -695,6 +695,11 @@ pub enum StaticResolution {
     /// The request did not resolve to a servable, in-limit regular
     /// file.
     NotFound,
+    /// The request named a directory without a trailing slash. The
+    /// caller answers `301` to the same path with one, so the page's
+    /// own relative links resolve under the directory rather than
+    /// beside it.
+    Redirect,
 }
 
 /// Resolves `rel` under `root` for a static-file request, enforcing
@@ -723,13 +728,34 @@ pub fn resolve_static_path(root: &std::path::Path, rel: &str, max_bytes: u64) ->
     let Ok(meta) = std::fs::metadata(&canonical) else {
         return StaticResolution::NotFound;
     };
+    if meta.is_dir() {
+        // A directory is served as the `index.html` inside it, which is
+        // what makes a site's own directory URLs resolve.
+        if !rel.is_empty() && !rel.ends_with('/') {
+            return StaticResolution::Redirect;
+        }
+        let index = canonical.join("index.html");
+        let Ok(index_meta) = std::fs::metadata(&index) else {
+            return StaticResolution::NotFound;
+        };
+        return servable(index, &index_meta, max_bytes);
+    }
+    servable(canonical, &meta, max_bytes)
+}
+
+/// `path` as a resolution, once it is known to be inside the root.
+fn servable(
+    path: std::path::PathBuf,
+    meta: &std::fs::Metadata,
+    max_bytes: u64,
+) -> StaticResolution {
     if !meta.is_file() {
         return StaticResolution::NotFound;
     }
     if max_bytes > 0 && meta.len() > max_bytes {
         return StaticResolution::NotFound;
     }
-    StaticResolution::File(canonical)
+    StaticResolution::File(path)
 }
 
 #[unsafe(no_mangle)]
@@ -785,6 +811,19 @@ pub unsafe extern "C" fn gos_rt_file_server_serve(
                         status: 403,
                         body: SyncRawPtr::new(alloc_cstring(b"forbidden")),
                         headers: Vec::new(),
+                        body_bytes: None,
+                        content_type: "text/plain; charset=utf-8".to_string(),
+                        stream_handle: -1,
+                    })) as i64,
+                );
+            }
+            StaticResolution::Redirect => {
+                return crate::c_abi::vec::pack_result(
+                    0,
+                    Box::into_raw(Box::new(GosHttpResponse {
+                        status: 301,
+                        body: SyncRawPtr::new(alloc_cstring(b"")),
+                        headers: vec![("location".to_string(), format!("{path}/"))],
                         body_bytes: None,
                         content_type: "text/plain; charset=utf-8".to_string(),
                         stream_handle: -1,
@@ -1431,6 +1470,27 @@ mod static_path_tests {
             StaticResolution::File(_) => "File",
             StaticResolution::Forbidden => "Forbidden",
             StaticResolution::NotFound => "NotFound",
+            StaticResolution::Redirect => "Redirect",
         }
+    }
+
+    /// A directory is served as the index inside it, and one named
+    /// without a trailing slash is redirected to the form the page's
+    /// own relative links resolve under.
+    #[test]
+    fn a_directory_resolves_to_its_index_or_a_redirect() {
+        let root = temp_root("directory-index");
+        let sub = root.join("tour");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("index.html"), b"TOUR").unwrap();
+        std::fs::write(root.join("index.html"), b"ROOT").unwrap();
+        assert_eq!(label(&resolve_static_path(&root, "tour/", 0)), "File");
+        assert_eq!(label(&resolve_static_path(&root, "tour", 0)), "Redirect");
+        // The server root is the directory form already.
+        assert_eq!(label(&resolve_static_path(&root, "", 0)), "File");
+        // A directory with no index is still not found.
+        std::fs::create_dir_all(root.join("empty")).unwrap();
+        assert_eq!(label(&resolve_static_path(&root, "empty/", 0)), "NotFound");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

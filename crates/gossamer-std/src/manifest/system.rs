@@ -447,6 +447,38 @@ pub const FS: StdModule = StdModule {
             doc: "Creates a directory and any missing ancestors.",
         },
         StdItem {
+            name: "create_dir_mode",
+            kind: StdItemKind::Function,
+            doc: "Creates a single directory with exactly this mode, whatever the umask is. \
+                  On Windows only the owner write bit is meaningful: it sets the read-only \
+                  attribute.",
+        },
+        StdItem {
+            name: "create_dir_all_mode",
+            kind: StdItemKind::Function,
+            doc: "Creates a directory and any missing ancestors, giving each one it creates \
+                  exactly this mode.",
+        },
+        StdItem {
+            name: "write_mode",
+            kind: StdItemKind::Function,
+            doc: "Writes a file and leaves it at exactly this mode, whatever the umask is.",
+        },
+        StdItem {
+            name: "permissions",
+            kind: StdItemKind::Function,
+            doc: "The permission bits of a path, in the chmod(2) encoding. On Windows the \
+                  read-only attribute is widened into the bits an equivalent Unix path \
+                  would carry.",
+        },
+        StdItem {
+            name: "set_permissions",
+            kind: StdItemKind::Function,
+            doc: "Sets the permission bits of a path, in the chmod(2) encoding. On Windows \
+                  only the owner write bit is meaningful: it sets or clears the read-only \
+                  attribute.",
+        },
+        StdItem {
             name: "remove_file",
             kind: StdItemKind::Function,
             doc: "Removes a single file.",
@@ -745,6 +777,15 @@ pub const PROCESS: StdModule = StdModule {
             name: "run",
             kind: StdItemKind::Function,
             doc: "One-shot: runs a program with args, captures stdout/stderr plus the exit code.",
+        },
+        StdItem {
+            name: "run_in",
+            kind: StdItemKind::Function,
+            doc: "run_in(program, args, dir, env): the same one-shot run with the \
+                  child's working directory and environment supplied. An empty dir \
+                  inherits the caller's; the env pairs override the inherited \
+                  environment rather than replacing it, so a caller sets the two \
+                  variables it cares about without restating PATH.",
         },
         StdItem {
             name: "spawn",

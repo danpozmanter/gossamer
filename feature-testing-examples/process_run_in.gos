@@ -1,0 +1,69 @@
+// `process::run_in(program, args, dir, env)` - a child with its own
+// working directory and environment overrides.
+//
+// The directory and the variables reach the child on every tier: an
+// empty dir inherits the caller's, and the pairs override the
+// inherited environment rather than replacing it, so a variable the
+// caller already had is still there.
+
+use std::env
+use std::errors
+use std::fs
+use std::path
+use std::process
+
+fn line_of(result: Result<process::Output, errors::Error>) -> String {
+    match result {
+        Ok(output) => format!("code={} out={}", output.code, output.stdout.trim())
+        Err(e) => format!("error: {}", e)
+    }
+}
+
+fn main() {
+    let root = path::join(&env::temp_dir(), &"gossamer_run_in_fixture")
+    let _ = fs::remove_dir_all(&root)
+    let _ = fs::create_dir_all(&root)
+    let _ = fs::write(path::join(&root, &"marker.txt"), "inside".as_bytes())
+
+    // The child starts where the caller said, so a relative path it
+    // reads is relative to that directory.
+    println!("dir: {}", line_of(process::run_in(&"/bin/cat", &#["marker.txt"], &root, &#[])))
+
+    // An empty directory leaves the child where the caller is.
+    println!(
+        "inherited dir: {}"
+        line_of(process::run_in(&"/bin/sh", &#["-c", "test -d /proc && echo here"], &"", &#[]))
+    )
+
+    // The pairs reach the child.
+    let overrides = #[("GOS_RUN_IN_PROBE", "set-by-caller")]
+    println!(
+        "env: {}"
+        line_of(process::run_in(
+            &"/bin/sh"
+            &#["-c", "echo $GOS_RUN_IN_PROBE"]
+            &""
+            &overrides
+        ))
+    )
+
+    // ... on top of the environment the caller already had, rather
+    // than instead of it.
+    println!(
+        "inherited env: {}"
+        line_of(process::run_in(
+            &"/bin/sh"
+            &#["-c", "test -n \"$PATH\" && echo path-kept"]
+            &""
+            &overrides
+        ))
+    )
+
+    // A command that does not exist is an Err, as it is for run.
+    match process::run_in(&"/nonexistent/gossamer-probe", &#[], &"", &#[]) {
+        Ok(output) => println!("missing: code={}", output.code)
+        Err(_) => println!("missing: error")
+    }
+
+    let _ = fs::remove_dir_all(&root)
+}

@@ -75,7 +75,7 @@ jobs:
         run: cargo build --release -p gossamer-cli
 
       - name: Idle CPU regression guard
-        run: ./benchmarks/idle/check.sh
+        run: "${GOS_HARNESS_BIN:-./target/release/gos}" run benchmarks/idle/check.gos
 
       - name: Release HTTP soak resource gate
         shell: bash
@@ -152,33 +152,7 @@ jobs:
           for ((i = 0; i < BENCH_RUNS; i++)); do
             "$GOS" bench benchmarks/perf --parallel 1 | tee ".perf/gos-bench-$i.txt"
           done
-          python3 - .perf/gos-bench-*.txt <<'PY' | tee -a .perf/current.txt
-          import re
-          import statistics
-          import sys
-          from collections import defaultdict
-
-          records = defaultdict(list)
-          ansi_re = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
-          line_re = re.compile(
-              r"^(?P<label>\S+)\s+\.\.\.\s+(?P<ns>[0-9]+)\s+ns/op(?:\s+\(.*\))?$"
-          )
-          for path in sys.argv[1:]:
-              for line in open(path):
-                  m = line_re.match(ansi_re.sub("", line).strip())
-                  if m:
-                      records[m.group("label")].append(int(m.group("ns")))
-
-          if not records:
-              raise SystemExit("gos bench produced no parseable ns/op records")
-
-          for label in sorted(records):
-              samples = records[label]
-              if len(samples) < 3:
-                  raise SystemExit(f"{label}: expected at least 3 samples, got {len(samples)}")
-              safe_label = "bench:" + label.replace("::", "/")
-              print(f"{safe_label} {int(statistics.median(samples))}")
-          PY
+          "$GOS" run scripts/bench_median.gos .perf/gos-bench-*.txt | tee -a .perf/current.txt
 
           # Arithmetic-heavy: factorial via recursion
           [[ -f examples/factorial.gos ]] && measure_process factorial "$GOS" run examples/factorial.gos
@@ -193,6 +167,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          GOS=./target/release/gos
           CURRENT=.perf/current.txt
           BASELINE=.perf/baseline.txt
 
@@ -221,49 +196,7 @@ jobs:
           # larger absolute wall-clock delta before the ratio matters. Existing
           # two-column baselines remain readable; RSS begins gating once a
           # three-column baseline entry has been written on main.
-          python3 - "$BASELINE" "$CURRENT" <<'PY'
-          import sys, collections
-
-          def load(path):
-              d = {}
-              for line in open(path):
-                  parts = line.split()
-                  if len(parts) >= 2:
-                      d[parts[0]] = (int(parts[1]), int(parts[2]) if len(parts) >= 3 else None)
-              return d
-
-          base = load(sys.argv[1])
-          curr = load(sys.argv[2])
-          regressions = []
-          for name, (ns, rss) in curr.items():
-              if name not in base:
-                  print(f"  {name}: no baseline yet [NEW]")
-                  continue
-              base_ns, base_rss = base[name]
-              ratio = ns / base_ns
-              time_delta = ns - base_ns
-              rss_ratio = rss / base_rss if rss is not None and base_rss else None
-              if name.startswith("bench:"):
-                  limit_ratio = 1.25
-                  min_delta = max(500, int(base_ns * 0.05))
-                  value_text = f"{ns} ns/op (baseline {base_ns} ns/op, {ratio:.2f}x)"
-              else:
-                  limit_ratio = 1.5
-                  min_delta = 10_000_000
-                  value_text = f"{ns // 1_000_000}ms (baseline {base_ns // 1_000_000}ms, {ratio:.2f}x)"
-              time_regressed = ratio >= limit_ratio and time_delta >= min_delta
-              rss_regressed = rss_ratio is not None and rss_ratio >= 1.5
-              status = "REGRESSION" if time_regressed or rss_regressed else "OK"
-              rss_text = "RSS baseline pending" if rss_ratio is None else f"RSS {rss}KiB (baseline {base_rss}KiB, {rss_ratio:.2f}x)"
-              print(f"  {name}: {value_text}; {rss_text} [{status}]")
-              if time_regressed or rss_regressed:
-                  regressions.append(name)
-          if regressions:
-              print("\nPerf regressions:")
-              for name in regressions:
-                  print(f"  {name}")
-              print("::warning::Perf baseline comparison regressed; see uploaded perf-log artifact")
-          PY
+          "$GOS" run scripts/perf_compare.gos "$BASELINE" "$CURRENT"
 
       - name: Update baseline on main
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'

@@ -738,18 +738,7 @@ impl<'a> Builder<'a> {
         else {
             return None;
         };
-        let names: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
-        let strip_std = if names.first() == Some(&"std") {
-            &names[1..]
-        } else {
-            &names[..]
-        };
-        let joined = strip_std.join("::");
-        // `use std::compress::gzip` + `gzip::encode(..)` names the same
-        // function as `compress::gzip::encode`; the arms below key on the
-        // canonical path, so fold the leaf spelling into it first.
-        let joined = gossamer_resolve::canonical_stdlib_path(&joined)
-            .map_or(joined, std::string::ToString::to_string);
+        let joined = Self::stdlib_free_path(segments);
         if matches!(
             joined.as_str(),
             "BTreeSet::new" | "collections::BTreeSet::new"
@@ -847,6 +836,38 @@ impl<'a> Builder<'a> {
             return result;
         }
         let joined = joined.as_str();
+        let (rt_name, ret_ty) = self.resolve_stdlib_free_call(joined, args)?;
+        self.emit_stdlib_free_call(rt_name, ret_ty, args, span)
+    }
+
+    /// The canonical stdlib path a free-call callee's segments name.
+    ///
+    /// `use std::compress::gzip` + `gzip::encode(..)` names the same
+    /// function as `compress::gzip::encode`, and the arms below key on
+    /// the canonical path, so the leaf spelling folds into it here.
+    pub(crate) fn stdlib_free_path(segments: &[gossamer_ast::Ident]) -> String {
+        let names: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
+        let strip_std = if names.first() == Some(&"std") {
+            &names[1..]
+        } else {
+            &names[..]
+        };
+        let joined = strip_std.join("::");
+        gossamer_resolve::canonical_stdlib_path(&joined)
+            .map_or(joined, std::string::ToString::to_string)
+    }
+
+    /// The runtime symbol and pinned return type a stdlib free call
+    /// lowers to, without emitting it.
+    ///
+    /// Separate from the emission so a caller that needs only the type -
+    /// a `for` loop deciding what its element shape is - can ask without
+    /// lowering the call twice.
+    pub(crate) fn resolve_stdlib_free_call(
+        &mut self,
+        joined: &str,
+        args: &[HirExpr],
+    ) -> Option<(&'static str, gossamer_types::Ty)> {
         let mut resolved = self.lower_errors_regex_free(joined, args);
         resolved = resolved.or_else(|| self.lower_fs_free(joined, args));
         resolved = resolved.or_else(|| self.lower_fs_2_free(joined, args));
@@ -895,8 +916,7 @@ impl<'a> Builder<'a> {
         resolved = resolved.or_else(|| self.lower_exec_free(joined, args));
         resolved = resolved.or_else(|| self.lower_signal_flag_free(joined, args));
         resolved = resolved.or_else(|| self.lower_sandbox_free(joined, args));
-        let (rt_name, ret_ty) = resolved?;
-        self.emit_stdlib_free_call(rt_name, ret_ty, args, span)
+        resolved
     }
 
     /// Lowers a prelude free function by its bare name with the arguments
@@ -1219,6 +1239,23 @@ impl<'a> Builder<'a> {
                 (sym, self.result_unit_error_adt_ty())
             }
             "fs::create_dir" => ("gos_rt_fs_create_dir", self.result_unit_error_adt_ty()),
+            "fs::create_dir_mode" => ("gos_rt_fs_create_dir_mode", self.result_unit_error_adt_ty()),
+            "fs::create_dir_all_mode" => (
+                "gos_rt_fs_create_dir_all_mode",
+                self.result_unit_error_adt_ty(),
+            ),
+            "fs::write_mode" => ("gos_rt_fs_write_mode", self.result_unit_error_adt_ty()),
+            "fs::set_permissions" => ("gos_rt_fs_set_permissions", self.result_unit_error_adt_ty()),
+            "fs::permissions" => {
+                let mode = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let error = self.tcx.dyn_error_ty();
+                let substs = gossamer_types::Substs::from_types([mode, error]);
+                let result_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX),
+                    substs,
+                });
+                ("gos_rt_fs_permissions", result_ty)
+            }
             "fs::create_dir_all" => (
                 "gos_rt_os_mkdir_all_result",
                 self.result_unit_error_adt_ty(),
@@ -4347,6 +4384,24 @@ impl<'a> Builder<'a> {
                     substs,
                 });
                 ("gos_rt_exec_run", result_ty)
+            }
+            // `process::run_in(prog, args, dir, env)` - the same
+            // `Result<Output, errors::Error>` shape as `process::run`,
+            // with the child's working directory and environment
+            // overrides supplied by the caller.
+            "process::run_in" => {
+                let output_def = gossamer_resolve::DefId::local(u32::MAX - 3);
+                let output_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: output_def,
+                    substs: gossamer_types::Substs::new(),
+                });
+                let err_ty = self.tcx.dyn_error_ty();
+                let substs = gossamer_types::Substs::from_types([output_ty, err_ty]);
+                let result_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX),
+                    substs,
+                });
+                ("gos_rt_exec_run_in", result_ty)
             }
             // `exec::spawn(prog, args) -> Result<i64, errors::Error>`.
             // Non-blocking process launch - returns the child PID

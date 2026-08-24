@@ -212,7 +212,8 @@ pub const ENCODING_JSON: StdModule = StdModule {
         StdItem {
             name: "at",
             kind: StdItemKind::Function,
-            doc: "Indexes an array element on a dynamic Value.",
+            doc: "Indexes an array element on a dynamic Value. An index the \
+                  array does not have reads as JSON null.",
         },
         StdItem {
             name: "keys",

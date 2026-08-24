@@ -1,0 +1,259 @@
+// VM-vs-JIT parity sweep over every fixture, in parallel.
+//
+// Runs each `.gos` under `examples/` and `feature-testing-examples/`
+// twice through `gos run`: once with the JIT off, once with it on. A
+// promoted body that answers differently - or crashes - is a JIT bug,
+// and this catches it in seconds where the full tier-parity walk
+// (which also builds each fixture natively) takes tens of minutes.
+//
+// Usage: gos run scripts/jit_parity_sweep.gos [--force-jit] [gos-binary]
+//
+//   --force-jit   promote every body at its first call instead of at
+//                 the shipped hotness threshold, which widens coverage
+//                 well past what a short fixture reaches on its own -
+//                 and slows the sweep down by roughly an order of
+//                 magnitude.
+//
+// Output is compared as a line multiset rather than a transcript: a
+// program whose goroutines interleave differently between two runs of
+// the same binary would otherwise read as a divergence here. Every
+// value, count, and crash still has to match; exact line order is what
+// the full tier-parity walk compares.
+
+use std::{env, fs, path, process, sort, thread}
+
+/// Seconds a single fixture may take before it is killed.
+///
+/// The thing under test is a JIT that can hang, so the bound is not a
+/// timing tolerance: it is what turns a hang into a reported
+/// divergence instead of a sweep that never ends. `timeout` is the
+/// mechanism because it ends the child; a bound the sweep kept for
+/// itself would leave the hung child running.
+const BOUND_SECONDS: String = "30"
+
+/// Roots whose direct children are swept. `examples/projects/` holds
+/// whole project trees - servers and other long-running entry points
+/// the parity walk does not run either - so only the single-file
+/// fixtures directly under each root are taken.
+const ROOTS: [String; 2] = ["examples", "feature-testing-examples"]
+
+/// One fixture's verdict: empty when the two runs agree.
+struct Divergence {
+    report: String
+}
+
+/// The checkout the fixtures live in, found by walking up from the
+/// working directory.
+fn repo_root() -> String {
+    let mut directory = env::current_dir().unwrap_or(".")
+    loop {
+        if fs::is_dir(&path::join(&directory, &"feature-testing-examples")) {
+            return directory
+        }
+        match path::parent(&directory) {
+            Some(parent) => directory = parent
+            None => return "."
+        }
+    }
+}
+
+/// The first directory on `PATH` holding an executable named `name`,
+/// or "" when it is on none.
+fn on_path(name: String) -> String {
+    for directory in env::var(&"PATH").unwrap_or("").split(":") {
+        let candidate = path::join(&directory, &name)
+        if fs::is_file(&candidate) {
+            return candidate
+        }
+    }
+    ""
+}
+
+/// Every `.gos` directly under the sweep's roots, sorted.
+fn fixtures(root: &String) -> Vec<String> {
+    let mut files = #[]
+    for directory in ROOTS {
+        let full = path::join(root, &directory)
+        match fs::read_dir(&full) {
+            Ok(entries) => {
+                for entry in entries {
+                    if entry.is_file && entry.name.ends_with(".gos") {
+                        files.push(path::join(&directory, &entry.name))
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("jit parity sweep: reading {}: {}", full, e)
+                process::exit(2)
+            }
+        }
+    }
+    sort::sort_stable(files)
+}
+
+/// `text`'s lines as a sorted multiset, which is what the two runs are
+/// compared as.
+fn sorted_lines(text: &String) -> Vec<String> {
+    let mut lines = #[]
+    for line in text.lines() {
+        lines.push(line)
+    }
+    sort::sort_stable(lines)
+}
+
+/// The `<` / `>` report for two sorted multisets, capped at 20 lines.
+fn difference(vm: Vec<String>, jit: Vec<String>) -> Vec<String> {
+    let mut report = #[]
+    let mut left = 0
+    let mut right = 0
+    while report.len() < 20 {
+        match (left < vm.len(), right < jit.len()) {
+            (false, false) => break
+            (true, false) => {
+                report.push(format!("< {}", vm[left]))
+                left += 1
+            }
+            (false, true) => {
+                report.push(format!("> {}", jit[right]))
+                right += 1
+            }
+            (true, true) => {
+                if vm[left] == jit[right] {
+                    left += 1
+                    right += 1
+                } else if vm[left] < jit[right] {
+                    report.push(format!("< {}", vm[left]))
+                    left += 1
+                } else {
+                    report.push(format!("> {}", jit[right]))
+                    right += 1
+                }
+            }
+        }
+    }
+    report
+}
+
+/// Runs one fixture both ways and answers what differed, if anything.
+fn compare_one(
+    timeout: &String
+    gos: &String
+    root: &String
+    file: &String
+    force_jit: bool
+) -> Divergence {
+    let command = #[BOUND_SECONDS, *gos, "run", *file]
+    let vm = process::run_in(timeout, &command, root, &#[("GOS_JIT", "0")])
+    let jit_env = if force_jit { #[("GOSSAMER_JIT_THRESHOLD", "1")] } else { #[] }
+    let jit = process::run_in(timeout, &command, root, &jit_env)
+    match (vm, jit) {
+        (Ok(vm), Ok(jit)) => {
+            let vm_lines = sorted_lines(&vm.stdout)
+            let jit_lines = sorted_lines(&jit.stdout)
+            if vm_lines == jit_lines && vm.code == jit.code {
+                return Divergence { report: "" }
+            }
+            let mut lines = #[
+                format!("=== {}", file)
+                format!("  vm  exit={}", vm.code)
+                format!("  jit exit={}", jit.code)
+            ]
+            for line in difference(vm_lines, jit_lines) {
+                lines.push(line)
+            }
+            Divergence { report: lines.join("\n") }
+        }
+        _ => Divergence {
+            report: format!("=== {}\n  could not run the fixture", file)
+        }
+    }
+}
+
+/// Sweeps every `worker`th fixture, so the whole set is covered once
+/// by `workers` goroutines without any shared state between them.
+fn sweep_share(
+    timeout: String
+    gos: String
+    root: String
+    files: Vec<String>
+    worker: i64
+    workers: i64
+    force_jit: bool
+) -> Vec<String> {
+    let mut divergences = #[]
+    let mut index = worker
+    while index < files.len() {
+        let divergence = compare_one(&timeout, &gos, &root, &files[index], force_jit)
+        if !divergence.report.is_empty() {
+            divergences.push(divergence.report)
+        }
+        index += workers
+    }
+    divergences
+}
+
+fn main() {
+    let mut force_jit = false
+    let mut gos = ""
+    for argument in env::args() {
+        if argument == "--force-jit" {
+            force_jit = true
+        } else {
+            gos = argument
+        }
+    }
+    let root = repo_root()
+    if gos.is_empty() {
+        gos = path::join(&root, &"target/debug/gos")
+    }
+    if !fs::is_file(&gos) {
+        eprintln!("jit parity sweep: no gos binary at {} (cargo build --bin gos)", gos)
+        process::exit(2)
+    }
+    let timeout = on_path("timeout")
+    if timeout.is_empty() {
+        eprintln!("jit parity sweep: `timeout` is not on PATH, so a hung fixture could not be ended")
+        process::exit(2)
+    }
+
+    let files = fixtures(&root)
+    let workers = max(1, thread::num_cpus())
+    let mut handles = #[]
+    let mut divergences = #[]
+    let outcome = cohort {
+        let mut worker = 0
+        while worker < workers {
+            let share = worker
+            handles.push(spawn(|| {
+                sweep_share(timeout, gos, root, files, share, workers, force_jit)
+            }))
+            worker += 1
+        }
+        for handle in handles {
+            match handle.join() {
+                Ok(found) => {
+                    for report in found {
+                        divergences.push(report)
+                    }
+                }
+                Err(e) => {
+                    eprintln!("jit parity sweep: a worker failed: {}", e)
+                    process::exit(1)
+                }
+            }
+        }
+    }
+    if let Err(e) = outcome {
+        eprintln!("jit parity sweep: {}", e)
+        process::exit(1)
+    }
+
+    if !divergences.is_empty() {
+        eprintln!("JIT-vs-VM divergences:")
+        for report in sort::sort_stable(divergences) {
+            eprintln!("{}", report)
+        }
+        process::exit(1)
+    }
+    println!("jit parity sweep: every fixture agrees between the VM and the JIT")
+}

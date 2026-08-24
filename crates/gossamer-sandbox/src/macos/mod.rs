@@ -103,6 +103,20 @@ pub(crate) fn run(
     stdio: Stdio,
     bound: Option<std::time::Duration>,
 ) -> Result<SandboxOutput, SandboxError> {
+    // Resolved before anything wraps it: a wrapped `argv` launches
+    // `sandbox-exec`, which exists whether or not the command does, so
+    // the launch's own not-found report never fires and the wrapper's
+    // `EX_OSERR` would stand in for a missing command. Seatbelt matches
+    // on resolved paths, so handing the wrapper the resolved program
+    // also names the same file the profile's rules were generated
+    // against.
+    let mut argv = argv.to_vec();
+    if let Some(program) = argv.first() {
+        let resolved = exec::resolve_program(policy, program)?;
+        argv[0] = resolved.to_string_lossy().into_owned();
+    }
+    let argv = argv.as_slice();
+
     // The wrapper is decided before the command is built, so the
     // policy's environment, working directory, and stdio are installed
     // on the program that actually runs.

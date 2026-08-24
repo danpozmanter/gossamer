@@ -178,6 +178,70 @@ impl Stdio {
     }
 }
 
+// Only the macOS backend needs to resolve a program before the launch
+// does: every other backend spawns `argv[0]` itself and reports the
+// launch's own `NotFound`. Compiled under `test` as well, so the
+// resolution rules are proven on every host rather than only on the
+// one platform that installs them.
+/// The `PATH` the exec family falls back to when the environment
+/// carries none. POSIX names it `_CS_PATH`; every Unix ships the same
+/// two directories in it, and Windows searches its own system
+/// directories whatever the environment says.
+#[cfg(any(target_os = "macos", test))]
+fn default_path() -> &'static str {
+    if cfg!(windows) {
+        "C:\\Windows\\system32;C:\\Windows"
+    } else {
+        "/usr/bin:/bin"
+    }
+}
+
+/// The file `program` names, resolved the way the launch itself
+/// resolves it: a spelling with a separator against the policy's
+/// working directory, a bare name through the `PATH` the child is
+/// given.
+///
+/// A backend that wraps `argv` in another program - macOS runs the
+/// command through `sandbox-exec` - launches a wrapper that always
+/// exists, so the launch cannot report that the command does not.
+/// Resolving first is what keeps `command not found` a distinct
+/// outcome on every platform rather than whatever code the wrapper
+/// happens to exit with.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn resolve_program(
+    policy: &CompiledPolicy,
+    program: &str,
+) -> Result<std::path::PathBuf, SandboxError> {
+    let not_found = || SandboxError::CommandNotFound(program.to_string());
+    let candidate = std::path::Path::new(program);
+    if candidate.components().count() > 1 {
+        let full = if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            working_directory(policy).join(candidate)
+        };
+        return crate::discover::is_executable_file(&full)
+            .then_some(full)
+            .ok_or_else(not_found);
+    }
+    // The child's own environment, because that is what the search
+    // the child's launch performs will read.
+    let path = policy
+        .environment()
+        .get("PATH")
+        .filter(|value| !value.is_empty())
+        .map_or_else(|| std::ffi::OsString::from(default_path()), Into::into);
+    crate::discover::search_path(program, &path).ok_or_else(not_found)
+}
+
+/// The directory a relative path in `policy` resolves against.
+#[cfg(any(target_os = "macos", test))]
+fn working_directory(policy: &CompiledPolicy) -> std::path::PathBuf {
+    policy.working_directory.clone().unwrap_or_else(|| {
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+    })
+}
+
 /// Builds the `Command` for `argv` with the policy's environment and
 /// working directory applied.
 ///
@@ -635,5 +699,117 @@ pub(crate) mod signals {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod exec_tests {
+    use super::*;
+    use crate::error::EXIT_COMMAND_NOT_FOUND;
+    use crate::level::Level;
+    use crate::policy::SandboxPolicy;
+    use std::path::{Path, PathBuf};
+
+    /// A directory holding one executable file named `name`.
+    fn bin_directory(tag: &str, name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("gos-exec-resolve-{tag}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create fixture directory");
+        let file = dir.join(name);
+        std::fs::write(&file, b"#!/bin/sh\nexit 0\n").expect("write fixture command");
+        make_executable(&file);
+        dir
+    }
+
+    #[cfg(unix)]
+    fn make_executable(path: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+            .expect("mark the fixture executable");
+    }
+
+    #[cfg(not(unix))]
+    fn make_executable(_path: &Path) {}
+
+    /// The name a command carries on this platform, since Windows
+    /// resolves an unqualified name through its executable suffixes.
+    fn command_name(stem: &str) -> String {
+        if cfg!(windows) {
+            format!("{stem}.exe")
+        } else {
+            stem.to_string()
+        }
+    }
+
+    fn policy_with_path(directory: &Path) -> crate::policy::CompiledPolicy {
+        SandboxPolicy::new()
+            .level(Level::None)
+            .read_write(directory)
+            .env_set("PATH", directory.to_string_lossy().into_owned())
+            .compile()
+            .expect("the policy compiles")
+    }
+
+    #[test]
+    fn a_bare_name_resolves_through_the_path_the_child_is_given() {
+        let dir = bin_directory("bare-name", &command_name("tool"));
+        let policy = policy_with_path(&dir);
+        let resolved =
+            resolve_program(&policy, "tool").expect("the command is on the child's PATH");
+        assert_eq!(resolved, dir.join(command_name("tool")));
+    }
+
+    /// The whole point of the resolution: a command that does not exist
+    /// is that failure class and not any other, whatever the backend
+    /// would have launched.
+    #[test]
+    fn a_command_that_is_on_no_path_is_not_found() {
+        let dir = bin_directory("missing", &command_name("tool"));
+        let policy = policy_with_path(&dir);
+        let error = resolve_program(&policy, "gossamer-sandbox-no-such-command-7c1e")
+            .expect_err("a command on no PATH does not resolve");
+        assert_eq!(error.exit_code(), EXIT_COMMAND_NOT_FOUND, "{error}");
+        assert!(
+            error
+                .to_string()
+                .contains("gossamer-sandbox-no-such-command"),
+            "{error}"
+        );
+    }
+
+    /// A command spelled with a separator names a file rather than a
+    /// search, and a relative one names it from where the child starts.
+    #[test]
+    fn a_path_shaped_command_is_resolved_against_the_working_directory() {
+        let dir = bin_directory("relative", &command_name("tool"));
+        let policy = SandboxPolicy::new()
+            .level(Level::None)
+            .read_write(&dir)
+            .working_directory(&dir)
+            .compile()
+            .expect("the policy compiles");
+        let spelled = format!(".{}{}", std::path::MAIN_SEPARATOR, command_name("tool"));
+        let resolved = resolve_program(&policy, &spelled).expect("a relative command resolves");
+        assert_eq!(resolved, dir.join(".").join(command_name("tool")));
+        let error = resolve_program(&policy, "./gossamer-sandbox-no-such-file")
+            .expect_err("a relative command that is not there does not resolve");
+        assert_eq!(error.exit_code(), EXIT_COMMAND_NOT_FOUND, "{error}");
+    }
+
+    /// A policy that passes no `PATH` still launches the commands the
+    /// exec family would find, so the resolution cannot be stricter
+    /// than the launch it stands in for.
+    #[test]
+    fn a_policy_with_no_path_falls_back_to_the_default_search_path() {
+        let policy = SandboxPolicy::new()
+            .level(Level::None)
+            .compile()
+            .expect("the policy compiles");
+        assert!(!policy.environment().contains_key("PATH"));
+        let name = if cfg!(windows) { "cmd" } else { "sh" };
+        assert!(
+            resolve_program(&policy, name).is_ok(),
+            "{name} is in the default search path"
+        );
     }
 }

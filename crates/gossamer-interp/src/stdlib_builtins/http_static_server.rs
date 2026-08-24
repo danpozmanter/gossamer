@@ -124,6 +124,25 @@ fn file_response(status: i64, bytes: &[u8], mime: &str, headers: &[(&str, String
     Value::struct_("Response", fields)
 }
 
+/// The `301` that sends a directory request to the same path with a
+/// trailing slash, so the page's own relative links resolve under the
+/// directory rather than beside it.
+fn redirect_response(location: &str) -> Value {
+    let fields = vec![
+        ("status", Value::Int(301)),
+        ("body", Value::String(SmolStr::from(""))),
+        (
+            "content_type",
+            Value::String(SmolStr::from("text/plain; charset=utf-8")),
+        ),
+        (
+            "headers",
+            header_array(&[("location", location.to_string())]),
+        ),
+    ];
+    Value::struct_("Response", fields)
+}
+
 fn forbidden_response() -> Value {
     let fields = vec![
         ("status", Value::Int(403)),
@@ -156,6 +175,9 @@ pub(crate) fn native_file_server_serve(
     let full = match resolve_static_path(std::path::Path::new(&root), rel, STATIC_FILE_MAX_BYTES) {
         StaticResolution::File(p) => p,
         StaticResolution::Forbidden => return Ok(ok_variant(forbidden_response())),
+        StaticResolution::Redirect => {
+            return Ok(ok_variant(redirect_response(&format!("{path}/"))));
+        }
         StaticResolution::NotFound => {
             return Ok(ok_variant(super::http_router::http_404_response()));
         }

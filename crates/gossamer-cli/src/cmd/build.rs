@@ -272,12 +272,7 @@ fn run(file: &PathBuf, request: &BuildRequest<'_>) -> Result<()> {
     if let Some(outcome) = load_unchanged_build(&stamp_path, &out_path, &build_key) {
         build_timings.stamp = phase_started.elapsed();
         build_timings.total = started.elapsed();
-        println!(
-            "build: {bytes}B native executable at {path} ({note})",
-            bytes = outcome.size,
-            path = out_path.display(),
-            note = outcome.note,
-        );
+        report_artifact(&outcome, &out_path);
         if timings {
             build_timings.print(true);
         }
@@ -287,7 +282,13 @@ fn run(file: &PathBuf, request: &BuildRequest<'_>) -> Result<()> {
     let _ = fs::remove_file(&stamp_path);
 
     let phase_started = Instant::now();
-    let (sf, resolutions, table, tcx) = validate_source(
+    let ValidatedSource {
+        sf,
+        resolutions,
+        table,
+        tcx,
+        comptime_inputs,
+    } = validate_source(
         file,
         source,
         &mut build_timings,
@@ -311,18 +312,30 @@ fn run(file: &PathBuf, request: &BuildRequest<'_>) -> Result<()> {
         &mut build_timings,
     )
     .map_err(|err| anyhow!("build: {}", err.user_message()))?;
-    store_successful_build(&stamp_path, &out_path, &build_key, &outcome);
+    store_successful_build(
+        &stamp_path,
+        &out_path,
+        &build_key,
+        &outcome,
+        &comptime_inputs,
+    );
+    report_artifact(&outcome, &out_path);
+    if timings {
+        build_timings.total = started.elapsed();
+        build_timings.print(false);
+    }
+    Ok(())
+}
+
+/// The one line a finished build prints, whether it linked or found
+/// the artifact still current.
+fn report_artifact(outcome: &NativeBuildOutcome, out_path: &Path) {
     println!(
         "build: {bytes}B native executable at {path} ({note})",
         bytes = outcome.size,
         path = out_path.display(),
         note = outcome.note,
     );
-    if timings {
-        build_timings.total = started.elapsed();
-        build_timings.print(false);
-    }
-    Ok(())
 }
 
 /// Emits a stable, machine-readable summary of the selected optimization
@@ -409,7 +422,10 @@ impl BuildTimings {
     }
 }
 
-const BUILD_STAMP_VERSION: &str = "gossamer-linked-artifact-v1";
+/// Stamp format identity. A stamp written by an older toolchain is
+/// read as a miss, so a format that gained a field never reads one
+/// that could not carry it as though it did.
+const BUILD_STAMP_VERSION: &str = "gossamer-linked-artifact-v2";
 
 /// Fingerprints everything available before the frontend that can affect the
 /// linked artifact. The bundled source covers sibling modules, while project
@@ -560,6 +576,18 @@ fn load_unchanged_build(
         return None;
     }
     let note = lines.next()?.to_string();
+    // The comptime inputs are the half of the input set the key cannot
+    // carry: which files a `comptime` region reads is decided by
+    // running it, which happens after the key is formed. Each one is
+    // re-stated here and compared with what it says today, so an edited
+    // embedded asset is a miss exactly as an edited source is.
+    for line in lines {
+        let path = line.strip_prefix(COMPTIME_INPUT_PREFIX)?;
+        let path = path.split_once(' ')?.1.split_once(' ')?.1;
+        if comptime_input_line(Path::new(path))? != line {
+            return None;
+        }
+    }
     let size = fs::metadata(out_path).ok()?.len();
     Some(NativeBuildOutcome {
         size,
@@ -567,11 +595,41 @@ fn load_unchanged_build(
     })
 }
 
+/// How a recorded compile-time input is spelled in a stamp:
+/// `input <len> <mtime> <path>`, path last so it needs no escaping.
+const COMPTIME_INPUT_PREFIX: &str = "input ";
+
+/// The stamp line for compile-time input `path`, or `None` when the
+/// path cannot be stated on one line.
+///
+/// A path holding a newline is the one shape a line-oriented stamp
+/// cannot express; refusing to record it makes every later build a
+/// miss, which is the safe direction.
+fn comptime_input_line(path: &Path) -> Option<String> {
+    let text = path.to_string_lossy();
+    if text.contains('\n') {
+        return None;
+    }
+    let (len, mtime) = fs::metadata(path).map_or_else(
+        |_| ("-".to_string(), "-".to_string()),
+        |meta| {
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or_else(|| "-".to_string(), |since| since.as_nanos().to_string());
+            (meta.len().to_string(), mtime)
+        },
+    );
+    Some(format!("{COMPTIME_INPUT_PREFIX}{len} {mtime} {text}"))
+}
+
 fn store_successful_build(
     stamp_path: &Path,
     out_path: &Path,
     key: &str,
     outcome: &NativeBuildOutcome,
+    comptime_inputs: &[PathBuf],
 ) {
     let Some(parent) = stamp_path.parent() else {
         return;
@@ -579,11 +637,21 @@ fn store_successful_build(
     if fs::create_dir_all(parent).is_err() {
         return;
     }
-    let contents = format!(
+    let mut contents = format!(
         "{BUILD_STAMP_VERSION}\n{key}\n{}\n{}\n",
         file_stamp_identity(out_path),
         outcome.note,
     );
+    for path in comptime_inputs {
+        let Some(line) = comptime_input_line(path) else {
+            // Nothing recorded means nothing to compare, and a stamp
+            // that cannot state its whole input set must not be one a
+            // later build trusts.
+            return;
+        };
+        contents.push_str(&line);
+        contents.push('\n');
+    }
     let tmp = stamp_path.with_extension(format!("tmp-{}", std::process::id()));
     if fs::write(&tmp, contents).is_ok() {
         let _ = fs::rename(&tmp, stamp_path);
@@ -601,12 +669,7 @@ fn validate_source(
     source: String,
     timings: &mut BuildTimings,
     origins: (&Path, &[gossamer_pkg::bundle::BundledSpan]),
-) -> Result<(
-    gossamer_ast::SourceFile,
-    gossamer_resolve::Resolutions,
-    gossamer_types::TypeTable,
-    gossamer_types::TyCtxt,
-)> {
+) -> Result<ValidatedSource> {
     // Compile-time codegen pass for from_json/to_json (and friends).
     let phase_started = Instant::now();
     let augmented = gossamer_parse::autoderive::augment_source(&source);
@@ -619,6 +682,10 @@ fn validate_source(
     // result literals so the native backend compiles a constant.
     let phase_started = Instant::now();
     let augmented = crate::comptime_fold::fold_comptime(augmented, &file.to_string_lossy())?;
+    // What the fold read is as much an input of this build as the
+    // source is: the same text over different bytes is a different
+    // program, and the stamp has to be able to tell.
+    let comptime_inputs = gossamer_runtime::comptime_inputs::take();
     timings.comptime = phase_started.elapsed();
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), augmented);
@@ -667,7 +734,25 @@ fn validate_source(
         table,
         tcx,
     } = outcome.checked;
-    Ok((sf, resolutions, table, tcx))
+    Ok(ValidatedSource {
+        sf,
+        resolutions,
+        table,
+        tcx,
+        comptime_inputs,
+    })
+}
+
+/// A validated front end, plus the paths its comptime fold read.
+struct ValidatedSource {
+    sf: gossamer_ast::SourceFile,
+    resolutions: gossamer_resolve::Resolutions,
+    table: gossamer_types::TypeTable,
+    tcx: gossamer_types::TyCtxt,
+    /// Files a `comptime` region read while folding this source. They
+    /// belong to the build's input set even though nothing in the
+    /// source names them.
+    comptime_inputs: Vec<PathBuf>,
 }
 
 struct NativeBuildOutcome {
@@ -1943,7 +2028,7 @@ mod tests {
             size: 6,
             note: "test link".to_string(),
         };
-        super::store_successful_build(&stamp, &output, "key-a", &outcome);
+        super::store_successful_build(&stamp, &output, "key-a", &outcome, &[]);
         let hit = super::load_unchanged_build(&stamp, &output, "key-a").expect("stamp hit");
         assert_eq!(hit.size, 6);
         assert!(hit.note.contains("unchanged"));
@@ -1953,6 +2038,75 @@ mod tests {
         assert!(
             super::load_unchanged_build(&stamp, &output, "key-a").is_none(),
             "an externally replaced artifact must not be accepted"
+        );
+        std::fs::remove_dir_all(root).expect("remove scratch");
+    }
+
+    /// A file a `comptime` region read is an input of the build even
+    /// though no line of the source names it, so editing one has to
+    /// invalidate the artifact the fold's result was compiled into.
+    #[test]
+    fn a_stamp_invalidates_when_a_comptime_input_changes() {
+        let root = scratch("stamp-comptime-input");
+        std::fs::create_dir_all(&root).expect("create scratch");
+        let output = root.join("app");
+        let stamp = root.join("app.stamp");
+        let embedded = root.join("profile.toml");
+        std::fs::write(&output, b"binary").expect("write output");
+        std::fs::write(&embedded, b"level = \"standard\"\n").expect("write embedded asset");
+        let outcome = super::NativeBuildOutcome {
+            size: 6,
+            note: "test link".to_string(),
+        };
+        let inputs = vec![embedded.clone()];
+        super::store_successful_build(&stamp, &output, "key-a", &outcome, &inputs);
+        assert!(
+            super::load_unchanged_build(&stamp, &output, "key-a").is_some(),
+            "an untouched input is still a hit"
+        );
+
+        std::fs::write(&embedded, b"level = \"strict\"\n").expect("edit embedded asset");
+        assert!(
+            super::load_unchanged_build(&stamp, &output, "key-a").is_none(),
+            "an edited comptime input must not be accepted"
+        );
+
+        super::store_successful_build(&stamp, &output, "key-a", &outcome, &inputs);
+        std::fs::remove_file(&embedded).expect("remove embedded asset");
+        assert!(
+            super::load_unchanged_build(&stamp, &output, "key-a").is_none(),
+            "a removed comptime input must not be accepted"
+        );
+        std::fs::remove_dir_all(root).expect("remove scratch");
+    }
+
+    /// A path that appears only after the build is an input too: a
+    /// `comptime` region that asked whether it existed compiled the
+    /// answer in.
+    #[test]
+    fn a_stamp_invalidates_when_a_comptime_input_appears() {
+        let root = scratch("stamp-comptime-appears");
+        std::fs::create_dir_all(&root).expect("create scratch");
+        let output = root.join("app");
+        let stamp = root.join("app.stamp");
+        let absent = root.join("override.toml");
+        std::fs::write(&output, b"binary").expect("write output");
+        let outcome = super::NativeBuildOutcome {
+            size: 6,
+            note: "test link".to_string(),
+        };
+        super::store_successful_build(
+            &stamp,
+            &output,
+            "key-a",
+            &outcome,
+            std::slice::from_ref(&absent),
+        );
+        assert!(super::load_unchanged_build(&stamp, &output, "key-a").is_some());
+        std::fs::write(&absent, b"level = \"none\"\n").expect("create the absent input");
+        assert!(
+            super::load_unchanged_build(&stamp, &output, "key-a").is_none(),
+            "a comptime input that came into existence must not be accepted"
         );
         std::fs::remove_dir_all(root).expect("remove scratch");
     }

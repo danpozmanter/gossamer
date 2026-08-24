@@ -1,0 +1,198 @@
+// Full e2e matrix for the `[rust-bindings]` system.
+//
+// Usage: gos run scripts/test_external_libs_full.gos
+//
+// For each example, exercises:
+//   - `gos run` against the source
+//   - a cache hit on the second run
+//   - the no-bindings fast path (no cargo invocation)
+//
+// Compiled-mode (`gos build`) parity is exercised by
+// scripts/test_rust_binding_static_e2e.gos. This harness covers the
+// runner-dispatch path, which is the headline binding pipeline.
+//
+// The toolchain under test is the one this harness builds, at
+// `<root>/target/debug/gos`. The interpreter running the harness is
+// chosen by whoever invokes it - CI uses `GOS_HARNESS_BIN` - so a
+// compiler bug fails the examples rather than the harness reporting on
+// them.
+
+use std::{env, fs, path, process}
+
+/// One matrix cell: a project, the entry it runs, and the markers its
+/// output must carry.
+struct Cell {
+    label: String
+    project: String
+    entry: String
+    markers: Vec<String>
+}
+
+/// The project.toml of a project with no bindings at all.
+const PLAIN_MANIFEST: String = """
+[project]
+id = "example.com/no-bindings"
+version = "0.1.0"
+
+[dependencies]
+"""
+
+/// A program that reaches nothing native, so its run must not invoke
+/// cargo at all.
+const PLAIN_SOURCE: String = """
+fn main() {
+    println!("plain-project ok")
+}
+"""
+
+/// The checkout the examples live in.
+fn repo_root() -> String {
+    if let Some(root) = env::var(&"GOSSAMER_ROOT") {
+        return root
+    }
+    let mut directory = env::current_dir().unwrap_or(".")
+    loop {
+        if fs::is_dir(&path::join(&directory, &"example-external-libraries")) {
+            return directory
+        }
+        match path::parent(&directory) {
+            Some(parent) => directory = parent
+            None => return "."
+        }
+    }
+}
+
+/// Ends the run with `message` on standard error.
+fn fail(message: String) {
+    eprintln!("test_external_libs_full: {}", message)
+    process::exit(1)
+}
+
+/// Runs one cell and checks every marker it must print.
+fn run_cell(gos: &String, cell: &Cell, cache: &String) {
+    println!("=> {}", cell.label)
+    let environment = #[("XDG_CACHE_HOME", *cache)]
+    let outcome = process::run_in(gos, &#["run", cell.entry], &cell.project, &environment)
+    let output = match outcome {
+        Ok(result) => format!("{}{}", result.stdout, result.stderr)
+        Err(e) => {
+            fail(format!("{}: {}", cell.label, e))
+            return
+        }
+    }
+    print!("{}", output)
+    if !output.ends_with("\n") {
+        println!("")
+    }
+    for marker in cell.markers {
+        if !output.contains(marker) {
+            fail(format!("missing marker '{}' for {}", marker, cell.label))
+        }
+    }
+}
+
+fn main() {
+    let root = repo_root()
+    println!("=> building gos...")
+    match process::run_in(&"cargo", &#["build", "-p", "gossamer-cli"], &root, &#[]) {
+        Ok(result) => {
+            if result.code != 0 {
+                eprint!("{}", result.stderr)
+                fail("cargo build failed")
+            }
+        }
+        Err(e) => fail(format!("cargo build: {}", e))
+    }
+    let gos = path::join(&root, &"target/debug/gos")
+    if !fs::is_file(&gos) {
+        fail(format!("gos binary not produced at {}", gos))
+    }
+
+    // Every child shares one throwaway cache root, so a cold cell is
+    // genuinely cold and the warm cell that follows it is genuinely
+    // warm.
+    let cache = match fs::temp_dir(&"gos-extlibs-cache-") {
+        Ok(cache) => cache
+        Err(e) => {
+            fail(format!("creating a cache directory: {}", e))
+            return
+        }
+    }
+
+    let examples = path::join(&root, &"example-external-libraries")
+    let aware = path::join(&examples, &"01-gossamer-aware")
+    let wrapped = path::join(&examples, &"02-plain-rust-wrapped")
+
+    println!("=> phase 1: example 01 (echo-binding)")
+    let aware_markers = #["HELLO, GOSSAMER", "sum: 15", "count: 3"]
+    run_cell(
+        &gos
+        &Cell {
+            label: "01-gossamer-aware (cold)"
+            project: aware
+            entry: "src/main.gos"
+            markers: aware_markers
+        }
+        &cache
+    )
+    // The second invocation must hit the cache rather than build.
+    run_cell(
+        &gos
+        &Cell {
+            label: "01-gossamer-aware (warm)"
+            project: aware
+            entry: "src/main.gos"
+            markers: aware_markers
+        }
+        &cache
+    )
+
+    println!("=> phase 2: example 02 (unic-segment wrapper)")
+    let wrapped_markers = #["count: 10", "grapheme: n", "grapheme: ï"]
+    run_cell(
+        &gos
+        &Cell {
+            label: "02-plain-rust-wrapped (cold)"
+            project: wrapped
+            entry: "src/main.gos"
+            markers: wrapped_markers
+        }
+        &cache
+    )
+    run_cell(
+        &gos
+        &Cell {
+            label: "02-plain-rust-wrapped (warm)"
+            project: wrapped
+            entry: "src/main.gos"
+            markers: wrapped_markers
+        }
+        &cache
+    )
+
+    println!("=> phase 3: no-bindings fast path")
+    let plain = match fs::temp_dir(&"gos-nobindings-") {
+        Ok(plain) => plain
+        Err(e) => {
+            fail(format!("creating a scratch project: {}", e))
+            return
+        }
+    }
+    let _ = fs::create_dir_all(&path::join(&plain, &"src"))
+    let _ = fs::write(path::join(&plain, &"project.toml"), PLAIN_MANIFEST.as_bytes())
+    let _ = fs::write(path::join(&plain, &"src/main.gos"), PLAIN_SOURCE.as_bytes())
+    run_cell(
+        &gos
+        &Cell {
+            label: "no-bindings project"
+            project: plain
+            entry: "src/main.gos"
+            markers: #["plain-project ok"]
+        }
+        &cache
+    )
+    let _ = fs::remove_dir_all(&plain)
+    let _ = fs::remove_dir_all(&cache)
+
+    println!("=> all matrix cells green")
+}

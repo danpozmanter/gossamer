@@ -75,5 +75,12 @@ echo "  runtime   $RUNTIME"
 echo "  Ctrl-C to stop."
 echo
 
-cd "$SERVE_DIR"
-exec python3 -m http.server "$PORT"
+# The project's own web stack serves the project's own site: a
+# directory resolves to the index.html inside it, so /tour/ and
+# /playground/ work exactly as they do deployed.
+GOS="${GOS_BIN:-$ROOT/target/debug/gos}"
+if [ ! -x "$GOS" ]; then
+  echo "building $GOS" >&2
+  ( cd "$ROOT" && cargo build --bin gos )
+fi
+exec "$GOS" run "$ROOT/scripts/serve_site.gos" "$PORT" "$SERVE_DIR"

@@ -1418,6 +1418,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_exec_run as *const u8,
         ),
         (
+            "gos_rt_exec_run_in",
+            crate::c_abi::gos_rt_exec_run_in as *const u8,
+        ),
+        (
             "gos_rt_exec_signal",
             crate::c_abi::gos_rt_exec_signal as *const u8,
         ),
@@ -1580,6 +1584,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_fs_create_dir_all as *const u8,
         ),
         (
+            "gos_rt_fs_create_dir_all_mode",
+            crate::c_abi::gos_rt_fs_create_dir_all_mode as *const u8,
+        ),
+        (
+            "gos_rt_fs_create_dir_mode",
+            crate::c_abi::gos_rt_fs_create_dir_mode as *const u8,
+        ),
+        (
             "gos_rt_fs_file_close",
             crate::c_abi::gos_rt_fs_file_close as *const u8,
         ),
@@ -1740,8 +1752,20 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_fs_walk_dir as *const u8,
         ),
         (
+            "gos_rt_fs_permissions",
+            crate::c_abi::gos_rt_fs_permissions as *const u8,
+        ),
+        (
+            "gos_rt_fs_set_permissions",
+            crate::c_abi::gos_rt_fs_set_permissions as *const u8,
+        ),
+        (
             "gos_rt_fs_write",
             crate::c_abi::gos_rt_fs_write as *const u8,
+        ),
+        (
+            "gos_rt_fs_write_mode",
+            crate::c_abi::gos_rt_fs_write_mode as *const u8,
         ),
         (
             "gos_rt_gc_alloc",

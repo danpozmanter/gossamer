@@ -1,0 +1,36 @@
+// A `for` over a free stdlib call binds the call's element type.
+//
+// The checker often leaves such a call's own expression type as an
+// unresolved variable, while the lowering pins a real return type on
+// it. A loop that reads the slot without asking binds the machine word
+// the element happens to be, so a sequence of strings iterates as raw
+// pointers on the compiled tiers and as text on the VM.
+
+use std::{iter, sort, strings}
+
+fn main() {
+    let names = #["gamma", "alpha", "beta"]
+    for name in sort::sort_stable(names) {
+        println!("sorted: {}", name)
+    }
+
+    let numbers = #[3, 1, 2]
+    for value in sort::sort_stable(numbers) {
+        println!("number: {}", value)
+    }
+
+    for part in strings::split(&"a,b,c", &",") {
+        println!("part: {}", part)
+    }
+
+    for word in iter::map(|w| w.to_uppercase(), #["one", "two"]) {
+        println!("mapped: {}", word)
+    }
+
+    // The same sequence bound first, which always worked, so the two
+    // spellings are pinned against each other.
+    let ordered = sort::sort_stable(names)
+    for name in ordered {
+        println!("bound: {}", name)
+    }
+}

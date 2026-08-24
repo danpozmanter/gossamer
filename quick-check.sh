@@ -204,7 +204,12 @@ if [[ $run_sweep -eq 1 ]]; then
     phase "behavior gates"
     sweep_args=()
     [[ $force_jit -eq 1 ]] && sweep_args+=(--force-jit)
-    run_step "VM-vs-JIT fixture sweep" ./scripts/jit_parity_sweep.sh "${sweep_args[@]}"
+    # The sweep is itself a Gossamer program. `GOS_HARNESS_BIN` runs it
+    # on a different toolchain than the one under test, so a compiler
+    # bug fails the fixtures rather than the harness that reports them.
+    harness_gos="${GOS_HARNESS_BIN:-./target/debug/gos}"
+    run_step "VM-vs-JIT fixture sweep" \
+        "$harness_gos" run scripts/jit_parity_sweep.gos "${sweep_args[@]}"
 fi
 
 if [[ $run_deny -eq 1 || $run_audit -eq 1 || $run_rustdoc -eq 1 ]]; then

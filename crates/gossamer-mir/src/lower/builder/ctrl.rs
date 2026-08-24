@@ -2851,6 +2851,28 @@ impl<'a> Builder<'a> {
             }
             _ => {}
         }
+        // A free stdlib call's own expression type is often an
+        // unresolved `Var`, while the lowering pins a real return type
+        // on the call. Ask the lowering what it will produce, so
+        // `for line in sort::sort_stable(xs)` binds a `String` rather
+        // than the word its slot happens to hold.
+        if let HirExprKind::Call { callee, args } = &iter.kind
+            && let HirExprKind::Path { segments, .. } = &callee.kind
+        {
+            let joined = Self::stdlib_free_path(segments);
+            if let Some((_, ret_ty)) = self.resolve_stdlib_free_call(&joined, args) {
+                let mut ty = ret_ty;
+                while let TyKind::Ref { inner, .. } = self.tcx.kind_of(ty) {
+                    ty = *inner;
+                }
+                if let TyKind::Vec(elem) | TyKind::Slice(elem) | TyKind::Array { elem, .. } =
+                    self.tcx.kind_of(ty)
+                {
+                    return Some(*elem);
+                }
+            }
+            return None;
+        }
         if let HirExprKind::MethodCall { name, receiver, .. } = &iter.kind {
             return match name.name.as_str() {
                 "split" | "splitn" | "split_whitespace" | "lines" => Some(self.tcx.string_ty()),
@@ -3568,7 +3590,10 @@ impl<'a> Builder<'a> {
                 // already handled above, and a fixed array must keep its
                 // length-driven lowering below.
                 if for_vec_elem.is_none()
-                    && matches!(&for_loop.iter_expr.kind, HirExprKind::MethodCall { .. })
+                    && matches!(
+                        &for_loop.iter_expr.kind,
+                        HirExprKind::MethodCall { .. } | HirExprKind::Call { .. }
+                    )
                     && !matches!(self.tcx.kind_of(cur), TyKind::Array { .. })
                 {
                     for_vec_elem = self.for_loop_elem_ty(for_loop.iter_expr);

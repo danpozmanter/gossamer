@@ -358,6 +358,106 @@ fn strict_denies_every_network_protocol_or_fails_closed() {
     assert_ne!(output.code, 0, "a network namespace denies UDP too");
 }
 
+/// Environment variable that turns the probe below into the thing it
+/// probes, so a bind can be attempted from inside a sandbox without
+/// needing an interpreter on the host.
+#[cfg(target_os = "linux")]
+const LOOPBACK_PROBE: &str = "GOS_SANDBOX_LOOPBACK_PROBE";
+
+/// Binds a loopback port when the cases below run this binary again
+/// inside a sandbox, and does nothing otherwise.
+#[cfg(target_os = "linux")]
+#[test]
+fn loopback_bind_probe() {
+    if std::env::var(LOOPBACK_PROBE).is_err() {
+        return;
+    }
+    std::net::TcpListener::bind("127.0.0.1:0").expect("bind a loopback port");
+}
+
+/// `policy` with what it takes to run this test binary again: the
+/// directory it and its libraries live in, and the variable that turns
+/// the probe on.
+#[cfg(target_os = "linux")]
+fn probe_policy(policy: SandboxPolicy) -> SandboxPolicy {
+    let exe = std::env::current_exe().expect("this test binary");
+    let deps = exe.parent().expect("the binary lives in a directory");
+    policy
+        .read_only(deps)
+        .env_set(LOOPBACK_PROBE, "1")
+        .env_set("RUST_TEST_THREADS", "1")
+}
+
+/// Runs the probe inside `sandbox`, answering its exit code, or
+/// `None` when the run could not be made at all on this host.
+#[cfg(target_os = "linux")]
+fn run_probe(sandbox: &Sandbox) -> Option<i32> {
+    let exe = std::env::current_exe().expect("this test binary");
+    let argv = vec![
+        exe.to_string_lossy().into_owned(),
+        "--exact".to_string(),
+        "loopback_bind_probe".to_string(),
+    ];
+    match sandbox.run_with(&argv, Stdio::Capture) {
+        Ok(output) => Some(output.code),
+        Err(error) => {
+            eprintln!("skipping: {error}");
+            None
+        }
+    }
+}
+
+/// The namespace is the network boundary at strict, and the loopback
+/// it brings up is inside it. A tool that asks the machine for a local
+/// address - every JVM, and most Node toolchains - has to get one.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_loopback_bind_works_at_strict_where_the_namespace_is_the_boundary() {
+    if skip_unless_enforcing() {
+        return;
+    }
+    let root = workspace("strict-loopback");
+    let policy = probe_policy(shell_policy(&root, Level::Strict));
+    let Ok(sandbox) = Sandbox::new(&policy) else {
+        return;
+    };
+    let Some(code) = run_probe(&sandbox) else {
+        return;
+    };
+    assert_eq!(
+        code, 0,
+        "a loopback bind inside the run's own network namespace reaches nothing outside it"
+    );
+}
+
+/// Without a namespace there is no "inside": a listening port on the
+/// host's own loopback is reachable by every other process on the
+/// machine, so a policy asking for no network still denies it.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_loopback_bind_is_denied_at_standard_where_the_host_stack_is_shared() {
+    if skip_unless_enforcing() {
+        return;
+    }
+    let root = workspace("standard-loopback");
+    let policy = probe_policy(shell_policy(&root, Level::Standard));
+    let Ok(sandbox) = Sandbox::new(&policy) else {
+        return;
+    };
+    if sandbox.network_enforcement() == gossamer_sandbox::Enforcement::None {
+        // This kernel's Landlock has no network layer, so nothing here
+        // is installed to deny it and the run says so.
+        return;
+    }
+    let Some(code) = run_probe(&sandbox) else {
+        return;
+    };
+    assert_ne!(
+        code, 0,
+        "a loopback bind on the host's own stack is a listening port other processes can reach"
+    );
+}
+
 // ----------------------------------------------------------------
 // Portable cases.
 //
@@ -459,6 +559,34 @@ fn a_command_that_does_not_exist_is_reported_as_such() {
     let error = sandbox
         .run_with(
             &["gossamer-sandbox-no-such-command-9f3a".to_string()],
+            Stdio::Capture,
+        )
+        .expect_err("a missing command is an error, not an exit code");
+    assert_eq!(
+        error.exit_code(),
+        gossamer_sandbox::EXIT_COMMAND_NOT_FOUND,
+        "{error}"
+    );
+}
+
+/// The same contract at the level a host actually enforces at. A
+/// backend that wraps `argv` in another program - macOS runs the
+/// command through `sandbox-exec` - launches a wrapper that exists
+/// whether or not the command does, so the not-found report has to be
+/// produced before the wrapper is built or the wrapper's own failure
+/// code stands in for it.
+#[test]
+fn a_command_that_does_not_exist_is_reported_as_such_at_the_hosts_maximum_level() {
+    let host = gossamer_sandbox::capabilities();
+    if host.max_level < Level::Basic {
+        return;
+    }
+    let root = workspace("max-level-not-found");
+    let sandbox =
+        Sandbox::new(&portable_policy(&root, host.max_level)).expect("the reported level builds");
+    let error = sandbox
+        .run_with(
+            &["gossamer-sandbox-no-such-command-4b7d".to_string()],
             Stdio::Capture,
         )
         .expect_err("a missing command is an error, not an exit code");

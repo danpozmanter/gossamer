@@ -1,0 +1,91 @@
+// The median ns/op per benchmark label across several `gos bench`
+// transcripts, as the perf gate's `bench:` rows.
+//
+// Usage: gos run scripts/bench_median.gos <transcript>...
+//
+// Repeating the harness and taking the median is what keeps one lucky
+// or unlucky hosted-runner sample from defining the gate, so a label
+// that was not measured at least three times is an error rather than a
+// row built on one reading.
+
+use std::{env, fs, process, regex, sort}
+use std::collections::Map
+
+/// Escape sequences a terminal transcript carries, which the record
+/// pattern must not have to account for.
+const ANSI: String = "\x1b\\[[0-?]*[ -/]*[@-~]"
+
+/// One `label ... <n> ns/op` record, with the trailing detail the
+/// harness prints in parentheses.
+const RECORD: String = "^(\\S+)\\s+\\.\\.\\.\\s+([0-9]+)\\s+ns/op(\\s+\\(.*\\))?$"
+
+/// Samples per label, in the order the transcripts were read.
+fn samples(paths: Vec<String>) -> Map<String, Vec<i64>> {
+    let mut records: Map<String, Vec<i64>> = Map::new()
+    let ansi = match regex::compile(&ANSI) {
+        Ok(pattern) => pattern
+        Err(e) => {
+            eprintln!("bench_median: {}", e)
+            process::exit(1)
+        }
+    }
+    let record = match regex::compile(&RECORD) {
+        Ok(pattern) => pattern
+        Err(e) => {
+            eprintln!("bench_median: {}", e)
+            process::exit(1)
+        }
+    }
+    for path in paths {
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text
+            Err(e) => {
+                eprintln!("bench_median: reading {}: {}", path, e)
+                process::exit(1)
+            }
+        }
+        for line in text.lines() {
+            let plain = regex::replace_all(ansi, line, "").trim()
+            if let Some(groups) = regex::captures(record, &plain) {
+                let label = groups[1].unwrap_or("")
+                let ns = groups[2].unwrap_or("0").to_i64().unwrap_or(0)
+                records.or_insert(label, #[]).push(ns)
+            }
+        }
+    }
+    records
+}
+
+/// The middle value of `xs`, or the mean of the middle pair, truncated
+/// the way an integer nanosecond reading is.
+fn median(xs: Vec<i64>) -> i64 {
+    let ordered = sort::sort_stable(xs)
+    let middle = ordered.len() / 2
+    if ordered.len() % 2 == 1 {
+        return ordered[middle]
+    }
+    (ordered[middle - 1] + ordered[middle]) / 2
+}
+
+fn main() {
+    let paths = env::args()
+    if paths.is_empty() {
+        eprintln!("usage: gos run scripts/bench_median.gos <transcript>...")
+        process::exit(2)
+    }
+    let records = samples(paths)
+    if records.is_empty() {
+        eprintln!("gos bench produced no parseable ns/op records")
+        process::exit(1)
+    }
+    let mut labels = records.keys()
+    labels.sort()
+    for label in labels {
+        let values = records.get(&label).unwrap_or(#[])
+        if values.len() < 3 {
+            eprintln!("{}: expected at least 3 samples, got {}", label, values.len())
+            process::exit(1)
+        }
+        println!("bench:{} {}", label.replace("::", "/"), median(values))
+    }
+}

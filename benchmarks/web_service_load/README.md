@@ -22,11 +22,17 @@ is the proof their work composes with Track B's HTTP/sqlite stack.
 ## Quickstart
 
 ```sh
-./run.sh                     # uses bundled wrk-style harness
-./run.sh --connections=10000 # increase fan-out
-./run.sh --soak              # 30-minute soak (CI gate)
-./run.sh --metrics           # print final MemStats + goroutine count
+gos run run.gos                     # uses the bundled wrk-style harness
+gos run run.gos --connections=10000 # increase fan-out
+gos run run.gos --soak              # 30-minute soak (CI gate)
+gos run run.gos --metrics           # print the final metrics body
 ```
+
+The service binds its own address (`0.0.0.0:8080`), so the load is
+aimed there; `PORT` retargets it for a variant that listens elsewhere.
+Assertions 2 and 3 read a `/debug/metrics` endpoint - a service that
+serves none is reported as unmeasured rather than as passing, since a
+missing reading is not a reading of zero.
 
 The bundled harness (`harness.gos`) opens N concurrent HTTPS
 clients in goroutines, each issuing `GET /notes` + `POST /notes`
@@ -41,7 +47,7 @@ deps; CI runners that need to install them on every job spend
 more time installing than testing. The bundled harness is a
 Gossamer program - same toolchain - so the soak is one
 `gos run benchmarks/web_service_load/harness.gos` away. The
-`./run.sh --vegeta` path is wired for users who already have
+`--vegeta` path is wired for users who already have
 vegeta and want richer percentile output.
 
 ## Assertions (CI gates)

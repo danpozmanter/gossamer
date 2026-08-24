@@ -1,0 +1,332 @@
+// Joint Track A + B load validation. See README.md for the assertions
+// this harness enforces.
+//
+// Usage: gos run benchmarks/web_service_load/run.gos
+//            [--connections=N] [--duration=SEC] [--soak] [--vegeta]
+//            [--metrics]
+//
+// Defaults: 1000 connections, a 60-second window, the bundled harness.
+//
+// The service under test is built from the checkout and run as a
+// child. The interpreter running this harness is chosen by whoever
+// invokes it - CI uses `GOS_HARNESS_BIN` - so a compiler bug fails the
+// service rather than the harness reporting on it.
+
+use std::{env, fs, net, path, process, thread, time}
+
+/// How the metrics endpoint is reached, when the service has one: a
+/// scrape goes through `curl` exactly as the operator would run it by
+/// hand, and tolerates TLS the way that operator would.
+const CURL: String = "curl"
+
+/// Where `examples/projects/web_service_full` binds. The service picks
+/// its own address, so this is the port the load is aimed at rather
+/// than one the harness hands it; `PORT` overrides it for a service
+/// variant that listens elsewhere.
+const SERVICE_PORT: i64 = 8080
+
+/// Settings, from the environment and then the command line.
+struct Settings {
+    connections: i64
+    duration_sec: i64
+    port: i64
+    procs: i64
+    soak: bool
+    vegeta: bool
+    metrics: bool
+}
+
+const USAGE: String = """
+Usage: run.gos [--connections=N] [--duration=SEC] [--soak] [--vegeta] [--metrics]
+
+Defaults: 1000 connections, 60-second window, bundled harness.
+"""
+
+/// The checkout this harness lives in.
+fn repo_root() -> String {
+    let mut directory = env::current_dir().unwrap_or(".")
+    loop {
+        if fs::is_dir(&path::join(&directory, &"examples/projects/web_service_full")) {
+            return directory
+        }
+        match path::parent(&directory) {
+            Some(parent) => directory = parent
+            None => return "."
+        }
+    }
+}
+
+/// An environment variable read as a number, or `fallback`.
+fn number_from_env(name: String, fallback: i64) -> i64 {
+    env::var(&name).unwrap_or("").to_i64().unwrap_or(fallback)
+}
+
+fn parse_settings() -> Settings {
+    let mut settings = Settings {
+        connections: number_from_env("CONNECTIONS", 1000)
+        duration_sec: number_from_env("DURATION_SEC", 60)
+        port: number_from_env("PORT", SERVICE_PORT)
+        procs: number_from_env("GOMAXPROCS_FOR_SVC", max(1, thread::num_cpus()))
+        soak: false
+        vegeta: false
+        metrics: false
+    }
+    for argument in env::args() {
+        // A `--flag=value` argument carries its value; the rest are
+        // bare switches, so the value probe comes first.
+        if let Some(value) = argument.strip_prefix("--connections=") {
+            settings.connections = value.to_i64().unwrap_or(settings.connections)
+            continue
+        }
+        if let Some(value) = argument.strip_prefix("--duration=") {
+            settings.duration_sec = value.to_i64().unwrap_or(settings.duration_sec)
+            continue
+        }
+        match argument {
+            "--soak" => {
+                settings.soak = true
+                settings.duration_sec = 1800
+            }
+            "--vegeta" => settings.vegeta = true
+            "--metrics" => settings.metrics = true
+            "--help" | "-h" => {
+                println!("{}", USAGE)
+                process::exit(0)
+            }
+            _ => {
+                eprintln!("unknown arg: {}", argument)
+                process::exit(64)
+            }
+        }
+    }
+    settings
+}
+
+/// The first directory on `PATH` holding an executable named `name`,
+/// or "" when it is on none.
+fn on_path(name: String) -> String {
+    for directory in env::var(&"PATH").unwrap_or("").split(":") {
+        let candidate = path::join(&directory, &name)
+        if fs::is_file(&candidate) {
+            return candidate
+        }
+    }
+    ""
+}
+
+/// The service binary `gos build --release` produced, wherever the
+/// layout puts it.
+fn service_binary(service_dir: &String) -> Option<String> {
+    let release = path::join(service_dir, &"target/release")
+    for entry in fs::read_dir(&release).unwrap_or(#[]) {
+        if entry.is_file {
+            return Some(entry.path)
+        }
+    }
+    for candidate in #[path::join(service_dir, &"main"), path::join(service_dir, &"src/main")] {
+        if fs::is_file(&candidate) {
+            return Some(candidate)
+        }
+    }
+    None
+}
+
+/// Blocks until something is listening on `port`, or the tries run out.
+fn await_listener(port: i64) -> bool {
+    let address = format!("127.0.0.1:{}", port)
+    let mut tries = 0
+    while tries < 50 {
+        if let Ok(stream) = net::TcpStream::connect(&address) {
+            stream.close()
+            return true
+        }
+        time::sleep(100)
+        tries += 1
+    }
+    false
+}
+
+/// The OS thread count of `pid`, which is what a thread-per-connection
+/// server would blow past.
+fn thread_count(pid: i64) -> i64 {
+    let status = fs::read_to_string(&format!("/proc/{}/status", pid)).unwrap_or("")
+    for line in status.lines() {
+        if let Some(value) = line.strip_prefix("Threads:") {
+            return value.trim().to_i64().unwrap_or(0)
+        }
+    }
+    0
+}
+
+/// The metrics endpoint's body, scraped the way an operator would.
+fn scrape(port: i64) -> String {
+    let url = format!("http://127.0.0.1:{}/debug/metrics", port)
+    match process::run(&CURL, &#["-sk", url]) {
+        Ok(result) => result.stdout
+        Err(_) => ""
+    }
+}
+
+/// The value of a `name=value` line in a metrics body, or "".
+fn metric(body: &String, name: String) -> String {
+    let prefix = format!("{}=", name)
+    for line in body.lines() {
+        if let Some(value) = line.strip_prefix(&prefix) {
+            return value.trim()
+        }
+    }
+    ""
+}
+
+fn main() {
+    let settings = parse_settings()
+    let root = repo_root()
+    let service_dir = path::join(&root, &"examples/projects/web_service_full")
+    let log_dir = fs::temp_dir(&"gos-bench-").unwrap_or(env::temp_dir())
+    println!("[bench] log dir: {}", log_dir)
+    println!(
+        "[bench] connections={} duration={}s GOMAXPROCS={}"
+        settings.connections
+        settings.duration_sec
+        settings.procs
+    )
+
+    // Release mode so DWARF and the write barriers are exercised end
+    // to end.
+    let gos = path::join(&root, &"target/release/gos")
+    let source = path::join(&service_dir, &"src/main.gos")
+    let build_env = #[("GOSSAMER_PROCS", format!("{}", settings.procs))]
+    match process::run_in(&gos, &#["build", "--release", source], &root, &build_env) {
+        Ok(result) => {
+            print!("{}", result.stdout)
+            eprint!("{}", result.stderr)
+            if result.code != 0 {
+                eprintln!("[FAIL] the service did not build")
+                process::exit(1)
+            }
+        }
+        Err(e) => {
+            eprintln!("[FAIL] building the service: {}", e)
+            process::exit(1)
+        }
+    }
+
+    let Some(binary) = service_binary(&service_dir) else {
+        eprintln!("[FAIL] no service binary under {}", service_dir)
+        process::exit(1)
+    }
+    let pid = match process::spawn(&binary, &#[]) {
+        Ok(pid) => pid
+        Err(e) => {
+            eprintln!("[FAIL] starting the service: {}", e)
+            process::exit(1)
+            0
+        }
+    }
+    if !await_listener(settings.port) {
+        let _ = process::kill(pid)
+        eprintln!("[FAIL] the service never listened on port {}", settings.port)
+        process::exit(1)
+    }
+    let start_threads = thread_count(pid)
+    println!("[bench] start: pid={} threads={}", pid, start_threads)
+
+    let vegeta = if settings.vegeta { on_path("vegeta") } else { "" }
+    if vegeta.is_empty() {
+        println!("[bench] running bundled harness")
+        let harness = path::join(&root, &"benchmarks/web_service_load/harness.gos")
+        let arguments = #[
+            "run"
+            harness
+            "--port"
+            format!("{}", settings.port)
+            "--connections"
+            format!("{}", settings.connections)
+            "--duration"
+            format!("{}", settings.duration_sec)
+        ]
+        match process::run(&gos, &arguments) {
+            Ok(result) => {
+                print!("{}", result.stdout)
+                eprint!("{}", result.stderr)
+            }
+            Err(e) => eprintln!("[bench] the bundled harness failed: {}", e)
+        }
+    } else {
+        // `vegeta attack` reads its targets from a file and writes its
+        // binary result set to one, which `vegeta report` renders -
+        // the same two stages the shell spelled as a pipe.
+        let targets = path::join(&log_dir, &"targets.txt")
+        let results = path::join(&log_dir, &"results.bin")
+        let target_line = format!("GET https://127.0.0.1:{}/notes\n", settings.port)
+        let _ = fs::write(targets, target_line.as_bytes())
+        let attack = #[
+            "attack"
+            "-targets"
+            targets
+            "-duration"
+            format!("{}s", settings.duration_sec)
+            "-rate"
+            "0"
+            "-workers"
+            format!("{}", settings.connections)
+            "-insecure"
+            "-output"
+            results
+        ]
+        let _ = process::run(&vegeta, &attack)
+        if let Ok(report) = process::run(&vegeta, &#["report", results]) {
+            print!("{}", report.stdout)
+        }
+    }
+
+    let peak_threads = thread_count(pid)
+    let body = scrape(settings.port)
+    let goroutines = metric(&body, "goroutines").to_i64().unwrap_or(0)
+    let gc_p99 = metric(&body, "gc_pause_p99_ms")
+    if settings.metrics {
+        print!("{}", body)
+    }
+
+    let mut failed = false
+    let thread_limit = settings.procs * 2 + 4
+    if peak_threads > thread_limit {
+        eprintln!("[FAIL] thread count {} > limit {}", peak_threads, thread_limit)
+        failed = true
+    } else {
+        println!("[ok]   threads={} within {}", peak_threads, thread_limit)
+    }
+
+    // The pause and goroutine assertions read a `/debug/metrics`
+    // endpoint. A service that does not serve one is reported as
+    // unmeasured rather than passed: a missing reading is not a
+    // reading of zero.
+    if gc_p99.is_empty() {
+        println!("[skip] gc_pause_p99: the service serves no /debug/metrics")
+    } else {
+        let whole = gc_p99.split_once(".").map(|(whole, _)| whole).unwrap_or(gc_p99)
+        if whole.to_i64().unwrap_or(0) > 10 {
+            eprintln!("[FAIL] GC pause p99 {} ms > 10 ms", gc_p99)
+            failed = true
+        } else {
+            println!("[ok]   gc_pause_p99={}ms", gc_p99)
+        }
+    }
+
+    if settings.soak {
+        if metric(&body, "goroutines").is_empty() {
+            println!("[skip] goroutines after soak: the service serves no /debug/metrics")
+        } else if goroutines > 5000 {
+            eprintln!("[FAIL] goroutine count after 30-min soak: {}", goroutines)
+            failed = true
+        } else {
+            println!("[ok]   goroutines after soak={}", goroutines)
+        }
+    }
+
+    let _ = process::kill(pid)
+    let _ = fs::remove_dir_all(&log_dir)
+    if failed {
+        process::exit(1)
+    }
+}

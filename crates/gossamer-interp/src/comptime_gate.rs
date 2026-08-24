@@ -260,6 +260,7 @@ const NAME_CAPABILITIES: &[(&str, Capability)] = &[
     ("fs::is_symlink", Capability::Read),
     ("fs::metadata", Capability::Read),
     ("fs::open", Capability::Read),
+    ("fs::permissions", Capability::Read),
     ("fs::read", Capability::Read),
     ("fs::read_dir", Capability::Read),
     ("fs::read_to_string", Capability::Read),
@@ -279,14 +280,18 @@ const NAME_CAPABILITIES: &[(&str, Capability)] = &[
     ("fs::create", Capability::Write),
     ("fs::create_dir", Capability::Write),
     ("fs::create_dir_all", Capability::Write),
+    ("fs::create_dir_all_mode", Capability::Write),
+    ("fs::create_dir_mode", Capability::Write),
     ("fs::remove_dir", Capability::Write),
     ("fs::remove_dir_all", Capability::Write),
     ("fs::remove_file", Capability::Write),
     ("fs::rename", Capability::Write),
+    ("fs::set_permissions", Capability::Write),
     ("fs::sync_dir", Capability::Write),
     ("fs::temp_dir", Capability::Write),
     ("fs::temp_file", Capability::Write),
     ("fs::write", Capability::Write),
+    ("fs::write_mode", Capability::Write),
     // os.
     ("os::exec::kill", Capability::Exec),
     ("os::exec::kill_group", Capability::Exec),
@@ -440,12 +445,27 @@ pub(crate) fn denied(name: &str, level: ComptimeIo) -> Option<Capability> {
 }
 
 /// Refuses a compile-time read of `path` that leaves the confinement
-/// root.
+/// root, and records the path as an input of the fold.
 ///
 /// The capability itself is decided when the builtin's name resolves;
 /// this is the second half of `confined`, where the read is permitted
 /// but only under the tree that holds the source doing the reading.
+///
+/// Every compile-time read passes here, which is what makes it the one
+/// place a build can learn what a `comptime` region depends on.
 pub(crate) fn guard_read(operation: &str, path: &str) -> crate::value::RuntimeResult<()> {
+    guard_read_pattern(operation, path)?;
+    gossamer_runtime::comptime_inputs::record(path);
+    Ok(())
+}
+
+/// The same check for a read whose argument names a set of paths
+/// rather than one, such as a glob pattern.
+///
+/// The pattern itself is not an input - its own bytes are in the
+/// source - so what the read actually reached is recorded by the
+/// caller, which is the only place that knows it.
+pub(crate) fn guard_read_pattern(operation: &str, path: &str) -> crate::value::RuntimeResult<()> {
     gossamer_runtime::comptime_policy::check_path(operation, Capability::Read, path)
         .map_err(|denied| crate::value::RuntimeError::ComptimeDenied(denied.to_string()))
 }

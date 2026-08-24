@@ -1,0 +1,128 @@
+// Fail when the committed tier evidence no longer matches a fresh run.
+//
+// Usage: gos run scripts/feature_status_diff.gos <fresh> <committed>
+//
+// The fresh sidecar carries a record per fixture as well as per module;
+// only the `std::` rows are the committed evidence, so the comparison
+// is over those. A tier that reached no verdict is absent from a
+// record rather than marked failing, so the comparison is over the
+// tiers each row actually states.
+
+use std::{env, fs, process, sort}
+use std::collections::Map
+use std::encoding::json
+
+/// The `std::` rows of `path`, each rendered as the tiers it states.
+fn evidence(path: &String, only_std: bool) -> Map<String, String> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text
+        Err(e) => {
+            eprintln!("feature_status_diff: reading {}: {}", path, e)
+            process::exit(1)
+        }
+    }
+    let document = match json::parse(&text) {
+        Ok(document) => document
+        Err(e) => {
+            eprintln!("feature_status_diff: parsing {}: {}", path, e)
+            process::exit(1)
+        }
+    }
+    let mut rows: Map<String, String> = Map::new()
+    let mut index = 0
+    while index < json::len(document) {
+        let record = json::at(document, index)
+        index += 1
+        let name = field(&record, &"name")
+        if only_std && !name.starts_with("std::") {
+            continue
+        }
+        rows.insert(name, tiers_of(json::get(record, "tiers")))
+    }
+    rows
+}
+
+/// A string field of `record`, or empty when it carries none.
+fn field(record: &json::Value, key: &String) -> String {
+    match json::get(record, key) {
+        Some(value) => json::as_str(value).unwrap_or("")
+        None => ""
+    }
+}
+
+/// A record's tier verdicts as one comparable string, key by key.
+fn tiers_of(tiers: Option<json::Value>) -> String {
+    let Some(tiers) = tiers else { return "" }
+    let mut keys = json::keys(tiers).unwrap_or(#[])
+    keys.sort()
+    let mut parts = #[]
+    for key in keys {
+        parts.push(format!("{}={}", key, field(&tiers, &key)))
+    }
+    parts.join(",")
+}
+
+/// The names in `left` that `right` does not carry.
+fn missing_from(left: &Map<String, String>, right: &Map<String, String>) -> Vec<String> {
+    let mut names = #[]
+    for (name, _) in left.iter() {
+        if !right.contains_key(&name) {
+            names.push(name)
+        }
+    }
+    sort::sort_stable(names)
+}
+
+/// The names both carry whose verdicts differ.
+fn changed(left: &Map<String, String>, right: &Map<String, String>) -> Vec<String> {
+    let mut names = #[]
+    for (name, verdicts) in left.iter() {
+        if let Some(other) = right.get(&name) {
+            if other != verdicts {
+                names.push(name)
+            }
+        }
+    }
+    sort::sort_stable(names)
+}
+
+/// A name list, spelled the way the report has always spelled one.
+fn name_list(names: Vec<String>) -> String {
+    let mut quoted = #[]
+    for name in names {
+        quoted.push(format!("'{}'", name))
+    }
+    format!("[{}]", quoted.join(", "))
+}
+
+fn main() {
+    let args = env::args()
+    if args.len() != 2 {
+        eprintln!("usage: gos run scripts/feature_status_diff.gos <fresh> <committed>")
+        process::exit(2)
+    }
+    let fresh = evidence(&args[0], true)
+    let committed = evidence(&args[1], false)
+
+    let added = missing_from(&fresh, &committed)
+    let removed = missing_from(&committed, &fresh)
+    let changed = changed(&fresh, &committed)
+
+    if added.is_empty() && removed.is_empty() && changed.is_empty() {
+        println!("evidence is current ({} modules)", committed.len())
+        return
+    }
+    println!("{} is stale.", args[1])
+    if !added.is_empty() {
+        println!("  added: {}", name_list(added))
+    }
+    if !removed.is_empty() {
+        println!("  removed: {}", name_list(removed))
+    }
+    if !changed.is_empty() {
+        println!("  changed: {}", name_list(changed))
+    }
+    println!("Regenerate with `gos test --tier-parity --report status` and copy the")
+    println!("std:: rows from target/debug/.feature-status.json.")
+    process::exit(1)
+}

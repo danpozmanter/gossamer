@@ -2178,6 +2178,31 @@
 <td>Creates a directory and any missing ancestors.</td>
 </tr>
 <tr>
+<td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>create_dir_mode</code></a></td>
+<td><code>fn create_dir_mode(path: String, mode: i64) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>Creates a single directory with exactly this mode. The mode is applied after the directory exists, so the umask cannot mask a bit out of it. On Windows only the owner write bit is meaningful: it sets or clears the read-only attribute.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>create_dir_all_mode</code></a></td>
+<td><code>fn create_dir_all_mode(path: String, mode: i64) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>Creates a directory and any missing ancestors, giving each one it creates exactly this mode and leaving one that already existed as it is.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>write_mode</code></a></td>
+<td><code>fn write_mode(path: String, contents: String, mode: i64) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>Writes a file and leaves it at exactly this mode. The file is created with the mode and then set to it, so it is never more permissive than asked for and the umask cannot leave it less permissive.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>permissions</code></a></td>
+<td><code>fn permissions(path: String) -&gt; Result&lt;i64, errors::Error&gt;</code></td>
+<td>The permission bits of a path, in the chmod(2) encoding, including the setuid, setgid, and sticky bits. On Windows the read-only attribute is widened into the bits an equivalent Unix path would carry: <code>0o666</code> / <code>0o777</code> when writable, <code>0o444</code> / <code>0o555</code> when read-only.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>set_permissions</code></a></td>
+<td><code>fn set_permissions(path: String, mode: i64) -&gt; Result&lt;(), errors::Error&gt;</code></td>
+<td>Sets the permission bits of a path, in the chmod(2) encoding. On Windows only the owner write bit is meaningful: it sets or clears the read-only attribute and every other bit is ignored.</td>
+</tr>
+<tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/fs.rs"><code>sync_dir</code></a></td>
 <td><code>fn sync_dir(path: String) -&gt; Result&lt;(), errors::Error&gt;</code></td>
 <td>Makes a directory's own entries durable - the barrier a create, rename, or delete needs after the file itself is synced. On Windows NTFS metadata ordering supplies it and the call performs no flush.</td>

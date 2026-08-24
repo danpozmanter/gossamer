@@ -3444,8 +3444,8 @@
       "id": "std-encoding-json-at",
       "name": "std::encoding::json::at",
       "kind": "function",
-      "signature": "fn at(value: json::Value, index: i64) -> Option<json::Value>",
-      "description": "Indexes an array element on a dynamic Value.",
+      "signature": "fn at(value: json::Value, index: i64) -> json::Value",
+      "description": "Indexes an array element on a dynamic Value. An index the array does not have reads as JSON null.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -4904,6 +4904,44 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-fs-create-dir-all-mode",
+      "name": "std::fs::create_dir_all_mode",
+      "kind": "function",
+      "signature": "fn create_dir_all_mode(path: String, mode: i64) -> Result<(), errors::Error>",
+      "description": "Creates a directory and any missing ancestors, giving each one it creates exactly this mode.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdfs",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-fs-create-dir-mode",
+      "name": "std::fs::create_dir_mode",
+      "kind": "function",
+      "signature": "fn create_dir_mode(path: String, mode: i64) -> Result<(), errors::Error>",
+      "description": "Creates a single directory with exactly this mode, whatever the umask is. On Windows only the owner write bit is meaningful: it sets the read-only attribute.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdfs",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-fs-exists",
       "name": "std::fs::exists",
       "kind": "function",
@@ -5023,6 +5061,25 @@
       "kind": "function",
       "signature": "fn open(path: String) -> Result<fs::File, io::Error>",
       "description": "Opens a file for streaming reads.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdfs",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-fs-permissions",
+      "name": "std::fs::permissions",
+      "kind": "function",
+      "signature": "fn permissions(path: String) -> Result<i64, errors::Error>",
+      "description": "The permission bits of a path, in the chmod(2) encoding. On Windows the read-only attribute is widened into the bits an equivalent Unix path would carry.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -5170,6 +5227,25 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-fs-set-permissions",
+      "name": "std::fs::set_permissions",
+      "kind": "function",
+      "signature": "fn set_permissions(path: String, mode: i64) -> Result<(), errors::Error>",
+      "description": "Sets the permission bits of a path, in the chmod(2) encoding. On Windows only the owner write bit is meaningful: it sets or clears the read-only attribute.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdfs",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-fs-sync-dir",
       "name": "std::fs::sync_dir",
       "kind": "function",
@@ -5251,6 +5327,25 @@
       "kind": "function",
       "signature": "fn write(path: String, contents: Vec<u8>) -> Result<(), io::Error>",
       "description": "Writes bytes to a file, creating or truncating it.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdfs",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-fs-write-mode",
+      "name": "std::fs::write_mode",
+      "kind": "function",
+      "signature": "fn write_mode(path: String, contents: String, mode: i64) -> Result<(), errors::Error>",
+      "description": "Writes a file and leaves it at exactly this mode, whatever the umask is.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -13706,6 +13801,25 @@
       "kind": "function",
       "signature": "fn run(program: String, args: Vec<String>) -> Result<process::Output, errors::Error>",
       "description": "One-shot: runs a program with args, captures stdout/stderr plus the exit code.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdprocess",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-process-run-in",
+      "name": "std::process::run_in",
+      "kind": "function",
+      "signature": "fn run_in(program: String, args: Vec<String>, dir: String, env: Vec<(String, String)>) -> Result<process::Output, errors::Error>",
+      "description": "run_in(program, args, dir, env): the same one-shot run with the child's working directory and environment supplied. An empty dir inherits the caller's; the env pairs override the inherited environment rather than replacing it, so a caller sets the two variables it cares about without restating PATH.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",

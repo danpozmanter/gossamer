@@ -93,7 +93,9 @@ fn initialize_result(params: &Value) -> Value {
                redundant module calls. Prefer dedicated collection contracts: \
                Stack for LIFO-only values, Queue for FIFO-only values, \
                MinHeap or MaxHeap for priority queues, and Deque only when \
-               both ends matter.",
+               both ends matter. Keep HTML in its own file and read or embed \
+               it from there rather than writing markup inside Gossamer \
+               source.",
             ),
         ),
     ])

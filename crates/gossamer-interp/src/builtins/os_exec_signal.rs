@@ -256,26 +256,30 @@ fn builtin_fs_remove_dir(args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_fs_is_file(args: &[Value]) -> RuntimeResult<Value> {
     let path = args.first().and_then(as_str).unwrap_or("");
-    crate::comptime_gate::guard_read("fs::is_file", path)?;
-    Ok(Value::Bool(fs_std::is_file(path)))
+    let path = gossamer_runtime::comptime_paths::resolve(path);
+    crate::comptime_gate::guard_read("fs::is_file", &path)?;
+    Ok(Value::Bool(fs_std::is_file(&path)))
 }
 
 fn builtin_fs_is_dir(args: &[Value]) -> RuntimeResult<Value> {
     let path = args.first().and_then(as_str).unwrap_or("");
-    crate::comptime_gate::guard_read("fs::is_dir", path)?;
-    Ok(Value::Bool(fs_std::is_dir(path)))
+    let path = gossamer_runtime::comptime_paths::resolve(path);
+    crate::comptime_gate::guard_read("fs::is_dir", &path)?;
+    Ok(Value::Bool(fs_std::is_dir(&path)))
 }
 
 fn builtin_fs_is_symlink(args: &[Value]) -> RuntimeResult<Value> {
     let path = args.first().and_then(as_str).unwrap_or("");
-    crate::comptime_gate::guard_read("fs::is_symlink", path)?;
-    Ok(Value::Bool(fs_std::is_symlink(path)))
+    let path = gossamer_runtime::comptime_paths::resolve(path);
+    crate::comptime_gate::guard_read("fs::is_symlink", &path)?;
+    Ok(Value::Bool(fs_std::is_symlink(&path)))
 }
 
 fn builtin_fs_file_size(args: &[Value]) -> RuntimeResult<Value> {
     let path = args.first().and_then(as_str).unwrap_or("");
-    crate::comptime_gate::guard_read("fs::file_size", path)?;
-    let size = fs_std::file_size(path);
+    let path = gossamer_runtime::comptime_paths::resolve(path);
+    crate::comptime_gate::guard_read("fs::file_size", &path)?;
+    let size = fs_std::file_size(&path);
     Ok(Value::Int(i64::try_from(size).unwrap_or(i64::MAX)))
 }
 
@@ -584,8 +588,44 @@ fn builtin_time_parse_rfc3339(args: &[Value]) -> RuntimeResult<Value> {
 /// streamed output; this entry point covers the dominant
 /// "run a command and read its output" use case.
 fn builtin_exec_run(args: &[Value]) -> RuntimeResult<Value> {
+    exec_run_with("exec::run", args, None, None)
+}
+
+/// `process::run_in(prog, args, dir, env) -> Result<Output, errors::Error>`.
+///
+/// The cwd-and-environment shape of `process::run`: an empty `dir`
+/// inherits the caller's working directory, and each `env` pair
+/// overrides the inherited environment rather than replacing it.
+fn builtin_exec_run_in(args: &[Value]) -> RuntimeResult<Value> {
+    let dir = args.get(2).and_then(as_str).unwrap_or("").to_owned();
+    let mut environment: Vec<(String, String)> = Vec::new();
+    if let Some(Value::Array(pairs)) = args.get(3) {
+        for pair in pairs.iter() {
+            if let Value::Tuple(fields) = pair
+                && let (Some(name), Some(value)) = (
+                    fields.first().and_then(as_str),
+                    fields.get(1).and_then(as_str),
+                )
+            {
+                environment.push((name.to_owned(), value.to_owned()));
+            }
+        }
+    }
+    exec_run_with("process::run_in", args, Some(dir), Some(environment))
+}
+
+/// Runs a child and answers the `Output` struct, for whichever entry
+/// point asked.
+fn exec_run_with(
+    operation: &str,
+    args: &[Value],
+    dir: Option<String>,
+    environment: Option<Vec<(String, String)>>,
+) -> RuntimeResult<Value> {
     let Some(prog) = args.first().and_then(as_str) else {
-        return Ok(err_variant("exec::run: program argument must be a string"));
+        return Ok(err_variant(format!(
+            "{operation}: program argument must be a string"
+        )));
     };
     let prog = prog.to_owned();
     let mut cmd_args = Vec::new();
@@ -596,9 +636,17 @@ fn builtin_exec_run(args: &[Value]) -> RuntimeResult<Value> {
             }
         }
     }
+    let working_directory = dir.unwrap_or_default();
+    let environment = environment.unwrap_or_default();
     match gossamer_runtime::sched_global::run_blocking("exec-run", move || {
         let mut cmd = std::process::Command::new(prog);
         cmd.args(cmd_args);
+        if !working_directory.is_empty() {
+            cmd.current_dir(&working_directory);
+        }
+        for (name, value) in &environment {
+            cmd.env(name, value);
+        }
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
         cmd.output()
@@ -1031,6 +1079,12 @@ fn builtin_fs_list_dir(args: &[Value]) -> RuntimeResult<Value> {
 /// Builds the `DirInfo` struct value shared by `fs::read_dir` and
 /// `fs::walk_dir`; field order matches the compiled tier's blob.
 fn dir_info_value(entry: &fs_std::DirEntry) -> Value {
+    // Every entry a compile-time listing hands back is an input of the
+    // fold: its name, size, and modification time are all values the
+    // region can compile into the program. A walk reaches each
+    // directory it descends into through here too, so recording the
+    // entry covers the whole tree rather than only the root.
+    gossamer_runtime::comptime_inputs::record(&fs_std::encode_path(&entry.path));
     let (size, modified_ms) = std::fs::metadata(&entry.path).map_or((0_i64, 0_i64), |m| {
         let size = i64::try_from(m.len()).unwrap_or(i64::MAX);
         let modified_ms = m

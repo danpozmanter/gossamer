@@ -51,21 +51,28 @@ fn builtin_json_get(args: &[Value]) -> RuntimeResult<Value> {
     Ok(none_variant())
 }
 
-/// `json::at(array, idx)` → array index. Returns `Value::Unit`
-/// when the receiver isn't an array or the index is out of bounds.
+/// A JSON `null`, which is what a document states and what an element
+/// the document does not have reads as.
+fn json_null() -> Value {
+    Value::Json(Arc::new(JsonInner::new(json_std::Value::Null)))
+}
+
+/// `json::at(array, idx)` → array index. Answers JSON `null` when the
+/// receiver isn't an array or the index is out of bounds, which is what
+/// the compiled tiers answer and what `json::is_null` reports on.
 fn builtin_json_at(args: &[Value]) -> RuntimeResult<Value> {
     let Some(receiver) = args.first() else {
-        return Ok(Value::Unit);
+        return Ok(json_null());
     };
     let idx = args.get(1).and_then(|v| match v {
         Value::Int(n) => Some(*n),
         _ => None,
     });
     let Some(idx) = idx else {
-        return Ok(Value::Unit);
+        return Ok(json_null());
     };
     if idx < 0 {
-        return Ok(Value::Unit);
+        return Ok(json_null());
     }
     if let Value::Json(value) = receiver {
         if let json_std::Value::Array(items) = value.as_value() {
@@ -73,14 +80,14 @@ fn builtin_json_at(args: &[Value]) -> RuntimeResult<Value> {
                 return Ok(json_child_to_lazy_value(value, child));
             }
         }
-        return Ok(Value::Unit);
+        return Ok(json_null());
     }
     if let Value::Array(arr) = receiver {
         if let Some(v) = arr.get(idx as usize) {
             return Ok(v.clone());
         }
     }
-    Ok(Value::Unit)
+    Ok(json_null())
 }
 
 /// `json::keys(object)` → `Some([String])` of every key in sorted
@@ -477,7 +484,7 @@ fn json_value_to_gossamer(value: &json_std::Value) -> Value {
 /// branches of the document.
 fn json_value_to_lazy_value(value: &json_std::Value) -> Value {
     match value {
-        json_std::Value::Null => Value::Unit,
+        json_std::Value::Null => json_null(),
         json_std::Value::Bool(b) => Value::Bool(*b),
         json_std::Value::Int(n) => Value::Int(*n),
         json_std::Value::Number(n) => Value::Float(*n),
@@ -490,7 +497,7 @@ fn json_value_to_lazy_value(value: &json_std::Value) -> Value {
 
 fn json_child_to_lazy_value(parent: &JsonInner, child: &json_std::Value) -> Value {
     match child {
-        json_std::Value::Null => Value::Unit,
+        json_std::Value::Null => Value::Json(Arc::new(parent.child(child))),
         json_std::Value::Bool(b) => Value::Bool(*b),
         json_std::Value::Int(n) => Value::Int(*n),
         json_std::Value::Number(n) => Value::Float(*n),

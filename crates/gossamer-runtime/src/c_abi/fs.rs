@@ -2136,6 +2136,125 @@ pub fn unlock_range_on(file: &std::fs::File, start: u64, len: u64) -> std::io::R
     Ok(())
 }
 
+/// Answers the `Result<(), errors::Error>` carrier for a filesystem
+/// operation over `context`.
+fn fs_unit_result(outcome: std::io::Result<()>, context: &str) -> i128 {
+    match outcome {
+        Ok(()) => unsafe { gos_rt_result_new(0, 0) },
+        Err(e) => fs_io_err(&e, context),
+    }
+}
+
+/// `fs::permissions(path) -> Result<i64, errors::Error>` - the
+/// permission bits of `path`, in the chmod(2) encoding.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_permissions(path: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        if path.is_null() {
+            return fs_err("permissions: null path");
+        }
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
+        let context = p.clone();
+        match crate::sched_global::run_blocking("fs-permissions", move || {
+            crate::fs_mode::read(std::path::Path::new(&p))
+        }) {
+            Ok(Ok(mode)) => unsafe { gos_rt_result_new(0, i64::from(mode)) },
+            Ok(Err(e)) => fs_io_err(&e, &context),
+            Err(e) => fs_err(&e),
+        }
+    })
+}
+
+/// `fs::set_permissions(path, mode) -> Result<(), errors::Error>` -
+/// chmod(2). On Windows only the owner write bit is meaningful: it
+/// sets or clears the read-only attribute.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_set_permissions(path: *const c_char, mode: i64) -> i128 {
+    ffi_entry!(0i128, {
+        if path.is_null() {
+            return fs_err("set_permissions: null path");
+        }
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
+        let context = p.clone();
+        let bits = crate::fs_mode::bits(mode);
+        let outcome = crate::sched_global::run_blocking("fs-set-permissions", move || {
+            crate::fs_mode::apply(std::path::Path::new(&p), bits)
+        });
+        match outcome {
+            Ok(result) => fs_unit_result(result, &context),
+            Err(e) => fs_err(&e),
+        }
+    })
+}
+
+/// `fs::create_dir_mode(path, mode) -> Result<(), errors::Error>` -
+/// creates one directory and gives it exactly `mode`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_create_dir_mode(path: *const c_char, mode: i64) -> i128 {
+    ffi_entry!(0i128, {
+        if path.is_null() {
+            return fs_err("create_dir_mode: null path");
+        }
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
+        let context = p.clone();
+        let bits = crate::fs_mode::bits(mode);
+        let outcome = crate::sched_global::run_blocking("fs-create-dir-mode", move || {
+            crate::fs_mode::create_dir(std::path::Path::new(&p), bits)
+        });
+        match outcome {
+            Ok(result) => fs_unit_result(result, &context),
+            Err(e) => fs_err(&e),
+        }
+    })
+}
+
+/// `fs::create_dir_all_mode(path, mode) -> Result<(), errors::Error>`
+/// - creates `path` and every missing parent with exactly `mode`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_create_dir_all_mode(path: *const c_char, mode: i64) -> i128 {
+    ffi_entry!(0i128, {
+        if path.is_null() {
+            return fs_err("create_dir_all_mode: null path");
+        }
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
+        let context = p.clone();
+        let bits = crate::fs_mode::bits(mode);
+        let outcome = crate::sched_global::run_blocking("fs-create-dir-all-mode", move || {
+            crate::fs_mode::create_dir_all(std::path::Path::new(&p), bits)
+        });
+        match outcome {
+            Ok(result) => fs_unit_result(result, &context),
+            Err(e) => fs_err(&e),
+        }
+    })
+}
+
+/// `fs::write_mode(path, contents, mode) -> Result<(), errors::Error>`
+/// - writes `contents` and gives the file exactly `mode`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_write_mode(
+    path: *const c_char,
+    contents: *const c_char,
+    mode: i64,
+) -> i128 {
+    ffi_entry!(0i128, {
+        if path.is_null() || contents.is_null() {
+            return fs_err("write_mode: null argument");
+        }
+        let p = unsafe { crate::c_abi::gos_str_arg_string(path) };
+        let bytes = unsafe { crate::c_abi::gos_str_arg_bytes(contents) }.to_vec();
+        let context = p.clone();
+        let bits = crate::fs_mode::bits(mode);
+        let outcome = crate::sched_global::run_blocking("fs-write-mode", move || {
+            crate::fs_mode::write(std::path::Path::new(&p), &bytes, bits)
+        });
+        match outcome {
+            Ok(result) => fs_unit_result(result, &context),
+            Err(e) => fs_err(&e),
+        }
+    })
+}
+
 #[cfg(test)]
 mod path_separator_tests {
     use super::{path_is_separator_on, path_last_separator_on};

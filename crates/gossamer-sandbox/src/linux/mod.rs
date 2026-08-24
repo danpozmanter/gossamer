@@ -183,12 +183,40 @@ pub(crate) fn mechanisms(policy: &CompiledPolicy) -> Vec<String> {
     lines
 }
 
+/// The network setting Landlock's TCP layer has to hold, or `None`
+/// when another mechanism holds it.
+///
+/// A network namespace is the whole boundary: it covers every
+/// protocol, and the only interface inside it is the child's own
+/// loopback, which the namespace brings up on purpose because a JVM
+/// or Node tool asks the machine for a local address before it will
+/// start. Landlock's layer matches on port and never on address, so
+/// stacking it on top cannot deny anything the namespace has not
+/// already denied - it can only take that loopback away.
+fn landlock_network(policy: &CompiledPolicy) -> Option<Network> {
+    if network_namespace_holds_it(policy) {
+        return None;
+    }
+    Some(policy.network)
+}
+
+/// Whether this run's network setting is held by a network namespace.
+///
+/// The namespace is entered only at `strict`, and only for a policy
+/// that asks for no network at all: any other setting needs the host's
+/// own stack, so there is nothing to unshare.
+fn network_namespace_holds_it(policy: &CompiledPolicy) -> bool {
+    policy.level == Level::Strict && policy.network == Network::None
+}
+
 /// The one line naming what holds the policy's network setting here.
 fn network_mechanism(policy: &CompiledPolicy) -> String {
     let abi = landlock::abi_version();
     match (policy.level, policy.network) {
         (Level::Strict, Network::None) => {
-            "network namespace: no network, every protocol".to_string()
+            "network namespace: no network, every protocol; the child's own \
+             loopback is inside it"
+                .to_string()
         }
         (_, Network::Open) => "no network restriction".to_string(),
         (_, network) if abi.is_some_and(|version| version >= 4) => {
@@ -438,12 +466,12 @@ fn install_enforcement(
     }
     let level = policy.level;
     let deny_network = policy.network == Network::None;
-    let network = policy.network;
     let private_temp = (policy.temp == Temp::Private)
         .then(|| policy.temp_directory.clone())
         .flatten();
     let abi = landlock::abi_version();
-    let ruleset = abi.map(|abi| landlock::Ruleset::compile(abi, &policy.rules, network));
+    let ruleset =
+        abi.map(|abi| landlock::Ruleset::compile(abi, &policy.rules, landlock_network(policy)));
     // A `connect` to a pathname socket is outside Landlock's access
     // rights, so a denied socket needs the mount namespace to be
     // unreachable rather than merely refused.
@@ -658,6 +686,56 @@ mod linux_tests {
             );
             assert!(report.max_level >= Level::Standard);
         }
+    }
+
+    /// The namespace is the boundary at strict, so the Landlock layer
+    /// is not asked to hold the same setting a second time - it would
+    /// only take away the loopback the namespace brings up.
+    #[test]
+    fn the_tcp_layer_is_left_out_where_the_namespace_is_the_boundary() {
+        let compiled = |level, network| {
+            crate::policy::SandboxPolicy::new()
+                .level(level)
+                .network(network)
+                .compile()
+                .expect("compile")
+        };
+        assert_eq!(
+            landlock_network(&compiled(Level::Strict, Network::None)),
+            None
+        );
+        // Every other combination reaches the host's own stack, so the
+        // TCP layer is all there is.
+        assert_eq!(
+            landlock_network(&compiled(Level::Standard, Network::None)),
+            Some(Network::None)
+        );
+        assert_eq!(
+            landlock_network(&compiled(Level::Strict, Network::Client)),
+            Some(Network::Client)
+        );
+        assert_eq!(
+            landlock_network(&compiled(Level::Standard, Network::Client)),
+            Some(Network::Client)
+        );
+    }
+
+    /// What the run reports has to keep matching what it installs: a
+    /// namespace-held policy is still fully enforced, and says so.
+    #[test]
+    fn a_namespace_held_policy_is_still_reported_as_fully_enforced() {
+        let policy = crate::policy::SandboxPolicy::new()
+            .level(Level::Strict)
+            .network(Network::None)
+            .compile()
+            .expect("compile");
+        assert_eq!(network_enforcement(&policy), Enforcement::Full);
+        assert!(
+            mechanisms(&policy)
+                .iter()
+                .any(|line| line.contains("loopback")),
+            "the mechanism line names what is inside the namespace"
+        );
     }
 
     #[test]

@@ -2183,6 +2183,11 @@
 <td>One-shot: runs a program with args, captures stdout/stderr plus the exit code.</td>
 </tr>
 <tr>
+<td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/process.rs"><code>run_in</code></a></td>
+<td><code>fn run_in(program: String, args: Vec&lt;String&gt;, dir: String, env: Vec&lt;(String, String)&gt;) -&gt; Result&lt;process::Output, errors::Error&gt;</code></td>
+<td>The same one-shot run with the child's working directory and environment supplied. An empty <code>dir</code> inherits the caller's working directory; the <code>env</code> pairs override the inherited environment rather than replacing it, so a caller sets the two variables it cares about without restating <code>PATH</code>.</td>
+</tr>
+<tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/process.rs"><code>signal</code></a></td>
 <td><code>fn signal(pid: i64, signum: i64) -&gt; bool</code></td>
 <td>Sends a signal to a process by PID (POSIX).</td>

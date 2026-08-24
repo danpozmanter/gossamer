@@ -191,7 +191,10 @@ impl Ruleset {
     /// is enforced by the absence of a grant. The policy's rule
     /// ordering already resolved which paths are granted, so a denied
     /// path simply contributes nothing here.
-    pub(crate) fn compile(abi: u32, rules: &[PathRule], network: Network) -> Self {
+    /// `network` is `None` when another mechanism holds the policy's
+    /// network setting, in which case this ruleset handles no network
+    /// access at all.
+    pub(crate) fn compile(abi: u32, rules: &[PathRule], network: Option<Network>) -> Self {
         let denials: Vec<&Path> = rules
             .iter()
             .filter(|rule| rule.access == Access::Deny)
@@ -224,12 +227,17 @@ impl Ruleset {
         }
         let handled_net = if abi >= 4 {
             match network {
-                Network::None => NET_BIND_TCP | NET_CONNECT_TCP,
+                Some(Network::None) => NET_BIND_TCP | NET_CONNECT_TCP,
                 // No allow-rule is added for the handled access, so
                 // every bind is refused while connect stays outside the
                 // ruleset entirely.
-                Network::Client => NET_BIND_TCP,
-                Network::Open => 0,
+                Some(Network::Client) => NET_BIND_TCP,
+                // Landlock's net layer matches on port, never on
+                // address, so it cannot tell a loopback bind from any
+                // other one. Where a network namespace already holds
+                // the setting, handling TCP here would only subtract
+                // the child's own loopback.
+                Some(Network::Open) | None => 0,
             }
         } else {
             0
@@ -381,7 +389,7 @@ mod landlock_tests {
             path: file,
             access: Access::ReadWrite,
         }];
-        let compiled = Ruleset::compile(8, &rules, Network::Open);
+        let compiled = Ruleset::compile(8, &rules, Some(Network::Open));
         assert_eq!(compiled.grants[0].rights & DIRECTORY_ONLY, 0);
         assert_ne!(compiled.grants[0].rights & FS_WRITE_FILE, 0);
     }
@@ -417,18 +425,22 @@ mod landlock_tests {
             path: std::path::PathBuf::from("/etc"),
             access: Access::Deny,
         }];
-        assert!(Ruleset::compile(4, &rules, Network::None).grants.is_empty());
+        assert!(
+            Ruleset::compile(4, &rules, Some(Network::None))
+                .grants
+                .is_empty()
+        );
     }
 
     #[test]
     fn the_tcp_layer_is_requested_only_from_the_abi_that_has_it() {
-        assert_eq!(Ruleset::compile(3, &[], Network::None).handled_net, 0);
-        assert_ne!(Ruleset::compile(4, &[], Network::None).handled_net, 0);
+        assert_eq!(Ruleset::compile(3, &[], Some(Network::None)).handled_net, 0);
+        assert_ne!(Ruleset::compile(4, &[], Some(Network::None)).handled_net, 0);
         assert_eq!(
-            Ruleset::compile(4, &[], Network::Client).handled_net,
+            Ruleset::compile(4, &[], Some(Network::Client)).handled_net,
             NET_BIND_TCP,
             "client handles bind only, so connect stays outside the ruleset"
         );
-        assert_eq!(Ruleset::compile(4, &[], Network::Open).handled_net, 0);
+        assert_eq!(Ruleset::compile(4, &[], Some(Network::Open)).handled_net, 0);
     }
 }

@@ -1,6 +1,6 @@
 # Idle CPU baseline
 
-`benchmarks/idle/check.sh` runs `gos run empty.gos`, which calls
+`benchmarks/idle/check.gos` runs `gos run empty.gos`, which calls
 `time::sleep(2000)` and exits. The total user+system CPU consumed
 during those two wall-clock seconds is the regression signal.
 

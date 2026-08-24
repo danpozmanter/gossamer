@@ -806,7 +806,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::encoding::json",
         name: "at",
-        signature: "fn at(value: json::Value, index: i64) -> Option<json::Value>",
+        signature: "fn at(value: json::Value, index: i64) -> json::Value",
     },
     StdFunctionSignature {
         module_path: "std::encoding::json",
@@ -1072,6 +1072,31 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         module_path: "std::fs",
         name: "create_dir_all",
         signature: "fn create_dir_all(path: String) -> Result<(), io::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::fs",
+        name: "create_dir_mode",
+        signature: "fn create_dir_mode(path: String, mode: i64) -> Result<(), errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::fs",
+        name: "create_dir_all_mode",
+        signature: "fn create_dir_all_mode(path: String, mode: i64) -> Result<(), errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::fs",
+        name: "write_mode",
+        signature: "fn write_mode(path: String, contents: String, mode: i64) -> Result<(), errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::fs",
+        name: "permissions",
+        signature: "fn permissions(path: String) -> Result<i64, errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::fs",
+        name: "set_permissions",
+        signature: "fn set_permissions(path: String, mode: i64) -> Result<(), errors::Error>",
     },
     StdFunctionSignature {
         module_path: "std::fs",
@@ -2922,6 +2947,11 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         module_path: "std::process",
         name: "run",
         signature: "fn run(program: String, args: Vec<String>) -> Result<process::Output, errors::Error>",
+    },
+    StdFunctionSignature {
+        module_path: "std::process",
+        name: "run_in",
+        signature: "fn run_in(program: String, args: Vec<String>, dir: String, env: Vec<(String, String)>) -> Result<process::Output, errors::Error>",
     },
     StdFunctionSignature {
         module_path: "std::process",

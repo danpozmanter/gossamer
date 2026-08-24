@@ -199,10 +199,32 @@ pub(crate) fn builtin_path_matches(args: &[Value]) -> RuntimeResult<Value> {
 /// filesystem matches for a `*` / `?` / `[abc]` / `**` pattern.
 pub(crate) fn builtin_path_glob(args: &[Value]) -> RuntimeResult<Value> {
     let pattern = args.first().and_then(as_str).unwrap_or("");
-    crate::comptime_gate::guard_read("path::glob", pattern)?;
+    // A compile-time glob means the same set of files whatever
+    // directory the build was started from, exactly as a compile-time
+    // read means the same file.
+    let pattern = gossamer_runtime::comptime_paths::resolve(pattern);
+    let pattern = pattern.as_str();
+    crate::comptime_gate::guard_read_pattern("path::glob", pattern)?;
     match path_std::glob(pattern) {
-        Ok(paths) => Ok(ok_variant(string_array(paths))),
+        Ok(paths) => {
+            // Both halves of what a compile-time glob depends on: the
+            // files it matched, and the directory whose listing decides
+            // whether tomorrow's glob matches the same set.
+            gossamer_runtime::comptime_inputs::record_each(&paths);
+            gossamer_runtime::comptime_inputs::record(literal_prefix(pattern));
+            Ok(ok_variant(string_array(paths)))
+        }
         Err(e) => Ok(err_variant(e.to_string())),
+    }
+}
+
+/// The directory part of `pattern` up to its first wildcard, which is
+/// the deepest directory every match must live under.
+fn literal_prefix(pattern: &str) -> &str {
+    let wildcard = pattern.find(['*', '?', '[']).unwrap_or(pattern.len());
+    match pattern[..wildcard].rfind(['/', '\\']) {
+        Some(slash) => &pattern[..slash.max(1)],
+        None => ".",
     }
 }
 

@@ -569,6 +569,7 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "process",
         &[
             ("run", builtin_exec_run),
+            ("run_in", builtin_exec_run_in),
             ("spawn", builtin_exec_spawn),
             ("spawn_piped", builtin_exec_spawn_piped),
             ("kill", builtin_exec_kill),

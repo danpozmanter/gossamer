@@ -486,7 +486,16 @@ fn http_router_chain_parity_across_tiers() {
 fn http_static_file_parity_across_tiers() {
     self_terminating_server_parity(
         "feature-testing-examples/http_static_file.gos",
-        &["status=200 body=static file ok", "missing status=404"],
+        &[
+            "status=200 body=static file ok",
+            "missing status=404",
+            // A directory is served as the index inside it, and one
+            // named without a trailing slash is redirected to the form
+            // the page's own relative links resolve under.
+            "root status=200 body=root index",
+            "dir status=200 body=tour index",
+            "dir-no-slash status=301 location=/tour/",
+        ],
     );
 }
 

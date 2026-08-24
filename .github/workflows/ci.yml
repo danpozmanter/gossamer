@@ -780,25 +780,8 @@ jobs:
         run: ./target/debug/gos test --tier-parity --report status || true
       - name: Fail when the committed evidence is stale
         run: |
-          python3 - <<'PYEOF'
-          import json, sys
-          fresh = json.load(open("target/debug/.feature-status.json"))
-          committed = json.load(open("resources/feature-status.json"))
-          fresh = {r["name"]: r["tiers"] for r in fresh if r["name"].startswith("std::")}
-          committed = {r["name"]: r["tiers"] for r in committed}
-          if fresh != committed:
-              added = sorted(set(fresh) - set(committed))
-              removed = sorted(set(committed) - set(fresh))
-              changed = sorted(k for k in set(fresh) & set(committed) if fresh[k] != committed[k])
-              print("resources/feature-status.json is stale.")
-              for label, items in (("added", added), ("removed", removed), ("changed", changed)):
-                  if items:
-                      print(f"  {label}: {items}")
-              print("Regenerate with `gos test --tier-parity --report status` and copy the")
-              print("std:: rows from target/debug/.feature-status.json.")
-              sys.exit(1)
-          print(f"evidence is current ({len(committed)} modules)")
-          PYEOF
+          ./target/debug/gos run scripts/feature_status_diff.gos \
+            target/debug/.feature-status.json resources/feature-status.json
       - name: The reported status may not exceed its evidence
         run: ./target/debug/gos feature-status --check
 
@@ -974,8 +957,8 @@ jobs:
           GOS_RUNTIME_LIB_AARCH64_UNKNOWN_LINUX_MUSL: target/aarch64-unknown-linux-musl/release/libgossamer_runtime.a
           GOS_RUNTIME_LIB_X86_64_UNKNOWN_LINUX_MUSL: target/x86_64-unknown-linux-musl/release/libgossamer_runtime.a
         run: |
-          ./scripts/cross_build_fixtures.sh aarch64-unknown-linux-musl out-macos
-          ./scripts/cross_build_fixtures.sh x86_64-unknown-linux-musl out-macos
+          ./target/debug/gos run scripts/cross_build_fixtures.gos aarch64-unknown-linux-musl out-macos
+          ./target/debug/gos run scripts/cross_build_fixtures.gos x86_64-unknown-linux-musl out-macos
       - uses: actions/upload-artifact@v7
         with:
           name: cross-bins-macos
@@ -1028,8 +1011,8 @@ jobs:
           GOS_RUNTIME_LIB_AARCH64_UNKNOWN_LINUX_MUSL: target/aarch64-unknown-linux-musl/release/libgossamer_runtime.a
           GOS_RUNTIME_LIB_X86_64_UNKNOWN_LINUX_MUSL: target/x86_64-unknown-linux-musl/release/libgossamer_runtime.a
         run: |
-          pwsh -File scripts/cross_build_fixtures.ps1 aarch64-unknown-linux-musl out-windows
-          pwsh -File scripts/cross_build_fixtures.ps1 x86_64-unknown-linux-musl out-windows
+          ./target/debug/gos.exe run scripts/cross_build_fixtures.gos aarch64-unknown-linux-musl out-windows
+          ./target/debug/gos.exe run scripts/cross_build_fixtures.gos x86_64-unknown-linux-musl out-windows
       - uses: actions/upload-artifact@v7
         with:
           name: cross-bins-windows
@@ -1059,4 +1042,7 @@ jobs:
       - name: Build gos
         run: cargo build --bin gos
       - name: Each cross binary must match the VM
-        run: ./scripts/qemu_diff_against_vm.sh bins
+        # `GOS_HARNESS_BIN` runs the harness on a toolchain other than
+        # the one under test where one is provided, so a compiler bug
+        # fails the fixtures rather than the harness reporting on them.
+        run: "${GOS_HARNESS_BIN:-./target/debug/gos}" run scripts/qemu_diff_against_vm.gos bins

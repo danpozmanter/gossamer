@@ -102,7 +102,12 @@ impl FileServer {
             Err(_) => return not_found(),
         };
         if meta.is_dir() {
-            // Try to serve `index.html` under the directory.
+            // A directory named without a trailing slash is redirected
+            // first, so the index page's own relative links resolve
+            // under the directory rather than beside it.
+            if !rel_path.is_empty() && !rel_path.ends_with('/') {
+                return redirect(&format!("/{}/", rel_path.trim_start_matches('/')));
+            }
             let idx = canonical.join("index.html");
             if let Ok(im) = fs::metadata(&idx) {
                 return self.serve_file(&idx, &im, request);
@@ -219,6 +224,20 @@ impl FileServer {
             raw_header_pairs: Vec::new(),
             body_stream: None,
         }
+    }
+}
+
+/// The `301` a directory request without a trailing slash answers.
+fn redirect(location: &str) -> Response {
+    let mut headers = Headers::new();
+    headers.insert("content-type", "text/plain; charset=utf-8");
+    headers.insert("location", location);
+    Response {
+        status: StatusCode(301),
+        headers,
+        body: Vec::new(),
+        raw_header_pairs: Vec::new(),
+        body_stream: None,
     }
 }
 
@@ -471,9 +490,35 @@ mod tests {
         std::fs::create_dir(&sub).unwrap();
         std::fs::write(sub.join("index.html"), b"INDEX").unwrap();
         let fs = FileServer::new(dir.path());
-        let resp = fs.serve_path("sub", &req("/sub"));
+        let resp = fs.serve_path("sub/", &req("/sub/"));
         assert_eq!(resp.status, StatusCode(200));
         assert_eq!(resp.body, b"INDEX");
+    }
+
+    /// The index page's own relative links resolve under the
+    /// directory, so a request that named it without a trailing slash
+    /// is sent to the form that makes them work.
+    #[test]
+    fn directory_without_a_trailing_slash_redirects_to_one() {
+        let dir = tmpdir();
+        let sub = dir.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(sub.join("index.html"), b"INDEX").unwrap();
+        let fs = FileServer::new(dir.path());
+        let resp = fs.serve_path("sub", &req("/sub"));
+        assert_eq!(resp.status, StatusCode(301));
+        assert_eq!(resp.headers.get("location"), Some("/sub/"));
+    }
+
+    /// The root of the server is the directory form already.
+    #[test]
+    fn the_root_serves_its_own_index() {
+        let dir = tmpdir();
+        std::fs::write(dir.path().join("index.html"), b"ROOT").unwrap();
+        let fs = FileServer::new(dir.path());
+        let resp = fs.serve_path("", &req("/"));
+        assert_eq!(resp.status, StatusCode(200));
+        assert_eq!(resp.body, b"ROOT");
     }
 
     #[test]
@@ -482,7 +527,7 @@ mod tests {
         let sub = dir.path().join("empty");
         std::fs::create_dir(&sub).unwrap();
         let fs = FileServer::new(dir.path());
-        let resp = fs.serve_path("empty", &req("/empty"));
+        let resp = fs.serve_path("empty/", &req("/empty/"));
         assert_eq!(resp.status, StatusCode(404));
     }
 

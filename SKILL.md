@@ -286,10 +286,14 @@ Write clear, low-complexity, concise code.
 - **Bare numeric literals** - `0`, `1.5`, never `0i64`; suffix only
   with no contextual hint. String literals are already `String` - no
   `.to_string()`; `&"foo"` borrows where `&String`/`&str` is expected.
+- **HTML lives in its own file**, read at run time or embedded with a
+  `comptime` read, never written as markup inside `.gos` source: an
+  `.html` file is what an editor, a formatter, and a template engine can
+  each work on.
 - **`"""` strings dedent themselves** - the body starts on the line
   after the opening delimiter, and the indentation it shares with the
-  closing `"""` is stripped from every line, so embedded HTML or SQL
-  keeps the shape of the code around it. Escapes work as in `"..."` and
+  closing `"""` is stripped from every line, so an embedded SQL
+  statement keeps the shape of the code around it. Escapes work as in `"..."` and
   decode after the strip; only whitespace may follow the opening `"""`
   (GP0033). `gos fmt` moves the body with the line that opens it, so
   re-indenting the statement re-indents the block.

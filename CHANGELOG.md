@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.55.6 - Compile-time build inputs, permission modes, cwd+env process API, script updates
+
+- A file a `comptime` region reads is now an input of the build. `gos build`
+  records every path a fold reached and re-checks each one against the stamp,
+  so editing a `.toml` a `comptime fn` embeds rebuilds the binary instead of
+  reporting it unchanged and shipping the previous bytes. A directory a
+  compile-time listing walked counts the same way, and `gos watch --check`
+  restarts on an edit to one of those files.
+- `std::fs` can create a file or directory with a mode and read or set one:
+  `fs::create_dir_mode`, `fs::create_dir_all_mode`, `fs::write_mode`,
+  `fs::permissions`, and `fs::set_permissions`. The mode is stated after the
+  path exists, so the process umask cannot mask a bit out of it and a
+  directory a tool requires to be world-writable can be made from Gossamer.
+  On Windows only the owner write bit is meaningful: it sets or clears the
+  read-only attribute, and `fs::permissions` widens that attribute into the
+  bits an equivalent Unix path would carry.
+- A command that does not exist inside a macOS sandbox reports 127, the code
+  Linux and Windows already report. The command is resolved before `argv` is
+  wrapped in `sandbox-exec`, which exists whether or not the command does and
+  was exiting 71 in its place.
+- A loopback bind inside a `strict` Linux sandbox with no network is
+  permitted. The network namespace is the boundary there and brings the
+  child's own loopback up on purpose, so the Landlock TCP layer is no longer
+  stacked on top of it, where it could deny nothing the namespace had not
+  already denied and only took that loopback away. Below `strict` the host's
+  network stack is shared and the TCP denial stands.
+- A `comptime` region resolves `fs::is_file`, `fs::is_dir`, `fs::is_symlink`,
+  `fs::file_size`, `fs::metadata`, and `path::glob` against the directory of
+  the source that embeds them, as `fs::read_to_string` already did, so one
+  fold no longer disagrees with itself about which file a relative path names.
+- `process::run_in(program, args, dir, env)` runs a child in a directory of
+  the caller's choosing with environment overrides on top of the inherited
+  one, which `process::run` could not express.
+- A `for` loop over a free stdlib call binds the call's element type on the
+  compiled tiers. A sequence of strings from `sort::sort_stable`,
+  `strings::split`, or `iter::map` iterated as the machine words its slots
+  hold, so the loop printed pointers where the bytecode VM printed text;
+  binding the call to a local first was the only spelling that worked.
+- A JSON `null` reads the same on every tier. The bytecode VM answered a unit
+  value for a stated null, for a field whose value is null, and for an index
+  an array does not have, so `{}` rendered `()` where a compiled binary
+  rendered `null`; `json::at` now answers JSON null rather than nothing, and
+  its declared return type says so.
+- `http::static_files::FileServer` serves a directory as the `index.html`
+  inside it, and redirects a request that named the directory without a
+  trailing slash to the form the page's own relative links resolve under.
+- The repository's own tooling is written in Gossamer: the benchmark-suite
+  runner, the perf-gate parsers, the feature-status diff, the cross-build
+  fixture driver, the VM-vs-JIT sweep, the site preview server, and the
+  binding, QEMU, idle-CPU, and load harnesses. Building the site locally no
+  longer needs Python.
+
 ## 0.55.5 - Returned-aggregate container ownership
 
 - A container built into an aggregate a function returns no longer leaks a

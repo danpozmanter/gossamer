@@ -855,69 +855,121 @@ pub unsafe extern "C" fn gos_rt_fs_metadata_raw(path: *const c_char) -> i128 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_exec_run(prog: *const c_char, args: *mut GosVec) -> i128 {
     ffi_entry!(0i128, {
-        let prog_str = if prog.is_null() {
-            let err =
-                crate::c_abi::errors::error_new_from_bytes("exec::run: program is null".as_bytes());
-            return unsafe { gos_rt_result_new(1, err as i64) };
-        } else {
-            unsafe { crate::c_abi::gos_str_arg_string(prog) }
-        };
-        let mut cmd_args: Vec<String> = Vec::new();
-        if !args.is_null() {
-            let v = unsafe { &*args };
-            let elem_bytes = v.elem_bytes as usize;
-            if elem_bytes != 0 && !v.ptr.is_null() {
-                for i in 0..v.len {
-                    let slot = unsafe { v.ptr.add((i as usize) * elem_bytes) };
-                    let cstr_ptr = unsafe {
-                        std::ptr::with_exposed_provenance::<c_char>(
-                            (slot as *const usize).read_unaligned(),
-                        )
-                    };
-                    if cstr_ptr.is_null() {
-                        cmd_args.push(String::new());
-                        continue;
-                    }
-                    let arg_str = unsafe { crate::c_abi::gos_str_arg_string(cstr_ptr) };
-                    cmd_args.push(arg_str);
-                }
-            }
-        }
-        let display_prog = prog_str.clone();
-        match crate::sched_global::run_blocking("exec-run", move || {
-            let mut command = std::process::Command::new(&prog_str);
-            command.args(&cmd_args);
-            command.stdout(std::process::Stdio::piped());
-            command.stderr(std::process::Stdio::piped());
-            command.output()
-        }) {
-            Ok(Ok(out)) => {
-                let stdout_str = String::from_utf8_lossy(&out.stdout).into_owned();
-                let stderr_str = String::from_utf8_lossy(&out.stderr).into_owned();
-                let code = i64::from(out.status.code().unwrap_or(-1));
-                let stdout_cs = alloc_cstring(stdout_str.as_bytes()) as i64;
-                let stderr_cs = alloc_cstring(stderr_str.as_bytes()) as i64;
-                // Output struct laid out as `[stdout: i64, stderr: i64,
-                // code: i64]` (3 × 8 B). Box-allocated so the pointer
-                // shares the global allocator domain with every other
-                // helper-returned aggregate; previously the arena
-                // backed this and an LLVM `arena_restore` could rewind
-                // the watermark while the caller still held the blob.
-                let blob = Box::into_raw(Box::new([stdout_cs, stderr_cs, code])).cast::<i64>();
-                gos_rt_result_new(0, blob as i64)
-            }
-            Ok(Err(e)) => {
-                let msg = format!("exec::run({display_prog}): {e}");
-                let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
-                unsafe { gos_rt_result_new(1, err as i64) }
-            }
-            Err(e) => {
-                let msg = format!("exec::run({display_prog}): {e}");
-                let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
-                unsafe { gos_rt_result_new(1, err as i64) }
-            }
+        unsafe {
+            exec_run_with(
+                "exec::run",
+                prog,
+                args,
+                std::ptr::null(),
+                std::ptr::null_mut(),
+            )
         }
     })
+}
+
+/// `process::run_in(program, args, dir, env) -> Result<Output, errors::Error>`.
+///
+/// The cwd-and-environment shape of `process::run`: `dir` is the
+/// directory the child starts in (empty inherits the caller's), and
+/// `env` is a `Vec<(String, String)>` whose entries override the
+/// inherited environment rather than replacing it - a harness sets the
+/// two variables it cares about without having to restate `PATH`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_exec_run_in(
+    prog: *const c_char,
+    args: *mut GosVec,
+    dir: *const c_char,
+    env: *mut GosVec,
+) -> i128 {
+    ffi_entry!(0i128, {
+        unsafe { exec_run_with("process::run_in", prog, args, dir, env) }
+    })
+}
+
+/// Runs a child and packs its output, for whichever entry point asked.
+unsafe fn exec_run_with(
+    operation: &str,
+    prog: *const c_char,
+    args: *mut GosVec,
+    dir: *const c_char,
+    env: *mut GosVec,
+) -> i128 {
+    let prog_str = if prog.is_null() {
+        let msg = format!("{operation}: program is null");
+        let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
+        return unsafe { gos_rt_result_new(1, err as i64) };
+    } else {
+        unsafe { crate::c_abi::gos_str_arg_string(prog) }
+    };
+    let mut cmd_args: Vec<String> = Vec::new();
+    if !args.is_null() {
+        let v = unsafe { &*args };
+        let elem_bytes = v.elem_bytes as usize;
+        if elem_bytes != 0 && !v.ptr.is_null() {
+            for i in 0..v.len {
+                let slot = unsafe { v.ptr.add((i as usize) * elem_bytes) };
+                let cstr_ptr = unsafe {
+                    std::ptr::with_exposed_provenance::<c_char>(
+                        (slot as *const usize).read_unaligned(),
+                    )
+                };
+                if cstr_ptr.is_null() {
+                    cmd_args.push(String::new());
+                    continue;
+                }
+                let arg_str = unsafe { crate::c_abi::gos_str_arg_string(cstr_ptr) };
+                cmd_args.push(arg_str);
+            }
+        }
+    }
+    let working_directory = if dir.is_null() {
+        String::new()
+    } else {
+        unsafe { crate::c_abi::gos_str_arg_string(dir) }
+    };
+    let environment = crate::c_abi::vec::decode_header_tuple_vec(env);
+    let display_prog = prog_str.clone();
+    let operation = operation.to_string();
+    let reported = operation.clone();
+    match crate::sched_global::run_blocking("exec-run", move || {
+        let mut command = std::process::Command::new(&prog_str);
+        command.args(&cmd_args);
+        if !working_directory.is_empty() {
+            command.current_dir(&working_directory);
+        }
+        for (name, value) in &environment {
+            command.env(name, value);
+        }
+        command.stdout(std::process::Stdio::piped());
+        command.stderr(std::process::Stdio::piped());
+        command.output()
+    }) {
+        Ok(Ok(out)) => {
+            let stdout_str = String::from_utf8_lossy(&out.stdout).into_owned();
+            let stderr_str = String::from_utf8_lossy(&out.stderr).into_owned();
+            let code = i64::from(out.status.code().unwrap_or(-1));
+            let stdout_cs = alloc_cstring(stdout_str.as_bytes()) as i64;
+            let stderr_cs = alloc_cstring(stderr_str.as_bytes()) as i64;
+            // Output struct laid out as `[stdout: i64, stderr: i64,
+            // code: i64]` (3 x 8 B). Box-allocated so the pointer shares
+            // the global allocator domain with every other
+            // helper-returned aggregate; an arena-backed blob could be
+            // rewound by an LLVM `arena_restore` while the caller still
+            // held it.
+            let blob = Box::into_raw(Box::new([stdout_cs, stderr_cs, code])).cast::<i64>();
+            unsafe { gos_rt_result_new(0, blob as i64) }
+        }
+        Ok(Err(e)) => {
+            let msg = format!("{reported}({display_prog}): {e}");
+            let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
+            unsafe { gos_rt_result_new(1, err as i64) }
+        }
+        Err(e) => {
+            let msg = format!("{reported}({display_prog}): {e}");
+            let err = crate::c_abi::errors::error_new_from_bytes(msg.as_bytes());
+            unsafe { gos_rt_result_new(1, err as i64) }
+        }
+    }
 }
 
 /// Marks the process as a running Gossamer program, from the entry shim a

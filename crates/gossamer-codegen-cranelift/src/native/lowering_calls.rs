@@ -671,6 +671,11 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_fs_read_to_string" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_fs_write" => (&[ptr_ty, ptr_ty], Some(types::I64)),
         "gos_rt_fs_create_dir_all" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_fs_create_dir_all_mode"
+        | "gos_rt_fs_create_dir_mode"
+        | "gos_rt_fs_set_permissions" => (&[ptr_ty, types::I64], Some(types::I128)),
+        "gos_rt_fs_permissions" => (&[ptr_ty], Some(types::I128)),
+        "gos_rt_fs_write_mode" => (&[ptr_ty, ptr_ty, types::I64], Some(types::I128)),
         "gos_rt_fs_file_close" => (&[types::I64], None),
         "gos_rt_fs_file_create" | "gos_rt_fs_file_open" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_fs_file_flush" => (&[types::I64], Some(types::I128)),
@@ -734,6 +739,7 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_fs_list_dir" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_fs_walk_dir" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_exec_run" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
+        "gos_rt_exec_run_in" => (&[ptr_ty, ptr_ty, ptr_ty, ptr_ty], Some(types::I128)),
         "gos_rt_exec_spawn" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_exec_spawn_piped" => (&[ptr_ty, ptr_ty], Some(types::I128)),
         "gos_rt_child_write_stdin" => (&[types::I64, ptr_ty], Some(types::I64)),
