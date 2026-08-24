@@ -1007,6 +1007,10 @@ jobs:
           done
           cargo build --bin gos
       - name: Cross build the fixtures (both targets)
+        # bash, not the Windows default: pwsh reports only the last
+        # command's status, so a first-target failure would upload half
+        # an artifact and pass.
+        shell: bash
         env:
           GOS_RUNTIME_LIB_AARCH64_UNKNOWN_LINUX_MUSL: target/aarch64-unknown-linux-musl/release/libgossamer_runtime.a
           GOS_RUNTIME_LIB_X86_64_UNKNOWN_LINUX_MUSL: target/x86_64-unknown-linux-musl/release/libgossamer_runtime.a
@@ -1045,4 +1049,5 @@ jobs:
         # `GOS_HARNESS_BIN` runs the harness on a toolchain other than
         # the one under test where one is provided, so a compiler bug
         # fails the fixtures rather than the harness reporting on them.
-        run: "${GOS_HARNESS_BIN:-./target/debug/gos}" run scripts/qemu_diff_against_vm.gos bins
+        run: |
+          "${GOS_HARNESS_BIN:-./target/debug/gos}" run scripts/qemu_diff_against_vm.gos bins

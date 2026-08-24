@@ -75,7 +75,8 @@ jobs:
         run: cargo build --release -p gossamer-cli
 
       - name: Idle CPU regression guard
-        run: "${GOS_HARNESS_BIN:-./target/release/gos}" run benchmarks/idle/check.gos
+        run: |
+          "${GOS_HARNESS_BIN:-./target/release/gos}" run benchmarks/idle/check.gos
 
       - name: Release HTTP soak resource gate
         shell: bash
