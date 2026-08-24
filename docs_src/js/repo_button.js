@@ -3,9 +3,9 @@
 // so clear that cache and replace the rendered facts with no-store
 // GitHub API results on every page load.
 (function () {
-    var REPO_NAME = "danpozmanter/gossamer";
+    var REPO_NAME = "gossamer-lang/gossamer";
     var REPO_URL = "https://github.com/" + REPO_NAME;
-    var REPO_API = "https://api.github.com/repos/danpozmanter/gossamer";
+    var REPO_API = "https://api.github.com/repos/gossamer-lang/gossamer";
     var STAR_ICON =
         '<svg class="gos-source-fact-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" aria-hidden="true">' +
           '<path d="M8 1.2l2.1 4.2 4.6.7-3.3 3.2.8 4.6L8 11.7l-4.2 2.2.8-4.6-3.3-3.2 4.6-.7L8 1.2z"/>' +

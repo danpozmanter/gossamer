@@ -1,6 +1,6 @@
 # Examples
 
-The [`examples/`](https://github.com/danpozmanter/gossamer/tree/main/examples)
+The [`examples/`](https://github.com/gossamer-lang/gossamer/tree/main/examples)
 directory ships a broad set of worked programs.
 
 ## A friendly taste
@@ -85,7 +85,7 @@ fn main() {
 
 ## More in the tree
 
-The [`examples/`](https://github.com/danpozmanter/gossamer/tree/main/examples)
+The [`examples/`](https://github.com/gossamer-lang/gossamer/tree/main/examples)
 directory ships many more worked programs - collections and data
 structures, error handling, file and directory I/O, encoding
 (JSON / YAML / TOML / base64 / hex), crypto hashing, regular

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.55.5 - Returned-aggregate container ownership
+
+- A container built into an aggregate a function returns no longer leaks a
+  buffer per call on the compiled tiers.
+
 ## 0.55.4 - Destructuring assignment, socket deadlines
 
 - A read or write deadline on a `net::TcpStream` now bounds the wait on the

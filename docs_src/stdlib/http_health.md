@@ -8,9 +8,9 @@ Liveness and readiness endpoints are ordinary handlers over `std::lifecycle`: an
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_health.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_health.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Health`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_health.rs) | `type Health` | Aggregates a set of named probes into a single status. |
-| [`Probe`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/http_health.rs) | `trait Probe` | One health check returning Ok or Err with a short message. |
+| [`Health`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_health.rs) | `type Health` | Aggregates a set of named probes into a single status. |
+| [`Probe`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_health.rs) | `trait Probe` | One health check returning Ok or Err with a short message. |

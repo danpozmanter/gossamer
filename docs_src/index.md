@@ -6,11 +6,11 @@ and deterministic - a Swift-like model of reference counting (with
 automatic cycle collection) plus `arena { }` regions, and no tracing
 collector.
 
-- Source on GitHub: [danpozmanter/gossamer](https://github.com/danpozmanter/gossamer)
-- Language spec: [`SPEC.md`](https://github.com/danpozmanter/gossamer/blob/main/SPEC.md)
-- Project style guide: [`GUIDELINES.md`](https://github.com/danpozmanter/gossamer/blob/main/GUIDELINES.md)
-- Security policy: [`SECURITY.md`](https://github.com/danpozmanter/gossamer/blob/main/SECURITY.md)
-- AI skill card: [`SKILL.md`](https://github.com/danpozmanter/gossamer/blob/main/SKILL.md) -
+- Source on GitHub: [gossamer-lang/gossamer](https://github.com/gossamer-lang/gossamer)
+- Language spec: [`SPEC.md`](https://github.com/gossamer-lang/gossamer/blob/main/SPEC.md)
+- Project style guide: [`GUIDELINES.md`](https://github.com/gossamer-lang/gossamer/blob/main/GUIDELINES.md)
+- Security policy: [`SECURITY.md`](https://github.com/gossamer-lang/gossamer/blob/main/SECURITY.md)
+- AI skill card: [`SKILL.md`](https://github.com/gossamer-lang/gossamer/blob/main/SKILL.md) -
   drop it into a model's context to teach it idiomatic Gossamer
   (`gos skill-prompt` prints the same text)
 

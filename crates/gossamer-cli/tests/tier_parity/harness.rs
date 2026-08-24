@@ -834,6 +834,9 @@ const SPECS: &[Spec] = &[
     // Tuple-destructuring assignment over bindings, fields, indices, tuple
     // positions, nested tuples, and `_`.
     spec("feature-testing-examples/destructuring_assignment.gos"),
+    // A container built into an aggregate the callee returns: the frame that
+    // made it releases its own reference.
+    spec("feature-testing-examples/returned_aggregate_container_share.gos"),
     spec("feature-testing-examples/const_generic_array_len.gos"),
     spec("feature-testing-examples/container_display.gos"),
     spec("feature-testing-examples/container_reassign_loop.gos"),

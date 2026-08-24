@@ -27,7 +27,7 @@ those binaries natively or under QEMU and compares them with the pure bytecode
 VM. Cross-host glibc links can be configured with an external sysroot but are
 not part of the supported contract. Cross-compiling *to* macOS or Windows as a
 target remains out of scope (needs external SDKs). The release matrix in
-[`.github/workflows/release.yml`](https://github.com/danpozmanter/gossamer/blob/main/.github/workflows/release.yml)
+[`.github/workflows/release.yml`](https://github.com/gossamer-lang/gossamer/blob/main/.github/workflows/release.yml)
 is the source of truth for what we test on.
 
 ## Building per target
@@ -62,7 +62,7 @@ path:
 # Build stage
 FROM debian:bookworm-slim AS build
 RUN apt-get update && apt-get install -y curl ca-certificates build-essential
-RUN curl -fsSL https://github.com/danpozmanter/gossamer/releases/latest/download/gos-x86_64-unknown-linux-musl -o /usr/local/bin/gos && chmod +x /usr/local/bin/gos
+RUN curl -fsSL https://github.com/gossamer-lang/gossamer/releases/latest/download/gos-x86_64-unknown-linux-musl -o /usr/local/bin/gos && chmod +x /usr/local/bin/gos
 WORKDIR /src
 COPY . .
 RUN gos build --release src/main.gos --out-dir /out

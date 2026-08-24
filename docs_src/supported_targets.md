@@ -1,7 +1,7 @@
 # Supported Targets
 
 The executable matrix in
-[`conformance/target_matrix.tsv`](https://github.com/danpozmanter/gossamer/blob/main/conformance/target_matrix.tsv)
+[`conformance/target_matrix.tsv`](https://github.com/gossamer-lang/gossamer/blob/main/conformance/target_matrix.tsv)
 is the release contract. `stable_tier_conformance` checks that it remains
 registered and that this page and `SPEC.md` name the same support classes.
 The matrix is evidence-based: accepting a triple locally is not support.

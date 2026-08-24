@@ -10,7 +10,7 @@ otherwise. The implementation contract is that interpreter builtins, MIR
 lowering, compiled runtime ABI, docs, and parity tests all agree.
 
 Most methods below dispatch by name through the compiler's MIR table at
-[`crates/gossamer-mir/src/lower.rs`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-mir/src/lower.rs).
+[`crates/gossamer-mir/src/lower.rs`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-mir/src/lower.rs).
 
 If a method you expect is not listed, the compiler will emit a
 `CallIntrinsic{name:"unsupported"}` MIR node and the codegen

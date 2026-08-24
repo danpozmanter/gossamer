@@ -8,7 +8,7 @@ Run a command under an OS-native sandbox: one policy model, three backends, no d
 
 ## API details and source
 
-The [policy model and the three backends](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-sandbox/src/lib.rs) live in their own crate, which depends on no other Gossamer crate: a sandbox exists to contain a build system, so it must not need one in order to build. The [language binding](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-runtime/src/c_abi/sandbox.rs) exposes that model unchanged.
+The [policy model and the three backends](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-sandbox/src/lib.rs) live in their own crate, which depends on no other Gossamer crate: a sandbox exists to contain a build system, so it must not need one in order to build. The [language binding](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-runtime/src/c_abi/sandbox.rs) exposes that model unchanged.
 
 A level the host cannot honor fails closed and names the blocking primitive; it is never quietly downgraded. An unknown enum spelling - a level, a network mode, a temp mode - leaves the setting as it was, so a typo can never weaken a policy.
 

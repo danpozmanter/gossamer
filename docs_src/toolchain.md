@@ -154,7 +154,7 @@ Editors should launch `gos lsp` over stdio and speak LSP 3.16 with
 
 Plug-ins that wire `gos lsp` into common editors live in a separate
 repo:
-[`danpozmanter/gossamer-editor-support`](https://github.com/danpozmanter/gossamer-editor-support)
+[`gossamer-lang/gossamer-editor-support`](https://github.com/gossamer-lang/gossamer-editor-support)
 - ships VSCode, Vim, Neovim, Helix, Emacs, Sublime, Zed clients
 plus a tree-sitter grammar.
 
@@ -178,7 +178,7 @@ directly:
 - `hover` / `definition` / `references` / `workspace_symbols` -
   semantic navigation backed by the same analysis engine as
   `gos lsp`.
-- The [AI skill card](https://github.com/danpozmanter/gossamer/blob/main/SKILL.md)
+- The [AI skill card](https://github.com/gossamer-lang/gossamer/blob/main/SKILL.md)
   ships as the `gossamer://skill-card` resource and the
   `skill-card` prompt; `gos skill-prompt` prints the same text.
 

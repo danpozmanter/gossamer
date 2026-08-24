@@ -7,7 +7,7 @@ Gossamer's surface is Rust with two simplifications:
 - Semicolons may replace newlines only between statements on the same line.
   They are separators, not trailing terminators.
 
-See [`SPEC.md`](https://github.com/danpozmanter/gossamer/blob/main/SPEC.md)
+See [`SPEC.md`](https://github.com/gossamer-lang/gossamer/blob/main/SPEC.md)
 for the full grammar and semantics.
 
 Delimited lists use commas on one line and newlines across multiple lines.

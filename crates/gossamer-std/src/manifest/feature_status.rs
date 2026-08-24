@@ -309,6 +309,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/fs_temp_file_lifecycle.gos",
             "feature-testing-examples/nul_in_strings.gos",
             "feature-testing-examples/os_args_clone_roundtrip.gos",
+            "feature-testing-examples/sandbox_env_allow_all.gos",
             "feature-testing-examples/stdlib_alias_wiring.gos",
             "feature-testing-examples/stdlib_env_portable.gos",
             "feature-testing-examples/stdlib_fs_portable.gos",
@@ -547,6 +548,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/net_ip.gos",
             "feature-testing-examples/net_smtp_send.gos",
             "feature-testing-examples/net_tcp_echo.gos",
+            "feature-testing-examples/net_tcp_read_deadline.gos",
             "feature-testing-examples/net_tls_client.gos",
             "feature-testing-examples/net_tls_client_modes.gos",
             "feature-testing-examples/net_unix_echo.gos",
@@ -662,7 +664,13 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/weak_into_strong_cycle.gos",
         ],
     ),
-    ("std::sandbox", &["feature-testing-examples/sandbox.gos"]),
+    (
+        "std::sandbox",
+        &[
+            "feature-testing-examples/sandbox.gos",
+            "feature-testing-examples/sandbox_env_allow_all.gos",
+        ],
+    ),
     ("std::slog", &["feature-testing-examples/stdlib_slog.gos"]),
     (
         "std::sort",
@@ -842,6 +850,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/mut_ref_container_params.gos",
             "feature-testing-examples/mutex_poison_recovery.gos",
             "feature-testing-examples/mutex_vs_channel_counter.gos",
+            "feature-testing-examples/net_tcp_read_deadline.gos",
             "feature-testing-examples/os_signal_handler.gos",
             "feature-testing-examples/panic_hook.gos",
             "feature-testing-examples/select_default_timing.gos",

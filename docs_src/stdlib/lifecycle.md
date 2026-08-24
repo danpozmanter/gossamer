@@ -8,8 +8,8 @@ Process readiness and graceful shutdown, with systemd sd_notify. Shutdown is obs
 
 ## API details and source
 
-The [implementation source](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/lifecycle.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
+The [implementation source](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/lifecycle.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Lifecycle`](https://github.com/danpozmanter/gossamer/blob/main/crates/gossamer-std/src/lifecycle.rs) | `type Lifecycle` | Registers shutdown hooks, listens for SIGTERM / SIGINT, and notifies systemd. |
+| [`Lifecycle`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/lifecycle.rs) | `type Lifecycle` | Registers shutdown hooks, listens for SIGTERM / SIGINT, and notifies systemd. |

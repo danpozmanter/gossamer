@@ -6,7 +6,7 @@ build.
 ## From source
 
 ```sh
-git clone https://github.com/danpozmanter/gossamer
+git clone https://github.com/gossamer-lang/gossamer
 cd gossamer
 cargo build --workspace --release
 ./target/release/gos --version
@@ -98,7 +98,7 @@ cargo build --workspace --release -p gossamer-driver --features musl
 
 Pre-built plug-ins for VSCode, Vim, Neovim, Helix, Emacs, Sublime,
 and Zed (plus a tree-sitter grammar) live at
-[`danpozmanter/gossamer-editor-support`](https://github.com/danpozmanter/gossamer-editor-support).
+[`gossamer-lang/gossamer-editor-support`](https://github.com/gossamer-lang/gossamer-editor-support).
 Each one drives `gos lsp` for diagnostics, hover, completion,
 go-to-definition, references, rename, and inlay hints.
 

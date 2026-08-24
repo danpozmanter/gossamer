@@ -1,6 +1,6 @@
 # Gossamer
 
-[![CI](https://github.com/danpozmanter/gossamer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/danpozmanter/gossamer/actions/workflows/ci.yml)
+[![CI](https://github.com/gossamer-lang/gossamer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gossamer-lang/gossamer/actions/workflows/ci.yml)
 
 [Homepage and Docs](http://gossamer-lang.org/)
 
@@ -175,7 +175,7 @@ as well, and is off by default this release.
 - Language spec: [`SPEC.md`](SPEC.md)
 - Project style guide: [`GUIDELINES.md`](GUIDELINES.md)
 - AI skill card: [`SKILL.md`](SKILL.md) - drop this file into a model's context to teach it how to write idiomatic Gossamer (also embedded in `gos skill-prompt`).
-- Editor integrations: [`danpozmanter/gossamer-editor-support`](https://github.com/danpozmanter/gossamer-editor-support) (VSCode, Vim, Neovim, Helix, Emacs, Sublime, Zed, plus a tree-sitter grammar)
+- Editor integrations: [`gossamer-lang/gossamer-editor-support`](https://github.com/gossamer-lang/gossamer-editor-support) (VSCode, Vim, Neovim, Helix, Emacs, Sublime, Zed, plus a tree-sitter grammar)
 
 Source files use the `.gos` extension.
 
@@ -489,7 +489,7 @@ contract.
 
 ## Editor Support
 
-Support for various editors (VS Code, Neovim, etc) [here](https://github.com/danpozmanter/gossamer-editor-support) - syntax and LSP support.
+Support for various editors (VS Code, Neovim, etc) [here](https://github.com/gossamer-lang/gossamer-editor-support) - syntax and LSP support.
    
 [Lite Anvil](https://github.com/danpozmanter/lite-anvil) supports Gossamer as a first class language (syntax & LSP).
 

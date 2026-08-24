@@ -633,3 +633,75 @@ fn parse_max_rss_kb(stderr: &str) -> Option<u64> {
     }
     None
 }
+
+/// A container built into an aggregate the callee returns must not leave a
+/// reference behind. The count the constructor made, the count the aggregate
+/// construction mints, and the count the return copy mints are three; the
+/// frame gives up one at the return-site field free and the caller owns one,
+/// so the constructor's belongs to the frame. Without that release a builder
+/// called in a loop retains one buffer per call, which the allocation ledger
+/// reports as a live-Vec count that tracks the iteration count.
+#[test]
+fn returned_aggregate_container_leaves_no_live_vec_per_call() {
+    let dir = env::temp_dir().join(format!("gos-agg-share-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("agg_share.gos");
+    std::fs::write(
+        &source,
+        "
+use std::env
+
+fn pair(i: i64) -> (i64, Vec<i64>) { (i, #[i, i + 1]) }
+
+fn main() {
+    let n = env::args().first().unwrap_or(\"64\").to_i64().unwrap_or(64)
+    let mut k = 0
+    let mut tags = #[]
+    for i in 0..n { (k, tags) = pair(i) }
+    println!(\"{} {}\", k, tags.len())
+}
+",
+    )
+    .unwrap();
+    let build = Command::new(gos_bin())
+        .args(["build", "--out-dir"])
+        .arg(&dir)
+        .arg(&source)
+        .output()
+        .expect("gos build");
+    assert!(
+        build.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let binary = dir.join("agg_share");
+
+    let live = |iterations: &str| -> usize {
+        let out = Command::new(&binary)
+            .arg(iterations)
+            .env("GOS_LEAK_LEDGER", "1")
+            .output()
+            .expect("run with the allocation ledger");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        stderr
+            .split("vec=")
+            .nth(1)
+            .and_then(|tail| tail.split_whitespace().next())
+            .and_then(|n| n.parse::<usize>().ok())
+            .unwrap_or_else(|| panic!("ledger must report a live Vec count: {stderr}"))
+    };
+
+    let small = live("64");
+    let large = live("4096");
+    assert_eq!(
+        small, large,
+        "live Vec count tracks the call count ({small} at 64 calls, {large} at \
+         4096): the reference the constructor made is reaching nothing that \
+         frees it"
+    );
+    assert!(
+        large <= 4,
+        "a builder loop should end holding one buffer, not {large}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

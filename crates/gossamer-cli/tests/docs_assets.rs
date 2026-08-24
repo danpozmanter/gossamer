@@ -22,7 +22,7 @@ fn docs_repo_header_facts_are_live_and_loaded() {
     let script = std::fs::read_to_string(root.join("docs_src/js/repo_button.js"))
         .expect("read repo_button.js");
     assert!(
-        script.contains("https://api.github.com/repos/danpozmanter/gossamer"),
+        script.contains("https://api.github.com/repos/gossamer-lang/gossamer"),
         "repo header facts must come from GitHub at runtime"
     );
     assert!(

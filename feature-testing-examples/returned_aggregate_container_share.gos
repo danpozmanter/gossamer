@@ -1,0 +1,48 @@
+// A container built into an aggregate the function returns is handed over
+// once: the constructor's reference stays with the frame that made it, the
+// aggregate's own reference is given up where the return copy mints the
+// caller's. A loop that calls such a builder holds one live buffer at a
+// time, not one per call.
+struct Row { id: i64, tags: Vec<i64> }
+
+fn pair(i: i64) -> (i64, Vec<i64>) {
+    (i, #[i, i + 1])
+}
+
+fn row(i: i64) -> Row {
+    Row { id: i, tags: #[i, i + 1, i + 2] }
+}
+
+fn nested(i: i64) -> (String, Vec<String>) {
+    (format!("r{}", i), #[format!("t{}", i), "fixed"])
+}
+
+fn main() {
+    let mut k = 0
+    let mut tags = #[]
+    for i in 0..64 {
+        (k, tags) = pair(i)
+    }
+    println!("pair {} {:?}", k, tags)
+
+    let mut held = Row { id: 0, tags: #[] }
+    for i in 0..64 {
+        held = row(i)
+    }
+    println!("struct {} {:?}", held.id, held.tags)
+
+    let mut name = ""
+    let mut names = #[]
+    for i in 0..64 {
+        (name, names) = nested(i)
+    }
+    println!("nested {} {:?}", name, names)
+
+    // The same builder whose result is read without being kept.
+    let mut total = 0
+    for i in 0..64 {
+        let (n, v) = pair(i)
+        total += n + v.len()
+    }
+    println!("read-only {}", total)
+}

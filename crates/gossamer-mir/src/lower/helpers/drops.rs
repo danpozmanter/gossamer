@@ -152,6 +152,132 @@ fn pointee_of(tcx: &TyCtxt, ty: Ty) -> Ty {
     }
 }
 
+/// Per-local: whether a container this frame constructed keeps a reference of
+/// its own after being written into an aggregate the frame then returns.
+///
+/// Three references exist for `fn f() -> (i64, Vec<i64>) { (i, #[..]) }`: the
+/// constructor's, the one the `Rvalue::Aggregate` retain mints for the tuple
+/// local, and the one the return copy mints for the caller. The frame gives
+/// up the tuple local's at the return-site field free, and the caller owns
+/// the third - so the constructor's is the frame's to release, and treating
+/// the operand as moved into the aggregate instead leaves it with nothing to
+/// free it. A builder called in a loop then grows without bound.
+///
+/// The claim needs BOTH halves of that exchange visible, so it is only made
+/// for an aggregate copied into the return slot. An aggregate handed to a
+/// container instead - `Map::from([(k, #[..])])` - is stored by taking the
+/// share it already holds rather than minting one, and adding a release here
+/// would free a buffer the container still reads.
+///
+/// It also needs that construction to be the container's ONLY escape. An
+/// in-place append writes through the container without taking a share of it
+/// and does not count; a bare copy, a reference, a consuming call, or a store
+/// into a heap slot each hand the pointer somewhere this frame cannot see.
+fn aggregates_minting_their_own_share(body: &Body, tcx: &TyCtxt) -> Vec<bool> {
+    use gossamer_types::TyKind;
+    let n = body.locals.len();
+    // Per container local: the aggregates it was written into, and whether
+    // anything else could be holding its pointer.
+    let mut carriers: Vec<Vec<Local>> = vec![Vec::new(); n];
+    let mut escapes_elsewhere = vec![false; n];
+    let mut returned = vec![false; n];
+    let container = |l: Local| -> bool {
+        body.locals.get(l.0 as usize).is_some_and(|decl| {
+            !decl.region && matches!(tcx.kind_of(decl.ty), TyKind::Vec(_) | TyKind::Slice(_))
+        })
+    };
+    let note_escape = |op: &Operand, escapes: &mut Vec<bool>| {
+        if let Operand::Copy(p) = op
+            && p.projection.is_empty()
+            && (p.local.0 as usize) < escapes.len()
+        {
+            escapes[p.local.0 as usize] = true;
+        }
+    };
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                if let StatementKind::StaticStore { value, .. } = &stmt.kind {
+                    note_escape(value, &mut escapes_elsewhere);
+                }
+                continue;
+            };
+            if let Rvalue::Use(Operand::Copy(src)) = rvalue
+                && place.local == Local::RETURN
+                && place.projection.is_empty()
+                && src.projection.is_empty()
+                && (src.local.0 as usize) < n
+            {
+                returned[src.local.0 as usize] = true;
+            }
+            match rvalue {
+                Rvalue::Aggregate { operands, .. } => {
+                    for op in operands {
+                        if let Operand::Copy(p) = op
+                            && p.projection.is_empty()
+                            && (p.local.0 as usize) < n
+                        {
+                            if place.projection.is_empty() {
+                                carriers[p.local.0 as usize].push(place.local);
+                            } else {
+                                escapes_elsewhere[p.local.0 as usize] = true;
+                            }
+                        }
+                    }
+                }
+                Rvalue::Use(op) | Rvalue::Cast { operand: op, .. } => {
+                    note_escape(op, &mut escapes_elsewhere);
+                }
+                Rvalue::Repeat { value, .. } => note_escape(value, &mut escapes_elsewhere),
+                Rvalue::CallIntrinsic { args, .. } => {
+                    for op in args {
+                        note_escape(op, &mut escapes_elsewhere);
+                    }
+                }
+                Rvalue::Ref { place: p, .. } => {
+                    if (p.local.0 as usize) < n {
+                        escapes_elsewhere[p.local.0 as usize] = true;
+                    }
+                }
+                Rvalue::UnaryOp { .. }
+                | Rvalue::BinaryOp { .. }
+                | Rvalue::Len(_)
+                | Rvalue::StaticLoad(_) => {}
+            }
+        }
+        match &block.terminator {
+            Terminator::Call { callee, args, .. } => {
+                note_escape(callee, &mut escapes_elsewhere);
+                let in_place = matches!(
+                    callee,
+                    Operand::Const(ConstValue::Str(name))
+                        if appends_through_container(name.as_str())
+                );
+                for (idx, op) in args.iter().enumerate() {
+                    if in_place && idx == 0 {
+                        continue;
+                    }
+                    note_escape(op, &mut escapes_elsewhere);
+                }
+            }
+            Terminator::Drop { place, .. } if (place.local.0 as usize) < n => {
+                escapes_elsewhere[place.local.0 as usize] = true;
+            }
+            _ => {}
+        }
+    }
+    (0..n)
+        .map(|i| {
+            container(Local(u32::try_from(i).unwrap_or(0)))
+                && !escapes_elsewhere[i]
+                && !carriers[i].is_empty()
+                && carriers[i]
+                    .iter()
+                    .all(|carrier| returned[carrier.0 as usize])
+        })
+        .collect()
+}
+
 pub(crate) fn aggregate_rc_field_paths(tcx: &TyCtxt, ty: Ty) -> AggFieldPaths {
     fn recursable(tcx: &TyCtxt, ty: Ty) -> bool {
         use gossamer_types::TyKind;
@@ -5058,6 +5184,8 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
         moved
     };
 
+    let mints_own_share = aggregates_minting_their_own_share(body, tcx);
+
     // Pass 3: collect drop targets in stable local-index order.
     // The constructor-name → free-name table already restricts
     // candidates to runtime container shapes; we trust the MIR's
@@ -5066,7 +5194,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
     let drop_targets_all: Vec<(Local, &'static str)> = (0..owner_ctor.len())
         .filter_map(|i| {
             let free = owner_ctor[i]?;
-            if moved_into_return[i] || moved_into_aggregate[i] {
+            if (moved_into_return[i] || moved_into_aggregate[i]) && !mints_own_share[i] {
                 return None;
             }
             Some((Local(i as u32), free))
