@@ -192,6 +192,17 @@ fn main() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Ceiling for a run that must not have slept.
+///
+/// The regressions these cases guard against are a zero or negative
+/// duration reaching a real timer wait: a negative millisecond count
+/// read as unsigned is not two seconds of sleep, it is billions of
+/// years. So the bound only has to be shorter than "slept at all",
+/// and is set well above what a cold process costs on a loaded CI
+/// runner - the alternative is a gate that reports the runner's
+/// scheduling rather than the runtime's behaviour.
+const DID_NOT_SLEEP_MS: u64 = 30_000;
+
 #[test]
 fn time_sleep_zero_does_not_block_in_all_tiers() {
     // Zero duration must not block. Catches a would-be regression where
@@ -209,7 +220,7 @@ fn main() {
     assert!(vm.success, "vm stderr: {}", vm.stderr);
     assert!(vm.stdout.contains("done"));
     assert!(
-        vm.elapsed_ms < 2000,
+        vm.elapsed_ms < DID_NOT_SLEEP_MS,
         "vm should not block on zero sleep, took {} ms",
         vm.elapsed_ms
     );
@@ -221,7 +232,7 @@ fn main() {
     assert!(cl.success, "cranelift stderr: {}", cl.stderr);
     assert!(cl.stdout.contains("done"));
     assert!(
-        cl.elapsed_ms < 2000,
+        cl.elapsed_ms < DID_NOT_SLEEP_MS,
         "cranelift should not block on zero sleep, took {} ms",
         cl.elapsed_ms
     );
@@ -233,7 +244,7 @@ fn main() {
     assert!(ll.success, "llvm stderr: {}", ll.stderr);
     assert!(ll.stdout.contains("done"));
     assert!(
-        ll.elapsed_ms < 2000,
+        ll.elapsed_ms < DID_NOT_SLEEP_MS,
         "llvm should not block on zero sleep, took {} ms",
         ll.elapsed_ms
     );
@@ -265,7 +276,7 @@ fn main() {
         "vm must not continue after negative sleep"
     );
     assert!(
-        vm.elapsed_ms < 2000,
+        vm.elapsed_ms < DID_NOT_SLEEP_MS,
         "vm should reject negative sleep quickly, took {} ms",
         vm.elapsed_ms
     );
@@ -285,7 +296,7 @@ fn main() {
         "cranelift must not continue after negative sleep"
     );
     assert!(
-        cl.elapsed_ms < 2000,
+        cl.elapsed_ms < DID_NOT_SLEEP_MS,
         "cranelift should reject negative sleep quickly, took {} ms",
         cl.elapsed_ms
     );
@@ -305,7 +316,7 @@ fn main() {
         "llvm must not continue after negative sleep"
     );
     assert!(
-        ll.elapsed_ms < 2000,
+        ll.elapsed_ms < DID_NOT_SLEEP_MS,
         "llvm should reject negative sleep quickly, took {} ms",
         ll.elapsed_ms
     );

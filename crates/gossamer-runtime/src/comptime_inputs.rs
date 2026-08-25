@@ -77,11 +77,25 @@ mod comptime_inputs_tests {
     /// tests running at once would each see the other's paths.
     static SEQUENCE: Mutex<()> = Mutex::new(());
 
+    /// This platform's absolute root: `/` on Unix, the current drive's
+    /// `C:\` on Windows. A path literal cannot stand in for it - a
+    /// leading `/` is root-relative on Windows, not absolute, so a
+    /// literal would be recorded against the working directory.
+    fn under_root(parts: &[&str]) -> PathBuf {
+        let root = std::env::current_dir()
+            .expect("a working directory")
+            .ancestors()
+            .last()
+            .expect("every path has a root ancestor")
+            .to_path_buf();
+        parts.iter().fold(root, |path, part| path.join(part))
+    }
+
     #[test]
     fn a_read_outside_a_fold_is_not_an_input() {
         let _order = SEQUENCE.lock();
         begin();
-        record("/etc/hosts");
+        record(&under_root(&["etc", "hosts"]).to_string_lossy());
         assert!(take().is_empty());
     }
 
@@ -89,17 +103,13 @@ mod comptime_inputs_tests {
     fn a_read_during_a_fold_is_recorded_once() {
         let _order = SEQUENCE.lock();
         begin();
-        let _fold = Confined::at_root(PathBuf::from("/"));
-        record("/project/profiles/one.toml");
-        record("/project/profiles/one.toml");
-        record("/project/profiles/two.toml");
-        assert_eq!(
-            take(),
-            vec![
-                PathBuf::from("/project/profiles/one.toml"),
-                PathBuf::from("/project/profiles/two.toml"),
-            ]
-        );
+        let _fold = Confined::at_root(under_root(&[]));
+        let first = under_root(&["project", "profiles", "one.toml"]);
+        let second = under_root(&["project", "profiles", "two.toml"]);
+        record(&first.to_string_lossy());
+        record(&first.to_string_lossy());
+        record(&second.to_string_lossy());
+        assert_eq!(take(), vec![first, second]);
         assert!(take().is_empty(), "taking the set clears it");
     }
 
@@ -110,7 +120,7 @@ mod comptime_inputs_tests {
     fn a_relative_read_is_recorded_against_the_working_directory() {
         let _order = SEQUENCE.lock();
         begin();
-        let _fold = Confined::at_root(PathBuf::from("/"));
+        let _fold = Confined::at_root(under_root(&[]));
         record("profiles/standard.toml");
         let cwd = std::env::current_dir().expect("a working directory");
         assert_eq!(take(), vec![cwd.join("profiles/standard.toml")]);
@@ -120,10 +130,11 @@ mod comptime_inputs_tests {
     fn a_new_fold_starts_from_nothing() {
         let _order = SEQUENCE.lock();
         begin();
-        let _fold = Confined::at_root(PathBuf::from("/"));
-        record("/project/first.toml");
+        let _fold = Confined::at_root(under_root(&[]));
+        record(&under_root(&["project", "first.toml"]).to_string_lossy());
         begin();
-        record("/project/second.toml");
-        assert_eq!(take(), vec![PathBuf::from("/project/second.toml")]);
+        let second = under_root(&["project", "second.toml"]);
+        record(&second.to_string_lossy());
+        assert_eq!(take(), vec![second]);
     }
 }

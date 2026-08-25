@@ -2,24 +2,65 @@
 // working directory and environment overrides.
 //
 // The directory and the variables reach the child on every tier: an
-// empty dir inherits the caller's, and the pairs override the
-// inherited environment rather than replacing it, so a variable the
-// caller already had is still there.
+// empty dir inherits the caller's, and the pairs override the inherited
+// environment rather than replacing it, so a variable the caller
+// already had is still there.
+//
+// The shell differs per platform, so the commands do; what is printed
+// does not. A failed spawn's message is deliberately not printed - it
+// is the host's text, not the language's.
 
 use std::env
 use std::errors
 use std::fs
+use std::os
 use std::path
 use std::process
 
-fn line_of(result: Result<process::Output, errors::Error>) -> String {
+/// The program that runs a one-liner on this host, and the flag it
+/// takes.
+fn shell() -> (String, String) {
+    if os::family() == "windows" {
+        ("cmd", "/C")
+    } else {
+        ("/bin/sh", "-c")
+    }
+}
+
+/// A command line that prints the contents of `marker.txt` in the
+/// child's own working directory.
+fn read_marker() -> String {
+    if os::family() == "windows" {
+        "type marker.txt"
+    } else {
+        "cat marker.txt"
+    }
+}
+
+/// A command line that prints the child's working directory.
+fn print_cwd() -> String {
+    if os::family() == "windows" { "cd" } else { "pwd" }
+}
+
+/// A command line that prints one environment variable.
+fn print_var(name: String) -> String {
+    if os::family() == "windows" {
+        format!("echo %{}%", name)
+    } else {
+        format!("echo ${}", name)
+    }
+}
+
+/// The trimmed stdout of a run, or "" when it could not run at all.
+fn output_of(result: Result<process::Output, errors::Error>) -> String {
     match result {
-        Ok(output) => format!("code={} out={}", output.code, output.stdout.trim())
-        Err(e) => format!("error: {}", e)
+        Ok(output) => output.stdout.trim()
+        Err(_) => ""
     }
 }
 
 fn main() {
+    let (program, flag) = shell()
     let root = path::join(&env::temp_dir(), &"gossamer_run_in_fixture")
     let _ = fs::remove_dir_all(&root)
     let _ = fs::create_dir_all(&root)
@@ -27,40 +68,32 @@ fn main() {
 
     // The child starts where the caller said, so a relative path it
     // reads is relative to that directory.
-    println!("dir: {}", line_of(process::run_in(&"/bin/cat", &#["marker.txt"], &root, &#[])))
+    let in_dir = process::run_in(&program, &#[flag, read_marker()], &root, &#[])
+    println!("dir: {}", output_of(in_dir))
 
     // An empty directory leaves the child where the caller is.
-    println!(
-        "inherited dir: {}"
-        line_of(process::run_in(&"/bin/sh", &#["-c", "test -d /proc && echo here"], &"", &#[]))
-    )
+    let inherited = process::run_in(&program, &#[flag, print_cwd()], &"", &#[])
+    let here = env::current_dir().unwrap_or("?")
+    println!("inherited dir: {}", output_of(inherited) == here)
 
     // The pairs reach the child.
     let overrides = #[("GOS_RUN_IN_PROBE", "set-by-caller")]
-    println!(
-        "env: {}"
-        line_of(process::run_in(
-            &"/bin/sh"
-            &#["-c", "echo $GOS_RUN_IN_PROBE"]
-            &""
-            &overrides
-        ))
+    let named = process::run_in(
+        &program
+        &#[flag, print_var("GOS_RUN_IN_PROBE")]
+        &""
+        &overrides
     )
+    println!("env: {}", output_of(named))
 
-    // ... on top of the environment the caller already had, rather
-    // than instead of it.
-    println!(
-        "inherited env: {}"
-        line_of(process::run_in(
-            &"/bin/sh"
-            &#["-c", "test -n \"$PATH\" && echo path-kept"]
-            &""
-            &overrides
-        ))
-    )
+    // ... on top of the environment the caller already had, rather than
+    // instead of it.
+    let inherited_env = process::run_in(&program, &#[flag, print_var("PATH")], &"", &overrides)
+    println!("inherited env: {}", !output_of(inherited_env).is_empty())
 
     // A command that does not exist is an Err, as it is for run.
-    match process::run_in(&"/nonexistent/gossamer-probe", &#[], &"", &#[]) {
+    let missing = path::join(&root, &"no-such-command")
+    match process::run_in(&missing, &#[], &"", &#[]) {
         Ok(output) => println!("missing: code={}", output.code)
         Err(_) => println!("missing: error")
     }

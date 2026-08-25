@@ -790,7 +790,16 @@ mod exec_tests {
             .expect("the policy compiles");
         let spelled = format!(".{}{}", std::path::MAIN_SEPARATOR, command_name("tool"));
         let resolved = resolve_program(&policy, &spelled).expect("a relative command resolves");
-        assert_eq!(resolved, dir.join(".").join(command_name("tool")));
+        // Compared as the file it names rather than as text: the
+        // policy's working directory is canonicalized, which on macOS
+        // prefixes `/private` and on Windows `\\?\`, and the spelling
+        // keeps the `.` component the caller wrote.
+        assert_eq!(
+            resolved.canonicalize().ok(),
+            dir.join(command_name("tool")).canonicalize().ok(),
+            "resolved {} should name the fixture command",
+            resolved.display(),
+        );
         let error = resolve_program(&policy, "./gossamer-sandbox-no-such-file")
             .expect_err("a relative command that is not there does not resolve");
         assert_eq!(error.exit_code(), EXIT_COMMAND_NOT_FOUND, "{error}");

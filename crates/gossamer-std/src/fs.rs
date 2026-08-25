@@ -2299,9 +2299,13 @@ mod tests {
         let dir = scratch("perm-missing");
         stdfs::create_dir_all(&dir).unwrap();
         let err = set_permissions_mode(dir.join("nope.txt"), 0o644).unwrap_err();
-        #[cfg(unix)]
+        // Windows carries the read-only attribute, so a missing path
+        // there fails the same way it does on Unix: there is nothing to
+        // set it on. Only a target with neither mechanism reports the
+        // operation itself as unsupported.
+        #[cfg(any(unix, windows))]
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
         let _ = remove_all(&dir);
     }

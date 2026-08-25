@@ -569,6 +569,14 @@ fn a_command_that_does_not_exist_is_reported_as_such() {
     );
 }
 
+/// Serialises the cases that run at the host's maximum level.
+///
+/// Windows names one `AppContainer` profile per process and deletes it
+/// when the run that created it ends, so two strict runs at once take
+/// the profile out from under each other; a shared grant record has the
+/// same property. One at a time is what the design allows.
+static MAX_LEVEL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The same contract at the level a host actually enforces at. A
 /// backend that wraps `argv` in another program - macOS runs the
 /// command through `sandbox-exec` - launches a wrapper that exists
@@ -577,6 +585,9 @@ fn a_command_that_does_not_exist_is_reported_as_such() {
 /// code stands in for it.
 #[test]
 fn a_command_that_does_not_exist_is_reported_as_such_at_the_hosts_maximum_level() {
+    let _one_at_a_time = MAX_LEVEL_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let host = gossamer_sandbox::capabilities();
     if host.max_level < Level::Basic {
         return;
@@ -599,6 +610,9 @@ fn a_command_that_does_not_exist_is_reported_as_such_at_the_hosts_maximum_level(
 
 #[test]
 fn the_hosts_own_maximum_level_actually_runs_a_child() {
+    let _one_at_a_time = MAX_LEVEL_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let host = gossamer_sandbox::capabilities();
     if host.max_level < Level::Basic {
         return;

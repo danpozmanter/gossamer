@@ -586,6 +586,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
     (
         "std::os",
         &[
+            "feature-testing-examples/process_run_in.gos",
             "feature-testing-examples/stdlib_os_introspection.gos",
             "feature-testing-examples/winb_sys_misc.gos",
         ],
