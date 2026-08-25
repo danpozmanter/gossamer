@@ -7472,7 +7472,7 @@
       "id": "std-http-sse-encode-comment",
       "name": "std::http::sse::encode_comment",
       "kind": "function",
-      "signature": "fn encode_comment(comment: String) -> Vec<u8>",
+      "signature": "fn encode_comment(comment: String) -> String",
       "description": "Render a `:`-prefixed keepalive line. Available in interp + compiled.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -7491,7 +7491,7 @@
       "id": "std-http-sse-encode-event",
       "name": "std::http::sse::encode_event",
       "kind": "function",
-      "signature": "fn encode_event(event: String, data: String, id: String) -> Vec<u8>",
+      "signature": "fn encode_event(event: String, data: String, id: String) -> String",
       "description": "Render one event block as a string: `(event, data, id) -> String`. Available in interp + compiled.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -7510,7 +7510,7 @@
       "id": "std-http-sse-encode-retry",
       "name": "std::http::sse::encode_retry",
       "kind": "function",
-      "signature": "fn encode_retry(ms: i64) -> Vec<u8>",
+      "signature": "fn encode_retry(ms: i64) -> String",
       "description": "Render a `retry:` reconnect-hint directive in milliseconds. Available in interp + compiled.",
       "lifecycle": "experimental",
       "tier_support": [

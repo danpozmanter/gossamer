@@ -1883,6 +1883,11 @@ unsafe fn skip_desc(tags: DescStream, cursor: &mut usize) {
             skip_desc(tags, cursor);
         },
         gossamer_abi::DESC_SET_I64 | gossamer_abi::DESC_SET_STR => *cursor += 1,
+        gossamer_abi::DESC_CONTAINER => {
+            // The byte naming the container, then one element descriptor.
+            *cursor += 1;
+            unsafe { skip_desc(tags, cursor) };
+        }
         gossamer_abi::DESC_ADT => *cursor += 3,
         gossamer_abi::DESC_OPTION => unsafe { skip_desc(tags, cursor) },
         gossamer_abi::DESC_ARRAY => {
@@ -2036,7 +2041,10 @@ pub(crate) unsafe fn render_desc_storage(
             let word = unsafe { (slot as *const i64).read_unaligned() };
             let v: *const crate::c_abi::GosVec = std::ptr::with_exposed_provenance(word as usize);
             let elem_desc = *cursor;
-            out.push('[');
+            // A `Vec` renders in its own literal spelling; the bare
+            // bracket belongs to the fixed array it shares a runtime
+            // representation with, which `DESC_ARRAY` names.
+            out.push_str("#[");
             if !v.is_null() {
                 let vec = unsafe { &*v };
                 for i in 0..vec.len {
@@ -2168,6 +2176,39 @@ pub(crate) unsafe fn render_desc_storage(
                 std::ptr::with_exposed_provenance::<u8>(word)
             };
             out.push_str(&unsafe { crate::c_abi::vec::adt_fmt_string(arg, fmt) });
+        }
+        // A container whose elements live in the runtime: the slot holds
+        // the handle, and the byte after the tag names which container.
+        gossamer_abi::DESC_CONTAINER => {
+            *cursor += 1;
+            let which = tags.byte(*cursor);
+            *cursor += 1;
+            let elem_desc = *cursor;
+            unsafe { skip_desc(tags, cursor) };
+            let word = unsafe { (slot as *const i64).read_unaligned() };
+            let rendered = match which {
+                28 | 30 => {
+                    let owner = if which == 28 { "MaxHeap" } else { "MinHeap" };
+                    let handle: *const crate::c_abi::GosVec =
+                        std::ptr::with_exposed_provenance(word as usize);
+                    unsafe {
+                        crate::c_abi::container_heap::bheap_format_at(
+                            handle, owner, tags, elem_desc,
+                        )
+                    }
+                }
+                _ => {
+                    let owner = match which {
+                        31 => "Queue",
+                        32 => "Stack",
+                        _ => "Deque",
+                    };
+                    let handle: *mut crate::c_abi::deque::GosDeque =
+                        std::ptr::with_exposed_provenance_mut(word as usize);
+                    unsafe { crate::c_abi::deque::deque_format_at(handle, owner, tags, elem_desc) }
+                }
+            };
+            out.push_str(&rendered);
         }
         gossamer_abi::DESC_SET_I64 | gossamer_abi::DESC_SET_STR => {
             *cursor += 1;

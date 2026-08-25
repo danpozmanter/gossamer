@@ -73,6 +73,11 @@ impl<'tcx> FnBuilder<'tcx> {
             };
         if is_vec_ctor || Self::init_is_sequence_snapshot(init) {
             self.collection_locals.insert(reg);
+        } else {
+            // A register a scope gave back is bound again by the next
+            // local, whose value is its own; the tag says what THIS
+            // binding holds, so a binding that is not a Vec clears it.
+            self.collection_locals.remove(&reg);
         }
     }
 

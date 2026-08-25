@@ -355,6 +355,47 @@ pub unsafe extern "C" fn gos_rt_deque_clear(d: *mut GosDeque) {
 /// element through `tags` - the one text form every tier prints for these
 /// containers.
 unsafe fn deque_format_with(d: *mut GosDeque, owner: &str, tags: *const u8) -> *mut c_char {
+    let text = if tags.is_null() {
+        unsafe { deque_format_words(d, owner) }
+    } else {
+        let stream = unsafe { crate::c_abi::map::DescStream::new(tags) };
+        unsafe { deque_format_at(d, owner, stream, 0) }
+    };
+    crate::c_abi::string::alloc_cstring(text.as_bytes())
+}
+
+/// `owner [1, 2]` over one-word integer elements.
+unsafe fn deque_format_words(d: *mut GosDeque, owner: &str) -> String {
+    let mut out = String::from(owner);
+    out.push_str(" [");
+    let vec = unsafe { gos_rt_deque_vec(d) };
+    if !vec.is_null() {
+        let store = unsafe { &*vec };
+        for i in 0..store.len.max(0) {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&crate::builtins::format_int(unsafe {
+                crate::c_abi::vec::vec_elem_load_i64(store, i)
+            }));
+        }
+    }
+    out.push(']');
+    out
+}
+
+/// `owner [a, b]` reading each element at `elem_desc` in `tags`, so a
+/// container nested in another shape renders through the same stream the
+/// shape around it is being read from.
+///
+/// # Safety
+/// `d` is a live deque handle and `elem_desc` indexes `tags`.
+pub(crate) unsafe fn deque_format_at(
+    d: *mut GosDeque,
+    owner: &str,
+    tags: crate::c_abi::map::DescStream,
+    elem_desc: usize,
+) -> String {
     let mut out = String::from(owner);
     out.push_str(" [");
     let vec = unsafe { gos_rt_deque_vec(d) };
@@ -366,21 +407,14 @@ unsafe fn deque_format_with(d: *mut GosDeque, owner: &str, tags: *const u8) -> *
                 out.push_str(", ");
             }
             let slot = unsafe { store.ptr.add((i as usize) * stride) };
-            if tags.is_null() {
-                out.push_str(&crate::builtins::format_int(unsafe {
-                    crate::c_abi::vec::vec_elem_load_i64(store, i)
-                }));
-            } else {
-                let stream = unsafe { crate::c_abi::map::DescStream::new(tags) };
-                let mut cursor = 0usize;
-                unsafe {
-                    crate::c_abi::map::render_desc_value(&mut out, slot, stream, &mut cursor);
-                };
-            }
+            let mut cursor = elem_desc;
+            unsafe {
+                crate::c_abi::map::render_desc_value(&mut out, slot, tags, &mut cursor);
+            };
         }
     }
     out.push(']');
-    crate::c_abi::string::alloc_cstring(out.as_bytes())
+    out
 }
 
 /// Format a `Deque` of one-word integer elements for `{}` / `{:?}`.

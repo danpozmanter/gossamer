@@ -101,7 +101,7 @@ fn main() {
     println!("{:?}", v)
 }
 "#;
-    assert_eq!(run_main(src), "[1, 2, 3]\n");
+    assert_eq!(run_main(src), "#[1, 2, 3]\n");
 }
 
 #[test]

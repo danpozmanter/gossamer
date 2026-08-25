@@ -487,6 +487,37 @@ impl TyCtxt {
         self.struct_fields.get(&def).map(Vec::as_slice)
     }
 
+    /// Whether a container element of this type is reached by the address
+    /// of its slots rather than read as a word: a struct, a tuple, or a
+    /// fixed array, at any width. A one-field struct and a one-element
+    /// tuple each occupy a single slot yet a field projection still
+    /// dereferences off the slot address, so the width alone cannot
+    /// answer this - a one-word scalar element is the value itself.
+    /// The opaque stdlib handles (`def.local` in the `u32::MAX - 16 ..=
+    /// u32::MAX` sentinel range, `Option` and `Result` among them) hold a
+    /// pointer in their word and are addressed only when they span more
+    /// than one slot.
+    #[must_use]
+    pub fn elem_is_addressed_aggregate(&self, ty: Ty) -> bool {
+        match self.kind_of(ty) {
+            TyKind::Tuple(_) | TyKind::Array { .. } => true,
+            TyKind::Adt { def, substs } => {
+                let (def, substs) = (*def, substs.clone());
+                let user_struct =
+                    def.local < u32::MAX - 16 && self.adt_field_tys(def, &substs).is_some();
+                user_struct || self.slot_bytes(ty) > 8
+            }
+            _ => false,
+        }
+    }
+
+    /// An addressed aggregate that occupies a single slot, which is the
+    /// case the element width cannot report on its own.
+    #[must_use]
+    pub fn is_flat_inline_aggregate(&self, ty: Ty) -> bool {
+        self.slot_bytes(ty) <= 8 && self.elem_is_addressed_aggregate(ty)
+    }
+
     /// Inline slot size in bytes of a value of type `ty` on the compiled
     /// tiers, where every slot is 8-byte-aligned. Aggregates sum their
     /// fields' rounded-up slot widths; `Option`/`Result` are the 2-word

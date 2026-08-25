@@ -88,6 +88,13 @@ pub mod vec_elem_kind {
     /// deep-free and pointer-slot paths can never mistake the descriptor for
     /// a child Vec pointer.
     pub const PACKED_ROWS: u8 = 9;
+    /// Element is an aggregate - a struct, tuple, or fixed array - held
+    /// inline in the storage whose slots own no heap children, and which
+    /// occupies a single slot. Its slot address is the value, so a read
+    /// that hands the element to the program copies the slot block out;
+    /// the width alone cannot say this, since a one-word scalar element
+    /// is the value itself. Shallow free of the buffer is correct.
+    pub const AGGR_FLAT: u8 = 10;
 }
 
 #[repr(C)]
@@ -1268,11 +1275,11 @@ pub(crate) unsafe fn vec_elem_load_i64(v: &GosVec, idx: i64) -> i64 {
 /// so its slot address is the value and its slots may embed owned children.
 /// A one-field struct occupies a single slot and is still one of these, which
 /// is why the width alone does not answer the question.
-fn vec_elem_is_inline_aggregate(v: &GosVec) -> bool {
+pub(crate) fn vec_elem_is_inline_aggregate(v: &GosVec) -> bool {
     v.elem_bytes > 8
         || matches!(
             v.elem_kind,
-            vec_elem_kind::AGGR_OWNED | vec_elem_kind::AGGR_GUARDED
+            vec_elem_kind::AGGR_OWNED | vec_elem_kind::AGGR_GUARDED | vec_elem_kind::AGGR_FLAT
         )
 }
 
@@ -1408,7 +1415,12 @@ fn header_elem_kind(requested: u8, site: &str) -> u8 {
         vec_elem_kind::AGGR_GUARDED | vec_elem_kind::AGGR_OWNED | vec_elem_kind::PACKED_ROWS => {
             vec_elem_kind::PRIMITIVE
         }
-        kind if kind <= vec_elem_kind::ERROR || kind == vec_elem_kind::RC_ENUM => kind,
+        kind if kind <= vec_elem_kind::ERROR
+            || kind == vec_elem_kind::RC_ENUM
+            || kind == vec_elem_kind::AGGR_FLAT =>
+        {
+            kind
+        }
         other => {
             eprintln!("{site}: unknown elem_kind {other}; falling back to PRIMITIVE");
             vec_elem_kind::PRIMITIVE
@@ -1975,7 +1987,10 @@ unsafe fn vec_retain_elem_at_for_copy(v: *const GosVec, idx: i64) -> bool {
     let slot = unsafe { vec.ptr.add((idx as usize) * stride) };
     if matches!(
         vec.elem_kind,
-        vec_elem_kind::PRIMITIVE | vec_elem_kind::AGGR_GUARDED | vec_elem_kind::AGGR_OWNED
+        vec_elem_kind::PRIMITIVE
+            | vec_elem_kind::AGGR_GUARDED
+            | vec_elem_kind::AGGR_OWNED
+            | vec_elem_kind::AGGR_FLAT
     ) {
         return true;
     }

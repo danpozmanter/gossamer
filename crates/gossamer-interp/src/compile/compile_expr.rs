@@ -2911,6 +2911,27 @@ impl<'tcx> FnBuilder<'tcx> {
             }
         }
         let receiver_reg = self.compile_expr(receiver)?;
+        // A rendering method answers the text `{}` answers, and a `Vec`
+        // and a fixed array share one runtime representation; the
+        // descriptor built from the static type is what tells them
+        // apart, so it travels with the renderer's copy here as it does
+        // with a format argument.
+        let receiver_reg = match self.render_receiver_desc(receiver.ty, &name.name, args.len()) {
+            Some(desc) => {
+                let dst = self.alloc_reg();
+                let desc_idx = self.const_idx(
+                    ConstKey::String(desc.clone()),
+                    Value::String(desc.as_str().into()),
+                );
+                self.emit(Op::UintLeaves {
+                    dst,
+                    src: receiver_reg,
+                    desc_idx,
+                });
+                dst
+            }
+            None => receiver_reg,
+        };
         // `xs.pop()` evaluates to `Option<last>` while shortening the
         // receiver. `Op::VecPop` does both in one in-place step: it
         // returns `Some(last)` / `None` and shrinks the receiver
@@ -4420,6 +4441,18 @@ impl<'tcx> FnBuilder<'tcx> {
         segments.last().is_some_and(|s| s.name == "__concat")
     }
 
+    /// The [`Op::UintLeaves`] descriptor a rendering method's receiver
+    /// needs, or `None` when the method renders nothing the value alone
+    /// cannot say. `join` renders the elements without the brackets, so
+    /// its receiver takes the element-only descriptor.
+    fn render_receiver_desc(&self, ty: Ty, method: &str, argc: usize) -> Option<String> {
+        match (method, argc) {
+            ("to_string" | "fmt", 0) => crate::value::render_descriptor(self.tcx, ty),
+            ("join", 1) => crate::value::element_render_descriptor(self.tcx, ty),
+            _ => None,
+        }
+    }
+
     /// The [`Op::UintLeaves`] descriptor for a rendered argument of type `ty`:
     /// where the type declared its integers `u64` / `usize`. `None` when it
     /// declared none, which is every value that renders as it always has.
@@ -4427,83 +4460,7 @@ impl<'tcx> FnBuilder<'tcx> {
     /// The shape mirrors what the compiled tiers' element, payload, and slot
     /// tags render unsigned, so all three tiers read one value the same way.
     pub(crate) fn uint_leaves_desc(&self, ty: Ty) -> Option<String> {
-        use crate::value::uint_desc;
-        let mut out = Vec::new();
-        self.push_uint_desc(ty, &mut out, 0);
-        out.iter()
-            .any(|b| *b == uint_desc::UINT || *b == uint_desc::SET)
-            .then(|| out.iter().map(|b| *b as char).collect())
-    }
-
-    fn push_uint_desc(&self, ty: Ty, out: &mut Vec<u8>, depth: u8) {
-        use crate::value::uint_desc;
-        use gossamer_types::TyKind;
-        if depth > 8 {
-            out.push(uint_desc::NONE);
-            return;
-        }
-        let peeled = self.unwrap_ref(ty);
-        if self.is_unsigned64_ty(peeled) {
-            out.push(uint_desc::UINT);
-            return;
-        }
-        match self.tcx.kind(peeled) {
-            Some(TyKind::Vec(elem) | TyKind::Slice(elem) | TyKind::Array { elem, .. }) => {
-                let elem = *elem;
-                out.push(uint_desc::SEQ);
-                self.push_uint_desc(elem, out, depth + 1);
-            }
-            Some(TyKind::Tuple(elems)) => {
-                let elems = elems.clone();
-                let Ok(arity) = u8::try_from(elems.len()) else {
-                    out.push(uint_desc::NONE);
-                    return;
-                };
-                out.push(uint_desc::TUPLE);
-                out.push(arity);
-                for elem in elems {
-                    self.push_uint_desc(elem, out, depth + 1);
-                }
-            }
-            Some(TyKind::HashMap { key, value, .. }) => {
-                let (key, value) = (*key, *value);
-                out.push(uint_desc::MAP);
-                self.push_uint_desc(key, out, depth + 1);
-                self.push_uint_desc(value, out, depth + 1);
-            }
-            // `Option` and `Result` are the sentinel Adts `u32::MAX - 1` and
-            // `u32::MAX`; a `Set` / `BTreeSet` is `u32::MAX - 7` / `- 18`.
-            Some(TyKind::Adt { def, substs }) if def.local == u32::MAX - 1 => {
-                let payload = substs.types().first().copied();
-                out.push(uint_desc::OPTION);
-                match payload {
-                    Some(payload) => self.push_uint_desc(payload, out, depth + 1),
-                    None => out.push(uint_desc::NONE),
-                }
-            }
-            Some(TyKind::Adt { def, substs }) if def.local == u32::MAX => {
-                let tys = substs.types();
-                let (ok, err) = (tys.first().copied(), tys.get(1).copied());
-                out.push(uint_desc::RESULT);
-                for arm in [ok, err] {
-                    match arm {
-                        Some(arm) => self.push_uint_desc(arm, out, depth + 1),
-                        None => out.push(uint_desc::NONE),
-                    }
-                }
-            }
-            Some(TyKind::Adt { def, substs })
-                if def.local == u32::MAX - 7 || def.local == u32::MAX - 18 =>
-            {
-                let elem = substs.types().first().copied();
-                if elem.is_some_and(|elem| self.is_unsigned64_ty(elem)) {
-                    out.push(uint_desc::SET);
-                } else {
-                    out.push(uint_desc::NONE);
-                }
-            }
-            _ => out.push(uint_desc::NONE),
-        }
+        crate::value::render_descriptor(self.tcx, ty)
     }
 
     pub(crate) fn expr_has_uint_display_provenance(&self, expr: &HirExpr) -> bool {
@@ -4756,7 +4713,28 @@ impl<'tcx> FnBuilder<'tcx> {
             dst: callee_reg,
             idx,
         });
-        let value = self.compile_expr(arg)?;
+        let compiled = self.compile_expr(arg)?;
+        // The walk sees values, and a `Vec` and a fixed array share one
+        // runtime representation while a `u64` shares a slot with an
+        // `i64`. The descriptor built from the static type travels with
+        // the renderer's private copy so the walk spells both the way a
+        // program that wrote them spells them.
+        let value = match self.uint_leaves_desc(arg.ty) {
+            Some(desc) => {
+                let dst = self.alloc_reg();
+                let desc_idx = self.const_idx(
+                    ConstKey::String(desc.clone()),
+                    Value::String(desc.as_str().into()),
+                );
+                self.emit(Op::UintLeaves {
+                    dst,
+                    src: compiled,
+                    desc_idx,
+                });
+                dst
+            }
+            None => compiled,
+        };
         // An enum value carries only its variant name at run time, so the
         // walk cannot name the type whose `impl` renders it. The compiler
         // knows both, and hands over `Variant=Type::method` lines for every

@@ -1,0 +1,47 @@
+// A container renders wherever it sits, not only on its own.
+//
+// A `Map`, a `Set`, a `Deque`, a `Queue`, a `Stack`, and a heap keep
+// their elements in the runtime, so a shape holding one has to name it
+// in the descriptor that travels with the format call and let the
+// container's own formatter read them out. A struct holding one derives
+// its rendering the same way a struct of scalars does.
+
+use std::collections::{BTreeSet, Deque, Map, MinHeap, Queue, Set, Stack}
+
+struct Holder {
+    queue: Queue<i64>
+    deque: Deque<String>
+    set: Set<i64>
+    ordered: BTreeSet<i64>
+    index: Map<String, i64>
+    heap: MinHeap<i64>
+    stack: Stack<i64>
+}
+
+fn main() {
+    let mut queue = Queue::new()
+    queue.push(7)
+    let mut deque = Deque::new()
+    deque.push_back("a")
+    deque.push_front("b")
+    let mut heap = MinHeap::new()
+    heap.push(2)
+    heap.push(1)
+    let mut stack = Stack::new()
+    stack.push(5)
+
+    println!("in tuple: {:?}", (queue, 1))
+    println!("heap in tuple: {:?}", (heap, 2))
+
+    let held = Holder {
+        queue: queue
+        deque: deque
+        set: #{ 2, 1 }
+        ordered: #{ 4, 3 }
+        index: { "x": 9 }
+        heap: heap
+        stack: stack
+    }
+    println!("display: {}", held)
+    println!("debug: {:?}", held)
+}

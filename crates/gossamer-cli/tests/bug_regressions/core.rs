@@ -1172,7 +1172,7 @@ fn main() {
     assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
     assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
     assert_eq!(
-        vm.0, "field=[1]\noutside=[2]\nparam=[3]\nuser=400\n",
+        vm.0, "field=#[1]\noutside=#[2]\nparam=#[3]\nuser=400\n",
         "vm stdout"
     );
     assert_eq!(native.0, vm.0, "tier parity");
@@ -1230,13 +1230,13 @@ fn main() {
     assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
     assert_eq!(
         vm.0,
-        "extend [1, 2, 3, 4, 5]\n\
-         extend_from_slice [1, 2, 3, 9]\n\
-         truncate [1, 2]\n\
-         sort [1, 2, 3]\n\
-         reverse [3, 2, 1]\n\
-         clear []\n\
-         extend_str [104, 105]\n",
+        "extend #[1, 2, 3, 4, 5]\n\
+         extend_from_slice #[1, 2, 3, 9]\n\
+         truncate #[1, 2]\n\
+         sort #[1, 2, 3]\n\
+         reverse #[3, 2, 1]\n\
+         clear #[]\n\
+         extend_str #[104, 105]\n",
         "vm stdout"
     );
     assert_eq!(native.0, vm.0, "tier parity");

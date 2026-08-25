@@ -431,6 +431,8 @@ mod vec_elem_kind_llvm {
     pub(super) const VEC: i32 = 2;
     pub(super) const MAP: i32 = 3;
     pub(super) const ERROR: i32 = 4;
+    /// A struct, tuple, or fixed array of a single slot, held inline.
+    pub(super) const AGGR_FLAT: i32 = 10;
 }
 
 /// Derives the `elem_kind` discriminator for a `Vec<T>` destination
@@ -451,6 +453,7 @@ fn llvm_vec_elem_kind_from_local(body: &Body, tcx: &TyCtxt, dest_local: Local) -
         Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Iterator(_)) => vec_elem_kind_llvm::VEC,
         Some(TyKind::HashMap { .. }) => vec_elem_kind_llvm::MAP,
         Some(TyKind::DynError) => vec_elem_kind_llvm::ERROR,
+        _ if tcx.is_flat_inline_aggregate(inner) => vec_elem_kind_llvm::AGGR_FLAT,
         _ => vec_elem_kind_llvm::PRIMITIVE,
     }
 }

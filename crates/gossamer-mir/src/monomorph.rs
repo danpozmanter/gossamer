@@ -266,10 +266,7 @@ fn repair_generic_element_reads(copy: &mut Body, tcx: &TyCtxt) {
             TyKind::Adt { def, .. }
                 if def.local < u32::MAX - 16 && tcx.struct_field_tys(*def).is_some()
         );
-        let is_wide_aggregate = matches!(
-            tcx.kind_of(elem_ty),
-            TyKind::Tuple(_) | TyKind::Adt { .. } | TyKind::Array { .. }
-        ) && tcx.slot_bytes(elem_ty) > 8;
+        let is_wide_aggregate = tcx.elem_is_addressed_aggregate(elem_ty);
         if is_struct_adt || is_wide_aggregate {
             *callee = Operand::Const(ConstValue::Str("gos_rt_vec_get_ptr".to_string()));
         }

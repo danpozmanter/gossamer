@@ -2549,7 +2549,7 @@ fn a_mut_self_method_on_a_module_type_writes_back_to_its_caller() {
     let native = project_build_run(&dir, "writeback");
     let _ = fs::remove_dir_all(&dir);
     assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
-    assert_eq!(vm.0, "1 2 3\ncounter=3 seen=[1, 2, 3]\n", "vm stdout");
+    assert_eq!(vm.0, "1 2 3\ncounter=3 seen=#[1, 2, 3]\n", "vm stdout");
     assert_eq!(native.0, vm.0, "tier parity");
 }
 
@@ -2849,7 +2849,7 @@ fn cross_package_struct_variant_holding_itself_renders_and_builds() {
     let native = project_build_run(&app, "vapp");
     let _ = fs::remove_dir_all(&root);
     assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
-    assert_eq!(vm.0, "Attr { data: Int(7), pairs: [] }\n", "vm stdout");
+    assert_eq!(vm.0, "Attr { data: Int(7), pairs: #[] }\n", "vm stdout");
     assert_eq!(native.0, vm.0, "tier parity");
 }
 

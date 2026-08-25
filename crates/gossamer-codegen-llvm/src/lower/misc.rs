@@ -681,6 +681,10 @@ impl<'a> Lowerer<'a> {
                     Some(TyKind::Slice(elem) | TyKind::Vec(elem)) => {
                         let elem = *elem;
                         match self.tcx.kind(elem) {
+                            // An element type nothing constrained belongs to
+                            // a sequence nothing put a value in, so it reads
+                            // as the empty sequence the word printer renders.
+                            None | Some(TyKind::Var(_)) => ConcatKind::VecI64,
                             Some(TyKind::Int(IntTy::U64 | IntTy::Usize)) => ConcatKind::VecUint,
                             Some(TyKind::Int(_)) => ConcatKind::VecI64,
                             Some(TyKind::Float(_)) => ConcatKind::VecF64,
@@ -1141,6 +1145,16 @@ impl<'a> Lowerer<'a> {
     /// for scalars, Strings, and collections, or the payload ADT's derived
     /// `fmt`. `None` for a payload no formatter reaches.
     pub(crate) fn debug_payload_plan(&self, ty: Ty, method: &str) -> Option<DebugPayload> {
+        // An arm the inference never constrained - the `Err` of a bare
+        // `Ok(v)`, or the `Ok` of a bare `Err(e)` - can hold no value any
+        // program built, so it reads as the plain word its slot occupies
+        // and the arm that does hold the value renders as it should.
+        if matches!(
+            self.tcx.kind(self.unwrap_ref(ty)),
+            None | Some(TyKind::Var(_))
+        ) {
+            return Some(DebugPayload::Tag(0));
+        }
         if let Some(tag) = self.debug_payload_kind(ty) {
             return Some(DebugPayload::Tag(tag));
         }
@@ -1325,10 +1339,22 @@ impl<'a> Lowerer<'a> {
                 } else {
                     gossamer_abi::DESC_RESULT
                 }];
-                out.extend(self.value_descriptor_into(*tys.first()?, fns, method)?);
+                out.extend(self.arm_descriptor_into(*tys.first()?, fns, method)?);
                 if !is_option {
-                    out.extend(self.value_descriptor_into(*tys.get(1)?, fns, method)?);
+                    out.extend(self.arm_descriptor_into(*tys.get(1)?, fns, method)?);
                 }
+                Some(out)
+            }
+            // A `Deque` / `Queue` / `Stack` / heap keeps its elements in the
+            // runtime, so the descriptor names the container and its element
+            // and the shim reads them out of the handle.
+            Some(TyKind::Adt { def, substs })
+                if matches!(u32::MAX - def.local, 19 | 28 | 30 | 31 | 32) =>
+            {
+                let which = u8::try_from(u32::MAX - def.local).ok()?;
+                let elem = *substs.types().first()?;
+                let mut out = vec![gossamer_abi::DESC_CONTAINER, which];
+                out.extend(self.value_descriptor_into(elem, fns, method)?);
                 Some(out)
             }
             // `errors::Error` is the Err arm of nearly every fallible
@@ -1355,6 +1381,18 @@ impl<'a> Lowerer<'a> {
                     u8::try_from(slots).ok()?,
                 ])
             }
+        }
+    }
+
+    /// [`Self::value_descriptor_into`] for one arm of an `Option` or a
+    /// `Result`. An arm the inference never constrained - the `Err` of a
+    /// bare `Ok(v)`, which nothing in the program can build - reads as
+    /// the plain word its slot would hold, so a shape whose other arm is
+    /// perfectly renderable still renders.
+    fn arm_descriptor_into(&self, ty: Ty, fns: &mut Vec<String>, method: &str) -> Option<Vec<u8>> {
+        match self.tcx.kind(self.unwrap_ref(ty)) {
+            None | Some(TyKind::Var(_)) => Some(vec![0]),
+            _ => self.value_descriptor_into(ty, fns, method),
         }
     }
 

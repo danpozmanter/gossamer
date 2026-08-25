@@ -164,7 +164,14 @@ pub(super) fn vec_elem_kind_from_dest(
             // payload either way (the codegen doesn't currently
             // emit aggregate-typed vec elements). This is an
             // additional safety boundary, not the primary leak fix.
-            vec_elem_kind_codegen::PRIMITIVE
+            if tcx.is_flat_inline_aggregate(inner) {
+                vec_elem_kind_codegen::AGGR_FLAT
+            } else {
+                vec_elem_kind_codegen::PRIMITIVE
+            }
+        }
+        TyKind::Tuple(_) | TyKind::Array { .. } if tcx.is_flat_inline_aggregate(inner) => {
+            vec_elem_kind_codegen::AGGR_FLAT
         }
         _ => vec_elem_kind_codegen::PRIMITIVE,
     }
@@ -215,4 +222,6 @@ pub mod vec_elem_kind_codegen {
     pub const MAP: i32 = 3;
     #[allow(dead_code, reason = "reserved for errors::Error deep-free wiring")]
     pub const ERROR: i32 = 4;
+    /// A struct, tuple, or fixed array of a single slot, held inline.
+    pub const AGGR_FLAT: i32 = 10;
 }

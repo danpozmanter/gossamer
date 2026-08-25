@@ -1805,10 +1805,8 @@ impl<'a> Builder<'a> {
             self.tcx.kind_of(elem_ty),
             TyKind::Adt { def, .. } if def.local == u32::MAX || def.local == u32::MAX - 1
         );
-        let elem_is_multislot = matches!(
-            self.tcx.kind_of(elem_ty),
-            TyKind::Tuple(_) | TyKind::Adt { .. } | TyKind::Array { .. }
-        ) && self.type_slot_bytes(elem_ty) > 8;
+        let elem_is_multislot =
+            !elem_is_result_option && self.tcx.elem_is_addressed_aggregate(elem_ty);
         let helper = if elem_is_result_option {
             "gos_rt_vec_get_i128"
         } else if elem_is_multislot {

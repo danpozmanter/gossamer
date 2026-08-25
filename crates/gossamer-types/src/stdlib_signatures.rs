@@ -1446,17 +1446,17 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::http::sse",
         name: "encode_comment",
-        signature: "fn encode_comment(comment: String) -> Vec<u8>",
+        signature: "fn encode_comment(comment: String) -> String",
     },
     StdFunctionSignature {
         module_path: "std::http::sse",
         name: "encode_event",
-        signature: "fn encode_event(event: String, data: String, id: String) -> Vec<u8>",
+        signature: "fn encode_event(event: String, data: String, id: String) -> String",
     },
     StdFunctionSignature {
         module_path: "std::http::sse",
         name: "encode_retry",
-        signature: "fn encode_retry(ms: i64) -> Vec<u8>",
+        signature: "fn encode_retry(ms: i64) -> String",
     },
     StdFunctionSignature {
         module_path: "std::http::static_files",

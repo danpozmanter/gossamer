@@ -168,7 +168,7 @@ fn explicit_array_to_vec_conversions_are_accepted_and_execute() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "[1, 2, 3, 4]\n[5, 6]\n"
+        "#[1, 2, 3, 4]\n#[5, 6]\n"
     );
 }
 
@@ -350,7 +350,7 @@ fn indexing_iteration_and_non_resizing_mutation_execute() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "[4, 4, 4]\n12\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "#[4, 4, 4]\n12\n");
 }
 
 #[test]
@@ -427,7 +427,7 @@ fn array_slice_and_vec_execution_matches_vm_forced_jit_and_llvm_release() {
         "VM stderr: {}",
         String::from_utf8_lossy(&vm.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&vm.stdout), "[x, x]\n[y, y]\n22\n");
+    assert_eq!(String::from_utf8_lossy(&vm.stdout), "[x, x]\n#[y, y]\n22\n");
 
     let jit = Command::new(gos_bin())
         .arg("run")
@@ -559,7 +559,7 @@ fn owned_sequence_parameters_do_not_alias_the_caller_on_any_tier() {
     );
     assert_eq!(
         String::from_utf8_lossy(&vm.stdout),
-        "9 4 [1, 2, 3] [1, 2, 3]\n3 [[1, 2]]\n3 [1, 2]\n3 2\n[1, 2, 3] [1, 2, 3, 5]\n[alpha, beta] [alpha, beta, gamma]\n2\n2\n"
+        "9 4 [1, 2, 3] #[1, 2, 3]\n3 #[#[1, 2]]\n3 #[1, 2]\n3 2\n#[1, 2, 3] #[1, 2, 3, 5]\n#[alpha, beta] #[alpha, beta, gamma]\n2\n2\n"
     );
 
     for function in ["mutate_wrapped", "mutate_array_of_vec", "main"] {

@@ -14,6 +14,6 @@ The [implementation source](https://github.com/gossamer-lang/gossamer/blob/main/
 |---|---|---|
 | [`Event`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_sse.rs) | `type Event` | One SSE event (id, event, data, retry). |
 | [`Stream`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_sse.rs) | `type Stream` | Active SSE stream - handler writes events through it (Rust-side). |
-| [`encode_comment`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_sse.rs) | `fn encode_comment(comment: String) -> Vec<u8>` | Render a `:`-prefixed keepalive line. Available in interp + compiled. |
-| [`encode_event`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_sse.rs) | `fn encode_event(event: String, data: String, id: String) -> Vec<u8>` | Render one event block as a string: `(event, data, id) -> String`. Available in interp + compiled. |
-| [`encode_retry`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_sse.rs) | `fn encode_retry(ms: i64) -> Vec<u8>` | Render a `retry:` reconnect-hint directive in milliseconds. Available in interp + compiled. |
+| [`encode_comment`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_sse.rs) | `fn encode_comment(comment: String) -> String` | Render a `:`-prefixed keepalive line. Available in interp + compiled. |
+| [`encode_event`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_sse.rs) | `fn encode_event(event: String, data: String, id: String) -> String` | Render one event block as a string: `(event, data, id) -> String`. Available in interp + compiled. |
+| [`encode_retry`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_sse.rs) | `fn encode_retry(ms: i64) -> String` | Render a `retry:` reconnect-hint directive in milliseconds. Available in interp + compiled. |

@@ -1724,14 +1724,14 @@ fn repl_replays_user_mut_self_methods() {
     assert!(
         out.stdout
             .lines()
-            .any(|line| line == "Mutable { content: [1, 5, 3] }"),
+            .any(|line| line == "Mutable { content: #[1, 5, 3] }"),
         "println should see the mutation; stdout: {}",
         out.stdout
     );
     assert!(
         out.stdout
             .lines()
-            .any(|line| line == "mut m: Mutable = Mutable { content: [1, 5, 3] }"),
+            .any(|line| line == "mut m: Mutable = Mutable { content: #[1, 5, 3] }"),
         "%b should replay the user mutator; stdout: {}",
         out.stdout
     );
@@ -2665,17 +2665,17 @@ fn repl_iter_receiver_methods_pipe_dotdot_and_range_index_work() {
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
-        "[3, 4, 5]",
-        "[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]",
-        "[(1, 0), (2, 1), (3, 2), (4, 3), (5, 4)]",
-        "[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]",
-        "[1, 2]",
-        "[1, 2]",
-        "[[1, 2], [2, 3], [3, 4], [4, 5]]",
-        "[[1, 2], [3, 4], [5]]",
-        "[(1, 2), (2, 3), (3, 4), (4, 5)]",
-        "[1, 2, 3]",
-        "[5, 4, 3, 2, 1]",
+        "#[3, 4, 5]",
+        "#[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]",
+        "#[(1, 0), (2, 1), (3, 2), (4, 3), (5, 4)]",
+        "#[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]",
+        "#[1, 2]",
+        "#[1, 2]",
+        "#[#[1, 2], #[2, 3], #[3, 4], #[4, 5]]",
+        "#[#[1, 2], #[3, 4], #[5]]",
+        "#[(1, 2), (2, 3), (3, 4), (4, 5)]",
+        "#[1, 2, 3]",
+        "#[5, 4, 3, 2, 1]",
     ] {
         assert!(
             out.stdout.contains(expected),
@@ -2765,7 +2765,7 @@ fn repl_vec_slice_rejects_bad_arity_and_argument_types() {
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("Ok([2, 3])"),
+        out.stdout.contains("Ok(#[2, 3])"),
         "valid Vec::slice call should still work: {}",
         out.stdout
     );
@@ -3433,7 +3433,7 @@ fn repl_mut_vec_for_loop_and_tuple_for_loop_work() {
          for i in (0, 1) { println(i) }\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
-    assert!(out.stdout.contains("\n[2, 3]\n"), "{}", out.stdout);
+    assert!(out.stdout.contains("\n#[2, 3]\n"), "{}", out.stdout);
     assert!(out.stdout.contains("\n0\n1\n"), "{}", out.stdout);
 }
 

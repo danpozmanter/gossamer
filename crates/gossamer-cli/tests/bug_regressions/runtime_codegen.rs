@@ -1109,10 +1109,10 @@ fn main() {
 "#;
     let expected = "\
 (1, x, true)
-({\"a\": 1, \"b\": 2}, [1, 2, 3])
+({\"a\": 1, \"b\": 2}, #[1, 2, 3])
 #{1, 2, 3}
 #{1, 2, 3}
-Rec { name: \"r\", nums: [1, 2] }
+Rec { name: \"r\", nums: #[1, 2] }
 ";
     let dir = fresh_dir("collection_display_literals");
     let path = write_source(&dir, "collection_display_literals", src);

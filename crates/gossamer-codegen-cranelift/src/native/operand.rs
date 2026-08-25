@@ -816,15 +816,16 @@ pub(super) fn operand_aggregate_slots(body: &Body, tcx: &TyCtxt, op: &Operand) -
                 TyKind::Tuple(_) | TyKind::Adt { .. } | TyKind::Array { .. }
             ) {
                 let slots = type_slot_count(tcx, ty);
-                // MIR treats a user struct as address-is-value at every
-                // width, so a one-field struct is still handed over as the
-                // address of its backing storage - the consumer memcpys its
-                // single slot. Reading the local as a scalar word instead
-                // would hand over the storage pointer as if it were the
-                // field. An opaque stdlib heap-blob handle (`def.local` in
-                // the `u32::MAX - 16 ..= u32::MAX` sentinel range) genuinely
-                // is a pointer word, so it stays by value.
-                if slots > 1 || is_user_struct_adt(tcx, ty) {
+                // MIR treats an aggregate as address-is-value at every
+                // width, so a one-field struct, a one-element tuple, and a
+                // one-element array are each handed over as the address of
+                // their backing storage - the consumer memcpys the single
+                // slot. Reading the local as a scalar word instead would
+                // hand over the storage pointer as if it were the field. An
+                // opaque stdlib heap-blob handle (`def.local` in the
+                // `u32::MAX - 16 ..= u32::MAX` sentinel range) genuinely is
+                // a pointer word, so it stays by value.
+                if tcx.elem_is_addressed_aggregate(ty) {
                     return Some(slots.max(1));
                 }
             }

@@ -73,6 +73,13 @@ pub const DESC_ENUM: u8 = 21;
 /// [`DESC_ENUM`] describes, read through the same descriptor.
 pub const DESC_SELF: u8 = 22;
 
+/// Descriptor tag for a container whose elements live in the runtime - a
+/// `Deque`, `Queue`, `Stack`, `MaxHeap`, or `MinHeap`. The slot holds the
+/// handle; one byte follows naming which container (the `u32::MAX -`
+/// offset of its sentinel `DefId`: 19, 28, 30, 31, 32), then the
+/// element's own descriptor.
+pub const DESC_CONTAINER: u8 = 23;
+
 /// Descriptor tag for a fixed-size array stored inline. Four bytes follow -
 /// the element count and how many slots one element spans, each a
 /// little-endian `u16` - then the element's own descriptor once.

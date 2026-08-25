@@ -7722,6 +7722,11 @@ impl<'a> TypeChecker<'a> {
                 let j = self.tcx.json_value_ty();
                 self.option_adt_ty(j)
             }
+            ("keys", 0) => {
+                let name = self.tcx.string_ty();
+                let names = self.tcx.intern(TyKind::Vec(name));
+                self.option_adt_ty(names)
+            }
             ("len", 0) => self.tcx.int_ty(IntTy::I64),
             ("is_null", 0) => self.tcx.bool_ty(),
             ("as_i64", 0) => {

@@ -56,7 +56,37 @@
   every key while the length and the absent-key answer stayed right.
 - A set renders in its own literal spelling - `#{1, 2}` - at every depth, on
   every tier, and in the REPL, for `Set` and `BTreeSet` alike. It read as
-  `Set {1, 2}` when printed and `#{1, 2}` only at the REPL's top level.
+  `Set {1, 2}` when printed and `#{1, 2}` only at the REPL's top level, and
+  `set.to_string()` on a compiled tier answered the handle word's decimal.
+- A `Vec` renders in its own literal spelling - `#[1, 2]` - at every depth,
+  under `{}` and `{:?}`, through `to_string` and `join`, and in the REPL. A
+  fixed array and a slice keep the bare brackets they are written in, which
+  is the only thing that tells the two apart: they share one runtime
+  representation, so the static type is what answers.
+- A container element that is an aggregate of a single slot - a one-field
+  struct, a one-element tuple, a one-element array - is read as the value it
+  is on the compiled tiers. Such an element was stored as the address of the
+  pushing frame's slots, so a `Vec`, `Queue`, `Stack`, `Deque`, or heap
+  answered stale memory once that frame returned, `first` / `pop` / `peek`
+  handed back a word that was not the value, and a `MinHeap` of them faulted.
+- A local rebound in a scope a `Vec` binding has left is no longer treated as
+  a `Vec` by the bytecode VM. A `push` on it went to the sequence surface and
+  silently did nothing, so a later `pop` answered `None`.
+- A float element renders as a float wherever a sequence is rendered on the
+  bytecode VM, including one a `map` or a `collect` produced, which read as
+  the integer a whole float spells.
+- `println!("{:?}", Ok(value))` compiles. A `Result` or `Option` arm nothing
+  in the program constrains, and a sequence whose element type nothing
+  constrains, now render rather than refusing the build.
+- A struct holding a `Map`, a `Set`, a `Deque`, a `Queue`, a `Stack`, or a
+  heap renders it, and so does a tuple, an `Option`, or a `Result` holding
+  one. Such a field left the struct with no rendering at all, which the
+  bytecode VM walked anyway and a compiled build refused outright.
+- `json::Value::keys()` in method form answers `Option<Vec<String>>`, the
+  type its free-function spelling already answered.
+- `sse::encode_event`, `encode_comment`, and `encode_retry` declare the
+  `String` they answer. Printing one from a compiled binary read the string
+  as a `Vec<u8>` and crashed.
 - `SKILL.md` and the MCP server state Gossamer's value semantics: every
   parameter is by value, passing a collection copies nothing and cannot
   change the caller's value, `mut` on a parameter is local, and only a

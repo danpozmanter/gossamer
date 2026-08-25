@@ -43,7 +43,7 @@ fn vec_insert_returns_result_without_replacing_the_receiver() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "Ok(())\n[1, 9, 2, 3]\ntrue\n[1, 9, 2, 3]\n[3, 9, 2, 1]\n"
+        "Ok(())\n#[1, 9, 2, 3]\ntrue\n#[1, 9, 2, 3]\n#[3, 9, 2, 1]\n"
     );
 }
 
@@ -59,7 +59,7 @@ fn map_insert_and_collection_from_follow_rust_shaped_contracts() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "0\nNone\nSome(1)\nSome(2)\nSome(2)\nNone\n2\n0\nSome(5)\n0\n3\n3\n[1, 2, 3]\n[4, 5]\n"
+        "0\nNone\nSome(1)\nSome(2)\nSome(2)\nNone\n2\n0\nSome(5)\n0\n3\n3\n#[1, 2, 3]\n#[4, 5]\n"
     );
 }
 
@@ -75,6 +75,6 @@ fn option_method_dispatch_matches_the_single_option_surface() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "Some(13)\nSome(12)\nSome(12)\ntrue\ntrue\n[12]\n[]\nSome(24)\nSome(4)\nSome(5)\n6\n7\nSome((12, 3))\n"
+        "Some(13)\nSome(12)\nSome(12)\ntrue\ntrue\n#[12]\n#[]\nSome(24)\nSome(4)\nSome(5)\n6\n7\nSome((12, 3))\n"
     );
 }

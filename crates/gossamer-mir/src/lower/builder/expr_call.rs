@@ -1449,6 +1449,10 @@ impl<'a> Builder<'a> {
             TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Iterator(_) => 2,
             TyKind::HashMap { .. } => 3,
             TyKind::DynError => 4,
+            // A single-slot struct, tuple, or fixed array is held inline
+            // and its slot address is the value; the store has to know,
+            // since a one-word scalar element is the value itself.
+            _ if self.tcx.is_flat_inline_aggregate(elem) => 10,
             _ => 0,
         }
     }

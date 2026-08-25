@@ -22,4 +22,9 @@ fn main() {
     println!("in option: {:?}", Some(#{ 5 }))
     println!("of strings: {:?}", #{ "b", "a" })
     println!("empty: {:?}", Set::new())
+
+    // A set's local carries the bare handle word, so the method that
+    // answers the text has to reach the same formatter `{}` does.
+    println!("to_string: {}", plain.to_string())
+    println!("ordered to_string: {}", ordered.to_string())
 }

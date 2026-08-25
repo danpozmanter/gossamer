@@ -2444,6 +2444,12 @@ fn render_repl_value(value: &gossamer_interp::Value) -> String {
 
 struct ReplValueType {
     rendered: String,
+    /// How a value of this type renders, when the value alone cannot
+    /// say: a `Vec` and a fixed array share one runtime representation,
+    /// and a `u64` shares a slot with an `i64`. This is the descriptor
+    /// the bytecode compiler builds for a `println!` of the same value,
+    /// so the REPL and a program show one value the same way.
+    render_desc: Option<String>,
     references: Vec<gossamer_types::Mutbl>,
     method_owner: Option<String>,
     fixed_array: bool,
@@ -2490,6 +2496,7 @@ impl ReplValueType {
         };
         Self {
             rendered,
+            render_desc: gossamer_interp::value::repl_render_descriptor(tcx, ty),
             references,
             method_owner,
             fixed_array,
@@ -2500,6 +2507,7 @@ impl ReplValueType {
     fn unknown() -> Self {
         Self {
             rendered: "<unknown>".to_string(),
+            render_desc: None,
             references: Vec::new(),
             method_owner: None,
             fixed_array: false,
@@ -2516,14 +2524,15 @@ fn render_repl_binding_value(value: &gossamer_interp::Value, ty: &ReplValueType)
     if ty.rendered.starts_with("Iterator<") {
         return "<iterator>".to_string();
     }
-    let mut rendered = render_repl_value(value);
-    // A Vec prints in its own spelling; a fixed array is the bare bracket
-    // form, which `render_repl_value` already produces. A set needs
-    // nothing here: it renders in its own spelling at every depth, on
-    // every tier.
-    if matches!(ty.method_owner.as_deref(), Some("Vec")) && rendered.starts_with('[') {
-        rendered = format!("#{rendered}");
-    }
+    // Rendered through the binding's own type, so a `Vec` shows in its
+    // own spelling at every depth and a fixed array keeps the bare
+    // brackets - the two share one runtime representation, so the value
+    // alone cannot say which it is. This is the descriptor the bytecode
+    // compiler builds for a `println!` of the same value.
+    let mut rendered = match &ty.render_desc {
+        Some(desc) => gossamer_interp::value::uint_leaves(value, desc.as_bytes()).repr(),
+        None => render_repl_value(value),
+    };
     for mutability in ty.references.iter().rev() {
         rendered = format!("{}{rendered}", mutability.prefix());
     }

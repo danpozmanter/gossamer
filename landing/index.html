@@ -170,7 +170,7 @@ fn clamp(lo: i64, hi: i64, x: i64) -&gt; i64 {
     if x &lt; lo { lo } else if x &gt; hi { hi } else { x }
 }
 
-let n = 3 |&gt; double |&gt; add(10) |&gt; clamp(0, 100)
+let n = 3 |&gt; double |&gt; |v| add(10, v) |&gt; |v| clamp(0, 100, v)
 println!("answer: {}", n)
 </code></pre>
         </div>

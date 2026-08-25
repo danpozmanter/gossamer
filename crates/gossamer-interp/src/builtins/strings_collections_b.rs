@@ -1149,6 +1149,12 @@ fn render_display(
     let joined = |dispatch: &mut dyn NativeDispatch, items: &[Value]| -> RuntimeResult<Vec<String>> {
         let mut out = Vec::with_capacity(items.len());
         for item in items {
+            // A float inside a sequence reads in the form that shows it is
+            // one, the same text every other sequence rendering writes.
+            if let Value::Float(number) = item {
+                out.push(gossamer_runtime::builtins::format_float_debug(*number));
+                continue;
+            }
             out.push(render_display(dispatch, item, aliases, method)?);
         }
         Ok(out)
@@ -1187,16 +1193,24 @@ fn render_display(
                 joined(dispatch, &items)?.join(", ")
             ))
         }
+        // A set renders in the literal spelling that builds it, the same
+        // one it has when nothing inside supplies its own rendering.
         Value::Struct(inner)
             if matches!(inner.name.as_str(), "Set" | "BTreeSet")
                 && let Some(items) =
                     crate::stdlib_builtins::set::set_display_snapshot(value) =>
         {
-            Ok(format!(
-                "{} {{{}}}",
-                inner.name,
-                joined(dispatch, &items)?.join(", ")
-            ))
+            Ok(format!("#{{{}}}", joined(dispatch, &items)?.join(", ")))
+        }
+        // The renderer's copy of a `Vec` arrives inside a wrapper naming
+        // it as one, since a `Vec` and a fixed array are one value shape.
+        Value::Struct(inner) if let Some(items) = crate::value::vec_render_items(inner) => {
+            match items.as_value_slice() {
+                Some(parts) => Ok(format!("#[{}]", joined(dispatch, parts)?.join(", "))),
+                // A flat typed storage holds no value this walk can reach,
+                // so it renders as it does everywhere else.
+                None => Ok(crate::value::vec_render_text(items)),
+            }
         }
         Value::Struct(inner) => {
             let mut parts = Vec::with_capacity(inner.fields.len());

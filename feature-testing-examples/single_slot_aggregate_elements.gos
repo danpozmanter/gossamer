@@ -1,0 +1,107 @@
+// A container element that is an aggregate is reached by the address of
+// its slots, and a one-field struct, a one-element tuple, and a
+// one-element array are aggregates like any other.
+//
+// Their width alone cannot say so - a one-word scalar element is the
+// value itself - so the element store carries the answer, and every
+// read that hands an element to the program copies the slot block out.
+// Pushing in one frame and reading in another is the case that proves
+// it: the element must live in the container, not at the address the
+// pushing frame used.
+
+use std::collections::{Deque, MinHeap, Queue, Stack}
+
+struct Cell { n: i64 }
+
+fn fill_vec() -> Vec<Cell> {
+    let mut out = #[]
+    for i in 0..3 {
+        out.push(Cell { n: i * 10 })
+    }
+    out
+}
+
+fn fill_queue(q: &mut Queue<Cell>) {
+    for i in 0..3 {
+        q.push(Cell { n: i + 1 })
+    }
+}
+
+fn main() {
+    let mut cells = fill_vec()
+    println!("vec: {:?}", cells)
+    println!("index: {} {}", cells[0].n, cells[2].n)
+    if let Some(first) = cells.first() {
+        println!("first: {}", first.n)
+    }
+    if let Some(last) = cells.pop() {
+        println!("pop: {}", last.n)
+    }
+    let mut walked = 0
+    for cell in cells {
+        walked += cell.n
+    }
+    println!("walk: {}", walked)
+
+    let mut queue = Queue::new()
+    fill_queue(&mut queue)
+    println!("queue: {:?}", queue)
+    let mut drained = 0
+    while let Some(cell) = queue.pop() {
+        drained += cell.n
+    }
+    println!("drain: {}", drained)
+
+    let mut stack = Stack::new()
+    stack.push(Cell { n: 7 })
+    println!("stack: {:?} {}", stack, stack.pop().unwrap().n)
+
+    let mut deque = Deque::new()
+    deque.push_back(Cell { n: 8 })
+    deque.push_front(Cell { n: 9 })
+    println!("deque: {:?} {}", deque, deque.pop_front().unwrap().n)
+
+    let mut heap = MinHeap::new()
+    heap.push(Cell { n: 5 })
+    heap.push(Cell { n: 2 })
+    println!("heap: {:?} {}", heap, heap.pop().unwrap().n)
+
+    // A one-element tuple and a one-element array are the same shape
+    // with no field name.
+    let mut ones = #[]
+    ones.push((3,))
+    println!("tuples: {:?} {}", ones, ones[0].0)
+    if let Some(one) = ones.first() {
+        println!("tuple first: {}", one.0)
+    }
+
+    let mut rows = #[]
+    rows.push([4])
+    println!("arrays: {:?} {}", rows, rows[0][0])
+    if let Some(row) = rows.pop() {
+        println!("array pop: {}", row[0])
+    }
+
+    // The same reads inside a repeatedly called body, where the compiled
+    // tiers keep the element in a register across iterations.
+    let mut total = 0
+    for _ in 0..40 {
+        total += round()
+    }
+    println!("hot: {}", total)
+}
+
+/// One tuple read and one struct pop, in a body called often enough for
+/// the JIT to compile it.
+fn round() -> i64 {
+    let mut sum = 0
+    let mut hot: Vec<(i64,)> = #[]
+    hot.push((6,))
+    sum += hot[0].0
+    let mut cell = Queue::new()
+    cell.push(Cell { n: 1 })
+    if let Some(c) = cell.pop() {
+        sum += c.n
+    }
+    sum
+}

@@ -80,7 +80,7 @@ fn main() {
     println!("{:?}", first)
 }
 "#;
-    assert_eq!(run_main(src), "[10, 11, 12]\n");
+    assert_eq!(run_main(src), "#[10, 11, 12]\n");
 }
 
 #[test]

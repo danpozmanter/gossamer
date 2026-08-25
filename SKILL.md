@@ -269,7 +269,10 @@ Write clear, low-complexity, concise code.
   `#{1,2,3}` for `Set`. `Queue`, `Stack`, `Deque`, `MaxHeap`, and `MinHeap`
   have no literal: build them with `T::new()` or `T::from([1,2,3])`. The
   repeat form follows the same spelling: `[5; 5]` is a fixed array of five
-  `5`s and `#[6; 7]` is a `Vec` of seven `6`s.
+  `5`s and `#[6; 7]` is a `Vec` of seven `6`s. A value RENDERS in the
+  spelling that builds it, at every depth and on every tier: `#[1, 2]` for a
+  `Vec`, `[1, 2]` for a fixed array or slice, `#{1, 2}` for a `Set` or
+  `BTreeSet`, `{"a": 1}` for a `Map`.
 - **Prefer dedicated collection contracts for intent.** `Stack` is the
   idiomatic LIFO-only type even though `Vec` can push/pop at the end;
   `Queue` is the FIFO-only type even though a deque can model it; `MinHeap`

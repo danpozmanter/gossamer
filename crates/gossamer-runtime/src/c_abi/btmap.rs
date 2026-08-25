@@ -23,11 +23,11 @@ use super::*;
 pub unsafe extern "C" fn gos_rt_vec_format_i64(v: *const GosVec) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() {
-            return alloc_cstring(b"[]");
+            return alloc_cstring(b"#[]");
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 4);
-        out.push('[');
+        out.push_str("#[");
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -50,11 +50,11 @@ pub unsafe extern "C" fn gos_rt_vec_format_i64(v: *const GosVec) -> *mut c_char 
 pub unsafe extern "C" fn gos_rt_vec_format_u64(v: *const GosVec) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() {
-            return alloc_cstring(b"[]");
+            return alloc_cstring(b"#[]");
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 4);
-        out.push('[');
+        out.push_str("#[");
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -73,11 +73,11 @@ pub unsafe extern "C" fn gos_rt_vec_format_u64(v: *const GosVec) -> *mut c_char 
 pub unsafe extern "C" fn gos_rt_vec_format_f64(v: *const GosVec) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() {
-            return alloc_cstring(b"[]");
+            return alloc_cstring(b"#[]");
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 6);
-        out.push('[');
+        out.push_str("#[");
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -97,11 +97,11 @@ pub unsafe extern "C" fn gos_rt_vec_format_f64(v: *const GosVec) -> *mut c_char 
 pub unsafe extern "C" fn gos_rt_vec_format_bool(v: *const GosVec) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() {
-            return alloc_cstring(b"[]");
+            return alloc_cstring(b"#[]");
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 6);
-        out.push('[');
+        out.push_str("#[");
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -122,11 +122,11 @@ pub unsafe extern "C" fn gos_rt_vec_format_bool(v: *const GosVec) -> *mut c_char
 pub unsafe extern "C" fn gos_rt_vec_format_char(v: *const GosVec) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() {
-            return alloc_cstring(b"[]");
+            return alloc_cstring(b"#[]");
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 3);
-        out.push('[');
+        out.push_str("#[");
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -154,11 +154,11 @@ pub unsafe extern "C" fn gos_rt_vec_format_adt(
 ) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() || fmt.is_null() {
-            return alloc_cstring(b"[]");
+            return alloc_cstring(b"#[]");
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 16);
-        out.push('[');
+        out.push_str("#[");
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -190,19 +190,20 @@ pub unsafe extern "C" fn gos_rt_vec_format_desc(
 ) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() || tags.is_null() {
-            return alloc_cstring(b"[]");
+            return alloc_cstring(b"#[]");
         }
         let tags = unsafe { crate::c_abi::map::DescStream::new(tags) };
         let vec = unsafe { &*v };
-        // An element wider than one slot is stored inline; a one-word element
-        // is the value or the handle addressing it.
-        let storage = if vec.elem_bytes > 8 {
+        // An aggregate element is stored inline whatever its width; a
+        // one-word element that is not one is the value itself or the
+        // handle addressing it.
+        let storage = if crate::c_abi::vec::vec_elem_is_inline_aggregate(vec) {
             crate::c_abi::map::Storage::Inline
         } else {
             crate::c_abi::map::Storage::ByWord
         };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 16);
-        out.push('[');
+        out.push_str("#[");
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -227,11 +228,11 @@ pub unsafe extern "C" fn gos_rt_vec_format_desc(
 pub unsafe extern "C" fn gos_rt_vec_format_map(v: *const GosVec) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() {
-            return alloc_cstring(b"[]");
+            return alloc_cstring(b"#[]");
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 16);
-        out.push('[');
+        out.push_str("#[");
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -264,11 +265,11 @@ pub unsafe extern "C" fn gos_rt_vec_format_tuple(
 ) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() || tags.is_null() || n <= 0 {
-            return alloc_cstring(b"[]");
+            return alloc_cstring(b"#[]");
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 16);
-        out.push('[');
+        out.push_str("#[");
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -300,11 +301,11 @@ pub unsafe extern "C" fn gos_rt_vec_format_tuple(
 pub unsafe extern "C" fn gos_rt_vec_format_string(v: *const GosVec) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() {
-            return alloc_cstring(b"[]");
+            return alloc_cstring(b"#[]");
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 8);
-        out.push('[');
+        out.push_str("#[");
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -330,11 +331,11 @@ pub unsafe extern "C" fn gos_rt_vec_format_string(v: *const GosVec) -> *mut c_ch
 pub unsafe extern "C" fn gos_rt_vec_format_vec_i64(v: *const GosVec) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() {
-            return alloc_cstring(b"[]");
+            return alloc_cstring(b"#[]");
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 8);
-        out.push('[');
+        out.push_str("#[");
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -344,11 +345,11 @@ pub unsafe extern "C" fn gos_rt_vec_format_vec_i64(v: *const GosVec) -> *mut c_c
                 std::ptr::with_exposed_provenance::<GosVec>((p as *const usize).read_unaligned())
             };
             if inner_ptr.is_null() {
-                out.push_str("[]");
+                out.push_str("#[]");
             } else {
                 let rendered = unsafe { gos_rt_vec_format_i64(inner_ptr) };
                 if rendered.is_null() {
-                    out.push_str("[]");
+                    out.push_str("#[]");
                 } else {
                     out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(rendered) });
                 }
@@ -366,11 +367,11 @@ pub unsafe extern "C" fn gos_rt_vec_format_vec_i64(v: *const GosVec) -> *mut c_c
 pub unsafe extern "C" fn gos_rt_vec_format_vec_f64(v: *const GosVec) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() {
-            return alloc_cstring(b"[]");
+            return alloc_cstring(b"#[]");
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 8);
-        out.push('[');
+        out.push_str("#[");
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -380,11 +381,11 @@ pub unsafe extern "C" fn gos_rt_vec_format_vec_f64(v: *const GosVec) -> *mut c_c
                 std::ptr::with_exposed_provenance::<GosVec>((p as *const usize).read_unaligned())
             };
             if inner_ptr.is_null() {
-                out.push_str("[]");
+                out.push_str("#[]");
             } else {
                 let rendered = unsafe { gos_rt_vec_format_f64(inner_ptr) };
                 if rendered.is_null() {
-                    out.push_str("[]");
+                    out.push_str("#[]");
                 } else {
                     out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(rendered) });
                 }
@@ -403,11 +404,11 @@ pub unsafe extern "C" fn gos_rt_vec_format_vec_f64(v: *const GosVec) -> *mut c_c
 pub unsafe extern "C" fn gos_rt_vec_format_vec_string(v: *const GosVec) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() {
-            return alloc_cstring(b"[]");
+            return alloc_cstring(b"#[]");
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 8);
-        out.push('[');
+        out.push_str("#[");
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -417,11 +418,11 @@ pub unsafe extern "C" fn gos_rt_vec_format_vec_string(v: *const GosVec) -> *mut 
                 std::ptr::with_exposed_provenance::<GosVec>((p as *const usize).read_unaligned())
             };
             if inner_ptr.is_null() {
-                out.push_str("[]");
+                out.push_str("#[]");
             } else {
                 let rendered = unsafe { gos_rt_vec_format_string(inner_ptr) };
                 if rendered.is_null() {
-                    out.push_str("[]");
+                    out.push_str("#[]");
                 } else {
                     out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(rendered) });
                 }

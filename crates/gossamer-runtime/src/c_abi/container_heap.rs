@@ -817,22 +817,40 @@ pub unsafe extern "C" fn gos_rt_bheap_min_from_vec_desc(
 /// Renders `owner [a, b, c]` over the heap's array order, reading each
 /// element through the rendering descriptor `tags`.
 unsafe fn bheap_format_desc(v: *const GosVec, owner: &str, tags: *const u8) -> *mut c_char {
+    if v.is_null() || tags.is_null() {
+        return crate::c_abi::string::alloc_cstring(format!("{owner} []").as_bytes());
+    }
+    let stream = unsafe { crate::c_abi::map::DescStream::new(tags) };
+    let text = unsafe { bheap_format_at(v, owner, stream, 0) };
+    crate::c_abi::string::alloc_cstring(text.as_bytes())
+}
+
+/// `owner [a, b]` reading each element at `elem_desc` in `tags`, so a heap
+/// nested in another shape renders through the same stream.
+///
+/// # Safety
+/// `v` is a live element store and `elem_desc` indexes `tags`.
+pub(crate) unsafe fn bheap_format_at(
+    v: *const GosVec,
+    owner: &str,
+    tags: crate::c_abi::map::DescStream,
+    elem_desc: usize,
+) -> String {
     let mut out = String::from(owner);
     out.push_str(" [");
-    if !v.is_null() && !tags.is_null() {
+    if !v.is_null() {
         let vec = unsafe { &*v };
-        let stream = unsafe { crate::c_abi::map::DescStream::new(tags) };
         for i in 0..vec.len.max(0) {
             if i > 0 {
                 out.push_str(", ");
             }
             let slot = unsafe { heap_elem(vec, i as usize) };
-            let mut cursor = 0usize;
-            unsafe { crate::c_abi::map::render_desc_value(&mut out, slot, stream, &mut cursor) };
+            let mut cursor = elem_desc;
+            unsafe { crate::c_abi::map::render_desc_value(&mut out, slot, tags, &mut cursor) };
         }
     }
     out.push(']');
-    crate::c_abi::string::alloc_cstring(out.as_bytes())
+    out
 }
 
 /// Format a `MaxHeap` whose elements are described by `tags`.

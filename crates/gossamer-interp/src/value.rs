@@ -3066,6 +3066,9 @@ impl fmt::Display for Value {
                 if matches!(inner.name.as_str(), "bytes::Buffer" | "bytes::Builder") {
                     return out.write_str(inner.name.as_str());
                 }
+                if let Some(items) = vec_render_items(inner) {
+                    return out.write_str(&repr_vec(items));
+                }
                 if is_set_struct_name(inner.name.as_str()) {
                     return out.write_str(&repr_set(self));
                 }
@@ -3147,8 +3150,14 @@ pub(crate) mod uint_desc {
     pub(crate) const NONE: u8 = b'.';
     /// This integer position is unsigned.
     pub(crate) const UINT: u8 = b'u';
-    /// A sequence; the element's own descriptor follows.
+    /// A fixed array or a slice; the element's own descriptor follows.
+    /// Renders in bare brackets, which is how both are written.
     pub(crate) const SEQ: u8 = b'v';
+    /// A `Vec`; the element's own descriptor follows. Renders in the
+    /// `Vec` literal's own spelling, `#[..]`, which is what tells it
+    /// apart from a fixed array at every depth - the two share one
+    /// runtime representation, so only the descriptor knows.
+    pub(crate) const VEC: u8 = b'V';
     /// A map; the key's descriptor follows, then the value's.
     pub(crate) const MAP: u8 = b'm';
     /// A tuple; its arity follows as one byte, then that many descriptors.
@@ -3159,17 +3168,39 @@ pub(crate) mod uint_desc {
     pub(crate) const RESULT: u8 = b'r';
     /// A set whose elements are unsigned.
     pub(crate) const SET: u8 = b's';
+    /// A `Deque` / `Queue` / `Stack` / heap handle; the element's own
+    /// descriptor follows. The elements live in a runtime registry, so
+    /// the descriptor rides on the handle the renderer copies.
+    pub(crate) const CONTAINER: u8 = b'c';
+    /// A struct; its field count follows as one byte, then that many
+    /// descriptors, in declaration order. Only the REPL builds this:
+    /// a program renders a struct through the `to_string` synthesized
+    /// for its type, which describes each field where it formats it.
+    pub(crate) const ADT: u8 = b'A';
 }
 
 /// Field a rendered set handle carries to say its elements read as unsigned.
 /// Only [`uint_leaves`] adds it, and only to the copy the renderer sees.
 pub(crate) const SET_UINT_MARKER: &str = "__uint";
 
+/// Name of the one-field wrapper [`uint_leaves`] puts a `Vec` in so the
+/// renderer knows to spell it `#[..]`. A `Vec` and a fixed array share
+/// one runtime representation, so the descriptor built from the static
+/// type is the only thing that can tell them apart; the wrapper carries
+/// that answer on the renderer's private copy and nowhere else.
+pub(crate) const VEC_RENDER_NAME: &str = "__vec";
+
+/// Field a rendered container handle carries to describe its elements,
+/// for the containers whose elements the renderer reads out of a
+/// registry rather than out of the value. Only [`uint_leaves`] adds it.
+pub(crate) const ELEM_DESC_MARKER: &str = "__elemdesc";
+
 /// Returns `value` with the integers the descriptor names re-boxed as
 /// [`Value::Uint`], so a `u64` at or above `i64::MAX` renders as its own
 /// decimal instead of the negative the same bits spell. The copy is the
 /// renderer's alone, so the source keeps its own representation.
-pub(crate) fn uint_leaves(value: &Value, desc: &[u8]) -> Value {
+#[must_use]
+pub fn uint_leaves(value: &Value, desc: &[u8]) -> Value {
     let mut cursor = 0usize;
     convert_uint(value, desc, &mut cursor)
 }
@@ -3179,12 +3210,14 @@ fn skip_uint_desc(desc: &[u8], cursor: &mut usize) {
     let tag = desc.get(*cursor).copied().unwrap_or(uint_desc::NONE);
     *cursor += 1;
     match tag {
-        uint_desc::SEQ | uint_desc::OPTION => skip_uint_desc(desc, cursor),
+        uint_desc::SEQ | uint_desc::VEC | uint_desc::OPTION | uint_desc::CONTAINER => {
+            skip_uint_desc(desc, cursor);
+        }
         uint_desc::MAP | uint_desc::RESULT => {
             skip_uint_desc(desc, cursor);
             skip_uint_desc(desc, cursor);
         }
-        uint_desc::TUPLE => {
+        uint_desc::TUPLE | uint_desc::ADT => {
             let arity = desc.get(*cursor).copied().unwrap_or(0) as usize;
             *cursor += 1;
             for _ in 0..arity {
@@ -3204,6 +3237,10 @@ fn convert_uint(value: &Value, desc: &[u8], cursor: &mut usize) -> Value {
             other => other.clone(),
         },
         uint_desc::SEQ => convert_uint_sequence(value, desc, cursor),
+        uint_desc::VEC => {
+            let converted = convert_uint_sequence(value, desc, cursor);
+            Value::struct_(VEC_RENDER_NAME, vec![("items", converted)])
+        }
         uint_desc::TUPLE => {
             let arity = desc.get(*cursor).copied().unwrap_or(0) as usize;
             *cursor += 1;
@@ -3223,8 +3260,42 @@ fn convert_uint(value: &Value, desc: &[u8], cursor: &mut usize) -> Value {
             out.extend(parts.iter().skip(arity).cloned());
             Value::Tuple(Arc::new(out))
         }
+        uint_desc::ADT => {
+            let count = desc.get(*cursor).copied().unwrap_or(0) as usize;
+            *cursor += 1;
+            let Value::Struct(inner) = value else {
+                for _ in 0..count {
+                    skip_uint_desc(desc, cursor);
+                }
+                return value.clone();
+            };
+            let mut fields = inner.fields.to_vec();
+            for i in 0..count {
+                match fields.get_mut(i) {
+                    Some((_, field)) => *field = convert_uint(&field.clone(), desc, cursor),
+                    None => skip_uint_desc(desc, cursor),
+                }
+            }
+            Value::struct_(inner.name.as_str(), fields)
+        }
         uint_desc::OPTION | uint_desc::RESULT => convert_uint_variant(value, desc, cursor, tag),
         uint_desc::MAP => convert_uint_map(value, desc, cursor),
+        uint_desc::CONTAINER => {
+            let elem_at = *cursor;
+            skip_uint_desc(desc, cursor);
+            match value {
+                Value::Struct(inner)
+                    if desc[elem_at..*cursor].iter().any(|b| *b != uint_desc::NONE) =>
+                {
+                    let elem_desc: String =
+                        desc[elem_at..*cursor].iter().map(|b| *b as char).collect();
+                    let mut fields = inner.fields.to_vec();
+                    fields.push((ELEM_DESC_MARKER, Value::String(elem_desc.as_str().into())));
+                    Value::struct_(inner.name.as_str(), fields)
+                }
+                other => other.clone(),
+            }
+        }
         uint_desc::SET => match value {
             Value::Struct(inner) if is_set_struct_name(inner.name.as_str()) => {
                 let mut fields = inner.fields.to_vec();
@@ -3383,6 +3454,9 @@ fn repr_value(value: &Value) -> String {
         {
             inner.name.as_str().to_string()
         }
+        Value::Struct(inner) if vec_render_items(inner).is_some() => {
+            repr_vec_debug(vec_render_items(inner).unwrap_or(value))
+        }
         Value::Struct(inner) if is_set_struct_name(inner.name.as_str()) => repr_set(value),
         Value::Struct(inner) if is_deque_struct_name(inner.name.as_str()) => {
             repr_deque(value, inner.name.as_str())
@@ -3455,7 +3529,7 @@ fn repr_set(value: &Value) -> String {
             .iter()
             .map(|element| match element {
                 Value::Int(n) if unsigned => format!("{}", *n as u64),
-                other => other.to_string(),
+                other => render_element(other),
             })
             .collect::<Vec<_>>()
             .join(", ")
@@ -3467,18 +3541,97 @@ fn repr_deque(value: &Value, owner: &str) -> String {
     // Elements read the way a sequence's do - `Deque [a, b]` for the same
     // elements a `Vec` prints as `[a, b]`, which is what both compiled tiers
     // render from the element descriptor.
-    format!(
-        "{owner} [{}]",
-        values
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
+    format!("{owner} [{}]", render_elements(value, &values))
+}
+
+/// The elements of a registry-backed container, each rendered under the
+/// descriptor the handle carries, comma-joined.
+fn render_elements(handle: &Value, values: &[Value]) -> String {
+    let desc = elem_desc_of(handle);
+    values
+        .iter()
+        .map(|element| match &desc {
+            Some(desc) => render_element(&uint_leaves(element, desc.as_bytes())),
+            None => render_element(element),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The element descriptor a rendered container handle carries, if any.
+pub(crate) fn elem_desc_of(handle: &Value) -> Option<String> {
+    let Value::Struct(inner) = handle else {
+        return None;
+    };
+    inner
+        .fields
+        .iter()
+        .find_map(|(name, value)| (*name == ELEM_DESC_MARKER).then(|| value.to_string()))
 }
 
 fn is_set_struct_name(name: &str) -> bool {
     matches!(name, "Set" | "BTreeSet")
+}
+
+/// Whether `inner` is the render-only wrapper that says "this sequence
+/// is a `Vec`", and the sequence it carries.
+pub(crate) fn vec_render_items(inner: &StructInner) -> Option<&Value> {
+    if inner.name.as_str() != VEC_RENDER_NAME {
+        return None;
+    }
+    inner.fields.get(0).map(|(_, items)| items)
+}
+
+/// One element of a sequence as its own text. A float inside a sequence
+/// reads in the form that shows it is one, which is what
+/// [`write_element`] writes wherever a sequence is rendered.
+fn render_element(value: &Value) -> String {
+    match value {
+        Value::Float(number) => repr_float(*number),
+        other => other.to_string(),
+    }
+}
+
+/// A `Vec` in its own literal spelling for the `repr` channel, where a
+/// nested value reads as the source that would build it - a `String`
+/// element in quotes, exactly as a fixed array's element does.
+fn repr_vec_debug(items: &Value) -> String {
+    match items.as_value_slice() {
+        Some(parts) => format!(
+            "#[{}]",
+            parts.iter().map(repr_value).collect::<Vec<_>>().join(", ")
+        ),
+        None => repr_vec(items),
+    }
+}
+
+/// A `Vec` in its own literal spelling, elements rendered as they are
+/// anywhere else.
+pub(crate) fn vec_render_text(items: &Value) -> String {
+    repr_vec(items)
+}
+
+/// A `Vec` in its own literal spelling, elements rendered as they are
+/// anywhere else.
+fn repr_vec(items: &Value) -> String {
+    if let Some(parts) = items.as_value_slice() {
+        return format!(
+            "#[{}]",
+            parts
+                .iter()
+                .map(render_element)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    // A flat typed storage - an `IntArray`, a `FloatVec`, a byte buffer -
+    // renders its own elements in bare brackets, and the `Vec` spelling
+    // is that same text under the `Vec` opening bracket.
+    let rendered = repr_value(items);
+    match rendered.strip_prefix('[') {
+        Some(rest) => format!("#[{rest}"),
+        None => format!("#[{rendered}]"),
+    }
 }
 
 fn is_deque_struct_name(name: &str) -> bool {
@@ -3492,14 +3645,7 @@ fn is_heap_struct_name(name: &str) -> bool {
 fn repr_binary_heap(value: &Value, owner: &str) -> String {
     let values =
         crate::stdlib_builtins::container_heap::binary_heap_snapshot(value).unwrap_or_default();
-    format!(
-        "{owner} [{}]",
-        values
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
+    format!("{owner} [{}]", render_elements(value, &values))
 }
 
 fn repr_float(number: f64) -> String {
@@ -5058,5 +5204,203 @@ mod native_consume_tests {
         );
         drop(child_owner);
         drop(owner);
+    }
+}
+
+/// The render descriptor for `ty`, or `None` when every value of that
+/// type renders the way it always has.
+///
+/// The descriptor is what carries a static type into a renderer that
+/// only sees values: a `Vec` and a fixed array share one runtime
+/// representation, and a `u64` and an `i64` share one slot, so the
+/// spelling and the signedness are knowable only from here. One
+/// builder serves the bytecode compiler's format sites and the REPL,
+/// so a value reads the same in both.
+#[must_use]
+pub fn render_descriptor(tcx: &gossamer_types::TyCtxt, ty: gossamer_types::Ty) -> Option<String> {
+    descriptor_of(tcx, ty, false)
+}
+
+/// [`render_descriptor`] that also describes a struct's fields, for a
+/// value the REPL renders from the value alone rather than through the
+/// `to_string` a program's format site calls.
+#[must_use]
+pub fn repl_render_descriptor(
+    tcx: &gossamer_types::TyCtxt,
+    ty: gossamer_types::Ty,
+) -> Option<String> {
+    descriptor_of(tcx, ty, true)
+}
+
+fn descriptor_of(
+    tcx: &gossamer_types::TyCtxt,
+    ty: gossamer_types::Ty,
+    adts: bool,
+) -> Option<String> {
+    let mut out = Vec::new();
+    push_render_desc_with(tcx, ty, &mut out, 0, adts);
+    out.iter()
+        .any(|b| *b == uint_desc::UINT || *b == uint_desc::SET || *b == uint_desc::VEC)
+        .then(|| out.iter().map(|b| *b as char).collect())
+}
+
+/// [`render_descriptor`] for a sequence whose ELEMENTS are rendered
+/// while the sequence itself is not - what `xs.join(sep)` builds, since
+/// the separator replaces the brackets. The outer `Vec` tag becomes the
+/// bare-sequence one; every nested descriptor is unchanged.
+#[must_use]
+pub fn element_render_descriptor(
+    tcx: &gossamer_types::TyCtxt,
+    ty: gossamer_types::Ty,
+) -> Option<String> {
+    let mut out = Vec::new();
+    push_render_desc(tcx, ty, &mut out, 0);
+    if out.first() != Some(&uint_desc::VEC) {
+        return None;
+    }
+    out[0] = uint_desc::SEQ;
+    out.iter()
+        .any(|b| *b == uint_desc::UINT || *b == uint_desc::SET || *b == uint_desc::VEC)
+        .then(|| out.iter().map(|b| *b as char).collect())
+}
+
+/// `ty` with every reference peeled.
+fn peel_refs(tcx: &gossamer_types::TyCtxt, mut ty: gossamer_types::Ty) -> gossamer_types::Ty {
+    while let Some(gossamer_types::TyKind::Ref { inner, .. }) = tcx.kind(ty) {
+        ty = *inner;
+    }
+    ty
+}
+
+fn is_unsigned64(tcx: &gossamer_types::TyCtxt, ty: gossamer_types::Ty) -> bool {
+    matches!(
+        tcx.kind(peel_refs(tcx, ty)),
+        Some(gossamer_types::TyKind::Int(
+            gossamer_types::IntTy::U64 | gossamer_types::IntTy::Usize
+        ))
+    )
+}
+
+fn push_render_desc(
+    tcx: &gossamer_types::TyCtxt,
+    ty: gossamer_types::Ty,
+    out: &mut Vec<u8>,
+    depth: u8,
+) {
+    push_render_desc_with(tcx, ty, out, depth, false);
+}
+
+fn push_render_desc_with(
+    tcx: &gossamer_types::TyCtxt,
+    ty: gossamer_types::Ty,
+    out: &mut Vec<u8>,
+    depth: u8,
+    adts: bool,
+) {
+    use gossamer_types::TyKind;
+    if depth > 8 {
+        out.push(uint_desc::NONE);
+        return;
+    }
+    let peeled = peel_refs(tcx, ty);
+    if is_unsigned64(tcx, peeled) {
+        out.push(uint_desc::UINT);
+        return;
+    }
+    match tcx.kind(peeled) {
+        // A `Vec` renders in its own spelling; a fixed array and a slice
+        // are written in bare brackets and render that way.
+        Some(TyKind::Vec(elem)) => {
+            let elem = *elem;
+            out.push(uint_desc::VEC);
+            push_render_desc_with(tcx, elem, out, depth + 1, adts);
+        }
+        Some(TyKind::Slice(elem) | TyKind::Array { elem, .. }) => {
+            let elem = *elem;
+            out.push(uint_desc::SEQ);
+            push_render_desc_with(tcx, elem, out, depth + 1, adts);
+        }
+        Some(TyKind::Tuple(elems)) => {
+            let elems = elems.clone();
+            let Ok(arity) = u8::try_from(elems.len()) else {
+                out.push(uint_desc::NONE);
+                return;
+            };
+            out.push(uint_desc::TUPLE);
+            out.push(arity);
+            for elem in elems {
+                push_render_desc_with(tcx, elem, out, depth + 1, adts);
+            }
+        }
+        Some(TyKind::HashMap { key, value, .. }) => {
+            let (key, value) = (*key, *value);
+            out.push(uint_desc::MAP);
+            push_render_desc_with(tcx, key, out, depth + 1, adts);
+            push_render_desc_with(tcx, value, out, depth + 1, adts);
+        }
+        // `Option` and `Result` are the sentinel Adts `u32::MAX - 1` and
+        // `u32::MAX`; a `Set` / `BTreeSet` is `u32::MAX - 7` / `- 18`.
+        Some(TyKind::Adt { def, substs }) if def.local == u32::MAX - 1 => {
+            let payload = substs.types().first().copied();
+            out.push(uint_desc::OPTION);
+            match payload {
+                Some(payload) => push_render_desc_with(tcx, payload, out, depth + 1, adts),
+                None => out.push(uint_desc::NONE),
+            }
+        }
+        Some(TyKind::Adt { def, substs }) if def.local == u32::MAX => {
+            let tys = substs.types();
+            let (ok, err) = (tys.first().copied(), tys.get(1).copied());
+            out.push(uint_desc::RESULT);
+            for arm in [ok, err] {
+                match arm {
+                    Some(arm) => push_render_desc_with(tcx, arm, out, depth + 1, adts),
+                    None => out.push(uint_desc::NONE),
+                }
+            }
+        }
+        // `Deque` (-19), `MaxHeap` (-28), `MinHeap` (-30), `Queue` (-31),
+        // and `Stack` (-32) keep their elements in a runtime registry, so
+        // the descriptor travels on the handle.
+        Some(TyKind::Adt { def, substs })
+            if matches!(u32::MAX - def.local, 19 | 28 | 30 | 31 | 32) =>
+        {
+            let elem = substs.types().first().copied();
+            out.push(uint_desc::CONTAINER);
+            match elem {
+                Some(elem) => push_render_desc_with(tcx, elem, out, depth + 1, adts),
+                None => out.push(uint_desc::NONE),
+            }
+        }
+        Some(TyKind::Adt { def, substs })
+            if def.local == u32::MAX - 7 || def.local == u32::MAX - 18 =>
+        {
+            let elem = substs.types().first().copied();
+            if elem.is_some_and(|elem| is_unsigned64(tcx, elem)) {
+                out.push(uint_desc::SET);
+            } else {
+                out.push(uint_desc::NONE);
+            }
+        }
+        // A struct's fields are described only for the REPL: a program
+        // renders one through the `to_string` synthesized for its type,
+        // which describes each field at the format site inside it.
+        Some(TyKind::Adt { def, substs }) if adts && def.local < u32::MAX - 16 => {
+            let (def, substs) = (*def, substs.clone());
+            let Some(fields) = tcx.adt_field_tys(def, &substs).map(<[_]>::to_vec) else {
+                out.push(uint_desc::NONE);
+                return;
+            };
+            let Ok(count) = u8::try_from(fields.len()) else {
+                out.push(uint_desc::NONE);
+                return;
+            };
+            out.push(uint_desc::ADT);
+            out.push(count);
+            for field in fields {
+                push_render_desc_with(tcx, field, out, depth + 1, adts);
+            }
+        }
+        _ => out.push(uint_desc::NONE),
     }
 }

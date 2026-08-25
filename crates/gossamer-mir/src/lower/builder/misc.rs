@@ -615,8 +615,9 @@ impl<'a> Builder<'a> {
                 gossamer_types::TyKind::Adt { def, .. }
                     if def.local < u32::MAX - 16 && self.tcx.struct_field_tys(*def).is_some()
             );
-            let elem_is_multislot =
-                (elem_is_aggregate && self.type_slot_bytes(elem_ty) > 8) || elem_is_struct_adt;
+            let elem_is_multislot = (elem_is_aggregate
+                && self.tcx.elem_is_addressed_aggregate(elem_ty))
+                || elem_is_struct_adt;
             // `f64` elements must be read as a float bit-pattern; everything
             // else single-slot (i64 / bool / char / String / heap-handle ptr)
             // reads through one `gos_rt_vec_get_i64`.

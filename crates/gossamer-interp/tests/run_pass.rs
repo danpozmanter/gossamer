@@ -110,7 +110,7 @@ fn main() {
     println!("{:?}", totals)
 }
 "#;
-    assert_eq!(run_program(source), "[3, 7]\n");
+    assert_eq!(run_program(source), "#[3, 7]\n");
 }
 
 #[test]

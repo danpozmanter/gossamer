@@ -3657,10 +3657,7 @@ impl<'a> Builder<'a> {
             // pointer, so it must come back through `gos_rt_vec_get_ptr` too.
             // (`Result`/`Option` are handled by `elem_is_result_option` above.)
             let elem_is_tuple = matches!(self.tcx.kind_of(elem_unwrapped), TyKind::Tuple(_));
-            let elem_is_multislot = (matches!(
-                self.tcx.kind_of(elem_unwrapped),
-                TyKind::Tuple(_) | TyKind::Adt { .. } | TyKind::Array { .. }
-            ) && self.type_slot_bytes(elem_unwrapped) > 8)
+            let elem_is_multislot = self.tcx.elem_is_addressed_aggregate(elem_unwrapped)
                 || elem_is_struct_adt
                 || elem_is_tuple;
             let (helper, dest_ty) = if elem_is_result_option {

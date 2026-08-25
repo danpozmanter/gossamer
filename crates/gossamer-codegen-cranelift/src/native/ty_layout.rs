@@ -231,8 +231,8 @@ pub(super) fn single_slot_managed_leaf(tcx: &TyCtxt, ty: Ty) -> bool {
 }
 
 /// True when `ty` is a by-value aggregate (struct / tuple / one-element array)
-/// whose whole layout is one 8-byte slot holding a heap-managed leaf. Such an
-/// aggregate is address-represented exactly like a multi-slot one: a local's
+/// whose whole layout is one 8-byte slot. Such an aggregate is
+/// address-represented exactly like a multi-slot one: a local's
 /// `Variable` holds a pointer to the one-word backing storage (stack slot or
 /// heap block), `Field(0)` walks that address, a `&self` receiver copies the
 /// pointer, and the drop pass's `Field`-projected zero-init / free stores load
@@ -246,7 +246,7 @@ pub(super) fn single_slot_addr_aggregate(tcx: &TyCtxt, ty: Ty) -> bool {
     ) && !tcx.is_rc_managed(ty)
         && !is_inline_two_word_ty(tcx, ty)
         && type_slot_count(tcx, ty) == 1
-        && single_slot_managed_leaf(tcx, ty)
+        && (single_slot_managed_leaf(tcx, ty) || tcx.elem_is_addressed_aggregate(ty))
 }
 
 /// Slot width of an aggregate operand, preferring recorded `local_slots`

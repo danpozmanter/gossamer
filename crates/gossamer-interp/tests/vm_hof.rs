@@ -94,7 +94,7 @@ fn main() {
 "#;
     assert_eq!(
         run_main(src),
-        "doubled=[2, 4, 6, 8, 10]\nevens=[2, 4]\nproduct=120\n"
+        "doubled=#[2, 4, 6, 8, 10]\nevens=#[2, 4]\nproduct=120\n"
     );
 }
 
@@ -107,7 +107,7 @@ fn main() {
     println!("{:?}", shifted)
 }
 "#;
-    assert_eq!(run_main(src), "[1, 3, 5, 7]\n");
+    assert_eq!(run_main(src), "#[1, 3, 5, 7]\n");
 }
 
 #[test]
@@ -124,7 +124,7 @@ fn main() {
     println!("tripled={:?}", tripled)
 }
 "#;
-    assert_eq!(run_main(src), "tripled=[3, 6, 9, 12, 15]\n");
+    assert_eq!(run_main(src), "tripled=#[3, 6, 9, 12, 15]\n");
 }
 
 #[test]
@@ -180,5 +180,5 @@ fn main() {
     println!("{:?}", scaled)
 }
 "#;
-    assert_eq!(run_main(src), "[4, 8, 12]\n");
+    assert_eq!(run_main(src), "#[4, 8, 12]\n");
 }

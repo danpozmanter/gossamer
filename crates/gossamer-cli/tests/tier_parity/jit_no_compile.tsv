@@ -283,6 +283,8 @@ feature-testing-examples/sequence_method_compilability.gos	no hot body
 feature-testing-examples/serde_more_field_kinds.gos	entry shape
 feature-testing-examples/set_from_sequence.gos	no hot body
 feature-testing-examples/set_literal_rendering.gos	no hot body
+feature-testing-examples/vec_literal_rendering.gos	no hot body
+feature-testing-examples/container_in_aggregate_rendering.gos	no hot body
 feature-testing-examples/shared_across_goroutines.gos	admission gate
 feature-testing-examples/single_field_struct_aggregate.gos	bytecode-only local
 feature-testing-examples/slice_methods.gos	no hot body

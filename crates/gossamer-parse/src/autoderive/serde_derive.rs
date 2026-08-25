@@ -488,6 +488,29 @@ fn ty_is_renderable_within(
                     _ => false,
                 };
             }
+            // A keyed, ordered, or slot-backed container renders through
+            // the runtime, element by element, so it renders exactly when
+            // every type it holds does.
+            if matches!(
+                name,
+                "Map"
+                    | "BTreeMap"
+                    | "Set"
+                    | "BTreeSet"
+                    | "Deque"
+                    | "Queue"
+                    | "Stack"
+                    | "MaxHeap"
+                    | "MinHeap"
+            ) {
+                return !seg.generics.is_empty()
+                    && seg.generics.iter().all(|arg| match arg {
+                        gossamer_ast::GenericArg::Type(inner) => {
+                            ty_is_renderable_within(inner, formattable, params, aliases, depth)
+                        }
+                        gossamer_ast::GenericArg::Const(_) => false,
+                    });
+            }
             if !seg.generics.is_empty() {
                 return false;
             }

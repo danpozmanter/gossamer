@@ -533,7 +533,8 @@ impl<'a> Builder<'a> {
         // the scalar shapes have a dedicated shim worth keeping.
         if method.name.as_str() == "to_string"
             && args.is_empty()
-            && self.display_to_string_receiver(receiver_ty)
+            && (self.display_to_string_receiver(receiver_ty)
+                || self.receiver_is_set_handle(receiver))
             && !self.has_user_rendering_method(receiver_ty, "to_string")
             && !self.renders_through_own_shim(receiver, &receiver_kind_flat, receiver_ty)
         {
@@ -3787,13 +3788,15 @@ impl<'a> Builder<'a> {
                 _ => "gos_rt_deque_push_front_f64",
             };
         }
-        // An element spanning more than one slot - a struct, tuple, array,
-        // inline enum, or `Option` / `Result` carrier - is handed over by the
-        // address of its slots, which is what the wide entry point takes.
+        // An aggregate element - a struct, tuple, array, inline enum, or
+        // `Option` / `Result` carrier - is handed over by the address of
+        // its slots, which is what the wide entry point takes. This holds
+        // however narrow it is: a one-field struct is still an aggregate,
+        // and the one-word entry point would store its address.
         if matches!(rt, "gos_rt_deque_push_back" | "gos_rt_deque_push_front")
-            && args
-                .first()
-                .is_some_and(|arg| self.type_slot_bytes(arg.ty) > 8)
+            && args.first().is_some_and(|arg| {
+                self.type_slot_bytes(arg.ty) > 8 || self.tcx.is_flat_inline_aggregate(arg.ty)
+            })
         {
             rt = match rt {
                 "gos_rt_deque_push_back" => "gos_rt_deque_push_back_wide",
@@ -6255,6 +6258,22 @@ impl<'a> Builder<'a> {
             .or_else(|| self.runtime_kind_from_ty(receiver_ty))
             .or_else(|| self.runtime_kind_from_ty(receiver.ty));
         kind == Some("errors::Error")
+    }
+
+    /// Whether the receiver is a set, whose local carries the bare handle
+    /// word rather than the set's own type. The width tells the renderer
+    /// nothing, so the display path is what reaches the set formatter -
+    /// the word's own `to_string` would answer its decimal.
+    fn receiver_is_set_handle(&self, receiver: &HirExpr) -> bool {
+        let mut ty = receiver.ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(ty) {
+            ty = *inner;
+        }
+        matches!(
+            self.tcx.kind_of(ty),
+            TyKind::Adt { def, .. }
+                if def.local == HASH_SET_DEF_LOCAL || def.local == BTREE_SET_DEF_LOCAL
+        )
     }
 
     fn display_to_string_receiver(&mut self, receiver_ty: Ty) -> bool {
