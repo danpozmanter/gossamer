@@ -4,9 +4,9 @@
 //! different paths. Verifies the constructor + method-chain
 //! shape works identically across tiers.
 
+use std::io::BufRead;
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::Duration;
 
 fn gos_bin() -> PathBuf {
     let mut p = std::env::current_exe().unwrap();
@@ -16,79 +16,87 @@ fn gos_bin() -> PathBuf {
     p
 }
 
-fn write_source(port: u16) -> PathBuf {
+/// A source path of this run's own, so two tests never write one file.
+fn source_path(tag: &str) -> PathBuf {
     let pid = std::process::id();
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.subsec_nanos());
-    let path = std::env::temp_dir().join(format!("gos-router-parity-{pid}-{nanos}.gos"));
-    let src = format!(
-        r#"
+    std::env::temp_dir().join(format!("{tag}-{pid}-{nanos}.gos"))
+}
+
+fn write_source() -> PathBuf {
+    let path = source_path("gos-router-parity");
+    let src = r#"
 use std::http
 use std::http::router
+use std::io
 
-struct Health {{ }}
-impl Health {{
-    fn serve(&self, _r: http::Request) -> Result<http::Response, http::Error> {{
+struct Health { }
+impl Health {
+    fn serve(&self, _r: http::Request) -> Result<http::Response, http::Error> {
         Ok(http::Response::text(200, "ok"))
-    }}
-}}
+    }
+}
 
-struct Echo {{ }}
-impl Echo {{
-    fn serve(&self, r: http::Request) -> Result<http::Response, http::Error> {{
-        Ok(http::Response::text(200, format("echo {{}}", r.path)))
-    }}
-}}
+struct Echo { }
+impl Echo {
+    fn serve(&self, r: http::Request) -> Result<http::Response, http::Error> {
+        Ok(http::Response::text(200, format("echo {}", r.path)))
+    }
+}
 
-fn main() {{
+fn main() {
     let r = router::Router::new()
-    r.get("/health", Health {{ }})
-    r.get("/echo", Echo {{ }})
-    let _ = http::serve("127.0.0.1:{port}", r)
-}}
-"#,
-    );
+    r.get("/health", Health { })
+    r.get("/echo", Echo { })
+    let s = http::Server::new()
+    match s.listen("127.0.0.1:0") {
+        Ok(_) => println("{}", s.addr())
+        Err(e) => eprintln("listen: {}", e)
+    }
+    // Standard output is buffered, and this program does not end:
+    // the address has to leave the buffer before the serve loop.
+    io::stdout().flush()
+    let _ = s.serve(r)
+}
+"#;
     std::fs::write(&path, src).unwrap();
     path
 }
 
-fn write_source_bare_fn(port: u16) -> PathBuf {
-    let pid = std::process::id();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.subsec_nanos());
-    let path = std::env::temp_dir().join(format!("gos-router-parity-fn-{pid}-{nanos}.gos"));
-    let src = format!(
-        r#"
+fn write_source_bare_fn() -> PathBuf {
+    let path = source_path("gos-router-parity-fn");
+    let src = r#"
 use std::http
 use std::http::router
+use std::io
 
-fn health(_r: http::Request) -> Result<http::Response, http::Error> {{
+fn health(_r: http::Request) -> Result<http::Response, http::Error> {
     Ok(http::Response::text(200, "ok"))
-}}
+}
 
-fn echo(r: http::Request) -> Result<http::Response, http::Error> {{
-    Ok(http::Response::text(200, format("echo {{}}", r.path)))
-}}
+fn echo(r: http::Request) -> Result<http::Response, http::Error> {
+    Ok(http::Response::text(200, format("echo {}", r.path)))
+}
 
-fn main() {{
+fn main() {
     let r = router::Router::new()
     r.get("/health", health)
     r.get("/echo", echo)
-    let _ = http::serve("127.0.0.1:{port}", r)
-}}
-"#,
-    );
+    let s = http::Server::new()
+    match s.listen("127.0.0.1:0") {
+        Ok(_) => println("{}", s.addr())
+        Err(e) => eprintln("listen: {}", e)
+    }
+    // Standard output is buffered, and this program does not end:
+    // the address has to leave the buffer before the serve loop.
+    io::stdout().flush()
+    let _ = s.serve(r)
+}
+"#;
     std::fs::write(&path, src).unwrap();
     path
-}
-
-fn free_port() -> u16 {
-    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let p = l.local_addr().unwrap().port();
-    drop(l);
-    p
 }
 
 fn curl(addr: &str, path: &str) -> (String, i32) {
@@ -110,24 +118,31 @@ fn curl(addr: &str, path: &str) -> (String, i32) {
     (body, code)
 }
 
-fn run_and_check(cmd: &mut Command, port: u16) {
+/// Runs one server and asks it for every route.
+///
+/// The server binds port zero and prints the address the kernel gave
+/// it, which is both where to send the requests and the fact that the
+/// listener is up: a test that picked the port itself would be talking
+/// to whatever else took it in the meantime.
+fn run_and_check(cmd: &mut Command) {
     let mut child = cmd
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .expect("spawn");
-    let addr = format!("127.0.0.1:{port}");
-    // Wait for readiness instead of a fixed sleep: poll `/health` until it
-    // answers 200 or a bounded deadline elapses. A fixed 800ms guess raced
-    // the server's bind on a loaded machine.
-    let ready = (0..200).any(|_| {
-        if curl(&addr, "/health").1 == 200 {
-            return true;
+    let mut announced = String::new();
+    let bound = std::io::BufReader::new(child.stdout.take().expect("the child's stdout"))
+        .read_line(&mut announced)
+        .expect("read the address the server bound");
+    if bound == 0 {
+        let _ = child.wait();
+        let mut complaint = String::new();
+        if let Some(mut stderr) = child.stderr.take() {
+            let _ = std::io::Read::read_to_string(&mut stderr, &mut complaint);
         }
-        std::thread::sleep(Duration::from_millis(25));
-        false
-    });
-    assert!(ready, "router server did not become ready on {addr}");
+        panic!("the server ended before it bound: {complaint}");
+    }
+    let addr = announced.trim().to_string();
     let (h_body, h_code) = curl(&addr, "/health");
     let (e_body, e_code) = curl(&addr, "/echo");
     let (m_body, m_code) = curl(&addr, "/missing");
@@ -144,13 +159,12 @@ fn run_and_check(cmd: &mut Command, port: u16) {
 
 #[test]
 fn router_interp_matches_compiled() {
-    let port = free_port();
-    let src = write_source(port);
+    let src = write_source();
 
     // Interp run.
     let mut interp = Command::new(gos_bin());
     interp.arg("run").arg(&src);
-    run_and_check(&mut interp, port);
+    run_and_check(&mut interp);
 
     // Compiled build + run.
     let build = Command::new(gos_bin())
@@ -166,19 +180,18 @@ fn router_interp_matches_compiled() {
     let stem = src.file_stem().unwrap().to_str().unwrap();
     let bin = std::env::temp_dir().join("target").join("debug").join(stem);
     let mut compiled = Command::new(&bin);
-    run_and_check(&mut compiled, port);
+    run_and_check(&mut compiled);
     let _ = std::fs::remove_file(&src);
 }
 
 #[test]
 fn router_bare_fn_interp_matches_compiled() {
-    let port = free_port();
-    let src = write_source_bare_fn(port);
+    let src = write_source_bare_fn();
 
     // Interp run with bare-function handlers (no struct + impl).
     let mut interp = Command::new(gos_bin());
     interp.arg("run").arg(&src);
-    run_and_check(&mut interp, port);
+    run_and_check(&mut interp);
 
     // Compiled build + run.
     let build = Command::new(gos_bin())
@@ -194,6 +207,6 @@ fn router_bare_fn_interp_matches_compiled() {
     let stem = src.file_stem().unwrap().to_str().unwrap();
     let bin = std::env::temp_dir().join("target").join("debug").join(stem);
     let mut compiled = Command::new(&bin);
-    run_and_check(&mut compiled, port);
+    run_and_check(&mut compiled);
     let _ = std::fs::remove_file(&src);
 }
